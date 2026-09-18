@@ -228,6 +228,9 @@ valkey_password = os.environ.get("VALKEY_PASSWORD", "change_me_valkey_password")
 valkey_port = os.environ.get("VALKEY_PORT", "6379")
 valkey_url = f"redis://:{valkey_password}@127.0.0.1:{valkey_port}/0"
 desired.update({
+    "chatos.mcp.result_rabbitmq_url": rabbitmq_url,
+    "memory_engine.queue.rabbitmq_url": rabbitmq_url,
+    "plugin_management.catalog.rabbitmq_url": rabbitmq_url,
     "task_runner.queue.callback_delivery_mode": "rabbitmq",
     "task_runner.queue.rabbitmq_url": rabbitmq_url,
     "task_runner.observability.otlp_endpoint": "http://127.0.0.1:4317",
@@ -235,6 +238,7 @@ desired.update({
     "mcp_management.observability.otlp_endpoint": "http://127.0.0.1:4317",
     "mcp_management.async_tool.dispatch_mode": "rabbitmq",
     "mcp_management.async_tool.rabbitmq_url": rabbitmq_url,
+    "mcp_management.invocation.quota_valkey_url": valkey_url,
     "mcp_management.security.allowed_internal_callers": "chatos,task-runner,configuration-center",
     "local_connector.coordination.valkey_url": valkey_url,
     "chatos.observability.otlp_endpoint": "http://127.0.0.1:4317",
@@ -620,6 +624,8 @@ start_all() {
   ensure_plugin_management_mtls_material
   prepare_local_dev_apisix_config
   start_infra
+  echo "[INFO] applying PostgreSQL migrations"
+  "$ROOT_DIR/scripts/postgres-migrate-all.sh"
   wait_for_consul
   deregister_local_dev_services
   stop_docker_app_services

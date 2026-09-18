@@ -73,9 +73,9 @@ async fn sync_plugin_marketplace_by_id(
     actor: &str,
 ) -> Result<PluginCatalogSyncResponse, ApiError> {
     let lock_owner = Uuid::new_v4().to_string();
-    let lock_until = mongodb::bson::DateTime::from_system_time(
-        std::time::SystemTime::now() + state.config.plugin_catalog_sync_lock_timeout,
-    );
+    let lock_until = chrono::Utc::now()
+        + chrono::Duration::from_std(state.config.plugin_catalog_sync_lock_timeout)
+            .map_err(|error| ApiError::internal(error.to_string()))?;
     let acquired = state
         .store
         .acquire_plugin_catalog_sync_lease(marketplace_id, lock_owner.as_str(), lock_until)
@@ -101,9 +101,9 @@ async fn sync_plugin_marketplace_by_id(
             tokio::select! {
                 _ = &mut lease_heartbeat_stopped => break,
                 _ = interval.tick() => {
-                    let lock_until = mongodb::bson::DateTime::from_system_time(
-                        std::time::SystemTime::now() + lock_timeout,
-                    );
+                    let lock_until = chrono::Utc::now()
+                        + chrono::Duration::from_std(lock_timeout)
+                            .expect("validated Plugin Catalog lock timeout");
                     match heartbeat_state
                         .store
                         .renew_plugin_catalog_sync_lease(
@@ -792,11 +792,6 @@ async fn materialize_catalog(
             .map_err(ApiError::internal)?
             .is_some();
         if !ready {
-            state
-                .store
-                .set_plugin_release_publication_ready(release.id.as_str(), false)
-                .await
-                .map_err(ApiError::internal)?;
             staged_release_ids.push(release.id.clone());
         }
         match state
@@ -805,15 +800,25 @@ async fn materialize_catalog(
             .await
             .map_err(ApiError::internal)?
         {
-            Some(existing) if existing == *release => {}
-            Some(_) => state
-                .store
-                .replace_plugin_release(release)
-                .await
-                .map_err(ApiError::internal)?,
+            Some(existing) => {
+                if !ready {
+                    state
+                        .store
+                        .set_plugin_release_publication_ready(release.id.as_str(), false)
+                        .await
+                        .map_err(ApiError::internal)?;
+                }
+                if existing != *release {
+                    state
+                        .store
+                        .replace_plugin_release(release)
+                        .await
+                        .map_err(ApiError::internal)?;
+                }
+            }
             None => state
                 .store
-                .insert_plugin_release(release)
+                .insert_plugin_release_pending(release)
                 .await
                 .map_err(ApiError::internal)?,
         }

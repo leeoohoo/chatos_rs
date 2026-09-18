@@ -21,17 +21,59 @@ type AuditFilters = {
   device_id?: string;
 };
 
+type AuditCursor = {
+  createdAt: string;
+  id: string;
+};
+
+const AUDIT_PAGE_SIZE = 100;
+const AUDIT_REQUEST_LIMIT = AUDIT_PAGE_SIZE + 1;
+
 export function PluginAuditPage({ user }: { user: CurrentUser }) {
   const { t } = useI18n();
   const [form] = Form.useForm<AuditFilters>();
   const [filters, setFilters] = useState<AuditFilters>({});
+  const [page, setPage] = useState(1);
+  const [pageCursors, setPageCursors] = useState<Array<AuditCursor | null>>([null]);
   const [detail, setDetail] = useState<PluginAuditLogRecord | null>(null);
   const isAdmin = user.role === 'super_admin';
+  const cursor = pageCursors[page - 1] || null;
   const auditQuery = useQuery({
-    queryKey: ['plugin-management', 'plugin-audit', filters],
-    queryFn: () => api.listPluginAudit({ ...filters, limit: 100 }),
+    queryKey: ['plugin-management', 'plugin-audit', filters, cursor],
+    queryFn: () => api.listPluginAudit({
+      ...filters,
+      limit: AUDIT_REQUEST_LIMIT,
+      ...(cursor
+        ? { before_created_at: cursor.createdAt, before_id: cursor.id }
+        : {}),
+    }),
     enabled: isAdmin,
   });
+  const visibleItems = (auditQuery.data?.items || []).slice(0, AUDIT_PAGE_SIZE);
+  const canAdvance = (auditQuery.data?.items.length || 0) > AUDIT_PAGE_SIZE;
+  const maxReachablePage = Math.max(
+    pageCursors.length,
+    page === pageCursors.length && canAdvance ? page + 1 : page,
+  );
+  const resetPagination = () => {
+    setPage(1);
+    setPageCursors([null]);
+  };
+  const changePage = (nextPage: number) => {
+    if (nextPage < 1 || nextPage === page) return;
+    if (nextPage <= pageCursors.length) {
+      setPage(nextPage);
+      return;
+    }
+    if (nextPage !== page + 1 || page !== pageCursors.length || !canAdvance) return;
+    const lastItem = visibleItems[visibleItems.length - 1];
+    if (!lastItem) return;
+    setPageCursors((current) => [
+      ...current.slice(0, page),
+      { createdAt: lastItem.created_at, id: lastItem.id },
+    ]);
+    setPage(nextPage);
+  };
   const columns = useMemo<ColumnsType<PluginAuditLogRecord>>(
     () => [
       {
@@ -106,7 +148,14 @@ export function PluginAuditPage({ user }: { user: CurrentUser }) {
           <Typography.Title level={3}>{t('pluginAudit.title')}</Typography.Title>
           <Typography.Text type="secondary">{t('pluginAudit.description')}</Typography.Text>
         </Space>
-        <Button icon={<ReloadOutlined />} onClick={() => auditQuery.refetch()}>
+        <Button
+          icon={<ReloadOutlined />}
+          onClick={() => {
+            const alreadyOnFirstPage = page === 1;
+            resetPagination();
+            if (alreadyOnFirstPage) void auditQuery.refetch();
+          }}
+        >
           {t('pluginAudit.refresh')}
         </Button>
       </div>
@@ -114,6 +163,7 @@ export function PluginAuditPage({ user }: { user: CurrentUser }) {
         form={form}
         layout="inline"
         onFinish={(values) => {
+          resetPagination();
           setFilters({
             event: optionalText(values.event),
             plugin_id: optionalText(values.plugin_id),
@@ -142,6 +192,7 @@ export function PluginAuditPage({ user }: { user: CurrentUser }) {
             <Button
               onClick={() => {
                 form.resetFields();
+                resetPagination();
                 setFilters({});
               }}
             >
@@ -153,13 +204,25 @@ export function PluginAuditPage({ user }: { user: CurrentUser }) {
       <Table
         rowKey="id"
         columns={columns}
-        dataSource={auditQuery.data?.items || []}
+        dataSource={visibleItems}
         loading={auditQuery.isLoading || auditQuery.isFetching}
         scroll={{ x: 1210 }}
         pagination={{
-          pageSize: 100,
+          current: page,
+          pageSize: AUDIT_PAGE_SIZE,
           total: auditQuery.data?.total || 0,
           showSizeChanger: false,
+          showLessItems: true,
+          onChange: changePage,
+          itemRender: (pageNumber, type, originalElement) => {
+            if (type === 'page' && pageNumber > maxReachablePage) {
+              return <span aria-disabled="true">{pageNumber}</span>;
+            }
+            if (type === 'jump-prev' || type === 'jump-next') {
+              return <span aria-disabled="true">•••</span>;
+            }
+            return originalElement;
+          },
         }}
       />
       <Modal

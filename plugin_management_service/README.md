@@ -4,12 +4,12 @@
 
 ## 目录
 
-- `backend`：Rust、axum、MongoDB
+- `backend`：Rust、axum、PostgreSQL
 - `frontend`：React、TypeScript、Ant Design
 
 ## 本地依赖
 
-- MongoDB：默认 `127.0.0.1:27018`
+- PostgreSQL 18.6
 - User Service：默认 `http://127.0.0.1:39190`
 - Rust toolchain
 - Node.js 和 npm
@@ -18,6 +18,13 @@
 
 ```bash
 cargo run -p plugin_management_service_backend
+```
+
+首次启动前执行 schema migration：
+
+```bash
+PLUGIN_MANAGEMENT_MIGRATION_DATABASE_URL='postgresql://...' \
+  cargo run -p plugin_management_service_backend --bin migrate
 ```
 
 默认地址：`http://127.0.0.1:39260`
@@ -108,7 +115,6 @@ Chat OS 的规划开关、`chatos_plan` 任务配置、专用提示词和规划 
 - `PLUGIN_MANAGEMENT_SERVICE_HOST`
 - `PLUGIN_MANAGEMENT_SERVICE_PORT`
 - `PLUGIN_MANAGEMENT_SERVICE_DATABASE_URL`
-- `PLUGIN_MANAGEMENT_SERVICE_MONGODB_DATABASE`
 - `PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL`
 - `PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS`
 - `PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_USERNAME`

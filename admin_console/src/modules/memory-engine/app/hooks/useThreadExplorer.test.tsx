@@ -5,6 +5,7 @@ import { act, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { api } from '../../api';
+import type { ThreadSummariesPage } from '../../types';
 import { renderHook } from '../../test/renderHook';
 import { buildThreadFilters, useThreadExplorer } from './useThreadExplorer';
 
@@ -110,6 +111,121 @@ describe('useThreadExplorer', () => {
     expect(result.current.threadRecords).toHaveLength(1);
   });
 
+  it('uses the last visible record as the cursor for the next record page', async () => {
+    const listThreads = vi.mocked(api.listThreads);
+    const listThreadRecords = vi.mocked(api.listThreadRecords);
+    const record = (id: string, createdAt: string) => ({
+      id,
+      thread_id: threadA.id,
+      tenant_id: threadA.tenant_id,
+      source_id: threadA.source_id,
+      role: 'user',
+      record_type: 'message',
+      content: id,
+      summary_status: 'pending',
+      created_at: createdAt,
+    });
+    const firstRecord = record('record-a', '2026-05-20T00:00:00Z');
+    const secondRecord = record('record-b', '2026-05-20T00:00:01Z');
+    const thirdRecord = record('record-c', '2026-05-20T00:00:02Z');
+    const fourthRecord = record('record-d', '2026-05-20T00:00:03Z');
+
+    listThreads.mockResolvedValue([threadA]);
+    listThreadRecords
+      .mockResolvedValueOnce({ items: [], total: 4, has_more: false })
+      .mockResolvedValueOnce({
+        items: [firstRecord, secondRecord],
+        total: 4,
+        has_more: true,
+      })
+      .mockResolvedValueOnce({
+        items: [thirdRecord, fourthRecord],
+        total: 4,
+        has_more: false,
+      });
+
+    const { result } = renderHook(() => useThreadExplorer('data'));
+    await waitFor(() => expect(result.current.selectedThread?.id).toBe(threadA.id));
+
+    await act(async () => {
+      await result.current.handleThreadRecordPageChange(1, 2);
+    });
+    await act(async () => {
+      await result.current.handleThreadRecordPageChange(2, 2);
+    });
+
+    expect(listThreadRecords).toHaveBeenNthCalledWith(3, threadA.id, {
+      tenant_id: threadA.tenant_id,
+      source_id: threadA.source_id,
+      order: 'asc',
+      limit: 2,
+      offset: 0,
+      after_created_at: secondRecord.created_at,
+      after_id: secondRecord.id,
+    });
+    expect(result.current.threadRecordPage).toBe(2);
+    expect(result.current.threadRecords.map((item) => item.id)).toEqual([
+      thirdRecord.id,
+      fourthRecord.id,
+    ]);
+  });
+
+  it('uses the last visible thread as the cursor for the next server page', async () => {
+    const listThreads = vi.mocked(api.listThreads);
+    const listThreadRecords = vi.mocked(api.listThreadRecords);
+    const threadC = {
+      ...threadA,
+      id: 'thread-c',
+      subject_id: 'subject-c',
+      created_at: '2026-05-19T00:00:00Z',
+      updated_at: '2026-05-19T00:00:00Z',
+    };
+    const threadD = {
+      ...threadC,
+      id: 'thread-d',
+      subject_id: 'subject-d',
+      created_at: '2026-05-18T00:00:00Z',
+      updated_at: '2026-05-18T00:00:00Z',
+    };
+
+    listThreads
+      .mockResolvedValueOnce([threadA])
+      .mockResolvedValueOnce([threadA, threadB, threadC])
+      .mockResolvedValueOnce([threadC, threadD]);
+    listThreadRecords.mockResolvedValue({ items: [], total: 0 });
+
+    const { result } = renderHook(() => useThreadExplorer('data'));
+    await waitFor(() => expect(result.current.selectedThread?.id).toBe('thread-a'));
+
+    await act(async () => {
+      await result.current.handleThreadPageChange(1, 2);
+    });
+    expect(result.current.threads.map((thread) => thread.id)).toEqual([
+      'thread-a',
+      'thread-b',
+    ]);
+    expect(result.current.threadHasMore).toBe(true);
+
+    await act(async () => {
+      await result.current.handleThreadPageChange(2, 2);
+    });
+    expect(listThreads).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        before_updated_at: threadB.updated_at,
+        before_created_at: threadB.created_at,
+        before_id: threadB.id,
+        limit: 3,
+        offset: 0,
+      }),
+    );
+    expect(result.current.threadPage).toBe(2);
+    expect(result.current.threads.map((thread) => thread.id)).toEqual([
+      'thread-c',
+      'thread-d',
+    ]);
+  });
+
   it('builds extended thread filters for supported query fields', () => {
     expect(
       buildThreadFilters({
@@ -156,8 +272,8 @@ describe('useThreadExplorer', () => {
       items: [],
       total: 0,
     });
-    listThreadSummaries.mockImplementation(async (threadId: string) => [
-      {
+    listThreadSummaries.mockImplementation(async (threadId: string) => ({
+      items: [{
         id: `summary-${threadId}`,
         tenant_id: 'tenant-a',
         source_id: 'source-a',
@@ -172,8 +288,9 @@ describe('useThreadExplorer', () => {
         subject_memory_summarized: 0,
         created_at: '2026-05-20T00:00:00Z',
         updated_at: '2026-05-20T00:00:00Z',
-      },
-    ]);
+      }],
+      has_more: false,
+    }));
 
     const { result } = renderHook(() => useThreadExplorer('data'));
 
@@ -202,13 +319,13 @@ describe('useThreadExplorer', () => {
     expect(listThreadSummaries).toHaveBeenNthCalledWith(1, 'thread-a', {
       tenant_id: 'tenant-a',
       source_id: 'source-a',
-      limit: 200,
+      limit: 10,
       offset: 0,
     });
     expect(listThreadSummaries).toHaveBeenNthCalledWith(2, 'thread-b', {
       tenant_id: 'tenant-a',
       source_id: 'source-a',
-      limit: 200,
+      limit: 10,
       offset: 0,
     });
   });
@@ -224,8 +341,8 @@ describe('useThreadExplorer', () => {
       total: 0,
     });
     listThreadSummaries
-      .mockResolvedValueOnce([
-        {
+      .mockResolvedValueOnce({
+        items: [{
           id: 'summary-thread-a-initial',
           tenant_id: 'tenant-a',
           source_id: 'source-a',
@@ -240,10 +357,11 @@ describe('useThreadExplorer', () => {
           subject_memory_summarized: 0,
           created_at: '2026-05-20T00:00:00Z',
           updated_at: '2026-05-20T00:00:00Z',
-        },
-      ])
-      .mockResolvedValueOnce([
-        {
+        }],
+        has_more: false,
+      })
+      .mockResolvedValueOnce({
+        items: [{
           id: 'summary-thread-a-refreshed',
           tenant_id: 'tenant-a',
           source_id: 'source-a',
@@ -258,8 +376,9 @@ describe('useThreadExplorer', () => {
           subject_memory_summarized: 0,
           created_at: '2026-05-20T00:00:00Z',
           updated_at: '2026-05-20T00:00:00Z',
-        },
-      ]);
+        }],
+        has_more: false,
+      });
 
     const { result } = renderHook(() => useThreadExplorer('data'));
 
@@ -283,6 +402,68 @@ describe('useThreadExplorer', () => {
       expect(listThreadSummaries).toHaveBeenCalledTimes(2);
       expect(result.current.threadSummaries[0]?.id).toBe('summary-thread-a-refreshed');
     });
+  });
+
+  it('uses the last visible summary as the cursor for the next summary page', async () => {
+    const listThreads = vi.mocked(api.listThreads);
+    const listThreadRecords = vi.mocked(api.listThreadRecords);
+    const listThreadSummaries = vi.mocked(api.listThreadSummaries);
+    const summary = (id: string, level: number, createdAt: string) => ({
+      id,
+      tenant_id: threadA.tenant_id,
+      source_id: threadA.source_id,
+      thread_id: threadA.id,
+      subject_id: threadA.subject_id,
+      summary_type: 'thread_incremental',
+      level,
+      summary_text: id,
+      source_record_count: 1,
+      status: 'done',
+      rollup_status: 'pending',
+      subject_memory_summarized: 0,
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
+    const firstSummary = summary('summary-a', 2, '2026-05-20T00:00:00Z');
+    const secondSummary = summary('summary-b', 1, '2026-05-20T00:00:00Z');
+    const thirdSummary = summary('summary-c', 1, '2026-05-20T00:00:01Z');
+
+    listThreads.mockResolvedValue([threadA]);
+    listThreadRecords.mockResolvedValue({ items: [], total: 0 });
+    listThreadSummaries
+      .mockResolvedValueOnce({
+        items: [firstSummary, secondSummary],
+        has_more: true,
+      })
+      .mockResolvedValueOnce({
+        items: [thirdSummary],
+        has_more: false,
+      });
+
+    const { result } = renderHook(() => useThreadExplorer('data'));
+    await waitFor(() => expect(result.current.selectedThread?.id).toBe(threadA.id));
+    await act(async () => {
+      result.current.setDetailTab('summaries');
+    });
+    await waitFor(() => expect(result.current.threadSummaries).toHaveLength(2));
+
+    await act(async () => {
+      await result.current.handleThreadSummaryPageChange(2, 10);
+    });
+
+    expect(listThreadSummaries).toHaveBeenNthCalledWith(2, threadA.id, {
+      tenant_id: threadA.tenant_id,
+      source_id: threadA.source_id,
+      limit: 10,
+      offset: 0,
+      after_level: secondSummary.level,
+      after_created_at: secondSummary.created_at,
+      after_id: secondSummary.id,
+    });
+    expect(result.current.threadSummaryPage).toBe(2);
+    expect(result.current.threadSummaries.map((item) => item.id)).toEqual([
+      thirdSummary.id,
+    ]);
   });
 
   it('loads subject memories with the agent subject from thread labels', async () => {
@@ -472,38 +653,8 @@ describe('useThreadExplorer', () => {
     const listThreadRecords = vi.mocked(api.listThreadRecords);
     const listThreadSummaries = vi.mocked(api.listThreadSummaries);
 
-    let resolveThreadASummaries: ((value: Array<{
-      id: string;
-      tenant_id: string;
-      source_id: string;
-      thread_id: string;
-      subject_id: string;
-      summary_type: string;
-      level: number;
-      summary_text: string;
-      source_record_count: number;
-      status: string;
-      rollup_status: string;
-      subject_memory_summarized: number;
-      created_at: string;
-      updated_at: string;
-    }>) => void) | null = null;
-    let resolveThreadBSummaries: ((value: Array<{
-      id: string;
-      tenant_id: string;
-      source_id: string;
-      thread_id: string;
-      subject_id: string;
-      summary_type: string;
-      level: number;
-      summary_text: string;
-      source_record_count: number;
-      status: string;
-      rollup_status: string;
-      subject_memory_summarized: number;
-      created_at: string;
-      updated_at: string;
-    }>) => void) | null = null;
+    let resolveThreadASummaries: ((value: ThreadSummariesPage) => void) | null = null;
+    let resolveThreadBSummaries: ((value: ThreadSummariesPage) => void) | null = null;
 
     listThreads.mockResolvedValue([threadA, threadB]);
     listThreadRecords.mockResolvedValue({
@@ -545,8 +696,8 @@ describe('useThreadExplorer', () => {
     });
 
     await act(async () => {
-      resolveThreadBSummaries?.([
-        {
+      resolveThreadBSummaries?.({
+        items: [{
           id: 'summary-thread-b',
           tenant_id: 'tenant-a',
           source_id: 'source-a',
@@ -561,8 +712,9 @@ describe('useThreadExplorer', () => {
           subject_memory_summarized: 0,
           created_at: '2026-05-20T00:00:00Z',
           updated_at: '2026-05-20T00:00:00Z',
-        },
-      ]);
+        }],
+        has_more: false,
+      });
       await Promise.resolve();
     });
 
@@ -571,8 +723,8 @@ describe('useThreadExplorer', () => {
     });
 
     await act(async () => {
-      resolveThreadASummaries?.([
-        {
+      resolveThreadASummaries?.({
+        items: [{
           id: 'summary-thread-a',
           tenant_id: 'tenant-a',
           source_id: 'source-a',
@@ -587,8 +739,9 @@ describe('useThreadExplorer', () => {
           subject_memory_summarized: 0,
           created_at: '2026-05-20T00:00:00Z',
           updated_at: '2026-05-20T00:00:00Z',
-        },
-      ]);
+        }],
+        has_more: false,
+      });
       await Promise.resolve();
     });
 

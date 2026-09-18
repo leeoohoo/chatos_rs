@@ -143,6 +143,7 @@ impl ManagedBridgeRuntime {
         let lease_path = locator_dir.join("bridge.lock");
         let lease = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&lease_path)

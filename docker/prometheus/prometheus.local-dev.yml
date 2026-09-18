@@ -50,3 +50,15 @@ scrape_configs:
   - job_name: plugin-management-service
     static_configs:
       - targets: ["host.docker.internal:39260"]
+
+  - job_name: user-service
+    static_configs:
+      - targets: ["host.docker.internal:39190"]
+
+  - job_name: configuration-center
+    static_configs:
+      - targets: ["host.docker.internal:39270"]
+
+  - job_name: local-connector
+    static_configs:
+      - targets: ["host.docker.internal:39230"]

@@ -12,13 +12,11 @@ use chatos_ai_runtime::{
 pub(super) use chatos_service_runtime::env_text as normalized_env;
 use chatos_service_runtime::{validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN};
 
-use super::database::normalize_database_url;
 use super::{AppConfig, StoreMode, TaskRunnerRole, DEFAULT_TASK_RUN_EXECUTION_TIMEOUT_MS};
 
 impl AppConfig {
     pub fn from_env() -> Result<Self, String> {
-        let store_mode = StoreMode::from_env(normalized_env("TASK_RUNNER_STORE_MODE").as_deref());
-        let mongodb_database = require_config_center_text("TASK_RUNNER_MONGODB_DATABASE")?;
+        let store_mode = StoreMode::Postgres;
         let workspace_dir = require_config_center_text("TASK_RUNNER_WORKSPACE_DIR")?;
         let host = require_config_center_text("TASK_RUNNER_HOST")?
             .parse::<IpAddr>()
@@ -102,11 +100,7 @@ impl AppConfig {
             otlp_export_timeout: Duration::from_millis(otlp_export_timeout_ms),
             role,
             store_mode,
-            database_url: normalize_database_url(
-                store_mode,
-                require_config_center_secret("TASK_RUNNER_DATABASE_URL")?,
-                &mongodb_database,
-            ),
+            database_url: require_config_center_secret("TASK_RUNNER_DATABASE_URL")?,
             memory_engine_base_url: Some(memory_engine_base_url),
             memory_engine_source_id: normalized_env("MEMORY_ENGINE_SOURCE_ID")
                 .or_else(|| normalized_env("TASK_RUNNER_MEMORY_ENGINE_SOURCE_ID"))

@@ -10,6 +10,8 @@ use crate::pressure::{PlatformPressureLevel, TaskRunnerPressureState};
 use crate::services::{RunService, TaskService};
 use crate::state::TaskRunnerRuntimeStats;
 
+const SCHEDULER_CLAIM_BATCH_SIZE: usize = 100;
+
 pub fn spawn_task_scheduler(
     config: AppConfig,
     task_service: TaskService,
@@ -34,7 +36,10 @@ pub fn spawn_task_scheduler(
             }
             runtime_stats.set_scheduler_pressure_paused(false);
             let now = chrono::Utc::now();
-            match task_service.list_due_scheduled_tasks(now).await {
+            match task_service
+                .claim_due_scheduled_tasks(now, SCHEDULER_CLAIM_BATCH_SIZE)
+                .await
+            {
                 Ok(tasks) => {
                     if !tasks.is_empty() {
                         info!(
@@ -47,28 +52,7 @@ pub fn spawn_task_scheduler(
                             "scheduler found due tasks"
                         );
                     }
-                    for task in tasks {
-                        let claimed = match task_service
-                            .mark_scheduled_run_started_if_due(&task, now)
-                            .await
-                        {
-                            Ok(Some(claimed)) => claimed,
-                            Ok(None) => {
-                                info!(
-                                    "scheduler skipped due slot for task {} because another scheduler claimed it",
-                                    task.id
-                                );
-                                continue;
-                            }
-                            Err(err) => {
-                                warn!(
-                                    "scheduler failed to claim due slot for task {}: {}",
-                                    task.id, err
-                                );
-                                continue;
-                            }
-                        };
-
+                    for claimed in tasks {
                         match run_service
                             .start_scheduled_run(&claimed.id, StartTaskRunRequest::default())
                             .await

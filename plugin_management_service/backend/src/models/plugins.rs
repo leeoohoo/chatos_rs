@@ -50,8 +50,32 @@ pub struct PluginCatalogQuery {
     pub visibility: Option<String>,
     pub featured: Option<bool>,
     pub enabled: Option<bool>,
+    pub after_featured: Option<bool>,
+    pub after_category: Option<String>,
+    pub after_display_name: Option<String>,
+    pub after_id: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<u64>,
+}
+
+impl PluginCatalogQuery {
+    pub fn cursor(&self) -> Result<Option<(bool, &str, &str, &str)>, String> {
+        match (
+            self.after_featured,
+            self.after_category.as_deref(),
+            self.after_display_name.as_deref(),
+            self.after_id.as_deref(),
+        ) {
+            (None, None, None, None) => Ok(None),
+            (Some(featured), Some(category), Some(display_name), Some(id)) => {
+                if id.is_empty() {
+                    return Err("after_id must be non-empty".to_string());
+                }
+                Ok(Some((featured, category, display_name, id)))
+            }
+            _ => Err("all Plugin Catalog cursor fields must be provided together".to_string()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -75,8 +99,31 @@ pub struct PluginAuditQuery {
     pub owner_user_id: Option<String>,
     pub device_id: Option<String>,
     pub event: Option<String>,
+    pub before_created_at: Option<String>,
+    pub before_id: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<u64>,
+}
+
+impl PluginAuditQuery {
+    pub fn cursor(&self) -> Result<Option<(&str, &str)>, String> {
+        match (self.before_created_at.as_deref(), self.before_id.as_deref()) {
+            (None, None) => Ok(None),
+            (Some(created_at), Some(id)) => {
+                let created_at = created_at.trim();
+                let id = id.trim();
+                if created_at.is_empty() || id.is_empty() {
+                    return Err(
+                        "before_created_at and before_id must both be non-empty".to_string()
+                    );
+                }
+                chrono::DateTime::parse_from_rfc3339(created_at)
+                    .map_err(|_| "before_created_at must use RFC3339".to_string())?;
+                Ok(Some((created_at, id)))
+            }
+            _ => Err("before_created_at and before_id must be provided together".to_string()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

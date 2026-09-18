@@ -5,15 +5,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chatos_mcp_service::{McpToolCallCommand, McpToolCallResult, McpToolCallResultItem};
-use futures_util::{StreamExt, TryStreamExt};
-use mongodb::bson::{doc, DateTime};
-use mongodb::error::{ErrorKind as MongoErrorKind, WriteFailure};
-use mongodb::options::IndexOptions;
-use mongodb::{Client, Collection, IndexModel};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::types::Json;
 use tokio::sync::RwLock;
 
-const MAX_CAS_ATTEMPTS: usize = 8;
+mod postgres;
+
+use postgres::{load_batch, load_batch_by, load_batches, persist_batch};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -44,7 +43,7 @@ pub struct RuntimeToolBatchRecord {
     pub revision: i64,
     pub created_at_unix_ms: i64,
     pub updated_at_unix_ms: i64,
-    pub expires_at: DateTime,
+    pub expires_at: DateTime<Utc>,
     pub expires_at_unix: i64,
 }
 
@@ -93,7 +92,7 @@ pub struct RuntimeToolBatchStore {
 
 enum RuntimeToolBatchStoreBackend {
     Memory(RwLock<HashMap<String, RuntimeToolBatchRecord>>),
-    Mongo(Collection<RuntimeToolBatchRecord>),
+    Postgres(chatos_postgres::PgPool),
 }
 
 impl RuntimeToolBatchStore {
@@ -106,59 +105,14 @@ impl RuntimeToolBatchStore {
     }
 
     pub async fn connect(database_url: &str) -> Result<Self, String> {
-        let client = Client::with_uri_str(database_url)
-            .await
-            .map_err(|error| format!("connect MCP tool batch MongoDB failed: {error}"))?;
-        let database = client.default_database().ok_or_else(|| {
-            "MCP_MANAGEMENT_DATABASE_URL must include a MongoDB database name".to_string()
-        })?;
-        let collection =
-            database.collection::<RuntimeToolBatchRecord>("mcp_management_runtime_tool_batches");
-        collection
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! { "expires_at": 1 })
-                    .options(
-                        IndexOptions::builder()
-                            .name("runtime_tool_batch_expiry_ttl".to_string())
-                            .expire_after(Some(std::time::Duration::from_secs(0)))
-                            .build(),
-                    )
-                    .build(),
-                None,
-            )
-            .await
-            .map_err(|error| format!("initialize Runtime Tool Batch TTL index failed: {error}"))?;
-        for (name, keys) in [
-            (
-                "runtime_tool_batch_pending_event",
-                doc! { "pending_event": 1, "updated_at_unix_ms": 1 },
-            ),
-            (
-                "runtime_tool_batch_invocation",
-                doc! { "invocation_ids": 1, "expires_at_unix": 1 },
-            ),
-            (
-                "runtime_tool_batch_waiting_user_prompt",
-                doc! { "waiting_user_prompt_ids": 1, "expires_at_unix": 1 },
-            ),
-        ] {
-            collection
-                .create_index(
-                    IndexModel::builder()
-                        .keys(keys)
-                        .options(IndexOptions::builder().name(name.to_string()).build())
-                        .build(),
-                    None,
-                )
-                .await
-                .map_err(|error| {
-                    format!("initialize Runtime Tool Batch index {name} failed: {error}")
-                })?;
+        let pool = crate::postgres::connect(database_url).await?;
+        Ok(Self::from_pool(pool))
+    }
+
+    pub(crate) fn from_pool(pool: chatos_postgres::PgPool) -> Self {
+        Self {
+            backend: Arc::new(RuntimeToolBatchStoreBackend::Postgres(pool)),
         }
-        Ok(Self {
-            backend: Arc::new(RuntimeToolBatchStoreBackend::Mongo(collection)),
-        })
     }
 
     pub async fn insert_or_get(
@@ -176,23 +130,16 @@ impl RuntimeToolBatchStore {
                 records.insert(record.batch_id.clone(), record.clone());
                 Ok(record)
             }
-            RuntimeToolBatchStoreBackend::Mongo(collection) => {
-                match collection.insert_one(record.clone(), None).await {
-                    Ok(_) => Ok(record),
-                    Err(error) if is_duplicate_key(&error) => {
-                        let existing = collection
-                            .find_one(doc! { "_id": record.batch_id.as_str() }, None)
-                            .await
-                            .map_err(|error| format!("load duplicate Runtime Tool Batch failed: {error}"))?
-                            .ok_or_else(|| {
-                                "MongoDB reported a duplicate Runtime Tool Batch without returning it"
-                                    .to_string()
-                            })?;
-                        ensure_same_command(&existing, &record)?;
-                        Ok(existing)
-                    }
-                    Err(error) => Err(format!("insert Runtime Tool Batch failed: {error}")),
+            RuntimeToolBatchStoreBackend::Postgres(pool) => {
+                let inserted = persist_batch(pool, &record, true).await?;
+                if inserted {
+                    return Ok(record);
                 }
+                let existing = load_batch(pool, &record.batch_id)
+                    .await?
+                    .ok_or_else(|| "duplicate Runtime Tool Batch was not found".to_string())?;
+                ensure_same_command(&existing, &record)?;
+                Ok(existing)
             }
         }
     }
@@ -202,10 +149,7 @@ impl RuntimeToolBatchStore {
             RuntimeToolBatchStoreBackend::Memory(records) => {
                 Ok(records.read().await.get(batch_id).cloned())
             }
-            RuntimeToolBatchStoreBackend::Mongo(collection) => collection
-                .find_one(doc! { "_id": batch_id }, None)
-                .await
-                .map_err(|error| format!("load Runtime Tool Batch failed: {error}")),
+            RuntimeToolBatchStoreBackend::Postgres(pool) => load_batch(pool, batch_id).await,
         }
     }
 
@@ -220,10 +164,12 @@ impl RuntimeToolBatchStore {
                 .values()
                 .find(|record| record.invocation_ids.iter().any(|id| id == invocation_id))
                 .cloned()),
-            RuntimeToolBatchStoreBackend::Mongo(collection) => collection
-                .find_one(doc! { "invocation_ids": invocation_id }, None)
-                .await
-                .map_err(|error| format!("load Runtime Tool Batch by invocation failed: {error}")),
+            RuntimeToolBatchStoreBackend::Postgres(pool) => load_batch_by(
+                pool,
+                "SELECT data FROM mcp_management_runtime_tool_batches WHERE $1=ANY(invocation_ids) LIMIT 1",
+                invocation_id,
+            )
+            .await,
         }
     }
 
@@ -303,12 +249,12 @@ impl RuntimeToolBatchStore {
                         .any(|id| id == prompt_id)
                 })
                 .cloned()),
-            RuntimeToolBatchStoreBackend::Mongo(collection) => collection
-                .find_one(doc! { "waiting_user_prompt_ids": prompt_id }, None)
-                .await
-                .map_err(|error| {
-                    format!("load Runtime Tool Batch by waiting-user prompt failed: {error}")
-                }),
+            RuntimeToolBatchStoreBackend::Postgres(pool) => load_batch_by(
+                pool,
+                "SELECT data FROM mcp_management_runtime_tool_batches WHERE $1=ANY(waiting_user_prompt_ids) LIMIT 1",
+                prompt_id,
+            )
+            .await,
         }
     }
 
@@ -411,17 +357,12 @@ impl RuntimeToolBatchStore {
                 .take(limit)
                 .cloned()
                 .collect()),
-            RuntimeToolBatchStoreBackend::Mongo(collection) => collection
-                .find(
-                    doc! { "pending_event": { "$ne": mongodb::bson::Bson::Null } },
-                    None,
-                )
-                .await
-                .map_err(|error| format!("list pending Runtime Tool Batches failed: {error}"))?
-                .take(limit)
-                .try_collect()
-                .await
-                .map_err(|error| format!("read pending Runtime Tool Batches failed: {error}")),
+            RuntimeToolBatchStoreBackend::Postgres(pool) => load_batches(
+                pool,
+                "SELECT data FROM mcp_management_runtime_tool_batches WHERE pending_event_type IS NOT NULL ORDER BY updated_at_unix_ms,batch_id LIMIT $1",
+                limit,
+            )
+            .await,
         }
     }
 
@@ -435,14 +376,12 @@ impl RuntimeToolBatchStore {
                 .filter(|record| record.status == RuntimeToolBatchStatus::Active)
                 .cloned()
                 .collect::<Vec<_>>(),
-            RuntimeToolBatchStoreBackend::Mongo(collection) => collection
-                .find(doc! { "status": "active" }, None)
-                .await
-                .map_err(|error| format!("list active Runtime Tool Batches failed: {error}"))?
-                .take(limit)
-                .try_collect()
-                .await
-                .map_err(|error| format!("read active Runtime Tool Batches failed: {error}"))?,
+            RuntimeToolBatchStoreBackend::Postgres(pool) => load_batches(
+                pool,
+                "SELECT data FROM mcp_management_runtime_tool_batches WHERE status='active' ORDER BY created_at_unix_ms,batch_id LIMIT $1",
+                limit,
+            )
+            .await?,
         };
         records.sort_by(|left, right| {
             left.created_at_unix_ms
@@ -473,34 +412,25 @@ impl RuntimeToolBatchStore {
                 }
                 Ok(record.clone())
             }
-            RuntimeToolBatchStoreBackend::Mongo(collection) => {
-                for _ in 0..MAX_CAS_ATTEMPTS {
-                    let mut record = collection
-                        .find_one(doc! { "_id": batch_id }, None)
-                        .await
-                        .map_err(|error| {
-                            format!("load Runtime Tool Batch for CAS failed: {error}")
-                        })?
-                        .ok_or_else(|| "Runtime Tool Batch was not found".to_string())?;
-                    let previous_revision = record.revision;
-                    if !mutation(&mut record)? {
-                        return Ok(record);
-                    }
+            RuntimeToolBatchStoreBackend::Postgres(pool) => {
+                let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+                let value = sqlx::query_scalar::<_, Json<serde_json::Value>>(
+                    "SELECT data FROM mcp_management_runtime_tool_batches WHERE batch_id=$1 FOR UPDATE",
+                )
+                .bind(batch_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|error| format!("load Runtime Tool Batch for update failed: {error}"))?
+                .ok_or_else(|| "Runtime Tool Batch was not found".to_string())?;
+                let mut record: RuntimeToolBatchRecord =
+                    serde_json::from_value(value.0).map_err(|error| error.to_string())?;
+                if mutation(&mut record)? {
                     record.revision = record.revision.saturating_add(1);
                     record.updated_at_unix_ms = chrono::Utc::now().timestamp_millis();
-                    let result = collection
-                        .replace_one(
-                            doc! { "_id": batch_id, "revision": previous_revision },
-                            record.clone(),
-                            None,
-                        )
-                        .await
-                        .map_err(|error| format!("CAS Runtime Tool Batch failed: {error}"))?;
-                    if result.modified_count == 1 {
-                        return Ok(record);
-                    }
+                    persist_batch(&mut *tx, &record, false).await?;
                 }
-                Err("Runtime Tool Batch CAS conflict limit was exceeded".to_string())
+                tx.commit().await.map_err(|error| error.to_string())?;
+                Ok(record)
             }
         }
     }
@@ -516,17 +446,6 @@ fn ensure_same_command(
         Ok(())
     } else {
         Err("Runtime Tool Batch id conflicts with a different command".to_string())
-    }
-}
-
-fn is_duplicate_key(error: &mongodb::error::Error) -> bool {
-    match error.kind.as_ref() {
-        MongoErrorKind::Write(WriteFailure::WriteError(error)) => error.code == 11_000,
-        MongoErrorKind::BulkWrite(failure) => failure
-            .write_errors
-            .as_ref()
-            .is_some_and(|errors| errors.iter().any(|error| error.code == 11_000)),
-        _ => false,
     }
 }
 
@@ -586,7 +505,7 @@ mod tests {
             revision: 0,
             created_at_unix_ms: 1,
             updated_at_unix_ms: 1,
-            expires_at: DateTime::from_millis(10_000),
+            expires_at: DateTime::<Utc>::from_timestamp(10, 0).unwrap(),
             expires_at_unix: 10,
         }
     }
@@ -763,6 +682,52 @@ mod tests {
         assert_eq!(
             unchanged.pending_event,
             Some(RuntimeToolBatchPendingEvent::InvocationReady { call_index: 0 })
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires MCP_MANAGEMENT_TEST_DATABASE_URL and migrated PostgreSQL"]
+    async fn postgresql_store_serializes_batch_progress_across_instances() {
+        let database_url = std::env::var("MCP_MANAGEMENT_TEST_DATABASE_URL").unwrap();
+        let first = RuntimeToolBatchStore::connect(&database_url).await.unwrap();
+        let second = RuntimeToolBatchStore::connect(&database_url).await.unwrap();
+        let suffix = uuid::Uuid::new_v4().simple().to_string();
+        let batch_id = format!("batch-{suffix}");
+        let invocation_id = format!("invocation-{suffix}");
+        let mut record = record(1, vec![None]);
+        record.batch_id = batch_id.clone();
+        record.command.batch_id = batch_id.clone();
+        record.command.calls[0].invocation_id = invocation_id.clone();
+        record.invocation_ids[0] = invocation_id.clone();
+        record.expires_at_unix = chrono::Utc::now().timestamp() + 300;
+        record.expires_at = DateTime::<Utc>::from_timestamp(record.expires_at_unix, 0).unwrap();
+
+        first.insert_or_get(record).await.expect("insert batch");
+        assert_eq!(
+            second
+                .find_by_invocation(&invocation_id)
+                .await
+                .expect("find batch")
+                .expect("stored batch")
+                .batch_id,
+            batch_id
+        );
+        let mut item = result_item(0);
+        item.invocation_id = invocation_id;
+        let completed = second
+            .record_terminal_item(&batch_id, 0, item)
+            .await
+            .expect("complete batch");
+        assert_eq!(completed.status, RuntimeToolBatchStatus::Completed);
+        assert_eq!(completed.revision, 1);
+        assert_eq!(
+            first
+                .get(&batch_id)
+                .await
+                .expect("load completed batch")
+                .expect("completed batch")
+                .status,
+            RuntimeToolBatchStatus::Completed
         );
     }
 }

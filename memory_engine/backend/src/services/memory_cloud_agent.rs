@@ -166,11 +166,9 @@ pub(crate) async fn generate_or_defer_from_config(
     spec: CloudSummaryPipelineSpec,
     terminal_context: Value,
 ) -> Result<crate::services::ai_pipeline::SummaryBuildResult, String> {
-    let store = CloudAgentStateStore::connect_to_database(
-        config.mongodb_uri.as_str(),
-        config.mongodb_database.as_str(),
-    )
-    .await?;
+    let store = CloudAgentStateStore::from_repository(
+        crate::repositories::cloud_agent::CloudAgentPostgresStore::new(db.clone()),
+    );
     generate_or_defer(
         config,
         db,

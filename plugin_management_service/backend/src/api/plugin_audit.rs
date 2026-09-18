@@ -9,6 +9,7 @@ pub(super) async fn list_plugin_audit(
     Query(query): Query<PluginAuditQuery>,
 ) -> Result<Json<ListResponse<PluginAuditLogRecord>>, ApiError> {
     ensure_super_admin(&user)?;
+    query.cursor().map_err(ApiError::bad_request)?;
     state
         .store
         .list_plugin_audit(&query)

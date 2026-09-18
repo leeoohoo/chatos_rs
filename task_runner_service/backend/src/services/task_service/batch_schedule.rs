@@ -83,11 +83,12 @@ impl TaskService {
         Ok(summarize_batch_results(results))
     }
 
-    pub async fn list_due_scheduled_tasks(
+    pub async fn claim_due_scheduled_tasks(
         &self,
         now: DateTime<Utc>,
+        limit: usize,
     ) -> Result<Vec<TaskRecord>, String> {
-        self.store.list_due_scheduled_tasks(now).await
+        self.store.claim_due_scheduled_tasks(now, limit).await
     }
 
     pub async fn mark_scheduled_run_started(

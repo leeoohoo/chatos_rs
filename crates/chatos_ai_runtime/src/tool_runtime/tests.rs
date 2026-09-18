@@ -181,7 +181,7 @@ fn oversized_result_does_not_consume_the_entire_batch_budget() {
         is_error: false,
         is_stream: false,
         conversation_turn_id: None,
-        content: std::iter::repeat(fill).take(50_000).collect(),
+        content: std::iter::repeat_n(fill, 50_000).collect(),
         result: None,
         fatal_error: false,
         transient_model_input: None,

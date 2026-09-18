@@ -56,13 +56,7 @@ async fn request_responses(
         false,
     );
 
-    send_stream_request(
-        client,
-        api_key,
-        endpoint.as_str(),
-        &body,
-    )
-    .await
+    send_stream_request(client, api_key, endpoint.as_str(), &body).await
 }
 
 #[allow(clippy::too_many_arguments)]

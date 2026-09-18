@@ -1104,9 +1104,7 @@ async fn unconfirmed_mutation_cancellation_returns_unknown_execution_state() {
             terminal_error_code: None,
             terminal_error_message: None,
             file_modification_outcome: None,
-            expires_at: DateTime::from_millis(
-                (chrono::Utc::now().timestamp() + 60).saturating_mul(1_000),
-            ),
+            expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
             expires_at_unix: chrono::Utc::now().timestamp() + 60,
         })
         .await

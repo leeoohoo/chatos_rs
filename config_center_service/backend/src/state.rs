@@ -4,7 +4,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::Utc;
-use mongodb::Client;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;

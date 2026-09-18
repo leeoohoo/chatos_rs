@@ -9,138 +9,73 @@ impl AppStore {
         owner_user_id: &str,
         device_id: &str,
     ) -> Result<Vec<PluginInstallationRecord>, String> {
-        let options = FindOptions::builder()
-            .sort(doc! { "active": -1, "last_checked_at": -1 })
-            .build();
-        self.plugin_installations
-            .find(
-                doc! { "owner_user_id": owner_user_id, "device_id": device_id },
-                options,
-            )
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())
+        decode_all(sqlx::query_scalar("SELECT data FROM plugin_installations WHERE owner_user_id=$1 AND device_id=$2 ORDER BY active DESC,last_checked_at DESC").bind(owner_user_id).bind(device_id).fetch_all(&self.pool).await.map_err(db_error)?)
     }
-
     pub async fn get_plugin_installation(
         &self,
         owner_user_id: &str,
         device_id: &str,
         plugin_id: &str,
     ) -> Result<Option<PluginInstallationRecord>, String> {
-        self.plugin_installations
-            .find_one(
-                doc! {
-                    "owner_user_id": owner_user_id,
-                    "device_id": device_id,
-                    "plugin_id": plugin_id,
-                },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())
+        decode_optional(sqlx::query_scalar("SELECT data FROM plugin_installations WHERE owner_user_id=$1 AND device_id=$2 AND plugin_id=$3").bind(owner_user_id).bind(device_id).bind(plugin_id).fetch_optional(&self.pool).await.map_err(db_error)?)
     }
-
     pub async fn get_preferred_plugin_installation(
         &self,
         owner_user_id: &str,
         plugin_id: &str,
     ) -> Result<Option<PluginInstallationRecord>, String> {
-        let options = mongodb::options::FindOneOptions::builder()
-            .sort(doc! { "last_checked_at": -1, "installed_at": -1, "id": 1 })
-            .build();
-        self.plugin_installations
-            .find_one(
-                preferred_plugin_installation_filter(owner_user_id, plugin_id),
-                options,
-            )
-            .await
-            .map_err(|err| err.to_string())
+        decode_optional(sqlx::query_scalar("SELECT data FROM plugin_installations WHERE owner_user_id=$1 AND plugin_id=$2 AND active AND data->>'install_status'='installed' AND data->>'availability_status'=ANY($3) AND data->>'dependency_status'='satisfied' AND data->>'permission_status'='satisfied' AND data->>'auth_status'='satisfied' ORDER BY last_checked_at DESC,(data->>'installed_at')::timestamptz DESC,id LIMIT 1").bind(owner_user_id).bind(plugin_id).bind(vec!["ready","partially_available"]).fetch_optional(&self.pool).await.map_err(db_error)?)
     }
-
     pub async fn replace_plugin_installation(
         &self,
         record: &PluginInstallationRecord,
     ) -> Result<(), String> {
-        self.plugin_installations
-            .replace_one(doc! { "id": &record.id }, record, upsert_options())
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
+        sqlx::query("INSERT INTO plugin_installations(id,owner_user_id,device_id,plugin_id,release_id,active,last_checked_at,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET owner_user_id=EXCLUDED.owner_user_id,device_id=EXCLUDED.device_id,plugin_id=EXCLUDED.plugin_id,release_id=EXCLUDED.release_id,active=EXCLUDED.active,last_checked_at=EXCLUDED.last_checked_at,data=EXCLUDED.data").bind(&record.id).bind(&record.owner_user_id).bind(&record.device_id).bind(&record.plugin_id).bind(&record.release_id).bind(record.active).bind(timestamp(&record.last_checked_at)?).bind(json(record)?).execute(&self.pool).await.map(|_|()).map_err(db_error)
     }
-
     pub async fn get_user_plugin_preference(
         &self,
         owner_user_id: &str,
         plugin_id: &str,
     ) -> Result<Option<UserPluginPreferenceRecord>, String> {
-        self.plugin_preferences
-            .find_one(
-                doc! { "owner_user_id": owner_user_id, "plugin_id": plugin_id },
-                None,
+        decode_optional(
+            sqlx::query_scalar(
+                "SELECT data FROM plugin_user_preferences WHERE owner_user_id=$1 AND plugin_id=$2",
             )
+            .bind(owner_user_id)
+            .bind(plugin_id)
+            .fetch_optional(&self.pool)
             .await
-            .map_err(|err| err.to_string())
+            .map_err(db_error)?,
+        )
     }
-
     pub async fn replace_user_plugin_preference(
         &self,
         record: &UserPluginPreferenceRecord,
     ) -> Result<(), String> {
-        self.plugin_preferences
-            .replace_one(
-                doc! { "owner_user_id": &record.owner_user_id, "plugin_id": &record.plugin_id },
-                record,
-                upsert_options(),
-            )
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
+        sqlx::query("INSERT INTO plugin_user_preferences(owner_user_id,plugin_id,enabled,updated_at,data) VALUES($1,$2,$3,$4,$5) ON CONFLICT(owner_user_id,plugin_id) DO UPDATE SET enabled=EXCLUDED.enabled,updated_at=EXCLUDED.updated_at,data=EXCLUDED.data").bind(&record.owner_user_id).bind(&record.plugin_id).bind(record.enabled).bind(timestamp(&record.updated_at)?).bind(json(record)?).execute(&self.pool).await.map(|_|()).map_err(db_error)
     }
-
     pub async fn list_enabled_user_plugin_preferences(
         &self,
         owner_user_id: &str,
     ) -> Result<Vec<UserPluginPreferenceRecord>, String> {
-        self.plugin_preferences
-            .find(
-                doc! { "owner_user_id": owner_user_id, "enabled": true },
-                None,
+        decode_all(
+            sqlx::query_scalar(
+                "SELECT data FROM plugin_user_preferences WHERE owner_user_id=$1 AND enabled",
             )
+            .bind(owner_user_id)
+            .fetch_all(&self.pool)
             .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())
+            .map_err(db_error)?,
+        )
     }
-
     pub async fn list_plugin_oauth_connections(
         &self,
         owner_user_id: &str,
         device_id: &str,
         plugin_id: &str,
     ) -> Result<Vec<PluginOAuthConnectionRecord>, String> {
-        let options = FindOptions::builder()
-            .sort(doc! { "provider": 1, "component_key": 1 })
-            .build();
-        self.plugin_oauth_connections
-            .find(
-                doc! {
-                    "owner_user_id": owner_user_id,
-                    "device_id": device_id,
-                    "plugin_id": plugin_id,
-                },
-                options,
-            )
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())
+        decode_all(sqlx::query_scalar("SELECT data FROM plugin_oauth_connections WHERE owner_user_id=$1 AND device_id=$2 AND plugin_id=$3 ORDER BY provider,component_key").bind(owner_user_id).bind(device_id).bind(plugin_id).fetch_all(&self.pool).await.map_err(db_error)?)
     }
-
     pub async fn get_plugin_oauth_connection(
         &self,
         owner_user_id: &str,
@@ -149,101 +84,37 @@ impl AppStore {
         component_key: &str,
         provider: &str,
     ) -> Result<Option<PluginOAuthConnectionRecord>, String> {
-        self.plugin_oauth_connections
-            .find_one(
-                doc! {
-                    "owner_user_id": owner_user_id,
-                    "device_id": device_id,
-                    "plugin_id": plugin_id,
-                    "component_key": component_key,
-                    "provider": provider,
-                },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())
+        decode_optional(sqlx::query_scalar("SELECT data FROM plugin_oauth_connections WHERE owner_user_id=$1 AND device_id=$2 AND plugin_id=$3 AND component_key=$4 AND provider=$5").bind(owner_user_id).bind(device_id).bind(plugin_id).bind(component_key).bind(provider).fetch_optional(&self.pool).await.map_err(db_error)?)
     }
-
     pub async fn replace_plugin_oauth_connection(
         &self,
         record: &PluginOAuthConnectionRecord,
     ) -> Result<(), String> {
-        self.plugin_oauth_connections
-            .replace_one(doc! { "id": &record.id }, record, upsert_options())
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
+        sqlx::query("INSERT INTO plugin_oauth_connections(id,owner_user_id,device_id,plugin_id,release_id,component_key,provider,connected,updated_at,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO UPDATE SET owner_user_id=EXCLUDED.owner_user_id,device_id=EXCLUDED.device_id,plugin_id=EXCLUDED.plugin_id,release_id=EXCLUDED.release_id,component_key=EXCLUDED.component_key,provider=EXCLUDED.provider,connected=EXCLUDED.connected,updated_at=EXCLUDED.updated_at,data=EXCLUDED.data").bind(&record.id).bind(&record.owner_user_id).bind(&record.device_id).bind(&record.plugin_id).bind(&record.release_id).bind(&record.component_key).bind(&record.provider).bind(record.connected).bind(timestamp(&record.updated_at)?).bind(json(record)?).execute(&self.pool).await.map(|_|()).map_err(db_error)
     }
-
     pub async fn insert_plugin_audit(&self, record: &PluginAuditLogRecord) -> Result<(), String> {
-        self.plugin_audit_logs
-            .insert_one(record, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
+        sqlx::query("INSERT INTO plugin_audit_logs(id,event,owner_user_id,device_id,plugin_id,release_id,component_key,outcome,created_at,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)").bind(&record.id).bind(&record.event).bind(&record.owner_user_id).bind(&record.device_id).bind(&record.plugin_id).bind(&record.release_id).bind(&record.component_key).bind(&record.outcome).bind(timestamp(&record.created_at)?).bind(json(record)?).execute(&self.pool).await.map(|_|()).map_err(db_error)
     }
-
     pub async fn list_plugin_audit(
         &self,
         query: &PluginAuditQuery,
     ) -> Result<ListResponse<PluginAuditLogRecord>, String> {
-        let mut filter = doc! {};
-        for (field, value) in [
-            ("plugin_id", query.plugin_id.as_deref()),
-            ("owner_user_id", query.owner_user_id.as_deref()),
-            ("device_id", query.device_id.as_deref()),
-            ("event", query.event.as_deref()),
-        ] {
-            if let Some(value) = normalized(value) {
-                filter.insert(field, value);
-            }
-        }
-        let total = self
-            .plugin_audit_logs
-            .count_documents(filter.clone(), None)
-            .await
-            .map_err(|err| err.to_string())?;
-        let options = FindOptions::builder()
-            .sort(doc! { "created_at": -1 })
-            .limit(Some(query.limit.unwrap_or(100).clamp(1, 500)))
-            .skip(query.offset)
-            .build();
-        let items = self
-            .plugin_audit_logs
-            .find(filter, options)
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(ListResponse { items, total })
-    }
-}
-
-fn preferred_plugin_installation_filter(owner_user_id: &str, plugin_id: &str) -> Document {
-    doc! {
-        "owner_user_id": owner_user_id,
-        "plugin_id": plugin_id,
-        "active": true,
-        "install_status": "installed",
-        "availability_status": { "$in": ["ready", "partially_available"] },
-        "dependency_status": "satisfied",
-        "permission_status": "satisfied",
-        "auth_status": "satisfied",
+        let plugin_id = normalized(query.plugin_id.as_deref());
+        let owner = normalized(query.owner_user_id.as_deref());
+        let device = normalized(query.device_id.as_deref());
+        let event = normalized(query.event.as_deref());
+        let (before_created_at, before_id) = match query.cursor()? {
+            Some((created_at, id)) => (Some(timestamp(created_at)?), Some(id)),
+            None => (None, None),
+        };
+        let total=sqlx::query_scalar::<_,i64>("SELECT count(*) FROM plugin_audit_logs WHERE ($1::text IS NULL OR plugin_id=$1) AND ($2::text IS NULL OR owner_user_id=$2) AND ($3::text IS NULL OR device_id=$3) AND ($4::text IS NULL OR event=$4)").bind(&plugin_id).bind(&owner).bind(&device).bind(&event).fetch_one(&self.pool).await.map_err(db_error)?;
+        let items=decode_all(sqlx::query_scalar("SELECT data FROM plugin_audit_logs WHERE ($1::text IS NULL OR plugin_id=$1) AND ($2::text IS NULL OR owner_user_id=$2) AND ($3::text IS NULL OR device_id=$3) AND ($4::text IS NULL OR event=$4) AND ($5::timestamptz IS NULL OR (created_at,id)<($5,$6::text)) ORDER BY created_at DESC,id DESC LIMIT $7 OFFSET $8").bind(plugin_id).bind(owner).bind(device).bind(event).bind(before_created_at).bind(before_id).bind(query.limit.unwrap_or(100).clamp(1,500)).bind(i64::try_from(query.offset.unwrap_or(0)).unwrap_or(i64::MAX)).fetch_all(&self.pool).await.map_err(db_error)?)?;
+        Ok(ListResponse {
+            items,
+            total: u64::try_from(total).unwrap_or(u64::MAX),
+        })
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::preferred_plugin_installation_filter;
-
-    #[test]
-    fn preferred_installation_query_is_scoped_to_the_exact_owner_and_plugin() {
-        let filter = preferred_plugin_installation_filter("owner-1", "plugin-browser");
-
-        assert_eq!(filter.get_str("owner_user_id"), Ok("owner-1"));
-        assert_eq!(filter.get_str("plugin_id"), Ok("plugin-browser"));
-        assert_eq!(filter.get_bool("active"), Ok(true));
-        assert_eq!(filter.get_str("install_status"), Ok("installed"));
-    }
-}
+mod tests;

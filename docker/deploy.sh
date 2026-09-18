@@ -257,6 +257,18 @@ validate_production_secrets() {
     return 0
   fi
 
+  local postgres_image postgres_server_max_connections
+  postgres_image="$(env_value POSTGRES_IMAGE "")"
+  if [[ ! "$postgres_image" =~ ^postgres:18\.6-bookworm@sha256:[0-9a-f]{64}$ ]]; then
+    echo "[ERROR] production POSTGRES_IMAGE must pin postgres:18.6-bookworm by sha256 digest" >&2
+    failures=1
+  fi
+  postgres_server_max_connections="$(env_value POSTGRES_SERVER_MAX_CONNECTIONS "")"
+  if [[ ! "$postgres_server_max_connections" =~ ^[0-9]+$ ]] \
+    || (( postgres_server_max_connections < 150 )); then
+    echo "[ERROR] production POSTGRES_SERVER_MAX_CONNECTIONS must be an integer >= 150 for the current 11-process pool budget" >&2
+    failures=1
+  fi
   local key value default_value
   while IFS='|' read -r key default_value; do
     value="$(env_value "$key" "$default_value")"
@@ -265,7 +277,9 @@ validate_production_secrets() {
       failures=1
     fi
   done <<'EOF'
-MONGODB_PASSWORD|admin
+POSTGRES_ADMIN_PASSWORD|change_me_postgres_admin_password
+POSTGRES_APP_PASSWORD|change_me_postgres_app_password
+POSTGRES_MIGRATION_PASSWORD|change_me_postgres_migration_password
 HARNESS_ADMIN_PASSWORD|admin123456
 RABBITMQ_DEFAULT_PASS|change_me_rabbitmq_password
 VALKEY_PASSWORD|change_me_valkey_password
@@ -926,6 +940,52 @@ start_default() {
   esac
 }
 
+verify_production_user_import() {
+  if ! is_production_environment; then
+    return 0
+  fi
+  CHATOS_BOOTSTRAP_FILE="$ENV_FILE" "$ROOT_DIR/scripts/postgres-verify-user-import.sh"
+}
+
+prepare_postgres() {
+  case "${CHATOS_DOCKER_MODE:-prebuilt}" in
+    build|local|dev)
+      build_local_images \
+        configuration-center-backend \
+        user-service-backend \
+        memory-engine-backend \
+        plugin-management-backend \
+        local-connector-service-backend \
+        mcp-management-service-backend \
+        task-runner-backend \
+        chatos-backend
+      ;;
+    prebuilt|pull|image|images)
+      pull_prebuilt_images
+      ;;
+    *)
+      echo "[ERROR] unsupported CHATOS_DOCKER_MODE=${CHATOS_DOCKER_MODE}" >&2
+      exit 2
+      ;;
+  esac
+  compose up -d postgres
+  compose run --rm postgres-provision
+  local migration_service
+  for migration_service in \
+    configuration-center-migrate \
+    user-service-migrate \
+    plugin-management-migrate \
+    local-connector-migrate \
+    task-runner-migrate \
+    mcp-management-migrate \
+    memory-engine-migrate \
+    chatos-migrate
+  do
+    compose run --rm --no-deps "$migration_service"
+  done
+  compose run --rm --no-deps postgres-finalize
+  echo "[OK] PostgreSQL is provisioned, migrated, and runtime privileges are finalized."
+}
 if [[ "$ACTION" == "build-services" ]]; then
   print_build_services
   exit 0
@@ -949,7 +1009,7 @@ ensure_docker_ready
 cd "$ROOT_DIR"
 
 case "$ACTION" in
-  up|start|restart|fast|quick|up-fast|up-quick|restart-fast|restart-quick|dev|local|build-up|restart-dev|restart-local|rebuild)
+  up|start|restart|fast|quick|up-fast|up-quick|restart-fast|restart-quick|dev|local|build-up|restart-dev|restart-local|rebuild|postgres-prepare|verify-user-import)
     validate_runtime_material
     ensure_cloud_network
     ;;
@@ -958,33 +1018,46 @@ esac
 case "$ACTION" in
   up|start)
     shift || true
+    verify_production_user_import
     start_default "$@"
     ;;
   restart)
     shift || true
+    verify_production_user_import
     compose down --remove-orphans
     start_default "$@"
     ;;
   fast|quick|up-fast|up-quick)
     shift || true
+    verify_production_user_import
     start_without_refresh "$@"
     ;;
   restart-fast|restart-quick)
     shift || true
+    verify_production_user_import
     restart_without_refresh "$@"
     ;;
   dev|local|build-up)
     shift || true
+    verify_production_user_import
     start_from_local_build "$@"
     ;;
   restart-dev|restart-local)
     shift || true
+    verify_production_user_import
     compose down --remove-orphans
     start_from_local_build "$@"
     ;;
   rebuild)
     shift || true
+    verify_production_user_import
     rebuild_services "$@"
+    ;;
+  postgres-prepare)
+    prepare_postgres
+    ;;
+  verify-user-import)
+    verify_production_user_import
     ;;
   build)
     shift || true
@@ -1021,7 +1094,7 @@ case "$ACTION" in
     print_build_services
     ;;
   *)
-    echo "Usage: $0 [up|fast|restart|restart-fast|dev|restart-dev|rebuild|build|down|reset|logs|ps|pull|clean-images|clean-build-cache|services|build-services|validate-plugin-ui-origin|validate-runtime-material] [service...]" >&2
+    echo "Usage: $0 [up|fast|restart|restart-fast|dev|restart-dev|rebuild|build|postgres-prepare|verify-user-import|down|reset|logs|ps|pull|clean-images|clean-build-cache|services|build-services|validate-plugin-ui-origin|validate-runtime-material] [service...]" >&2
     echo "  up/restart pull prebuilt images by default." >&2
     echo "  fast/restart-fast reuse existing images and skip pull/build." >&2
     echo "  dev/restart-dev build local images; rebuild builds only the given build-service names." >&2
@@ -1031,6 +1104,7 @@ case "$ACTION" in
     echo "  buildable service names can be listed with: $0 build-services" >&2
     echo "  Plugin UI origins can be checked without Docker using: $0 validate-plugin-ui-origin" >&2
     echo "  Runtime secrets and mTLS material can be checked without Docker using: $0 validate-runtime-material" >&2
+    echo "  Production cutover: postgres-prepare, migrate users, verify-user-import, then up." >&2
     exit 2
     ;;
 esac

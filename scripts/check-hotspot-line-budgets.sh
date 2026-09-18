@@ -45,7 +45,6 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 BUDGETS=(
-  "chatos/backend/src/services/git/mod.rs:40"
   "chatos/backend/src/services/chatos_memory_engine/mod.rs:120"
   "chatos/backend/src/services/code_nav/languages/java/mod.rs:650"
   "chatos/backend/src/services/code_nav/languages/go/mod.rs:520"

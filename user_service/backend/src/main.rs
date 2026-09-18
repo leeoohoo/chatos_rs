@@ -29,6 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let internal_tls = UserServiceInternalTlsConfig::from_env(config.host, config.port)?;
     let internal_mtls_config = load_internal_mtls_config(&internal_tls)?;
     let state = AppState::new(config.clone()).await?;
+    let retention_handle = state.retention.spawn();
     let public_app = build_public_router(state.clone());
     let internal_app = build_internal_router(state);
     let _service_runtime = chatos_service_runtime::register_current_service(
@@ -62,6 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             result?;
         }
     }
+    retention_handle.abort();
     Ok(())
 }
 

@@ -5,10 +5,16 @@ use super::*;
 
 impl AppState {
     pub async fn new(config: AppConfig) -> Result<Self, String> {
-        let client = Client::with_uri_str(config.database_url.as_str())
+        let postgres_config = chatos_postgres::PostgresConfig::from_env(
+            config.database_url.clone(),
+            "configuration-center",
+            "CONFIG_CENTER",
+        )
+        .map_err(|err| err.to_string())?;
+        let pool = chatos_postgres::connect(&postgres_config)
             .await
-            .map_err(|err| format!("connect configuration center MongoDB failed: {err}"))?;
-        let store = AppStore::new(client.database(config.mongodb_database.as_str()));
+            .map_err(|err| format!("connect configuration center PostgreSQL failed: {err}"))?;
+        let store = AppStore::new(pool);
         store.initialize().await?;
         store
             .delete_definitions(USER_PREFERENCE_CONFIG_KEYS)
@@ -47,6 +53,7 @@ impl AppState {
         state.migrate_user_service_runtime_config().await?;
         state.migrate_user_service_smtp_config().await?;
         state.migrate_chatos_ui_config().await?;
+        state.migrate_postgres_pool_config().await?;
         Ok(state)
     }
 

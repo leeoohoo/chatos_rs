@@ -53,5 +53,18 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             359,
             now,
         ),
+        secret_definition(
+            CONFIGURATION_CENTER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
+            "MCP Management Internal Secret",
+            "Configuration Center 调用 MCP Management 内部接口时使用的共享密钥",
+            "Configuration Center / Downstream Security",
+            "service",
+            Some("configuration-center"),
+            json!("change_me_configuration_center_mcp_management_secret"),
+            "restart_required",
+            &["MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET"],
+            3591,
+            now,
+        ),
     ]
 }

@@ -9,8 +9,9 @@ use chatos_cloud_agent_protocol::CloudAgentRunRecord;
 use tokio::sync::Mutex;
 
 use crate::{
-    CloudAgentAtomicTransition, CloudAgentClaim, CloudAgentClaimResult, CloudAgentOutboxIntent,
-    CloudAgentRunStore, MongoCloudAgentRunStore,
+    validate_initial_cloud_agent_state, CloudAgentAtomicTransition, CloudAgentClaim,
+    CloudAgentClaimResult, CloudAgentOutboxIntent, CloudAgentOutboxPublishFailure,
+    CloudAgentPendingOutboxIntent, CloudAgentRunStore, CloudAgentStateRepository,
 };
 
 #[derive(Default)]
@@ -40,6 +41,7 @@ struct InMemoryCloudAgentOutboxRecord {
     publish_attempts: u32,
     last_error: Option<String>,
     dead_lettered: bool,
+    publish_claim: Option<InMemoryClaim>,
 }
 
 impl InMemoryCloudAgentOutboxRecord {
@@ -50,21 +52,9 @@ impl InMemoryCloudAgentOutboxRecord {
             publish_attempts: 0,
             last_error: None,
             dead_lettered: false,
+            publish_claim: None,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CloudAgentOutboxPublishFailure {
-    pub publish_attempts: u32,
-    pub dead_lettered: bool,
-    pub available_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct CloudAgentPendingOutboxIntent {
-    pub intent: CloudAgentOutboxIntent,
-    pub publish_attempts: u32,
 }
 
 #[derive(Clone, Default)]
@@ -105,8 +95,7 @@ impl InMemoryCloudAgentRunStore {
         record: CloudAgentRunRecord,
         outbox: Vec<CloudAgentOutboxIntent>,
     ) -> Result<(), String> {
-        record.validate()?;
-        validate_initial_outbox(&record, &outbox)?;
+        validate_initial_cloud_agent_state(&record, &outbox)?;
         let mut state = self.state.lock().await;
         let lane = state
             .lanes
@@ -198,6 +187,106 @@ impl InMemoryCloudAgentRunStore {
         });
         intents.truncate(usize::try_from(limit.max(1)).unwrap_or(usize::MAX));
         Ok(intents)
+    }
+
+    async fn claim_ready_outbox_with_attempts(
+        &self,
+        limit: i64,
+        claim_token: &str,
+        claim_until: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<CloudAgentPendingOutboxIntent>, String> {
+        if claim_token.trim().is_empty() {
+            return Err("Cloud Agent outbox claim token must not be empty".to_string());
+        }
+        let now = chrono::Utc::now();
+        if claim_until <= now {
+            return Err("Cloud Agent outbox claim deadline must be in the future".to_string());
+        }
+        let mut state = self.state.lock().await;
+        let mut event_ids = state
+            .outbox
+            .iter()
+            .filter(|(_, record)| {
+                !record.dead_lettered
+                    && record.available_at <= now
+                    && record
+                        .publish_claim
+                        .as_ref()
+                        .is_none_or(|claim| claim.until <= now)
+            })
+            .map(|(event_id, record)| (event_id.clone(), record.available_at))
+            .collect::<Vec<_>>();
+        event_ids.sort_by(|left, right| left.1.cmp(&right.1).then_with(|| left.0.cmp(&right.0)));
+        event_ids.truncate(usize::try_from(limit.max(1)).unwrap_or(usize::MAX));
+
+        let mut claimed = Vec::with_capacity(event_ids.len());
+        for (event_id, _) in event_ids {
+            let record = state
+                .outbox
+                .get_mut(event_id.as_str())
+                .ok_or_else(|| "Cloud Agent outbox candidate disappeared".to_string())?;
+            record.publish_claim = Some(InMemoryClaim {
+                token: claim_token.to_string(),
+                until: claim_until,
+            });
+            let mut intent = record.intent.clone();
+            intent.available_at = record.available_at;
+            claimed.push(CloudAgentPendingOutboxIntent {
+                intent,
+                publish_attempts: record.publish_attempts,
+            });
+        }
+        Ok(claimed)
+    }
+
+    async fn mark_claimed_outbox_published(
+        &self,
+        event_id: &str,
+        claim_token: &str,
+    ) -> Result<bool, String> {
+        let mut state = self.state.lock().await;
+        let claimed = state
+            .outbox
+            .get(event_id)
+            .and_then(|record| record.publish_claim.as_ref())
+            .is_some_and(|claim| claim.token == claim_token);
+        if !claimed {
+            return Ok(false);
+        }
+        state.outbox.remove(event_id);
+        Ok(true)
+    }
+
+    async fn mark_claimed_outbox_publish_failed(
+        &self,
+        event_id: &str,
+        claim_token: &str,
+        error: &str,
+        next_available_at: chrono::DateTime<chrono::Utc>,
+        max_attempts: u32,
+    ) -> Result<Option<CloudAgentOutboxPublishFailure>, String> {
+        let mut state = self.state.lock().await;
+        let Some(record) = state.outbox.get_mut(event_id) else {
+            return Ok(None);
+        };
+        if record.dead_lettered
+            || record
+                .publish_claim
+                .as_ref()
+                .is_none_or(|claim| claim.token != claim_token)
+        {
+            return Ok(None);
+        }
+        record.publish_attempts = record.publish_attempts.saturating_add(1);
+        record.last_error = Some(bounded_outbox_publish_error(error));
+        record.dead_lettered = record.publish_attempts >= max_attempts.max(1);
+        record.available_at = next_available_at;
+        record.publish_claim = None;
+        Ok(Some(CloudAgentOutboxPublishFailure {
+            publish_attempts: record.publish_attempts,
+            dead_lettered: record.dead_lettered,
+            available_at: record.available_at,
+        }))
     }
 
     pub async fn mark_outbox_published(&self, event_id: &str) -> Result<bool, String> {
@@ -390,10 +479,70 @@ impl CloudAgentRunStore for InMemoryCloudAgentRunStore {
     }
 }
 
+#[async_trait]
+impl CloudAgentStateRepository for InMemoryCloudAgentRunStore {
+    async fn allocate_lane_seq(&self, key: &str) -> Result<u64, String> {
+        InMemoryCloudAgentRunStore::allocate_lane_seq(self, key).await
+    }
+    async fn insert_run_with_outbox(
+        &self,
+        record: CloudAgentRunRecord,
+        outbox: Vec<CloudAgentOutboxIntent>,
+    ) -> Result<(), String> {
+        InMemoryCloudAgentRunStore::insert_run_with_outbox(self, record, outbox).await
+    }
+    async fn advance_lane_after_terminal(
+        &self,
+        key: &str,
+        seq: u64,
+    ) -> Result<Option<u64>, String> {
+        InMemoryCloudAgentRunStore::advance_lane_after_terminal(self, key, seq).await
+    }
+    async fn claim_ready_outbox_with_attempts(
+        &self,
+        limit: i64,
+        claim_token: &str,
+        claim_until: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<CloudAgentPendingOutboxIntent>, String> {
+        InMemoryCloudAgentRunStore::claim_ready_outbox_with_attempts(
+            self,
+            limit,
+            claim_token,
+            claim_until,
+        )
+        .await
+    }
+    async fn mark_claimed_outbox_published(
+        &self,
+        id: &str,
+        claim_token: &str,
+    ) -> Result<bool, String> {
+        InMemoryCloudAgentRunStore::mark_claimed_outbox_published(self, id, claim_token).await
+    }
+    async fn mark_claimed_outbox_publish_failed(
+        &self,
+        id: &str,
+        claim_token: &str,
+        error: &str,
+        next: chrono::DateTime<chrono::Utc>,
+        max: u32,
+    ) -> Result<Option<CloudAgentOutboxPublishFailure>, String> {
+        InMemoryCloudAgentRunStore::mark_claimed_outbox_publish_failed(
+            self,
+            id,
+            claim_token,
+            error,
+            next,
+            max,
+        )
+        .await
+    }
+}
+
 #[derive(Clone)]
 pub enum CloudAgentStateStore {
     Memory(InMemoryCloudAgentRunStore),
-    Mongo(MongoCloudAgentRunStore),
+    Repository(Arc<dyn CloudAgentStateRepository>),
 }
 
 impl CloudAgentStateStore {
@@ -401,42 +550,17 @@ impl CloudAgentStateStore {
         Self::Memory(InMemoryCloudAgentRunStore::new())
     }
 
-    pub async fn connect(database_url: &str) -> Result<Self, String> {
-        Ok(Self::Mongo(
-            MongoCloudAgentRunStore::connect(database_url).await?,
-        ))
-    }
-
-    pub async fn connect_to_database(
-        database_url: &str,
-        database_name: &str,
-    ) -> Result<Self, String> {
-        let client = mongodb::Client::with_uri_str(database_url)
-            .await
-            .map_err(|error| format!("connect Cloud Agent MongoDB failed: {error}"))?;
-        let database_name = database_name.trim();
-        if database_name.is_empty() {
-            return Err("Cloud Agent database name must not be empty".to_string());
-        }
-        let database = client.database(database_name);
-        Ok(Self::Mongo(
-            MongoCloudAgentRunStore::from_database(client, database).await?,
-        ))
-    }
-
-    pub async fn from_mongodb_database(
-        client: mongodb::Client,
-        database: mongodb::Database,
-    ) -> Result<Self, String> {
-        Ok(Self::Mongo(
-            MongoCloudAgentRunStore::from_database(client, database).await?,
-        ))
+    pub fn from_repository<S>(store: S) -> Self
+    where
+        S: CloudAgentStateRepository + 'static,
+    {
+        Self::Repository(Arc::new(store))
     }
 
     pub async fn allocate_lane_seq(&self, ordering_lane_key: &str) -> Result<u64, String> {
         match self {
             Self::Memory(store) => store.allocate_lane_seq(ordering_lane_key).await,
-            Self::Mongo(store) => store.allocate_lane_seq(ordering_lane_key).await,
+            Self::Repository(store) => store.allocate_lane_seq(ordering_lane_key).await,
         }
     }
 
@@ -451,7 +575,7 @@ impl CloudAgentStateStore {
     ) -> Result<(), String> {
         match self {
             Self::Memory(store) => store.insert_run_with_outbox(record, outbox).await,
-            Self::Mongo(store) => store.insert_run_with_outbox(record, outbox).await,
+            Self::Repository(store) => store.insert_run_with_outbox(record, outbox).await,
         }
     }
 
@@ -466,7 +590,7 @@ impl CloudAgentStateStore {
                     .advance_lane_after_terminal(ordering_lane_key, completed_lane_seq)
                     .await
             }
-            Self::Mongo(store) => {
+            Self::Repository(store) => {
                 store
                     .advance_lane_after_terminal(ordering_lane_key, completed_lane_seq)
                     .await
@@ -480,24 +604,93 @@ impl CloudAgentStateStore {
     ) -> Result<Vec<CloudAgentOutboxIntent>, String> {
         match self {
             Self::Memory(store) => store.list_ready_outbox(limit).await,
-            Self::Mongo(store) => store.list_ready_outbox(limit).await,
+            Self::Repository(_) => Err(
+                "unclaimed Cloud Agent outbox inspection is only available for the in-memory store"
+                    .to_string(),
+            ),
         }
     }
 
-    pub(crate) async fn list_ready_outbox_with_attempts(
+    pub(crate) async fn claim_ready_outbox_with_attempts(
         &self,
         limit: i64,
+        claim_token: &str,
+        claim_until: chrono::DateTime<chrono::Utc>,
     ) -> Result<Vec<CloudAgentPendingOutboxIntent>, String> {
         match self {
-            Self::Memory(store) => store.list_ready_outbox_with_attempts(limit).await,
-            Self::Mongo(store) => store.list_ready_outbox_with_attempts(limit).await,
+            Self::Memory(store) => {
+                store
+                    .claim_ready_outbox_with_attempts(limit, claim_token, claim_until)
+                    .await
+            }
+            Self::Repository(store) => {
+                store
+                    .claim_ready_outbox_with_attempts(limit, claim_token, claim_until)
+                    .await
+            }
+        }
+    }
+
+    pub(crate) async fn mark_claimed_outbox_published(
+        &self,
+        event_id: &str,
+        claim_token: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::Memory(store) => {
+                store
+                    .mark_claimed_outbox_published(event_id, claim_token)
+                    .await
+            }
+            Self::Repository(store) => {
+                store
+                    .mark_claimed_outbox_published(event_id, claim_token)
+                    .await
+            }
+        }
+    }
+
+    pub(crate) async fn mark_claimed_outbox_publish_failed(
+        &self,
+        event_id: &str,
+        claim_token: &str,
+        error: &str,
+        next_available_at: chrono::DateTime<chrono::Utc>,
+        max_attempts: u32,
+    ) -> Result<Option<CloudAgentOutboxPublishFailure>, String> {
+        match self {
+            Self::Memory(store) => {
+                store
+                    .mark_claimed_outbox_publish_failed(
+                        event_id,
+                        claim_token,
+                        error,
+                        next_available_at,
+                        max_attempts,
+                    )
+                    .await
+            }
+            Self::Repository(store) => {
+                store
+                    .mark_claimed_outbox_publish_failed(
+                        event_id,
+                        claim_token,
+                        error,
+                        next_available_at,
+                        max_attempts,
+                    )
+                    .await
+            }
         }
     }
 
     pub async fn mark_outbox_published(&self, event_id: &str) -> Result<bool, String> {
         match self {
             Self::Memory(store) => store.mark_outbox_published(event_id).await,
-            Self::Mongo(store) => store.mark_outbox_published(event_id).await,
+            Self::Repository(_) => Err(
+                "unclaimed Cloud Agent outbox acknowledgement is only available for the in-memory store"
+                    .to_string(),
+            ),
         }
     }
 
@@ -514,10 +707,12 @@ impl CloudAgentStateStore {
                     .mark_outbox_publish_failed(event_id, error, next_available_at, max_attempts)
                     .await
             }
-            Self::Mongo(store) => {
-                store
-                    .mark_outbox_publish_failed(event_id, error, next_available_at, max_attempts)
-                    .await
+            Self::Repository(store) => {
+                let _ = store;
+                Err(
+                    "unclaimed Cloud Agent outbox failure is only available for the in-memory store"
+                        .to_string(),
+                )
             }
         }
     }
@@ -528,25 +723,12 @@ pub(super) fn bounded_outbox_publish_error(error: &str) -> String {
     error.chars().take(MAX_ERROR_CHARS).collect()
 }
 
-fn validate_initial_outbox(
-    record: &CloudAgentRunRecord,
-    outbox: &[CloudAgentOutboxIntent],
-) -> Result<(), String> {
-    for intent in outbox {
-        intent.validate()?;
-        if intent.ordering != record.ordering {
-            return Err("initial outbox ordering does not match Cloud Agent run".to_string());
-        }
-    }
-    Ok(())
-}
-
 #[async_trait]
 impl CloudAgentRunStore for CloudAgentStateStore {
     async fn load_run(&self, agent_run_id: &str) -> Result<Option<CloudAgentRunRecord>, String> {
         match self {
             Self::Memory(store) => store.load_run(agent_run_id).await,
-            Self::Mongo(store) => store.load_run(agent_run_id).await,
+            Self::Repository(store) => store.load_run(agent_run_id).await,
         }
     }
 
@@ -556,14 +738,14 @@ impl CloudAgentRunStore for CloudAgentStateStore {
     ) -> Result<CloudAgentClaimResult, String> {
         match self {
             Self::Memory(store) => store.acquire_short_claim(claim).await,
-            Self::Mongo(store) => store.acquire_short_claim(claim).await,
+            Self::Repository(store) => store.acquire_short_claim(claim).await,
         }
     }
 
     async fn renew_short_claim(&self, claim: &CloudAgentClaim) -> Result<bool, String> {
         match self {
             Self::Memory(store) => store.renew_short_claim(claim).await,
-            Self::Mongo(store) => store.renew_short_claim(claim).await,
+            Self::Repository(store) => store.renew_short_claim(claim).await,
         }
     }
 
@@ -573,189 +755,17 @@ impl CloudAgentRunStore for CloudAgentStateStore {
     ) -> Result<bool, String> {
         match self {
             Self::Memory(store) => store.commit_transition(transition).await,
-            Self::Mongo(store) => store.commit_transition(transition).await,
+            Self::Repository(store) => store.commit_transition(transition).await,
         }
     }
 
     async fn release_short_claim(&self, claim: &CloudAgentClaim) -> Result<(), String> {
         match self {
             Self::Memory(store) => store.release_short_claim(claim).await,
-            Self::Mongo(store) => store.release_short_claim(claim).await,
+            Self::Repository(store) => store.release_short_claim(claim).await,
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use chatos_cloud_agent_protocol::{
-        CloudAgentOrdering, CloudAgentRunPhase, CloudAgentRunStatus,
-    };
-    use chrono::Utc;
-    use serde_json::Value;
-
-    fn run_record(run_id: &str, lane_seq: u64) -> CloudAgentRunRecord {
-        let now = Utc::now();
-        CloudAgentRunRecord {
-            ordering: CloudAgentOrdering {
-                ordering_lane_key: "task:task-1".to_string(),
-                lane_seq,
-                agent_run_id: run_id.to_string(),
-                generation: 1,
-                step_seq: 1,
-            },
-            owner_service: "task-runner".to_string(),
-            owner_entity_type: "task_run".to_string(),
-            owner_entity_id: run_id.to_string(),
-            owner_user_id: "user-1".to_string(),
-            agent_key: "task_runner_run_phase".to_string(),
-            input: Value::Null,
-            status: CloudAgentRunStatus::ModelReady,
-            phase: CloudAgentRunPhase::Ready,
-            iteration: 0,
-            model_config_ref: "model-1".to_string(),
-            model_runtime_snapshot_ref: "snapshot-1".to_string(),
-            agent_prompt_revision: "1".to_string(),
-            agent_prompt_checksum: "checksum-1".to_string(),
-            capability_policy_revision: "policy-1".to_string(),
-            mcp_runtime_session_ref: None,
-            previous_response_id: None,
-            continuation_mode: None,
-            pending_batch_id: None,
-            pending_tool_calls: Vec::new(),
-            pending_tool_results: Vec::new(),
-            response_input_items: Vec::new(),
-            current_input_items_ref: format!("task_run:{run_id}:input"),
-            usage_accumulator: Value::Null,
-            max_iterations: 10,
-            retry_count: 0,
-            deadline_at: None,
-            cancel_requested: false,
-            terminal_outcome: None,
-            version: 1,
-            created_at: now,
-            updated_at: now,
-        }
-    }
-
-    fn outbox_intent(run: &CloudAgentRunRecord) -> CloudAgentOutboxIntent {
-        CloudAgentOutboxIntent {
-            event_id: format!("{}:event", run.ordering.agent_run_id),
-            topic: "run_started".to_string(),
-            routing_key: "cloud_agent.test.runtime".to_string(),
-            ordering: run.ordering.clone(),
-            causation_id: "cause-1".to_string(),
-            correlation_id: "correlation-1".to_string(),
-            available_at: Utc::now() - chrono::Duration::seconds(1),
-            payload: serde_json::json!({}),
-        }
-    }
-
-    #[tokio::test]
-    async fn terminal_commit_advances_an_empty_lane_for_the_next_future_run() {
-        let store = InMemoryCloudAgentRunStore::new();
-        let first_seq = store.allocate_lane_seq("task:task-1").await.unwrap();
-        let first = run_record("run-1", first_seq);
-        store.insert_run(first.clone()).await.unwrap();
-        let claim = CloudAgentClaim {
-            ordering: first.ordering.clone(),
-            expected_status: first.status,
-            expected_phase: first.phase,
-            expected_version: first.version,
-            claim_token: "claim-1".to_string(),
-            claim_until: Utc::now() + chrono::Duration::seconds(30),
-        };
-        assert_eq!(
-            store.acquire_short_claim(&claim).await.unwrap(),
-            CloudAgentClaimResult::Acquired
-        );
-        assert!(store
-            .commit_transition(CloudAgentAtomicTransition {
-                claim,
-                next_input: Value::Null,
-                next_status: CloudAgentRunStatus::Succeeded,
-                next_phase: CloudAgentRunPhase::Terminal,
-                next_step_seq: 2,
-                next_iteration: 1,
-                next_retry_count: 0,
-                previous_response_id: None,
-                continuation_mode: None,
-                current_input_items_ref: "task_run:run-1:terminal".to_string(),
-                mcp_runtime_session_ref: None,
-                pending_batch_id: None,
-                pending_tool_calls: Vec::new(),
-                pending_tool_results: Vec::new(),
-                response_input_items: Vec::new(),
-                usage_accumulator: Value::Null,
-                terminal_outcome: Some(serde_json::json!({"ok": true})),
-                outbox: Vec::new(),
-            })
-            .await
-            .unwrap());
-
-        let second_seq = store.allocate_lane_seq("task:task-1").await.unwrap();
-        assert_eq!(second_seq, 2);
-        let second = run_record("run-2", second_seq);
-        store.insert_run(second.clone()).await.unwrap();
-        let second_claim = CloudAgentClaim {
-            ordering: second.ordering.clone(),
-            expected_status: second.status,
-            expected_phase: second.phase,
-            expected_version: second.version,
-            claim_token: "claim-2".to_string(),
-            claim_until: Utc::now() + chrono::Duration::seconds(30),
-        };
-        assert_eq!(
-            store.acquire_short_claim(&second_claim).await.unwrap(),
-            CloudAgentClaimResult::Acquired
-        );
-    }
-
-    #[tokio::test]
-    async fn outbox_publish_failures_back_off_and_eventually_dead_letter() {
-        let store = InMemoryCloudAgentRunStore::new();
-        let lane_seq = store.allocate_lane_seq("task:task-1").await.unwrap();
-        let run = run_record("run-outbox", lane_seq);
-        let intent = outbox_intent(&run);
-        store
-            .insert_run_with_outbox(run, vec![intent.clone()])
-            .await
-            .unwrap();
-
-        assert_eq!(store.list_ready_outbox(10).await.unwrap().len(), 1);
-        let retry_at = Utc::now() + chrono::Duration::minutes(1);
-        let first = store
-            .mark_outbox_publish_failed(intent.event_id.as_str(), "publish failed", retry_at, 8)
-            .await
-            .unwrap()
-            .expect("pending outbox failure");
-        assert_eq!(first.publish_attempts, 1);
-        assert!(!first.dead_lettered);
-        assert!(store.list_ready_outbox(10).await.unwrap().is_empty());
-
-        let mut latest = first;
-        for _ in 2..=8 {
-            latest = store
-                .mark_outbox_publish_failed(
-                    intent.event_id.as_str(),
-                    "publish failed again",
-                    Utc::now() - chrono::Duration::seconds(1),
-                    8,
-                )
-                .await
-                .unwrap()
-                .expect("pending outbox failure");
-        }
-        assert_eq!(latest.publish_attempts, 8);
-        assert!(latest.dead_lettered);
-        assert!(store.list_ready_outbox(10).await.unwrap().is_empty());
-    }
-
-    #[test]
-    fn outbox_publish_errors_are_bounded() {
-        assert_eq!(
-            bounded_outbox_publish_error(&"x".repeat(3_000)).len(),
-            2_000
-        );
-    }
-}
+mod tests;

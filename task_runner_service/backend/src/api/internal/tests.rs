@@ -245,6 +245,7 @@ async fn test_state() -> AppState {
 
     AppState {
         config,
+        postgres_pool: None,
         task_queue_topology,
         task_service,
         model_config_service,

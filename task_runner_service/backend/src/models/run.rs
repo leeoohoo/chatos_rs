@@ -497,7 +497,6 @@ mod tests {
     use super::{
         task_run_memory_thread_id, EffectiveTaskToolSnapshot, TaskRunAttemptStatus, TaskRunRecord,
     };
-    use mongodb::bson;
     use serde_json::json;
 
     #[test]
@@ -552,11 +551,14 @@ mod tests {
             json!({}),
             "2026-08-07T00:00:00Z".to_string(),
         );
-        let mut document = bson::to_document(&run).expect("serialize run as Mongo document");
-        document.remove("effective_tools");
+        let mut document = serde_json::to_value(&run).expect("serialize run as JSON");
+        document
+            .as_object_mut()
+            .expect("run object")
+            .remove("effective_tools");
 
         let decoded: TaskRunRecord =
-            bson::from_document(document).expect("decode legacy run without effective_tools");
+            serde_json::from_value(document).expect("decode legacy run without effective_tools");
 
         assert_eq!(
             decoded.effective_tools,

@@ -10,158 +10,109 @@ const RETIRED_BUNDLED_MARKETPLACE_ID: &str = "chatos-bundled";
 
 impl AppStore {
     pub async fn remove_retired_bundled_plugin_marketplaces(&self) -> Result<u64, String> {
-        let marketplace_documents = self
-            .plugin_marketplace_documents
-            .find(
-                doc! {
-                    "$or": [
-                        { "id": RETIRED_BUNDLED_MARKETPLACE_ID },
-                        { "trust_level": "bundled" },
-                    ],
-                },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect::<Vec<Document>>()
-            .await
-            .map_err(|err| err.to_string())?;
-        let mut marketplace_ids = marketplace_documents
-            .iter()
-            .filter_map(|document| document.get_str("id").ok())
-            .map(ToOwned::to_owned)
-            .collect::<Vec<_>>();
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        let mut marketplace_ids = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM plugin_marketplaces WHERE id=$1 OR trust_level='bundled'",
+        )
+        .bind(RETIRED_BUNDLED_MARKETPLACE_ID)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_error)?;
         if !marketplace_ids
             .iter()
             .any(|id| id == RETIRED_BUNDLED_MARKETPLACE_ID)
         {
             marketplace_ids.push(RETIRED_BUNDLED_MARKETPLACE_ID.to_string());
         }
-
-        let catalog_documents = self
-            .database
-            .collection::<Document>("plugin_catalog_entries")
-            .find(doc! { "marketplace_id": { "$in": &marketplace_ids } }, None)
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect::<Vec<Document>>()
-            .await
-            .map_err(|err| err.to_string())?;
-        let plugin_ids = catalog_documents
-            .iter()
-            .filter_map(|document| document.get_str("id").ok())
-            .map(ToOwned::to_owned)
-            .collect::<Vec<_>>();
-        let release_documents = if plugin_ids.is_empty() {
-            Vec::new()
-        } else {
-            self.database
-                .collection::<Document>("plugin_releases")
-                .find(doc! { "plugin_id": { "$in": &plugin_ids } }, None)
+        let plugin_ids = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM plugin_catalog_entries WHERE marketplace_id=ANY($1)",
+        )
+        .bind(&marketplace_ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_error)?;
+        let release_ids = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM plugin_releases WHERE plugin_id=ANY($1)",
+        )
+        .bind(&plugin_ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db_error)?;
+        sqlx::query(
+            "DELETE FROM plugin_agent_bindings WHERE resource_kind=ANY($1) AND resource_id=ANY($2)",
+        )
+        .bind(vec![RESOURCE_KIND_PLUGIN, RESOURCE_KIND_PLUGIN_COMPONENT])
+        .bind(&plugin_ids)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_error)?;
+        for query in [
+            "DELETE FROM plugin_installations WHERE plugin_id=ANY($1)",
+            "DELETE FROM plugin_user_preferences WHERE plugin_id=ANY($1)",
+            "DELETE FROM plugin_component_snapshots WHERE plugin_id=ANY($1)",
+            "DELETE FROM plugin_oauth_connections WHERE plugin_id=ANY($1)",
+            "DELETE FROM plugin_audit_logs WHERE plugin_id=ANY($1)",
+        ] {
+            sqlx::query(query)
+                .bind(&plugin_ids)
+                .execute(&mut *tx)
                 .await
-                .map_err(|err| err.to_string())?
-                .try_collect::<Vec<Document>>()
-                .await
-                .map_err(|err| err.to_string())?
-        };
-        let release_ids = release_documents
-            .iter()
-            .filter_map(|document| document.get_str("id").ok())
-            .map(ToOwned::to_owned)
-            .collect::<Vec<_>>();
-
-        if !plugin_ids.is_empty() {
-            self.bindings
-                .delete_many(
-                    doc! {
-                        "resource_kind": {
-                            "$in": [RESOURCE_KIND_PLUGIN, RESOURCE_KIND_PLUGIN_COMPONENT]
-                        },
-                        "resource_id": { "$in": &plugin_ids },
-                    },
-                    None,
-                )
-                .await
-                .map_err(|err| err.to_string())?;
-            self.plugin_installations
-                .delete_many(doc! { "plugin_id": { "$in": &plugin_ids } }, None)
-                .await
-                .map_err(|err| err.to_string())?;
-            self.plugin_preferences
-                .delete_many(doc! { "plugin_id": { "$in": &plugin_ids } }, None)
-                .await
-                .map_err(|err| err.to_string())?;
-            self.plugin_component_snapshots
-                .delete_many(doc! { "plugin_id": { "$in": &plugin_ids } }, None)
-                .await
-                .map_err(|err| err.to_string())?;
-            self.plugin_oauth_connections
-                .delete_many(doc! { "plugin_id": { "$in": &plugin_ids } }, None)
-                .await
-                .map_err(|err| err.to_string())?;
-            self.plugin_audit_logs
-                .delete_many(doc! { "plugin_id": { "$in": &plugin_ids } }, None)
-                .await
-                .map_err(|err| err.to_string())?;
-            self.plugin_releases
-                .delete_many(doc! { "plugin_id": { "$in": &plugin_ids } }, None)
-                .await
-                .map_err(|err| err.to_string())?;
+                .map_err(db_error)?;
         }
-        if !release_ids.is_empty() {
-            self.plugin_release_publication_states
-                .delete_many(doc! { "release_id": { "$in": &release_ids } }, None)
-                .await
-                .map_err(|err| err.to_string())?;
-        }
-
-        self.plugin_catalog_entries
-            .delete_many(doc! { "marketplace_id": { "$in": &marketplace_ids } }, None)
+        sqlx::query("DELETE FROM plugin_release_publication_states WHERE release_id=ANY($1)")
+            .bind(&release_ids)
+            .execute(&mut *tx)
             .await
-            .map_err(|err| err.to_string())?;
-        self.plugin_publishers
-            .delete_many(doc! { "marketplace_id": { "$in": &marketplace_ids } }, None)
+            .map_err(db_error)?;
+        sqlx::query("DELETE FROM plugin_releases WHERE plugin_id=ANY($1)")
+            .bind(&plugin_ids)
+            .execute(&mut *tx)
             .await
-            .map_err(|err| err.to_string())?;
-        self.plugin_catalog_syncs
-            .delete_many(doc! { "marketplace_id": { "$in": &marketplace_ids } }, None)
+            .map_err(db_error)?;
+        sqlx::query("DELETE FROM plugin_catalog_entries WHERE marketplace_id=ANY($1)")
+            .bind(&marketplace_ids)
+            .execute(&mut *tx)
             .await
-            .map_err(|err| err.to_string())?;
-        self.plugin_audit_logs
-            .delete_many(
-                doc! {
-                    "plugin_id": {
-                        "$in": marketplace_ids
-                            .iter()
-                            .map(|id| format!("marketplace:{id}"))
-                            .collect::<Vec<_>>()
-                    }
-                },
-                None,
-            )
+            .map_err(db_error)?;
+        sqlx::query("DELETE FROM plugin_publishers WHERE marketplace_id=ANY($1)")
+            .bind(&marketplace_ids)
+            .execute(&mut *tx)
             .await
-            .map_err(|err| err.to_string())?;
-        self.plugin_marketplaces
-            .delete_many(doc! { "id": { "$in": &marketplace_ids } }, None)
+            .map_err(db_error)?;
+        sqlx::query("DELETE FROM plugin_catalog_syncs WHERE marketplace_id=ANY($1)")
+            .bind(&marketplace_ids)
+            .execute(&mut *tx)
             .await
-            .map(|result| result.deleted_count)
-            .map_err(|err| err.to_string())
+            .map_err(db_error)?;
+        let audit_ids = marketplace_ids
+            .iter()
+            .map(|id| format!("marketplace:{id}"))
+            .collect::<Vec<_>>();
+        sqlx::query("DELETE FROM plugin_audit_logs WHERE plugin_id=ANY($1)")
+            .bind(audit_ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_error)?;
+        let deleted = sqlx::query("DELETE FROM plugin_marketplaces WHERE id=ANY($1)")
+            .bind(&marketplace_ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_error)?
+            .rows_affected();
+        tx.commit().await.map_err(db_error)?;
+        Ok(deleted)
     }
 
     pub async fn delete_plugin_bindings_for_agent(&self, agent_key: &str) -> Result<(), String> {
-        self.bindings
-            .delete_many(
-                doc! {
-                    "agent_key": agent_key,
-                    "resource_kind": {
-                        "$in": [RESOURCE_KIND_PLUGIN, RESOURCE_KIND_PLUGIN_COMPONENT]
-                    },
-                },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
+        sqlx::query(
+            "DELETE FROM plugin_agent_bindings WHERE agent_key=$1 AND resource_kind=ANY($2)",
+        )
+        .bind(agent_key)
+        .bind(vec![RESOURCE_KIND_PLUGIN, RESOURCE_KIND_PLUGIN_COMPONENT])
+        .execute(&self.pool)
+        .await
+        .map(|_| ())
+        .map_err(db_error)
     }
 
     pub async fn list_plugin_publishers(
@@ -169,45 +120,29 @@ impl AppStore {
         query: &PluginPublisherQuery,
         owner_user_id: Option<&str>,
     ) -> Result<ListResponse<PluginPublisherRecord>, String> {
-        let mut filter = doc! {};
-        if let Some(owner_user_id) = owner_user_id {
-            filter.insert("owner_user_id", owner_user_id);
-        }
-        if let Some(marketplace_id) = normalized(query.marketplace_id.as_deref()) {
-            filter.insert("marketplace_id", marketplace_id);
-        }
-        if let Some(status) = normalized(query.status.as_deref()) {
-            filter.insert("status", status);
-        }
-        let total = self
-            .plugin_publishers
-            .count_documents(filter.clone(), None)
-            .await
-            .map_err(|err| err.to_string())?;
-        let options = FindOptions::builder()
-            .sort(doc! { "updated_at": -1, "created_at": -1 })
-            .limit(Some(query.limit.unwrap_or(100).clamp(1, 500)))
-            .skip(query.offset)
-            .build();
-        let items = self
-            .plugin_publishers
-            .find(filter, options)
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(ListResponse { items, total })
+        let marketplace = normalized(query.marketplace_id.as_deref());
+        let status = normalized(query.status.as_deref());
+        let total = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM plugin_publishers WHERE ($1::text IS NULL OR owner_user_id=$1) AND ($2::text IS NULL OR marketplace_id=$2) AND ($3::text IS NULL OR status=$3)")
+            .bind(owner_user_id).bind(&marketplace).bind(&status).fetch_one(&self.pool).await.map_err(db_error)?;
+        let items = decode_all(sqlx::query_scalar("SELECT data FROM plugin_publishers WHERE ($1::text IS NULL OR owner_user_id=$1) AND ($2::text IS NULL OR marketplace_id=$2) AND ($3::text IS NULL OR status=$3) ORDER BY updated_at DESC,(data->>'created_at')::timestamptz DESC LIMIT $4 OFFSET $5")
+            .bind(owner_user_id).bind(marketplace).bind(status).bind(query.limit.unwrap_or(100).clamp(1,500)).bind(i64::try_from(query.offset.unwrap_or(0)).unwrap_or(i64::MAX))
+            .fetch_all(&self.pool).await.map_err(db_error)?)?;
+        Ok(ListResponse {
+            items,
+            total: u64::try_from(total).unwrap_or(u64::MAX),
+        })
     }
 
     pub async fn get_plugin_publisher(
         &self,
         id: &str,
     ) -> Result<Option<PluginPublisherRecord>, String> {
-        self.plugin_publishers
-            .find_one(doc! { "id": id }, None)
-            .await
-            .map_err(|err| err.to_string())
+        fetch_one(
+            "SELECT data FROM plugin_publishers WHERE id=$1",
+            id,
+            &self.pool,
+        )
+        .await
     }
 
     pub async fn find_plugin_publisher(
@@ -215,24 +150,25 @@ impl AppStore {
         marketplace_id: &str,
         publisher_id: &str,
     ) -> Result<Option<PluginPublisherRecord>, String> {
-        self.plugin_publishers
-            .find_one(
-                doc! { "marketplace_id": marketplace_id, "publisher_id": publisher_id },
-                None,
+        decode_optional(
+            sqlx::query_scalar(
+                "SELECT data FROM plugin_publishers WHERE marketplace_id=$1 AND publisher_id=$2",
             )
+            .bind(marketplace_id)
+            .bind(publisher_id)
+            .fetch_optional(&self.pool)
             .await
-            .map_err(|err| err.to_string())
+            .map_err(db_error)?,
+        )
     }
 
     pub async fn replace_plugin_publisher(
         &self,
         record: &PluginPublisherRecord,
     ) -> Result<(), String> {
-        self.plugin_publishers
-            .replace_one(doc! { "id": &record.id }, record, upsert_options())
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
+        sqlx::query("INSERT INTO plugin_publishers(id,marketplace_id,publisher_id,owner_user_id,status,updated_at,data) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO UPDATE SET marketplace_id=EXCLUDED.marketplace_id,publisher_id=EXCLUDED.publisher_id,owner_user_id=EXCLUDED.owner_user_id,status=EXCLUDED.status,updated_at=EXCLUDED.updated_at,data=EXCLUDED.data")
+            .bind(&record.id).bind(&record.marketplace_id).bind(&record.publisher_id).bind(&record.owner_user_id).bind(&record.status).bind(timestamp(&record.updated_at)?).bind(json(record)?)
+            .execute(&self.pool).await.map(|_| ()).map_err(db_error)
     }
 
     pub async fn replace_plugin_publisher_if_matches(
@@ -240,23 +176,22 @@ impl AppStore {
         expected: &PluginPublisherRecord,
         record: &PluginPublisherRecord,
     ) -> Result<bool, String> {
-        let filter = mongodb::bson::to_document(expected).map_err(|err| err.to_string())?;
-        let result = self
-            .plugin_publishers
-            .replace_one(filter, record, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(result.matched_count == 1)
+        let result = sqlx::query("UPDATE plugin_publishers SET marketplace_id=$1,publisher_id=$2,owner_user_id=$3,status=$4,updated_at=$5,data=$6 WHERE id=$7 AND data=$8")
+            .bind(&record.marketplace_id).bind(&record.publisher_id).bind(&record.owner_user_id).bind(&record.status).bind(timestamp(&record.updated_at)?).bind(json(record)?).bind(&expected.id).bind(json(expected)?)
+            .execute(&self.pool).await.map_err(db_error)?;
+        Ok(result.rows_affected() == 1)
     }
 
     pub async fn get_plugin_catalog_sync(
         &self,
         marketplace_id: &str,
     ) -> Result<Option<PluginCatalogSyncRecord>, String> {
-        self.plugin_catalog_syncs
-            .find_one(doc! { "marketplace_id": marketplace_id }, None)
-            .await
-            .map_err(|err| err.to_string())
+        fetch_one(
+            "SELECT data FROM plugin_catalog_syncs WHERE marketplace_id=$1",
+            marketplace_id,
+            &self.pool,
+        )
+        .await
     }
 
     pub async fn commit_plugin_catalog_sync(
@@ -264,25 +199,24 @@ impl AppStore {
         record: &PluginCatalogSyncRecord,
         expected_revision: Option<&str>,
     ) -> Result<bool, String> {
-        if let Some(expected_revision) = expected_revision {
-            let result = self
-                .plugin_catalog_syncs
-                .replace_one(
-                    doc! {
-                        "marketplace_id": &record.marketplace_id,
-                        "revision": expected_revision,
-                    },
-                    record,
-                    None,
-                )
-                .await
-                .map_err(|err| err.to_string())?;
-            return Ok(result.matched_count == 1);
+        let data = json(record)?;
+        let synced_at = timestamp(&record.synced_at)?;
+        if let Some(expected) = expected_revision {
+            return sqlx::query("UPDATE plugin_catalog_syncs SET synced_at=$1,data=$2 WHERE marketplace_id=$3 AND data->>'revision'=$4")
+                .bind(synced_at).bind(data).bind(&record.marketplace_id).bind(expected).execute(&self.pool).await.map(|r| r.rows_affected()==1).map_err(db_error);
         }
-        match self.plugin_catalog_syncs.insert_one(record, None).await {
+        match sqlx::query(
+            "INSERT INTO plugin_catalog_syncs(marketplace_id,synced_at,data) VALUES($1,$2,$3)",
+        )
+        .bind(&record.marketplace_id)
+        .bind(synced_at)
+        .bind(data)
+        .execute(&self.pool)
+        .await
+        {
             Ok(_) => Ok(true),
-            Err(error) if error.to_string().contains("E11000") => Ok(false),
-            Err(error) => Err(error.to_string()),
+            Err(sqlx::Error::Database(error)) if error.is_unique_violation() => Ok(false),
+            Err(error) => Err(db_error(error)),
         }
     }
 
@@ -291,83 +225,72 @@ impl AppStore {
         query: &PluginCatalogQuery,
         visible_owner_user_id: Option<&str>,
     ) -> Result<ListResponse<PluginCatalogRecord>, String> {
-        let mut filter = doc! {};
-        let mut predicates = Vec::new();
-        if let Some(owner_user_id) = visible_owner_user_id {
-            filter.insert("enabled", true);
-            predicates.push(doc! {
-                "$or": [
-                    { "visibility": PLUGIN_VISIBILITY_PUBLIC },
-                    {
-                        "visibility": PLUGIN_VISIBILITY_PRIVATE,
-                        "owner_user_id": owner_user_id,
-                    },
-                ]
-            });
-        } else {
-            if let Some(visibility) = normalized(query.visibility.as_deref()) {
-                filter.insert("visibility", visibility);
+        let marketplace = normalized(query.marketplace_id.as_deref());
+        let category = normalized(query.category.as_deref());
+        let visibility = normalized(query.visibility.as_deref());
+        let search = normalized(query.q.as_deref()).map(|q| format!("%{q}%"));
+        let owner_view = visible_owner_user_id.is_some();
+        let (after_featured, after_category, after_display_name, after_id) = match query.cursor()? {
+            Some((featured, category, display_name, id)) => {
+                (Some(featured), Some(category), Some(display_name), Some(id))
             }
-            if let Some(enabled) = query.enabled {
-                filter.insert("enabled", enabled);
-            }
-        }
-        if let Some(marketplace_id) = normalized(query.marketplace_id.as_deref()) {
-            filter.insert("marketplace_id", marketplace_id);
-        }
-        if let Some(category) = normalized(query.category.as_deref()) {
-            filter.insert("interface.category", category);
-        }
-        if let Some(featured) = query.featured {
-            filter.insert("featured", featured);
-        }
-        if let Some(q) = normalized(query.q.as_deref()) {
-            let regex = Regex {
-                pattern: q,
-                options: "i".to_string(),
-            };
-            predicates.push(doc! {
-                "$or": [
-                    doc! { "id": { "$regex": regex.clone() } },
-                    doc! { "name": { "$regex": regex.clone() } },
-                    doc! { "display_name": { "$regex": regex.clone() } },
-                    doc! { "description": { "$regex": regex.clone() } },
-                    doc! { "keywords": { "$regex": regex } },
-                ]
-            });
-        }
-        if !predicates.is_empty() {
-            filter.insert("$and", predicates);
-        }
-        let total = self
-            .plugin_catalog_entries
-            .count_documents(filter.clone(), None)
+            None => (None, None, None, None),
+        };
+        let predicate = "(NOT $1 OR (enabled AND (visibility=$2 OR (visibility=$3 AND owner_user_id=$4)))) AND ($1 OR $5::text IS NULL OR visibility=$5) AND ($1 OR $6::bool IS NULL OR enabled=$6) AND ($7::text IS NULL OR marketplace_id=$7) AND ($8::text IS NULL OR category=$8) AND ($9::bool IS NULL OR featured=$9) AND ($10::text IS NULL OR lower(id) LIKE lower($10) OR lower(name) LIKE lower($10) OR lower(display_name) LIKE lower($10) OR lower(data->>'description') LIKE lower($10) OR (lower(plugin_catalog_keywords_search_text(data->'keywords')) LIKE lower($10) AND EXISTS(SELECT 1 FROM jsonb_array_elements_text(COALESCE(data->'keywords','[]')) keyword WHERE keyword ILIKE $10)))";
+        let total_sql = format!("SELECT count(*) FROM plugin_catalog_entries WHERE {predicate}");
+        let total = sqlx::query_scalar::<_, i64>(&total_sql)
+            .bind(owner_view)
+            .bind(PLUGIN_VISIBILITY_PUBLIC)
+            .bind(PLUGIN_VISIBILITY_PRIVATE)
+            .bind(visible_owner_user_id)
+            .bind(&visibility)
+            .bind(query.enabled)
+            .bind(&marketplace)
+            .bind(&category)
+            .bind(query.featured)
+            .bind(&search)
+            .fetch_one(&self.pool)
             .await
-            .map_err(|err| err.to_string())?;
-        let options = FindOptions::builder()
-            .sort(doc! { "featured": -1, "interface.category": 1, "display_name": 1 })
-            .limit(Some(query.limit.unwrap_or(100).clamp(1, 500)))
-            .skip(query.offset)
-            .build();
-        let items = self
-            .plugin_catalog_entries
-            .find(filter, options)
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(ListResponse { items, total })
+            .map_err(db_error)?;
+        let items_sql = format!("SELECT data FROM plugin_catalog_entries WHERE {predicate} AND ($11::bool IS NULL OR ((NOT featured),category,display_name,id)>((NOT $11),$12::text,$13::text,$14::text)) ORDER BY (NOT featured),category,display_name,id LIMIT $15 OFFSET $16");
+        let items = decode_all(
+            sqlx::query_scalar(&items_sql)
+                .bind(owner_view)
+                .bind(PLUGIN_VISIBILITY_PUBLIC)
+                .bind(PLUGIN_VISIBILITY_PRIVATE)
+                .bind(visible_owner_user_id)
+                .bind(visibility)
+                .bind(query.enabled)
+                .bind(marketplace)
+                .bind(category)
+                .bind(query.featured)
+                .bind(search)
+                .bind(after_featured)
+                .bind(after_category)
+                .bind(after_display_name)
+                .bind(after_id)
+                .bind(query.limit.unwrap_or(100).clamp(1, 500))
+                .bind(i64::try_from(query.offset.unwrap_or(0)).unwrap_or(i64::MAX))
+                .fetch_all(&self.pool)
+                .await
+                .map_err(db_error)?,
+        )?;
+        Ok(ListResponse {
+            items,
+            total: u64::try_from(total).unwrap_or(u64::MAX),
+        })
     }
 
     pub async fn get_plugin_catalog_entry(
         &self,
         id: &str,
     ) -> Result<Option<PluginCatalogRecord>, String> {
-        self.plugin_catalog_entries
-            .find_one(doc! { "id": id }, None)
-            .await
-            .map_err(|err| err.to_string())
+        fetch_one(
+            "SELECT data FROM plugin_catalog_entries WHERE id=$1",
+            id,
+            &self.pool,
+        )
+        .await
     }
 
     pub async fn find_plugin_catalog_entry(
@@ -375,24 +298,25 @@ impl AppStore {
         marketplace_id: &str,
         name: &str,
     ) -> Result<Option<PluginCatalogRecord>, String> {
-        self.plugin_catalog_entries
-            .find_one(
-                doc! { "marketplace_id": marketplace_id, "name": name },
-                None,
+        decode_optional(
+            sqlx::query_scalar(
+                "SELECT data FROM plugin_catalog_entries WHERE marketplace_id=$1 AND name=$2",
             )
+            .bind(marketplace_id)
+            .bind(name)
+            .fetch_optional(&self.pool)
             .await
-            .map_err(|err| err.to_string())
+            .map_err(db_error)?,
+        )
     }
 
     pub async fn replace_plugin_catalog_entry(
         &self,
         record: &PluginCatalogRecord,
     ) -> Result<(), String> {
-        self.plugin_catalog_entries
-            .replace_one(doc! { "id": &record.id }, record, upsert_options())
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
+        sqlx::query("INSERT INTO plugin_catalog_entries(id,plugin_key,marketplace_id,owner_user_id,name,display_name,category,visibility,enabled,featured,updated_at,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(id) DO UPDATE SET plugin_key=EXCLUDED.plugin_key,marketplace_id=EXCLUDED.marketplace_id,owner_user_id=EXCLUDED.owner_user_id,name=EXCLUDED.name,display_name=EXCLUDED.display_name,category=EXCLUDED.category,visibility=EXCLUDED.visibility,enabled=EXCLUDED.enabled,featured=EXCLUDED.featured,updated_at=EXCLUDED.updated_at,data=EXCLUDED.data")
+            .bind(&record.id).bind(&record.plugin_key).bind(&record.marketplace_id).bind(&record.owner_user_id).bind(&record.name).bind(&record.display_name).bind(&record.interface.category).bind(&record.visibility).bind(record.enabled).bind(record.featured).bind(timestamp(&record.updated_at)?).bind(json(record)?)
+            .execute(&self.pool).await.map(|_| ()).map_err(db_error)
     }
 
     pub async fn list_plugin_releases(
@@ -400,83 +324,41 @@ impl AppStore {
         plugin_id: &str,
         include_revoked: bool,
     ) -> Result<Vec<PluginReleaseRecord>, String> {
-        let mut filter = doc! { "plugin_id": plugin_id };
-        if !include_revoked {
-            filter.insert("revoked_at", doc! { "$eq": null });
-        }
-        let options = FindOptions::builder()
-            .sort(doc! { "published_at": -1, "version": -1 })
-            .build();
-        let releases: Vec<PluginReleaseRecord> = self
-            .plugin_releases
-            .find(filter, options)
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())?;
-        let mut ready = Vec::with_capacity(releases.len());
-        for release in releases {
-            if self.plugin_release_is_ready(release.id.as_str()).await? {
-                ready.push(release);
-            }
-        }
-        Ok(ready)
+        decode_all(sqlx::query_scalar("SELECT r.data FROM plugin_releases r LEFT JOIN plugin_release_publication_states s ON s.release_id=r.id WHERE r.plugin_id=$1 AND ($2 OR r.revoked_at IS NULL) AND COALESCE(s.ready,TRUE) ORDER BY r.published_at DESC,r.version DESC").bind(plugin_id).bind(include_revoked).fetch_all(&self.pool).await.map_err(db_error)?)
     }
 
     pub async fn get_plugin_release(
         &self,
         id: &str,
     ) -> Result<Option<PluginReleaseRecord>, String> {
-        let release = self
-            .plugin_releases
-            .find_one(doc! { "id": id }, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        if release.is_some() && !self.plugin_release_is_ready(id).await? {
-            return Ok(None);
-        }
-        Ok(release)
+        decode_optional(sqlx::query_scalar("SELECT r.data FROM plugin_releases r LEFT JOIN plugin_release_publication_states s ON s.release_id=r.id WHERE r.id=$1 AND COALESCE(s.ready,TRUE)").bind(id).fetch_optional(&self.pool).await.map_err(db_error)?)
     }
 
     pub async fn list_plugin_releases_by_ids(
         &self,
         ids: &[String],
     ) -> Result<Vec<PluginReleaseRecord>, String> {
-        let ids: Vec<String> = ids
+        let ids = ids
             .iter()
             .map(|id| id.trim())
             .filter(|id| !id.is_empty())
-            .map(ToOwned::to_owned)
-            .collect();
+            .collect::<Vec<_>>();
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let releases: Vec<PluginReleaseRecord> = self
-            .plugin_releases
-            .find(doc! { "id": { "$in": ids } }, None)
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())?;
-        let mut ready = Vec::with_capacity(releases.len());
-        for release in releases {
-            if self.plugin_release_is_ready(release.id.as_str()).await? {
-                ready.push(release);
-            }
-        }
-        Ok(ready)
+        decode_all(sqlx::query_scalar("SELECT r.data FROM plugin_releases r LEFT JOIN plugin_release_publication_states s ON s.release_id=r.id WHERE r.id=ANY($1) AND COALESCE(s.ready,TRUE)").bind(ids).fetch_all(&self.pool).await.map_err(db_error)?)
     }
 
     pub async fn get_plugin_release_any_state(
         &self,
         id: &str,
     ) -> Result<Option<PluginReleaseRecord>, String> {
-        self.plugin_releases
-            .find_one(doc! { "id": id }, None)
-            .await
-            .map_err(|err| err.to_string())
+        fetch_one(
+            "SELECT data FROM plugin_releases WHERE id=$1",
+            id,
+            &self.pool,
+        )
+        .await
     }
 
     pub async fn find_plugin_release_by_version(
@@ -484,18 +366,35 @@ impl AppStore {
         plugin_id: &str,
         version: &str,
     ) -> Result<Option<PluginReleaseRecord>, String> {
-        self.plugin_releases
-            .find_one(doc! { "plugin_id": plugin_id, "version": version }, None)
+        decode_optional(
+            sqlx::query_scalar(
+                "SELECT data FROM plugin_releases WHERE plugin_id=$1 AND version=$2",
+            )
+            .bind(plugin_id)
+            .bind(version)
+            .fetch_optional(&self.pool)
             .await
-            .map_err(|err| err.to_string())
+            .map_err(db_error)?,
+        )
     }
 
-    pub async fn insert_plugin_release(&self, record: &PluginReleaseRecord) -> Result<(), String> {
-        self.plugin_releases
-            .insert_one(record, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
+    pub async fn insert_plugin_release_pending(
+        &self,
+        record: &PluginReleaseRecord,
+    ) -> Result<(), String> {
+        let state = PluginReleasePublicationState {
+            release_id: record.id.clone(),
+            ready: false,
+            updated_at: now_rfc3339(),
+        };
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        sqlx::query("INSERT INTO plugin_releases(id,plugin_id,version,release_channel,published_at,revoked_at,data) VALUES($1,$2,$3,$4,$5,$6,$7)")
+            .bind(&record.id).bind(&record.plugin_id).bind(&record.version).bind(&record.release_channel).bind(timestamp(&record.published_at)?).bind(optional_timestamp(record.revoked_at.as_deref())?).bind(json(record)?)
+            .execute(&mut *tx).await.map_err(db_error)?;
+        sqlx::query("INSERT INTO plugin_release_publication_states(release_id,ready,updated_at,data) VALUES($1,$2,$3,$4)")
+            .bind(&state.release_id).bind(state.ready).bind(timestamp(&state.updated_at)?).bind(json(&state)?)
+            .execute(&mut *tx).await.map_err(db_error)?;
+        tx.commit().await.map_err(db_error)
     }
 
     pub async fn set_plugin_release_publication_ready(
@@ -508,27 +407,14 @@ impl AppStore {
             ready,
             updated_at: now_rfc3339(),
         };
-        self.plugin_release_publication_states
-            .replace_one(doc! { "release_id": release_id }, state, upsert_options())
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    }
-
-    async fn plugin_release_is_ready(&self, release_id: &str) -> Result<bool, String> {
-        self.plugin_release_publication_states
-            .find_one(doc! { "release_id": release_id }, None)
-            .await
-            .map(|state| state.is_none_or(|state| state.ready))
-            .map_err(|err| err.to_string())
+        sqlx::query("INSERT INTO plugin_release_publication_states(release_id,ready,updated_at,data) VALUES($1,$2,$3,$4) ON CONFLICT(release_id) DO UPDATE SET ready=EXCLUDED.ready,updated_at=EXCLUDED.updated_at,data=EXCLUDED.data")
+            .bind(release_id).bind(ready).bind(timestamp(&state.updated_at)?).bind(json(&state)?).execute(&self.pool).await.map(|_| ()).map_err(db_error)
     }
 
     pub async fn replace_plugin_release(&self, record: &PluginReleaseRecord) -> Result<(), String> {
-        self.plugin_releases
-            .replace_one(doc! { "id": &record.id }, record, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
+        sqlx::query("UPDATE plugin_releases SET plugin_id=$1,version=$2,release_channel=$3,published_at=$4,revoked_at=$5,data=$6 WHERE id=$7")
+            .bind(&record.plugin_id).bind(&record.version).bind(&record.release_channel).bind(timestamp(&record.published_at)?).bind(optional_timestamp(record.revoked_at.as_deref())?).bind(json(record)?).bind(&record.id)
+            .execute(&self.pool).await.map(|_| ()).map_err(db_error)
     }
 
     pub async fn replace_plugin_component_snapshots(
@@ -537,20 +423,23 @@ impl AppStore {
         release_id: &str,
         records: &[PluginComponentSnapshot],
     ) -> Result<(), String> {
-        self.plugin_component_snapshots
-            .delete_many(
-                doc! { "plugin_id": plugin_id, "release_id": release_id },
-                None,
-            )
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        sqlx::query("DELETE FROM plugin_component_snapshots WHERE plugin_id=$1 AND release_id=$2")
+            .bind(plugin_id)
+            .bind(release_id)
+            .execute(&mut *tx)
             .await
-            .map_err(|err| err.to_string())?;
-        if !records.is_empty() {
-            self.plugin_component_snapshots
-                .insert_many(records, None)
-                .await
-                .map_err(|err| err.to_string())?;
+            .map_err(db_error)?;
+        for record in records {
+            let value =
+                serde_json::to_value(record.component.kind).map_err(|error| error.to_string())?;
+            let kind = value
+                .as_str()
+                .ok_or_else(|| "Plugin component kind is not text".to_string())?;
+            sqlx::query("INSERT INTO plugin_component_snapshots(plugin_id,release_id,component_key,component_kind,data) VALUES($1,$2,$3,$4,$5)")
+                .bind(&record.plugin_id).bind(&record.release_id).bind(&record.component.component_key).bind(kind).bind(json(record)?).execute(&mut *tx).await.map_err(db_error)?;
         }
-        Ok(())
+        tx.commit().await.map_err(db_error)
     }
 
     pub async fn list_plugin_component_snapshots(
@@ -558,18 +447,9 @@ impl AppStore {
         plugin_id: &str,
         release_id: &str,
     ) -> Result<Vec<PluginComponentSnapshot>, String> {
-        let options = FindOptions::builder()
-            .sort(doc! { "component.component_key": 1 })
-            .build();
-        self.plugin_component_snapshots
-            .find(
-                doc! { "plugin_id": plugin_id, "release_id": release_id },
-                options,
-            )
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())
+        decode_all(sqlx::query_scalar("SELECT data FROM plugin_component_snapshots WHERE plugin_id=$1 AND release_id=$2 ORDER BY component_key").bind(plugin_id).bind(release_id).fetch_all(&self.pool).await.map_err(db_error)?)
     }
 }
+
+#[cfg(test)]
+mod tests;

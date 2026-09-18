@@ -19,10 +19,11 @@ resolve_local_dev_host_address() {
 }
 
 export_local_env() {
-  local mongo_user mongo_password mongo_port host_address
-  mongo_user="$(env_value MONGODB_USER admin)"
-  mongo_password="$(env_value MONGODB_PASSWORD admin)"
-  mongo_port="$(env_value MONGODB_HOST_PORT 27018)"
+  local postgres_host postgres_port postgres_app_password postgres_migration_password host_address
+  postgres_host="$(env_value POSTGRES_HOST 127.0.0.1)"
+  postgres_port="$(env_value POSTGRES_PORT 5433)"
+  postgres_app_password="$(env_value POSTGRES_APP_PASSWORD chatos_local_app_password)"
+  postgres_migration_password="$(env_value POSTGRES_MIGRATION_PASSWORD chatos_local_migration_password)"
   host_address="$(resolve_local_dev_host_address)"
   export CHATOS_LOCAL_DEV_HOST_ADDRESS="$host_address"
   export CHATOS_ENV="${CHATOS_LOCAL_DEV_ENV:-local}"
@@ -104,14 +105,12 @@ export_local_env() {
   else
     export CADVISOR_DOCKER_SOCKET="${CADVISOR_DOCKER_SOCKET:-/var/run/docker.sock}"
   fi
-  export MONGODB_USER="$mongo_user"
-  export MONGODB_PASSWORD="$mongo_password"
-  export MONGODB_HOST="${MONGODB_HOST:-127.0.0.1}"
-  export MONGODB_PORT="$mongo_port"
-  export MONGODB_AUTH_SOURCE="${MONGODB_AUTH_SOURCE:-admin}"
-  local mongodb_query="authSource=admin&replicaSet=rs0&directConnection=true"
-  export MONGODB_CONNECTION_STRING="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/chatos?${mongodb_query}"
-  export MONGODB_DB="${MONGODB_DB:-chatos}"
+  export POSTGRES_HOST="$postgres_host"
+  export POSTGRES_PORT="$postgres_port"
+  export POSTGRES_ADMIN_USER="${POSTGRES_ADMIN_USER:-chatos_admin}"
+  export POSTGRES_ADMIN_PASSWORD="${POSTGRES_ADMIN_PASSWORD:-chatos_local_admin_password}"
+  export POSTGRES_APP_PASSWORD="$postgres_app_password"
+  export POSTGRES_MIGRATION_PASSWORD="$postgres_migration_password"
 
   export CHATOS_ADMIN_USERNAME="${CHATOS_ADMIN_USERNAME:-admin}"
   export CHATOS_ADMIN_PASSWORD="${CHATOS_ADMIN_PASSWORD:-admin123456}"
@@ -170,17 +169,29 @@ export_local_env() {
   export HOST="${HOST:-0.0.0.0}"
   export BACKEND_PORT="${BACKEND_PORT:-3997}"
   export CHATOS_INTERNAL_MTLS_PORT="${CHATOS_INTERNAL_MTLS_PORT:-3999}"
-  export USER_SERVICE_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/user_service?${mongodb_query}"
-  export MEMORY_ENGINE_MONGODB_URI="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/admin?${mongodb_query}"
-  export PLUGIN_MANAGEMENT_SERVICE_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/plugin_management_service?${mongodb_query}"
-  export CONFIG_CENTER_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/configuration_center?${mongodb_query}"
-  export CONFIG_CENTER_MONGODB_DATABASE="${CONFIG_CENTER_MONGODB_DATABASE:-configuration_center}"
-  export PLUGIN_MANAGEMENT_SERVICE_MONGODB_DATABASE="${PLUGIN_MANAGEMENT_SERVICE_MONGODB_DATABASE:-plugin_management_service}"
-  export LOCAL_CONNECTOR_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/local_connector_service?${mongodb_query}"
-  export TASK_RUNNER_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/task_runner_service?${mongodb_query}"
-  export MCP_MANAGEMENT_DATABASE_URL="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/mcp_management_service?${mongodb_query}"
-  export LEGACY_AUTH_MONGODB_URI="mongodb://${mongo_user}:${mongo_password}@127.0.0.1:${mongo_port}/admin?${mongodb_query}"
-  export LEGACY_AUTH_MONGODB_DATABASE="${LEGACY_AUTH_MONGODB_DATABASE:-legacy_auth}"
+  export CHATOS_DATABASE_URL="postgresql://chatos_app:${CHATOS_APP_PASSWORD:-$postgres_app_password}@${postgres_host}:${postgres_port}/chatos"
+  export CONFIG_CENTER_DATABASE_URL="postgresql://config_center_app:${CONFIG_CENTER_APP_PASSWORD:-$postgres_app_password}@${postgres_host}:${postgres_port}/configuration_center"
+  export USER_SERVICE_DATABASE_URL="postgresql://user_service_app:${USER_SERVICE_APP_PASSWORD:-$postgres_app_password}@${postgres_host}:${postgres_port}/user_service"
+  export PLUGIN_MANAGEMENT_SERVICE_DATABASE_URL="postgresql://plugin_management_app:${PLUGIN_MANAGEMENT_APP_PASSWORD:-$postgres_app_password}@${postgres_host}:${postgres_port}/plugin_management_service"
+  export LOCAL_CONNECTOR_DATABASE_URL="postgresql://local_connector_app:${LOCAL_CONNECTOR_APP_PASSWORD:-$postgres_app_password}@${postgres_host}:${postgres_port}/local_connector_service"
+  export TASK_RUNNER_DATABASE_URL="postgresql://task_runner_app:${TASK_RUNNER_APP_PASSWORD:-$postgres_app_password}@${postgres_host}:${postgres_port}/task_runner_service"
+  export MCP_MANAGEMENT_DATABASE_URL="postgresql://mcp_management_app:${MCP_MANAGEMENT_APP_PASSWORD:-$postgres_app_password}@${postgres_host}:${postgres_port}/mcp_management_service"
+  export MEMORY_ENGINE_DATABASE_URL="postgresql://memory_engine_app:${MEMORY_ENGINE_APP_PASSWORD:-$postgres_app_password}@${postgres_host}:${postgres_port}/memory_engine"
+  export CONFIG_CENTER_POSTGRES_POOL_MAX_CONNECTIONS="${CONFIG_CENTER_POSTGRES_POOL_MAX_CONNECTIONS:-10}"
+  export CONFIG_CENTER_POSTGRES_POOL_MIN_CONNECTIONS="${CONFIG_CENTER_POSTGRES_POOL_MIN_CONNECTIONS:-1}"
+  export CONFIG_CENTER_POSTGRES_POOL_ACQUIRE_TIMEOUT_MS="${CONFIG_CENTER_POSTGRES_POOL_ACQUIRE_TIMEOUT_MS:-5000}"
+  export CONFIG_CENTER_POSTGRES_POOL_IDLE_TIMEOUT_MS="${CONFIG_CENTER_POSTGRES_POOL_IDLE_TIMEOUT_MS:-600000}"
+  export CONFIG_CENTER_POSTGRES_POOL_MAX_LIFETIME_MS="${CONFIG_CENTER_POSTGRES_POOL_MAX_LIFETIME_MS:-1800000}"
+  export CONFIG_CENTER_POSTGRES_STATEMENT_TIMEOUT_MS="${CONFIG_CENTER_POSTGRES_STATEMENT_TIMEOUT_MS:-30000}"
+  export CONFIG_CENTER_POSTGRES_LOCK_TIMEOUT_MS="${CONFIG_CENTER_POSTGRES_LOCK_TIMEOUT_MS:-5000}"
+  export CHATOS_MIGRATION_DATABASE_URL="postgresql://chatos_migrator:${CHATOS_MIGRATOR_PASSWORD:-$postgres_migration_password}@${postgres_host}:${postgres_port}/chatos"
+  export CONFIG_CENTER_MIGRATION_DATABASE_URL="postgresql://config_center_migrator:${CONFIG_CENTER_MIGRATOR_PASSWORD:-$postgres_migration_password}@${postgres_host}:${postgres_port}/configuration_center"
+  export USER_SERVICE_MIGRATION_DATABASE_URL="postgresql://user_service_migrator:${USER_SERVICE_MIGRATOR_PASSWORD:-$postgres_migration_password}@${postgres_host}:${postgres_port}/user_service"
+  export PLUGIN_MANAGEMENT_MIGRATION_DATABASE_URL="postgresql://plugin_management_migrator:${PLUGIN_MANAGEMENT_MIGRATOR_PASSWORD:-$postgres_migration_password}@${postgres_host}:${postgres_port}/plugin_management_service"
+  export LOCAL_CONNECTOR_MIGRATION_DATABASE_URL="postgresql://local_connector_migrator:${LOCAL_CONNECTOR_MIGRATOR_PASSWORD:-$postgres_migration_password}@${postgres_host}:${postgres_port}/local_connector_service"
+  export TASK_RUNNER_MIGRATION_DATABASE_URL="postgresql://task_runner_migrator:${TASK_RUNNER_MIGRATOR_PASSWORD:-$postgres_migration_password}@${postgres_host}:${postgres_port}/task_runner_service"
+  export MCP_MANAGEMENT_MIGRATION_DATABASE_URL="postgresql://mcp_management_migrator:${MCP_MANAGEMENT_MIGRATOR_PASSWORD:-$postgres_migration_password}@${postgres_host}:${postgres_port}/mcp_management_service"
+  export MEMORY_ENGINE_MIGRATION_DATABASE_URL="postgresql://memory_engine_migrator:${MEMORY_ENGINE_MIGRATOR_PASSWORD:-$postgres_migration_password}@${postgres_host}:${postgres_port}/memory_engine"
 
   export MEMORY_ENGINE_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
   export MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL="https://127.0.0.1:${USER_SERVICE_INTERNAL_MTLS_PORT}"
@@ -209,7 +220,7 @@ export_local_env() {
   export USER_SERVICE_TASK_RUNNER_BASE_URL="https://127.0.0.1:${TASK_RUNNER_INTERNAL_MTLS_PORT}"
   export MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL="https://127.0.0.1:${CHATOS_INTERNAL_MTLS_PORT}"
   export MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL="https://127.0.0.1:${LOCAL_CONNECTOR_INTERNAL_MTLS_PORT}"
-  export TASK_RUNNER_STORE_MODE="${TASK_RUNNER_STORE_MODE:-mongo}"
+  export TASK_RUNNER_STORE_MODE="${TASK_RUNNER_STORE_MODE:-postgres}"
   # Do not inject a local default for TASK_RUNNER_WORKER_CONCURRENCY here.
   # Task Runner loads the authoritative value from Configuration Center at
   # startup unless the operator explicitly exports an environment override.
@@ -360,8 +371,8 @@ infra_service_host_port() {
     consul)
       printf '%s\n' "${CONSUL_HTTP_PORT:-8500}"
       ;;
-    mongodb)
-      printf '%s\n' "${MONGODB_HOST_PORT:-27018}"
+    postgres)
+      printf '%s\n' "${POSTGRES_PORT:-5433}"
       ;;
     minio)
       printf '%s\n' "${MINIO_API_PORT:-39000}"
@@ -402,6 +413,8 @@ start_infra() {
   fi
   echo "[INFO] reconciling local-dev infrastructure containers: ${INFRA_SERVICES[*]}"
   compose up -d "${INFRA_SERVICES[@]}"
+  echo "[INFO] provisioning isolated PostgreSQL databases and roles"
+  compose run --rm postgres-provision
 }
 
 stop_docker_app_services() {

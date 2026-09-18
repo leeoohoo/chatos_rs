@@ -330,6 +330,12 @@ fn render_prometheus_metrics() -> String {
         "chatos_conversation_turns_active{{service=\"chatos-backend\"}} {}",
         crate::services::runtime_guidance_manager::runtime_guidance_manager().active_turn_count()
     );
+    if let Ok(pool) = crate::db::get_pool() {
+        body.push_str(&chatos_postgres::render_pool_metrics(
+            pool,
+            "chatos-backend",
+        ));
+    }
     body
 }
 

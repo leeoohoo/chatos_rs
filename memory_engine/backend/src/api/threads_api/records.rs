@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, Query, State},
+    http::StatusCode,
     Json,
 };
 use serde_json::json;
@@ -49,18 +50,23 @@ pub async fn list_records(
 ) -> Result<Json<ThreadRecordsPageResponse>, (axum::http::StatusCode, String)> {
     let tenant_id = auth.resolve_tenant_scope(query.tenant_id.as_deref())?;
     let asc = !matches!(query.order.as_deref(), Some("desc"));
-    let page = records::list_records_page(
-        &state.pool,
-        thread_id.as_str(),
-        tenant_id.as_deref(),
-        query.source_id.as_deref(),
-        query.role.as_deref(),
-        query.record_type.as_deref(),
-        query.summary_status.as_deref(),
-        query.limit.unwrap_or(100),
-        query.offset.unwrap_or(0),
+    let values = records::ListRecordsQuery {
+        thread_id: thread_id.as_str(),
+        tenant_id: tenant_id.as_deref(),
+        source_id: query.source_id.as_deref(),
+        role: query.role.as_deref(),
+        record_type: query.record_type.as_deref(),
+        summary_status: query.summary_status.as_deref(),
+        after_created_at: query.after_created_at.as_deref(),
+        after_id: query.after_id.as_deref(),
+        limit: query.limit.unwrap_or(100),
+        offset: query.offset.unwrap_or(0),
         asc,
-    )
+    };
+    values
+        .cursor()
+        .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
+    let page = records::list_records_page(&state.pool, values)
     .await
     .map_err(internal_error)?;
     Ok(Json(page))

@@ -2,19 +2,14 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::sync::mpsc;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use futures_util::TryStreamExt;
-use mongodb::{
-    bson::{self, doc, Bson, Document},
-    options::{FindOneOptions, FindOptions, IndexOptions, ReplaceOptions},
-    Client, Collection, IndexModel,
-};
 use parking_lot::RwLock;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 use tracing::warn;
 
 use crate::config::{AppConfig, StoreMode};
@@ -33,27 +28,16 @@ mod app_prompts;
 mod app_runs;
 mod app_tasks;
 mod app_users;
-mod codec;
+pub(crate) mod cloud_agent;
 mod in_memory;
-mod mongo;
-mod mongo_support;
+mod postgres;
 mod task_support;
 
-use self::codec::ask_user_prompt_status_to_str;
-use self::mongo_support::{
-    bson_string_field, bson_usize_field, build_limit_stage, build_mongo_prompt_filter,
-    build_mongo_run_filter, build_mongo_task_filter, build_skip_stage,
-    is_mongo_active_run_conflict, is_mongo_active_run_index_conflict,
-    is_mongo_execution_lane_conflict, mongo_find_options,
-};
 use self::task_support::{
     apply_offset_limit, build_page_response, empty_task_stats, slice_page_items, task_due_at,
     task_due_for_scheduler, task_matches_keyword, DEFAULT_PAGE_LIMIT,
 };
 
-const ACTIVE_TASK_RUN_UNIQUE_INDEX_NAME: &str = "idx_task_runs_active_task_unique";
-const ACTIVE_EXECUTION_LANE_UNIQUE_INDEX_NAME: &str = "idx_task_runs_active_execution_lane_unique";
-const TASK_RUNS_TASK_CREATED_INDEX_NAME: &str = "idx_task_runs_task_created_at";
 pub(crate) const EXECUTION_LANE_BUSY_ERROR: &str = "当前执行通道已有正在执行的运行";
 
 fn task_run_status_is_terminal(status: TaskRunStatus) -> bool {
@@ -251,6 +235,7 @@ struct StoreData {
     ask_user_prompts: BTreeMap<String, AskUserPromptRecord>,
     users: BTreeMap<String, UserRecord>,
     task_prerequisites: BTreeMap<String, BTreeSet<String>>,
+    dependency_graph_revision: i64,
     cancel_requested_runs: HashSet<String>,
 }
 
@@ -293,24 +278,6 @@ pub(crate) struct InMemoryStore {
 }
 
 #[derive(Clone)]
-pub(crate) struct MongoStore {
-    client: Client,
-    tasks: Collection<TaskRecord>,
-    user_service_model_source: UserServiceModelSource,
-    runtime_settings: Collection<RuntimeSettingsRecord>,
-    runs: Collection<TaskRunRecord>,
-    run_events: Collection<TaskRunEventRecord>,
-    run_terminal_subscriptions: Collection<RunTerminalSubscriptionRecord>,
-    ask_user_prompts: Collection<AskUserPromptRecord>,
-    users: Collection<UserRecord>,
-    task_prerequisites: Collection<TaskPrerequisiteRecord>,
-    dependency_graph_revisions: Collection<Document>,
-    run_event_persist_sender: mpsc::Sender<TaskRunEventRecord>,
-    cancel_requested_runs: Arc<RwLock<HashSet<String>>>,
-    run_event_sender: broadcast::Sender<TaskRunEventRecord>,
-}
-
-#[derive(Clone)]
 pub(crate) struct UserServiceModelSource {
     base_url: String,
     http_client: reqwest::Client,
@@ -321,7 +288,7 @@ pub(crate) struct UserServiceModelSource {
 pub(crate) enum AppStore {
     #[cfg_attr(not(test), allow(dead_code))]
     InMemory(InMemoryStore),
-    Mongo(MongoStore),
+    Postgres(postgres::PostgresStore),
 }
 
 impl AppStore {
@@ -342,9 +309,46 @@ impl AppStore {
                     )
                 }
             }
-            StoreMode::Mongo => Ok(Self::Mongo(
-                MongoStore::connect(config, run_event_sender).await?,
+            StoreMode::Postgres => Ok(Self::Postgres(
+                postgres::PostgresStore::connect(config, run_event_sender).await?,
             )),
+        }
+    }
+
+    pub(crate) async fn try_acquire_maintenance_lease(
+        &self,
+        lease_name: &str,
+        owner_id: &str,
+        lease_ttl: std::time::Duration,
+    ) -> Result<bool, String> {
+        if lease_name.trim().is_empty() || owner_id.trim().is_empty() {
+            return Err("maintenance lease name and owner must not be empty".to_string());
+        }
+        let lease_ttl_seconds = i64::try_from(lease_ttl.as_secs())
+            .map_err(|_| "maintenance lease TTL is too large".to_string())?;
+        if lease_ttl_seconds == 0 {
+            return Err("maintenance lease TTL must be at least one second".to_string());
+        }
+        match self {
+            Self::InMemory(_) => Ok(true),
+            Self::Postgres(store) => {
+                sqlx::query_scalar::<_, String>(
+                    "INSERT INTO task_runner_maintenance_leases(lease_name,owner_id,lease_until,updated_at) \
+                     VALUES($1,$2,now()+($3::bigint * interval '1 second'),now()) \
+                     ON CONFLICT(lease_name) DO UPDATE SET \
+                     owner_id=EXCLUDED.owner_id,lease_until=EXCLUDED.lease_until,updated_at=now() \
+                     WHERE task_runner_maintenance_leases.owner_id=EXCLUDED.owner_id \
+                        OR task_runner_maintenance_leases.lease_until<=now() \
+                     RETURNING owner_id",
+                )
+                .bind(lease_name)
+                .bind(owner_id)
+                .bind(lease_ttl_seconds)
+                .fetch_optional(store.pool())
+                .await
+                .map(|claimed| claimed.as_deref() == Some(owner_id))
+                .map_err(|error| error.to_string())
+            }
         }
     }
 }

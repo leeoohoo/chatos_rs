@@ -21,8 +21,9 @@ cp docker/bootstrap.conf.example docker/bootstrap.conf
 
 至少检查这些引导值：
 
-- `MONGODB_USER`
-- `MONGODB_PASSWORD`
+- `POSTGRES_ADMIN_PASSWORD`
+- `POSTGRES_APP_PASSWORD`
+- `POSTGRES_MIGRATION_PASSWORD`
 - `RABBITMQ_DEFAULT_PASS`
 - `VALKEY_PASSWORD`
 - `HARNESS_ADMIN_PASSWORD`
@@ -107,7 +108,7 @@ docker/deploy.sh down
 docker/deploy.sh reset
 ```
 
-`reset` 会删除 Compose volumes，包括 MongoDB 数据，仅用于需要清空环境的时候。
+`reset` 会删除 Compose volumes，包括 PostgreSQL 数据，仅用于需要清空环境的时候。
 
 本机开发测试如果不想频繁构建 Docker 镜像，可以使用宿主机开发栈：
 
@@ -117,7 +118,7 @@ make local-dev-status
 make local-dev-stop
 ```
 
-这个入口只用 Docker 启动 MongoDB/Harness 等基础依赖，业务服务在宿主机运行，并自动在 `.chatos-local-dev/config-center-mtls/` 生成本机开发证书。DB Connection Hub 已归档到 `docs/db_connection_hub/`，不会启动。
+这个入口只用 Docker 启动 PostgreSQL/Harness 等基础依赖，先完成 8 个隔离 database 的 provisioning 和 migration，再在宿主机运行业务服务，并自动在 `.chatos-local-dev/config-center-mtls/` 生成本机开发证书。DB Connection Hub 已归档到 `docs/db_connection_hub/`，不会启动。
 
 ## 5. 默认端口
 
@@ -136,7 +137,7 @@ make local-dev-stop
 - Local Connector Service backend：`39230`
 - Official Website：`39251`
 - Official Website backend：`39250`
-- MongoDB host port：`27018`
+- PostgreSQL host port：`5433`
 
 端口可以在 `docker/bootstrap.conf` 里覆盖。
 

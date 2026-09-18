@@ -55,6 +55,7 @@ private final class AgentDirectChatViewModel: ObservableObject {
     private let projectsService: NativeLocalProjectsService
     private var openedStore: SQLiteAgentGroupChatStore?
     private var schedulerTask: Task<Void, Never>?
+    private var changeObservationTask: Task<Void, Never>?
 
     init(
         ownerUserID: String,
@@ -70,6 +71,10 @@ private final class AgentDirectChatViewModel: ObservableObject {
         self.scheduler = scheduler
         self.builderService = builderService
         self.projectsService = projectsService
+    }
+
+    deinit {
+        changeObservationTask?.cancel()
     }
 
     var profilesByID: [String: LocalAgentProfile] {
@@ -104,7 +109,27 @@ private final class AgentDirectChatViewModel: ObservableObject {
 
     func activate() async {
         await load()
+        startChangeObservation()
         startScheduler()
+    }
+
+    private func startChangeObservation() {
+        guard changeObservationTask == nil else { return }
+        let service = service
+        let ownerUserID = ownerUserID
+        let conversationID = conversationID
+        changeObservationTask = Task { [weak self] in
+            let changes = await service.changes(
+                ownerUserID: ownerUserID,
+                roomID: conversationID
+            )
+            for await _ in changes {
+                guard !Task.isCancelled else { break }
+                try? await Task.sleep(for: .milliseconds(120))
+                guard !Task.isCancelled else { break }
+                await self?.load()
+            }
+        }
     }
 
     func load() async {

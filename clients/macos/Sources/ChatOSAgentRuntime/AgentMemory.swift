@@ -34,10 +34,9 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
         self.includeSubjectMemory = profile == "approval" ? false : nil
     }
 
-    /// Local chat Agents own one continuous Memory identity across private chats, teams, Todo
-    /// execution and separate wake-ups. `runID` still namespaces immutable record IDs and audit
-    /// checkpoints, but it must not split the Agent's Memory thread. Tool authority remains bound
-    /// to the current delivery/project and is never widened by remembered content.
+    /// Local chat Agent manager runs own one continuous Memory identity across private chats,
+    /// teams and separate wake-ups. Todo execution deliberately uses the Todo-scoped initializer
+    /// below so execution records never enter the Agent's long-lived communications thread.
     public init(
         tenantID: String,
         agentID: String,
@@ -53,19 +52,45 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
         }), !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
         self.tenantID = tenantID
         self.sourceID = "chatos"
-        self.threadID = "client-agent:group-chat:\(agentID)"
-        self.subjectID = "agent:\(agentID)"
+        self.threadID = "client-agent:manager:\(agentID)"
+        self.subjectID = "agent-manager:\(agentID)"
         self.runID = runID
         self.runtimeScope = runtimeScope
         self.includeSubjectMemory = nil
     }
 
+    /// A Todo owns an isolated Memory identity. It may continue across retries of that same Todo,
+    /// but it never recalls the assignee's manager subject or another Todo's execution history.
+    public init(
+        tenantID: String,
+        todoID: String,
+        runID: UUID,
+        runtimeScope: String
+    ) throws {
+        let identifiers = [tenantID, todoID]
+        guard identifiers.allSatisfy({ value in
+            !value.isEmpty
+                && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
+                && value.rangeOfCharacter(from: .controlCharacters) == nil
+        }), !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
+        self.tenantID = tenantID
+        self.sourceID = "chatos"
+        self.threadID = "client-agent:todo:\(todoID)"
+        self.subjectID = "todo:\(todoID)"
+        self.runID = runID
+        self.runtimeScope = runtimeScope
+        self.includeSubjectMemory = false
+    }
+
     public func recordID(at index: Int) -> String { "client-agent:\(runID):message:\(index)" }
 
-    /// Story and approval threads belong to one run. Local chat Agents deliberately keep one
-    /// thread across wake-ups, so compose may return immutable records written by earlier runs.
+    /// Story and approval threads belong to one run. Manager and Todo threads are stable for their
+    /// respective identity, so compose may return records written by earlier runs of that same
+    /// manager or Todo. The legacy group-chat prefix remains accepted for bound pre-migration runs.
     public var allowsCrossRunHistory: Bool {
-        threadID.hasPrefix("client-agent:group-chat:")
+        threadID.hasPrefix("client-agent:manager:")
+            || threadID.hasPrefix("client-agent:todo:")
+            || threadID.hasPrefix("client-agent:group-chat:")
     }
 
     /// Parses only record IDs emitted by `recordID(at:)`. Memory Engine has already verified the

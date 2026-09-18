@@ -1,84 +1,42 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use mongodb::bson::{doc, Bson, Document};
 use serde_json::Value;
+use sqlx::types::Json;
 
 use crate::models::user_settings::UserSettings;
-use crate::repositories::db::{mongo_find_one_doc, mongo_update_one_doc, with_db};
+use crate::repositories::db::{db_error, with_db};
 
 pub async fn get_user_settings(user_id: &str) -> Result<Option<UserSettings>, String> {
-    with_db(|db| {
-        let user_id = user_id.to_string();
+    with_db(|pool| {
         Box::pin(async move {
-            let doc = mongo_find_one_doc(db, "user_settings", doc! { "user_id": &user_id }).await?;
-            if let Some(doc) = doc {
-                let settings = doc
-                    .get("settings")
-                    .cloned()
-                    .unwrap_or(Bson::Document(Document::new()));
-                return Ok(Some(UserSettings {
-                    user_id,
-                    settings: bson_to_json(settings),
-                }));
-            }
-            Ok(None)
-        })
-    })
-    .await
-}
-
-pub async fn set_user_settings(user_id: &str, settings: &Value) -> Result<(), String> {
-    with_db(|db| {
-        let user_id = user_id.to_string();
-        let settings = settings.clone();
-        Box::pin(async move {
-            let now = crate::core::time::now_rfc3339();
-            mongo_update_one_doc(
-                db,
-                "user_settings",
-                doc! { "user_id": &user_id },
-                doc! { "$set": { "user_id": &user_id, "settings": json_to_bson(settings), "updated_at": &now } },
-                Some(mongodb::options::UpdateOptions::builder().upsert(true).build()),
+            let value = sqlx::query_scalar::<_, Json<Value>>(
+                "SELECT settings FROM user_settings WHERE user_id=$1",
             )
-            .await?;
-            Ok(())
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(db_error)?;
+            Ok(value.map(|Json(settings)| UserSettings {
+                user_id: user_id.to_string(),
+                settings,
+            }))
         })
     })
     .await
 }
-
+pub async fn set_user_settings(user_id: &str, settings: &Value) -> Result<(), String> {
+    with_db(|pool|Box::pin(async move{sqlx::query("INSERT INTO user_settings(user_id,updated_at,settings) VALUES($1,now(),$2) ON CONFLICT(user_id) DO UPDATE SET updated_at=now(),settings=EXCLUDED.settings").bind(user_id).bind(Json(settings.clone())).execute(pool).await.map(|_|()).map_err(db_error)})).await
+}
 pub async fn purge_managed_runtime_settings() -> Result<u64, String> {
-    with_db(|db| {
-        Box::pin(async move {
-            db.collection::<Document>("user_settings")
-                .update_many(
-                    doc! {},
-                    doc! {
-                        "$unset": {
-                            "settings.MAX_ITERATIONS": "",
-                            "settings.TASK_FOLLOW_UP_MAX_ROUNDS": "",
-                            "settings.LOG_LEVEL": "",
-                            "settings.HISTORY_LIMIT": "",
-                            "settings.CHAT_MAX_TOKENS": "",
-                            "settings.ATTACHMENT_TOTAL_MAX_BYTES": "",
-                            "settings.TERMINAL_UI_ENABLED": "",
-                        }
-                    },
-                    None,
-                )
-                .await
-                .map(|result| result.modified_count)
-                .map_err(|err| err.to_string())
-        })
-    })
-    .await
-}
-
-fn bson_to_json(bson: Bson) -> Value {
-    serde_json::to_value(bson).unwrap_or(Value::Null)
-}
-
-fn json_to_bson(json: Value) -> Bson {
-    mongodb::bson::to_bson(&json).unwrap_or(Bson::Null)
+    const KEYS: &[&str] = &[
+        "MAX_ITERATIONS",
+        "TASK_FOLLOW_UP_MAX_ROUNDS",
+        "LOG_LEVEL",
+        "HISTORY_LIMIT",
+        "CHAT_MAX_TOKENS",
+        "ATTACHMENT_TOTAL_MAX_BYTES",
+        "TERMINAL_UI_ENABLED",
+    ];
+    with_db(|pool|Box::pin(async move{sqlx::query("UPDATE user_settings SET settings=settings-$1::text[],updated_at=now() WHERE settings ?| $1::text[]").bind(KEYS).execute(pool).await.map(|result|result.rows_affected()).map_err(db_error)})).await
 }

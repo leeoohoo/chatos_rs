@@ -146,6 +146,7 @@ fn protected_api(state: AppState) -> Router<AppState> {
 pub fn build_public_router(state: AppState) -> Router {
     let router = Router::new()
         .route("/api/health", get(system::health))
+        .route("/metrics", get(system::metrics))
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/register", post(auth::register))
         .route(
@@ -434,8 +435,8 @@ mod tests {
             otlp_endpoint: "http://127.0.0.1:4317".to_string(),
             otlp_trace_sample_ratio: 1.0,
             otlp_export_timeout: std::time::Duration::from_secs(1),
-            database_url: "mongodb://127.0.0.1:1/user_router_tests".to_string(),
-            mongodb_database: "user_router_tests".to_string(),
+            database_url: "postgresql://postgres:postgres@127.0.0.1:1/user_router_tests"
+                .to_string(),
             jwt_secret: "test-secret".to_string(),
             jwt_issuer: "user_service".to_string(),
             user_service_audience: "user_service".to_string(),
@@ -479,6 +480,8 @@ mod tests {
             wechat_mini_program_request_timeout_ms: 5_000,
             wechat_mini_program_bind_ticket_ttl_seconds: 120,
             wechat_mini_program_client_session_ttl_seconds: 604_800,
+            retention_interval: std::time::Duration::from_secs(60),
+            retention_batch_size: 500,
         }
     }
 

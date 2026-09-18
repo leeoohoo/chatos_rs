@@ -23,7 +23,7 @@ use super::{
     list_plugin_install_sources, list_project_bindings, list_sandbox_pairings, list_workspaces,
     mcp_relay, plugin_artifact_create_relay, plugin_artifact_list_relay,
     plugin_artifact_read_relay, plugin_artifact_update_relay, plugin_cancel_relay,
-    plugin_execute_relay, plugin_prepare_relay, plugin_ui_asset_relay,
+    plugin_execute_relay, plugin_prepare_relay, plugin_ui_asset_relay, prometheus_metrics,
     proxy_plugin_release_artifact, remote_connection_command_relay, remote_connection_test_relay,
     remote_sftp_relay, remote_terminal_close_relay, remote_terminal_ws_relay,
     require_internal_auth, require_public_auth, resolve_local_runtime_capabilities, revoke_device,
@@ -270,6 +270,7 @@ pub fn build_public_router(state: AppState) -> Router {
     apply_common_layers(
         Router::new()
             .route("/api/health", get(health_handler))
+            .route("/metrics", get(prometheus_metrics))
             .route("/api/auth/login", post(user_service_public_proxy))
             .route("/api/auth/register", post(user_service_public_proxy))
             .route(

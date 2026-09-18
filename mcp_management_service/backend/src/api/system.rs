@@ -15,7 +15,9 @@ use crate::async_dispatch::AsyncToolDispatchRuntimeStats;
 use crate::auth::require_internal_request;
 use crate::config::AsyncToolDispatchMode;
 use crate::error::ApiError;
-use crate::runtime::{RuntimeInvocationStoreStats, RuntimeSessionStoreStats};
+use crate::runtime::{
+    RuntimeInvocationStoreStats, RuntimeRetentionStats, RuntimeSessionStoreStats,
+};
 use crate::state::AppState;
 
 const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
@@ -27,6 +29,7 @@ pub(super) struct SystemStatsResponse {
     now: String,
     async_tool_dispatch: AsyncToolDispatchStatsResponse,
     runtime_sessions: RuntimeSessionStoreStats,
+    runtime_retention: Option<RuntimeRetentionStats>,
     runtime_invocations: RuntimeInvocationStoreStats,
 }
 
@@ -88,6 +91,10 @@ pub(super) async fn system_stats(
             runtime: state.async_tool_dispatch.runtime_stats(),
         },
         runtime_sessions,
+        runtime_retention: state
+            .runtime_retention
+            .as_ref()
+            .map(|retention| retention.stats()),
         runtime_invocations,
     }))
 }
@@ -96,6 +103,13 @@ pub(super) async fn prometheus_metrics(State(state): State<AppState>) -> impl In
     let stats = state.async_tool_dispatch.rabbitmq_queue_stats().await;
     let mut body =
         chatos_queue_observability::render_prometheus_metrics("mcp-management-service", &stats);
+    if let Some(pool) = state.postgres_pool.as_ref() {
+        body.push_str(&chatos_postgres::render_pool_metrics(
+            pool,
+            "mcp-management",
+        ));
+    }
+    append_async_dispatch_runtime_metrics(&mut body, &state.async_tool_dispatch.runtime_stats());
     match state.runtime_sessions.stats().await {
         Ok(stats) => append_runtime_session_metrics(&mut body, &stats),
         Err(_) => append_runtime_session_metrics_unavailable(&mut body),
@@ -104,7 +118,58 @@ pub(super) async fn prometheus_metrics(State(state): State<AppState>) -> impl In
         Ok(stats) => append_runtime_invocation_metrics(&mut body, &stats),
         Err(_) => append_runtime_invocation_metrics_unavailable(&mut body),
     }
+    if let Some(retention) = state.runtime_retention.as_ref() {
+        append_runtime_retention_metrics(&mut body, &retention.stats());
+    }
     ([(header::CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE)], body)
+}
+
+fn append_async_dispatch_runtime_metrics(body: &mut String, stats: &AsyncToolDispatchRuntimeStats) {
+    append_counter(
+        body,
+        "chatos_mcp_expired_invocation_recovery_claimed_total",
+        "Expired MCP Runtime Invocations claimed for recovery.",
+        stats.expired_recovery_claimed_total,
+    );
+    append_counter(
+        body,
+        "chatos_mcp_expired_invocation_recovery_completed_total",
+        "Expired MCP Runtime Invocations fully terminalized and reduced.",
+        stats.expired_recovery_completed_total,
+    );
+    append_counter(
+        body,
+        "chatos_mcp_expired_invocation_recovery_failed_total",
+        "Expired MCP Runtime Invocation recovery attempts that failed.",
+        stats.expired_recovery_failed_total,
+    );
+}
+
+fn append_runtime_retention_metrics(body: &mut String, stats: &RuntimeRetentionStats) {
+    append_counter(
+        body,
+        "chatos_mcp_runtime_retention_successful_runs_total",
+        "Successful MCP runtime retention runs.",
+        stats.successful_runs_total,
+    );
+    append_counter(
+        body,
+        "chatos_mcp_runtime_retention_failed_runs_total",
+        "Failed MCP runtime retention runs.",
+        stats.failed_runs_total,
+    );
+    append_counter(
+        body,
+        "chatos_mcp_runtime_retention_deleted_rows_total",
+        "Expired MCP runtime artifact rows deleted by retention.",
+        stats.deleted_rows_total,
+    );
+    append_gauge(
+        body,
+        "chatos_mcp_runtime_retention_last_success_unix",
+        "Unix timestamp of the last successful MCP runtime retention run; zero means none.",
+        stats.last_success_unix.unwrap_or_default(),
+    );
 }
 
 fn append_runtime_session_metrics(body: &mut String, stats: &RuntimeSessionStoreStats) {

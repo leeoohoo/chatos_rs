@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, Query, State},
+    http::StatusCode,
     Json,
 };
 use serde_json::json;
@@ -75,25 +76,29 @@ pub async fn list_threads_query(
     Query(query): Query<AdminListThreadsQuery>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
     let tenant_id = auth.resolve_tenant_scope(query.tenant_id.as_deref())?;
-    let items = threads::list_threads(
-        &state.pool,
-        threads::ListThreadsQuery {
-            tenant_id: tenant_id.as_deref(),
-            source_id: query.source_id.as_deref(),
-            subject_id: query.subject_id.as_deref(),
-            external_thread_id: query.external_thread_id.as_deref(),
-            session_id: query.session_id.as_deref(),
-            contact_id: query.contact_id.as_deref(),
-            project_id: query.project_id.as_deref(),
-            agent_id: query.agent_id.as_deref(),
-            mapping_source: query.mapping_source.as_deref(),
-            mapping_version: query.mapping_version.as_deref(),
-            thread_label: query.thread_label.as_deref(),
-            status: query.status.as_deref(),
-            limit: query.limit.unwrap_or(200),
-            offset: query.offset.unwrap_or(0),
-        },
-    )
+    let values = threads::ListThreadsQuery {
+        tenant_id: tenant_id.as_deref(),
+        source_id: query.source_id.as_deref(),
+        subject_id: query.subject_id.as_deref(),
+        external_thread_id: query.external_thread_id.as_deref(),
+        session_id: query.session_id.as_deref(),
+        contact_id: query.contact_id.as_deref(),
+        project_id: query.project_id.as_deref(),
+        agent_id: query.agent_id.as_deref(),
+        mapping_source: query.mapping_source.as_deref(),
+        mapping_version: query.mapping_version.as_deref(),
+        thread_label: query.thread_label.as_deref(),
+        status: query.status.as_deref(),
+        before_updated_at: query.before_updated_at.as_deref(),
+        before_created_at: query.before_created_at.as_deref(),
+        before_id: query.before_id.as_deref(),
+        limit: query.limit.unwrap_or(200),
+        offset: query.offset.unwrap_or(0),
+    };
+    values
+        .cursor()
+        .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
+    let items = threads::list_threads(&state.pool, values)
     .await
     .map_err(internal_error)?;
     Ok(Json(json!({ "items": items })))

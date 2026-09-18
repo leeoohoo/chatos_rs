@@ -9,8 +9,9 @@ use crate::providers::{
 use crate::routing::RoutingEngine;
 use crate::runtime::{
     RuntimeExecutionScopeStore, RuntimeGrantService, RuntimeInvocationQuota,
-    RuntimeInvocationQuotaLimits, RuntimeInvocationStore, RuntimeSessionCacheLimits,
-    RuntimeSessionCloseStore, RuntimeSessionStore, RuntimeToolBatchStore,
+    RuntimeInvocationQuotaLimits, RuntimeInvocationStore, RuntimeRetention,
+    RuntimeSessionCacheLimits, RuntimeSessionCloseStore, RuntimeSessionStore,
+    RuntimeToolBatchStore,
 };
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
 use std::sync::Arc;
@@ -39,6 +40,7 @@ const INVOCATION_DEVICE_ACTIVE_LIMIT_CONFIG_KEY: &str =
 #[derive(Clone)]
 pub struct AppState {
     pub config: AppConfig,
+    pub(crate) postgres_pool: Option<chatos_postgres::PgPool>,
     pub routing: RoutingEngine,
     pub plugin_management_client: PluginManagementClient,
     pub providers: ProviderDispatcher,
@@ -47,6 +49,7 @@ pub struct AppState {
     pub runtime_grants: RuntimeGrantService,
     pub runtime_sessions: RuntimeSessionStore,
     pub runtime_session_closes: RuntimeSessionCloseStore,
+    pub runtime_retention: Option<RuntimeRetention>,
     pub runtime_execution_scopes: RuntimeExecutionScopeStore,
     pub runtime_invocations: RuntimeInvocationStore,
     pub runtime_tool_batches: RuntimeToolBatchStore,
@@ -57,6 +60,10 @@ impl AppState {
     pub async fn new(config: AppConfig) -> Result<Self, String> {
         let (runtime_session_cache_limits, runtime_invocation_quota) =
             load_runtime_managed_resources().await?;
+        let runtime_database_pool = match config.runtime_session_database_url.as_deref() {
+            Some(database_url) => Some(crate::postgres::connect(database_url).await?),
+            None => None,
+        };
         let plugin_management_client = PluginManagementClient::new(
             PluginManagementClientConfig::new(
                 config.plugin_management_service_base_url.clone(),
@@ -69,11 +76,11 @@ impl AppState {
             .map_err(|err| format!("build plugin management client config failed: {err}"))?,
         )
         .map_err(|err| format!("initialize Plugin Management client failed: {err}"))?;
-        let skill_attestations = Arc::new(match config.runtime_session_database_url.as_deref() {
-            Some(database_url) => {
-                crate::providers::plugin_components::SkillActivationAttestationService::connect(
+        let skill_attestations = Arc::new(match runtime_database_pool.as_ref() {
+            Some(pool) => {
+                crate::providers::plugin_components::SkillActivationAttestationService::from_pool(
                     config.runtime_grant_secret.as_str(),
-                    database_url,
+                    pool.clone(),
                 )
                 .await?
             }
@@ -107,21 +114,16 @@ impl AppState {
             },
             skill_attestations.clone(),
         )?;
-        let runtime_sessions = match config.runtime_session_database_url.as_deref() {
-            Some(database_url) => {
-                RuntimeSessionStore::connect(
-                    database_url,
-                    config.runtime_session_encryption_secret.as_str(),
-                    runtime_session_cache_limits,
-                )
-                .await?
-            }
+        let runtime_sessions = match runtime_database_pool.as_ref() {
+            Some(pool) => RuntimeSessionStore::from_pool(
+                pool.clone(),
+                config.runtime_session_encryption_secret.as_str(),
+                runtime_session_cache_limits,
+            )?,
             None => RuntimeSessionStore::memory(),
         };
-        let runtime_invocations = match config.runtime_session_database_url.as_deref() {
-            Some(database_url) => {
-                RuntimeInvocationStore::connect(database_url, runtime_invocation_quota).await?
-            }
+        let runtime_invocations = match runtime_database_pool.as_ref() {
+            Some(pool) => RuntimeInvocationStore::from_pool(pool.clone(), runtime_invocation_quota),
             None => {
                 #[cfg(test)]
                 {
@@ -135,21 +137,30 @@ impl AppState {
                 }
             }
         };
-        let runtime_session_closes = match config.runtime_session_database_url.as_deref() {
-            Some(database_url) => RuntimeSessionCloseStore::connect(database_url).await?,
+        let runtime_session_closes = match runtime_database_pool.as_ref() {
+            Some(pool) => RuntimeSessionCloseStore::from_pool(pool.clone()),
             None => RuntimeSessionCloseStore::memory(),
         };
-        let runtime_execution_scopes = match config.runtime_session_database_url.as_deref() {
-            Some(database_url) => RuntimeExecutionScopeStore::connect(database_url).await?,
+        let runtime_execution_scopes = match runtime_database_pool.as_ref() {
+            Some(pool) => RuntimeExecutionScopeStore::from_pool(pool.clone()),
             None => RuntimeExecutionScopeStore::memory(),
         };
-        let runtime_tool_batches = match config.runtime_session_database_url.as_deref() {
-            Some(database_url) => RuntimeToolBatchStore::connect(database_url).await?,
+        let runtime_tool_batches = match runtime_database_pool.as_ref() {
+            Some(pool) => RuntimeToolBatchStore::from_pool(pool.clone()),
             None => RuntimeToolBatchStore::memory(),
+        };
+        let runtime_retention = match runtime_database_pool.as_ref() {
+            Some(pool) => Some(RuntimeRetention::new(
+                pool.clone(),
+                config.runtime_retention_interval,
+                config.runtime_retention_batch_size,
+            )?),
+            None => None,
         };
         let async_tool_dispatch =
             AsyncToolDispatch::new(config.async_tool_dispatch_topology.clone());
         let state = Self {
+            postgres_pool: runtime_database_pool,
             runtime_grants: RuntimeGrantService::new(
                 config.runtime_grant_secret.clone(),
                 config.runtime_session_ttl,
@@ -161,6 +172,7 @@ impl AppState {
             skill_attestations,
             runtime_sessions,
             runtime_session_closes,
+            runtime_retention,
             runtime_execution_scopes,
             runtime_invocations,
             runtime_tool_batches,

@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { api } from '../../api/client';
 import type { TaskRecord, TaskStatus } from '../../types';
+import type { TaskListCursor } from './useTasksPageData';
 
 type UseTasksPageEffectsParams = {
   visibleTasks?: TaskRecord[];
@@ -19,6 +20,7 @@ type UseTasksPageEffectsParams = {
   subtasksParentTask: TaskRecord | null;
   setSelectedTaskIds: Dispatch<SetStateAction<string[]>>;
   setTaskPage: Dispatch<SetStateAction<number>>;
+  setTaskPageCursors: Dispatch<SetStateAction<Array<TaskListCursor | null>>>;
   setDetailTaskId: Dispatch<SetStateAction<string | null>>;
   setDetailTaskPreview: Dispatch<SetStateAction<TaskRecord | null>>;
 };
@@ -35,6 +37,7 @@ export function useTasksPageEffects({
   subtasksParentTask,
   setSelectedTaskIds,
   setTaskPage,
+  setTaskPageCursors,
   setDetailTaskId,
   setDetailTaskPreview,
 }: UseTasksPageEffectsParams) {
@@ -58,12 +61,14 @@ export function useTasksPageEffects({
 
   useEffect(() => {
     setTaskPage(1);
+    setTaskPageCursors([null]);
   }, [
     keywordFilter,
     routeModelConfigId,
     routeProjectId,
     scheduledOnly,
     setTaskPage,
+    setTaskPageCursors,
     statusFilter,
     tagFilter,
   ]);

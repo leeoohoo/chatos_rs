@@ -27,47 +27,55 @@ jobs:
             build_args: |
               MANIFEST_PATH=user_service/backend/Cargo.toml
               BIN_NAME=user_service_backend
+              MIGRATION_BIN_NAME=migrate
           - image: chatos-rs-configuration-center-backend
             dockerfile: docker/Dockerfile.rust-service
             build_args: |
               MANIFEST_PATH=Cargo.toml
               PACKAGE_NAME=config_center_service_backend
               BIN_NAME=config_center_service_backend
+              MIGRATION_BIN_NAME=migrate
           - image: chatos-rs-memory-engine-backend
             dockerfile: docker/Dockerfile.rust-service
             build_args: |
               MANIFEST_PATH=memory_engine/backend/Cargo.toml
               BIN_NAME=memory_engine
+              MIGRATION_BIN_NAME=migrate
           - image: chatos-rs-plugin-management-backend
             dockerfile: docker/Dockerfile.rust-service
             build_args: |
               MANIFEST_PATH=Cargo.toml
               PACKAGE_NAME=plugin_management_service_backend
               BIN_NAME=plugin_management_service_backend
+              MIGRATION_BIN_NAME=migrate
           - image: chatos-rs-local-connector-service-backend
             dockerfile: docker/Dockerfile.rust-service
             build_args: |
               MANIFEST_PATH=Cargo.toml
               PACKAGE_NAME=local_connector_service_backend
               BIN_NAME=local_connector_service_backend
+              MIGRATION_BIN_NAME=migrate
           - image: chatos-rs-mcp-management-service-backend
             dockerfile: docker/Dockerfile.rust-service
             build_args: |
               MANIFEST_PATH=Cargo.toml
               PACKAGE_NAME=mcp_management_service_backend
               BIN_NAME=mcp_management_service_backend
+              MIGRATION_BIN_NAME=migrate
           - image: chatos-rs-task-runner-backend
             dockerfile: docker/Dockerfile.rust-service
             build_args: |
               MANIFEST_PATH=Cargo.toml
               PACKAGE_NAME=task_runner_service_backend
               BIN_NAME=task_runner_service_backend
+              MIGRATION_BIN_NAME=migrate
           - image: chatos-rs-chatos-backend
             dockerfile: docker/Dockerfile.rust-service
             build_args: |
               MANIFEST_PATH=Cargo.toml
               PACKAGE_NAME=chat_app_server_rs
               BIN_NAME=chat_app_server_rs
+              MIGRATION_BIN_NAME=migrate
           - image: chatos-rs-official-website-backend
             dockerfile: docker/Dockerfile.rust-service
             build_args: |

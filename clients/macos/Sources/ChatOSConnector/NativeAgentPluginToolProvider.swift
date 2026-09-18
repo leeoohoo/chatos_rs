@@ -268,21 +268,6 @@ extension NativeLocalConnectorService {
     }
 }
 
-/// Built-in Skill used by local Agents to keep the normal tool surface small. Installed Plugin
-/// metadata, schemas and processes are revealed lazily and only for the current run.
-enum LocalAgentCapabilityDiscoverySkill {
-    static let instructions = """
-    <skill name="chatos-capability-discovery">
-    当任务需要 Relay 之外的本机工具、项目文件或 Plugin 时，按以下顺序工作：
-    1. 使用 capability_search，用简短任务关键词搜索能力；不要为了探索而列出全部能力。
-    2. 只对最匹配的一个 plugin_option 调用 capability_describe，读取它在本轮可用的工具和参数。项目团队可在这里发现 ChatOS 内置的项目文件与终端 MCP；独立私聊不会获得项目能力。
-    3. 使用 capability_invoke 调用选中的 tool_option。只有需要另一类能力时才继续搜索。
-    4. 能力、项目 ID、项目根目录和本机授权由 ChatOS 内部绑定；不得猜测、索要或回显这些内部值。
-    5. 文件操作默认限定在当前项目；写入、删除、计费或其他高风险动作仍可能要求 Human 确认。
-    </skill>
-    """
-}
-
 private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     static let searchToolName = "capability_search"
     static let describeToolName = "capability_describe"
@@ -456,6 +441,7 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             ))
 
         case Self.invokeToolName:
+            try Task.checkCancellation()
             let arguments = try decode(InvokeArguments.self, from: call.arguments)
             guard let option = options.first(where: { $0.token == arguments.pluginOption }),
                   let toolName = toolNamesByOption[option.token]?[arguments.toolOption] else {
@@ -470,6 +456,7 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 name: toolName,
                 arguments: arguments.arguments.canonicalJSONString
             ))
+            try Task.checkCancellation()
             return .init(
                 redact(result.content),
                 madeProgress: result.madeProgress,
@@ -532,6 +519,7 @@ private struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
     private let runContext: LocalAgentChatRunContext
     private let resolvedProject: NativeResolvedProjectPath
     private let allowedCapabilities: Set<LocalAgentTodoBuiltinCapability>
+    private let lease: NativeAgentBuiltinRunLease
 
     init(
         service: NativeLocalConnectorService,
@@ -543,10 +531,12 @@ private struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
         self.runContext = runContext
         self.resolvedProject = resolvedProject
         self.allowedCapabilities = allowedCapabilities
+        self.lease = .init(service: service, runID: runContext.runID)
     }
 
     func definitions() async throws -> [AgentToolDefinition] {
-        try Self.nativeDefinitions.filter { value in
+        _ = lease
+        return try Self.nativeDefinitions.filter { value in
             guard let name = value.jsonObject?["name"]?.jsonString else { return false }
             return allowedCapabilities.contains(Self.capability(for: name))
         }.map { value in
@@ -575,6 +565,7 @@ private struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
 
     func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         do {
+            try Task.checkCancellation()
             guard allowedCapabilities.contains(Self.capability(for: call.name)) else {
                 return .failure("这个 Todo 的可信执行计划没有授权该基础能力。")
             }
@@ -592,7 +583,10 @@ private struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
                 runContext: runContext,
                 resolvedProject: resolvedProject
             )
+            try Task.checkCancellation()
             return .init(result.canonicalJSONString)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             return .failure(error.localizedDescription)
         }
@@ -625,14 +619,19 @@ extension NativeLocalConnectorService {
         if NativeMCPCodeReadTools.toolDefinitions.contains(where: {
             $0.jsonObject?["name"]?.jsonString == name
         }) {
-            return try await Task.detached {
+            let readTask = Task.detached {
                 try NativeMCPCodeReadTools(
                     workspace: resolvedProject.workspace,
                     projectRoot: projectRoot,
                     requestCWD: nil,
                     defaultToolRoot: nil
                 ).call(name: name, arguments: arguments)
-            }.value
+            }
+            return try await withTaskCancellationHandler {
+                try await readTask.value
+            } onCancel: {
+                readTask.cancel()
+            }
         }
         if NativeMCPCodeWriteStore.toolNames.contains(name) {
             if name == "commit_edit_session" {
@@ -650,7 +649,9 @@ extension NativeLocalConnectorService {
                 guard case .approve = decision else {
                     throw NativePluginRuntimeError.invalidRequest("用户未批准 Agent 修改项目文件")
                 }
+                try Task.checkCancellation()
             }
+            try Task.checkCancellation()
             return try await mcpCodeWriteStore.call(
                 name: name,
                 arguments: arguments,
@@ -702,12 +703,35 @@ extension NativeLocalConnectorService {
         guard case .approve = decision else {
             throw NativePluginRuntimeError.invalidRequest("用户未批准 Agent 执行终端命令")
         }
+        try Task.checkCancellation()
         return try await mcpTerminalStore.execute(
             command: command,
             cwd: cwd,
             projectRoot: projectRoot,
-            background: arguments["background"]?.jsonBool ?? false
+            background: arguments["background"]?.jsonBool ?? false,
+            ownerRunID: runContext.runID
         )
+    }
+
+    func cancelAgentBuiltinTools(runID: String) async {
+        _ = await mcpTerminalStore.cancel(ownerRunID: runID)
+        _ = await mcpCodeWriteStore.discard(runID: runID)
+    }
+}
+
+private final class NativeAgentBuiltinRunLease: @unchecked Sendable {
+    private let service: NativeLocalConnectorService
+    private let runID: String
+
+    init(service: NativeLocalConnectorService, runID: String) {
+        self.service = service
+        self.runID = runID
+    }
+
+    deinit {
+        let service = service
+        let runID = runID
+        Task { await service.cancelAgentBuiltinTools(runID: runID) }
     }
 }
 
@@ -777,6 +801,7 @@ private struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
     }
 
     func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        try Task.checkCancellation()
         guard let definition = nativeToolsByName[call.name],
               let data = call.arguments.data(using: .utf8) else {
             return .failure("Plugin 工具不可用：\(call.name)")
@@ -813,6 +838,7 @@ private struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
         ) else {
             return .failure("用户未批准这次 Plugin 操作。")
         }
+        try Task.checkCancellation()
         let rawResult = try await runtimeStore.call(
             adapterSessionID: identity.adapterSessionID,
             invocationID: call.id,
@@ -820,6 +846,7 @@ private struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
             arguments: arguments,
             timeout: .milliseconds(policy.timeoutMilliseconds)
         )
+        try Task.checkCancellation()
         let deviceID = try await service.localProjectDeviceID(ownerUserID: ownerUserID)
         guard let deviceID else { return .failure("Plugin 本机设备身份无效。") }
         let registered = try await runtimeStore.registerArtifacts(

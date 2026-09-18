@@ -63,15 +63,18 @@ actor LocalAgentGroupChatRunSession {
     private var run: LocalAgentGroupChatRun
     private let store: any LocalAgentGroupChatRunStoring
     private let now: @Sendable () -> Int64
+    private let didPersist: @Sendable (LocalAgentGroupChatRun) async -> Void
 
     init(
         run: LocalAgentGroupChatRun,
         store: any LocalAgentGroupChatRunStoring,
-        now: @escaping @Sendable () -> Int64
+        now: @escaping @Sendable () -> Int64,
+        didPersist: @escaping @Sendable (LocalAgentGroupChatRun) async -> Void = { _ in }
     ) {
         self.run = run
         self.store = store
         self.now = now
+        self.didPersist = didPersist
     }
 
     func record(checkpoint: AgentRunCheckpoint, event: AgentRunEvent) async throws {
@@ -83,6 +86,7 @@ actor LocalAgentGroupChatRunSession {
         run.events.append(event)
         run.updatedAtUnixMs = max(now(), run.updatedAtUnixMs)
         try await store.saveRun(run)
+        await didPersist(run)
     }
 
     func finish(checkpoint: AgentRunCheckpoint) async throws -> LocalAgentGroupChatRun {
@@ -93,6 +97,7 @@ actor LocalAgentGroupChatRunSession {
         run.checkpoint = checkpoint
         run.updatedAtUnixMs = max(now(), run.updatedAtUnixMs)
         try await store.saveRun(run)
+        await didPersist(run)
         return run
     }
 }

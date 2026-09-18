@@ -17,6 +17,7 @@ type TaskListTableProps = {
   page: number;
   pageSize: number;
   total: number;
+  maxReachablePage: number;
   onSelectedTaskIdsChange: (taskIds: string[]) => void;
   onPageChange: (page: number, pageSize: number) => void;
 };
@@ -30,6 +31,7 @@ export function TaskListTable({
   page,
   pageSize,
   total,
+  maxReachablePage,
   onSelectedTaskIdsChange,
   onPageChange,
 }: TaskListTableProps) {
@@ -52,6 +54,16 @@ export function TaskListTable({
         total,
         showSizeChanger: true,
         onChange: onPageChange,
+        showLessItems: true,
+        itemRender: (pageNumber, type, originalElement) => {
+          if (type === 'page' && pageNumber > maxReachablePage) {
+            return <span aria-disabled="true">{pageNumber}</span>;
+          }
+          if (type === 'jump-prev' || type === 'jump-next') {
+            return <span aria-disabled="true">•••</span>;
+          }
+          return originalElement;
+        },
       }}
       tableLayout="fixed"
       scroll={{ x: 1650 }}

@@ -130,6 +130,13 @@ async fn health_handler() -> Json<HealthResponse> {
     })
 }
 
+async fn prometheus_metrics(State(state): State<AppState>) -> impl IntoResponse {
+    (
+        [(CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        chatos_postgres::render_pool_metrics(state.store.pool(), "local-connector"),
+    )
+}
+
 async fn system_stats_handler(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,

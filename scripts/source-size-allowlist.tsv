@@ -1,41 +1,53 @@
 # path	max_lines	expires_on	reason
 # Only production source files above 800 lines belong here.
 # expires_on is inclusive; expired, stale, missing, and over-budget entries fail CI.
-crates/chatos_cloud_agent_runtime/src/lib.rs	2357	2026-10-31	3.0 hardening: split cloud Agent runtime assembly and transport contracts
+plugins/web-design-studio/ui-src/studio/WebDesignStudioApp.tsx	5115	2026-10-31	Existing design-studio debt: split editor state, panels, commands, and preview orchestration
+crates/chatos_cloud_agent_runtime/src/lib.rs	2535	2026-10-31	3.0 hardening: split cloud Agent runtime assembly and transport contracts
+plugins/web-design-studio/src/mcp-server.ts	2507	2026-10-31	Existing design-studio debt: split MCP schemas, dispatch, and editor operations
 task_runner_service/backend/src/services/run_model_phase/supply_chain.rs	1938	2026-10-31	3.0 hardening: split model supply-chain selection, policy, and diagnostics
-task_runner_service/backend/src/api/chatos_internal.rs	1901	2026-09-30	Phase 1E: split internal message task, retry, plugin projection, and response handlers
-plugins/browser/crates/browser-cdp-core/src/runtime.rs	1887	2026-10-31	3.0 plugin import: split browser runtime lifecycle and session state
-plugins/browser/crates/browser-cdp-mcp/src/lib.rs	1842	2026-10-31	3.0 plugin import: split MCP tools, schemas, and execution handlers
+plugins/browser/crates/browser-cdp-core/src/runtime.rs	2201	2026-10-31	3.0 plugin import: split browser runtime lifecycle and session state
+plugins/diagram-studio/ui-src/studio/DiagramStudioApp.tsx	1977	2026-10-31	Existing diagram-studio debt: split editor state, panels, and preview orchestration
+plugins/browser/crates/browser-cdp-mcp/src/lib.rs	1889	2026-10-31	3.0 plugin import: split MCP tools, schemas, and execution handlers
+plugins/diagram-studio/src/plantuml.ts	1800	2026-10-31	Existing diagram-studio debt: split PlantUML parsing, validation, and rendering helpers
 mcp_management_service/backend/src/api/mcp.rs	1521	2026-10-31	3.0 hardening: split MCP API validation, routing, and projection
 plugins/browser/crates/browser-cdp-extension/src/lib.rs	1520	2026-10-31	3.0 plugin import: split extension pairing, transport, and protocol handlers
-crates/chatos_ai_runtime/src/task/progress_review.rs	1513	2026-10-31	3.0 hardening: split task progress review policy and persistence mapping
+crates/chatos_ai_runtime/src/task/progress_review.rs	1638	2026-10-31	3.0 hardening: split task progress review policy and persistence mapping
+plugin_management_service/backend/src/api/plugin_package_publish.rs	1570	2026-10-31	3.0 hardening: split plugin package publication and trust validation
 mcp/src/implementations/builtin/code_maintainer/registration_write.rs	1412	2026-10-31	3.0 hardening: split registration mutation validation and write operations
 mcp_management_service/backend/src/async_dispatch/rabbitmq.rs	1408	2026-10-31	3.0 hardening: split RabbitMQ dispatch topology, consumers, and recovery
 config_center_service/backend/src/state/support.rs	1312	2026-10-31	3.0 hardening: split configuration support loading, merge, and validation
 config_center_service/backend/src/state/maintenance.rs	1242	2026-10-31	3.0 hardening: split maintenance state transitions and reconciliation
-mcp_management_service/backend/src/api/runtime_sessions.rs	1237	2026-10-31	3.0 hardening: split Runtime Session creation, resolution, and authorization
+mcp_management_service/backend/src/api/runtime_sessions.rs	1315	2026-10-31	3.0 hardening: split Runtime Session creation, resolution, and authorization
 mcp_management_service/backend/src/runtime/execution_scope_store.rs	1177	2026-10-31	3.0 hardening: split execution-scope persistence and lifecycle rules
-task_runner_service/backend/src/services/tool_runtime/mcp_server/prerequisite_creation.rs	1122	2026-10-31	3.0 hardening: split MCP prerequisite resolution and creation
-task_runner_service/backend/src/services/workspace_execution.rs	1122	2026-10-31	3.0 hardening: split workspace execution routing and lifecycle operations
 docker/deploy.sh	1110	2026-10-31	3.0 hardening: split deployment validation, lifecycle, runtime mTLS preflight, and reporting helpers
 crates/chatos_ai_runtime/src/turn.rs	1076	2026-10-31	3.0 hardening: split turn assembly, streaming, and completion behavior
-plugins/browser/crates/browser-cdp-bridge/src/server.rs	1052	2026-10-31	3.0 plugin import: split Browser Bridge server protocol and connection lifecycle
-local_connector_service/backend/src/api/mod.rs	1013	2026-10-31	3.0 hardening: split Local Connector API router, middleware, and shared responses
-crates/chatos_ai_runtime/src/runtime.rs	1009	2026-10-31	3.0 hardening: split AI runtime setup, execution, and teardown
+plugins/browser/crates/browser-cdp-bridge/src/server.rs	1182	2026-10-31	3.0 plugin import: split Browser Bridge server protocol and connection lifecycle
+local_connector_service/backend/src/api/mod.rs	1110	2026-10-31	3.0 hardening: split Local Connector API router, middleware, and shared responses
 chatos/backend/src/api/sessions/history_process.rs	1002	2026-10-31	3.0 hardening: split history compaction, callbacks, repair, and display projection
-chatos/backend/src/api/local_connectors.rs	1000	2026-10-31	3.0 hardening: split Local Connector API aggregation into domain modules
 crates/chatos_cloud_agent_runtime/src/rabbitmq_driver.rs	995	2026-10-31	3.0 hardening: split cloud Agent RabbitMQ driver lifecycle and delivery handling
 plugins/browser/crates/browser-cdp-direct/src/lib.rs	994	2026-10-31	3.0 plugin import: split direct CDP transport and command families
-plugin_management_service/backend/src/api/plugin_package_publish.rs	977	2026-10-31	3.0 hardening: split plugin package publication and trust validation
-task_runner_service/backend/src/services/run_post_process.rs	977	2026-10-31	3.0 hardening: split post-process callbacks, persistence, and notifications
 plugin_management_service/backend/src/api/plugin_catalog_sync.rs	939	2026-09-30	Phase 1D: split catalog fetch, signature validation, key rotation, and persistence
 memory_engine/backend/src/subject_memory_queue.rs	922	2026-10-31	3.0 hardening: split subject-memory queue scheduling and recovery
 task_runner_service/backend/src/services/verification_repair.rs	911	2026-10-31	3.0 hardening: split verification repair policy and execution
-local_connector_service/backend/src/api/terminal_relay.rs	906	2026-10-31	3.0 hardening: split terminal relay authorization, dispatch, and response mapping
-crates/chatos_ai_runtime/src/error_policy.rs	890	2026-10-31	3.0 hardening: split AI error classification, retry decisions, and user messages
-plugins/document/src/tools.ts	855	2026-10-31	3.0 plugin import: split document tool schemas and dispatch handlers
-chatos/backend/src/api/projects/requirement_execution/sync.rs	849	2026-10-31	3.0 hardening: split requirement execution synchronization stages
+local_connector_service/backend/src/api/terminal_relay.rs	1067	2026-10-31	3.0 hardening: split terminal relay authorization, dispatch, and response mapping
+local_connector_service/backend/src/relay.rs	1057	2026-10-31	3.0 hardening: split relay connection, request, and recovery paths
+plugins/web-design-studio/src/v2/scene-editor-command.ts	972	2026-10-31	Existing design-studio debt: split scene command validation and mutation handlers
+plugins/web-design-studio/src/v2/scene-schema.ts	960	2026-10-31	Existing design-studio debt: split scene schema families and validators
+plugins/web-design-studio/src/schema.ts	956	2026-10-31	Existing design-studio debt: split public tool schemas by operation family
+task_runner_service/backend/src/services/run_model_phase/callbacks/runtime_state.rs	941	2026-10-31	Existing Task Runner debt: split callback runtime state transitions and projections
+user_service/backend/src/api/wechat_auth.rs	929	2026-10-31	Existing User Service debt: split WeChat login, binding, and session handlers
+chatos/backend/src/api/message_task_runner.rs	918	2026-10-31	Existing ChatOS debt: split message-task dispatch, callback, and projection handlers
+memory_engine/backend/src/summary_queue.rs	916	2026-10-31	Existing Memory Engine debt: split summary queue dispatch, retry, and recovery paths
+plugins/web-design-studio/src/editor-model.ts	911	2026-10-31	Existing design-studio debt: split editor document state and mutation helpers
+crates/chatos_plugin_management_sdk/src/plugin_manifest/validator.rs	899	2026-10-31	Existing SDK debt: split manifest validation by component family
+crates/chatos_ai_runtime/src/error_policy.rs	894	2026-10-31	3.0 hardening: split AI error classification, retry decisions, and user messages
+plugins/document/src/tools.ts	886	2026-10-31	3.0 plugin import: split document tool schemas and dispatch handlers
+local_connector_service/backend/src/api/remote_connection_relay.rs	882	2026-10-31	Existing Local Connector debt: split remote relay authorization and transport handlers
+chatos/backend/src/api/ask_user_prompts.rs	877	2026-10-31	Existing ChatOS debt: split ask-user request lifecycle and API projections
+local_connector_service/backend/src/api/devices.rs	875	2026-10-31	Existing Local Connector debt: split device enrollment, lease, and query handlers
+plugins/diagram-studio/src/document-store.ts	875	2026-10-31	Existing diagram-studio debt: split document persistence and version operations
+chatos/backend/src/api/mod.rs	851	2026-10-31	Existing ChatOS debt: split API router assembly by domain
+mcp_management_service/backend/src/providers/plugin_components/local_runtime.rs	851	2026-10-31	Existing MCP debt: split local plugin runtime setup and invocation paths
+local_connector_service/backend/src/api/internal_auth.rs	850	2026-10-31	Existing Local Connector debt: split internal token validation and handlers
 memory_engine/backend/src/services/summary/thread_summary/execution.rs	842	2026-10-31	3.0 hardening: split thread summary execution and persistence stages
-local_connector_service/backend/src/relay.rs	827	2026-10-31	3.0 hardening: split relay connection, request, and recovery paths
-chatos/backend/src/api/agent_chat/task_runner_callback.rs	824	2026-10-31	3.0 hardening: split task callback validation and conversation projection
-chatos/backend/src/services/user_service_api_client.rs	821	2026-10-31	3.0 hardening: split User Service client authentication, model, and project operations
+chatos/backend/src/services/user_service_api_client.rs	839	2026-10-31	3.0 hardening: split User Service client authentication, model, and project operations

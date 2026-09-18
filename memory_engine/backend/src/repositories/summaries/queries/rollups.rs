@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use futures_util::StreamExt;
-use mongodb::bson::doc;
-
+use super::super::common::decode_summaries;
 use crate::db::Db;
 use crate::models::EngineSummary;
-
-use super::super::common::{collect_summaries, summary_collection};
+use crate::repositories::postgres::decode;
+use sqlx::types::Json;
+use sqlx::{Postgres, QueryBuilder};
 
 pub async fn find_summary_by_source_digest(
     db: &Db,
@@ -17,23 +16,13 @@ pub async fn find_summary_by_source_digest(
     level: i64,
     source_digest: &str,
 ) -> Result<Option<EngineSummary>, String> {
-    let normalized = source_digest.trim();
-    if normalized.is_empty() {
+    let digest = source_digest.trim();
+    if digest.is_empty() {
         return Ok(None);
     }
-
-    summary_collection(db)
-        .find_one(doc! {
-            "tenant_id": tenant_id,
-            "source_id": source_id,
-            "thread_id": thread_id,
-            "level": level,
-            "source_digest": normalized,
-        })
-        .await
-        .map_err(|err| err.to_string())
+    sqlx::query_scalar::<_,Json<serde_json::Value>>("SELECT data FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND level=$4 AND source_digest=$5 LIMIT 1")
+        .bind(tenant_id).bind(source_id).bind(thread_id).bind(level).bind(digest).fetch_optional(db).await.map_err(|e|e.to_string())?.map(decode).transpose()
 }
-
 pub async fn list_pending_summaries_by_level(
     db: &Db,
     tenant_id: &str,
@@ -41,23 +30,10 @@ pub async fn list_pending_summaries_by_level(
     thread_id: &str,
     level: i64,
 ) -> Result<Vec<EngineSummary>, String> {
-    let cursor = summary_collection(db)
-        .find(doc! {
-            "tenant_id": tenant_id,
-            "source_id": source_id,
-            "thread_id": thread_id,
-            "summary_type": "thread_incremental",
-            "level": level,
-            "status": "done",
-            "rollup_status": "pending",
-        })
-        .sort(doc! {"created_at": 1})
-        .await
-        .map_err(|err| err.to_string())?;
-
-    collect_summaries(cursor).await
+    let rows=sqlx::query_scalar::<_,Json<serde_json::Value>>("SELECT data FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND summary_type='thread_incremental' AND level=$4 AND status='done' AND rollup_status='pending' ORDER BY created_at")
+        .bind(tenant_id).bind(source_id).bind(thread_id).bind(level).fetch_all(db).await.map_err(|e|e.to_string())?;
+    decode_summaries(rows)
 }
-
 pub async fn list_threads_with_pending_rollups(
     db: &Db,
     tenant_id: Option<&str>,
@@ -65,55 +41,18 @@ pub async fn list_threads_with_pending_rollups(
     max_level: i64,
     limit: i64,
 ) -> Result<Vec<(String, String, String)>, String> {
-    let mut match_doc = doc! {
-        "summary_type": "thread_incremental",
-        "status": "done",
-        "rollup_status": "pending",
-        "level": {"$lte": max_level.max(0)}
-    };
-    if let Some(value) = tenant_id.map(str::trim).filter(|value| !value.is_empty()) {
-        match_doc.insert("tenant_id", value);
+    let mut q=QueryBuilder::<Postgres>::new("SELECT tenant_id,source_id,thread_id FROM engine_summaries WHERE summary_type='thread_incremental' AND status='done' AND rollup_status='pending' AND level<=");
+    q.push_bind(max_level.max(0));
+    if let Some(v) = tenant_id.map(str::trim).filter(|v| !v.is_empty()) {
+        q.push(" AND tenant_id=").push_bind(v);
     }
-    if let Some(value) = source_id.map(str::trim).filter(|value| !value.is_empty()) {
-        match_doc.insert("source_id", value);
+    if let Some(v) = source_id.map(str::trim).filter(|v| !v.is_empty()) {
+        q.push(" AND source_id=").push_bind(v);
     }
-
-    let pipeline = vec![
-        doc! {"$match": match_doc},
-        doc! {"$group": {
-            "_id": {
-                "thread_id": "$thread_id",
-                "tenant_id": "$tenant_id",
-                "source_id": "$source_id",
-            },
-            "min_created_at": {"$min": "$created_at"}
-        }},
-        doc! {"$sort": {"min_created_at": 1}},
-        doc! {"$limit": limit.clamp(1, 500)},
-    ];
-
-    let mut rows = db
-        .collection::<mongodb::bson::Document>("engine_summaries")
-        .aggregate(pipeline)
+    q.push(" GROUP BY tenant_id,source_id,thread_id ORDER BY min(created_at) LIMIT ")
+        .push_bind(limit.clamp(1, 500));
+    q.build_query_as()
+        .fetch_all(db)
         .await
-        .map_err(|err| err.to_string())?;
-
-    let mut out = Vec::new();
-    while let Some(row) = rows.next().await {
-        let row = row.map_err(|err| err.to_string())?;
-        let Ok(id_doc) = row.get_document("_id") else {
-            continue;
-        };
-        let Some(thread_id) = id_doc.get_str("thread_id").ok().map(ToOwned::to_owned) else {
-            continue;
-        };
-        let Some(tenant_id) = id_doc.get_str("tenant_id").ok().map(ToOwned::to_owned) else {
-            continue;
-        };
-        let Some(source_id) = id_doc.get_str("source_id").ok().map(ToOwned::to_owned) else {
-            continue;
-        };
-        out.push((tenant_id, source_id, thread_id));
-    }
-    Ok(out)
+        .map_err(|e| e.to_string())
 }

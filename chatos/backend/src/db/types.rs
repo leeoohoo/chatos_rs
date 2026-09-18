@@ -1,76 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use mongodb::{Client, Database as MongoDatabase};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DatabaseType {
-    Mongodb,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MongoConfig {
-    pub host: Option<String>,
-    pub port: Option<u16>,
-    pub database: Option<String>,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub connection_string: Option<String>,
-    pub max_pool_size: Option<u32>,
-    pub min_pool_size: Option<u32>,
-    pub server_selection_timeout_ms: Option<u64>,
-    pub connect_timeout_ms: Option<u64>,
-    pub socket_timeout_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DatabaseConfig {
-    #[serde(rename = "type")]
-    pub db_type: Option<DatabaseType>,
-    pub mongodb: Option<MongoConfig>,
-    pub auto_migrate: Option<bool>,
-    pub debug: Option<bool>,
-}
-
-impl Default for MongoConfig {
-    fn default() -> Self {
-        Self {
-            host: Some("localhost".to_string()),
-            port: Some(27017),
-            database: Some("chatos".to_string()),
-            username: None,
-            password: None,
-            connection_string: None,
-            max_pool_size: Some(100),
-            min_pool_size: Some(0),
-            server_selection_timeout_ms: Some(30000),
-            connect_timeout_ms: Some(20000),
-            socket_timeout_ms: Some(20000),
-        }
-    }
-}
-
-impl Default for DatabaseConfig {
-    fn default() -> Self {
-        Self {
-            db_type: Some(DatabaseType::Mongodb),
-            mongodb: Some(MongoConfig::default()),
-            auto_migrate: Some(true),
-            debug: Some(false),
-        }
-    }
-}
-
-pub enum Database {
-    Mongo { _client: Client, db: MongoDatabase },
+#[derive(Clone)]
+pub struct Database {
+    pub pool: chatos_postgres::PgPool,
 }
 
 impl Database {
-    pub fn mongodb_parts(&self) -> (Client, MongoDatabase) {
-        match self {
-            Self::Mongo { _client, db } => (_client.clone(), db.clone()),
-        }
+    pub fn pool(&self) -> &chatos_postgres::PgPool {
+        &self.pool
     }
 }

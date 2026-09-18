@@ -121,8 +121,8 @@ fn skill_component_binding(
     component_key: &str,
     expires_at_unix: i64,
 ) -> PluginLocalToolComponentBinding {
-    let instructions_sha256 = format!("{}", "2".repeat(64));
-    let resource_manifest_sha256 = format!("{}", "3".repeat(64));
+    let instructions_sha256 = "2".repeat(64);
+    let resource_manifest_sha256 = "3".repeat(64);
     let skill_snapshot = PluginSkillComponentSnapshot {
         protocol_version: SKILL_RUNTIME_PROTOCOL_VERSION,
         skill_id: skill_name.to_string(),

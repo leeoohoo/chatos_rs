@@ -48,6 +48,9 @@ TEST_FILE_PATTERNS = (
     re.compile(r"^test_.*\.py$", re.IGNORECASE),
     re.compile(r".*_test\.py$", re.IGNORECASE),
 )
+GENERATED_FILE_PATTERNS = (
+    re.compile(r"\.generated\.(?:c?m?js|jsx|py|rs|ts|tsx)$", re.IGNORECASE),
+)
 DIFF_HUNK_PATTERN = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 EMPTY_GIT_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
@@ -69,6 +72,8 @@ def is_production_source(path: str | Path) -> bool:
     if any(part.lower() in EXCLUDED_DIRECTORY_NAMES for part in candidate.parts[:-1]):
         return False
     if any(pattern.search(candidate.name) for pattern in TEST_FILE_PATTERNS):
+        return False
+    if any(pattern.search(candidate.name) for pattern in GENERATED_FILE_PATTERNS):
         return False
     return True
 

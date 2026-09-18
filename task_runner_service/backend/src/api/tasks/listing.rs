@@ -8,9 +8,11 @@ pub(in crate::api) async fn list_tasks(
     Extension(current_user): Extension<CurrentUser>,
     Query(query): Query<TaskListQuery>,
 ) -> Result<Json<Vec<TaskRecord>>, ApiError> {
+    let filters = task_filters_for_user(query.into_filters(), &current_user)?;
+    filters.cursor().map_err(ApiError::bad_request)?;
     let tasks = state
         .task_service
-        .list_tasks_filtered(task_filters_for_user(query.into_filters(), &current_user)?)
+        .list_tasks_filtered(filters)
         .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(redact_workspace_paths(&state, tasks)?))
@@ -21,9 +23,11 @@ pub(in crate::api) async fn list_tasks_page(
     Extension(current_user): Extension<CurrentUser>,
     Query(query): Query<TaskListQuery>,
 ) -> Result<Json<PaginatedResponse<TaskRecord>>, ApiError> {
+    let filters = task_filters_for_user(query.into_filters(), &current_user)?;
+    filters.cursor().map_err(ApiError::bad_request)?;
     let page = state
         .task_service
-        .list_tasks_page(task_filters_for_user(query.into_filters(), &current_user)?)
+        .list_tasks_page(filters)
         .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(redact_workspace_paths(&state, page)?))

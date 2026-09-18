@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{error::Error, fmt};
@@ -65,6 +65,9 @@ pub struct AsyncToolDispatchRuntimeStats {
     pub consumer_connected: bool,
     pub cancellation_consumer_connected: bool,
     pub cancellation_publisher_connected: bool,
+    pub expired_recovery_claimed_total: u64,
+    pub expired_recovery_completed_total: u64,
+    pub expired_recovery_failed_total: u64,
 }
 
 #[derive(Default)]
@@ -72,6 +75,9 @@ struct AsyncToolDispatchMetrics {
     consumer_connected: AtomicBool,
     cancellation_consumer_connected: AtomicBool,
     cancellation_publisher_connected: AtomicBool,
+    expired_recovery_claimed_total: AtomicU64,
+    expired_recovery_completed_total: AtomicU64,
+    expired_recovery_failed_total: AtomicU64,
 }
 
 #[derive(Clone)]
@@ -107,7 +113,37 @@ impl AsyncToolDispatch {
                 .metrics
                 .cancellation_publisher_connected
                 .load(Ordering::Relaxed),
+            expired_recovery_claimed_total: self
+                .metrics
+                .expired_recovery_claimed_total
+                .load(Ordering::Relaxed),
+            expired_recovery_completed_total: self
+                .metrics
+                .expired_recovery_completed_total
+                .load(Ordering::Relaxed),
+            expired_recovery_failed_total: self
+                .metrics
+                .expired_recovery_failed_total
+                .load(Ordering::Relaxed),
         }
+    }
+
+    pub(crate) fn observe_expired_recovery_claims(&self, count: usize) {
+        self.metrics
+            .expired_recovery_claimed_total
+            .fetch_add(count as u64, Ordering::Relaxed);
+    }
+
+    pub(crate) fn observe_expired_recovery_completed(&self) {
+        self.metrics
+            .expired_recovery_completed_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn observe_expired_recovery_failed(&self) {
+        self.metrics
+            .expired_recovery_failed_total
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Declare the complete durable topology before any consumer attaches.

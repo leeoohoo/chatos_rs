@@ -1,7 +1,10 @@
 use super::*;
 
+#[path = "user_service/retention.rs"]
+mod retention;
+
 pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
-    vec![
+    let mut definitions = vec![
         definition(
             USER_SERVICE_PORT_CONFIG_KEY,
             "Port",
@@ -778,5 +781,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             368,
             now,
         ),
-    ]
+    ];
+    definitions.extend(retention::definitions(now));
+    definitions
 }

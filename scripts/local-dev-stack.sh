@@ -29,7 +29,7 @@ fi
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-chatos-rs}"
 export CHATOS_LOCAL_DEV_APISIX_CONFIG_PATH="${CHATOS_LOCAL_DEV_APISIX_CONFIG_PATH:-$STATE_DIR/apisix.yaml}"
 
-INFRA_SERVICES=(consul mongodb minio rabbitmq valkey cadvisor prometheus alertmanager tempo grafana harness apisix-gateway)
+INFRA_SERVICES=(consul postgres minio rabbitmq valkey cadvisor prometheus alertmanager tempo grafana harness apisix-gateway)
 DOCKER_APP_SERVICES=(
   configuration-center-backend
   user-service-backend
@@ -92,8 +92,14 @@ case "$ACTION" in
     shift || true
     logs_for "${1:-}"
     ;;
+  postgres-migrate)
+    load_env_file "$ENV_FILE"
+    load_env_file "${CHATOS_LOCAL_DEV_OBJECT_STORAGE_ENV_FILE:-$STATE_DIR/object-storage.env}"
+    export_local_env
+    "$ROOT_DIR/scripts/postgres-migrate-all.sh"
+    ;;
   *)
-    echo "Usage: $0 [up|restart|down|status|logs <service-name>]" >&2
+    echo "Usage: $0 [up|restart|down|status|logs <service-name>|postgres-migrate]" >&2
     exit 2
     ;;
 esac

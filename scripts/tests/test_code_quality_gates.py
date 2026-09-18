@@ -26,6 +26,8 @@ class CodeQualityCommonTests(unittest.TestCase):
         self.assertFalse(is_production_source("frontend/src/App.test.tsx"))
         self.assertFalse(is_production_source("service/tests/integration.rs"))
         self.assertFalse(is_production_source("frontend/dist/index.js"))
+        self.assertFalse(is_production_source("frontend/src/icons.generated.ts"))
+        self.assertFalse(is_production_source("frontend/src/schema.GENERATED.tsx"))
 
     def test_unified_diff_parser_tracks_only_added_head_lines(self) -> None:
         diff = """diff --git a/src/app.rs b/src/app.rs

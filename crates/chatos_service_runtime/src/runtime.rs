@@ -26,6 +26,7 @@ pub struct ChatosServiceRuntime {
     client: reqwest::Client,
     round_robin: Arc<Mutex<HashMap<String, usize>>>,
     discovery_cache: Arc<Mutex<HashMap<String, CachedDiscovery>>>,
+    discovery_refresh_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +54,7 @@ impl ChatosServiceRuntime {
             config,
             round_robin: Arc::new(Mutex::new(HashMap::new())),
             discovery_cache: Arc::new(Mutex::new(HashMap::new())),
+            discovery_refresh_locks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -153,6 +155,21 @@ impl ChatosServiceRuntime {
         {
             return Ok(endpoints);
         }
+        let refresh_lock = {
+            let mut locks = self.discovery_refresh_locks.lock().await;
+            Arc::clone(
+                locks
+                    .entry(service_name.to_string())
+                    .or_insert_with(|| Arc::new(Mutex::new(()))),
+            )
+        };
+        let _refresh_guard = refresh_lock.lock().await;
+        if let Some(endpoints) = self
+            .cached_discovery(service_name, DISCOVERY_CACHE_TTL)
+            .await
+        {
+            return Ok(endpoints);
+        }
         let endpoint = format!(
             "{}/v1/health/service/{}?passing=true",
             consul.trim_end_matches('/'),
@@ -161,31 +178,35 @@ impl ChatosServiceRuntime {
         let response = match self.client.get(endpoint).send().await {
             Ok(response) => response,
             Err(error) => {
-                if let Some(endpoints) = self
-                    .cached_discovery(service_name, DISCOVERY_STALE_TTL)
-                    .await
-                {
-                    tracing::warn!(
-                        service = service_name,
-                        error = %error,
-                        "service discovery failed; using stale cached endpoints"
-                    );
-                    return Ok(endpoints);
-                }
-                return Err(error.into());
+                return self
+                    .stale_discovery_or_error(service_name, error.into())
+                    .await;
             }
         };
         if response.status() == StatusCode::NOT_FOUND {
+            self.cache_discovery(service_name, Vec::new()).await;
             return Ok(Vec::new());
         }
         if !response.status().is_success() {
-            return Err(ServiceRuntimeError::Message(format!(
-                "consul service discovery failed for {}: {}",
-                service_name,
-                response.status().as_u16()
-            )));
+            return self
+                .stale_discovery_or_error(
+                    service_name,
+                    ServiceRuntimeError::Message(format!(
+                        "consul service discovery failed for {}: {}",
+                        service_name,
+                        response.status().as_u16()
+                    )),
+                )
+                .await;
         }
-        let entries = response.json::<Vec<ConsulHealthEntry>>().await?;
+        let entries = match response.json::<Vec<ConsulHealthEntry>>().await {
+            Ok(entries) => entries,
+            Err(error) => {
+                return self
+                    .stale_discovery_or_error(service_name, error.into())
+                    .await;
+            }
+        };
         let mut endpoints = Vec::new();
         for entry in entries {
             let address = non_empty(entry.service.address)
@@ -204,14 +225,37 @@ impl ChatosServiceRuntime {
                 scheme: "http".to_string(),
             });
         }
+        self.cache_discovery(service_name, endpoints.clone()).await;
+        Ok(endpoints)
+    }
+
+    async fn cache_discovery(&self, service_name: &str, endpoints: Vec<ServiceEndpoint>) {
         self.discovery_cache.lock().await.insert(
             service_name.to_string(),
             CachedDiscovery {
-                endpoints: endpoints.clone(),
+                endpoints,
                 refreshed_at: Instant::now(),
             },
         );
-        Ok(endpoints)
+    }
+
+    async fn stale_discovery_or_error(
+        &self,
+        service_name: &str,
+        error: ServiceRuntimeError,
+    ) -> Result<Vec<ServiceEndpoint>, ServiceRuntimeError> {
+        if let Some(endpoints) = self
+            .cached_discovery(service_name, DISCOVERY_STALE_TTL)
+            .await
+        {
+            tracing::warn!(
+                service = service_name,
+                error = %error,
+                "service discovery failed; using stale cached endpoints"
+            );
+            return Ok(endpoints);
+        }
+        Err(error)
     }
 
     async fn cached_discovery(
@@ -463,4 +507,124 @@ fn apply_managed_env_var(key: &str, value: &str) -> usize {
 
 fn client_runtime() -> &'static ChatosServiceRuntime {
     CLIENT_RUNTIME.get_or_init(|| ChatosServiceRuntime::from_env("chatos-client", 80, "/health"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures_util::future::join_all;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::thread;
+
+    fn runtime_for_consul(address: String) -> ChatosServiceRuntime {
+        ChatosServiceRuntime {
+            config: RuntimeConfig {
+                enabled: true,
+                env_name: "test".to_string(),
+                discovery_mode: DiscoveryMode::ConsulOnly,
+                consul_http_addr: Some(address),
+                request_timeout_ms: 1_000,
+                service_name: "runtime-test".to_string(),
+                service_id: "runtime-test-1".to_string(),
+                service_address: "127.0.0.1".to_string(),
+                service_check_address: "127.0.0.1".to_string(),
+                service_port: 80,
+                service_health_path: "/health".to_string(),
+                service_tags: Vec::new(),
+            },
+            client: build_http_client(HttpClientTimeouts::new(Duration::from_secs(1)))
+                .expect("test client"),
+            round_robin: Arc::new(Mutex::new(HashMap::new())),
+            discovery_cache: Arc::new(Mutex::new(HashMap::new())),
+            discovery_refresh_locks: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    fn spawn_http_server(
+        status: &str,
+        body: &str,
+    ) -> (String, Arc<AtomicUsize>, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking test server");
+        let address = format!("http://{}", listener.local_addr().expect("server address"));
+        let count = Arc::new(AtomicUsize::new(0));
+        let server_count = Arc::clone(&count);
+        let status = status.to_string();
+        let body = body.to_string();
+        let handle = thread::spawn(move || {
+            let mut deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let mut accepted = false;
+            while std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        if !accepted {
+                            accepted = true;
+                            deadline = std::time::Instant::now() + Duration::from_millis(500);
+                        }
+                        server_count.fetch_add(1, Ordering::SeqCst);
+                        let mut request = [0u8; 2048];
+                        let _ = stream.read(&mut request);
+                        thread::sleep(Duration::from_millis(40));
+                        let response = format!(
+                            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        stream
+                            .write_all(response.as_bytes())
+                            .expect("write response");
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept request: {error}"),
+                }
+            }
+        });
+        (address, count, handle)
+    }
+
+    #[tokio::test]
+    async fn discovery_refresh_is_singleflight_per_service() {
+        let body = r#"[{"Node":{"Node":"node-1","Address":"127.0.0.1"},"Service":{"Address":"127.0.0.1","Port":39190}}]"#;
+        let (address, request_count, server) = spawn_http_server("200 OK", body);
+        let runtime = runtime_for_consul(address);
+        let results = join_all((0..32).map(|_| runtime.discover("user-service"))).await;
+        for result in results {
+            let endpoints = result.expect("discovery result");
+            assert_eq!(endpoints.len(), 1);
+            assert_eq!(endpoints[0].port, 39190);
+        }
+        server.join().expect("server thread");
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn discovery_uses_stale_cache_for_consul_server_errors() {
+        let (address, request_count, server) = spawn_http_server("503 Service Unavailable", "{}");
+        let runtime = runtime_for_consul(address);
+        runtime.discovery_cache.lock().await.insert(
+            "user-service".to_string(),
+            CachedDiscovery {
+                endpoints: vec![ServiceEndpoint {
+                    service_name: "user-service".to_string(),
+                    address: "stale.internal".to_string(),
+                    port: 39190,
+                    scheme: "http".to_string(),
+                }],
+                refreshed_at: Instant::now() - Duration::from_secs(6),
+            },
+        );
+
+        let endpoints = runtime
+            .discover("user-service")
+            .await
+            .expect("stale fallback");
+        server.join().expect("server thread");
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        assert_eq!(endpoints[0].address, "stale.internal");
+    }
 }

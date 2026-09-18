@@ -47,11 +47,36 @@
 
 ```bash
 cp docker/bootstrap.conf.example docker/bootstrap.conf
-# 只填写配置中心启动前必需的引导配置
+# 填写引导配置，并明确设置以下生产门禁：
+# POSTGRES_IMAGE=postgres:18.6-bookworm@sha256:<digest>
+# EXPECTED_MIGRATED_USER_COUNT=<Mongo 权威用户数>
+# EXPECTED_MIGRATED_WECHAT_IDENTITY_COUNT=<未撤销的微信身份数>
+
+# 只启动 PostgreSQL、创建隔离 database/role，并执行全部 schema migration
+docker/deploy.sh postgres-prepare
+
+# 先 dry-run，再执行一次性用户迁移；连接串不要写进脚本或日志
+export SOURCE_USER_MONGO_URL TARGET_USER_POSTGRES_URL
+cargo run --manifest-path tools/postgres-user-migration/Cargo.toml -- \
+  --mongo-database user_service \
+  --all-users \
+  --expected-user-count "$EXPECTED_MIGRATED_USER_COUNT" \
+  --dry-run
+cargo run --manifest-path tools/postgres-user-migration/Cargo.toml -- \
+  --mongo-database user_service \
+  --all-users \
+  --expected-user-count "$EXPECTED_MIGRATED_USER_COUNT" \
+  --apply
+
+# 数量、密码散列格式和身份外键全部通过后才允许启动应用
+docker/deploy.sh verify-user-import
 docker/deploy.sh up
 ```
 
 默认会拉取 GHCR 预构建镜像。
+
+如果存在微信小程序身份，在迁移命令中同时加入 `--include-wechat-identities`。生产 `up`、
+`restart` 和单服务 `rebuild` 都会重复执行用户导入门禁，避免空库启动后静默创建错误管理员。
 
 ## 本地源码构建启动
 
@@ -104,13 +129,13 @@ docker/deploy.sh down
 docker/deploy.sh reset
 ```
 
-`reset` 会删除 volumes，包括 MongoDB 数据。
+`reset` 会删除 volumes，包括 PostgreSQL 数据。
 
 ## 校验 Compose 配置
 
 ```bash
-docker compose -f docker/compose.yml config
-docker compose -f docker/compose.yml -f docker/compose.build.yml config
+docker compose -f docker/compose.yml -f docker/compose.platform.yml config
+docker compose -f docker/compose.yml -f docker/compose.platform.yml -f docker/compose.build.yml config
 ```
 
 ## Make 快捷入口

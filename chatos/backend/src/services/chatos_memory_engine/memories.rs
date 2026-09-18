@@ -52,6 +52,8 @@ pub async fn list_contact_project_memories_by_contact(
     offset: i64,
 ) -> Result<Vec<MemoryProjectMemoryDto>, String> {
     const PROJECT_MEMORY_QUERY_CONCURRENCY: usize = 8;
+    // Each async request must own its project id so the handler future remains lifetime-agnostic.
+    #[allow(clippy::redundant_iter_cloned)]
     let batches = stream::iter(project_ids.iter().cloned().map(|project_id| async move {
         list_contact_project_memories(user_id, contact_id, project_id.as_str(), limit, 0).await
     }))

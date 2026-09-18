@@ -1356,6 +1356,7 @@ mod tests {
         server.await.unwrap();
     }
 
+    #[allow(clippy::result_large_err)] // Tungstenite fixes the callback error response type.
     async fn spawn_mock_bridge(
         expected_token: &'static str,
         reject_auth: bool,
@@ -1367,10 +1368,8 @@ mod tests {
             let (stream, _) = listener.accept().await.unwrap();
             let mut socket =
                 accept_hdr_async(stream, |request: &Request, mut response: Response| {
-                    assert_eq!(
-                        request.headers().get(SEC_WEBSOCKET_PROTOCOL).unwrap(),
-                        BRIDGE_SUBPROTOCOL
-                    );
+                    let protocol = request.headers().get(SEC_WEBSOCKET_PROTOCOL).unwrap();
+                    assert_eq!(protocol, BRIDGE_SUBPROTOCOL);
                     response.headers_mut().insert(
                         SEC_WEBSOCKET_PROTOCOL,
                         HeaderValue::from_static(BRIDGE_SUBPROTOCOL),

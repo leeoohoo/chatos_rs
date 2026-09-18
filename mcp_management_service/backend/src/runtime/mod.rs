@@ -7,6 +7,7 @@ mod invocation_store;
 mod plugin_mcp;
 mod quota;
 mod session_close_store;
+mod session_retention;
 mod session_store;
 mod tool_batch_store;
 
@@ -28,6 +29,7 @@ pub use quota::{
     RuntimeInvocationQuota, RuntimeInvocationQuotaLimits, RuntimeInvocationQuotaReserveError,
 };
 pub use session_close_store::RuntimeSessionCloseStore;
+pub use session_retention::{RuntimeRetention, RuntimeRetentionStats};
 pub use session_store::{
     LocalConnectorInlineHttpRuntime, LocalConnectorMcpProviderBinding, RuntimeSessionCacheLimits,
     RuntimeSessionSnapshot, RuntimeSessionStore, RuntimeSessionStoreStats,

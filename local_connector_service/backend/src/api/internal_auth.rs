@@ -559,11 +559,6 @@ mod tests {
             (
                 SANDBOX_SERVICE_SCOPE,
                 Method::POST,
-                "/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes/leases",
-            ),
-            (
-                SANDBOX_SERVICE_SCOPE,
-                Method::POST,
                 "/api/local-connectors/sandbox-facade/pairing-1/api/sandboxes/sandbox-1/mcp",
             ),
         ] {
@@ -583,7 +578,8 @@ mod tests {
                 );
             assert_eq!(
                 error.message(),
-                "caller service is not allowed for this Local Connector operation"
+                "caller service is not allowed for this Local Connector operation",
+                "unexpected rejection path: {path}"
             );
         }
     }
@@ -824,7 +820,7 @@ mod tests {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,
             internal_mtls_port: 1,
-            database_url: "mongodb://127.0.0.1/test".to_string(),
+            database_url: "postgresql://postgres:postgres@127.0.0.1/test".to_string(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_secs(1),
             relay_request_timeout: Duration::from_secs(1),

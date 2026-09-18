@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use futures_util::TryStreamExt;
-use mongodb::bson::doc;
-use mongodb::options::{FindOneAndUpdateOptions, FindOptions, IndexOptions, ReturnDocument};
-use mongodb::IndexModel;
+use chrono::{TimeZone, Utc};
+use serde::de::DeserializeOwned;
+use serde_json::Value;
+use sqlx::types::Json;
 
 use crate::models::{
     ClientSessionRecord, UserExternalIdentityRecord, WeChatBindTicketRecord,
@@ -12,138 +12,39 @@ use crate::models::{
     WECHAT_BIND_STATUS_EXPIRED, WECHAT_BIND_STATUS_ISSUED,
 };
 
-use super::AppStore;
+use super::{db_error, json, optional_timestamp, timestamp, AppStore};
 
 #[derive(Debug)]
 pub enum BindExternalIdentityResult {
-    Bound(UserExternalIdentityRecord),
+    Bound(Box<UserExternalIdentityRecord>),
     Conflict,
 }
 
 impl AppStore {
-    pub(super) async fn initialize_wechat_auth_indexes(&self) -> Result<(), String> {
-        self.create_unique_index(&self.user_external_identities, "id")
-            .await?;
-        self.create_compound_index(
-            &self.user_external_identities,
-            doc! { "provider": 1, "app_id": 1, "open_id_hash": 1 },
-            "active_provider_subject_unique",
-            true,
-            Some(doc! { "revoked_at": null }),
-        )
-        .await?;
-        self.create_compound_index(
-            &self.user_external_identities,
-            doc! { "user_id": 1, "provider": 1, "app_id": 1 },
-            "active_user_provider_unique",
-            true,
-            Some(doc! { "revoked_at": null }),
-        )
-        .await?;
-
-        self.create_unique_index(&self.wechat_bind_tickets, "id")
-            .await?;
-        self.create_unique_index(&self.wechat_bind_tickets, "ticket_hash")
-            .await?;
-        self.create_compound_index(
-            &self.wechat_bind_tickets,
-            doc! { "claim_id": 1 },
-            "claim_id_unique_when_present",
-            true,
-            Some(doc! { "claim_id": { "$type": "string" } }),
-        )
-        .await?;
-        self.create_index(&self.wechat_bind_tickets, "expires_at_unix")
-            .await?;
-
-        self.create_unique_index(&self.client_sessions, "id")
-            .await?;
-        self.create_unique_index(&self.client_sessions, "token_jti")
-            .await?;
-        self.create_compound_index(
-            &self.client_sessions,
-            doc! { "user_id": 1, "client_type": 1 },
-            "user_client_type",
-            false,
-            None,
-        )
-        .await?;
-        self.create_index(&self.client_sessions, "expires_at_unix")
-            .await?;
-        self.create_unique_index(&self.device_proof_nonces, "id")
-            .await?;
-        self.device_proof_nonces
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! { "expires_at": 1 })
-                    .options(
-                        IndexOptions::builder()
-                            .name("device_proof_nonce_expiry".to_string())
-                            .expire_after(std::time::Duration::from_secs(0))
-                            .build(),
-                    )
-                    .build(),
-                None,
-            )
-            .await
-            .map_err(|err| format!("create device proof nonce TTL index failed: {err}"))?;
-        Ok(())
-    }
-
-    async fn create_compound_index<T>(
-        &self,
-        collection: &mongodb::Collection<T>,
-        keys: mongodb::bson::Document,
-        name: &str,
-        unique: bool,
-        partial_filter_expression: Option<mongodb::bson::Document>,
-    ) -> Result<(), String>
-    where
-        T: Send + Sync,
-    {
-        let options = IndexOptions::builder()
-            .name(name.to_string())
-            .unique(unique)
-            .partial_filter_expression(partial_filter_expression)
-            .build();
-        collection
-            .create_index(
-                IndexModel::builder().keys(keys).options(options).build(),
-                None,
-            )
-            .await
-            .map_err(|err| format!("create mongodb index {name} failed: {err}"))?;
-        Ok(())
-    }
-
     pub async fn find_active_external_identity_by_subject(
         &self,
         provider: &str,
         app_id: &str,
         open_id_hash: &str,
     ) -> Result<Option<UserExternalIdentityRecord>, String> {
-        self.user_external_identities
-            .find_one(
-                doc! {
-                    "provider": provider,
-                    "app_id": app_id,
-                    "open_id_hash": open_id_hash,
-                    "revoked_at": null,
-                },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())
+        decode_optional(sqlx::query_scalar(
+            "SELECT data FROM user_external_identities WHERE provider=$1 AND app_id=$2 AND open_id_hash=$3 AND revoked_at IS NULL",
+        ).bind(provider).bind(app_id).bind(open_id_hash).fetch_optional(&self.pool).await.map_err(db_error)?)
     }
 
     pub async fn find_active_external_identity_by_id(
         &self,
         id: &str,
     ) -> Result<Option<UserExternalIdentityRecord>, String> {
-        self.user_external_identities
-            .find_one(doc! { "id": id, "revoked_at": null }, None)
+        decode_optional(
+            sqlx::query_scalar(
+                "SELECT data FROM user_external_identities WHERE id=$1 AND revoked_at IS NULL",
+            )
+            .bind(id)
+            .fetch_optional(&self.pool)
             .await
-            .map_err(|err| err.to_string())
+            .map_err(db_error)?,
+        )
     }
 
     pub async fn find_active_external_identity_for_user(
@@ -152,166 +53,96 @@ impl AppStore {
         provider: &str,
         app_id: &str,
     ) -> Result<Option<UserExternalIdentityRecord>, String> {
-        self.user_external_identities
-            .find_one(
-                doc! {
-                    "user_id": user_id,
-                    "provider": provider,
-                    "app_id": app_id,
-                    "revoked_at": null,
-                },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())
+        decode_optional(sqlx::query_scalar(
+            "SELECT data FROM user_external_identities WHERE user_id=$1 AND provider=$2 AND app_id=$3 AND revoked_at IS NULL",
+        ).bind(user_id).bind(provider).bind(app_id).fetch_optional(&self.pool).await.map_err(db_error)?)
     }
 
     pub async fn bind_external_identity(
         &self,
         record: &UserExternalIdentityRecord,
     ) -> Result<BindExternalIdentityResult, String> {
-        if let Some(existing) = self
-            .find_active_external_identity_by_subject(
-                record.provider.as_str(),
-                record.app_id.as_str(),
-                record.open_id_hash.as_str(),
-            )
-            .await?
-        {
-            return Ok(if existing.user_id == record.user_id {
-                BindExternalIdentityResult::Bound(
-                    self.update_bound_identity_device(&existing, record).await?,
-                )
-            } else {
-                BindExternalIdentityResult::Conflict
-            });
-        }
-        if let Some(existing) = self
-            .find_active_external_identity_for_user(
-                record.user_id.as_str(),
-                record.provider.as_str(),
-                record.app_id.as_str(),
-            )
-            .await?
-        {
-            return Ok(if existing.open_id_hash == record.open_id_hash {
-                BindExternalIdentityResult::Bound(
-                    self.update_bound_identity_device(&existing, record).await?,
-                )
-            } else {
-                BindExternalIdentityResult::Conflict
-            });
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        let mut lock_keys = [
+            format!(
+                "identity-subject:{}:{}:{}",
+                record.provider, record.app_id, record.open_id_hash
+            ),
+            format!(
+                "identity-user:{}:{}:{}",
+                record.user_id, record.provider, record.app_id
+            ),
+        ];
+        lock_keys.sort();
+        for key in lock_keys {
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+                .bind(key)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_error)?;
         }
 
-        let revoked = self
-            .user_external_identities
-            .find_one(
-                doc! {
-                    "user_id": &record.user_id,
-                    "provider": &record.provider,
-                    "app_id": &record.app_id,
-                    "open_id_hash": &record.open_id_hash,
-                    "revoked_at": { "$ne": null },
-                },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())?;
-        let write_result = if let Some(revoked) = revoked {
-            self.user_external_identities
-                .find_one_and_update(
-                    doc! { "id": &revoked.id, "revoked_at": { "$ne": null } },
-                    doc! { "$set": {
-                        "union_id_hash": &record.union_id_hash,
-                        "companion_device_id": &record.companion_device_id,
-                        "companion_device_public_key": &record.companion_device_public_key,
-                        "updated_at": &record.updated_at,
-                        "last_login_at": &record.last_login_at,
-                        "revoked_at": null,
-                    } },
-                    FindOneAndUpdateOptions::builder()
-                        .return_document(ReturnDocument::After)
-                        .build(),
-                )
-                .await
-                .map(|value| value.map(BindExternalIdentityResult::Bound))
+        let by_subject: Option<UserExternalIdentityRecord> = decode_optional(sqlx::query_scalar(
+            "SELECT data FROM user_external_identities WHERE provider=$1 AND app_id=$2 AND open_id_hash=$3 AND revoked_at IS NULL FOR UPDATE",
+        ).bind(&record.provider).bind(&record.app_id).bind(&record.open_id_hash)
+            .fetch_optional(&mut *tx).await.map_err(db_error)?)?;
+        if let Some(existing) = by_subject {
+            if existing.user_id != record.user_id {
+                return Ok(BindExternalIdentityResult::Conflict);
+            }
+            let updated = update_bound_identity(&mut tx, existing, record).await?;
+            tx.commit().await.map_err(db_error)?;
+            return Ok(BindExternalIdentityResult::Bound(Box::new(updated)));
+        }
+
+        let by_user: Option<UserExternalIdentityRecord> = decode_optional(sqlx::query_scalar(
+            "SELECT data FROM user_external_identities WHERE user_id=$1 AND provider=$2 AND app_id=$3 AND revoked_at IS NULL FOR UPDATE",
+        ).bind(&record.user_id).bind(&record.provider).bind(&record.app_id)
+            .fetch_optional(&mut *tx).await.map_err(db_error)?)?;
+        if let Some(existing) = by_user {
+            if existing.open_id_hash != record.open_id_hash {
+                return Ok(BindExternalIdentityResult::Conflict);
+            }
+            let updated = update_bound_identity(&mut tx, existing, record).await?;
+            tx.commit().await.map_err(db_error)?;
+            return Ok(BindExternalIdentityResult::Bound(Box::new(updated)));
+        }
+
+        let revoked: Option<UserExternalIdentityRecord> = decode_optional(sqlx::query_scalar(
+            "SELECT data FROM user_external_identities WHERE user_id=$1 AND provider=$2 AND app_id=$3 AND open_id_hash=$4 AND revoked_at IS NOT NULL ORDER BY updated_at DESC LIMIT 1 FOR UPDATE",
+        ).bind(&record.user_id).bind(&record.provider).bind(&record.app_id).bind(&record.open_id_hash)
+            .fetch_optional(&mut *tx).await.map_err(db_error)?)?;
+
+        let result = if let Some(mut revived) = revoked {
+            revived.union_id_hash.clone_from(&record.union_id_hash);
+            revived
+                .companion_device_id
+                .clone_from(&record.companion_device_id);
+            revived
+                .companion_device_public_key
+                .clone_from(&record.companion_device_public_key);
+            revived.updated_at.clone_from(&record.updated_at);
+            revived.last_login_at.clone_from(&record.last_login_at);
+            revived.revoked_at = None;
+            sqlx::query("UPDATE user_external_identities SET union_id_hash=$2,revoked_at=NULL,updated_at=$3,data=$4 WHERE id=$1 AND revoked_at IS NOT NULL")
+                .bind(&revived.id).bind(&revived.union_id_hash).bind(timestamp(&revived.updated_at)?)
+                .bind(json(&revived)?).execute(&mut *tx).await.map_err(db_error)?;
+            revived
         } else {
-            self.user_external_identities
-                .insert_one(record, None)
-                .await
-                .map(|_| Some(BindExternalIdentityResult::Bound(record.clone())))
+            sqlx::query("INSERT INTO user_external_identities (id,user_id,provider,app_id,open_id_hash,union_id_hash,revoked_at,updated_at,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
+                .bind(&record.id).bind(&record.user_id).bind(&record.provider).bind(&record.app_id)
+                .bind(&record.open_id_hash).bind(&record.union_id_hash)
+                .bind(optional_timestamp(record.revoked_at.as_deref())?).bind(timestamp(&record.updated_at)?)
+                .bind(json(record)?).execute(&mut *tx).await.map_err(db_error)?;
+            record.clone()
         };
-
-        match write_result {
-            Ok(Some(result)) => Ok(result),
-            Ok(None) => self.resolve_identity_bind_race(record).await,
-            Err(err) if is_duplicate_key(&err) => self.resolve_identity_bind_race(record).await,
-            Err(err) => Err(err.to_string()),
-        }
-    }
-
-    async fn update_bound_identity_device(
-        &self,
-        existing: &UserExternalIdentityRecord,
-        requested: &UserExternalIdentityRecord,
-    ) -> Result<UserExternalIdentityRecord, String> {
-        self.user_external_identities
-            .find_one_and_update(
-                doc! { "id": &existing.id, "revoked_at": null },
-                doc! { "$set": {
-                    "union_id_hash": &requested.union_id_hash,
-                    "companion_device_id": &requested.companion_device_id,
-                    "companion_device_public_key": &requested.companion_device_public_key,
-                    "updated_at": &requested.updated_at,
-                } },
-                FindOneAndUpdateOptions::builder()
-                    .return_document(ReturnDocument::After)
-                    .build(),
-            )
-            .await
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| "bound WeChat identity disappeared during device update".to_string())
-    }
-
-    async fn resolve_identity_bind_race(
-        &self,
-        record: &UserExternalIdentityRecord,
-    ) -> Result<BindExternalIdentityResult, String> {
-        let by_subject = self
-            .find_active_external_identity_by_subject(
-                record.provider.as_str(),
-                record.app_id.as_str(),
-                record.open_id_hash.as_str(),
-            )
-            .await?;
-        let by_user = self
-            .find_active_external_identity_for_user(
-                record.user_id.as_str(),
-                record.provider.as_str(),
-                record.app_id.as_str(),
-            )
-            .await?;
-        match (by_subject, by_user) {
-            (Some(identity), _) if identity.user_id == record.user_id => {
-                Ok(BindExternalIdentityResult::Bound(identity))
-            }
-            (_, Some(identity)) if identity.open_id_hash == record.open_id_hash => {
-                Ok(BindExternalIdentityResult::Bound(identity))
-            }
-            _ => Ok(BindExternalIdentityResult::Conflict),
-        }
+        tx.commit().await.map_err(db_error)?;
+        Ok(BindExternalIdentityResult::Bound(Box::new(result)))
     }
 
     pub async fn touch_external_identity_login(&self, id: &str, now: &str) -> Result<(), String> {
-        self.user_external_identities
-            .update_one(
-                doc! { "id": id, "revoked_at": null },
-                doc! { "$set": { "last_login_at": now, "updated_at": now } },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
+        sqlx::query("UPDATE user_external_identities SET updated_at=$2,data=data || jsonb_build_object('last_login_at',$3::text,'updated_at',$3::text) WHERE id=$1 AND revoked_at IS NULL")
+            .bind(id).bind(timestamp(now)?).bind(now).execute(&self.pool).await.map(|_| ()).map_err(db_error)
     }
 
     pub async fn revoke_external_identity(
@@ -321,32 +152,21 @@ impl AppStore {
         app_id: &str,
         now: &str,
     ) -> Result<Option<UserExternalIdentityRecord>, String> {
-        self.user_external_identities
-            .find_one_and_update(
-                doc! {
-                    "user_id": user_id,
-                    "provider": provider,
-                    "app_id": app_id,
-                    "revoked_at": null,
-                },
-                doc! { "$set": { "revoked_at": now, "updated_at": now } },
-                FindOneAndUpdateOptions::builder()
-                    .return_document(ReturnDocument::After)
-                    .build(),
-            )
-            .await
-            .map_err(|err| err.to_string())
+        decode_optional(sqlx::query_scalar(
+            "UPDATE user_external_identities SET revoked_at=$4,updated_at=$4,data=data || jsonb_build_object('revoked_at',$5::text,'updated_at',$5::text) WHERE user_id=$1 AND provider=$2 AND app_id=$3 AND revoked_at IS NULL RETURNING data",
+        ).bind(user_id).bind(provider).bind(app_id).bind(timestamp(now)?).bind(now)
+            .fetch_optional(&self.pool).await.map_err(db_error)?)
     }
 
     pub async fn insert_wechat_bind_ticket(
         &self,
         record: &WeChatBindTicketRecord,
     ) -> Result<(), String> {
-        self.wechat_bind_tickets
-            .insert_one(record, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
+        sqlx::query("INSERT INTO wechat_bind_tickets (id,ticket_hash,user_id,app_id,status,claim_id,expires_at,updated_at,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
+            .bind(&record.id).bind(&record.ticket_hash).bind(&record.user_id).bind(&record.app_id)
+            .bind(&record.status).bind(&record.claim_id).bind(record.expires_at_unix)
+            .bind(timestamp(&record.updated_at)?).bind(json(record)?).execute(&self.pool).await
+            .map(|_| ()).map_err(db_error)
     }
 
     pub async fn expire_open_wechat_bind_tickets_for_user(
@@ -355,22 +175,10 @@ impl AppStore {
         app_id: &str,
         now: &str,
     ) -> Result<(), String> {
-        self.wechat_bind_tickets
-            .update_many(
-                doc! {
-                    "user_id": user_id,
-                    "app_id": app_id,
-                    "status": { "$in": [WECHAT_BIND_STATUS_ISSUED, WECHAT_BIND_STATUS_CLAIMED] },
-                },
-                doc! { "$set": {
-                    "status": WECHAT_BIND_STATUS_EXPIRED,
-                    "updated_at": now,
-                } },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
+        sqlx::query("UPDATE wechat_bind_tickets SET status=$3,updated_at=$4,data=data || jsonb_build_object('status',$3::text,'updated_at',$5::text) WHERE user_id=$1 AND app_id=$2 AND status=ANY($6)")
+            .bind(user_id).bind(app_id).bind(WECHAT_BIND_STATUS_EXPIRED).bind(timestamp(now)?).bind(now)
+            .bind(vec![WECHAT_BIND_STATUS_ISSUED, WECHAT_BIND_STATUS_CLAIMED])
+            .execute(&self.pool).await.map(|_| ()).map_err(db_error)
     }
 
     pub async fn find_wechat_bind_ticket_for_user(
@@ -378,12 +186,17 @@ impl AppStore {
         ticket_id: &str,
         user_id: &str,
     ) -> Result<Option<WeChatBindTicketRecord>, String> {
-        self.wechat_bind_tickets
-            .find_one(doc! { "id": ticket_id, "user_id": user_id }, None)
-            .await
-            .map_err(|err| err.to_string())
+        decode_optional(
+            sqlx::query_scalar("SELECT data FROM wechat_bind_tickets WHERE id=$1 AND user_id=$2")
+                .bind(ticket_id)
+                .bind(user_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(db_error)?,
+        )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn claim_wechat_bind_ticket(
         &self,
         ticket_hash: &str,
@@ -397,31 +210,12 @@ impl AppStore {
         now_unix: i64,
         now: &str,
     ) -> Result<Option<WeChatBindTicketRecord>, String> {
-        self.wechat_bind_tickets
-            .find_one_and_update(
-                doc! {
-                    "ticket_hash": ticket_hash,
-                    "app_id": app_id,
-                    "status": WECHAT_BIND_STATUS_ISSUED,
-                    "expires_at_unix": { "$gt": now_unix },
-                },
-                doc! { "$set": {
-                    "status": WECHAT_BIND_STATUS_CLAIMED,
-                    "claimed_open_id_hash": open_id_hash,
-                    "claimed_union_id_hash": union_id_hash,
-                    "claimed_device_id": device_id,
-                    "claimed_device_public_key": device_public_key,
-                    "claim_id": claim_id,
-                    "claim_secret_hash": claim_secret_hash,
-                    "claimed_at": now,
-                    "updated_at": now,
-                } },
-                FindOneAndUpdateOptions::builder()
-                    .return_document(ReturnDocument::After)
-                    .build(),
-            )
-            .await
-            .map_err(|err| err.to_string())
+        decode_optional(sqlx::query_scalar(
+            "UPDATE wechat_bind_tickets SET status=$3,claim_id=$4,updated_at=$5,data=data || jsonb_build_object('status',$3::text,'claimed_open_id_hash',$6::text,'claimed_union_id_hash',$7::text,'claimed_device_id',$8::text,'claimed_device_public_key',$9::text,'claim_id',$4::text,'claim_secret_hash',$10::text,'claimed_at',$11::text,'updated_at',$11::text) WHERE ticket_hash=$1 AND app_id=$2 AND status=$12 AND expires_at>$13 RETURNING data",
+        ).bind(ticket_hash).bind(app_id).bind(WECHAT_BIND_STATUS_CLAIMED).bind(claim_id)
+            .bind(timestamp(now)?).bind(open_id_hash).bind(union_id_hash).bind(device_id)
+            .bind(device_public_key).bind(claim_secret_hash).bind(now).bind(WECHAT_BIND_STATUS_ISSUED)
+            .bind(now_unix).fetch_optional(&self.pool).await.map_err(db_error)?)
     }
 
     pub async fn confirm_wechat_bind_ticket(
@@ -432,26 +226,11 @@ impl AppStore {
         now_unix: i64,
         now: &str,
     ) -> Result<Option<WeChatBindTicketRecord>, String> {
-        self.wechat_bind_tickets
-            .find_one_and_update(
-                doc! {
-                    "id": ticket_id,
-                    "user_id": user_id,
-                    "status": WECHAT_BIND_STATUS_CLAIMED,
-                    "expires_at_unix": { "$gt": now_unix },
-                },
-                doc! { "$set": {
-                    "status": WECHAT_BIND_STATUS_CONFIRMED,
-                    "confirmed_external_identity_id": external_identity_id,
-                    "confirmed_at": now,
-                    "updated_at": now,
-                } },
-                FindOneAndUpdateOptions::builder()
-                    .return_document(ReturnDocument::After)
-                    .build(),
-            )
-            .await
-            .map_err(|err| err.to_string())
+        decode_optional(sqlx::query_scalar(
+            "UPDATE wechat_bind_tickets SET status=$3,updated_at=$4,data=data || jsonb_build_object('status',$3::text,'confirmed_external_identity_id',$5::text,'confirmed_at',$6::text,'updated_at',$6::text) WHERE id=$1 AND user_id=$2 AND status=$7 AND expires_at>$8 RETURNING data",
+        ).bind(ticket_id).bind(user_id).bind(WECHAT_BIND_STATUS_CONFIRMED).bind(timestamp(now)?)
+            .bind(external_identity_id).bind(now).bind(WECHAT_BIND_STATUS_CLAIMED).bind(now_unix)
+            .fetch_optional(&self.pool).await.map_err(db_error)?)
     }
 
     pub async fn consume_confirmed_wechat_claim(
@@ -461,25 +240,11 @@ impl AppStore {
         now_unix: i64,
         now: &str,
     ) -> Result<Option<WeChatBindTicketRecord>, String> {
-        self.wechat_bind_tickets
-            .find_one_and_update(
-                doc! {
-                    "claim_id": claim_id,
-                    "claim_secret_hash": claim_secret_hash,
-                    "status": WECHAT_BIND_STATUS_CONFIRMED,
-                    "expires_at_unix": { "$gt": now_unix },
-                },
-                doc! { "$set": {
-                    "status": WECHAT_BIND_STATUS_CONSUMED,
-                    "consumed_at": now,
-                    "updated_at": now,
-                } },
-                FindOneAndUpdateOptions::builder()
-                    .return_document(ReturnDocument::After)
-                    .build(),
-            )
-            .await
-            .map_err(|err| err.to_string())
+        decode_optional(sqlx::query_scalar(
+            "UPDATE wechat_bind_tickets SET status=$3,updated_at=$4,data=data || jsonb_build_object('status',$3::text,'consumed_at',$5::text,'updated_at',$5::text) WHERE claim_id=$1 AND data->>'claim_secret_hash'=$2 AND status=$6 AND expires_at>$7 RETURNING data",
+        ).bind(claim_id).bind(claim_secret_hash).bind(WECHAT_BIND_STATUS_CONSUMED).bind(timestamp(now)?)
+            .bind(now).bind(WECHAT_BIND_STATUS_CONFIRMED).bind(now_unix)
+            .fetch_optional(&self.pool).await.map_err(db_error)?)
     }
 
     pub async fn find_wechat_claim(
@@ -488,35 +253,28 @@ impl AppStore {
         claim_secret_hash: &str,
         now_unix: i64,
     ) -> Result<Option<WeChatBindTicketRecord>, String> {
-        self.wechat_bind_tickets
-            .find_one(
-                doc! {
-                    "claim_id": claim_id,
-                    "claim_secret_hash": claim_secret_hash,
-                    "expires_at_unix": { "$gt": now_unix },
-                },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())
+        decode_optional(sqlx::query_scalar("SELECT data FROM wechat_bind_tickets WHERE claim_id=$1 AND data->>'claim_secret_hash'=$2 AND expires_at>$3")
+            .bind(claim_id).bind(claim_secret_hash).bind(now_unix).fetch_optional(&self.pool).await.map_err(db_error)?)
     }
 
     pub async fn insert_client_session(&self, record: &ClientSessionRecord) -> Result<(), String> {
-        self.client_sessions
-            .insert_one(record, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
+        sqlx::query("INSERT INTO client_sessions (id,user_id,client_type,external_identity_id,token_jti,expires_at,revoked_at,updated_at,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
+            .bind(&record.id).bind(&record.user_id).bind(&record.client_type).bind(&record.external_identity_id)
+            .bind(&record.token_jti).bind(record.expires_at_unix).bind(optional_timestamp(record.revoked_at.as_deref())?)
+            .bind(timestamp(&record.updated_at)?).bind(json(record)?).execute(&self.pool).await.map(|_| ()).map_err(db_error)
     }
 
     pub async fn find_client_session_by_jti(
         &self,
         token_jti: &str,
     ) -> Result<Option<ClientSessionRecord>, String> {
-        self.client_sessions
-            .find_one(doc! { "token_jti": token_jti }, None)
-            .await
-            .map_err(|err| err.to_string())
+        decode_optional(
+            sqlx::query_scalar("SELECT data FROM client_sessions WHERE token_jti=$1")
+                .bind(token_jti)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(db_error)?,
+        )
     }
 
     pub async fn consume_device_proof_nonce(
@@ -525,34 +283,21 @@ impl AppStore {
         nonce: &str,
         expires_at_unix_ms: i64,
     ) -> Result<bool, String> {
-        let record = super::DeviceProofNonceRecord {
-            id: format!("{session_id}:{nonce}"),
-            expires_at: mongodb::bson::DateTime::from_millis(expires_at_unix_ms),
-        };
-        match self.device_proof_nonces.insert_one(record, None).await {
-            Ok(_) => Ok(true),
-            Err(error) if is_duplicate_key(&error) => Ok(false),
-            Err(error) => Err(error.to_string()),
-        }
+        let expires_at = Utc
+            .timestamp_millis_opt(expires_at_unix_ms)
+            .single()
+            .ok_or_else(|| format!("invalid nonce expiry timestamp: {expires_at_unix_ms}"))?;
+        sqlx::query("INSERT INTO device_proof_nonces(id,expires_at) VALUES($1,$2) ON CONFLICT(id) DO NOTHING")
+            .bind(format!("{session_id}:{nonce}")).bind(expires_at).execute(&self.pool).await
+            .map(|result| result.rows_affected() == 1).map_err(db_error)
     }
 
     pub async fn list_client_sessions(
         &self,
         user_id: &str,
     ) -> Result<Vec<ClientSessionRecord>, String> {
-        self.client_sessions
-            .find(
-                doc! { "user_id": user_id },
-                FindOptions::builder()
-                    .sort(doc! { "created_at": -1 })
-                    .limit(100)
-                    .build(),
-            )
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())
+        decode_all(sqlx::query_scalar("SELECT data FROM client_sessions WHERE user_id=$1 ORDER BY (data->>'created_at')::timestamptz DESC LIMIT 100")
+            .bind(user_id).fetch_all(&self.pool).await.map_err(db_error)?)
     }
 
     pub async fn revoke_client_session(
@@ -562,20 +307,10 @@ impl AppStore {
         revoked_by: &str,
         now: &str,
     ) -> Result<Option<ClientSessionRecord>, String> {
-        self.client_sessions
-            .find_one_and_update(
-                doc! { "id": session_id, "user_id": user_id, "revoked_at": null },
-                doc! { "$set": {
-                    "revoked_at": now,
-                    "revoked_by": revoked_by,
-                    "updated_at": now,
-                } },
-                FindOneAndUpdateOptions::builder()
-                    .return_document(ReturnDocument::After)
-                    .build(),
-            )
-            .await
-            .map_err(|err| err.to_string())
+        decode_optional(sqlx::query_scalar(
+            "UPDATE client_sessions SET revoked_at=$3,updated_at=$3,data=data || jsonb_build_object('revoked_at',$4::text,'revoked_by',$5::text,'updated_at',$4::text) WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL RETURNING data",
+        ).bind(session_id).bind(user_id).bind(timestamp(now)?).bind(now).bind(revoked_by)
+            .fetch_optional(&self.pool).await.map_err(db_error)?)
     }
 
     pub async fn revoke_client_session_by_jti(
@@ -584,38 +319,15 @@ impl AppStore {
         revoked_by: &str,
         now: &str,
     ) -> Result<(), String> {
-        self.client_sessions
-            .update_one(
-                doc! { "token_jti": token_jti, "revoked_at": null },
-                doc! { "$set": {
-                    "revoked_at": now,
-                    "revoked_by": revoked_by,
-                    "updated_at": now,
-                } },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
+        sqlx::query("UPDATE client_sessions SET revoked_at=$2,updated_at=$2,data=data || jsonb_build_object('revoked_at',$3::text,'revoked_by',$4::text,'updated_at',$3::text) WHERE token_jti=$1 AND revoked_at IS NULL")
+            .bind(token_jti).bind(timestamp(now)?).bind(now).bind(revoked_by)
+            .execute(&self.pool).await.map(|_| ()).map_err(db_error)
     }
 
     pub async fn touch_client_session(&self, token_jti: &str, now: &str) -> Result<(), String> {
-        self.client_sessions
-            .update_one(
-                doc! {
-                    "token_jti": token_jti,
-                    "revoked_at": null,
-                    "expires_at_unix": { "$gt": chrono::Utc::now().timestamp() },
-                },
-                doc! { "$set": {
-                    "last_seen_at": now,
-                    "updated_at": now,
-                } },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
+        sqlx::query("UPDATE client_sessions SET updated_at=$2,data=data || jsonb_build_object('last_seen_at',$3::text,'updated_at',$3::text) WHERE token_jti=$1 AND revoked_at IS NULL AND expires_at>$4")
+            .bind(token_jti).bind(timestamp(now)?).bind(now).bind(Utc::now().timestamp())
+            .execute(&self.pool).await.map(|_| ()).map_err(db_error)
     }
 
     pub async fn revoke_client_sessions_for_identity(
@@ -624,30 +336,10 @@ impl AppStore {
         revoked_by: &str,
         now: &str,
     ) -> Result<Vec<ClientSessionRecord>, String> {
-        let sessions: Vec<ClientSessionRecord> = self
-            .client_sessions
-            .find(
-                doc! { "external_identity_id": identity_id, "revoked_at": null },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())?
-            .try_collect()
-            .await
-            .map_err(|err| err.to_string())?;
-        self.client_sessions
-            .update_many(
-                doc! { "external_identity_id": identity_id, "revoked_at": null },
-                doc! { "$set": {
-                    "revoked_at": now,
-                    "revoked_by": revoked_by,
-                    "updated_at": now,
-                } },
-                None,
-            )
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(sessions)
+        decode_all(sqlx::query_scalar(
+            "UPDATE client_sessions SET revoked_at=$2,updated_at=$2,data=data || jsonb_build_object('revoked_at',$3::text,'revoked_by',$4::text,'updated_at',$3::text) WHERE external_identity_id=$1 AND revoked_at IS NULL RETURNING data",
+        ).bind(identity_id).bind(timestamp(now)?).bind(now).bind(revoked_by)
+            .fetch_all(&self.pool).await.map_err(db_error)?)
     }
 
     pub async fn is_client_session_invalid(
@@ -655,30 +347,46 @@ impl AppStore {
         token_jti: &str,
         require_record: bool,
     ) -> Result<bool, String> {
-        let Some(session) = self
-            .client_sessions
-            .find_one(doc! { "token_jti": token_jti }, None)
-            .await
-            .map_err(|err| err.to_string())?
-        else {
+        let row = sqlx::query_as::<_, (Option<chrono::DateTime<Utc>>, i64, Option<String>, bool)>(
+            "SELECT session.revoked_at,session.expires_at,session.external_identity_id,identity.id IS NOT NULL FROM client_sessions session LEFT JOIN user_external_identities identity ON identity.id=session.external_identity_id AND identity.revoked_at IS NULL WHERE session.token_jti=$1",
+        ).bind(token_jti).fetch_optional(&self.pool).await.map_err(db_error)?;
+        let Some((revoked_at, expires_at, identity_id, identity_active)) = row else {
             return Ok(require_record);
         };
-        if session.revoked_at.is_some() || session.expires_at_unix <= chrono::Utc::now().timestamp()
-        {
-            return Ok(true);
-        }
-        let Some(identity_id) = session.external_identity_id.as_deref() else {
-            return Ok(false);
-        };
-        let identity = self
-            .user_external_identities
-            .find_one(doc! { "id": identity_id, "revoked_at": null }, None)
-            .await
-            .map_err(|err| err.to_string())?;
-        Ok(identity.is_none())
+        Ok(revoked_at.is_some()
+            || expires_at <= Utc::now().timestamp()
+            || (identity_id.is_some() && !identity_active))
     }
 }
 
-fn is_duplicate_key(error: &mongodb::error::Error) -> bool {
-    error.to_string().contains("E11000") || error.to_string().contains("duplicate key")
+async fn update_bound_identity(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    mut existing: UserExternalIdentityRecord,
+    requested: &UserExternalIdentityRecord,
+) -> Result<UserExternalIdentityRecord, String> {
+    existing.union_id_hash.clone_from(&requested.union_id_hash);
+    existing
+        .companion_device_id
+        .clone_from(&requested.companion_device_id);
+    existing
+        .companion_device_public_key
+        .clone_from(&requested.companion_device_public_key);
+    existing.updated_at.clone_from(&requested.updated_at);
+    sqlx::query("UPDATE user_external_identities SET union_id_hash=$2,updated_at=$3,data=$4 WHERE id=$1 AND revoked_at IS NULL")
+        .bind(&existing.id).bind(&existing.union_id_hash).bind(timestamp(&existing.updated_at)?)
+        .bind(json(&existing)?).execute(&mut **tx).await.map_err(db_error)?;
+    Ok(existing)
+}
+
+fn decode_optional<T: DeserializeOwned>(value: Option<Json<Value>>) -> Result<Option<T>, String> {
+    value
+        .map(|Json(value)| serde_json::from_value(value).map_err(|err| err.to_string()))
+        .transpose()
+}
+
+fn decode_all<T: DeserializeOwned>(values: Vec<Json<Value>>) -> Result<Vec<T>, String> {
+    values
+        .into_iter()
+        .map(|Json(value)| serde_json::from_value(value).map_err(|err| err.to_string()))
+        .collect()
 }

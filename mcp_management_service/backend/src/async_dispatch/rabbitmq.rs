@@ -30,6 +30,15 @@ use super::{
     RABBITMQ_INVOCATION_TERMINAL_CONSUMER_TAG,
 };
 
+mod recovery;
+
+#[cfg(test)]
+use recovery::{live_batch_watchdog_action, LiveBatchWatchdogAction};
+use recovery::{
+    reconcile_expired_invocations, reconcile_live_batches,
+    resume_terminal_invocation_with_session_fallback,
+};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct InvocationReadyEvent {
     event_id: String,
@@ -476,6 +485,12 @@ pub(super) async fn run_rabbitmq_terminal_consumer_loop(
                     let delivery = tokio::select! {
                         delivery = consumer.next() => delivery,
                         _ = watchdog.tick() => {
+                            if let Err(error) = reconcile_expired_invocations(&state).await {
+                                warn!(
+                                    error = error.as_str(),
+                                    "recover expired MCP invocations failed"
+                                );
+                            }
                             if let Err(error) = reconcile_live_batches(&state, &topology, &channel).await {
                                 warn!(
                                     error = error.as_str(),
@@ -496,7 +511,7 @@ pub(super) async fn run_rabbitmq_terminal_consumer_loop(
                                     )
                                     .await
                                 } else {
-                                    crate::api::mcp::resume_terminal_tool_batch_invocation(
+                                    resume_terminal_invocation_with_session_fallback(
                                         &state,
                                         event.invocation_id.as_str(),
                                     )
@@ -562,80 +577,6 @@ pub(super) async fn run_rabbitmq_terminal_consumer_loop(
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LiveBatchWatchdogAction {
-    None,
-    EnsureInvocationReady,
-    ResumeTerminal,
-}
-
-fn live_batch_watchdog_action(status: RuntimeInvocationStatus) -> LiveBatchWatchdogAction {
-    match status {
-        RuntimeInvocationStatus::Queued => LiveBatchWatchdogAction::EnsureInvocationReady,
-        RuntimeInvocationStatus::Completed
-        | RuntimeInvocationStatus::Failed
-        | RuntimeInvocationStatus::Cancelled
-        | RuntimeInvocationStatus::UnknownExecutionState => LiveBatchWatchdogAction::ResumeTerminal,
-        RuntimeInvocationStatus::Running
-        | RuntimeInvocationStatus::WaitingForUser
-        | RuntimeInvocationStatus::CancelRequested => LiveBatchWatchdogAction::None,
-    }
-}
-
-async fn reconcile_live_batches(
-    state: &AppState,
-    topology: &AsyncToolDispatchTopology,
-    channel: &Channel,
-) -> Result<(), String> {
-    for batch in state.runtime_tool_batches.list_active(1_000).await? {
-        let outcome: Result<(), String> = async {
-            let Some(call) = batch.command.calls.get(batch.next_call_index) else {
-                return Ok(());
-            };
-            let Some(invocation) = state
-                .runtime_invocations
-                .get_for_caller(
-                    call.invocation_id.as_str(),
-                    batch.command.owner_service.as_str(),
-                )
-                .await?
-            else {
-                state
-                    .runtime_tool_batches
-                    .ensure_invocation_ready_for(call.invocation_id.as_str())
-                    .await?;
-                return Ok(());
-            };
-            match live_batch_watchdog_action(invocation.status) {
-                LiveBatchWatchdogAction::None => {}
-                LiveBatchWatchdogAction::EnsureInvocationReady => {
-                    state
-                        .runtime_tool_batches
-                        .ensure_invocation_ready_for(invocation.invocation_id.as_str())
-                        .await?;
-                }
-                LiveBatchWatchdogAction::ResumeTerminal => {
-                    crate::api::mcp::resume_terminal_tool_batch_invocation(
-                        state,
-                        invocation.invocation_id.as_str(),
-                    )
-                    .await?;
-                }
-            }
-            Ok(())
-        }
-        .await;
-        if let Err(error) = outcome {
-            warn!(
-                batch_id = batch.batch_id.as_str(),
-                error = error.as_str(),
-                "MCP batch watchdog skipped one invalid batch"
-            );
-        }
-    }
-    reconcile_pending_batches(state, topology, channel).await
-}
-
 async fn reconcile_orphan_invocations(state: &AppState) -> Result<(), String> {
     use crate::runtime::RuntimeInvocationStatus;
 
@@ -667,7 +608,7 @@ async fn reconcile_orphan_invocations(state: &AppState) -> Result<(), String> {
         };
         let Some(invocation) = state
             .runtime_invocations
-            .get_for_caller(
+            .get_for_recovery(
                 call.invocation_id.as_str(),
                 batch.command.owner_service.as_str(),
             )

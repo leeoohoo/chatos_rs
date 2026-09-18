@@ -34,9 +34,8 @@ use crate::catalog::{
     LOCAL_CONNECTOR_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
     LOCAL_CONNECTOR_VALKEY_KEY_PREFIX_CONFIG_KEY, LOCAL_CONNECTOR_VALKEY_RECONNECT_MS_CONFIG_KEY,
     LOCAL_CONNECTOR_VALKEY_URL_CONFIG_KEY, MEMORY_ENGINE_AI_REQUEST_TIMEOUT_SECS_CONFIG_KEY,
-    MEMORY_ENGINE_HOST_CONFIG_KEY, MEMORY_ENGINE_MONGODB_DATABASE_CONFIG_KEY,
-    MEMORY_ENGINE_MONGODB_URI_CONFIG_KEY, MEMORY_ENGINE_PORT_CONFIG_KEY,
-    MEMORY_ENGINE_RABBITMQ_EXCHANGE_CONFIG_KEY,
+    MEMORY_ENGINE_DATABASE_URL_CONFIG_KEY, MEMORY_ENGINE_HOST_CONFIG_KEY,
+    MEMORY_ENGINE_PORT_CONFIG_KEY, MEMORY_ENGINE_RABBITMQ_EXCHANGE_CONFIG_KEY,
     MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS_CONFIG_KEY, MEMORY_ENGINE_RABBITMQ_URL_CONFIG_KEY,
     MEMORY_ENGINE_RECORD_SYNC_LEASE_TIMEOUT_SECS_CONFIG_KEY,
     MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE_CONFIG_KEY,
@@ -90,7 +89,7 @@ use crate::catalog::{
     PLUGIN_MANAGEMENT_HOST_CONFIG_KEY,
     PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_CHECK_TTL_SECONDS_CONFIG_KEY,
     PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_MAX_TOOL_SNAPSHOT_BYTES_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_MONGODB_DATABASE_CONFIG_KEY, PLUGIN_MANAGEMENT_PORT_CONFIG_KEY,
+    PLUGIN_MANAGEMENT_PORT_CONFIG_KEY,
     PLUGIN_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
     PLUGIN_MANAGEMENT_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
     PLUGIN_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
@@ -106,8 +105,8 @@ use crate::catalog::{
     TASK_RUNNER_CALLBACK_TIMEOUT_MS_CONFIG_KEY, TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY,
     TASK_RUNNER_DATABASE_URL_CONFIG_KEY, TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY,
     TASK_RUNNER_HOST_CONFIG_KEY, TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-    TASK_RUNNER_MEMORY_TIMEOUT_MS_CONFIG_KEY, TASK_RUNNER_MONGODB_DATABASE_CONFIG_KEY,
-    TASK_RUNNER_PORT_CONFIG_KEY, TASK_RUNNER_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
+    TASK_RUNNER_MEMORY_TIMEOUT_MS_CONFIG_KEY, TASK_RUNNER_PORT_CONFIG_KEY,
+    TASK_RUNNER_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
     TASK_RUNNER_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
     TASK_RUNNER_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
     TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY,
@@ -481,7 +480,6 @@ fn task_runner_runtime_backfill_adds_all_service_defaults() {
     assert!(changed_keys.contains(&TASK_RUNNER_HOST_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_PORT_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_DATABASE_URL_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_MONGODB_DATABASE_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_WORKSPACE_DIR_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY.to_string()));
@@ -616,11 +614,7 @@ fn task_runner_snapshot_exposes_runtime_downstream_environment_aliases() {
         (TASK_RUNNER_PORT_CONFIG_KEY.to_string(), json!(39090)),
         (
             TASK_RUNNER_DATABASE_URL_CONFIG_KEY.to_string(),
-            json!("mongodb://admin:admin@127.0.0.1:27018/task_runner_service?authSource=admin"),
-        ),
-        (
-            TASK_RUNNER_MONGODB_DATABASE_CONFIG_KEY.to_string(),
-            json!("task_runner_service"),
+            json!("postgresql://task_runner_app:change_me@127.0.0.1:5433/task_runner_service"),
         ),
         (TASK_RUNNER_WORKSPACE_DIR_CONFIG_KEY.to_string(), json!(".")),
         (
@@ -692,13 +686,9 @@ fn task_runner_snapshot_exposes_runtime_downstream_environment_aliases() {
     assert_eq!(
         snapshot.env.get("TASK_RUNNER_DATABASE_URL"),
         Some(
-            &"mongodb://admin:admin@127.0.0.1:27018/task_runner_service?authSource=admin"
+            &"postgresql://task_runner_app:change_me@127.0.0.1:5433/task_runner_service"
                 .to_string()
         )
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_MONGODB_DATABASE"),
-        Some(&"task_runner_service".to_string())
     );
     assert_eq!(
         snapshot.env.get("TASK_RUNNER_WORKSPACE_DIR"),
@@ -913,7 +903,9 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
         (LOCAL_CONNECTOR_PORT_CONFIG_KEY.to_string(), json!(39230)),
         (
             LOCAL_CONNECTOR_DATABASE_URL_CONFIG_KEY.to_string(),
-            json!("mongodb://admin:admin@127.0.0.1:27018/local_connector_service?authSource=admin"),
+            json!(
+                "postgresql://local_connector_app:change_me@127.0.0.1:5433/local_connector_service"
+            ),
         ),
         (
             LOCAL_CONNECTOR_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
@@ -1023,7 +1015,7 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
     assert_eq!(
         snapshot.env.get("LOCAL_CONNECTOR_DATABASE_URL"),
         Some(
-            &"mongodb://admin:admin@127.0.0.1:27018/local_connector_service?authSource=admin"
+            &"postgresql://local_connector_app:change_me@127.0.0.1:5433/local_connector_service"
                 .to_string()
         )
     );
@@ -1171,12 +1163,10 @@ fn memory_engine_runtime_backfill_adds_all_service_defaults() {
         Some(&json!(7083))
     );
     assert_eq!(
-        values.get(MEMORY_ENGINE_MONGODB_URI_CONFIG_KEY),
-        Some(&json!("mongodb://admin:admin@127.0.0.1:27018/admin"))
-    );
-    assert_eq!(
-        values.get(MEMORY_ENGINE_MONGODB_DATABASE_CONFIG_KEY),
-        Some(&json!("memory_engine"))
+        values.get(MEMORY_ENGINE_DATABASE_URL_CONFIG_KEY),
+        Some(&json!(
+            "postgresql://memory_engine_app:change_me@127.0.0.1:5433/memory_engine"
+        ))
     );
     assert_eq!(
         values.get(MEMORY_ENGINE_USER_SERVICE_BASE_URL_CONFIG_KEY),
@@ -1233,8 +1223,7 @@ fn memory_engine_runtime_backfill_adds_all_service_defaults() {
     assert!(changed_keys.contains(&MEMORY_ENGINE_HOST_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&MEMORY_ENGINE_PORT_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&MEMORY_ENGINE_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&MEMORY_ENGINE_MONGODB_URI_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&MEMORY_ENGINE_MONGODB_DATABASE_CONFIG_KEY.to_string()));
+    assert!(changed_keys.contains(&MEMORY_ENGINE_DATABASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&MEMORY_ENGINE_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
     assert!(
         changed_keys.contains(&MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string())
@@ -1313,12 +1302,8 @@ fn memory_engine_snapshot_exposes_runtime_environment_aliases() {
             json!(7083),
         ),
         (
-            MEMORY_ENGINE_MONGODB_URI_CONFIG_KEY.to_string(),
-            json!("mongodb://admin:admin@127.0.0.1:27018/admin"),
-        ),
-        (
-            MEMORY_ENGINE_MONGODB_DATABASE_CONFIG_KEY.to_string(),
-            json!("memory_engine"),
+            MEMORY_ENGINE_DATABASE_URL_CONFIG_KEY.to_string(),
+            json!("postgresql://memory_engine_app:change_me@127.0.0.1:5433/memory_engine"),
         ),
         (
             MEMORY_ENGINE_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
@@ -1486,12 +1471,8 @@ fn memory_engine_snapshot_exposes_runtime_environment_aliases() {
         Some(&"7081".to_string())
     );
     assert_eq!(
-        snapshot.env.get("MEMORY_ENGINE_MONGODB_URI"),
-        Some(&"mongodb://admin:admin@127.0.0.1:27018/admin".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("MEMORY_ENGINE_MONGODB_DATABASE"),
-        Some(&"memory_engine".to_string())
+        snapshot.env.get("MEMORY_ENGINE_DATABASE_URL"),
+        Some(&"postgresql://memory_engine_app:change_me@127.0.0.1:5433/memory_engine".to_string())
     );
     assert_eq!(
         snapshot.env.get("MEMORY_ENGINE_USER_SERVICE_BASE_URL"),
@@ -1565,7 +1546,6 @@ fn plugin_management_runtime_backfill_adds_all_service_defaults() {
     assert!(changed_keys.contains(&PLUGIN_MANAGEMENT_HOST_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&PLUGIN_MANAGEMENT_PORT_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&PLUGIN_MANAGEMENT_DATABASE_URL_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&PLUGIN_MANAGEMENT_MONGODB_DATABASE_CONFIG_KEY.to_string()));
     assert!(changed_keys
         .contains(&PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL_CONFIG_KEY.to_string()));
@@ -1630,12 +1610,8 @@ fn plugin_management_snapshot_exposes_runtime_environment_aliases() {
         (
             PLUGIN_MANAGEMENT_DATABASE_URL_CONFIG_KEY.to_string(),
             json!(
-                "mongodb://admin:admin@127.0.0.1:27018/plugin_management_service?authSource=admin"
+                "postgresql://plugin_management_app:change_me@127.0.0.1:5433/plugin_management_service"
             ),
-        ),
-        (
-            PLUGIN_MANAGEMENT_MONGODB_DATABASE_CONFIG_KEY.to_string(),
-            json!("plugin_management_service"),
         ),
         (
             PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY.to_string(),
@@ -1782,15 +1758,9 @@ fn plugin_management_snapshot_exposes_runtime_environment_aliases() {
     assert_eq!(
         snapshot.env.get("PLUGIN_MANAGEMENT_SERVICE_DATABASE_URL"),
         Some(
-            &"mongodb://admin:admin@127.0.0.1:27018/plugin_management_service?authSource=admin"
+            &"postgresql://plugin_management_app:change_me@127.0.0.1:5433/plugin_management_service"
                 .to_string()
         )
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("PLUGIN_MANAGEMENT_SERVICE_MONGODB_DATABASE"),
-        Some(&"plugin_management_service".to_string())
     );
     assert_eq!(
         snapshot

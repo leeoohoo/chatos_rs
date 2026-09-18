@@ -96,6 +96,49 @@ struct NativeMCPCodeWriteToolsTests {
         #expect(try String(contentsOf: file, encoding: .utf8) == "user change")
     }
 
+    @Test
+    func discardingExecutorRunRemovesUncommittedEditSession() async throws {
+        let fixture = try WriteFixture()
+        defer { fixture.dispose() }
+        let file = fixture.root.appendingPathComponent("pending.txt")
+        try Data("baseline".utf8).write(to: file)
+        let store = NativeMCPCodeWriteStore()
+        let opened = try await store.call(
+            name: "open_edit_session",
+            arguments: [:],
+            scope: fixture.scope,
+            projectRoot: fixture.root
+        )
+        let sessionID = try opened.string(at: ["result", "session_id"])
+        _ = try await store.call(
+            name: "stage_edit_batch",
+            arguments: [
+                "session_id": .string(sessionID),
+                "operations": .array([.object([
+                    "kind": .string("write"),
+                    "path": .string("pending.txt"),
+                    "content": .string("must not commit"),
+                    "expected_sha256": .string(Self.sha256("baseline")),
+                ])]),
+            ],
+            scope: fixture.scope,
+            projectRoot: fixture.root
+        )
+
+        let discarded = await store.discard(runID: fixture.scope.runID)
+
+        #expect(discarded == 1)
+        await #expect(throws: NativeMCPCodeWriteError.self) {
+            _ = try await store.call(
+                name: "commit_edit_session",
+                arguments: ["session_id": .string(sessionID)],
+                scope: fixture.scope,
+                projectRoot: fixture.root
+            )
+        }
+        #expect(try String(contentsOf: file, encoding: .utf8) == "baseline")
+    }
+
     private static func sha256(_ value: String) -> String {
         SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }

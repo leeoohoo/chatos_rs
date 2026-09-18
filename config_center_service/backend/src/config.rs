@@ -60,7 +60,6 @@ pub struct AppConfig {
     pub port: u16,
     pub internal_mtls_port: u16,
     pub database_url: String,
-    pub mongodb_database: String,
     pub user_service_base_url: String,
     pub user_service_request_timeout: Duration,
     pub consul_http_addr: Option<String>,
@@ -93,8 +92,6 @@ impl AppConfig {
                 "CONFIG_CENTER_INTERNAL_MTLS_PORT must differ from CONFIG_CENTER_PORT".to_string(),
             );
         }
-        let mongodb_database = normalized_env("CONFIG_CENTER_MONGODB_DATABASE")
-            .unwrap_or_else(|| "configuration_center".to_string());
         let caller_signing_secrets = CONFIG_CENTER_CALLER_BOOTSTRAP_SECRETS
             .iter()
             .map(|(service_name, env_key, development_default)| {
@@ -112,10 +109,8 @@ impl AppConfig {
             host,
             port,
             internal_mtls_port,
-            database_url: normalized_env("CONFIG_CENTER_DATABASE_URL").unwrap_or_else(|| {
-                format!("mongodb://admin:admin@127.0.0.1:27018/{mongodb_database}?authSource=admin")
-            }),
-            mongodb_database,
+            database_url: normalized_env("CONFIG_CENTER_DATABASE_URL")
+                .ok_or_else(|| "CONFIG_CENTER_DATABASE_URL is required".to_string())?,
             user_service_base_url: normalized_env("CONFIG_CENTER_USER_SERVICE_BASE_URL")
                 .or_else(|| normalized_env("CHATOS_USER_SERVICE_BASE_URL"))
                 .unwrap_or_else(|| "http://127.0.0.1:39190".to_string()),

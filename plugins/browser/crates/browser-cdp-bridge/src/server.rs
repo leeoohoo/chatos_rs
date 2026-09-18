@@ -305,16 +305,16 @@ impl ExtensionClient {
     }
 }
 
+#[allow(clippy::result_large_err)] // Tungstenite fixes the callback error response type.
 async fn accept_connection(stream: TcpStream, state: Arc<ServerState>) -> Result<(), String> {
     let route_slot = Arc::new(StdMutex::new(None));
     let callback_slot = route_slot.clone();
     let socket = accept_hdr_async(stream, move |request: &Request, mut response: Response| {
         let route = Route::for_request(request);
         if let Some(route) = route {
-            response.headers_mut().insert(
-                SEC_WEBSOCKET_PROTOCOL,
-                HeaderValue::from_static(route.subprotocol()),
-            );
+            let protocol = HeaderValue::from_static(route.subprotocol());
+            let headers = response.headers_mut();
+            headers.insert(SEC_WEBSOCKET_PROTOCOL, protocol);
         }
         *callback_slot.lock().expect("route lock") = route;
         Ok(response)

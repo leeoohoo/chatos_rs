@@ -23,6 +23,8 @@ pub(super) fn sanitize_task_list_filters(mut filters: TaskListFilters) -> TaskLi
     filters.parent_task_id = normalized_optional(filters.parent_task_id);
     filters.source_run_id = normalized_optional(filters.source_run_id);
     filters.source_session_id = normalized_optional(filters.source_session_id);
+    filters.after_updated_at = normalized_optional(filters.after_updated_at);
+    filters.after_id = normalized_optional(filters.after_id);
     filters.task_profile = filters
         .task_profile
         .and_then(|value| normalized_optional(Some(value)))

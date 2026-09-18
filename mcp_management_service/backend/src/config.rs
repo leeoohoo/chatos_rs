@@ -11,6 +11,9 @@ use std::net::Ipv4Addr;
 
 use chatos_service_runtime::{env_text, parse_bool_text, validate_production_secret};
 
+mod http_timeouts;
+use http_timeouts::local_connector_http_timeouts;
+
 const DEFAULT_RUNTIME_GRANT_SECRET: &str = "change_me_mcp_management_runtime_grant_secret";
 const DEFAULT_RUNTIME_SESSION_ENCRYPTION_SECRET: &str =
     "change_me_mcp_management_runtime_session_encryption_secret";
@@ -294,6 +297,8 @@ pub struct AppConfig {
     pub runtime_session_database_url: Option<String>,
     pub runtime_session_encryption_secret: String,
     pub runtime_session_ttl: Duration,
+    pub runtime_retention_interval: Duration,
+    pub runtime_retention_batch_size: usize,
     pub async_tool_dispatch_topology: AsyncToolDispatchTopology,
 }
 
@@ -424,6 +429,12 @@ impl AppConfig {
         let runtime_session_ttl = Duration::from_secs(
             required_u64("MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS")?.clamp(5 * 60, 2 * 60 * 60),
         );
+        let runtime_retention_interval = Duration::from_secs(
+            required_u64("MCP_MANAGEMENT_RUNTIME_RETENTION_INTERVAL_SECONDS")?
+                .clamp(10, 24 * 60 * 60),
+        );
+        let runtime_retention_batch_size =
+            required_usize("MCP_MANAGEMENT_RUNTIME_RETENTION_BATCH_SIZE")?.clamp(1, 10_000);
         let task_runner_request_timeout = Duration::from_millis(
             required_u64("MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS")?
                 .clamp(1_000, 2 * 60 * 60 * 1_000),
@@ -522,6 +533,8 @@ impl AppConfig {
             runtime_session_database_url,
             runtime_session_encryption_secret,
             runtime_session_ttl,
+            runtime_retention_interval,
+            runtime_retention_batch_size,
             async_tool_dispatch_topology,
         })
     }
@@ -591,6 +604,8 @@ impl AppConfig {
             runtime_session_encryption_secret: "a-long-runtime-session-encryption-secret"
                 .to_string(),
             runtime_session_ttl: Duration::from_secs(30 * 60),
+            runtime_retention_interval: Duration::from_secs(60),
+            runtime_retention_batch_size: 500,
             async_tool_dispatch_topology: AsyncToolDispatchTopology {
                 mode: AsyncToolDispatchMode::LocalQueue,
                 worker_concurrency: 4,
@@ -608,14 +623,6 @@ impl AppConfig {
             },
         }
     }
-}
-
-fn local_connector_http_timeouts(
-    control_plane_timeout: Duration,
-    tool_timeout: Duration,
-) -> chatos_service_runtime::HttpClientTimeouts {
-    chatos_service_runtime::HttpClientTimeouts::new(tool_timeout.max(control_plane_timeout))
-        .with_connect_timeout(control_plane_timeout)
 }
 
 fn normalize_base_url(value: String) -> String {

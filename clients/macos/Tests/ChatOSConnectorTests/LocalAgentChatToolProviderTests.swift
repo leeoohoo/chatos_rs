@@ -11,6 +11,11 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             .appendingPathComponent("chat.db")
     }
 
+    private func toolArguments(_ value: [String: Any]) throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+        return try XCTUnwrap(String(data: data, encoding: .utf8))
+    }
+
     func testProviderReadsScopedContextAndCompletesDeliveryBySendingMessage() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
@@ -101,6 +106,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 "chat_read_all_unread", "chat_inbox_send",
                 "todo_list", "todo_execution_options", "todo_add", "todo_update",
                 "todo_reorder", "todo_read_progress", "todo_dependency_options",
+                "todo_schedule_state", "todo_start_next", "agent_cycle_complete",
+                "team_asset_list", "team_asset_get", "team_asset_upsert", "team_asset_archive",
             ]
         )
         let bootstrap = try await provider.execute(
@@ -146,13 +153,16 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let workspaceTeams = try XCTUnwrap(workspaceJSON["teams"] as? [[String: Any]])
         let teamReference = try XCTUnwrap(workspaceTeams.first?["team_ref"] as? String)
         let thirdReference = try XCTUnwrap(
-            workspaceAgents.first(where: { $0["name"] as? String == "测试员" })?["agent_ref"]
+            workspaceAgents.first(where: {
+                ($0["is_current_agent"] as? Bool) == false
+                    && (($0["teams"] as? [String])?.isEmpty == true)
+            })?["agent_ref"]
                 as? String
         )
         let openedDirect = try await provider.execute(.init(
             id: "call-open-direct",
             name: LocalAgentChatToolProvider.openDirectToolName,
-            arguments: #"{"target_agent_ref":"\#(thirdReference)"}"#
+            arguments: try toolArguments(["target_agent_ref": thirdReference])
         ))
         XCTAssertTrue(openedDirect.content.contains("conversation_ref"))
         XCTAssertFalse(openedDirect.content.contains(third.id))
@@ -168,12 +178,20 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertTrue(members.content.contains("架构师"))
         XCTAssertTrue(members.content.contains("客户端"))
         let unread = try await provider.execute(
-            .init(id: "call-unread", name: "chat_read_unread", arguments: #"{"limit":20}"#)
+            .init(
+                id: "call-unread",
+                name: "chat_read_unread",
+                arguments: try toolArguments(["limit": 20])
+            )
         )
         XCTAssertFalse(unread.content.contains(incoming.message.id))
         XCTAssertTrue(unread.content.contains(incomingReference))
         let history = try await provider.execute(
-            .init(id: "call-history", name: "chat_read_messages", arguments: #"{"limit":20}"#)
+            .init(
+                id: "call-history",
+                name: "chat_read_messages",
+                arguments: try toolArguments(["limit": 20])
+            )
         )
         XCTAssertTrue(history.content.contains(incomingReference))
         XCTAssertFalse(history.content.contains(incoming.message.id))
@@ -181,24 +199,19 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             .init(
                 id: "call-mark-read",
                 name: "chat_mark_read",
-                arguments: #"{"through_message_ref":"\#(incomingReference)"}"#
+                arguments: try toolArguments(["through_message_ref": incomingReference])
             )
         )
         XCTAssertTrue(marked.content.contains(#""has_unread":false"#))
-        let proposalArguments = try XCTUnwrap(
-            String(
-                data: JSONSerialization.data(withJSONObject: [
-                    "name": "测试 Agent",
-                    "role": "测试工程师",
-                    "responsibility": "验证实现",
-                    "role_prompt": "只验证当前项目的实现。",
-                    "model_config_id": "inherit-current",
-                    "profession_key": "qa_engineer",
-                    "rationale": "团队缺少测试角色",
-                ], options: [.sortedKeys]),
-                encoding: .utf8
-            )
-        )
+        let proposalArguments = try toolArguments([
+            "name": "测试 Agent",
+            "role": "测试工程师",
+            "responsibility": "验证实现",
+            "role_prompt": "只验证当前项目的实现。",
+            "model_config_id": "inherit-current",
+            "profession_key": "qa_engineer",
+            "rationale": "团队缺少测试角色",
+        ])
         let proposed = try await provider.execute(
             .init(
                 id: "call-propose-member",
@@ -217,17 +230,12 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertEqual(pendingProposals.first?.proposerAgentID, first.id)
         XCTAssertEqual(pendingProposals.first?.draft.modelConfigID, first.draft.modelConfigID)
         XCTAssertEqual(pendingProposals.first?.draft.thinkingLevel, "medium")
-        let membershipArguments = try XCTUnwrap(
-            String(
-                data: JSONSerialization.data(withJSONObject: [
-                    "team_ref": teamReference,
-                    "target_agent_ref": thirdReference,
-                    "role": "测试工程师",
-                    "responsibility": "负责质量验证",
-                ], options: [.sortedKeys]),
-                encoding: .utf8
-            )
-        )
+        let membershipArguments = try toolArguments([
+            "team_ref": teamReference,
+            "target_agent_ref": thirdReference,
+            "role": "测试工程师",
+            "responsibility": "负责质量验证",
+        ])
         let membershipOutcome = try await provider.execute(.init(
             id: "call-propose-existing-member",
             name: LocalAgentChatToolProvider.proposeExistingMemberToolName,
@@ -251,15 +259,10 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let proposalSchema = String(decoding: proposalDefinition.schema, as: UTF8.self)
         XCTAssertFalse(proposalSchema.contains("model_config_id"))
 
-        let sendArguments = try XCTUnwrap(
-            String(
-                data: JSONSerialization.data(withJSONObject: [
-                    "content": "方案完成，@客户端 请开始实现。",
-                    "mention_agent_refs": [secondReference],
-                ], options: [.sortedKeys]),
-                encoding: .utf8
-            )
-        )
+        let sendArguments = try toolArguments([
+            "content": "方案完成，@客户端 请开始实现。",
+            "mention_agent_refs": [secondReference],
+        ])
         let sent = try await provider.execute(
             .init(
                 id: "call-send",
@@ -269,8 +272,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         )
         XCTAssertTrue(sent.content.contains(#""spawned_delivery_count":1"#))
         XCTAssertFalse(sent.content.contains(claimed.id))
-        let completed = try await store.delivery(ownerUserID: "alice", deliveryID: claimed.id)
-        XCTAssertEqual(completed?.status, .completed)
+        let stillRunning = try await store.delivery(ownerUserID: "alice", deliveryID: claimed.id)
+        XCTAssertEqual(stillRunning?.status, .running)
         let next = try await store.claimNextDelivery(
             ownerUserID: "alice",
             agentID: second.id,
@@ -279,6 +282,18 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertEqual(next?.triggerKind, .agentMention)
         XCTAssertEqual(next?.rootMessageID, incoming.message.rootMessageID)
 
+        _ = try await provider.execute(.init(
+            id: "schedule-state",
+            name: LocalAgentChatToolProvider.todoScheduleStateToolName,
+            arguments: "{}"
+        ))
+        _ = try await provider.execute(.init(
+            id: "complete-cycle",
+            name: LocalAgentChatToolProvider.completeManagerCycleToolName,
+            arguments: "{}"
+        ))
+        let completed = try await store.delivery(ownerUserID: "alice", deliveryID: claimed.id)
+        XCTAssertEqual(completed?.status, .completed)
         do {
             _ = try await provider.execute(
                 .init(id: "call-send-again", name: "chat_send_message", arguments: sendArguments)
@@ -465,7 +480,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let inbox = try await provider.execute(.init(
             id: "read-all",
             name: LocalAgentChatToolProvider.readAllUnreadToolName,
-            arguments: #"{"limit":20}"#
+            arguments: try toolArguments(["limit": 20])
         ))
         XCTAssertTrue(inbox.content.contains("今天放假通知"))
         XCTAssertTrue(inbox.content.contains("请修复登录错误"))
@@ -514,14 +529,11 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let informationalMessageRef = try XCTUnwrap(
             informationalMessage["message_ref"] as? String
         )
-        let replyArguments = try XCTUnwrap(String(
-            data: JSONSerialization.data(withJSONObject: [
-                "conversation_ref": actionableConversationRef,
-                "reply_to_message_ref": actionableMessageRef,
-                "content": "收到，我会处理。",
-            ], options: [.sortedKeys]),
-            encoding: .utf8
-        ))
+        let replyArguments = try toolArguments([
+            "conversation_ref": actionableConversationRef,
+            "reply_to_message_ref": actionableMessageRef,
+            "content": "收到，我会处理。",
+        ])
         let reply = try await provider.execute(.init(
             id: "reply-from-inbox",
             name: LocalAgentChatToolProvider.inboxSendToolName,
@@ -554,7 +566,13 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let invalidTeam = try await provider.execute(.init(
             id: "todo-invalid-team",
             name: LocalAgentChatToolProvider.todoAddToolName,
-            arguments: #"{"title":"无效任务","team_ref":"team_forged","source_message_refs":["\#(actionableMessageRef)"],"requires_execution":true,"builtin_capabilities":[]}"#
+            arguments: try toolArguments([
+                "title": "无效任务",
+                "team_ref": "team_forged",
+                "source_message_refs": [actionableMessageRef],
+                "requires_execution": true,
+                "builtin_capabilities": [],
+            ])
         ))
         XCTAssertTrue(invalidTeam.isError)
         XCTAssertTrue(invalidTeam.content.contains(#""code":"invalid_team_ref""#))
@@ -563,27 +581,35 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let invalidMessage = try await provider.execute(.init(
             id: "todo-invalid-message",
             name: LocalAgentChatToolProvider.todoAddToolName,
-            arguments: #"{"title":"无效任务","team_ref":"\#(teamRef)","source_message_refs":["message_forged"],"requires_execution":true,"builtin_capabilities":[]}"#
+            arguments: try toolArguments([
+                "title": "无效任务",
+                "team_ref": teamRef,
+                "source_message_refs": ["message_forged"],
+                "requires_execution": true,
+                "builtin_capabilities": [],
+            ])
         ))
         XCTAssertTrue(invalidMessage.isError)
         XCTAssertTrue(invalidMessage.content.contains(#""code":"invalid_source_message_ref""#))
         XCTAssertTrue(invalidMessage.content.contains(#""next_tool":"chat_read_all_unread""#))
-        let todoArguments = try XCTUnwrap(String(
-            data: JSONSerialization.data(withJSONObject: [
-                "title": "修复登录错误",
-                "priority": 90,
-                "team_ref": teamRef,
-                "assignee_ref": assigneeRef,
-                "source_message_refs": [actionableMessageRef, informationalMessageRef],
-                "requires_execution": true,
-                "builtin_capabilities": ["project_read", "project_write", "terminal"],
-                "plugin_hints": [[
-                    "plugin_ref": pluginRef,
-                    "reason": "验证 Todo 创建时可信选择 Plugin",
-                ]],
-            ], options: [.sortedKeys]),
-            encoding: .utf8
-        ))
+        let todoArguments = try toolArguments([
+            "title": "修复登录错误",
+            "objective": "修复客户端登录流程中的错误并验证恢复连接。",
+            "scope": "仅修改当前项目中的登录与网关连接实现。",
+            "expected_outputs": ["代码修复", "自动化测试结果"],
+            "acceptance_criteria": ["重新登录后网关保持已连接"],
+            "constraints": ["不得泄露内部 ID"],
+            "priority": 90,
+            "team_ref": teamRef,
+            "assignee_ref": assigneeRef,
+            "source_message_refs": [actionableMessageRef, informationalMessageRef],
+            "requires_execution": true,
+            "builtin_capabilities": ["project_read", "project_write", "terminal"],
+            "plugin_hints": [[
+                "plugin_ref": pluginRef,
+                "reason": "验证 Todo 创建时可信选择 Plugin",
+            ]],
+        ])
         let created = try await provider.execute(.init(
             id: "todo-actionable",
             name: LocalAgentChatToolProvider.todoAddToolName,
@@ -603,6 +629,12 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertEqual(todos.first?.title, "修复登录错误")
         XCTAssertEqual(todos.first?.sourceMessageID, actionable.message.id)
         XCTAssertEqual(todos.first?.teamRoomID, second.id)
+        XCTAssertEqual(
+            todos.first?.executionContract.objective,
+            "修复客户端登录流程中的错误并验证恢复连接。"
+        )
+        XCTAssertEqual(todos.first?.executionContract.expectedOutputs, ["代码修复", "自动化测试结果"])
+        XCTAssertEqual(todos.first?.executionContract.acceptanceCriteria, ["重新登录后网关保持已连接"])
         XCTAssertEqual(
             todos.first?.executionPlan.builtinCapabilities,
             [.projectRead, .projectWrite, .terminal]
@@ -714,17 +746,28 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let teamRef = try XCTUnwrap(team["team_ref"] as? String)
         let assignees = try XCTUnwrap(team["assignees"] as? [[String: Any]])
         let managerRef = try XCTUnwrap(
-            assignees.first(where: { ($0["name"] as? String) == "项目经理" })?["assignee_ref"]
+            assignees.first(where: { ($0["is_project_manager"] as? Bool) == true })?["assignee_ref"]
                 as? String
         )
         let engineerRef = try XCTUnwrap(
-            assignees.first(where: { ($0["name"] as? String) == "工程师" })?["assignee_ref"]
+            assignees.first(where: { ($0["is_project_manager"] as? Bool) == false })?["assignee_ref"]
                 as? String
         )
         let prerequisite = try await provider.execute(.init(
             id: "create-prerequisite",
             name: LocalAgentChatToolProvider.todoAddToolName,
-            arguments: #"{"title":"实现接口","team_ref":"\#(teamRef)","assignee_ref":"\#(engineerRef)","source_message_refs":["\#(sourceRef)"],"requires_execution":true,"builtin_capabilities":["project_read","project_write"]}"#
+            arguments: try toolArguments([
+                "title": "实现接口",
+                "objective": "实现客户端依赖的稳定接口",
+                "scope": "完成接口代码和验证",
+                "expected_outputs": ["接口实现"],
+                "acceptance_criteria": ["接口测试通过"],
+                "team_ref": teamRef,
+                "assignee_ref": engineerRef,
+                "source_message_refs": [sourceRef],
+                "requires_execution": true,
+                "builtin_capabilities": ["project_read", "project_write"],
+            ])
         ))
         let persistedAfterCreate = try await store.listTeamTodos(
             ownerUserID: "alice",
@@ -741,7 +784,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let dependencyOptions = try await provider.execute(.init(
             id: "dependency-options",
             name: LocalAgentChatToolProvider.todoDependencyOptionsToolName,
-            arguments: #"{"team_ref":"\#(teamRef)"}"#
+            arguments: try toolArguments(["team_ref": teamRef])
         ))
         let dependencyJSON = try XCTUnwrap(
             try JSONSerialization.jsonObject(with: Data(dependencyOptions.content.utf8))
@@ -751,7 +794,15 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let invalidDependency = try await provider.execute(.init(
             id: "create-invalid-dependent",
             name: LocalAgentChatToolProvider.todoAddToolName,
-            arguments: #"{"title":"伪造依赖","team_ref":"\#(teamRef)","assignee_ref":"\#(managerRef)","depends_on_todo_refs":["todo_forged"],"source_message_refs":["\#(sourceRef)"],"requires_execution":true,"builtin_capabilities":[]}"#
+            arguments: try toolArguments([
+                "title": "伪造依赖",
+                "team_ref": teamRef,
+                "assignee_ref": managerRef,
+                "depends_on_todo_refs": ["todo_forged"],
+                "source_message_refs": [sourceRef],
+                "requires_execution": true,
+                "builtin_capabilities": [],
+            ])
         ))
         XCTAssertTrue(invalidDependency.isError)
         XCTAssertTrue(invalidDependency.content.contains(#""code":"invalid_dependency_todo_ref""#))
@@ -759,7 +810,19 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let dependent = try await provider.execute(.init(
             id: "create-dependent",
             name: LocalAgentChatToolProvider.todoAddToolName,
-            arguments: #"{"title":"实现客户端","team_ref":"\#(teamRef)","assignee_ref":"\#(managerRef)","depends_on_todo_refs":["\#(prerequisiteRef)"],"source_message_refs":["\#(sourceRef)"],"requires_execution":true,"builtin_capabilities":["project_read","project_write"]}"#
+            arguments: try toolArguments([
+                "title": "实现客户端",
+                "objective": "基于接口完成客户端功能",
+                "scope": "完成客户端实现和验证",
+                "expected_outputs": ["客户端实现"],
+                "acceptance_criteria": ["客户端测试通过"],
+                "team_ref": teamRef,
+                "assignee_ref": managerRef,
+                "depends_on_todo_refs": [prerequisiteRef],
+                "source_message_refs": [sourceRef],
+                "requires_execution": true,
+                "builtin_capabilities": ["project_read", "project_write"],
+            ])
         ))
         XCTAssertFalse(dependent.isError)
         let todos = try await store.listTeamTodos(
@@ -838,7 +901,12 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let requestedManagement = try await workerProvider.execute(.init(
             id: "worker-request-management",
             name: LocalAgentChatToolProvider.inboxSendToolName,
-            arguments: #"{"conversation_ref":"\#(workerConversationRef)","reply_to_message_ref":"\#(workerSourceRef)","content":"发现新增工作，请项目经理任务化。","notify_project_manager":true}"#
+            arguments: try toolArguments([
+                "conversation_ref": workerConversationRef,
+                "reply_to_message_ref": workerSourceRef,
+                "content": "发现新增工作，请项目经理任务化。",
+                "notify_project_manager": true,
+            ])
         ))
         XCTAssertFalse(requestedManagement.isError)
         XCTAssertTrue(requestedManagement.content.contains(#""notified_project_manager":true"#))
@@ -939,16 +1007,20 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let executorDefinitions = try await executor.definitions()
         XCTAssertEqual(Set(executorDefinitions.map(\.name)), Set([
             "todo_get_context", "todo_progress_append", "todo_complete", "todo_block",
+            "team_asset_list", "team_asset_get",
         ]))
         _ = try await executor.execute(.init(
             id: "progress",
             name: LocalAgentChatToolProvider.todoProgressAppendToolName,
-            arguments: #"{"stage":"verification","detail":"已完成验证。"}"#
+            arguments: try toolArguments([
+                "stage": "verification",
+                "detail": "已完成验证。",
+            ])
         ))
         _ = try await executor.execute(.init(
             id: "complete",
             name: LocalAgentChatToolProvider.todoCompleteToolName,
-            arguments: #"{"summary":"任务已经完成并通过验证。"}"#
+            arguments: try toolArguments(["summary": "任务已经完成并通过验证。"])
         ))
         _ = try await store.failDelivery(
             ownerUserID: "alice",
@@ -997,7 +1069,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let listed = try await manager.execute(.init(
             id: "list-terminal",
             name: LocalAgentChatToolProvider.todoListToolName,
-            arguments: #"{"include_terminal":true}"#
+            arguments: try toolArguments(["include_terminal": true])
         ))
         let listedJSON = try XCTUnwrap(
             try JSONSerialization.jsonObject(with: Data(listed.content.utf8)) as? [[String: Any]]
@@ -1006,7 +1078,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let progress = try await manager.execute(.init(
             id: "read-progress",
             name: LocalAgentChatToolProvider.todoReadProgressToolName,
-            arguments: #"{"todo_ref":"\#(todoReference)"}"#
+            arguments: try toolArguments(["todo_ref": todoReference])
         ))
         XCTAssertTrue(progress.content.contains("已完成验证"))
         XCTAssertTrue(progress.content.contains("任务已经完成"))

@@ -5,6 +5,32 @@ import Foundation
 import XCTest
 
 final class LocalAgentGroupChatSchedulerTests: XCTestCase {
+    func testLocalChangeStreamDeliversDurableInvalidationToMatchingRoom() async throws {
+        let service = NativeAgentGroupChatService(
+            databaseURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("unused-agent-change-\(UUID().uuidString).db")
+        )
+        let stream = await service.changes(ownerUserID: "alice", roomID: "room-1")
+        let received = Task<NativeAgentGroupChatChange?, Never> {
+            for await change in stream { return Optional(change) }
+            return nil
+        }
+        await Task.yield()
+        let expected = NativeAgentGroupChatChange(
+            ownerUserID: "alice",
+            roomID: "room-1",
+            agentID: "agent-1",
+            runID: UUID(),
+            kind: .runUpdated
+        )
+
+        await service.publishChange(expected)
+
+        let receivedChange = await received.value
+        let change = try XCTUnwrap(receivedChange)
+        XCTAssertEqual(change, expected)
+    }
+
     func testAutomaticRecoveryOnlyAcceptsSideEffectFreeTechnicalPauses() {
         var checkpoint = AgentRunCheckpoint(
             scope: "account:alice:agent:test:run:test",
@@ -299,6 +325,130 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         XCTAssertTrue(unfinishedAfterAbandon.isEmpty)
     }
 
+    func testAbandoningExecutorBlocksTodoAndWakesManager() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-abandon-executor-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let nativeService = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await nativeService.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "项目经理",
+                rolePrompt: "管理并执行任务。",
+                modelConfigID: "local-model",
+                professionKey: "project_manager"
+            )
+        )
+        let team = try await store.createManagedRoom(
+            ownerUserID: "alice",
+            projectID: "abandon-executor-project",
+            draft: .init(name: "执行恢复团队"),
+            projectManagerAgentID: agent.id
+        )
+        let todo = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            requestKey: "abandon-running-todo",
+            draft: .init(
+                title: "执行到一半的任务",
+                teamRoomID: team.id,
+                creatorAgentID: agent.id
+            ),
+            nowUnixMs: 100
+        )
+        let pendingValue = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 101
+        )
+        let pending = try XCTUnwrap(pendingValue)
+        let claimedValue = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 102
+        )
+        let delivery = try XCTUnwrap(claimedValue)
+        XCTAssertEqual(delivery.id, pending.id)
+        XCTAssertEqual(delivery.lane, .executor)
+
+        let runID = UUID()
+        let context = try LocalAgentChatRunContext(
+            ownerUserID: "alice",
+            projectID: team.projectID,
+            roomID: team.id,
+            agentID: agent.id,
+            deliveryID: delivery.id,
+            triggerMessageID: delivery.messageID,
+            rootMessageID: delivery.rootMessageID,
+            runID: runID.uuidString.lowercased(),
+            hopCount: delivery.hopCount,
+            lane: .executor
+        )
+        var checkpoint = AgentRunCheckpoint(
+            scope: LocalAgentGroupChatRun.runtimeScope(for: context),
+            messages: [.init(role: .system, content: "system")]
+        )
+        checkpoint.id = runID
+        checkpoint.status = .needsReview
+        checkpoint.stopReason = "等待用户确认"
+        try await store.saveRun(try LocalAgentGroupChatRun(
+            id: runID,
+            context: context,
+            modelConfigID: agent.draft.modelConfigID,
+            policy: .init(),
+            checkpoint: checkpoint,
+            createdAtUnixMs: 102,
+            updatedAtUnixMs: 102
+        ))
+
+        let settingsSuite = "local-agent-abandon-executor-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: nativeService,
+            services: SchedulerTestServices(),
+            settings: .init(suiteName: settingsSuite),
+            now: { 200 }
+        )
+        try await scheduler.abandonDelivery(
+            ownerUserID: "alice",
+            projectID: team.projectID,
+            deliveryID: delivery.id
+        )
+
+        let failedDelivery = try await store.delivery(
+            ownerUserID: "alice",
+            deliveryID: delivery.id
+        )
+        XCTAssertEqual(failedDelivery?.status, .failed)
+        let blockedTodo = try await store.agentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id
+        )
+        XCTAssertEqual(blockedTodo?.status, .blocked)
+        XCTAssertEqual(blockedTodo?.blockedReason, "用户已结束这个未完成的本地 Agent Run。")
+        let progress = try await store.listAgentTodoProgress(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id,
+            limit: 20
+        )
+        XCTAssertEqual(progress.last?.kind, .blocked)
+        XCTAssertEqual(progress.last?.stage, "abandoned")
+
+        let managerWakeValue = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 201
+        )
+        let managerWake = try XCTUnwrap(managerWakeValue)
+        XCTAssertEqual(managerWake.triggerKind, .todoStatus)
+        XCTAssertEqual(managerWake.lane, .manager)
+    }
+
     func testSchedulerRunsDifferentAgentsConcurrentlyButClaimsOneDeliveryPerAgent() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-parallel-scheduler-\(UUID().uuidString)")
@@ -415,6 +565,12 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
             ),
             nowUnixMs: source.createdAtUnixMs + 1
         )
+        let executorDelivery = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: source.createdAtUnixMs + 2
+        )
+        XCTAssertNotNil(executorDelivery)
         let direct = try await store.openHumanAgentDirect(
             ownerUserID: "alice",
             agentID: agent.id
@@ -451,6 +607,215 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         )
         let completedTodo = allTodos.first
         XCTAssertEqual(completedTodo?.status, .completed)
+    }
+
+    func testConcurrentAccountDrainsSerializeAndBothConsumeQueuedWork() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-account-lease-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await service.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "串行调度 Agent",
+                rolePrompt: "依次处理消息。",
+                modelConfigID: "lane-model"
+            )
+        )
+        let direct = try await store.openHumanAgentDirect(
+            ownerUserID: "alice",
+            agentID: agent.id
+        )
+        for content in ["第一条消息", "第二条消息"] {
+            _ = try await store.postMessage(
+                ownerUserID: "alice",
+                roomID: direct.id,
+                draft: .init(senderKind: .human, senderID: "alice", content: content),
+                limits: .init()
+            )
+        }
+        let probe = SchedulerConcurrencyProbe()
+        let settingsSuite = "local-agent-account-lease-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: LaneSchedulerTestServices(probe: probe),
+            settings: .init(suiteName: settingsSuite)
+        )
+
+        async let first = scheduler.drainAccount(ownerUserID: "alice", maximumRuns: 1)
+        async let second = scheduler.drainAccount(ownerUserID: "alice", maximumRuns: 1)
+        let (firstResults, secondResults) = try await (first, second)
+        let maximumConcurrentCalls = await probe.maximumConcurrentCalls()
+
+        XCTAssertEqual([firstResults.count, secondResults.count], [1, 1])
+        XCTAssertEqual(maximumConcurrentCalls, 1)
+    }
+
+    func testCancelledTodoRejectsExecutorToolBeforeSideEffect() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-cancelled-executor-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let nativeService = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await nativeService.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "可取消执行者",
+                rolePrompt: "执行被分配的任务。",
+                modelConfigID: "cancellation-model"
+            )
+        )
+        let team = try await store.createRoom(
+            ownerUserID: "alice",
+            projectID: "cancellation-project",
+            draft: .init(name: "取消测试团队")
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: team.id,
+            agentID: agent.id,
+            draft: .init(role: "执行者")
+        )
+        let todo = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            requestKey: "cancel-before-tool",
+            draft: .init(title: "即将取消", teamRoomID: team.id),
+            nowUnixMs: 100
+        )
+        let delivery = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 101
+        )
+        XCTAssertNotNil(delivery)
+
+        let settingsSuite = "local-agent-cancellation-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: nativeService,
+            services: CancellationSchedulerTestServices(
+                store: store,
+                agentID: agent.id,
+                todoID: todo.id
+            ),
+            settings: .init(suiteName: settingsSuite),
+            now: { 200 }
+        )
+        let results = try await scheduler.drainProject(
+            ownerUserID: "alice",
+            projectID: team.projectID,
+            maximumRuns: 1
+        )
+
+        XCTAssertEqual(results.first?.outcome, .completed)
+        let storedDelivery = try await store.delivery(
+            ownerUserID: "alice",
+            deliveryID: try XCTUnwrap(delivery?.id)
+        )
+        XCTAssertEqual(storedDelivery?.status, .cancelled)
+        let progress = try await store.listAgentTodoProgress(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id,
+            limit: 20
+        )
+        XCTAssertFalse(progress.contains { $0.detail == "不应产生的副作用" })
+        let cancelledTodo = try await store.agentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id
+        )
+        XCTAssertEqual(cancelledTodo?.status, .cancelled)
+    }
+
+    func testManagerCancellationActivelyCancelsRunningExecutorTask() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-active-cancellation-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let nativeService = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await nativeService.store()
+        let manager = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "项目经理",
+                rolePrompt: "管理并执行任务。",
+                modelConfigID: "active-cancellation-model",
+                professionKey: "project_manager"
+            )
+        )
+        let team = try await store.createManagedRoom(
+            ownerUserID: "alice",
+            projectID: "active-cancellation-project",
+            draft: .init(name: "主动取消团队"),
+            projectManagerAgentID: manager.id
+        )
+        let todo = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: manager.id,
+            requestKey: "long-running-todo",
+            draft: .init(
+                title: "长时间执行任务",
+                teamRoomID: team.id,
+                creatorAgentID: manager.id
+            ),
+            nowUnixMs: 100
+        )
+        let executorDelivery = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: manager.id,
+            nowUnixMs: 101
+        )
+        _ = try XCTUnwrap(executorDelivery)
+        let direct = try await store.openHumanAgentDirect(
+            ownerUserID: "alice",
+            agentID: manager.id
+        )
+        _ = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: direct.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "停止正在执行的任务"),
+            limits: .init()
+        )
+
+        let settingsSuite = "local-agent-active-cancellation-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: nativeService,
+            services: ActiveCancellationSchedulerTestServices(),
+            settings: .init(suiteName: settingsSuite),
+            now: { 200 }
+        )
+        let startedAt = Date()
+        let results = try await scheduler.drainAccount(ownerUserID: "alice", maximumRuns: 2)
+
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 5)
+        XCTAssertEqual(results.count, 2)
+        XCTAssertTrue(results.contains { $0.outcome == .completed })
+        XCTAssertTrue(results.contains { $0.outcome == .suspended })
+        let cancelledTodo = try await store.agentTodo(
+            ownerUserID: "alice",
+            agentID: manager.id,
+            todoID: todo.id
+        )
+        XCTAssertEqual(cancelledTodo?.status, .cancelled)
+        let progress = try await store.listAgentTodoProgress(
+            ownerUserID: "alice",
+            agentID: manager.id,
+            todoID: todo.id,
+            limit: 20
+        )
+        XCTAssertTrue(progress.contains {
+            $0.kind == .cancelled && $0.stage == "cancelled"
+        })
     }
 
     func testFreshDeliveryPausesInsteadOfRunningWithoutContinuousMemory() async throws {
@@ -578,6 +943,8 @@ private struct SchedulerTestMemory: AgentMemoryServicing {
 }
 
 private actor SchedulerTestModel: AgentModelClient {
+    private var requestCount = 0
+
     func complete(
         messages: [AgentMessage],
         tools: [AgentToolDefinition],
@@ -589,14 +956,36 @@ private actor SchedulerTestModel: AgentModelClient {
         XCTAssertTrue(messages.contains {
             $0.role == .user && $0.content.contains("current_trigger_json")
         })
-        return .init(
-            role: .assistant,
-            toolCalls: [.init(
-                id: "send-reply",
-                name: "chat_send_message",
-                arguments: #"{"content":"我已在客户端完成本地调度。"}"#
-            )]
-        )
+        requestCount += 1
+        switch requestCount {
+        case 1:
+            return .init(
+                role: .assistant,
+                toolCalls: [.init(
+                    id: "send-reply",
+                    name: LocalAgentChatToolProvider.sendMessageToolName,
+                    arguments: #"{"content":"我已在客户端完成本地调度。"}"#
+                )]
+            )
+        case 2:
+            return .init(
+                role: .assistant,
+                toolCalls: [.init(
+                    id: "read-schedule",
+                    name: LocalAgentChatToolProvider.todoScheduleStateToolName,
+                    arguments: "{}"
+                )]
+            )
+        default:
+            return .init(
+                role: .assistant,
+                toolCalls: [.init(
+                    id: "complete-cycle",
+                    name: LocalAgentChatToolProvider.completeManagerCycleToolName,
+                    arguments: "{}"
+                )]
+            )
+        }
     }
 }
 
@@ -657,12 +1046,22 @@ private actor ParallelSchedulerTestModel: AgentModelClient {
                 toolCalls: [.init(id: "read-unread", name: "chat_read_unread", arguments: "{}")]
             )
         }
+        if requestCount == 2 {
+            return .init(
+                role: .assistant,
+                toolCalls: [.init(
+                    id: "send-reply",
+                    name: LocalAgentChatToolProvider.sendMessageToolName,
+                    arguments: #"{"content":"并行 Agent 已完成。"}"#
+                )]
+            )
+        }
         return .init(
             role: .assistant,
             toolCalls: [.init(
-                id: "send-reply",
-                name: "chat_send_message",
-                arguments: #"{"content":"并行 Agent 已完成。"}"#
+                id: "complete-cycle",
+                name: LocalAgentChatToolProvider.completeManagerCycleToolName,
+                arguments: "{}"
             )]
         )
     }
@@ -686,6 +1085,7 @@ private struct LaneSchedulerTestServices: AgentServiceProviding {
 
 private actor LaneSchedulerTestModel: AgentModelClient {
     private let probe: SchedulerConcurrencyProbe
+    private var requestCount = 0
 
     init(probe: SchedulerConcurrencyProbe) {
         self.probe = probe
@@ -709,6 +1109,17 @@ private actor LaneSchedulerTestModel: AgentModelClient {
                 )]
             )
         }
+        requestCount += 1
+        if requestCount > 1 {
+            return .init(
+                role: .assistant,
+                toolCalls: [.init(
+                    id: "complete-manager-cycle",
+                    name: LocalAgentChatToolProvider.completeManagerCycleToolName,
+                    arguments: "{}"
+                )]
+            )
+        }
         return .init(
             role: .assistant,
             toolCalls: [.init(
@@ -717,5 +1128,118 @@ private actor LaneSchedulerTestModel: AgentModelClient {
                 arguments: #"{"content":"通讯线程已回复。"}"#
             )]
         )
+    }
+}
+
+private struct CancellationSchedulerTestServices: AgentServiceProviding {
+    let store: SQLiteAgentGroupChatStore
+    let agentID: String
+    let todoID: String
+
+    func makeAgentModel(
+        configID: String,
+        policy: AgentRunPolicy
+    ) async throws -> any AgentModelClient {
+        XCTAssertEqual(configID, "cancellation-model")
+        return CancellationSchedulerTestModel(store: store, agentID: agentID, todoID: todoID)
+    }
+
+    func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
+        SchedulerTestMemory()
+    }
+}
+
+private actor CancellationSchedulerTestModel: AgentModelClient {
+    let store: SQLiteAgentGroupChatStore
+    let agentID: String
+    let todoID: String
+
+    init(store: SQLiteAgentGroupChatStore, agentID: String, todoID: String) {
+        self.store = store
+        self.agentID = agentID
+        self.todoID = todoID
+    }
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: agentID,
+            todoID: todoID,
+            update: .init(status: .cancelled),
+            nowUnixMs: 201
+        )
+        return .init(
+            role: .assistant,
+            toolCalls: [.init(
+                id: "rejected-progress",
+                name: LocalAgentChatToolProvider.todoProgressAppendToolName,
+                arguments: #"{"detail":"不应产生的副作用"}"#
+            )]
+        )
+    }
+}
+
+private struct ActiveCancellationSchedulerTestServices: AgentServiceProviding {
+    func makeAgentModel(
+        configID: String,
+        policy: AgentRunPolicy
+    ) async throws -> any AgentModelClient {
+        XCTAssertEqual(configID, "active-cancellation-model")
+        return ActiveCancellationSchedulerTestModel()
+    }
+
+    func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
+        SchedulerTestMemory()
+    }
+}
+
+private actor ActiveCancellationSchedulerTestModel: AgentModelClient {
+    private var requestCount = 0
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        if tools.contains(where: { $0.name == LocalAgentChatToolProvider.todoCompleteToolName }) {
+            try await Task.sleep(for: .seconds(30))
+            return .init(role: .assistant, content: "不应自然结束")
+        }
+        requestCount += 1
+        switch requestCount {
+        case 1:
+            return .init(role: .assistant, toolCalls: [.init(
+                id: "list-todos-before-cancel",
+                name: LocalAgentChatToolProvider.todoListToolName,
+                arguments: "{}"
+            )])
+        case 2:
+            let toolContent = messages.last(where: { $0.role == .tool })?.content ?? "[]"
+            let data = Data(toolContent.utf8)
+            let values = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+            let todoReference = try XCTUnwrap(values?.first?["todo_ref"] as? String)
+            let arguments = try XCTUnwrap(String(
+                data: JSONSerialization.data(withJSONObject: [
+                    "todo_ref": todoReference,
+                    "status": "cancelled",
+                ]),
+                encoding: .utf8
+            ))
+            return .init(role: .assistant, toolCalls: [.init(
+                id: "cancel-running-todo",
+                name: LocalAgentChatToolProvider.todoUpdateToolName,
+                arguments: arguments
+            )])
+        default:
+            return .init(role: .assistant, toolCalls: [.init(
+                id: "complete-after-cancel",
+                name: LocalAgentChatToolProvider.completeManagerCycleToolName,
+                arguments: "{}"
+            )])
+        }
     }
 }

@@ -1,36 +1,17 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use futures_util::TryStreamExt;
-use mongodb::{
-    bson::{doc, Document},
-    Cursor,
-};
+use sqlx::types::Json;
+use sqlx::{Postgres, QueryBuilder};
 use uuid::Uuid;
 
-use crate::db::Db;
 use crate::models::{now_rfc3339, EngineSummary};
+use crate::repositories::postgres::decode;
 
-pub(crate) fn summary_collection(db: &Db) -> mongodb::Collection<EngineSummary> {
-    db.collection::<EngineSummary>("engine_summaries")
-}
-
-pub(crate) fn thread_collection(db: &Db) -> mongodb::Collection<crate::models::EngineThread> {
-    db.collection::<crate::models::EngineThread>("engine_threads")
-}
-
-pub(crate) async fn collect_summaries(
-    cursor: Cursor<EngineSummary>,
+pub(crate) fn decode_summaries(
+    rows: Vec<Json<serde_json::Value>>,
 ) -> Result<Vec<EngineSummary>, String> {
-    cursor.try_collect().await.map_err(|err| err.to_string())
-}
-
-pub(crate) async fn collect_summary_thread_ids(
-    cursor: Cursor<crate::models::EngineThread>,
-) -> Result<Vec<String>, String> {
-    let threads: Vec<crate::models::EngineThread> =
-        cursor.try_collect().await.map_err(|err| err.to_string())?;
-    Ok(threads.into_iter().map(|thread| thread.id).collect())
+    rows.into_iter().map(decode).collect()
 }
 
 pub(crate) fn new_summary(
@@ -73,34 +54,33 @@ pub(crate) fn new_summary(
     }
 }
 
-pub(crate) fn build_thread_summary_filter(
-    thread_id: &str,
-    tenant_id: Option<&str>,
-    source_id: Option<&str>,
-    summary_type: Option<&str>,
-    status: Option<&str>,
+pub(crate) fn build_summary_query<'a>(
+    select: &str,
+    thread_id: &'a str,
+    tenant_id: Option<&'a str>,
+    source_id: Option<&'a str>,
+    summary_type: Option<&'a str>,
+    status: Option<&'a str>,
     level: Option<i64>,
-) -> Document {
-    let mut filter = doc! {
-        "thread_id": thread_id,
-    };
-    if let Some(value) = tenant_id.map(str::trim).filter(|value| !value.is_empty()) {
-        filter.insert("tenant_id", value);
+) -> QueryBuilder<'a, Postgres> {
+    let mut query = QueryBuilder::new(select);
+    query.push(" WHERE thread_id=").push_bind(thread_id);
+    append(&mut query, "tenant_id", tenant_id);
+    append(&mut query, "source_id", source_id);
+    append(&mut query, "summary_type", summary_type);
+    append(&mut query, "status", status);
+    if let Some(level) = level {
+        query.push(" AND level=").push_bind(level);
     }
-    if let Some(value) = source_id.map(str::trim).filter(|value| !value.is_empty()) {
-        filter.insert("source_id", value);
+    query
+}
+
+pub(crate) fn append<'a>(
+    query: &mut QueryBuilder<'a, Postgres>,
+    column: &str,
+    value: Option<&'a str>,
+) {
+    if let Some(value) = value.map(str::trim).filter(|v| !v.is_empty()) {
+        query.push(" AND ").push(column).push("=").push_bind(value);
     }
-    if let Some(value) = summary_type
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        filter.insert("summary_type", value);
-    }
-    if let Some(value) = status.map(str::trim).filter(|value| !value.is_empty()) {
-        filter.insert("status", value);
-    }
-    if let Some(value) = level {
-        filter.insert("level", value);
-    }
-    filter
 }

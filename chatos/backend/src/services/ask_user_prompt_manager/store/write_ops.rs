@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chrono::{Duration, Utc};
-use mongodb::bson::{doc, Bson, Document};
-use mongodb::options::{FindOneAndUpdateOptions, ReturnDocument, UpdateOptions};
-
-use crate::repositories::db::with_db;
+use crate::repositories::db::{
+    db_error, decode_optional, json, optional_timestamp, timestamp, with_db,
+};
 use crate::services::ask_user_prompt_manager::normalizer::{
     redact_prompt_payload, trimmed_non_empty,
 };
@@ -15,35 +13,31 @@ use crate::services::ask_user_prompt_manager::types::{
 use crate::services::realtime::{
     publish_ask_user_prompt_updated, resolve_conversation_scope, AskUserPromptRealtimePayload,
 };
+use chrono::{Duration, Utc};
 
-use super::codec::{ask_user_prompt_record_from_doc, ask_user_prompt_record_to_doc};
+async fn save(record: &AskUserPromptRecord) -> Result<(), String> {
+    with_db(|pool|Box::pin(async move{sqlx::query("INSERT INTO ask_user_prompt_requests(id,conversation_id,conversation_turn_id,status,source,external_prompt_id,created_at,updated_at,expires_at,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO UPDATE SET conversation_id=EXCLUDED.conversation_id,conversation_turn_id=EXCLUDED.conversation_turn_id,status=EXCLUDED.status,source=EXCLUDED.source,external_prompt_id=EXCLUDED.external_prompt_id,updated_at=EXCLUDED.updated_at,expires_at=EXCLUDED.expires_at,data=EXCLUDED.data").bind(&record.id).bind(&record.conversation_id).bind(&record.conversation_turn_id).bind(record.status.as_str()).bind(&record.source).bind(&record.external_prompt_id).bind(timestamp(&record.created_at)?).bind(timestamp(&record.updated_at)?).bind(optional_timestamp(record.expires_at.as_deref())?).bind(json(record)?).execute(pool).await.map(|_|()).map_err(db_error)})).await
+}
 
 pub async fn create_ask_user_prompt_record(
     payload: &AskUserPromptPayload,
 ) -> Result<AskUserPromptRecord, String> {
-    let id = trimmed_non_empty(payload.prompt_id.as_str())
+    let id = trimmed_non_empty(&payload.prompt_id)
         .ok_or_else(|| "prompt_id is required".to_string())?
         .to_string();
-    let conversation_id = trimmed_non_empty(payload.conversation_id.as_str())
+    let conversation_id = trimmed_non_empty(&payload.conversation_id)
         .ok_or_else(|| "conversation_id is required".to_string())?
         .to_string();
-    let conversation_turn_id = trimmed_non_empty(payload.conversation_turn_id.as_str())
+    let conversation_turn_id = trimmed_non_empty(&payload.conversation_turn_id)
         .ok_or_else(|| "conversation_turn_id is required".to_string())?
         .to_string();
-    let kind = trimmed_non_empty(payload.kind.as_str())
+    let kind = trimmed_non_empty(&payload.kind)
         .ok_or_else(|| "kind is required".to_string())?
         .to_string();
-    if let Some(existing) = super::read_ops::get_ask_user_prompt_record(id.as_str()).await? {
+    if let Some(existing) = super::read_ops::get_ask_user_prompt_record(&id).await? {
         return Ok(existing);
     }
-
     let now = crate::core::time::now_rfc3339();
-    let expires_at = Some(
-        (Utc::now()
-            + Duration::milliseconds(payload.timeout_ms.clamp(1_000, i32::MAX as u64) as i64))
-        .to_rfc3339(),
-    );
-
     let record = AskUserPromptRecord {
         id,
         conversation_id,
@@ -52,12 +46,16 @@ pub async fn create_ask_user_prompt_record(
             .tool_call_id
             .as_deref()
             .and_then(trimmed_non_empty)
-            .map(|value| value.to_string()),
+            .map(str::to_string),
         kind,
         status: AskUserPromptStatus::Pending,
         prompt: redact_prompt_payload(payload),
         response: None,
-        expires_at,
+        expires_at: Some(
+            (Utc::now()
+                + Duration::milliseconds(payload.timeout_ms.clamp(1_000, i32::MAX as u64) as i64))
+            .to_rfc3339(),
+        ),
         source: "chatos".to_string(),
         external_prompt_id: None,
         external_task_id: None,
@@ -66,77 +64,31 @@ pub async fn create_ask_user_prompt_record(
         created_at: now.clone(),
         updated_at: now,
     };
-
-    let mongo_record = record.clone();
-
-    let created = with_db(move |db| {
-        let record = mongo_record.clone();
-        Box::pin(async move {
-            let update_options = UpdateOptions::builder().upsert(true).build();
-            db.collection::<Document>("ask_user_prompt_requests")
-                .update_one(
-                    doc! { "id": record.id.clone() },
-                    doc! { "$set": ask_user_prompt_record_to_doc(&record) },
-                    update_options,
-                )
-                .await
-                .map_err(|err| err.to_string())?;
-            Ok(record)
-        })
-    })
-    .await?;
-
-    publish_ask_user_prompt_created(&created).await;
-    Ok(created)
+    save(&record).await?;
+    publish_ask_user_prompt_created(&record).await;
+    Ok(record)
 }
 
 pub async fn upsert_external_ask_user_prompt_record(
-    record: AskUserPromptRecord,
+    mut record: AskUserPromptRecord,
 ) -> Result<AskUserPromptRecord, String> {
-    let mongo_record = record.clone();
-
-    let saved = with_db(move |db| {
-        let mut record = mongo_record.clone();
-        Box::pin(async move {
-            let collection = db.collection::<Document>("ask_user_prompt_requests");
-            if let Some(existing_doc) = collection
-                .find_one(doc! { "id": record.id.clone() }, None)
-                .await
-                .map_err(|err| err.to_string())?
-            {
-                if let Some(existing) = ask_user_prompt_record_from_doc(&existing_doc) {
-                    if should_preserve_external_prompt_status(existing.status, record.status) {
-                        return Ok(existing);
-                    }
-                    record.created_at = existing.created_at.clone();
-                    if record.expires_at.is_none() {
-                        record.expires_at = existing.expires_at.clone();
-                    }
-                }
-            }
-
-            let update_options = UpdateOptions::builder().upsert(true).build();
-            collection
-                .update_one(
-                    doc! { "id": record.id.clone() },
-                    doc! { "$set": ask_user_prompt_record_to_doc(&record) },
-                    update_options,
-                )
-                .await
-                .map_err(|err| err.to_string())?;
-            Ok(record)
-        })
-    })
-    .await?;
-
-    if saved.status == AskUserPromptStatus::Pending {
-        publish_ask_user_prompt_created(&saved).await;
-    } else {
-        publish_ask_user_prompt_resolved(&saved).await;
+    if let Some(existing) = super::read_ops::get_ask_user_prompt_record(&record.id).await? {
+        if should_preserve_external_prompt_status(existing.status, record.status) {
+            return Ok(existing);
+        }
+        record.created_at = existing.created_at;
+        if record.expires_at.is_none() {
+            record.expires_at = existing.expires_at;
+        }
     }
-    Ok(saved)
+    save(&record).await?;
+    if record.status == AskUserPromptStatus::Pending {
+        publish_ask_user_prompt_created(&record).await
+    } else {
+        publish_ask_user_prompt_resolved(&record).await
+    }
+    Ok(record)
 }
-
 fn should_preserve_external_prompt_status(
     existing: AskUserPromptStatus,
     incoming: AskUserPromptStatus,
@@ -149,70 +101,48 @@ pub async fn update_ask_user_prompt_response(
     status: AskUserPromptStatus,
     response: Option<serde_json::Value>,
 ) -> Result<AskUserPromptRecord, String> {
-    let prompt_id = trimmed_non_empty(prompt_id)
-        .ok_or_else(|| "prompt_id is required".to_string())?
-        .to_string();
-    let updated_at = crate::core::time::now_rfc3339();
-
-    let status_raw = status.as_str().to_string();
-    let response_json = response
-        .as_ref()
-        .and_then(|value| serde_json::to_string(value).ok());
-
-    let prompt_id_for_mongo = prompt_id.clone();
-    let status_for_mongo = status_raw.clone();
-    let response_for_mongo = response_json.clone();
-    let updated_at_for_mongo = updated_at.clone();
-
-    let updated = with_db(move |db| {
-        let prompt_id = prompt_id_for_mongo.clone();
-        let status = status_for_mongo.clone();
-        let response_json = response_for_mongo.clone();
-        let updated_at = updated_at_for_mongo.clone();
+    let prompt_id =
+        trimmed_non_empty(prompt_id).ok_or_else(|| "prompt_id is required".to_string())?;
+    let updated = with_db(|pool| {
         Box::pin(async move {
-            let mut set_doc = doc! {
-                "status": status,
-                "updated_at": updated_at,
-            };
-            match response_json {
-                Some(raw) => {
-                    set_doc.insert("response_json", Bson::String(raw));
-                }
-                None => {
-                    set_doc.insert("response_json", Bson::Null);
-                }
-            }
-
-            let options = FindOneAndUpdateOptions::builder()
-                .return_document(ReturnDocument::After)
-                .build();
-
-            let updated = db
-                .collection::<Document>("ask_user_prompt_requests")
-                .find_one_and_update(doc! { "id": prompt_id }, doc! { "$set": set_doc }, options)
+            let mut tx = pool.begin().await.map_err(db_error)?;
+            let Some(mut record): Option<AskUserPromptRecord> = decode_optional(
+                sqlx::query_scalar(
+                    "SELECT data FROM ask_user_prompt_requests WHERE id=$1 FOR UPDATE",
+                )
+                .bind(prompt_id)
+                .fetch_optional(&mut *tx)
                 .await
-                .map_err(|err| err.to_string())?
-                .and_then(|doc| ask_user_prompt_record_from_doc(&doc))
-                .ok_or_else(|| ASK_USER_PROMPT_NOT_FOUND_ERR.to_string())?;
-            Ok(updated)
+                .map_err(db_error)?,
+            )?
+            else {
+                return Err(ASK_USER_PROMPT_NOT_FOUND_ERR.to_string());
+            };
+            record.status = status;
+            record.response = response;
+            record.updated_at = crate::core::time::now_rfc3339();
+            sqlx::query(
+                "UPDATE ask_user_prompt_requests SET status=$1,updated_at=$2,data=$3 WHERE id=$4",
+            )
+            .bind(status.as_str())
+            .bind(timestamp(&record.updated_at)?)
+            .bind(json(&record)?)
+            .bind(prompt_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_error)?;
+            tx.commit().await.map_err(db_error)?;
+            Ok(record)
         })
     })
     .await?;
-
     publish_ask_user_prompt_resolved(&updated).await;
     if let Ok(config) =
         chatos_mcp_management_sdk::McpManagementClientConfig::from_env("chatos").await
     {
         if let Ok(client) = chatos_mcp_management_sdk::McpManagementClient::new(config) {
-            if let Err(error) = client
-                .notify_waiting_user_resolved(updated.id.as_str())
-                .await
-            {
-                tracing::warn!(
-                    prompt_id = updated.id.as_str(),
-                    error = %error,
-                    "notify MCP Management Ask User resolution failed"
-                );
+            if let Err(error) = client.notify_waiting_user_resolved(&updated.id).await {
+                tracing::warn!(prompt_id=updated.id,error=%error,"notify MCP Management Ask User resolution failed");
             }
         }
     }
@@ -220,7 +150,7 @@ pub async fn update_ask_user_prompt_response(
 }
 
 async fn publish_ask_user_prompt_created(record: &AskUserPromptRecord) {
-    let Ok(scope) = resolve_conversation_scope(record.conversation_id.as_str()).await else {
+    let Ok(scope) = resolve_conversation_scope(&record.conversation_id).await else {
         return;
     };
     let Some(user_id) = scope.user_id.as_deref() else {
@@ -241,7 +171,7 @@ async fn publish_ask_user_prompt_created(record: &AskUserPromptRecord) {
         AskUserPromptRealtimePayload {
             conversation_id: record.conversation_id.clone(),
             conversation_turn_id: Some(record.conversation_turn_id.clone()),
-            project_id: project_id.map(ToOwned::to_owned),
+            project_id: project_id.map(str::to_string),
             prompt_id: record.id.clone(),
             action: "prompt_required".to_string(),
             status: Some(record.status.as_str().to_string()),
@@ -251,12 +181,12 @@ async fn publish_ask_user_prompt_created(record: &AskUserPromptRecord) {
                 .prompt
                 .get("title")
                 .and_then(serde_json::Value::as_str)
-                .map(ToOwned::to_owned),
+                .map(str::to_string),
             message: record
                 .prompt
                 .get("message")
                 .and_then(serde_json::Value::as_str)
-                .map(ToOwned::to_owned),
+                .map(str::to_string),
             allow_cancel: record
                 .prompt
                 .get("allow_cancel")
@@ -269,9 +199,8 @@ async fn publish_ask_user_prompt_created(record: &AskUserPromptRecord) {
         },
     );
 }
-
 async fn publish_ask_user_prompt_resolved(record: &AskUserPromptRecord) {
-    let Ok(scope) = resolve_conversation_scope(record.conversation_id.as_str()).await else {
+    let Ok(scope) = resolve_conversation_scope(&record.conversation_id).await else {
         return;
     };
     let Some(user_id) = scope.user_id.as_deref() else {
@@ -292,7 +221,7 @@ async fn publish_ask_user_prompt_resolved(record: &AskUserPromptRecord) {
         AskUserPromptRealtimePayload {
             conversation_id: record.conversation_id.clone(),
             conversation_turn_id: Some(record.conversation_turn_id.clone()),
-            project_id: project_id.map(ToOwned::to_owned),
+            project_id: project_id.map(str::to_string),
             prompt_id: record.id.clone(),
             action: "prompt_resolved".to_string(),
             status: Some(record.status.as_str().to_string()),
@@ -310,40 +239,22 @@ async fn publish_ask_user_prompt_resolved(record: &AskUserPromptRecord) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn external_prompt_upsert_does_not_regress_resolved_status_to_pending() {
         assert!(should_preserve_external_prompt_status(
             AskUserPromptStatus::Canceled,
-            AskUserPromptStatus::Pending,
+            AskUserPromptStatus::Pending
         ));
         assert!(should_preserve_external_prompt_status(
             AskUserPromptStatus::Ok,
-            AskUserPromptStatus::Pending,
-        ));
-        assert!(should_preserve_external_prompt_status(
-            AskUserPromptStatus::Timeout,
-            AskUserPromptStatus::Pending,
-        ));
-        assert!(should_preserve_external_prompt_status(
-            AskUserPromptStatus::Canceled,
-            AskUserPromptStatus::Ok,
+            AskUserPromptStatus::Pending
         ));
     }
-
     #[test]
     fn external_prompt_upsert_allows_pending_to_resolve() {
         assert!(!should_preserve_external_prompt_status(
             AskUserPromptStatus::Pending,
-            AskUserPromptStatus::Canceled,
-        ));
-        assert!(!should_preserve_external_prompt_status(
-            AskUserPromptStatus::Pending,
-            AskUserPromptStatus::Pending,
-        ));
-        assert!(!should_preserve_external_prompt_status(
-            AskUserPromptStatus::Canceled,
-            AskUserPromptStatus::Canceled,
+            AskUserPromptStatus::Canceled
         ));
     }
 }

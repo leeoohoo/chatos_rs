@@ -2,52 +2,30 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::net::{IpAddr, SocketAddr};
-use std::time::Duration;
 
 use axum::http::HeaderMap;
-use mongodb::bson::{doc, DateTime};
-use mongodb::options::{IndexOptions, UpdateOptions};
-use mongodb::{Collection, IndexModel};
-use serde::{Deserialize, Serialize};
+use chatos_postgres::PgPool;
 
 use crate::config::AppConfig;
 
 #[derive(Clone)]
 pub struct LoginThrottle {
-    records: Collection<LoginFailureRecord>,
+    pool: PgPool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LoginFailureRecord {
-    #[serde(rename = "_id")]
     key: String,
     attempts: i64,
     window_start_unix: i64,
     locked_until_unix: Option<i64>,
-    expires_at: DateTime,
+    expires_at_unix: i64,
 }
 
 impl LoginThrottle {
-    pub(crate) fn new(records: Collection<LoginFailureRecord>) -> Self {
-        Self { records }
-    }
-
-    pub async fn initialize(&self) -> Result<(), String> {
-        self.records
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! { "expires_at": 1 })
-                    .options(
-                        IndexOptions::builder()
-                            .expire_after(Some(Duration::ZERO))
-                            .build(),
-                    )
-                    .build(),
-                None,
-            )
-            .await
-            .map_err(|err| format!("create login throttle TTL index failed: {err}"))?;
-        Ok(())
+    pub(crate) fn new(pool: PgPool) -> Self {
+        Self { pool }
     }
 
     pub async fn is_locked(
@@ -60,17 +38,19 @@ impl LoginThrottle {
         if config.login_max_failed_attempts <= 0 {
             return Ok(false);
         }
-        self.records
-            .find_one(
-                doc! {
-                    "_id": { "$in": throttle_keys(username, source) },
-                    "locked_until_unix": { "$gt": now_unix },
-                },
-                None,
+        sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT EXISTS (
+                SELECT 1 FROM login_throttle
+                WHERE key = ANY($1) AND locked_until_unix > $2 AND expires_at > now()
             )
-            .await
-            .map(|record| record.is_some())
-            .map_err(|err| err.to_string())
+            "#,
+        )
+        .bind(throttle_keys(username, source))
+        .bind(now_unix)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|err| err.to_string())
     }
 
     pub async fn record_failure(
@@ -83,83 +63,78 @@ impl LoginThrottle {
         if config.login_max_failed_attempts <= 0 {
             return Ok(());
         }
+        let retention_seconds = config
+            .login_failure_window_seconds
+            .max(config.login_lockout_seconds)
+            .max(60);
         for key in throttle_keys(username, source) {
-            self.record_failure_for_key(key, now_unix, config).await?;
+            sqlx::query(
+                r#"
+                INSERT INTO login_throttle
+                    (key, attempts, window_start_unix, locked_until_unix, expires_at)
+                VALUES (
+                    $1,
+                    1,
+                    $2,
+                    CASE WHEN 1 >= $4 THEN $2 + $5 ELSE NULL END,
+                    to_timestamp($2 + $6)
+                )
+                ON CONFLICT (key) DO UPDATE SET
+                    attempts = CASE
+                        WHEN $2 - login_throttle.window_start_unix >= $3 THEN 1
+                        ELSE login_throttle.attempts + 1
+                    END,
+                    window_start_unix = CASE
+                        WHEN $2 - login_throttle.window_start_unix >= $3 THEN $2
+                        ELSE login_throttle.window_start_unix
+                    END,
+                    locked_until_unix = CASE
+                        WHEN (
+                            CASE
+                                WHEN $2 - login_throttle.window_start_unix >= $3 THEN 1
+                                ELSE login_throttle.attempts + 1
+                            END
+                        ) >= $4 THEN $2 + $5
+                        ELSE NULL
+                    END,
+                    expires_at = to_timestamp($2 + $6)
+                "#,
+            )
+            .bind(key)
+            .bind(now_unix)
+            .bind(config.login_failure_window_seconds)
+            .bind(config.login_max_failed_attempts)
+            .bind(config.login_lockout_seconds)
+            .bind(retention_seconds)
+            .execute(&self.pool)
+            .await
+            .map_err(|err| err.to_string())?;
         }
         Ok(())
     }
 
-    async fn record_failure_for_key(
-        &self,
-        key: String,
-        now_unix: i64,
-        config: &AppConfig,
-    ) -> Result<(), String> {
-        for _ in 0..8 {
-            let existing = self
-                .records
-                .find_one(doc! { "_id": &key }, None)
-                .await
-                .map_err(|err| err.to_string())?;
-            let next = next_failure_record(existing.as_ref(), key.as_str(), now_unix, config);
-            let filter = match existing.as_ref() {
-                Some(record) => doc! {
-                    "_id": &key,
-                    "attempts": record.attempts,
-                    "window_start_unix": record.window_start_unix,
-                    "locked_until_unix": record.locked_until_unix,
-                },
-                None => doc! { "_id": &key, "attempts": { "$exists": false } },
-            };
-            let update = doc! {
-                "$set": {
-                    "attempts": next.attempts,
-                    "window_start_unix": next.window_start_unix,
-                    "locked_until_unix": next.locked_until_unix,
-                    "expires_at": next.expires_at,
-                },
-                "$setOnInsert": { "_id": &key },
-            };
-            let result = self
-                .records
-                .update_one(
-                    filter,
-                    update,
-                    UpdateOptions::builder().upsert(existing.is_none()).build(),
-                )
-                .await;
-            match result {
-                Ok(result) if result.matched_count == 1 || result.upserted_id.is_some() => {
-                    return Ok(())
-                }
-                Ok(_) => continue,
-                Err(error) if error.to_string().contains("E11000") => continue,
-                Err(error) => return Err(error.to_string()),
-            }
-        }
-        Err("login throttle update was contended too many times".to_string())
-    }
-
     pub async fn record_success(&self, username: &str, source: Option<&str>) -> Result<(), String> {
-        self.records
-            .delete_many(
-                doc! { "_id": { "$in": throttle_keys(username, source) } },
-                None,
-            )
+        sqlx::query("DELETE FROM login_throttle WHERE key = ANY($1)")
+            .bind(throttle_keys(username, source))
+            .execute(&self.pool)
             .await
             .map(|_| ())
             .map_err(|err| err.to_string())
     }
+
 }
 
+#[cfg(test)]
 fn next_failure_record(
     existing: Option<&LoginFailureRecord>,
     key: &str,
     now_unix: i64,
-    config: &AppConfig,
+    max_failed_attempts: i64,
+    failure_window_seconds: i64,
+    lockout_seconds: i64,
 ) -> LoginFailureRecord {
     let window_expired = existing.is_none_or(|record| {
-        now_unix.saturating_sub(record.window_start_unix) >= config.login_failure_window_seconds
+        now_unix.saturating_sub(record.window_start_unix) >= failure_window_seconds
     });
     let window_start_unix = if window_expired {
         now_unix
@@ -171,22 +146,15 @@ fn next_failure_record(
     } else {
         existing.map_or(1, |record| record.attempts.saturating_add(1))
     };
-    let locked_until_unix = (attempts >= config.login_max_failed_attempts)
-        .then_some(now_unix.saturating_add(config.login_lockout_seconds));
-    let retention_seconds = config
-        .login_failure_window_seconds
-        .max(config.login_lockout_seconds)
-        .max(60);
+    let locked_until_unix =
+        (attempts >= max_failed_attempts).then_some(now_unix.saturating_add(lockout_seconds));
+    let retention_seconds = failure_window_seconds.max(lockout_seconds).max(60);
     LoginFailureRecord {
         key: key.to_string(),
         attempts,
         window_start_unix,
         locked_until_unix,
-        expires_at: DateTime::from_millis(
-            now_unix
-                .saturating_add(retention_seconds)
-                .saturating_mul(1000),
-        ),
+        expires_at_unix: now_unix.saturating_add(retention_seconds),
     }
 }
 
@@ -224,92 +192,34 @@ fn is_trusted_proxy_address(ip: IpAddr) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{next_failure_record, request_source, throttle_keys};
-    use crate::config::AppConfig;
-    use axum::http::HeaderMap;
-    use std::net::SocketAddr;
+    use super::*;
 
-    fn config() -> AppConfig {
-        AppConfig {
-            host: "127.0.0.1".parse().unwrap(),
-            port: 39190,
-            otlp_endpoint: "http://127.0.0.1:4317".to_string(),
-            otlp_trace_sample_ratio: 1.0,
-            otlp_export_timeout: std::time::Duration::from_secs(1),
-            database_url: "mongodb://127.0.0.1:27017/test".to_string(),
-            mongodb_database: "test".to_string(),
-            jwt_secret: "test-secret".to_string(),
-            jwt_issuer: "user_service".to_string(),
-            user_service_audience: "user_service".to_string(),
-            task_runner_audience: "task_runner".to_string(),
-            user_access_ttl_seconds: 3600,
-            task_runner_access_ttl_seconds: 3600,
-            super_admin_username: "admin".to_string(),
-            super_admin_password: "password".to_string(),
-            super_admin_display_name: "Admin".to_string(),
-            memory_engine_internal_api_secret: None,
-            task_runner_internal_api_secret: None,
-            downstream_request_timeout_ms: 5000,
-            harness_provisioning_enabled: false,
-            harness_base_url: None,
-            harness_synthetic_email_domain: "chatos.local".to_string(),
-            harness_space_prefix: "u-".to_string(),
-            harness_request_timeout_ms: 5000,
-            harness_project_pat_prefix: "chatos-project".to_string(),
-            chatos_internal_api_secret: None,
-            smtp_host: None,
-            smtp_port: 587,
-            smtp_username: None,
-            smtp_password: None,
-            email_from: None,
-            email_from_name: "Chat OS".to_string(),
-            registration_code_ttl_seconds: 600,
-            registration_code_resend_seconds: 60,
-            registration_code_hourly_limit: 5,
-            registration_code_max_attempts: 5,
-            login_max_failed_attempts: 3,
-            login_failure_window_seconds: 300,
-            login_lockout_seconds: 120,
-            wechat_mini_program_app_id: None,
-            wechat_mini_program_app_secret: None,
-            wechat_mini_program_identity_hash_secret: None,
-            wechat_mini_program_api_base_url: "https://api.weixin.qq.com".to_string(),
-            wechat_mini_program_env_version: "release".to_string(),
-            wechat_mini_program_development_login_enabled: false,
-            wechat_mini_program_request_timeout_ms: 5_000,
-            wechat_mini_program_bind_ticket_ttl_seconds: 120,
-            wechat_mini_program_client_session_ttl_seconds: 604_800,
-        }
+    #[test]
+    fn throttle_keys_cover_identity_and_source() {
+        assert_eq!(
+            throttle_keys(" alice ", Some(" 203.0.113.1 ")),
+            vec!["username:alice", "source:203.0.113.1"]
+        );
     }
 
     #[test]
     fn failure_transition_locks_and_resets_after_window() {
-        let config = config();
-        let first = next_failure_record(None, "username:admin", 1000, &config);
-        let second = next_failure_record(Some(&first), "username:admin", 1001, &config);
-        let third = next_failure_record(Some(&second), "username:admin", 1002, &config);
-        assert_eq!(third.locked_until_unix, Some(1122));
-
-        let reset = next_failure_record(Some(&third), "username:admin", 1300, &config);
+        let first = next_failure_record(None, "username:alice", 100, 2, 10, 30);
+        let second = next_failure_record(Some(&first), "username:alice", 101, 2, 10, 30);
+        assert_eq!(second.attempts, 2);
+        assert_eq!(second.locked_until_unix, Some(131));
+        let reset = next_failure_record(Some(&second), "username:alice", 111, 2, 10, 30);
         assert_eq!(reset.attempts, 1);
         assert_eq!(reset.locked_until_unix, None);
     }
 
     #[test]
-    fn throttle_keys_cover_identity_and_source() {
-        assert_eq!(
-            throttle_keys(" admin ", Some("203.0.113.5")),
-            ["username:admin", "source:203.0.113.5"]
-        );
-    }
-
-    #[test]
     fn forwarded_address_is_only_used_from_private_proxy_peer() {
         let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", "203.0.113.8, 10.0.0.2".parse().unwrap());
-        let proxy: SocketAddr = "10.0.0.2:1234".parse().unwrap();
-        let public_peer: SocketAddr = "198.51.100.2:1234".parse().unwrap();
-        assert_eq!(request_source(&headers, proxy), "203.0.113.8");
-        assert_eq!(request_source(&headers, public_peer), "198.51.100.2");
+        headers.insert("x-forwarded-for", "203.0.113.8".parse().expect("header"));
+        let private_peer = SocketAddr::from(([10, 0, 0, 2], 4000));
+        let public_peer = SocketAddr::from(([8, 8, 8, 8], 4000));
+        assert_eq!(request_source(&headers, private_peer), "203.0.113.8");
+        assert_eq!(request_source(&headers, public_peer), "8.8.8.8");
     }
 }

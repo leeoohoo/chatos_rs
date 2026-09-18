@@ -1,30 +1,23 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use futures_util::TryStreamExt;
-use mongodb::bson::{doc, Bson};
 use serde::Deserialize;
+use sqlx::FromRow;
 
 use crate::db::Db;
-use crate::models::now_rfc3339;
+use crate::repositories::postgres::timestamp;
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, FromRow, PartialEq, Eq)]
 pub struct SummaryDispatchOutbox {
     pub tenant_id: String,
     pub source_id: String,
-    #[serde(rename = "id")]
     pub thread_id: String,
-    #[serde(default)]
     pub summary_dispatch_version: i64,
-    #[serde(default)]
     pub summary_dispatch_published_version: i64,
-    #[serde(default)]
     pub summary_dispatch_consumed_version: i64,
 }
 
-fn collection(db: &Db) -> mongodb::Collection<SummaryDispatchOutbox> {
-    db.collection("engine_threads")
-}
+const COLUMNS: &str = "tenant_id,source_id,id AS thread_id,summary_dispatch_version,summary_dispatch_published_version,summary_dispatch_consumed_version";
 
 pub async fn get_pending_summary_dispatch(
     db: &Db,
@@ -32,17 +25,10 @@ pub async fn get_pending_summary_dispatch(
     source_id: &str,
     thread_id: &str,
 ) -> Result<Option<SummaryDispatchOutbox>, String> {
-    let now = now_rfc3339();
-    collection(db)
-        .find_one(doc! {
-            "tenant_id": tenant_id,
-            "source_id": source_id,
-            "id": thread_id,
-            "summary_dispatch_pending": true,
-            "$or": unlocked_summary_thread_filter(now.as_str()),
-        })
-        .await
-        .map_err(|err| err.to_string())
+    fetch_optional(db, &format!(
+        "SELECT {COLUMNS} FROM engine_threads WHERE tenant_id=$1 AND source_id=$2 AND id=$3 \
+         AND summary_dispatch_pending AND (summary_status<>'running' OR summary_lock_expires_at IS NULL OR summary_lock_expires_at<=now())"
+    ), tenant_id, source_id, thread_id).await
 }
 
 pub async fn get_summary_dispatch_state(
@@ -51,33 +37,27 @@ pub async fn get_summary_dispatch_state(
     source_id: &str,
     thread_id: &str,
 ) -> Result<Option<SummaryDispatchOutbox>, String> {
-    collection(db)
-        .find_one(doc! {
-            "tenant_id": tenant_id,
-            "source_id": source_id,
-            "id": thread_id,
-        })
-        .await
-        .map_err(|err| err.to_string())
+    fetch_optional(
+        db,
+        &format!(
+            "SELECT {COLUMNS} FROM engine_threads WHERE tenant_id=$1 AND source_id=$2 AND id=$3"
+        ),
+        tenant_id,
+        source_id,
+        thread_id,
+    )
+    .await
 }
 
 pub async fn list_pending_summary_dispatches(
     db: &Db,
     limit: i64,
 ) -> Result<Vec<SummaryDispatchOutbox>, String> {
-    let now = now_rfc3339();
-    collection(db)
-        .find(doc! {
-            "summary_dispatch_pending": true,
-            "$or": unlocked_summary_thread_filter(now.as_str()),
-        })
-        .sort(doc! {"summary_dispatch_requested_at": 1, "updated_at": 1})
-        .limit(limit.clamp(1, 10_000))
-        .await
-        .map_err(|err| err.to_string())?
-        .try_collect()
-        .await
-        .map_err(|err| err.to_string())
+    sqlx::query_as::<_, SummaryDispatchOutbox>(&format!(
+        "SELECT {COLUMNS} FROM engine_threads WHERE summary_dispatch_pending \
+         AND (summary_status<>'running' OR summary_lock_expires_at IS NULL OR summary_lock_expires_at<=now()) \
+         ORDER BY summary_dispatch_requested_at,updated_at LIMIT $1"
+    )).bind(limit.clamp(1,10_000)).fetch_all(db).await.map_err(|error| error.to_string())
 }
 
 pub async fn list_eligible_summary_dispatches(
@@ -85,19 +65,12 @@ pub async fn list_eligible_summary_dispatches(
     token_threshold: i64,
     limit: i64,
 ) -> Result<Vec<SummaryDispatchOutbox>, String> {
-    collection(db)
-        .find(doc! {
-            "summary_status": "pending",
-            "pending_summary_tokens": { "$gte": token_threshold.max(1) },
-            "$expr": eligible_summary_dispatch_expr(),
-        })
-        .sort(doc! {"updated_at": 1})
-        .limit(limit.clamp(1, 10_000))
-        .await
-        .map_err(|err| err.to_string())?
-        .try_collect()
-        .await
-        .map_err(|err| err.to_string())
+    sqlx::query_as::<_, SummaryDispatchOutbox>(&format!(
+        "SELECT {COLUMNS} FROM engine_threads WHERE summary_status='pending' AND pending_summary_tokens>=$1 \
+         AND summary_dispatch_consumed_version>=summary_dispatch_version \
+         AND COALESCE(summary_dispatch_dead_letter_version,-1)<summary_dispatch_version \
+         ORDER BY updated_at LIMIT $2"
+    )).bind(token_threshold.max(1)).bind(limit.clamp(1,10_000)).fetch_all(db).await.map_err(|error| error.to_string())
 }
 
 pub async fn list_stale_published_summary_dispatches(
@@ -106,100 +79,54 @@ pub async fn list_stale_published_summary_dispatches(
     stale_before: &str,
     limit: i64,
 ) -> Result<Vec<SummaryDispatchOutbox>, String> {
-    collection(db)
-        .find(stale_published_summary_dispatch_filter(
-            token_threshold,
-            stale_before,
-        ))
-        .sort(doc! {"summary_dispatch_published_at": 1, "updated_at": 1})
-        .limit(limit.clamp(1, 10_000))
-        .await
-        .map_err(|err| err.to_string())?
-        .try_collect()
-        .await
-        .map_err(|err| err.to_string())
+    sqlx::query_as::<_, SummaryDispatchOutbox>(&format!(
+        "SELECT {COLUMNS} FROM engine_threads WHERE summary_status='pending' AND pending_summary_tokens>=$1 \
+         AND NOT summary_dispatch_pending AND summary_dispatch_published_at<=$2 AND summary_dispatch_version>0 \
+         AND summary_dispatch_published_version>=summary_dispatch_version \
+         AND summary_dispatch_consumed_version<summary_dispatch_version \
+         AND COALESCE(summary_dispatch_dead_letter_version,-1)<summary_dispatch_version \
+         ORDER BY summary_dispatch_published_at,updated_at LIMIT $3"
+    )).bind(token_threshold.max(1)).bind(timestamp(stale_before)?).bind(limit.clamp(1,10_000))
+      .fetch_all(db).await.map_err(|error| error.to_string())
 }
 
 pub async fn defer_summary_dispatch_until_unlock(
     db: &Db,
     event: &SummaryDispatchOutbox,
 ) -> Result<bool, String> {
-    let result = collection(db)
-        .update_one(
-            dispatch_identity_filter(event),
-            doc! {
-                "$set": {
-                    "summary_dispatch_pending": true,
-                    "summary_dispatch_last_error": Bson::Null,
-                }
-            },
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(result.matched_count > 0)
+    update_event(
+        db,
+        event,
+        "summary_dispatch_pending=true,summary_dispatch_last_error=NULL",
+    )
+    .await
 }
 
 pub async fn mark_summary_dispatch_published(
     db: &Db,
     event: &SummaryDispatchOutbox,
 ) -> Result<bool, String> {
-    let now = now_rfc3339();
-    let result = collection(db)
-        .update_one(
-            doc! {
-                "tenant_id": &event.tenant_id,
-                "source_id": &event.source_id,
-                "id": &event.thread_id,
-                "summary_dispatch_version": { "$gte": event.summary_dispatch_version },
-            },
-            vec![doc! {
-                "$set": {
-                    "summary_dispatch_published_version": {
-                        "$max": [
-                            { "$ifNull": ["$summary_dispatch_published_version", 0] },
-                            event.summary_dispatch_version,
-                        ]
-                    },
-                    "summary_dispatch_published_at": &now,
-                    "summary_dispatch_last_error": Bson::Null,
-                    "summary_dispatch_pending": {
-                        "$gt": [
-                            { "$ifNull": ["$summary_dispatch_version", 0] },
-                            event.summary_dispatch_version,
-                        ]
-                    },
-                }
-            }],
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(result.matched_count > 0)
+    update_event(
+        db,
+        event,
+        "summary_dispatch_published_version=GREATEST(summary_dispatch_published_version,$4), \
+         summary_dispatch_published_at=now(),summary_dispatch_last_error=NULL, \
+         summary_dispatch_pending=(summary_dispatch_version>$4)",
+    )
+    .await
 }
 
 pub async fn mark_summary_dispatch_consumed(
     db: &Db,
     event: &SummaryDispatchOutbox,
 ) -> Result<bool, String> {
-    let now = now_rfc3339();
-    let result = collection(db)
-        .update_one(
-            dispatch_identity_filter(event),
-            vec![doc! {
-                "$set": {
-                    "summary_dispatch_consumed_version": {
-                        "$max": [
-                            { "$ifNull": ["$summary_dispatch_consumed_version", 0] },
-                            event.summary_dispatch_version,
-                        ]
-                    },
-                    "summary_dispatch_consumed_at": &now,
-                    "summary_dispatch_last_error": Bson::Null,
-                }
-            }],
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(result.matched_count > 0)
+    update_event(
+        db,
+        event,
+        "summary_dispatch_consumed_version=GREATEST(summary_dispatch_consumed_version,$4), \
+         summary_dispatch_consumed_at=now(),summary_dispatch_last_error=NULL",
+    )
+    .await
 }
 
 pub async fn mark_summary_dispatch_failed(
@@ -207,20 +134,12 @@ pub async fn mark_summary_dispatch_failed(
     event: &SummaryDispatchOutbox,
     error: &str,
 ) -> Result<bool, String> {
-    let now = now_rfc3339();
-    let result = collection(db)
-        .update_one(
-            dispatch_identity_filter(event),
-            doc! {
-                "$set": {
-                    "summary_dispatch_last_error": error,
-                    "summary_dispatch_last_failed_at": now,
-                }
-            },
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(result.matched_count > 0)
+    let result = sqlx::query(
+        "UPDATE engine_threads SET summary_dispatch_last_error=$5,summary_dispatch_last_failed_at=now() \
+         WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND summary_dispatch_version>=$4"
+    ).bind(&event.tenant_id).bind(&event.source_id).bind(&event.thread_id)
+      .bind(event.summary_dispatch_version).bind(error).execute(db).await.map_err(|value| value.to_string())?;
+    Ok(result.rows_affected() > 0)
 }
 
 pub async fn mark_summary_dispatch_dead_lettered(
@@ -228,27 +147,13 @@ pub async fn mark_summary_dispatch_dead_lettered(
     event: &SummaryDispatchOutbox,
     error: &str,
 ) -> Result<bool, String> {
-    let now = now_rfc3339();
-    let result = collection(db)
-        .update_one(
-            dispatch_identity_filter(event),
-            vec![doc! {
-                "$set": {
-                    "summary_dispatch_consumed_version": {
-                        "$max": [
-                            { "$ifNull": ["$summary_dispatch_consumed_version", 0] },
-                            event.summary_dispatch_version,
-                        ]
-                    },
-                    "summary_dispatch_dead_letter_version": event.summary_dispatch_version,
-                    "summary_dispatch_dead_lettered_at": &now,
-                    "summary_dispatch_last_error": error,
-                }
-            }],
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(result.matched_count > 0)
+    let result = sqlx::query(
+        "UPDATE engine_threads SET summary_dispatch_consumed_version=GREATEST(summary_dispatch_consumed_version,$4), \
+         summary_dispatch_dead_letter_version=$4,summary_dispatch_dead_lettered_at=now(),summary_dispatch_last_error=$5 \
+         WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND summary_dispatch_version>=$4"
+    ).bind(&event.tenant_id).bind(&event.source_id).bind(&event.thread_id)
+      .bind(event.summary_dispatch_version).bind(error).execute(db).await.map_err(|value| value.to_string())?;
+    Ok(result.rows_affected() > 0)
 }
 
 pub async fn rearm_summary_dispatch_if_eligible(
@@ -258,29 +163,14 @@ pub async fn rearm_summary_dispatch_if_eligible(
     thread_id: &str,
     token_threshold: i64,
 ) -> Result<Option<SummaryDispatchOutbox>, String> {
-    let now = now_rfc3339();
-    collection(db)
-        .find_one_and_update(
-            doc! {
-                "tenant_id": tenant_id,
-                "source_id": source_id,
-                "id": thread_id,
-                "summary_status": "pending",
-                "pending_summary_tokens": { "$gte": token_threshold.max(1) },
-                "$expr": eligible_summary_dispatch_expr(),
-            },
-            doc! {
-                "$inc": { "summary_dispatch_version": 1 },
-                "$set": {
-                    "summary_dispatch_requested_at": &now,
-                    "summary_dispatch_last_error": Bson::Null,
-                    "summary_dispatch_pending": true,
-                }
-            },
-        )
-        .return_document(mongodb::options::ReturnDocument::After)
-        .await
-        .map_err(|err| err.to_string())
+    sqlx::query_as::<_, SummaryDispatchOutbox>(&format!(
+        "UPDATE engine_threads SET summary_dispatch_version=summary_dispatch_version+1, \
+         summary_dispatch_requested_at=now(),summary_dispatch_last_error=NULL,summary_dispatch_pending=true \
+         WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND summary_status='pending' AND pending_summary_tokens>=$4 \
+         AND summary_dispatch_consumed_version>=summary_dispatch_version \
+         AND COALESCE(summary_dispatch_dead_letter_version,-1)<summary_dispatch_version RETURNING {COLUMNS}"
+    )).bind(tenant_id).bind(source_id).bind(thread_id).bind(token_threshold.max(1))
+      .fetch_optional(db).await.map_err(|error| error.to_string())
 }
 
 pub async fn rearm_stale_published_summary_dispatch(
@@ -289,91 +179,19 @@ pub async fn rearm_stale_published_summary_dispatch(
     token_threshold: i64,
     stale_before: &str,
 ) -> Result<Option<SummaryDispatchOutbox>, String> {
-    let now = now_rfc3339();
-    let mut filter = stale_published_summary_dispatch_filter(token_threshold, stale_before);
-    filter.insert("tenant_id", event.tenant_id.as_str());
-    filter.insert("source_id", event.source_id.as_str());
-    filter.insert("id", event.thread_id.as_str());
-    filter.insert("summary_dispatch_version", event.summary_dispatch_version);
-
-    collection(db)
-        .find_one_and_update(
-            filter,
-            doc! {
-                "$inc": {
-                    "summary_dispatch_version": 1,
-                    "summary_dispatch_recovery_count": 1,
-                },
-                "$set": {
-                    "summary_dispatch_requested_at": &now,
-                    "summary_dispatch_recovered_at": &now,
-                    "summary_dispatch_last_error": Bson::Null,
-                    "summary_dispatch_pending": true,
-                }
-            },
-        )
-        .return_document(mongodb::options::ReturnDocument::After)
-        .await
-        .map_err(|err| err.to_string())
-}
-
-fn stale_published_summary_dispatch_filter(
-    token_threshold: i64,
-    stale_before: &str,
-) -> mongodb::bson::Document {
-    doc! {
-        "summary_status": "pending",
-        "pending_summary_tokens": { "$gte": token_threshold.max(1) },
-        "summary_dispatch_pending": { "$ne": true },
-        "summary_dispatch_published_at": { "$lte": stale_before },
-        "$expr": {
-            "$and": [
-                {
-                    "$gt": [
-                        { "$ifNull": ["$summary_dispatch_version", 0] },
-                        0,
-                    ]
-                },
-                {
-                    "$gte": [
-                        { "$ifNull": ["$summary_dispatch_published_version", 0] },
-                        { "$ifNull": ["$summary_dispatch_version", 0] },
-                    ]
-                },
-                {
-                    "$lt": [
-                        { "$ifNull": ["$summary_dispatch_consumed_version", 0] },
-                        { "$ifNull": ["$summary_dispatch_version", 0] },
-                    ]
-                },
-                {
-                    "$lt": [
-                        { "$ifNull": ["$summary_dispatch_dead_letter_version", -1] },
-                        { "$ifNull": ["$summary_dispatch_version", 0] },
-                    ]
-                },
-            ]
-        },
-    }
-}
-
-fn eligible_summary_dispatch_expr() -> mongodb::bson::Document {
-    doc! {
-        "$and": [
-            {
-                "$gte": [
-                    { "$ifNull": ["$summary_dispatch_consumed_version", 0] },
-                    { "$ifNull": ["$summary_dispatch_version", 0] },
-                ]
-            },
-            {
-                "$lt": [
-                    { "$ifNull": ["$summary_dispatch_dead_letter_version", -1] },
-                    { "$ifNull": ["$summary_dispatch_version", 0] },
-                ]
-            },
-        ]
-    }
+    sqlx::query_as::<_, SummaryDispatchOutbox>(&format!(
+        "UPDATE engine_threads SET summary_dispatch_version=summary_dispatch_version+1, \
+         summary_dispatch_recovery_count=summary_dispatch_recovery_count+1,summary_dispatch_requested_at=now(), \
+         summary_dispatch_recovered_at=now(),summary_dispatch_last_error=NULL,summary_dispatch_pending=true \
+         WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND summary_dispatch_version=$4 \
+         AND summary_status='pending' AND pending_summary_tokens>=$5 AND NOT summary_dispatch_pending \
+         AND summary_dispatch_published_at<=$6 AND summary_dispatch_version>0 \
+         AND summary_dispatch_published_version>=summary_dispatch_version \
+         AND summary_dispatch_consumed_version<summary_dispatch_version \
+         AND COALESCE(summary_dispatch_dead_letter_version,-1)<summary_dispatch_version RETURNING {COLUMNS}"
+    )).bind(&event.tenant_id).bind(&event.source_id).bind(&event.thread_id)
+      .bind(event.summary_dispatch_version).bind(token_threshold.max(1)).bind(timestamp(stale_before)?)
+      .fetch_optional(db).await.map_err(|error| error.to_string())
 }
 
 pub async fn replay_dead_lettered_summary_dispatch(
@@ -383,104 +201,46 @@ pub async fn replay_dead_lettered_summary_dispatch(
     thread_id: &str,
     dead_letter_version: i64,
 ) -> Result<Option<SummaryDispatchOutbox>, String> {
-    let now = now_rfc3339();
-    collection(db)
-        .find_one_and_update(
-            doc! {
-                "tenant_id": tenant_id,
-                "source_id": source_id,
-                "id": thread_id,
-                "summary_status": "pending",
-                "summary_dispatch_version": dead_letter_version,
-                "summary_dispatch_dead_letter_version": dead_letter_version,
-                "summary_dispatch_consumed_version": { "$gte": dead_letter_version },
-                "summary_dispatch_pending": { "$ne": true },
-            },
-            doc! {
-                "$inc": { "summary_dispatch_version": 1 },
-                "$set": {
-                    "summary_dispatch_requested_at": &now,
-                    "summary_dispatch_last_error": Bson::Null,
-                    "summary_dispatch_pending": true,
-                },
-                "$unset": {
-                    "summary_dispatch_dead_letter_version": "",
-                    "summary_dispatch_dead_lettered_at": "",
-                    "summary_dispatch_last_failed_at": "",
-                },
-            },
-        )
-        .return_document(mongodb::options::ReturnDocument::After)
+    sqlx::query_as::<_, SummaryDispatchOutbox>(&format!(
+        "UPDATE engine_threads SET summary_dispatch_version=summary_dispatch_version+1, \
+         summary_dispatch_requested_at=now(),summary_dispatch_last_error=NULL,summary_dispatch_pending=true, \
+         summary_dispatch_dead_letter_version=NULL,summary_dispatch_dead_lettered_at=NULL,summary_dispatch_last_failed_at=NULL \
+         WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND summary_status='pending' \
+         AND summary_dispatch_version=$4 AND summary_dispatch_dead_letter_version=$4 \
+         AND summary_dispatch_consumed_version>=$4 AND NOT summary_dispatch_pending RETURNING {COLUMNS}"
+    )).bind(tenant_id).bind(source_id).bind(thread_id).bind(dead_letter_version)
+      .fetch_optional(db).await.map_err(|error| error.to_string())
+}
+
+async fn fetch_optional(
+    db: &Db,
+    query: &str,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+) -> Result<Option<SummaryDispatchOutbox>, String> {
+    sqlx::query_as(query)
+        .bind(tenant_id)
+        .bind(source_id)
+        .bind(thread_id)
+        .fetch_optional(db)
         .await
-        .map_err(|err| err.to_string())
+        .map_err(|error| error.to_string())
 }
 
-fn dispatch_identity_filter(event: &SummaryDispatchOutbox) -> mongodb::bson::Document {
-    doc! {
-        "tenant_id": &event.tenant_id,
-        "source_id": &event.source_id,
-        "id": &event.thread_id,
-        "summary_dispatch_version": { "$gte": event.summary_dispatch_version },
-    }
-}
-
-fn unlocked_summary_thread_filter(now: &str) -> Vec<mongodb::bson::Document> {
-    vec![
-        doc! {"summary_status": {"$ne": "running"}},
-        doc! {"summary_status": {"$exists": false}},
-        doc! {"summary_status": Bson::Null},
-        doc! {"summary_status": ""},
-        doc! {"summary_lock_expires_at": {"$exists": false}},
-        doc! {"summary_lock_expires_at": Bson::Null},
-        doc! {"summary_lock_expires_at": {"$lte": now}},
-    ]
-}
-
-#[cfg(test)]
-mod tests {
-    use mongodb::bson::{doc, Bson};
-
-    use super::stale_published_summary_dispatch_filter;
-
-    #[test]
-    fn stale_published_filter_requires_unconsumed_non_dead_lettered_delivery() {
-        let filter = stale_published_summary_dispatch_filter(160_000, "2026-09-15T00:00:00Z");
-
-        assert_eq!(filter.get_str("summary_status"), Ok("pending"));
-        assert_eq!(
-            filter
-                .get_document("pending_summary_tokens")
-                .and_then(|value| value.get_i64("$gte")),
-            Ok(160_000)
-        );
-        assert_eq!(
-            filter
-                .get_document("summary_dispatch_pending")
-                .and_then(|value| value.get_bool("$ne")),
-            Ok(true)
-        );
-        assert_eq!(
-            filter
-                .get_document("summary_dispatch_published_at")
-                .and_then(|value| value.get_str("$lte")),
-            Ok("2026-09-15T00:00:00Z")
-        );
-        let conditions = filter
-            .get_document("$expr")
-            .and_then(|value| value.get_array("$and"))
-            .expect("stale dispatch expression");
-        assert_eq!(conditions.len(), 4);
-        assert!(conditions
-            .iter()
-            .all(|value| matches!(value, Bson::Document(_))));
-        assert_eq!(
-            conditions[1],
-            Bson::Document(doc! {
-                "$gte": [
-                    { "$ifNull": ["$summary_dispatch_published_version", 0] },
-                    { "$ifNull": ["$summary_dispatch_version", 0] },
-                ]
-            })
-        );
-    }
+async fn update_event(
+    db: &Db,
+    event: &SummaryDispatchOutbox,
+    assignments: &str,
+) -> Result<bool, String> {
+    let sql = format!("UPDATE engine_threads SET {assignments} WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND summary_dispatch_version>=$4");
+    let result = sqlx::query(&sql)
+        .bind(&event.tenant_id)
+        .bind(&event.source_id)
+        .bind(&event.thread_id)
+        .bind(event.summary_dispatch_version)
+        .execute(db)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(result.rows_affected() > 0)
 }

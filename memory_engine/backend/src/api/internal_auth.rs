@@ -128,8 +128,7 @@ mod tests {
         AppConfig {
             host: "127.0.0.1".to_string(),
             port: 0,
-            mongodb_uri: "mongodb://127.0.0.1/test".to_string(),
-            mongodb_database: "test".to_string(),
+            database_url: "postgresql://127.0.0.1:5432/test".to_string(),
             ai_request_timeout_secs: 1,
             api_enabled: true,
             worker_enabled: false,
@@ -142,6 +141,8 @@ mod tests {
             rabbitmq_url: "amqp://127.0.0.1/%2f".to_string(),
             rabbitmq_exchange: "memory_engine_test".to_string(),
             rabbitmq_reconnect_delay: std::time::Duration::from_millis(100),
+            cloud_agent_outbox_reconcile_interval: std::time::Duration::from_secs(1),
+            cloud_agent_outbox_batch_size: 10,
             summary_queue: "memory_engine_test.summary".to_string(),
             summary_retry_queue: "memory_engine_test.summary.retry".to_string(),
             summary_dead_letter_queue: "memory_engine_test.summary.dead".to_string(),

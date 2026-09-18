@@ -2,17 +2,13 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::HashMap;
-use std::time::Duration;
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 use chatos_plugin_management_sdk::{
     SkillActivationAttestationClaims, DEFAULT_SKILL_ACTIVATION_LIMIT,
 };
-use futures_util::TryStreamExt;
-use mongodb::bson::{doc, spec::BinarySubtype, Binary, DateTime, Document};
-use mongodb::options::{IndexOptions, UpdateOptions};
-use mongodb::{Client, Collection, IndexModel};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -39,24 +35,23 @@ pub(crate) struct SkillActivationAttestationService {
 
 enum SkillActivationStore {
     Memory(RwLock<HashMap<String, HashMap<String, ActiveSkillActivation>>>),
-    Mongo(MongoSkillActivationStore),
+    Postgres(PostgresSkillActivationStore),
 }
 
-struct MongoSkillActivationStore {
-    collection: Collection<StoredSkillActivationDocument>,
+struct PostgresSkillActivationStore {
+    pool: chatos_postgres::PgPool,
     cipher: ActivationCipher,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 struct StoredSkillActivationDocument {
-    #[serde(rename = "_id")]
     activation_ref: String,
     runtime_session_id: String,
     equivalence_sha256: String,
-    expires_at: DateTime,
+    expires_at: DateTime<Utc>,
     expires_at_unix: i64,
-    nonce: Binary,
-    encrypted_activation: Binary,
+    nonce: Vec<u8>,
+    encrypted_activation: Vec<u8>,
 }
 
 #[derive(Clone)]
@@ -72,61 +67,22 @@ impl SkillActivationAttestationService {
         })
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) async fn connect(secret: &str, database_url: &str) -> Result<Self, String> {
         validate_activation_secret(secret)?;
-        let client = Client::with_uri_str(database_url)
-            .await
-            .map_err(|error| format!("connect Plugin Skill activation MongoDB failed: {error}"))?;
-        let database = client.default_database().ok_or_else(|| {
-            "MCP_MANAGEMENT_DATABASE_URL must include a MongoDB database name".to_string()
-        })?;
-        verify_shared_activation_key(
-            database.collection::<Document>("mcp_management_skill_activation_metadata"),
-            secret,
-        )
-        .await?;
-        let collection = database
-            .collection::<StoredSkillActivationDocument>("mcp_management_skill_activations");
-        collection
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! { "expires_at": 1 })
-                    .options(
-                        IndexOptions::builder()
-                            .name("skill_activation_expiry_ttl".to_string())
-                            .expire_after(Some(Duration::from_secs(0)))
-                            .build(),
-                    )
-                    .build(),
-                None,
-            )
-            .await
-            .map_err(|error| {
-                format!("initialize Plugin Skill activation TTL index failed: {error}")
-            })?;
-        collection
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! {
-                        "runtime_session_id": 1,
-                        "equivalence_sha256": 1,
-                        "expires_at_unix": 1,
-                    })
-                    .options(
-                        IndexOptions::builder()
-                            .name("skill_activation_session_equivalence".to_string())
-                            .build(),
-                    )
-                    .build(),
-                None,
-            )
-            .await
-            .map_err(|error| {
-                format!("initialize Plugin Skill activation lookup index failed: {error}")
-            })?;
+        let pool = crate::postgres::connect(database_url).await?;
+        Self::from_pool(secret, pool).await
+    }
+
+    pub(crate) async fn from_pool(
+        secret: &str,
+        pool: chatos_postgres::PgPool,
+    ) -> Result<Self, String> {
+        validate_activation_secret(secret)?;
+        verify_shared_activation_key(&pool, secret).await?;
         Ok(Self {
-            store: SkillActivationStore::Mongo(MongoSkillActivationStore {
-                collection,
+            store: SkillActivationStore::Postgres(PostgresSkillActivationStore {
+                pool,
                 cipher: ActivationCipher::new(secret)?,
             }),
         })
@@ -150,16 +106,17 @@ impl SkillActivationAttestationService {
                     .and_then(|session| session.get(activation_ref))
                     .cloned())
             }
-            SkillActivationStore::Mongo(store) => store
-                .collection
-                .find_one(
-                    doc! {
-                        "_id": activation_ref,
-                        "runtime_session_id": runtime_session_id,
-                        "expires_at_unix": { "$gt": now },
-                    },
-                    None,
-                )
+            SkillActivationStore::Postgres(store) => sqlx::query_as::<
+                _,
+                StoredSkillActivationDocument,
+            >(
+                "SELECT activation_ref,runtime_session_id,equivalence_sha256,expires_at,expires_at_unix,nonce,encrypted_activation \
+                 FROM mcp_management_skill_activations WHERE activation_ref=$1 AND runtime_session_id=$2 AND expires_at_unix>$3",
+            )
+                .bind(activation_ref)
+                .bind(runtime_session_id)
+                .bind(now)
+                .fetch_optional(&store.pool)
                 .await
                 .map_err(|error| format!("load Plugin Skill activation failed: {error}"))?
                 .map(|document| store.cipher.decrypt(document))
@@ -189,29 +146,24 @@ impl SkillActivationAttestationService {
                     })
                 })
                 .cloned()),
-            SkillActivationStore::Mongo(store) => store
-                .collection
-                .find(
-                    doc! {
-                        "runtime_session_id": claims.runtime_session_id.as_str(),
-                        "equivalence_sha256": equivalence_sha256,
-                        "expires_at_unix": { "$gt": now },
-                    },
-                    None,
-                )
+            SkillActivationStore::Postgres(store) => sqlx::query_as::<
+                _,
+                StoredSkillActivationDocument,
+            >(
+                "SELECT activation_ref,runtime_session_id,equivalence_sha256,expires_at,expires_at_unix,nonce,encrypted_activation \
+                 FROM mcp_management_skill_activations WHERE runtime_session_id=$1 AND equivalence_sha256=$2 \
+                 AND expires_at_unix>$3 ORDER BY activation_ref LIMIT 1",
+            )
+                .bind(&claims.runtime_session_id)
+                .bind(equivalence_sha256)
+                .bind(now)
+                .fetch_optional(&store.pool)
                 .await
                 .map_err(|error| {
                     format!("find equivalent Plugin Skill activation failed: {error}")
                 })?
-                .try_collect::<Vec<_>>()
-                .await
-                .map_err(|error| {
-                    format!("read equivalent Plugin Skill activations failed: {error}")
-                })?
-                .into_iter()
                 .map(|document| store.cipher.decrypt(document))
-                .collect::<Result<Vec<_>, _>>()
-                .map(|activations| activations.into_iter().next()),
+                .transpose(),
         }
     }
 
@@ -242,29 +194,50 @@ impl SkillActivationAttestationService {
                 }
                 session.insert(claims.activation_ref.clone(), activation.clone());
             }
-            SkillActivationStore::Mongo(store) => {
-                let count = store
-                    .collection
-                    .count_documents(
-                        doc! {
-                            "runtime_session_id": claims.runtime_session_id.as_str(),
-                            "expires_at_unix": { "$gt": chrono::Utc::now().timestamp() },
-                        },
-                        None,
-                    )
+            SkillActivationStore::Postgres(store) => {
+                let mut tx = store
+                    .pool
+                    .begin()
                     .await
-                    .map_err(|error| format!("count Plugin Skill activations failed: {error}"))?;
-                if count >= u64::from(DEFAULT_SKILL_ACTIVATION_LIMIT) {
+                    .map_err(|error| error.to_string())?;
+                sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+                    .bind(&claims.runtime_session_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|error| {
+                        format!("lock Plugin Skill activation session failed: {error}")
+                    })?;
+                let count = sqlx::query_scalar::<_, i64>(
+                    "SELECT count(*) FROM mcp_management_skill_activations \
+                     WHERE runtime_session_id=$1 AND expires_at_unix>$2",
+                )
+                .bind(&claims.runtime_session_id)
+                .bind(chrono::Utc::now().timestamp())
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|error| format!("count Plugin Skill activations failed: {error}"))?;
+                if count >= i64::from(DEFAULT_SKILL_ACTIVATION_LIMIT) {
                     return Err(format!(
                         "Plugin Skill activation limit exceeded ({DEFAULT_SKILL_ACTIVATION_LIMIT})"
                     ));
                 }
                 let document = store.cipher.encrypt(&activation)?;
-                store
-                    .collection
-                    .insert_one(document, None)
+                sqlx::query(
+                    "INSERT INTO mcp_management_skill_activations \
+                     (activation_ref,runtime_session_id,equivalence_sha256,expires_at,expires_at_unix,nonce,encrypted_activation) \
+                     VALUES($1,$2,$3,$4,$5,$6,$7)",
+                )
+                    .bind(&document.activation_ref)
+                    .bind(&document.runtime_session_id)
+                    .bind(&document.equivalence_sha256)
+                    .bind(document.expires_at)
+                    .bind(document.expires_at_unix)
+                    .bind(&document.nonce)
+                    .bind(&document.encrypted_activation)
+                    .execute(&mut *tx)
                     .await
                     .map_err(|error| format!("persist Plugin Skill activation failed: {error}"))?;
+                tx.commit().await.map_err(|error| error.to_string())?;
             }
         }
         Ok(activation)
@@ -282,21 +255,17 @@ impl SkillActivationAttestationService {
                 .get(runtime_session_id)
                 .map(|session| session.values().cloned().collect::<Vec<_>>())
                 .unwrap_or_default(),
-            SkillActivationStore::Mongo(store) => {
-                let documents = store
-                    .collection
-                    .find(
-                        doc! {
-                            "runtime_session_id": runtime_session_id,
-                            "expires_at_unix": { "$gt": now },
-                        },
-                        None,
-                    )
+            SkillActivationStore::Postgres(store) => {
+                let documents = sqlx::query_as::<_, StoredSkillActivationDocument>(
+                    "SELECT activation_ref,runtime_session_id,equivalence_sha256,expires_at,expires_at_unix,nonce,encrypted_activation \
+                     FROM mcp_management_skill_activations WHERE runtime_session_id=$1 AND expires_at_unix>$2 \
+                     ORDER BY activation_ref",
+                )
+                    .bind(runtime_session_id)
+                    .bind(now)
+                    .fetch_all(&store.pool)
                     .await
-                    .map_err(|error| format!("list Plugin Skill activations failed: {error}"))?
-                    .try_collect::<Vec<_>>()
-                    .await
-                    .map_err(|error| format!("read Plugin Skill activations failed: {error}"))?;
+                    .map_err(|error| format!("list Plugin Skill activations failed: {error}"))?;
                 documents
                     .into_iter()
                     .map(|document| store.cipher.decrypt(document))
@@ -348,51 +317,48 @@ impl SkillActivationAttestationService {
                 activations.write().await.remove(runtime_session_id);
                 Ok(())
             }
-            SkillActivationStore::Mongo(store) => store
-                .collection
-                .delete_many(doc! { "runtime_session_id": runtime_session_id }, None)
-                .await
-                .map(|_| ())
-                .map_err(|error| format!("remove Plugin Skill activations failed: {error}")),
+            SkillActivationStore::Postgres(store) => sqlx::query(
+                "DELETE FROM mcp_management_skill_activations WHERE runtime_session_id=$1",
+            )
+            .bind(runtime_session_id)
+            .execute(&store.pool)
+            .await
+            .map(|_| ())
+            .map_err(|error| format!("remove Plugin Skill activations failed: {error}")),
         }
     }
 }
 
 fn validate_activation_secret(secret: &str) -> Result<(), String> {
-    if secret.trim().as_bytes().len() < 16 {
+    if secret.trim().len() < 16 {
         return Err("Plugin Skill attestation secret must contain at least 16 bytes".to_string());
     }
     Ok(())
 }
 
 async fn verify_shared_activation_key(
-    collection: Collection<Document>,
+    pool: &chatos_postgres::PgPool,
     secret: &str,
 ) -> Result<(), String> {
     let fingerprint = hex::encode(Sha256::digest(
         format!("chatos.plugin.skill.activation.key.v1\0{}", secret.trim()).as_bytes(),
     ));
-    collection
-        .update_one(
-            doc! { "_id": "encryption-key-v1" },
-            doc! {
-                "$setOnInsert": {
-                    "fingerprint_sha256": fingerprint.as_str(),
-                    "created_at": DateTime::now(),
-                }
-            },
-            UpdateOptions::builder().upsert(true).build(),
-        )
-        .await
-        .map_err(|error| {
-            format!("initialize Plugin Skill activation key metadata failed: {error}")
-        })?;
-    let metadata = collection
-        .find_one(doc! { "_id": "encryption-key-v1" }, None)
+    sqlx::query(
+        "INSERT INTO mcp_management_skill_activation_metadata(key,fingerprint_sha256,created_at) \
+         VALUES('encryption-key-v1',$1,now()) ON CONFLICT(key) DO NOTHING",
+    )
+    .bind(&fingerprint)
+    .execute(pool)
+    .await
+    .map_err(|error| format!("initialize Plugin Skill activation key metadata failed: {error}"))?;
+    let stored = sqlx::query_scalar::<_, String>(
+        "SELECT fingerprint_sha256 FROM mcp_management_skill_activation_metadata WHERE key='encryption-key-v1'",
+    )
+        .fetch_optional(pool)
         .await
         .map_err(|error| format!("read Plugin Skill activation key metadata failed: {error}"))?
         .ok_or_else(|| "Plugin Skill activation key metadata is missing".to_string())?;
-    if metadata.get_str("fingerprint_sha256").ok() != Some(fingerprint.as_str()) {
+    if stored != fingerprint {
         return Err(
             "Plugin Skill activation encryption key does not match the key already registered by another MCP Management instance"
                 .to_string(),
@@ -510,18 +476,13 @@ impl ActivationCipher {
                 &activation.claims,
                 activation.parent_activation_ref.as_deref(),
             ),
-            expires_at: DateTime::from_millis(
-                activation.claims.expires_at_unix.saturating_mul(1_000),
-            ),
+            expires_at: DateTime::<Utc>::from_timestamp(activation.claims.expires_at_unix, 0)
+                .ok_or_else(|| {
+                    "Plugin Skill activation expiry is outside timestamp range".to_string()
+                })?,
             expires_at_unix: activation.claims.expires_at_unix,
-            nonce: Binary {
-                subtype: BinarySubtype::Generic,
-                bytes: nonce.to_vec(),
-            },
-            encrypted_activation: Binary {
-                subtype: BinarySubtype::Generic,
-                bytes: encrypted_activation,
-            },
+            nonce: nonce.to_vec(),
+            encrypted_activation,
         })
     }
 
@@ -529,19 +490,19 @@ impl ActivationCipher {
         &self,
         document: StoredSkillActivationDocument,
     ) -> Result<ActiveSkillActivation, String> {
-        if document.nonce.bytes.len() != ACTIVATION_NONCE_BYTES {
+        if document.nonce.len() != ACTIVATION_NONCE_BYTES {
             return Err("Plugin Skill activation nonce has an invalid size".to_string());
         }
         let cipher = Aes256Gcm::new_from_slice(&self.key).map_err(|error| {
             format!("initialize Plugin Skill activation cipher failed: {error}")
         })?;
-        let nonce_ref = Nonce::try_from(document.nonce.bytes.as_slice())
+        let nonce_ref = Nonce::try_from(document.nonce.as_slice())
             .map_err(|error| format!("initialize Plugin Skill activation nonce failed: {error}"))?;
         let plain = cipher
             .decrypt(
                 &nonce_ref,
                 Payload {
-                    msg: document.encrypted_activation.bytes.as_slice(),
+                    msg: document.encrypted_activation.as_slice(),
                     aad: document.activation_ref.as_bytes(),
                 },
             )
@@ -680,9 +641,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires CHATOS_MCP_MANAGEMENT_TEST_DATABASE_URL"]
-    async fn mongodb_store_shares_internal_activation_state_and_rejects_key_drift() {
-        let database_url = std::env::var("CHATOS_MCP_MANAGEMENT_TEST_DATABASE_URL").unwrap();
+    #[ignore = "requires MCP_MANAGEMENT_TEST_DATABASE_URL and migrated PostgreSQL"]
+    async fn postgresql_store_shares_internal_activation_state_and_rejects_key_drift() {
+        let database_url = std::env::var("MCP_MANAGEMENT_TEST_DATABASE_URL").unwrap();
         let secret = "shared-skill-activation-secret";
         let first = SkillActivationAttestationService::connect(secret, database_url.as_str())
             .await

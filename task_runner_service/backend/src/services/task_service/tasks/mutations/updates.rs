@@ -179,12 +179,17 @@ impl TaskService {
         }
         task.updated_at = now_rfc3339();
         self.ensure_task_thread(&task).await?;
-        let saved = self.store.save_task(task).await?;
-        if let Some(prerequisite_task_ids) = prerequisite_task_ids {
-            self.store
-                .set_task_prerequisites(id, prerequisite_task_ids)
-                .await?;
-        }
+        let saved = match prerequisite_task_ids {
+            Some(prerequisite_task_ids) => {
+                self.validate_and_save_task_with_prerequisites(
+                    task,
+                    &prerequisite_task_ids,
+                    current_user,
+                )
+                .await?
+            }
+            None => self.store.save_task(task).await?,
+        };
         self.hydrate_task_prerequisites(saved).await.map(Some)
     }
 
@@ -401,5 +406,32 @@ mod tests {
             .expect("get child")
             .expect("child");
         assert_eq!(child_after.status, TaskStatus::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn concurrent_opposite_dependencies_cannot_create_a_cycle() {
+        let service = test_service().await;
+        let first = create_task(&service, "first", TaskStatus::Ready).await;
+        let second = create_task(&service, "second", TaskStatus::Ready).await;
+
+        let (first_result, second_result) = tokio::join!(
+            service.set_task_prerequisites(&first.id, vec![second.id.clone()], None),
+            service.set_task_prerequisites(&second.id, vec![first.id.clone()], None),
+        );
+
+        assert_ne!(first_result.is_ok(), second_result.is_ok());
+        let error = first_result
+            .err()
+            .or_else(|| second_result.err())
+            .expect("one update must reject the cycle");
+        assert!(error.contains("循环依赖"));
+        service
+            .resolve_prerequisite_order(&first.id)
+            .await
+            .expect("first graph remains acyclic");
+        service
+            .resolve_prerequisite_order(&second.id)
+            .await
+            .expect("second graph remains acyclic");
     }
 }

@@ -1,0 +1,1 @@
+这是 Todo 执行状态通知，由客户端在执行线程完成、阻塞或异常结束后自动产生。先调用 chat_get_trigger 读取状态摘要，再调用 todo_list 找到对应任务，必要时调用 todo_read_progress 查看完整执行记录。根据结果判断是否需要使用 Todo 返回的 conversation_ref 和 message_ref，通过 chat_inbox_send 向一条或多条来源会话汇报；阻塞时可以结合新消息用 todo_update 调整任务、补充来源或重新置为 pending。处理完后必须调用 agent_cycle_complete。不要把内部 Todo 状态消息直接发到聊天记录，也不要猜测任何真实 ID。

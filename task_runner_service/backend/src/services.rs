@@ -115,7 +115,8 @@ use self::managed_config::{
 };
 pub(crate) use self::plugin_management_policy::TaskRunnerCapabilityPolicy;
 use self::process_log_text::apply_task_process_log_update;
-use self::schedule_helpers::{advance_task_schedule_after_dispatch, sanitize_task_schedule_config};
+pub(crate) use self::schedule_helpers::advance_task_schedule_after_dispatch;
+use self::schedule_helpers::sanitize_task_schedule_config;
 use self::status_display::{TaskScheduleModeExt, TaskStatusExt};
 use self::task_tenant_scope::{
     align_task_tenant_to_owner, resolve_task_tenant_id, save_task_if_tenant_aligned,

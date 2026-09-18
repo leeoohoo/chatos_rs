@@ -158,7 +158,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
         definition(
             TASK_RUNNER_RUN_EVENT_CLEANUP_BATCH_SIZE_CONFIG_KEY,
             "Run 事件清理批次",
-            "单轮最多检查包含过期事件的 Run 数量，限制清理操作对 MongoDB 的压力",
+            "单轮最多检查包含过期事件的 Run 数量，限制清理操作对数据库的压力",
             "Task Runner / Retention",
             "service",
             Some("task-runner"),
@@ -277,7 +277,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
         definition(
             TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_BATCH_SIZE_CONFIG_KEY,
             "审批记录清理批次",
-            "单轮最多删除的过期审批记录数量，用于限制 MongoDB 清理压力",
+            "单轮最多删除的过期审批记录数量，用于限制数据库清理压力",
             "Task Runner / Retention",
             "service",
             Some("task-runner"),

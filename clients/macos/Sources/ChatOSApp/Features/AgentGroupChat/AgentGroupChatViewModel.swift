@@ -43,6 +43,12 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published private(set) var pendingTeamProposals: [LocalAgentTeamCreationProposal] = []
     @Published private(set) var pendingMembershipProposals: [LocalAgentMembershipProposal] = []
     @Published private(set) var teams: [ProjectAgentRoom] = []
+    @Published private(set) var teamTodos: [LocalAgentTodo] = []
+    @Published private(set) var teamAssets: [LocalAgentTeamAsset] = []
+    @Published private(set) var teamAssetRevisions: [String: [LocalAgentTeamAssetRevision]] = [:]
+    @Published private(set) var loadingTeamAssetRevisionIDs: Set<String> = []
+    @Published private(set) var recentRuns: [LocalAgentGroupChatRun] = []
+    @Published private(set) var recentRunDeliveries: [UUID: ProjectAgentDelivery] = [:]
     @Published var draftMessage = ""
     @Published var attachments: [ConversationAttachmentDraft] = []
     @Published var attachmentError: String?
@@ -67,6 +73,7 @@ final class AgentGroupChatViewModel: ObservableObject {
     private var openedStore: SQLiteAgentGroupChatStore?
     private var schedulerTask: Task<Void, Never>?
     private var schedulerNeedsAnotherPass = false
+    private var changeObservationTask: Task<Void, Never>?
 
     init(
         projectID: String,
@@ -82,6 +89,10 @@ final class AgentGroupChatViewModel: ObservableObject {
         self.scheduler = scheduler
         self.builderService = builderService
         self.projectsService = projectsService
+    }
+
+    deinit {
+        changeObservationTask?.cancel()
     }
 
     var profilesByID: [String: LocalAgentProfile] {
@@ -121,6 +132,10 @@ final class AgentGroupChatViewModel: ObservableObject {
             let pendingRemovalProposals: [LocalAgentRemovalProposal]
             let pendingTeamProposals: [LocalAgentTeamCreationProposal]
             let pendingMembershipProposals: [LocalAgentMembershipProposal]
+            let teamTodos: [LocalAgentTodo]
+            let teamAssets: [LocalAgentTeamAsset]
+            let recentTeamRuns: [LocalAgentGroupChatRun]
+            let recentRunDeliveries: [UUID: ProjectAgentDelivery]
             if let room {
                 members = try await store.listMembers(ownerUserID: ownerUserID, roomID: room.id)
                 messages = try await store.listMessages(
@@ -168,6 +183,35 @@ final class AgentGroupChatViewModel: ObservableObject {
                     sourceRoomID: room.id,
                     status: .pending
                 )
+                teamTodos = try await store.listTeamTodos(
+                    ownerUserID: ownerUserID,
+                    teamRoomID: room.id,
+                    includeTerminal: true
+                )
+                teamAssets = try await store.listTeamAssets(
+                    ownerUserID: ownerUserID,
+                    teamRoomID: room.id,
+                    includeArchived: false
+                )
+                var runValues: [LocalAgentGroupChatRun] = []
+                for member in members {
+                    runValues.append(contentsOf: try await store.listAgentRuns(
+                        ownerUserID: ownerUserID,
+                        agentID: member.agentID,
+                        limit: 50
+                    ).filter { $0.context.roomID == room.id })
+                }
+                recentTeamRuns = runValues.sorted { $0.updatedAtUnixMs > $1.updatedAtUnixMs }
+                var deliveryValues: [UUID: ProjectAgentDelivery] = [:]
+                for run in recentTeamRuns {
+                    if let delivery = try await store.delivery(
+                        ownerUserID: ownerUserID,
+                        deliveryID: run.context.deliveryID
+                    ) {
+                        deliveryValues[run.id] = delivery
+                    }
+                }
+                recentRunDeliveries = deliveryValues
             } else {
                 members = []
                 messages = []
@@ -176,6 +220,10 @@ final class AgentGroupChatViewModel: ObservableObject {
                 pendingRemovalProposals = []
                 pendingTeamProposals = []
                 pendingMembershipProposals = []
+                teamTodos = []
+                teamAssets = []
+                recentTeamRuns = []
+                recentRunDeliveries = [:]
             }
             self.agents = agents
             self.room = room
@@ -196,6 +244,13 @@ final class AgentGroupChatViewModel: ObservableObject {
             self.pendingTeamProposals = pendingTeamProposals
             self.pendingMembershipProposals = pendingMembershipProposals
             self.teams = teams
+            self.teamTodos = teamTodos
+            self.teamAssets = teamAssets
+            let activeAssetIDs = Set(teamAssets.map(\.id))
+            teamAssetRevisions = teamAssetRevisions.filter { activeAssetIDs.contains($0.key) }
+            loadingTeamAssetRevisionIDs.formIntersection(activeAssetIDs)
+            self.recentRuns = recentTeamRuns
+            self.recentRunDeliveries = recentRunDeliveries
             let builderResources = try? await builderService.loadResources(
                 ownerUserID: ownerUserID
             )
@@ -209,8 +264,94 @@ final class AgentGroupChatViewModel: ObservableObject {
 
     func activate() async {
         await load()
+        startChangeObservation()
         if room != nil {
             startScheduler()
+        }
+    }
+
+    private func startChangeObservation() {
+        guard changeObservationTask == nil else { return }
+        let service = service
+        let ownerUserID = ownerUserID
+        changeObservationTask = Task { [weak self] in
+            let changes = await service.changes(ownerUserID: ownerUserID)
+            for await _ in changes {
+                guard !Task.isCancelled else { break }
+                try? await Task.sleep(for: .milliseconds(120))
+                guard !Task.isCancelled else { break }
+                await self?.load()
+            }
+        }
+    }
+
+    func saveTeamAsset(
+        existing: LocalAgentTeamAsset?,
+        category: LocalAgentTeamAssetCategory,
+        title: String,
+        markdown: String
+    ) async -> Bool {
+        guard let room else { return false }
+        do {
+            let store = try await resolveStore()
+            let saved = try await store.upsertTeamAsset(
+                ownerUserID: ownerUserID,
+                teamRoomID: room.id,
+                assetID: existing?.id,
+                editorAgentID: nil,
+                category: category,
+                title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+                markdown: markdown,
+                expectedRevision: existing?.revision,
+                nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            )
+            teamAssetRevisions.removeValue(forKey: saved.id)
+            await load()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func archiveTeamAsset(_ asset: LocalAgentTeamAsset) async {
+        guard let room else { return }
+        do {
+            let store = try await resolveStore()
+            _ = try await store.archiveTeamAsset(
+                ownerUserID: ownerUserID,
+                teamRoomID: room.id,
+                assetID: asset.id,
+                editorAgentID: nil,
+                expectedRevision: asset.revision,
+                nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            )
+            teamAssetRevisions.removeValue(forKey: asset.id)
+            await load()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func loadTeamAssetRevisions(_ asset: LocalAgentTeamAsset, force: Bool = false) async {
+        guard let room,
+              asset.teamRoomID == room.id,
+              force || teamAssetRevisions[asset.id] == nil,
+              loadingTeamAssetRevisionIDs.insert(asset.id).inserted else { return }
+        defer { loadingTeamAssetRevisionIDs.remove(asset.id) }
+        do {
+            let store = try await resolveStore()
+            let revisions = try await store.listTeamAssetRevisions(
+                ownerUserID: ownerUserID,
+                teamRoomID: room.id,
+                assetID: asset.id,
+                limit: 500
+            )
+            guard self.room?.id == room.id,
+                  teamAssets.contains(where: { $0.id == asset.id }) else { return }
+            teamAssetRevisions[asset.id] = revisions
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 

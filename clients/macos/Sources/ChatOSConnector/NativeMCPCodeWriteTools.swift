@@ -99,6 +99,15 @@ actor NativeMCPCodeWriteStore {
         }
     }
 
+    @discardableResult
+    func discard(runID: String) -> Int {
+        let matching = sessions.values.filter { $0.scope.runID == runID }
+        for session in matching {
+            removeSession(session)
+        }
+        return matching.count
+    }
+
     private func open(
         arguments: [String: NativeJSONValue],
         scope: NativeMCPCodeWriteScope,

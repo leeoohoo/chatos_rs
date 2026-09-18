@@ -61,7 +61,7 @@ pub(super) async fn update_admin_plugin_marketplace(
     )?;
     validate_marketplace_signing_keys(
         payload.trusted_signing_keys.as_slice(),
-        trust_level == PLUGIN_TRUST_TRUSTED,
+        marketplace_requires_catalog_root(trust_level.as_str(), catalog_url.as_deref()),
     )?;
     validate_marketplace_signing_key_progression(
         existing.trusted_signing_keys.as_slice(),
@@ -172,7 +172,10 @@ pub(super) async fn create_plugin_marketplace(
         )?;
     }
     let trusted_signing_keys = payload.trusted_signing_keys.unwrap_or_default();
-    validate_marketplace_signing_keys(&trusted_signing_keys, trust_level == PLUGIN_TRUST_TRUSTED)?;
+    validate_marketplace_signing_keys(
+        &trusted_signing_keys,
+        marketplace_requires_catalog_root(trust_level.as_str(), catalog_url.as_deref()),
+    )?;
 
     if state
         .store
@@ -308,6 +311,10 @@ fn normalize_marketplace_trust(
         ));
     }
     Ok(trust)
+}
+
+fn marketplace_requires_catalog_root(trust_level: &str, catalog_url: Option<&str>) -> bool {
+    trust_level == PLUGIN_TRUST_TRUSTED && catalog_url.is_some()
 }
 
 pub(super) fn validate_marketplace_signing_keys(
@@ -520,6 +527,22 @@ mod tests {
         let mut revoked_catalog = test_catalog_key("catalog-key", 2);
         revoked_catalog.revoked_at = Some("2026-06-01T00:00:00Z".to_string());
         assert!(validate_marketplace_signing_keys(&[revoked_catalog], true).is_err());
+    }
+
+    #[test]
+    fn direct_admin_registry_does_not_require_a_catalog_root() {
+        assert!(!marketplace_requires_catalog_root(
+            PLUGIN_TRUST_TRUSTED,
+            None,
+        ));
+        assert!(marketplace_requires_catalog_root(
+            PLUGIN_TRUST_TRUSTED,
+            Some("https://plugins.example.com/catalog.json"),
+        ));
+        assert!(!marketplace_requires_catalog_root(
+            PLUGIN_TRUST_UNTRUSTED,
+            Some("https://plugins.example.com/catalog.json"),
+        ));
     }
 
     #[test]

@@ -19,6 +19,7 @@ mod run_event_queue;
 mod run_event_retention;
 mod run_post_process_queue;
 pub mod scheduler;
+mod scheduler_outbox;
 pub mod services;
 pub mod state;
 pub mod store;
@@ -32,11 +33,12 @@ pub use ask_user_prompt_retention::{
 };
 pub use cloud_agent_queue::{spawn_cloud_agent_consumer, spawn_cloud_agent_outbox_reconciler};
 pub use config::{load_task_runner_dotenv, AppConfig, TaskRunnerRole};
-pub use run_event_queue::spawn_run_event_consumer;
+pub use run_event_queue::{spawn_run_event_consumer, spawn_run_event_outbox_reconciler};
 pub use run_event_retention::{spawn_run_event_retention, RunEventRetentionPolicy};
 pub use run_post_process_queue::{
     spawn_run_post_process_consumer, spawn_run_post_process_outbox_reconciler,
 };
+pub use scheduler_outbox::spawn_scheduler_outbox_supervisor;
 pub use state::AppState;
 pub use terminal_store::{
     configure_task_terminal_runtime, spawn_task_terminal_retention, TaskTerminalRetentionPolicy,

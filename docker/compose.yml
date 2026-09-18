@@ -249,7 +249,7 @@ x-rust-service: &rust-service
   depends_on:
     consul:
       condition: service_healthy
-    mongodb:
+    postgres:
       condition: service_healthy
     configuration-center-backend:
       condition: service_healthy
@@ -274,6 +274,15 @@ x-service-runtime-env: &service-runtime-env
 x-frontend-service: &frontend-service
   restart: unless-stopped
   deploy: *frontend-deploy
+  networks:
+    - cloud
+
+x-postgres-migration: &postgres-migration
+  restart: "no"
+  entrypoint: ["/usr/local/bin/chatos-migrate"]
+  depends_on:
+    postgres-provision:
+      condition: service_completed_successfully
   networks:
     - cloud
 
@@ -302,43 +311,153 @@ services:
     networks:
       - cloud
 
-  mongodb:
-    image: mongo:7.0
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:18.6-bookworm}
     restart: unless-stopped
-    entrypoint:
-      - bash
+    command:
+      - postgres
       - -c
-      - |
-        umask 077
-        printf '%s' "$${MONGODB_REPLICA_SET_KEY}" > /tmp/mongodb-keyfile
-        chown mongodb:mongodb /tmp/mongodb-keyfile
-        chmod 400 /tmp/mongodb-keyfile
-        exec docker-entrypoint.sh mongod --replSet rs0 --bind_ip_all --keyFile /tmp/mongodb-keyfile
+      - max_connections=${POSTGRES_SERVER_MAX_CONNECTIONS:-200}
     environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER:-admin}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD:-admin}
-      MONGODB_REPLICA_SET_KEY: ${MONGODB_REPLICA_SET_KEY:-Q2hhdE9TTG9jYWxEZXZSZXBsaWNhU2V0S2V5MjAyNg}
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-chatos_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?POSTGRES_ADMIN_PASSWORD is required}
+      POSTGRES_DB: postgres
+      TZ: UTC
     ports:
-      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${MONGODB_HOST_PORT:-27018}:27017"
+      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${POSTGRES_PORT:-5433}:5432"
     volumes:
-      - mongodb-data:/data/db
+      # PostgreSQL 18+ keeps the cluster in a major-version subdirectory.
+      # Mount the parent directory so the image can manage that layout and
+      # future pg_upgrade operations do not cross a volume boundary.
+      - postgres-data:/var/lib/postgresql
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "mongosh --quiet --username \"$${MONGO_INITDB_ROOT_USERNAME}\" --password \"$${MONGO_INITDB_ROOT_PASSWORD}\" --authenticationDatabase admin --eval 'try { rs.status().ok } catch (error) { if (error.code === 94) { rs.initiate({_id: \"rs0\", members: [{_id: 0, host: \"mongodb:27017\"}]}).ok } else { throw error } }' | grep 1"
-        ]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d postgres"]
+      interval: 5s
       timeout: 5s
       retries: 30
     deploy:
       resources:
         limits:
-          cpus: "${MONGODB_CPU_LIMIT:-2.0}"
-          memory: ${MONGODB_MEMORY_LIMIT:-2G}
+          cpus: "${POSTGRES_CPU_LIMIT:-2.0}"
+          memory: ${POSTGRES_MEMORY_LIMIT:-2G}
         reservations:
-          cpus: "${MONGODB_CPU_RESERVATION:-0.25}"
-          memory: ${MONGODB_MEMORY_RESERVATION:-512M}
+          cpus: "${POSTGRES_CPU_RESERVATION:-0.25}"
+          memory: ${POSTGRES_MEMORY_RESERVATION:-512M}
+    networks:
+      - cloud
+
+  postgres-provision:
+    image: ${POSTGRES_IMAGE:-postgres:18.6-bookworm}
+    restart: "no"
+    entrypoint: ["/bin/bash", "/scripts/postgres-provision-local.sh"]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_ADMIN_DATABASE: postgres
+      POSTGRES_ADMIN_USER: ${POSTGRES_ADMIN_USER:-chatos_admin}
+      POSTGRES_ADMIN_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?POSTGRES_ADMIN_PASSWORD is required}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}
+      POSTGRES_MIGRATION_PASSWORD: ${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}
+      CHATOS_APP_PASSWORD: ${CHATOS_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}
+      CONFIG_CENTER_APP_PASSWORD: ${CONFIG_CENTER_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}
+      USER_SERVICE_APP_PASSWORD: ${USER_SERVICE_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}
+      PLUGIN_MANAGEMENT_APP_PASSWORD: ${PLUGIN_MANAGEMENT_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}
+      LOCAL_CONNECTOR_APP_PASSWORD: ${LOCAL_CONNECTOR_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}
+      TASK_RUNNER_APP_PASSWORD: ${TASK_RUNNER_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}
+      MCP_MANAGEMENT_APP_PASSWORD: ${MCP_MANAGEMENT_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}
+      MEMORY_ENGINE_APP_PASSWORD: ${MEMORY_ENGINE_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}
+      CHATOS_MIGRATOR_PASSWORD: ${CHATOS_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}
+      CONFIG_CENTER_MIGRATOR_PASSWORD: ${CONFIG_CENTER_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}
+      USER_SERVICE_MIGRATOR_PASSWORD: ${USER_SERVICE_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}
+      PLUGIN_MANAGEMENT_MIGRATOR_PASSWORD: ${PLUGIN_MANAGEMENT_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}
+      LOCAL_CONNECTOR_MIGRATOR_PASSWORD: ${LOCAL_CONNECTOR_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}
+      TASK_RUNNER_MIGRATOR_PASSWORD: ${TASK_RUNNER_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}
+      MCP_MANAGEMENT_MIGRATOR_PASSWORD: ${MCP_MANAGEMENT_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}
+      MEMORY_ENGINE_MIGRATOR_PASSWORD: ${MEMORY_ENGINE_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}
+    volumes:
+      - ../scripts/postgres-provision-local.sh:/scripts/postgres-provision-local.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cloud
+
+  configuration-center-migrate:
+    <<: *postgres-migration
+    image: ${CONFIG_CENTER_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-configuration-center-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      CONFIG_CENTER_MIGRATION_DATABASE_URL: postgresql://config_center_migrator:${CONFIG_CENTER_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}@postgres:5432/configuration_center
+
+  user-service-migrate:
+    <<: *postgres-migration
+    image: ${USER_SERVICE_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-user-service-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      USER_SERVICE_MIGRATION_DATABASE_URL: postgresql://user_service_migrator:${USER_SERVICE_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}@postgres:5432/user_service
+
+  plugin-management-migrate:
+    <<: *postgres-migration
+    image: ${PLUGIN_MANAGEMENT_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-plugin-management-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      PLUGIN_MANAGEMENT_MIGRATION_DATABASE_URL: postgresql://plugin_management_migrator:${PLUGIN_MANAGEMENT_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}@postgres:5432/plugin_management_service
+
+  local-connector-migrate:
+    <<: *postgres-migration
+    image: ${LOCAL_CONNECTOR_SERVICE_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-local-connector-service-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      LOCAL_CONNECTOR_MIGRATION_DATABASE_URL: postgresql://local_connector_migrator:${LOCAL_CONNECTOR_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}@postgres:5432/local_connector_service
+
+  task-runner-migrate:
+    <<: *postgres-migration
+    image: ${TASK_RUNNER_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-task-runner-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      TASK_RUNNER_MIGRATION_DATABASE_URL: postgresql://task_runner_migrator:${TASK_RUNNER_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}@postgres:5432/task_runner_service
+
+  mcp-management-migrate:
+    <<: *postgres-migration
+    image: ${MCP_MANAGEMENT_SERVICE_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-mcp-management-service-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      MCP_MANAGEMENT_MIGRATION_DATABASE_URL: postgresql://mcp_management_migrator:${MCP_MANAGEMENT_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}@postgres:5432/mcp_management_service
+
+  memory-engine-migrate:
+    <<: *postgres-migration
+    image: ${MEMORY_ENGINE_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-memory-engine-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      MEMORY_ENGINE_MIGRATION_DATABASE_URL: postgresql://memory_engine_migrator:${MEMORY_ENGINE_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}@postgres:5432/memory_engine
+
+  chatos-migrate:
+    <<: *postgres-migration
+    image: ${CHATOS_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-chatos-backend:${CHATOS_IMAGE_TAG:-latest}}
+    environment:
+      CHATOS_MIGRATION_DATABASE_URL: postgresql://chatos_migrator:${CHATOS_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}@postgres:5432/chatos
+
+  postgres-finalize:
+    image: ${POSTGRES_IMAGE:-postgres:18.6-bookworm}
+    restart: "no"
+    entrypoint: ["/bin/bash", "/scripts/postgres-finalize-privileges.sh"]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_ADMIN_USER: ${POSTGRES_ADMIN_USER:-chatos_admin}
+      POSTGRES_ADMIN_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?POSTGRES_ADMIN_PASSWORD is required}
+    volumes:
+      - ../scripts/postgres-finalize-privileges.sh:/scripts/postgres-finalize-privileges.sh:ro
+    depends_on:
+      configuration-center-migrate:
+        condition: service_completed_successfully
+      user-service-migrate:
+        condition: service_completed_successfully
+      plugin-management-migrate:
+        condition: service_completed_successfully
+      local-connector-migrate:
+        condition: service_completed_successfully
+      task-runner-migrate:
+        condition: service_completed_successfully
+      mcp-management-migrate:
+        condition: service_completed_successfully
+      memory-engine-migrate:
+        condition: service_completed_successfully
+      chatos-migrate:
+        condition: service_completed_successfully
     networks:
       - cloud
 
@@ -405,8 +524,14 @@ services:
       MCP_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/mcp_management_mtls_client_identity
       MEMORY_ENGINE_MTLS_CA_CERT_PATH: /run/secrets/memory_engine_mtls_ca
       MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/memory_engine_mtls_client_identity
-      CONFIG_CENTER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/configuration_center?authSource=admin&replicaSet=rs0
-      CONFIG_CENTER_MONGODB_DATABASE: configuration_center
+      CONFIG_CENTER_DATABASE_URL: postgresql://config_center_app:${CONFIG_CENTER_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/configuration_center
+      CONFIG_CENTER_POSTGRES_POOL_MAX_CONNECTIONS: ${CONFIG_CENTER_POSTGRES_POOL_MAX_CONNECTIONS:-10}
+      CONFIG_CENTER_POSTGRES_POOL_MIN_CONNECTIONS: ${CONFIG_CENTER_POSTGRES_POOL_MIN_CONNECTIONS:-1}
+      CONFIG_CENTER_POSTGRES_POOL_ACQUIRE_TIMEOUT_MS: ${CONFIG_CENTER_POSTGRES_POOL_ACQUIRE_TIMEOUT_MS:-5000}
+      CONFIG_CENTER_POSTGRES_POOL_IDLE_TIMEOUT_MS: ${CONFIG_CENTER_POSTGRES_POOL_IDLE_TIMEOUT_MS:-600000}
+      CONFIG_CENTER_POSTGRES_POOL_MAX_LIFETIME_MS: ${CONFIG_CENTER_POSTGRES_POOL_MAX_LIFETIME_MS:-1800000}
+      CONFIG_CENTER_POSTGRES_STATEMENT_TIMEOUT_MS: ${CONFIG_CENTER_POSTGRES_STATEMENT_TIMEOUT_MS:-30000}
+      CONFIG_CENTER_POSTGRES_LOCK_TIMEOUT_MS: ${CONFIG_CENTER_POSTGRES_LOCK_TIMEOUT_MS:-5000}
       CONFIG_CENTER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL: https://mcp-management-service-backend:39282
       CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL: https://memory-engine-backend:7083/api/memory-engine/v1
@@ -425,8 +550,10 @@ services:
     depends_on:
       consul:
         condition: service_healthy
-      mongodb:
+      postgres:
         condition: service_healthy
+      postgres-finalize:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39270/health"]
       interval: 10s
@@ -511,8 +638,7 @@ services:
       USER_SERVICE_MTLS_SERVER_CERT_PATH: /run/secrets/user_service_mtls_server_cert
       USER_SERVICE_MTLS_SERVER_KEY_PATH: /run/secrets/user_service_mtls_server_key
       USER_SERVICE_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
-      USER_SERVICE_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/user_service?authSource=admin&replicaSet=rs0
-      USER_SERVICE_MONGODB_DATABASE: user_service
+      USER_SERVICE_DATABASE_URL: postgresql://user_service_app:${USER_SERVICE_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/user_service
       USER_SERVICE_JWT_SECRET: ${USER_SERVICE_JWT_SECRET:-change_me_user_service_secret}
       USER_SERVICE_JWT_ISSUER: ${USER_SERVICE_JWT_ISSUER:-user_service}
       USER_SERVICE_USER_AUDIENCE: ${USER_SERVICE_USER_AUDIENCE:-user_service}
@@ -558,8 +684,10 @@ services:
     depends_on:
       consul:
         condition: service_healthy
-      mongodb:
+      postgres:
         condition: service_healthy
+      postgres-finalize:
+        condition: service_completed_successfully
       configuration-center-backend:
         condition: service_healthy
       harness:
@@ -597,8 +725,7 @@ services:
       MEMORY_ENGINE_MTLS_SERVER_CERT_PATH: /run/secrets/memory_engine_mtls_server_cert
       MEMORY_ENGINE_MTLS_SERVER_KEY_PATH: /run/secrets/memory_engine_mtls_server_key
       MEMORY_ENGINE_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/memory_engine_mtls_ca
-      MEMORY_ENGINE_MONGODB_URI: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/admin?replicaSet=rs0
-      MEMORY_ENGINE_MONGODB_DATABASE: memory_engine
+      MEMORY_ENGINE_DATABASE_URL: postgresql://memory_engine_app:${MEMORY_ENGINE_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/memory_engine
       CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET: ${CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_chatos_memory_engine_secret}
       TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
       USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_user_service_memory_engine_secret}
@@ -610,6 +737,15 @@ services:
       USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
     ports:
       - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${MEMORY_ENGINE_PORT:-7081}:7081"
+    depends_on:
+      consul:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      postgres-finalize:
+        condition: service_completed_successfully
+      configuration-center-backend:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7081/health"]
       interval: 10s
@@ -640,8 +776,7 @@ services:
       MEMORY_ENGINE_PORT: 7081
       MEMORY_ENGINE_API_ENABLED: "false"
       MEMORY_ENGINE_WORKER_ENABLED: "true"
-      MEMORY_ENGINE_MONGODB_URI: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/admin?replicaSet=rs0
-      MEMORY_ENGINE_MONGODB_DATABASE: memory_engine
+      MEMORY_ENGINE_DATABASE_URL: postgresql://memory_engine_app:${MEMORY_ENGINE_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/memory_engine
       CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET: ${CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_chatos_memory_engine_secret}
       TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
       USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_user_service_memory_engine_secret}
@@ -651,10 +786,15 @@ services:
       MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL: https://user-service-backend:39192
       USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
       USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
-
-      interval: 10s
-      timeout: 5s
-      retries: 30
+    depends_on:
+      consul:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      postgres-finalize:
+        condition: service_completed_successfully
+      configuration-center-backend:
+        condition: service_healthy
 
   plugin-management-backend:
     <<: *rust-service
@@ -674,8 +814,7 @@ services:
       PLUGIN_MANAGEMENT_MTLS_SERVER_CERT_PATH: /run/secrets/plugin_management_mtls_server_cert
       PLUGIN_MANAGEMENT_MTLS_SERVER_KEY_PATH: /run/secrets/plugin_management_mtls_server_key
       PLUGIN_MANAGEMENT_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/plugin_management_mtls_ca
-      PLUGIN_MANAGEMENT_SERVICE_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/plugin_management_service?authSource=admin&replicaSet=rs0
-      PLUGIN_MANAGEMENT_SERVICE_MONGODB_DATABASE: plugin_management_service
+      PLUGIN_MANAGEMENT_SERVICE_DATABASE_URL: postgresql://plugin_management_app:${PLUGIN_MANAGEMENT_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/plugin_management_service
       PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL: http://task-runner-backend:39090
       PLUGIN_MANAGEMENT_CORS_ORIGINS: ${PLUGIN_MANAGEMENT_CORS_ORIGINS:-http://127.0.0.1:39261,http://localhost:39261}
@@ -700,8 +839,10 @@ services:
     depends_on:
       consul:
         condition: service_healthy
-      mongodb:
+      postgres:
         condition: service_healthy
+      postgres-finalize:
+        condition: service_completed_successfully
       user-service-backend:
         condition: service_healthy
     healthcheck:
@@ -728,7 +869,7 @@ services:
       LOCAL_CONNECTOR_MTLS_SERVER_CERT_PATH: /run/secrets/local_connector_mtls_server_cert
       LOCAL_CONNECTOR_MTLS_SERVER_KEY_PATH: /run/secrets/local_connector_mtls_server_key
       LOCAL_CONNECTOR_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/local_connector_mtls_ca
-      LOCAL_CONNECTOR_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/local_connector_service?authSource=admin&replicaSet=rs0
+      LOCAL_CONNECTOR_DATABASE_URL: postgresql://local_connector_app:${LOCAL_CONNECTOR_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/local_connector_service
       LOCAL_CONNECTOR_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       LOCAL_CONNECTOR_PUBLIC_BASE_URL: ${LOCAL_CONNECTOR_PUBLIC_BASE_URL:-http://localhost:39230}
       LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH:-}
@@ -745,6 +886,14 @@ services:
     volumes:
       - local-connector-data:/data/local_connector
     depends_on:
+      consul:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      postgres-finalize:
+        condition: service_completed_successfully
+      configuration-center-backend:
+        condition: service_healthy
       plugin-management-backend:
         condition: service_healthy
     healthcheck:
@@ -783,7 +932,7 @@ services:
       MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET:-change_me_configuration_center_mcp_management_secret}
       MCP_MANAGEMENT_RUNTIME_GRANT_SECRET: ${MCP_MANAGEMENT_RUNTIME_GRANT_SECRET:-change_me_mcp_management_runtime_grant_secret}
       MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET: ${MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET:-change_me_mcp_management_runtime_session_encryption_secret}
-      MCP_MANAGEMENT_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/mcp_management_service?authSource=admin&replicaSet=rs0
+      MCP_MANAGEMENT_DATABASE_URL: postgresql://mcp_management_app:${MCP_MANAGEMENT_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/mcp_management_service
       MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS: ${MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS:-7200}
       MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL: https://plugin-management-backend:39262
       PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_mcp_management_secret}
@@ -807,7 +956,13 @@ services:
     ports:
       - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${MCP_MANAGEMENT_PORT:-39280}:39280"
     depends_on:
-      mongodb:
+      postgres:
+        condition: service_healthy
+      postgres-finalize:
+        condition: service_completed_successfully
+      consul:
+        condition: service_healthy
+      configuration-center-backend:
         condition: service_healthy
       valkey:
         condition: service_healthy
@@ -848,8 +1003,8 @@ services:
       TASK_RUNNER_MTLS_SERVER_KEY_PATH: /run/secrets/task_runner_mtls_server_key
       TASK_RUNNER_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/task_runner_mtls_ca
       TASK_RUNNER_ROLE: ${TASK_RUNNER_ROLE:-api}
-      TASK_RUNNER_STORE_MODE: mongo
-      TASK_RUNNER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/task_runner_service?authSource=admin&replicaSet=rs0
+      TASK_RUNNER_STORE_MODE: postgres
+      TASK_RUNNER_DATABASE_URL: postgresql://task_runner_app:${TASK_RUNNER_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/task_runner_service
       TASK_RUNNER_WORKSPACE_DIR: /data/task-runner/workspace
       TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
@@ -880,8 +1035,10 @@ services:
     depends_on:
       consul:
         condition: service_healthy
-      mongodb:
+      postgres:
         condition: service_healthy
+      postgres-finalize:
+        condition: service_completed_successfully
       user-service-backend:
         condition: service_healthy
       memory-engine-backend:
@@ -920,8 +1077,8 @@ services:
       TASK_RUNNER_PORT: 39090
       TASK_RUNNER_ROLE: ${TASK_RUNNER_WORKER_ROLE:-worker}
       TASK_RUNNER_WORKER_ID: ${TASK_RUNNER_WORKER_ID:-task-runner-worker-docker}
-      TASK_RUNNER_STORE_MODE: mongo
-      TASK_RUNNER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/task_runner_service?authSource=admin&replicaSet=rs0
+      TASK_RUNNER_STORE_MODE: postgres
+      TASK_RUNNER_DATABASE_URL: postgresql://task_runner_app:${TASK_RUNNER_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/task_runner_service
       TASK_RUNNER_WORKSPACE_DIR: /data/task-runner/workspace
       TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
@@ -949,8 +1106,10 @@ services:
     depends_on:
       consul:
         condition: service_healthy
-      mongodb:
+      postgres:
         condition: service_healthy
+      postgres-finalize:
+        condition: service_completed_successfully
       user-service-backend:
         condition: service_healthy
       memory-engine-backend:
@@ -976,8 +1135,8 @@ services:
       TASK_RUNNER_PORT: 39090
       TASK_RUNNER_ROLE: ${TASK_RUNNER_SCHEDULER_ROLE:-scheduler}
       TASK_RUNNER_WORKER_ID: ${TASK_RUNNER_SCHEDULER_WORKER_ID:-task-runner-scheduler-docker}
-      TASK_RUNNER_STORE_MODE: mongo
-      TASK_RUNNER_DATABASE_URL: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/task_runner_service?authSource=admin&replicaSet=rs0
+      TASK_RUNNER_STORE_MODE: postgres
+      TASK_RUNNER_DATABASE_URL: postgresql://task_runner_app:${TASK_RUNNER_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/task_runner_service
       TASK_RUNNER_WORKSPACE_DIR: /data/task-runner/workspace
       TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
@@ -1005,8 +1164,10 @@ services:
     depends_on:
       consul:
         condition: service_healthy
-      mongodb:
+      postgres:
         condition: service_healthy
+      postgres-finalize:
+        condition: service_completed_successfully
       user-service-backend:
         condition: service_healthy
       memory-engine-backend:
@@ -1047,15 +1208,7 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      DATABASE_TYPE: mongodb
-      MONGODB_HOST: mongodb
-      MONGODB_PORT: 27017
-      MONGODB_DB: chatos
-      MONGODB_USER: ${MONGODB_USER:-admin}
-      MONGODB_PASSWORD: ${MONGODB_PASSWORD:-admin}
-      MONGODB_AUTH_SOURCE: admin
-      LEGACY_AUTH_MONGODB_URI: mongodb://${MONGODB_USER:-admin}:${MONGODB_PASSWORD:-admin}@mongodb:27017/admin?replicaSet=rs0
-      LEGACY_AUTH_MONGODB_DATABASE: ${LEGACY_AUTH_MONGODB_DATABASE:-legacy_auth}
+      CHATOS_DATABASE_URL: postgresql://chatos_app:${CHATOS_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/chatos
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-dev-only-change-me-please}
       AUTH_ACCESS_TOKEN_TTL_SECONDS: ${AUTH_ACCESS_TOKEN_TTL_SECONDS:-43200}
       CHATOS_WORKSPACE_DIR: /data/chatos/workspace
@@ -1104,8 +1257,10 @@ services:
     depends_on:
       consul:
         condition: service_healthy
-      mongodb:
+      postgres:
         condition: service_healthy
+      postgres-finalize:
+        condition: service_completed_successfully
       user-service-backend:
         condition: service_healthy
       task-runner-backend:
@@ -1163,8 +1318,6 @@ services:
     depends_on:
       consul:
         condition: service_healthy
-      mongodb:
-        condition: service_healthy
       user-service-backend:
         condition: service_healthy
     healthcheck:
@@ -1198,7 +1351,7 @@ services:
         condition: service_healthy
 
 volumes:
-  mongodb-data:
+  postgres-data:
   minio-data:
   chatos-data:
   task-runner-data:

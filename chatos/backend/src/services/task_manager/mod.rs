@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-mod mapper;
 mod normalizer;
 #[cfg(test)]
 mod review_hub;

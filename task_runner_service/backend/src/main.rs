@@ -14,14 +14,11 @@ use task_runner_service_backend::{
     internal_tls::{load_internal_mtls_config, TaskRunnerInternalTlsConfig},
     load_task_runner_dotenv,
     scheduler::spawn_task_scheduler,
-    services::{spawn_chatos_callback_queue_consumer, spawn_chatos_callback_reconciler},
-    spawn_ask_user_prompt_retention, spawn_ask_user_resolution_outbox_reconciler,
-    spawn_cloud_agent_consumer, spawn_cloud_agent_outbox_reconciler,
-    spawn_run_cancel_outbox_reconciler, spawn_run_event_consumer, spawn_run_event_retention,
-    spawn_run_post_process_consumer, spawn_run_post_process_outbox_reconciler,
-    spawn_run_terminal_outbox_reconciler, spawn_task_terminal_retention,
-    spawn_worker_control_consumer, AppConfig, AppState, AskUserPromptRetentionPolicy,
-    RunEventRetentionPolicy, TaskTerminalRetentionPolicy,
+    services::spawn_chatos_callback_queue_consumer,
+    spawn_ask_user_prompt_retention, spawn_cloud_agent_consumer, spawn_run_event_consumer,
+    spawn_run_event_retention, spawn_run_post_process_consumer, spawn_scheduler_outbox_supervisor,
+    spawn_task_terminal_retention, spawn_worker_control_consumer, AppConfig, AppState,
+    AskUserPromptRetentionPolicy, RunEventRetentionPolicy, TaskTerminalRetentionPolicy,
 };
 
 const TASK_RUNNER_TOKIO_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
@@ -108,33 +105,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "task runner queue topology configured"
     );
     let mut background_handles = Vec::new();
-    background_handles.push(spawn_task_terminal_retention());
-    background_handles.push(spawn_cloud_agent_outbox_reconciler(
-        app_state.task_queue_topology.clone(),
-        app_state.run_service.clone(),
-    ));
     if config.worker_enabled() {
         background_handles.push(spawn_cloud_agent_consumer(
             app_state.task_queue_topology.clone(),
             app_state.run_service.clone(),
         ));
     }
-    background_handles.push(spawn_run_cancel_outbox_reconciler(
-        app_state.task_queue_topology.clone(),
-        app_state.run_service.clone(),
-    ));
-    background_handles.push(spawn_run_terminal_outbox_reconciler(
-        app_state.task_queue_topology.clone(),
-        app_state.run_service.clone(),
-    ));
-    background_handles.push(spawn_ask_user_resolution_outbox_reconciler(
-        app_state.task_queue_topology.clone(),
-        app_state.ask_user_prompt_service.clone(),
-    ));
-    background_handles.push(spawn_run_post_process_outbox_reconciler(
-        app_state.task_queue_topology.clone(),
-        app_state.run_service.clone(),
-    ));
 
     if config.api_enabled() {
         background_handles.push(spawn_run_event_consumer(
@@ -146,6 +122,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if config.scheduler_enabled() {
+        background_handles.push(spawn_task_terminal_retention());
+        background_handles.push(spawn_scheduler_outbox_supervisor(app_state.clone()));
         background_handles.push(spawn_task_scheduler(
             config.clone(),
             app_state.task_service.clone(),
@@ -177,19 +155,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         ));
     }
 
-    if config.callback_delivery_enabled() {
-        background_handles.push(spawn_chatos_callback_reconciler(
+    if config.callback_consumer_enabled()
+        && app_state.task_queue_topology.callback_delivery_mode
+            == task_runner_service_backend::platform_queue::TaskQueueMode::RabbitMq
+    {
+        background_handles.push(spawn_chatos_callback_queue_consumer(
+            config.clone(),
+            app_state.task_queue_topology.clone(),
             app_state.run_service.clone(),
         ));
-        if app_state.task_queue_topology.callback_delivery_mode
-            == task_runner_service_backend::platform_queue::TaskQueueMode::RabbitMq
-        {
-            background_handles.push(spawn_chatos_callback_queue_consumer(
-                config.clone(),
-                app_state.task_queue_topology.clone(),
-                app_state.run_service.clone(),
-            ));
-        }
     }
 
     let service_id = std::env::var("CHATOS_SERVICE_ID")

@@ -41,6 +41,33 @@ final class AgentLoopSafetyTests: XCTestCase {
         XCTAssertEqual(result.modelCalls, 0)
     }
 
+    func testExplicitCancellationOfWriteToolPausesWithoutNeedsReview() async throws {
+        let model = ScriptModel([
+            .init(role: .assistant, toolCalls: [
+                .init(id: "cancelled-write", name: "write", arguments: "{}"),
+            ]),
+        ])
+        let result = try await AgentRuntime().run(
+            checkpoint: base,
+            scope: base.scope,
+            policy: .init(),
+            model: model,
+            tools: [
+                .init(
+                    name: "write",
+                    description: "write",
+                    schema: Data(#"{"type":"object","additionalProperties":false}"#.utf8),
+                    effect: .write
+                ),
+            ],
+            execute: { _ in throw CancellationError() }
+        )
+
+        XCTAssertEqual(result.status, .paused)
+        XCTAssertNotEqual(result.status, .needsReview)
+        XCTAssertNil(result.receipts["cancelled-write"])
+    }
+
     func testRetriesConsumeBudget() async throws {
         let model = FailingModel()
         var policy = AgentRunPolicy(); policy.maximumModelCalls = 2

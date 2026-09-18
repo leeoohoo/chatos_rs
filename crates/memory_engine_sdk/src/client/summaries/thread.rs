@@ -30,6 +30,13 @@ impl MemoryEngineClient {
                 append_optional_query(&mut query, "summary_type", req.summary_type.as_deref());
                 append_optional_query(&mut query, "status", req.status.as_deref());
                 append_optional_i64_query(&mut query, "level", req.level);
+                append_optional_i64_query(&mut query, "after_level", req.after_level);
+                append_optional_query(
+                    &mut query,
+                    "after_created_at",
+                    req.after_created_at.as_deref(),
+                );
+                append_optional_query(&mut query, "after_id", req.after_id.as_deref());
                 append_optional_i64_query(&mut query, "limit", req.limit);
                 append_optional_i64_query(&mut query, "offset", req.offset);
                 let suffix = if query.is_empty() {

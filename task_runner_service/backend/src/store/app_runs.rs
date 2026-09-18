@@ -7,14 +7,14 @@ impl AppStore {
     pub async fn run_execution_stats(&self) -> Result<RunExecutionStats, String> {
         match self {
             Self::InMemory(store) => Ok(store.run_execution_stats()),
-            Self::Mongo(store) => store.run_execution_stats().await,
+            Self::Postgres(store) => store.run_execution_stats().await,
         }
     }
 
     pub async fn list_runs(&self, task_id: Option<&str>) -> Result<Vec<TaskRunRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_runs(task_id)),
-            Self::Mongo(store) => store.list_runs(task_id).await,
+            Self::Postgres(store) => store.list_runs(task_id).await,
         }
     }
 
@@ -24,7 +24,7 @@ impl AppStore {
     ) -> Result<Vec<TaskRunRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_runs_filtered(filters)),
-            Self::Mongo(store) => store.list_runs_filtered(filters).await,
+            Self::Postgres(store) => store.list_runs_filtered(filters).await,
         }
     }
 
@@ -34,7 +34,7 @@ impl AppStore {
     ) -> Result<PaginatedResponse<TaskRunRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_runs_page(filters)),
-            Self::Mongo(store) => store.list_runs_page(filters).await,
+            Self::Postgres(store) => store.list_runs_page(filters).await,
         }
     }
 
@@ -44,7 +44,7 @@ impl AppStore {
     ) -> Result<Vec<RunSummaryRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_run_summaries_filtered(filters)),
-            Self::Mongo(store) => store.list_run_summaries_filtered(filters).await,
+            Self::Postgres(store) => store.list_run_summaries_filtered(filters).await,
         }
     }
 
@@ -54,14 +54,14 @@ impl AppStore {
     ) -> Result<Vec<RunSummaryRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.get_run_summaries_by_ids(ids)),
-            Self::Mongo(store) => store.get_run_summaries_by_ids(ids).await,
+            Self::Postgres(store) => store.get_run_summaries_by_ids(ids).await,
         }
     }
 
     pub async fn get_run(&self, id: &str) -> Result<Option<TaskRunRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.get_run(id)),
-            Self::Mongo(store) => store.get_run(id).await,
+            Self::Postgres(store) => store.get_run(id).await,
         }
     }
 
@@ -77,7 +77,7 @@ impl AppStore {
                 created_at,
                 run_id,
             )),
-            Self::Mongo(store) => {
+            Self::Postgres(store) => {
                 store
                     .get_prior_active_run_for_execution_lane(execution_lane_key, created_at, run_id)
                     .await
@@ -91,7 +91,7 @@ impl AppStore {
     ) -> Result<Option<TaskRunRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.rearm_run_workspace_integration(run_id)),
-            Self::Mongo(store) => store.rearm_run_workspace_integration(run_id).await,
+            Self::Postgres(store) => store.rearm_run_workspace_integration(run_id).await,
         }
     }
 
@@ -102,7 +102,7 @@ impl AppStore {
     ) -> Result<Option<TaskRunRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.waive_run_workspace_integration(run_id, reason)),
-            Self::Mongo(store) => store.waive_run_workspace_integration(run_id, reason).await,
+            Self::Postgres(store) => store.waive_run_workspace_integration(run_id, reason).await,
         }
     }
 
@@ -112,7 +112,7 @@ impl AppStore {
     ) -> Result<TaskRunRecord, String> {
         match self {
             Self::InMemory(store) => store.subscribe_run_terminal(subscription),
-            Self::Mongo(store) => store.subscribe_run_terminal(subscription).await,
+            Self::Postgres(store) => store.subscribe_run_terminal(subscription).await,
         }
     }
 
@@ -122,7 +122,7 @@ impl AppStore {
     ) -> Result<Vec<(TaskRunRecord, RunTerminalSubscriptionRecord)>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_pending_run_terminal_subscriptions(limit)),
-            Self::Mongo(store) => store.list_pending_run_terminal_subscriptions(limit).await,
+            Self::Postgres(store) => store.list_pending_run_terminal_subscriptions(limit).await,
         }
     }
 
@@ -134,7 +134,7 @@ impl AppStore {
             Self::InMemory(store) => {
                 Ok(store.acknowledge_run_terminal_subscription(subscription_id))
             }
-            Self::Mongo(store) => {
+            Self::Postgres(store) => {
                 store
                     .acknowledge_run_terminal_subscription(subscription_id)
                     .await
@@ -145,7 +145,7 @@ impl AppStore {
     pub async fn save_run(&self, run: TaskRunRecord) -> Result<TaskRunRecord, String> {
         match self {
             Self::InMemory(store) => store.save_run(run),
-            Self::Mongo(store) => store.save_run(run).await,
+            Self::Postgres(store) => store.save_run(run).await,
         }
     }
 
@@ -155,7 +155,7 @@ impl AppStore {
     ) -> Result<Vec<TaskRunRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_pending_run_post_processes(limit)),
-            Self::Mongo(store) => store.list_pending_run_post_processes(limit).await,
+            Self::Postgres(store) => store.list_pending_run_post_processes(limit).await,
         }
     }
 
@@ -165,7 +165,7 @@ impl AppStore {
     ) -> Result<bool, String> {
         match self {
             Self::InMemory(store) => Ok(store.acknowledge_run_post_process_event(run_id)),
-            Self::Mongo(store) => store.acknowledge_run_post_process_event(run_id).await,
+            Self::Postgres(store) => store.acknowledge_run_post_process_event(run_id).await,
         }
     }
 
@@ -176,7 +176,7 @@ impl AppStore {
     ) -> Result<bool, String> {
         match self {
             Self::InMemory(store) => Ok(store.record_run_post_process_failure(run_id, error)),
-            Self::Mongo(store) => store.record_run_post_process_failure(run_id, error).await,
+            Self::Postgres(store) => store.record_run_post_process_failure(run_id, error).await,
         }
     }
 
@@ -186,7 +186,7 @@ impl AppStore {
     ) -> Result<bool, String> {
         match self {
             Self::InMemory(store) => Ok(store.mark_run_chatos_followup_processed(run_id)),
-            Self::Mongo(store) => store.mark_run_chatos_followup_processed(run_id).await,
+            Self::Postgres(store) => store.mark_run_chatos_followup_processed(run_id).await,
         }
     }
 
@@ -196,7 +196,7 @@ impl AppStore {
     ) -> Result<bool, String> {
         match self {
             Self::InMemory(store) => Ok(store.mark_run_post_process_completed(run_id)),
-            Self::Mongo(store) => store.mark_run_post_process_completed(run_id).await,
+            Self::Postgres(store) => store.mark_run_post_process_completed(run_id).await,
         }
     }
 
@@ -207,7 +207,7 @@ impl AppStore {
     ) -> Result<bool, String> {
         match self {
             Self::InMemory(store) => Ok(store.mark_run_post_process_dead_lettered(run_id, error)),
-            Self::Mongo(store) => {
+            Self::Postgres(store) => {
                 store
                     .mark_run_post_process_dead_lettered(run_id, error)
                     .await
@@ -221,7 +221,7 @@ impl AppStore {
     ) -> Result<bool, String> {
         match self {
             Self::InMemory(store) => Ok(store.rearm_run_post_process_dead_letter(run_id)),
-            Self::Mongo(store) => store.rearm_run_post_process_dead_letter(run_id).await,
+            Self::Postgres(store) => store.rearm_run_post_process_dead_letter(run_id).await,
         }
     }
 
@@ -232,14 +232,14 @@ impl AppStore {
     ) -> Result<Vec<TaskRunRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_pending_chatos_callback_runs(now, limit)),
-            Self::Mongo(store) => store.list_pending_chatos_callback_runs(now, limit).await,
+            Self::Postgres(store) => store.list_pending_chatos_callback_runs(now, limit).await,
         }
     }
 
     pub async fn list_run_events(&self, run_id: &str) -> Result<Vec<TaskRunEventRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_run_events(run_id)),
-            Self::Mongo(store) => store.list_run_events(run_id).await,
+            Self::Postgres(store) => store.list_run_events(run_id).await,
         }
     }
 
@@ -251,14 +251,14 @@ impl AppStore {
     ) -> Result<(Vec<TaskRunEventRecord>, usize), String> {
         match self {
             Self::InMemory(store) => Ok(store.list_run_events_page(run_id, offset, limit)),
-            Self::Mongo(store) => store.list_run_events_page(run_id, offset, limit).await,
+            Self::Postgres(store) => store.list_run_events_page(run_id, offset, limit).await,
         }
     }
 
     pub async fn has_run_event_type(&self, run_id: &str, event_type: &str) -> Result<bool, String> {
         match self {
             Self::InMemory(store) => Ok(store.has_run_event_type(run_id, event_type)),
-            Self::Mongo(store) => store.has_run_event_type(run_id, event_type).await,
+            Self::Postgres(store) => store.has_run_event_type(run_id, event_type).await,
         }
     }
 
@@ -269,7 +269,7 @@ impl AppStore {
     ) -> Result<Option<TaskRunEventRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.get_run_event_by_type(run_id, event_type)),
-            Self::Mongo(store) => store.get_run_event_by_type(run_id, event_type).await,
+            Self::Postgres(store) => store.get_run_event_by_type(run_id, event_type).await,
         }
     }
 
@@ -280,7 +280,7 @@ impl AppStore {
     ) -> Result<Option<TaskRunEventRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.get_run_event(run_id, event_id)),
-            Self::Mongo(store) => store.get_run_event(run_id, event_id).await,
+            Self::Postgres(store) => store.get_run_event(run_id, event_id).await,
         }
     }
 
@@ -295,7 +295,7 @@ impl AppStore {
             Self::InMemory(store) => {
                 Ok(store.list_run_events_after(run_id, after_created_at, after_id, limit))
             }
-            Self::Mongo(store) => {
+            Self::Postgres(store) => {
                 store
                     .list_run_events_after(run_id, after_created_at, after_id, limit)
                     .await
@@ -309,7 +309,7 @@ impl AppStore {
     ) -> Result<Option<(String, String)>, String> {
         match self {
             Self::InMemory(store) => Ok(store.latest_run_event_cursor(run_id)),
-            Self::Mongo(store) => store.latest_run_event_cursor(run_id).await,
+            Self::Postgres(store) => store.latest_run_event_cursor(run_id).await,
         }
     }
 
@@ -322,7 +322,7 @@ impl AppStore {
             Self::InMemory(store) => {
                 Ok(store.prune_terminal_run_events_before(cutoff, candidate_limit))
             }
-            Self::Mongo(store) => {
+            Self::Postgres(store) => {
                 store
                     .prune_terminal_run_events_before(cutoff, candidate_limit)
                     .await
@@ -346,7 +346,7 @@ impl AppStore {
                 }
                 Ok(())
             }
-            Self::Mongo(store) => {
+            Self::Postgres(store) => {
                 store.append_run_event(event).await?;
                 if let Err(err) = crate::run_event_queue::publish_run_event(&publish_event).await {
                     warn!(
@@ -356,6 +356,10 @@ impl AppStore {
                         error = err.as_str(),
                         "failed to publish run event to rabbitmq"
                     );
+                } else {
+                    store
+                        .mark_run_event_published(publish_event.id.as_str())
+                        .await?;
                 }
                 Ok(())
             }
@@ -381,9 +385,55 @@ impl AppStore {
                     }
                 });
             }
-            Self::Mongo(store) => {
+            Self::Postgres(store) => {
                 let _ = publish_event;
-                store.enqueue_run_event(event);
+                if let Err(error) = store.enqueue_run_event(event) {
+                    warn!(
+                        error = error.as_str(),
+                        "failed to enqueue run event persistence"
+                    );
+                }
+            }
+        }
+    }
+
+    pub async fn claim_pending_run_events(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(TaskRunEventRecord, String)>, String> {
+        match self {
+            Self::InMemory(_) => Ok(Vec::new()),
+            Self::Postgres(store) => store.claim_pending_run_events(limit).await,
+        }
+    }
+
+    pub async fn complete_run_event_publish(
+        &self,
+        event_id: &str,
+        claim_token: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::InMemory(_) => Ok(true),
+            Self::Postgres(store) => {
+                store
+                    .complete_run_event_publish(event_id, claim_token)
+                    .await
+            }
+        }
+    }
+
+    pub async fn fail_run_event_publish(
+        &self,
+        event_id: &str,
+        claim_token: &str,
+        error: &str,
+    ) -> Result<bool, String> {
+        match self {
+            Self::InMemory(_) => Ok(true),
+            Self::Postgres(store) => {
+                store
+                    .fail_run_event_publish(event_id, claim_token, error)
+                    .await
             }
         }
     }
@@ -394,14 +444,14 @@ impl AppStore {
     ) -> Result<Option<TaskRunRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.mark_cancel_requested(run_id)),
-            Self::Mongo(store) => store.mark_cancel_requested(run_id).await,
+            Self::Postgres(store) => store.mark_cancel_requested(run_id).await,
         }
     }
 
     pub async fn repair_stale_cancel_requested_runs(&self) -> Result<u64, String> {
         match self {
             Self::InMemory(store) => Ok(store.repair_stale_cancel_requested_runs() as u64),
-            Self::Mongo(store) => store.repair_stale_cancel_requested_runs().await,
+            Self::Postgres(store) => store.repair_stale_cancel_requested_runs().await,
         }
     }
 
@@ -411,35 +461,35 @@ impl AppStore {
     ) -> Result<Vec<TaskRunRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_pending_run_cancel_events(limit)),
-            Self::Mongo(store) => store.list_pending_run_cancel_events(limit).await,
+            Self::Postgres(store) => store.list_pending_run_cancel_events(limit).await,
         }
     }
 
     pub async fn acknowledge_run_cancel_event(&self, run_id: &str) -> Result<bool, String> {
         match self {
             Self::InMemory(store) => Ok(store.acknowledge_run_cancel_event(run_id)),
-            Self::Mongo(store) => store.acknowledge_run_cancel_event(run_id).await,
+            Self::Postgres(store) => store.acknowledge_run_cancel_event(run_id).await,
         }
     }
 
     pub fn clear_cancel_requested(&self, run_id: &str) {
         match self.clone() {
             Self::InMemory(store) => store.clear_cancel_requested(run_id),
-            Self::Mongo(store) => store.clear_cancel_requested(run_id),
+            Self::Postgres(store) => store.clear_cancel_requested(run_id),
         }
     }
 
     pub fn signal_local_run_abort(&self, run_id: &str) {
         match self {
             Self::InMemory(store) => store.signal_local_run_abort(run_id),
-            Self::Mongo(store) => store.signal_local_run_abort(run_id),
+            Self::Postgres(store) => store.signal_local_run_abort(run_id),
         }
     }
 
     pub fn is_cancel_requested(&self, run_id: &str) -> bool {
         match self {
             Self::InMemory(store) => store.is_cancel_requested(run_id),
-            Self::Mongo(store) => store.is_cancel_requested(run_id),
+            Self::Postgres(store) => store.is_cancel_requested(run_id),
         }
     }
 
@@ -456,28 +506,28 @@ impl AppStore {
     pub async fn refresh_runtime_guards(&self) -> Result<(), String> {
         match self {
             Self::InMemory(_) => Ok(()),
-            Self::Mongo(store) => store.ensure_task_run_indexes().await,
+            Self::Postgres(store) => store.ensure_task_run_indexes().await,
         }
     }
 
     pub async fn has_active_run_for_task(&self, task_id: &str) -> Result<bool, String> {
         match self {
             Self::InMemory(store) => Ok(store.has_active_run_for_task(task_id)),
-            Self::Mongo(store) => store.has_active_run_for_task(task_id).await,
+            Self::Postgres(store) => store.has_active_run_for_task(task_id).await,
         }
     }
 
     pub fn subscribe_run_events(&self) -> broadcast::Receiver<TaskRunEventRecord> {
         match self {
             Self::InMemory(store) => store.run_event_sender.subscribe(),
-            Self::Mongo(store) => store.run_event_sender.subscribe(),
+            Self::Postgres(store) => store.run_event_sender.subscribe(),
         }
     }
 
     pub fn broadcast_run_event(&self, event: TaskRunEventRecord) {
         let sender = match self {
             Self::InMemory(store) => &store.run_event_sender,
-            Self::Mongo(store) => &store.run_event_sender,
+            Self::Postgres(store) => &store.run_event_sender,
         };
         let _ = sender.send(event);
     }

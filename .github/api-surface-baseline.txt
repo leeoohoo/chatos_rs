@@ -1,7 +1,7 @@
 # API Surface Baseline
 
-main_backend_route_count=214
-total_route_count=214
+main_backend_route_count=166
+total_route_count=166
 
 ## chatos/backend/src/api (.route lines)
 chatos/backend/src/api/agent_chat.rs: .route(
@@ -40,6 +40,10 @@ chatos/backend/src/api/code_nav.rs: .route("/api/code-nav/capabilities", post(ca
 chatos/backend/src/api/code_nav.rs: .route("/api/code-nav/definition", post(definition))
 chatos/backend/src/api/code_nav.rs: .route("/api/code-nav/document-symbols", post(document_symbols))
 chatos/backend/src/api/code_nav.rs: .route("/api/code-nav/references", post(references))
+chatos/backend/src/api/companion.rs: .route(
+chatos/backend/src/api/companion.rs: .route(
+chatos/backend/src/api/companion.rs: .route("/api/companion/conversations/{id}", get(get_conversation))
+chatos/backend/src/api/companion.rs: .route("/api/companion/messages/{id}/tasks", get(get_message_tasks))
 chatos/backend/src/api/configs.rs: .route(
 chatos/backend/src/api/configs.rs: .route(
 chatos/backend/src/api/configs.rs: .route(
@@ -55,41 +59,10 @@ chatos/backend/src/api/contacts.rs: .route(
 chatos/backend/src/api/contacts.rs: .route(
 chatos/backend/src/api/contacts.rs: .route(
 chatos/backend/src/api/contacts.rs: .route("/api/contacts", get(list_contacts).post(create_contact))
-chatos/backend/src/api/fs.rs: .route("/api/fs/delete", post(delete_entry))
-chatos/backend/src/api/fs.rs: .route("/api/fs/discard-git-changes", post(discard_git_changes))
-chatos/backend/src/api/fs.rs: .route("/api/fs/download", get(download_entry))
-chatos/backend/src/api/fs.rs: .route("/api/fs/entries", get(list_entries))
-chatos/backend/src/api/fs.rs: .route("/api/fs/gitignore", post(append_gitignore_entry))
-chatos/backend/src/api/fs.rs: .route("/api/fs/list", get(list_dirs))
-chatos/backend/src/api/fs.rs: .route("/api/fs/mkdir", post(create_dir))
-chatos/backend/src/api/fs.rs: .route("/api/fs/move", post(move_entry))
-chatos/backend/src/api/fs.rs: .route("/api/fs/open", post(open_path_externally))
-chatos/backend/src/api/fs.rs: .route("/api/fs/read", get(read_file))
-chatos/backend/src/api/fs.rs: .route("/api/fs/search", get(search_entries))
-chatos/backend/src/api/fs.rs: .route("/api/fs/search-content", get(search_content))
-chatos/backend/src/api/fs.rs: .route("/api/fs/touch", post(create_file))
-chatos/backend/src/api/fs.rs: .route("/api/fs/write", post(write_file))
-chatos/backend/src/api/git.rs: .route("/api/git/branch", post(create_branch))
-chatos/backend/src/api/git.rs: .route("/api/git/branches", get(branches))
-chatos/backend/src/api/git.rs: .route("/api/git/checkout", post(checkout))
-chatos/backend/src/api/git.rs: .route("/api/git/client", get(client))
-chatos/backend/src/api/git.rs: .route("/api/git/commit", post(commit))
-chatos/backend/src/api/git.rs: .route("/api/git/compare", get(compare))
-chatos/backend/src/api/git.rs: .route("/api/git/diff", get(diff))
-chatos/backend/src/api/git.rs: .route("/api/git/discard", post(discard))
-chatos/backend/src/api/git.rs: .route("/api/git/fetch", post(fetch))
-chatos/backend/src/api/git.rs: .route("/api/git/merge", post(merge_branch))
-chatos/backend/src/api/git.rs: .route("/api/git/pull", post(pull))
-chatos/backend/src/api/git.rs: .route("/api/git/push", post(push))
-chatos/backend/src/api/git.rs: .route("/api/git/stage", post(stage))
-chatos/backend/src/api/git.rs: .route("/api/git/status", get(status))
-chatos/backend/src/api/git.rs: .route("/api/git/summary", get(summary))
-chatos/backend/src/api/git.rs: .route("/api/git/unstage", post(unstage))
 chatos/backend/src/api/local_connectors.rs: .route(
 chatos/backend/src/api/local_connectors.rs: .route("/api/local-connectors/devices", get(list_devices))
 chatos/backend/src/api/local_connectors.rs: .route("/api/local-connectors/fs/list", get(list_directory))
 chatos/backend/src/api/local_connectors.rs: .route("/api/local-connectors/fs/mkdir", post(create_directory))
-chatos/backend/src/api/local_connectors.rs: .route("/api/local-connectors/projects", post(create_project))
 chatos/backend/src/api/local_connectors.rs: .route("/api/local-connectors/workspaces", get(list_workspaces))
 chatos/backend/src/api/mcp_management.rs: .route(
 chatos/backend/src/api/mcp_management.rs: .route(
@@ -150,27 +123,6 @@ chatos/backend/src/api/pet_activities.rs: .route(
 chatos/backend/src/api/pet_activities.rs: .route(
 chatos/backend/src/api/pet_activities.rs: .route("/api/pet-activities", get(list_activities))
 chatos/backend/src/api/pet_activities.rs: .route("/api/pet-activities/{activity_id}/ignore", post(ignore))
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route(
-chatos/backend/src/api/projects.rs: .route("/api/projects", get(list_projects))
-chatos/backend/src/api/projects.rs: .route("/api/projects/{id}/plan", get(get_project_plan))
-chatos/backend/src/api/projects.rs: .route("/api/projects/{id}/run/analyze", post(analyze_project_run))
-chatos/backend/src/api/projects.rs: .route("/api/projects/{id}/run/execute", post(execute_project_run))
-chatos/backend/src/api/projects.rs: .route("/api/projects/{id}/run/state", get(get_project_run_state))
 chatos/backend/src/api/realtime.rs: axum::Router::new().route("/api/realtime/ws", axum::routing::get(realtime_ws))
 chatos/backend/src/api/remote_connections.rs: .route(
 chatos/backend/src/api/remote_connections.rs: .route(

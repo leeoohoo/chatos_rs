@@ -242,15 +242,12 @@ pub(crate) async fn list_companion_message_tasks(
     let tasks = stream::iter(summaries.into_iter().map(|summary| {
         let context = &context;
         async move {
-            let Some(task_id) = summary
+            let task_id = summary
                 .get("id")
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-            else {
-                return None;
-            };
+                .map(ToOwned::to_owned)?;
             match task_runner_api_client::get_message_task(
                 context.base_url.as_str(),
                 task_id.as_str(),

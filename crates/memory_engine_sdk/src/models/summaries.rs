@@ -10,6 +10,9 @@ pub struct SdkListThreadSummariesRequest {
     pub summary_type: Option<String>,
     pub status: Option<String>,
     pub level: Option<i64>,
+    pub after_level: Option<i64>,
+    pub after_created_at: Option<String>,
+    pub after_id: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }

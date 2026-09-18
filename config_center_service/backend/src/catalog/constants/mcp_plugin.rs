@@ -65,6 +65,10 @@ pub const MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS_CONFIG_KEY: &str =
     "mcp_management.runtime.external_http_tool_timeout_ms";
 pub const MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS_CONFIG_KEY: &str =
     "mcp_management.runtime.session_ttl_seconds";
+pub const MCP_MANAGEMENT_RUNTIME_RETENTION_INTERVAL_SECONDS_CONFIG_KEY: &str =
+    "mcp_management.runtime.retention_interval_seconds";
+pub const MCP_MANAGEMENT_RUNTIME_RETENTION_BATCH_SIZE_CONFIG_KEY: &str =
+    "mcp_management.runtime.retention_batch_size";
 pub const MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_ENTRIES_CONFIG_KEY: &str =
     "mcp_management.runtime.session_cache_max_entries";
 pub const MCP_MANAGEMENT_RUNTIME_SESSION_CACHE_MAX_BYTES_CONFIG_KEY: &str =
@@ -125,8 +129,6 @@ pub const PLUGIN_MANAGEMENT_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
     "plugin_management.runtime.internal_mtls_port";
 pub const PLUGIN_MANAGEMENT_DATABASE_URL_CONFIG_KEY: &str =
     "plugin_management.runtime.database_url";
-pub const PLUGIN_MANAGEMENT_MONGODB_DATABASE_CONFIG_KEY: &str =
-    "plugin_management.runtime.mongodb_database";
 pub const PLUGIN_MANAGEMENT_CORS_ORIGINS_CONFIG_KEY: &str = "plugin_management.http.cors_origins";
 pub const PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_CHECK_TTL_SECONDS_CONFIG_KEY: &str =
     "plugin_management.local_connector.check_ttl_seconds";

@@ -29,6 +29,30 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         }
     }
 
+    private func sqliteInt(_ databaseURL: URL, sql: String) throws -> Int64 {
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(
+            databaseURL.path,
+            &database,
+            SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX,
+            nil
+        ) == SQLITE_OK, let database else {
+            defer { sqlite3_close(database) }
+            throw AgentGroupChatError.storage("test database open failed")
+        }
+        defer { sqlite3_close(database) }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
+              let statement else {
+            throw AgentGroupChatError.storage(String(cString: sqlite3_errmsg(database)))
+        }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            throw AgentGroupChatError.storage(String(cString: sqlite3_errmsg(database)))
+        }
+        return sqlite3_column_int64(statement, 0)
+    }
+
     private func makeAgent(
         _ store: SQLiteAgentGroupChatStore,
         owner: String = "alice",
@@ -1661,6 +1685,125 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         XCTAssertTrue(deliveries.first?.deduplicationKey.hasSuffix(urgent.id) == true)
     }
 
+    func testTodoEventRecipientsPersistOncePerEventAndRecipient() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let manager = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "项目经理",
+                rolePrompt: "维护任务板。",
+                modelConfigID: "model-1",
+                professionKey: "project_manager"
+            )
+        )
+        let worker = try await makeAgent(store, name: "执行者")
+        let room = try await store.createManagedRoom(
+            ownerUserID: "alice",
+            projectID: "event-recipient-project",
+            draft: .init(name: "事件投递团队"),
+            projectManagerAgentID: manager.id
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: worker.id,
+            draft: .init(role: "执行者")
+        )
+        let todo = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            requestKey: "event-recipient-todo",
+            draft: .init(
+                title: "实现功能",
+                teamRoomID: room.id,
+                creatorAgentID: manager.id
+            ),
+            nowUnixMs: 100
+        )
+
+        let firstReady = try await store.enqueueAgentTodoReady(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            nowUnixMs: 101
+        )
+        let repeatedReady = try await store.enqueueAgentTodoReady(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            nowUnixMs: 102
+        )
+        XCTAssertEqual(firstReady?.id, repeatedReady?.id)
+
+        _ = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            nowUnixMs: 103
+        )
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            update: .init(status: .blocked, blockedReason: "等待接口"),
+            nowUnixMs: 104
+        )
+        let firstStatus = try await store.enqueueAgentTodoStatus(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            excludingAgentID: nil,
+            nowUnixMs: 105
+        )
+        let repeatedStatus = try await store.enqueueAgentTodoStatus(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            excludingAgentID: nil,
+            nowUnixMs: 106
+        )
+        XCTAssertEqual(Set(firstStatus.map(\.id)), Set(repeatedStatus.map(\.id)))
+        XCTAssertEqual(firstStatus.count, 2)
+
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            update: .init(status: .cancelled),
+            nowUnixMs: 107
+        )
+        let cancellation = try await store.enqueueAgentTodoStatus(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            excludingAgentID: manager.id,
+            nowUnixMs: 108
+        )
+        XCTAssertEqual(cancellation.map(\.targetAgentID), [worker.id])
+
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM local_agent_todo_event_recipients"
+        ), 4)
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM local_agent_todo_event_recipients WHERE event_kind = 'ready'"
+        ), 1)
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM local_agent_todo_event_recipients WHERE event_kind = 'blocked'"
+        ), 2)
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM local_agent_todo_event_recipients WHERE event_kind = 'cancelled'"
+        ), 1)
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(DISTINCT delivery_id) FROM local_agent_todo_event_recipients"
+        ), 4)
+    }
+
     func testTeamTodoDependenciesGateCrossAgentParallelExecutionAndRejectCycles() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
@@ -1743,8 +1886,15 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             ownerUserID: "alice",
             agentID: first.id,
             todoID: blockedPrerequisite.id,
-            update: .init(status: .blocked, blockedReason: "等待外部输入"),
+            update: .init(status: .inProgress),
             nowUnixMs: 108
+        )
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: first.id,
+            todoID: blockedPrerequisite.id,
+            update: .init(status: .blocked, blockedReason: "等待外部输入"),
+            nowUnixMs: 109
         )
         let waitingOnBlocked = try await store.createAgentTodo(
             ownerUserID: "alice",
@@ -1815,6 +1965,240 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
                 .invalidField("todoDependencyCycle")
             )
         }
+    }
+
+    func testManagerExplicitlyStartsOnlyHighestPriorityReadyTodoAndCancellationStopsExecutor() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let assignee = try await makeAgent(store, name: "执行者")
+        let prerequisiteOwner = try await makeAgent(store, name: "前置负责人")
+        let room = try await makeRoom(store, projectID: "explicit-scheduling-project")
+        for agent in [assignee, prerequisiteOwner] {
+            _ = try await store.addMember(
+                ownerUserID: "alice",
+                roomID: room.id,
+                agentID: agent.id,
+                draft: .init(role: agent.draft.name)
+            )
+        }
+        let prerequisite = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: prerequisiteOwner.id,
+            requestKey: "explicit-prerequisite",
+            draft: .init(title: "尚未完成的前置", teamRoomID: room.id),
+            nowUnixMs: 100
+        )
+        let blockedHighPriority = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: assignee.id,
+            requestKey: "explicit-blocked",
+            draft: .init(
+                title: "有前置的高优先级任务",
+                priority: 100,
+                teamRoomID: room.id,
+                dependencies: [.init(
+                    prerequisiteTodoID: prerequisite.id,
+                    prerequisiteAgentID: prerequisiteOwner.id
+                )]
+            ),
+            nowUnixMs: 101
+        )
+        let ready = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: assignee.id,
+            requestKey: "explicit-ready",
+            draft: .init(title: "可立即执行", priority: 60, teamRoomID: room.id),
+            nowUnixMs: 102
+        )
+
+        let startedDelivery = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: assignee.id,
+            nowUnixMs: 103
+        )
+        let firstDelivery = try XCTUnwrap(startedDelivery)
+        let selected = try await store.todoForDelivery(
+            ownerUserID: "alice",
+            deliveryID: firstDelivery.id
+        )
+        XCTAssertEqual(selected?.id, ready.id)
+        let stillBlocked = try await store.agentTodo(
+            ownerUserID: "alice",
+            agentID: assignee.id,
+            todoID: blockedHighPriority.id
+        )
+        XCTAssertEqual(stillBlocked?.status, .pending)
+        let secondDelivery = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: assignee.id,
+            nowUnixMs: 104
+        )
+        XCTAssertNil(secondDelivery, "同一 Agent 已有 executor 时不能再启动第二个 Todo")
+
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: assignee.id,
+            todoID: ready.id,
+            update: .init(status: .cancelled),
+            nowUnixMs: 105
+        )
+        let cancelledDelivery = try await store.delivery(
+            ownerUserID: "alice",
+            deliveryID: firstDelivery.id
+        )
+        XCTAssertEqual(cancelledDelivery?.status, .cancelled)
+        do {
+            _ = try await store.updateAgentTodo(
+                ownerUserID: "alice",
+                agentID: assignee.id,
+                todoID: ready.id,
+                update: .init(status: .completed, result: "不应写入"),
+                nowUnixMs: 106
+            )
+            XCTFail("Cancelled executor completed its Todo")
+        } catch {
+            XCTAssertEqual(error as? AgentGroupChatError, .conflict)
+        }
+        let noReadyDelivery = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: assignee.id,
+            nowUnixMs: 107
+        )
+        XCTAssertNil(noReadyDelivery, "前置未完成的 Todo 不能被启动")
+    }
+
+    func testTeamAssetsRequireProjectManagerAndTodoKeepsStartRevisionSnapshot() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let manager = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "项目经理",
+                rolePrompt: "维护团队资产与任务板。",
+                modelConfigID: "model-1",
+                professionKey: "project_manager"
+            )
+        )
+        let worker = try await makeAgent(store, name: "工程师")
+        let room = try await store.createManagedRoom(
+            ownerUserID: "alice",
+            projectID: "asset-snapshot-project",
+            draft: .init(name: "资产快照团队"),
+            projectManagerAgentID: manager.id
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: worker.id,
+            draft: .init(role: "工程师")
+        )
+
+        do {
+            _ = try await store.upsertTeamAsset(
+                ownerUserID: "alice",
+                teamRoomID: room.id,
+                assetID: nil,
+                editorAgentID: worker.id,
+                category: .overview,
+                title: "项目背景",
+                markdown: "普通成员不应写入",
+                expectedRevision: nil,
+                nowUnixMs: 200
+            )
+            XCTFail("A non-manager wrote a team asset")
+        } catch {
+            XCTAssertEqual(error as? AgentGroupChatError, .permissionDenied)
+        }
+
+        let firstRevision = try await store.upsertTeamAsset(
+            ownerUserID: "alice",
+            teamRoomID: room.id,
+            assetID: nil,
+            editorAgentID: manager.id,
+            category: .techStack,
+            title: "技术栈",
+            markdown: "Swift 6 + SQLite",
+            expectedRevision: nil,
+            nowUnixMs: 201
+        )
+        do {
+            _ = try await store.upsertTeamAsset(
+                ownerUserID: "alice",
+                teamRoomID: room.id,
+                assetID: firstRevision.id,
+                editorAgentID: manager.id,
+                category: .techStack,
+                title: "技术栈",
+                markdown: "错误覆盖",
+                expectedRevision: 0,
+                nowUnixMs: 202
+            )
+            XCTFail("A stale asset revision was accepted")
+        } catch {
+            XCTAssertEqual(error as? AgentGroupChatError, .conflict)
+        }
+
+        let todo = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            requestKey: "asset-snapshot-todo",
+            draft: .init(
+                title: "实现客户端",
+                teamRoomID: room.id,
+                creatorAgentID: manager.id
+            ),
+            nowUnixMs: 203
+        )
+        let executorDelivery = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            nowUnixMs: 204
+        )
+        _ = try XCTUnwrap(executorDelivery)
+        let updatedAsset = try await store.upsertTeamAsset(
+            ownerUserID: "alice",
+            teamRoomID: room.id,
+            assetID: firstRevision.id,
+            editorAgentID: manager.id,
+            category: .techStack,
+            title: "技术栈",
+            markdown: "Swift 6 + PostgreSQL",
+            expectedRevision: firstRevision.revision,
+            nowUnixMs: 205
+        )
+        XCTAssertEqual(updatedAsset.revision, 2)
+
+        let snapshots = try await store.listTodoTeamAssetSnapshots(
+            ownerUserID: "alice",
+            todoID: todo.id
+        )
+        XCTAssertEqual(snapshots.count, 1)
+        XCTAssertEqual(snapshots[0].assetID, firstRevision.id)
+        XCTAssertEqual(snapshots[0].revision, 1)
+        XCTAssertEqual(snapshots[0].markdown, "Swift 6 + SQLite")
+        let revisionOneSnapshot = try await store.todoTeamAssetSnapshot(
+            ownerUserID: "alice",
+            todoID: todo.id,
+            assetID: firstRevision.id,
+            revision: 1
+        )
+        XCTAssertNotNil(revisionOneSnapshot)
+        let revisionTwoSnapshot = try await store.todoTeamAssetSnapshot(
+            ownerUserID: "alice",
+            todoID: todo.id,
+            assetID: firstRevision.id,
+            revision: 2
+        )
+        XCTAssertNil(revisionTwoSnapshot)
+        let revisions = try await store.listTeamAssetRevisions(
+            ownerUserID: "alice",
+            teamRoomID: room.id,
+            assetID: firstRevision.id,
+            limit: 10
+        )
+        XCTAssertEqual(revisions.map(\.revision), [2, 1])
     }
 
     func testManagedTeamRequiresExplicitProjectManagerProfession() async throws {
@@ -1923,6 +2307,95 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             roomID: room.id
         )
         XCTAssertEqual(migratedRoom?.projectManagerAgentID, manager.id)
+        try executeSQLite(url, sql: "PRAGMA foreign_key_check;")
+    }
+
+    func testMigration22PreservesTodoDeliveryAndBackfillsEventRecipientOnReplay() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        var initialStore: SQLiteAgentGroupChatStore? = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let manager = try await initialStore!.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "项目经理",
+                rolePrompt: "维护迁移任务板。",
+                modelConfigID: "model",
+                professionKey: "project_manager"
+            )
+        )
+        let worker = try await makeAgent(initialStore!, name: "迁移执行者")
+        let room = try await initialStore!.createManagedRoom(
+            ownerUserID: "alice",
+            projectID: "migration-22-project",
+            draft: .init(name: "迁移事件团队"),
+            projectManagerAgentID: manager.id
+        )
+        _ = try await initialStore!.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: worker.id,
+            draft: .init(role: "执行者")
+        )
+        let todo = try await initialStore!.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            requestKey: "migration-22-todo",
+            draft: .init(
+                title: "验证事件迁移",
+                teamRoomID: room.id,
+                creatorAgentID: manager.id
+            ),
+            nowUnixMs: 100
+        )
+        let createdReadyDelivery = try await initialStore!.enqueueAgentTodoReady(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            nowUnixMs: 101
+        )
+        let readyDelivery = try XCTUnwrap(createdReadyDelivery)
+        initialStore = nil
+
+        try executeSQLite(
+            url,
+            sql: """
+            PRAGMA foreign_keys = OFF;
+            BEGIN IMMEDIATE;
+            DROP TABLE local_agent_todo_event_recipients;
+            DELETE FROM local_agent_group_chat_schema_migrations WHERE version = 22;
+            COMMIT;
+            PRAGMA foreign_keys = ON;
+            """
+        )
+
+        let migratedStore = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let migratedTodo = try await migratedStore.agentTodo(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id
+        )
+        XCTAssertEqual(migratedTodo?.title, todo.title)
+        let migratedDelivery = try await migratedStore.delivery(
+            ownerUserID: "alice",
+            deliveryID: readyDelivery.id
+        )
+        XCTAssertEqual(migratedDelivery?.id, readyDelivery.id)
+
+        let replayed = try await migratedStore.enqueueAgentTodoReady(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            nowUnixMs: 102
+        )
+        XCTAssertEqual(replayed?.id, readyDelivery.id)
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM local_agent_todo_event_recipients"
+        ), 1)
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM local_agent_group_chat_schema_migrations WHERE version = 22"
+        ), 1)
         try executeSQLite(url, sql: "PRAGMA foreign_key_check;")
     }
 }

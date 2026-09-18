@@ -45,12 +45,8 @@ fn byte_buffer_preserves_multibyte_text_split_across_chunks() {
 
     let mut output = String::new();
     let mut saw_stream_text = false;
-    let terminal = process_sse_event(
-        raw_event.as_str(),
-        &mut output,
-        &mut saw_stream_text,
-    )
-    .expect("valid sse event");
+    let terminal = process_sse_event(raw_event.as_str(), &mut output, &mut saw_stream_text)
+        .expect("valid sse event");
 
     assert!(!terminal);
     assert_eq!(output, "你好世界");
@@ -66,12 +62,8 @@ fn byte_buffer_accepts_crlf_event_delimiter() {
 
     let mut output = String::new();
     let mut saw_stream_text = false;
-    process_sse_event(
-        raw_event.as_str(),
-        &mut output,
-        &mut saw_stream_text,
-    )
-    .expect("valid sse event");
+    process_sse_event(raw_event.as_str(), &mut output, &mut saw_stream_text)
+        .expect("valid sse event");
 
     assert_eq!(delimiter_len, 4);
     assert_eq!(output, "hello");

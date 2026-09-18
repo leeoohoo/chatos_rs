@@ -35,6 +35,11 @@ export type ThreadWorkspaceProps = {
   threads: EngineThread[];
   tenantLabelsById?: UserLabelMap;
   threadsLoading: boolean;
+  threadPage: number;
+  threadPageSize: number;
+  threadHasMore: boolean;
+  threadMaxReachablePage: number;
+  onThreadPageChange: (page: number, pageSize: number) => void;
   selectedThread: EngineThread | null;
   onSelectThread: (thread: EngineThread) => void;
   threadDetailLoading: boolean;
@@ -43,8 +48,14 @@ export type ThreadWorkspaceProps = {
   threadRecordPage: number;
   threadRecordPageSize: number;
   threadRecordTotal: number;
+  threadRecordMaxReachablePage: number;
   onThreadRecordPageChange: (page: number, pageSize: number) => void;
   threadSummaries: EngineSummary[];
+  threadSummaryPage: number;
+  threadSummaryPageSize: number;
+  threadSummaryHasMore: boolean;
+  threadSummaryMaxReachablePage: number;
+  onThreadSummaryPageChange: (page: number, pageSize: number) => void;
   subjectMemories: EngineSubjectMemory[];
   detailTab: DataDetailTab;
   onDetailTabChange: (detailTab: DataDetailTab) => void;

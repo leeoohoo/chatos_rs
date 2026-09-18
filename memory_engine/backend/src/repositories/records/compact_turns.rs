@@ -1,17 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use futures_util::TryStreamExt;
-use mongodb::bson::{doc, Document};
+use sqlx::types::Json;
+use sqlx::{Postgres, QueryBuilder};
 
 use crate::db::Db;
 use crate::models::{EngineCompactTurn, EngineRecord, TurnRecordSlice};
-
-use super::common::{build_record_filter, record_collection};
-
-pub(crate) fn compact_turn_collection(db: &Db) -> mongodb::Collection<EngineCompactTurn> {
-    db.collection::<EngineCompactTurn>("engine_compact_turns")
-}
+use crate::repositories::postgres::{decode, json, timestamp};
 
 pub(crate) fn extract_turn_id_from_metadata(metadata: Option<&serde_json::Value>) -> Option<&str> {
     metadata
@@ -133,25 +128,6 @@ fn compact_turn_id(
     format!("{tenant_id}::{source_id}::{thread_id}::{record_type}::{turn_id}")
 }
 
-fn build_turn_filter(
-    thread_id: &str,
-    tenant_id: &str,
-    source_id: &str,
-    record_type: &str,
-    turn_id: &str,
-) -> Document {
-    let mut filter = build_record_filter(
-        thread_id,
-        Some(tenant_id),
-        Some(source_id),
-        None,
-        Some(record_type),
-        None,
-    );
-    filter.insert("metadata.conversation_turn_id", turn_id);
-    filter
-}
-
 async fn list_records_for_turn(
     db: &Db,
     thread_id: &str,
@@ -160,19 +136,19 @@ async fn list_records_for_turn(
     record_type: &str,
     turn_id: &str,
 ) -> Result<Vec<EngineRecord>, String> {
-    let cursor = record_collection(db)
-        .find(build_turn_filter(
-            thread_id,
-            tenant_id,
-            source_id,
-            record_type,
-            turn_id,
-        ))
-        .sort(doc! { "created_at": 1, "id": 1 })
-        .await
-        .map_err(|err| err.to_string())?;
-
-    cursor.try_collect().await.map_err(|err| err.to_string())
+    let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
+        "SELECT data FROM engine_records WHERE thread_id=$1 AND tenant_id=$2 AND source_id=$3 \
+         AND record_type=$4 AND data #>> '{metadata,conversation_turn_id}'=$5 ORDER BY created_at,id",
+    )
+    .bind(thread_id)
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(record_type)
+    .bind(turn_id)
+    .fetch_all(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    rows.into_iter().map(decode).collect()
 }
 
 fn build_compact_turn_from_records(
@@ -233,23 +209,28 @@ fn build_compact_turn_from_records(
 }
 
 async fn upsert_compact_turn(db: &Db, item: &EngineCompactTurn) -> Result<(), String> {
-    compact_turn_collection(db)
-        .update_one(
-            doc! {
-                "tenant_id": &item.tenant_id,
-                "source_id": &item.source_id,
-                "thread_id": &item.thread_id,
-                "record_type": &item.record_type,
-                "turn_id": &item.turn_id,
-            },
-            doc! {
-                "$set": mongodb::bson::to_document(item).map_err(|err| err.to_string())?,
-            },
-        )
-        .upsert(true)
-        .await
-        .map(|_| ())
-        .map_err(|err| err.to_string())
+    sqlx::query(
+        "INSERT INTO engine_compact_turns \
+         (id,thread_id,tenant_id,source_id,record_type,turn_id,user_record_id,user_created_at,updated_at,data) \
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) \
+         ON CONFLICT(tenant_id,source_id,thread_id,record_type,turn_id) DO UPDATE SET \
+         id=EXCLUDED.id,user_record_id=EXCLUDED.user_record_id,user_created_at=EXCLUDED.user_created_at, \
+         updated_at=EXCLUDED.updated_at,data=EXCLUDED.data",
+    )
+    .bind(&item.id)
+    .bind(&item.thread_id)
+    .bind(&item.tenant_id)
+    .bind(&item.source_id)
+    .bind(&item.record_type)
+    .bind(&item.turn_id)
+    .bind(&item.user_record_id)
+    .bind(timestamp(&item.user_created_at)?)
+    .bind(timestamp(&item.updated_at)?)
+    .bind(json(item)?)
+    .execute(db)
+    .await
+    .map(|_| ())
+    .map_err(|error| error.to_string())
 }
 
 pub async fn rebuild_compact_turn(
@@ -321,17 +302,19 @@ async fn delete_compact_turn(
     record_type: &str,
     turn_id: &str,
 ) -> Result<(), String> {
-    compact_turn_collection(db)
-        .delete_one(doc! {
-            "tenant_id": tenant_id,
-            "source_id": source_id,
-            "thread_id": thread_id,
-            "record_type": record_type,
-            "turn_id": turn_id,
-        })
-        .await
-        .map(|_| ())
-        .map_err(|err| err.to_string())
+    sqlx::query(
+        "DELETE FROM engine_compact_turns WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 \
+         AND record_type=$4 AND turn_id=$5",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .bind(record_type)
+    .bind(turn_id)
+    .execute(db)
+    .await
+    .map(|_| ())
+    .map_err(|error| error.to_string())
 }
 
 pub async fn delete_compact_turns_by_thread(
@@ -341,19 +324,23 @@ pub async fn delete_compact_turns_by_thread(
     source_id: &str,
     record_type: Option<&str>,
 ) -> Result<(), String> {
-    let mut filter = doc! {
-        "tenant_id": tenant_id,
-        "source_id": source_id,
-        "thread_id": thread_id,
-    };
+    let mut query =
+        QueryBuilder::<Postgres>::new("DELETE FROM engine_compact_turns WHERE tenant_id=");
+    query
+        .push_bind(tenant_id)
+        .push(" AND source_id=")
+        .push_bind(source_id)
+        .push(" AND thread_id=")
+        .push_bind(thread_id);
     if let Some(value) = record_type.map(str::trim).filter(|value| !value.is_empty()) {
-        filter.insert("record_type", value);
+        query.push(" AND record_type=").push_bind(value);
     }
-    compact_turn_collection(db)
-        .delete_many(filter)
+    query
+        .build()
+        .execute(db)
         .await
         .map(|_| ())
-        .map_err(|err| err.to_string())
+        .map_err(|error| error.to_string())
 }
 
 fn compact_turn_to_slice(item: EngineCompactTurn) -> TurnRecordSlice {
@@ -389,51 +376,52 @@ pub async fn list_compact_turn_slices(
         .unwrap_or("message");
 
     let page_limit = limit.clamp(1, 200);
-    let mut filter = doc! {
-        "tenant_id": tenant_id,
-        "source_id": source_id,
-        "thread_id": thread_id,
-        "record_type": record_type,
-    };
-
-    if let Some(anchor_turn_id) = before_turn_id
+    let anchor = if let Some(anchor_turn_id) = before_turn_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        let anchor = compact_turn_collection(db)
-            .find_one(doc! {
-                "tenant_id": tenant_id,
-                "source_id": source_id,
-                "thread_id": thread_id,
-                "record_type": record_type,
-                "turn_id": anchor_turn_id,
-            })
-            .await
-            .map_err(|err| err.to_string())?;
-
+        let anchor = sqlx::query_as::<_, (chrono::DateTime<chrono::Utc>, String)>(
+            "SELECT user_created_at,user_record_id FROM engine_compact_turns \
+             WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND record_type=$4 AND turn_id=$5",
+        ).bind(tenant_id).bind(source_id).bind(thread_id).bind(record_type).bind(anchor_turn_id)
+          .fetch_optional(db).await.map_err(|error|error.to_string())?;
         let Some(anchor) = anchor else {
             return Ok((Vec::new(), false, None));
         };
-        filter.insert(
-            "$or",
-            vec![
-                doc! { "user_created_at": { "$lt": anchor.user_created_at.clone() } },
-                doc! {
-                    "user_created_at": anchor.user_created_at,
-                    "user_record_id": { "$lt": anchor.user_record_id },
-                },
-            ],
-        );
-    }
+        Some(anchor)
+    } else {
+        None
+    };
 
-    let cursor = compact_turn_collection(db)
-        .find(filter)
-        .sort(doc! { "user_created_at": -1, "user_record_id": -1 })
-        .limit(page_limit + 1)
+    let mut query =
+        QueryBuilder::<Postgres>::new("SELECT data FROM engine_compact_turns WHERE tenant_id=");
+    query
+        .push_bind(tenant_id)
+        .push(" AND source_id=")
+        .push_bind(source_id)
+        .push(" AND thread_id=")
+        .push_bind(thread_id)
+        .push(" AND record_type=")
+        .push_bind(record_type);
+    if let Some((created_at, record_id)) = anchor {
+        query
+            .push(" AND (user_created_at<")
+            .push_bind(created_at)
+            .push(" OR (user_created_at=")
+            .push_bind(created_at)
+            .push(" AND user_record_id<")
+            .push_bind(record_id)
+            .push("))");
+    }
+    query
+        .push(" ORDER BY user_created_at DESC,user_record_id DESC LIMIT ")
+        .push_bind(page_limit + 1);
+    let raw = query
+        .build_query_scalar::<Json<serde_json::Value>>()
+        .fetch_all(db)
         .await
-        .map_err(|err| err.to_string())?;
-    let mut rows: Vec<EngineCompactTurn> =
-        cursor.try_collect().await.map_err(|err| err.to_string())?;
+        .map_err(|error| error.to_string())?;
+    let mut rows: Vec<EngineCompactTurn> = raw.into_iter().map(decode).collect::<Result<_, _>>()?;
 
     let has_more = rows.len() > page_limit as usize;
     if has_more {

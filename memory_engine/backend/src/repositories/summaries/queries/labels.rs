@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use mongodb::bson::doc;
-
+use super::super::common::decode_summaries;
 use crate::db::Db;
 use crate::models::EngineSummary;
+use sqlx::types::Json;
+use sqlx::{Postgres, QueryBuilder};
 
-use super::super::common::{
-    collect_summaries, collect_summary_thread_ids, summary_collection, thread_collection,
-};
-
+#[allow(clippy::too_many_arguments)]
 pub async fn list_summaries_by_thread_label(
     db: &Db,
     tenant_id: &str,
@@ -22,7 +20,7 @@ pub async fn list_summaries_by_thread_label(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<EngineSummary>, String> {
-    list_summaries_by_thread_label_internal(
+    list_internal(
         db,
         tenant_id,
         source_id,
@@ -37,7 +35,6 @@ pub async fn list_summaries_by_thread_label(
     )
     .await
 }
-
 pub async fn list_summaries_by_thread_label_for_subject_memory_scope(
     db: &Db,
     tenant_id: &str,
@@ -47,7 +44,7 @@ pub async fn list_summaries_by_thread_label_for_subject_memory_scope(
     scope_key: &str,
     limit: i64,
 ) -> Result<Vec<EngineSummary>, String> {
-    list_summaries_by_thread_label_internal(
+    list_internal(
         db,
         tenant_id,
         source_id,
@@ -62,75 +59,57 @@ pub async fn list_summaries_by_thread_label_for_subject_memory_scope(
     )
     .await
 }
-
-async fn list_summaries_by_thread_label_internal(
+#[allow(clippy::too_many_arguments)]
+async fn list_internal(
     db: &Db,
     tenant_id: &str,
     source_id: &str,
-    thread_label: &str,
+    label: &str,
     summary_type: Option<&str>,
     status: Option<&str>,
     level: Option<i64>,
     subject_memory_summarized: Option<i64>,
-    subject_memory_scope_key: Option<&str>,
+    scope_key: Option<&str>,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<EngineSummary>, String> {
-    let normalized_label = thread_label.trim();
-    if normalized_label.is_empty() {
+    let label = label.trim();
+    if label.is_empty() {
         return Ok(Vec::new());
     }
-
-    let thread_cursor = thread_collection(db)
-        .find(doc! {
-            "tenant_id": tenant_id,
-            "source_id": source_id,
-            "labels": normalized_label,
-        })
-        .sort(doc! {"updated_at": -1, "created_at": -1})
-        .limit(5_000)
-        .await
-        .map_err(|err| err.to_string())?;
-
-    let thread_ids = collect_summary_thread_ids(thread_cursor).await?;
-    if thread_ids.is_empty() {
-        return Ok(Vec::new());
+    let mut q=QueryBuilder::<Postgres>::new("SELECT s.data FROM engine_summaries s JOIN engine_threads t ON t.id=s.thread_id WHERE s.tenant_id=");
+    q.push_bind(tenant_id)
+        .push(" AND s.source_id=")
+        .push_bind(source_id)
+        .push(" AND t.data->'labels' ? ")
+        .push_bind(label);
+    append_prefixed(&mut q, "s.summary_type", summary_type);
+    append_prefixed(&mut q, "s.status", status);
+    if let Some(v) = level {
+        q.push(" AND s.level=").push_bind(v);
     }
-
-    let mut filter = doc! {
-        "tenant_id": tenant_id,
-        "source_id": source_id,
-        "thread_id": {"$in": thread_ids},
-    };
-    if let Some(value) = summary_type
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        filter.insert("summary_type", value);
+    if let Some(v) = subject_memory_summarized {
+        q.push(" AND s.subject_memory_summarized=")
+            .push_bind(v.max(0));
     }
-    if let Some(value) = status.map(str::trim).filter(|value| !value.is_empty()) {
-        filter.insert("status", value);
+    if let Some(v) = scope_key.map(str::trim).filter(|v| !v.is_empty()) {
+        q.push(" AND NOT (")
+            .push_bind(v)
+            .push("=ANY(s.subject_memory_scope_keys))");
     }
-    if let Some(value) = level {
-        filter.insert("level", value);
+    q.push(" ORDER BY s.created_at,s.level DESC LIMIT ")
+        .push_bind(limit.clamp(1, 5000))
+        .push(" OFFSET ")
+        .push_bind(offset.max(0));
+    decode_summaries(
+        q.build_query_scalar::<Json<serde_json::Value>>()
+            .fetch_all(db)
+            .await
+            .map_err(|e| e.to_string())?,
+    )
+}
+fn append_prefixed<'a>(q: &mut QueryBuilder<'a, Postgres>, column: &str, value: Option<&'a str>) {
+    if let Some(v) = value.map(str::trim).filter(|v| !v.is_empty()) {
+        q.push(" AND ").push(column).push("=").push_bind(v);
     }
-    if let Some(value) = subject_memory_summarized {
-        filter.insert("subject_memory_summarized", value.max(0));
-    }
-    if let Some(value) = subject_memory_scope_key
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        filter.insert("subject_memory_scope_keys", doc! {"$ne": value});
-    }
-
-    let cursor = summary_collection(db)
-        .find(filter)
-        .sort(doc! {"created_at": 1, "level": -1})
-        .skip(offset.max(0) as u64)
-        .limit(limit.clamp(1, 5_000))
-        .await
-        .map_err(|err| err.to_string())?;
-
-    collect_summaries(cursor).await
 }

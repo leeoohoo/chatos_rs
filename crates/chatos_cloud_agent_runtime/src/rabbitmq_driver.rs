@@ -32,6 +32,7 @@ const DELIVERY_ATTEMPT_HEADER: &str = "x-chatos-delivery-attempt";
 const DELIVERY_FAILURE_HEADER: &str = "x-chatos-delivery-failure";
 const MAX_DELIVERY_ATTEMPTS: u32 = 8;
 const MAX_OUTBOX_PUBLISH_ATTEMPTS: u32 = 8;
+const OUTBOX_PUBLISH_CLAIM_TTL: Duration = Duration::from_secs(60);
 const MAX_AMQP_SHORT_STRING_BYTES: usize = 255;
 
 #[derive(Debug, Clone)]
@@ -62,10 +63,14 @@ impl CloudAgentRabbitMqTopology {
                 return Err(format!("Cloud Agent RabbitMQ {name} must not be empty"));
             }
         }
-        if self.prefetch_count == 0 || self.consumer_concurrency == 0 || self.outbox_batch_size <= 0
+        if self.prefetch_count == 0
+            || self.consumer_concurrency == 0
+            || self.outbox_batch_size <= 0
+            || self.outbox_reconcile_interval.is_zero()
         {
             return Err(
-                "Cloud Agent RabbitMQ prefetch and outbox batch size must be positive".to_string(),
+                "Cloud Agent RabbitMQ prefetch, outbox interval and batch size must be positive"
+                    .to_string(),
             );
         }
         Ok(())
@@ -213,6 +218,17 @@ where
             );
             return;
         }
+        let jitter_seed = format!(
+            "{}:{}:{}",
+            owner.owner_service(),
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        );
+        tokio::time::sleep(outbox_reconcile_startup_jitter(
+            topology.outbox_reconcile_interval,
+            jitter_seed.as_str(),
+        ))
+        .await;
         let mut interval = tokio::time::interval(topology.outbox_reconcile_interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -548,12 +564,26 @@ where
     O: CloudAgentQueueOwner,
 {
     let store = owner.cloud_agent_store();
-    let pending = store
-        .list_ready_outbox_with_attempts(topology.outbox_batch_size)
+    let claim_token = uuid::Uuid::new_v4().to_string();
+    let claim_until = chrono::Utc::now()
+        + chrono::Duration::from_std(OUTBOX_PUBLISH_CLAIM_TTL)
+            .map_err(|error| format!("invalid Cloud Agent outbox claim TTL: {error}"))?;
+    let mut pending = store
+        .claim_ready_outbox_with_attempts(
+            topology.outbox_batch_size,
+            claim_token.as_str(),
+            claim_until,
+        )
         .await?;
     if pending.is_empty() {
         return Ok(0);
     }
+    pending.sort_by(|left, right| {
+        left.intent
+            .available_at
+            .cmp(&right.intent.available_at)
+            .then_with(|| left.intent.event_id.cmp(&right.intent.event_id))
+    });
     let (connection, channel) = open_publisher(topology).await?;
     let _connection = connection;
     let mut published = 0usize;
@@ -563,7 +593,7 @@ where
         match publish_intent(&channel, topology, &store, &intent).await {
             Ok(()) => {
                 store
-                    .mark_outbox_published(intent.event_id.as_str())
+                    .mark_claimed_outbox_published(intent.event_id.as_str(), claim_token.as_str())
                     .await?;
                 published = published.saturating_add(1);
             }
@@ -573,8 +603,9 @@ where
                     + chrono::Duration::from_std(outbox_publish_retry_delay(next_attempt))
                         .unwrap_or_else(|_| chrono::Duration::minutes(5));
                 match store
-                    .mark_outbox_publish_failed(
+                    .mark_claimed_outbox_publish_failed(
                         intent.event_id.as_str(),
+                        claim_token.as_str(),
                         error.as_str(),
                         next_available_at,
                         MAX_OUTBOX_PUBLISH_ATTEMPTS,
@@ -897,6 +928,19 @@ fn outbox_publish_retry_delay(publish_attempt: u32) -> Duration {
     Duration::from_secs(1_u64 << exponent).min(MAX_RETRY_DELAY)
 }
 
+fn outbox_reconcile_startup_jitter(interval: Duration, seed: &str) -> Duration {
+    let max_jitter_ms = u64::try_from(interval.as_millis() / 4)
+        .unwrap_or(u64::MAX)
+        .min(1_000);
+    if max_jitter_ms == 0 {
+        return Duration::ZERO;
+    }
+    let digest = Sha256::digest(seed.as_bytes());
+    let mut bytes = [0_u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    Duration::from_millis(u64::from_le_bytes(bytes) % (max_jitter_ms + 1))
+}
+
 fn confirmed(label: &str, confirmation: Confirmation) -> Result<(), String> {
     match confirmation {
         Confirmation::Ack(None) => Ok(()),
@@ -909,87 +953,4 @@ fn confirmed(label: &str, confirmation: Confirmation) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn topology_requires_distinct_durable_queue_identities() {
-        let mut topology = CloudAgentRabbitMqTopology {
-            rabbitmq_url: "amqp://localhost".to_string(),
-            exchange: "cloud_agent".to_string(),
-            runtime_queue: "cloud_agent.project.runtime".to_string(),
-            retry_queue: "cloud_agent.project.runtime.retry".to_string(),
-            consumer_tag: "project-cloud-agent".to_string(),
-            reconnect_delay: Duration::from_secs(1),
-            outbox_reconcile_interval: Duration::from_secs(1),
-            outbox_batch_size: 100,
-            prefetch_count: 32,
-            consumer_concurrency: 4,
-            conflict_retry_delay: Duration::from_secs(1),
-        };
-        assert!(topology.validate().is_ok());
-        topology.consumer_concurrency = 0;
-        assert!(topology.validate().is_err());
-    }
-
-    #[test]
-    fn delivery_attempt_defaults_to_one_and_reads_retry_header() {
-        assert_eq!(cloud_agent_delivery_attempt(&BasicProperties::default()), 1);
-        let properties =
-            BasicProperties::default().with_headers(cloud_agent_delivery_headers(4, None));
-        assert_eq!(cloud_agent_delivery_attempt(&properties), 4);
-    }
-
-    #[test]
-    fn deleted_owner_entities_are_consumed_as_stale() {
-        for error in [
-            "Cloud Agent run not found: run-1",
-            "Task Run not found: run-1",
-            "Task not found: task-1",
-            "parent Task Run not found: run-1",
-            "parent Cloud Agent run not found",
-        ] {
-            assert!(cloud_agent_delivery_error_is_stale(error));
-        }
-        assert!(!cloud_agent_delivery_error_is_stale(
-            "Cloud Agent lifecycle arrived before terminal state"
-        ));
-    }
-
-    #[test]
-    fn delivery_failure_header_is_bounded() {
-        assert_eq!(truncate_delivery_failure(&"x".repeat(2_000)).len(), 1_024);
-    }
-
-    #[test]
-    fn amqp_property_ids_are_utf8_safe_stable_and_bounded() {
-        let short = "event-1";
-        assert_eq!(bounded_amqp_property_id(short), short);
-
-        let long = format!("event:{}", "任务".repeat(120));
-        let bounded = bounded_amqp_property_id(long.as_str());
-        assert!(bounded.len() <= MAX_AMQP_SHORT_STRING_BYTES);
-        assert_eq!(bounded, bounded_amqp_property_id(long.as_str()));
-        assert_ne!(
-            bounded,
-            bounded_amqp_property_id(format!("{long}-different").as_str())
-        );
-        assert!(bounded.contains('#'));
-    }
-
-    #[test]
-    fn outbox_publish_retry_delay_is_exponential_and_capped() {
-        assert_eq!(outbox_publish_retry_delay(1), Duration::from_secs(1));
-        assert_eq!(outbox_publish_retry_delay(2), Duration::from_secs(2));
-        assert_eq!(outbox_publish_retry_delay(8), Duration::from_secs(128));
-        assert_eq!(outbox_publish_retry_delay(20), Duration::from_secs(300));
-    }
-
-    #[test]
-    fn processing_error_retry_delay_is_exponential_and_capped() {
-        let base = Duration::from_secs(1);
-        assert_eq!(cloud_agent_retry_delay(base, 2), Duration::from_secs(1));
-        assert_eq!(cloud_agent_retry_delay(base, 3), Duration::from_secs(2));
-        assert_eq!(cloud_agent_retry_delay(base, 8), Duration::from_secs(60));
-    }
-}
+mod tests;

@@ -8,6 +8,7 @@ pub mod capabilities;
 pub mod config;
 pub mod error;
 mod internal_tls;
+pub mod postgres;
 pub mod pressure;
 pub mod project_context;
 pub mod providers;

@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Required Notice: Copyright (c) 2025 AI Chat Team
+
+[package]
+name = "postgres-user-migration"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Keep the temporary migration-only MongoDB dependency outside every runtime
+# workspace. Delete this tool after the production cutover has been accepted.
+[workspace]
+
+[dependencies]
+argon2 = "0.5"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+futures-util = "0.3"
+mongodb = { version = "2.8", features = ["tokio-runtime"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8.6", default-features = false, features = [
+  "runtime-tokio-rustls",
+  "postgres",
+  "chrono",
+  "json",
+] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

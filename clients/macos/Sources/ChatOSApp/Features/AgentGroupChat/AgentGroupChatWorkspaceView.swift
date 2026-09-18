@@ -1005,7 +1005,8 @@ private struct AgentProfileEditorSheet: View {
         }
         _name = State(initialValue: profile?.draft.name ?? "")
         _description = State(initialValue: profile?.draft.description ?? "")
-        _rolePrompt = State(initialValue: profile?.draft.rolePrompt ?? Self.defaultPrompt)
+        _rolePrompt = State(initialValue: profile?.draft.rolePrompt
+            ?? LocalAgentPromptCatalog.render(.agentDefaultRole))
         _modelConfigID = State(initialValue: profile?.draft.modelConfigID ?? "")
         _thinkingLevel = State(initialValue: profile?.draft.thinkingLevel ?? "")
         _professionKey = State(initialValue: profile?.draft.professionKey
@@ -1221,10 +1222,6 @@ private struct AgentProfileEditorSheet: View {
             content()
         }
     }
-
-    private static let defaultPrompt = """
-    只处理用户和项目团队明确交给你的工作。先通过 Relay MCP 理解当前项目、团队和群聊上下文，再按职责行动并回复；涉及项目创建或人员变更时必须等待 Human 确认。
-    """
 }
 
 private struct CreateAgentTeamSheet: View {

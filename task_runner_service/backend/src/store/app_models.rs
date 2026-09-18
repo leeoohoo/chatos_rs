@@ -7,14 +7,14 @@ impl AppStore {
     pub async fn list_model_configs(&self) -> Result<Vec<ModelConfigRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_model_configs()),
-            Self::Mongo(store) => store.list_model_configs().await,
+            Self::Postgres(store) => store.list_model_configs().await,
         }
     }
 
     pub async fn get_model_config(&self, id: &str) -> Result<Option<ModelConfigRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.get_model_config(id)),
-            Self::Mongo(store) => store.get_model_config(id).await,
+            Self::Postgres(store) => store.get_model_config(id).await,
         }
     }
 
@@ -25,14 +25,14 @@ impl AppStore {
     ) -> Result<ModelConfigRecord, String> {
         match self {
             Self::InMemory(store) => Ok(store.save_model_config(model)),
-            Self::Mongo(store) => store.save_model_config(model).await,
+            Self::Postgres(store) => store.save_model_config(model).await,
         }
     }
 
     pub async fn get_runtime_settings(&self) -> Result<Option<RuntimeSettingsRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.get_runtime_settings()),
-            Self::Mongo(store) => store.get_runtime_settings().await,
+            Self::Postgres(store) => store.get_runtime_settings().await,
         }
     }
 }

@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use futures_util::TryStreamExt;
-use mongodb::bson::doc;
+use sqlx::types::Json;
 use tracing::warn;
 
 use crate::db::Db;
 use crate::models::{now_rfc3339, EngineJobRun};
+use crate::repositories::postgres::{decode, json, optional_timestamp};
 use crate::repositories::threads;
 
-use super::super::common::{
-    job_run_collection, JOB_TYPE_THREAD_REPAIR, STALE_THREAD_REPAIR_JOB_TIMEOUT_SECS,
-};
+use super::super::common::{JOB_TYPE_THREAD_REPAIR, STALE_THREAD_REPAIR_JOB_TIMEOUT_SECS};
 
 fn stale_timeout_secs(job: &EngineJobRun, default_timeout_secs: i64) -> i64 {
     if job.job_type == JOB_TYPE_THREAD_REPAIR {
@@ -29,19 +27,21 @@ fn is_stale_running_job(job: &EngineJobRun, default_timeout_secs: i64) -> bool {
 
 pub async fn fail_stale_running_job_runs(db: &Db, timeout_secs: i64) -> Result<i64, String> {
     let finished_at = now_rfc3339();
-    let running_jobs = job_run_collection(db)
-        .find(doc! {"status": "running"})
-        .await
-        .map_err(|err| err.to_string())?
-        .try_collect::<Vec<EngineJobRun>>()
-        .await
-        .map_err(|err| err.to_string())?;
+    let running_jobs = sqlx::query_scalar::<_, Json<serde_json::Value>>(
+        "SELECT data FROM engine_job_runs WHERE status='running'",
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|error| error.to_string())?
+    .into_iter()
+    .map(decode)
+    .collect::<Result<Vec<EngineJobRun>, _>>()?;
 
     if running_jobs.is_empty() {
         return Ok(0);
     }
 
-    let stale_jobs = running_jobs
+    let mut stale_jobs = running_jobs
         .into_iter()
         .filter(|job| is_stale_running_job(job, timeout_secs))
         .collect::<Vec<_>>();
@@ -49,29 +49,31 @@ pub async fn fail_stale_running_job_runs(db: &Db, timeout_secs: i64) -> Result<i
         return Ok(0);
     }
 
-    let stale_job_ids = stale_jobs
-        .iter()
-        .map(|job| job.id.clone())
-        .collect::<Vec<_>>();
-
-    let result = job_run_collection(db)
-        .update_many(
-            doc! {
-                "status": "running",
-                "id": {"$in": stale_job_ids},
-            },
-            doc! {
-                "$set": {
-                    "status": "failed",
-                    "finished_at": finished_at,
-                    "error_message": "job run was marked failed automatically because it stayed in running status past the timeout",
-                }
-            },
+    let mut tx = db.begin().await.map_err(|error| error.to_string())?;
+    let mut modified = 0_i64;
+    for job in &mut stale_jobs {
+        job.status = "failed".to_string();
+        job.finished_at = Some(finished_at.clone());
+        job.error_message = Some(
+            "job run was marked failed automatically because it stayed in running status past the timeout"
+                .to_string(),
+        );
+        let result = sqlx::query(
+            "UPDATE engine_job_runs SET status='failed',finished_at=$2,data=$3 \
+             WHERE id=$1 AND status='running'",
         )
+        .bind(&job.id)
+        .bind(optional_timestamp(job.finished_at.as_deref())?)
+        .bind(json(job)?)
+        .execute(&mut *tx)
         .await
-        .map_err(|err| err.to_string())?;
+        .map_err(|error| error.to_string())?;
+        modified =
+            modified.saturating_add(i64::try_from(result.rows_affected()).unwrap_or(i64::MAX));
+    }
+    tx.commit().await.map_err(|error| error.to_string())?;
 
-    if result.modified_count > 0 {
+    if modified > 0 {
         for job in &stale_jobs {
             if job.job_type == "summary" {
                 if let (Some(tenant_id), Some(source_id), Some(thread_id)) = (
@@ -121,5 +123,5 @@ pub async fn fail_stale_running_job_runs(db: &Db, timeout_secs: i64) -> Result<i
         }
     }
 
-    Ok(result.modified_count as i64)
+    Ok(modified)
 }

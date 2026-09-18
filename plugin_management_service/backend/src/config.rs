@@ -14,7 +14,6 @@ pub struct AppConfig {
     pub host: IpAddr,
     pub port: u16,
     pub database_url: String,
-    pub mongodb_database: String,
     pub user_service_base_url: String,
     pub user_service_request_timeout: Duration,
     pub task_runner_base_url: String,
@@ -56,8 +55,6 @@ impl AppConfig {
                 format!("PLUGIN_MANAGEMENT_SERVICE_HOST must be a valid IP address: {err}")
             })?;
         let port = required_u16("PLUGIN_MANAGEMENT_SERVICE_PORT")?;
-        let mongodb_database =
-            require_config_center_text("PLUGIN_MANAGEMENT_SERVICE_MONGODB_DATABASE")?;
         let user_service_request_timeout_ms =
             required_u64("PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
         let cors_origins = require_csv("PLUGIN_MANAGEMENT_CORS_ORIGINS")?;
@@ -70,7 +67,6 @@ impl AppConfig {
             host,
             port,
             database_url: require_config_center_secret("PLUGIN_MANAGEMENT_SERVICE_DATABASE_URL")?,
-            mongodb_database,
             user_service_base_url: require_config_center_secret(
                 "PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL",
             )?,
@@ -241,24 +237,6 @@ fn validate_artifact_public_base_url(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::validate_artifact_public_base_url;
-
-    #[test]
-    fn artifact_public_base_allows_http_only_for_loopback_development() {
-        assert!(validate_artifact_public_base_url("https://plugins.example.com").is_ok());
-        assert!(validate_artifact_public_base_url("http://127.0.0.1:39260").is_ok());
-        assert!(validate_artifact_public_base_url("http://localhost:39260/plugins").is_ok());
-        assert!(validate_artifact_public_base_url("http://[::1]:39260").is_ok());
-        assert!(validate_artifact_public_base_url("http://plugins.example.com").is_err());
-        assert!(validate_artifact_public_base_url("http://10.0.0.2:39260").is_err());
-        assert!(
-            validate_artifact_public_base_url("https://plugins.example.com?token=secret").is_err()
-        );
-    }
-}
-
 fn caller_internal_api_secrets() -> Result<HashMap<String, String>, String> {
     [
         (
@@ -338,4 +316,22 @@ fn required_usize(key: &str) -> Result<usize, String> {
 fn required_bool(key: &str) -> Result<bool, String> {
     let value = require_config_center_secret(key)?;
     parse_bool_text(value.as_str()).ok_or_else(|| format!("invalid {key}: expected true/false"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_artifact_public_base_url;
+
+    #[test]
+    fn artifact_public_base_allows_http_only_for_loopback_development() {
+        assert!(validate_artifact_public_base_url("https://plugins.example.com").is_ok());
+        assert!(validate_artifact_public_base_url("http://127.0.0.1:39260").is_ok());
+        assert!(validate_artifact_public_base_url("http://localhost:39260/plugins").is_ok());
+        assert!(validate_artifact_public_base_url("http://[::1]:39260").is_ok());
+        assert!(validate_artifact_public_base_url("http://plugins.example.com").is_err());
+        assert!(validate_artifact_public_base_url("http://10.0.0.2:39260").is_err());
+        assert!(
+            validate_artifact_public_base_url("https://plugins.example.com?token=secret").is_err()
+        );
+    }
 }

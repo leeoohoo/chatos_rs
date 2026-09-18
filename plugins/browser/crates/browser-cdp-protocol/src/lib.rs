@@ -5,17 +5,12 @@ pub const PROTOCOL_VERSION: &str = "2025-06-18";
 pub const SERVER_NAME: &str = "chatos-browser-cdp";
 pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BrowserMode {
     Managed,
+    #[default]
     ChromeExtension,
-}
-
-impl Default for BrowserMode {
-    fn default() -> Self {
-        Self::ChromeExtension
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

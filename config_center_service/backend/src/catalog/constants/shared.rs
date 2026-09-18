@@ -43,7 +43,6 @@ pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "sandbox_manager.runtime.database_url",
     "sandbox_manager.runtime.host",
     "sandbox_manager.runtime.internal_mtls_port",
-    "sandbox_manager.runtime.mongodb_database",
     "sandbox_manager.runtime.port",
     "sandbox_manager.security.agent_token_secret",
     "sandbox_manager.security.mcp_management_internal_api_secret",

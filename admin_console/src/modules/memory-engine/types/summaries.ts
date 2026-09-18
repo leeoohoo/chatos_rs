@@ -52,8 +52,16 @@ export interface ThreadSummariesQuery {
   summary_type?: string;
   status?: string;
   level?: number;
+  after_level?: number;
+  after_created_at?: string;
+  after_id?: string;
   limit?: number;
   offset?: number;
+}
+
+export interface ThreadSummariesPage {
+  items: EngineSummary[];
+  has_more: boolean;
 }
 
 export interface SubjectMemoriesQuery {

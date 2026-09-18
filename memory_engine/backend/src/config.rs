@@ -10,8 +10,7 @@ use chatos_service_runtime::{env_text, parse_bool_text, validate_production_secr
 pub struct AppConfig {
     pub host: String,
     pub port: u16,
-    pub mongodb_uri: String,
-    pub mongodb_database: String,
+    pub database_url: String,
     pub ai_request_timeout_secs: u64,
     pub api_enabled: bool,
     pub worker_enabled: bool,
@@ -24,6 +23,8 @@ pub struct AppConfig {
     pub rabbitmq_url: String,
     pub rabbitmq_exchange: String,
     pub rabbitmq_reconnect_delay: Duration,
+    pub cloud_agent_outbox_reconcile_interval: Duration,
+    pub cloud_agent_outbox_batch_size: i64,
     pub summary_queue: String,
     pub summary_retry_queue: String,
     pub summary_dead_letter_queue: String,
@@ -60,8 +61,7 @@ impl AppConfig {
     pub fn from_env() -> Result<Self, String> {
         let host = required_text("MEMORY_ENGINE_HOST")?;
         let port = required_u16("MEMORY_ENGINE_PORT")?;
-        let mongodb_uri = required_text("MEMORY_ENGINE_MONGODB_URI")?;
-        let mongodb_database = required_text("MEMORY_ENGINE_MONGODB_DATABASE")?;
+        let database_url = required_text("MEMORY_ENGINE_DATABASE_URL")?;
         let ai_request_timeout_secs = required_u64("MEMORY_ENGINE_AI_TIMEOUT_SECS")?.max(5);
         let api_enabled = required_runtime_bool("MEMORY_ENGINE_API_ENABLED")?;
         let worker_enabled = required_managed_bool("MEMORY_ENGINE_WORKER_ENABLED")?;
@@ -81,6 +81,11 @@ impl AppConfig {
         let rabbitmq_reconnect_delay = Duration::from_millis(
             required_u64("MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS")?.max(100),
         );
+        let cloud_agent_outbox_reconcile_interval = Duration::from_millis(
+            required_u64("MEMORY_ENGINE_CLOUD_AGENT_OUTBOX_RECONCILE_MS")?.max(1_000),
+        );
+        let cloud_agent_outbox_batch_size =
+            required_i64("MEMORY_ENGINE_CLOUD_AGENT_OUTBOX_BATCH_SIZE")?.max(1);
         let summary_queue = required_text("MEMORY_ENGINE_SUMMARY_QUEUE")?;
         let summary_retry_queue = required_text("MEMORY_ENGINE_SUMMARY_RETRY_QUEUE")?;
         let summary_dead_letter_queue = required_text("MEMORY_ENGINE_SUMMARY_DEAD_LETTER_QUEUE")?;
@@ -145,8 +150,7 @@ impl AppConfig {
         let config = Self {
             host,
             port,
-            mongodb_uri,
-            mongodb_database,
+            database_url,
             ai_request_timeout_secs,
             api_enabled,
             worker_enabled,
@@ -159,6 +163,8 @@ impl AppConfig {
             rabbitmq_url,
             rabbitmq_exchange,
             rabbitmq_reconnect_delay,
+            cloud_agent_outbox_reconcile_interval,
+            cloud_agent_outbox_batch_size,
             summary_queue,
             summary_retry_queue,
             summary_dead_letter_queue,

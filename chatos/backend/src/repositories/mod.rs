@@ -3,8 +3,8 @@
 
 pub mod agents;
 pub mod applications;
-pub mod auth_users;
 pub mod chatos_memory_mappings;
+pub mod cloud_agent;
 pub mod db;
 pub mod memory_skills;
 pub mod pet_activity_inbox;

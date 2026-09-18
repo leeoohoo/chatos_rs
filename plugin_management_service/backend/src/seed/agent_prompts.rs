@@ -318,27 +318,24 @@ mod tests {
     #[test]
     fn managed_prompts_assign_network_plugins_per_task() {
         let prompts = baseline_prompts();
-        for (agent_key, profile) in [(
+        let (agent_key, profile) = (
             SystemAgentKey::ChatosConversationAgent.as_str(),
             DEFAULT_AGENT_PROMPT_PROFILE,
-        )] {
-            let content = prompts
-                .iter()
-                .find(|(key, candidate_profile, _)| {
-                    *key == agent_key && *candidate_profile == profile
-                })
-                .map(|(_, _, content)| *content)
-                .unwrap_or_else(|| panic!("missing prompt: {agent_key}/{profile}"));
-            assert!(content.contains("plugin_hints"));
-            assert!(content.contains("Browser CDP"));
-            assert!(content.contains("公开互联网"));
-            assert!(content.contains("读取成功不等于当前需求已经完成"));
-            assert!(content.contains("不得把旧 Task 的完成状态"));
-            assert!(content.contains("项目绑定本身不是创建 Task 的条件"));
-            assert!(content.contains("`wait_for_task_completion` 表示"));
-            assert!(content.contains("不得等待任务终态或产物"));
-            assert!(content.contains("然后结束当前轮"));
-        }
+        );
+        let content = prompts
+            .iter()
+            .find(|(key, candidate_profile, _)| *key == agent_key && *candidate_profile == profile)
+            .map(|(_, _, content)| *content)
+            .unwrap_or_else(|| panic!("missing prompt: {agent_key}/{profile}"));
+        assert!(content.contains("plugin_hints"));
+        assert!(content.contains("Browser CDP"));
+        assert!(content.contains("公开互联网"));
+        assert!(content.contains("读取成功不等于当前需求已经完成"));
+        assert!(content.contains("不得把旧 Task 的完成状态"));
+        assert!(content.contains("项目绑定本身不是创建 Task 的条件"));
+        assert!(content.contains("`wait_for_task_completion` 表示"));
+        assert!(content.contains("不得等待任务终态或产物"));
+        assert!(content.contains("然后结束当前轮"));
 
         let run_prompt = prompts
             .iter()

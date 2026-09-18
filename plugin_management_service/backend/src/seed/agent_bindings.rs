@@ -20,7 +20,7 @@ pub(super) async fn seed_agent_bindings(
     // The conversation agent is an orchestration boundary, not an execution agent.  Keep its
     // direct tool surface deterministic: every real capability (including notes, files, shell and
     // Plugin MCPs) is selected inside the Task Runner run.  Delete all older/default/override MCP
-    // bindings on every seed so a retired direct tool cannot survive an upgrade in MongoDB.
+    // bindings on every seed so a retired direct tool cannot survive an upgrade.
     store
         .delete_mcp_bindings_for_agent(CHATOS_CONVERSATION_AGENT_KEY)
         .await?;

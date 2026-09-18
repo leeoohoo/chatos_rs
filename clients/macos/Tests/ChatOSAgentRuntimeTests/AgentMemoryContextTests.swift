@@ -26,14 +26,37 @@ final class AgentMemoryContextTests: XCTestCase {
             runID: UUID(),
             runtimeScope: "account:user-a:project:project-2:agent:agent-a"
         )
-        XCTAssertEqual(first.subjectID, "agent:agent-a")
-        XCTAssertEqual(first.threadID, "client-agent:group-chat:agent-a")
+        XCTAssertEqual(first.subjectID, "agent-manager:agent-a")
+        XCTAssertEqual(first.threadID, "client-agent:manager:agent-a")
         XCTAssertEqual(firstInAnotherProject.subjectID, first.subjectID)
         XCTAssertEqual(firstInAnotherProject.threadID, first.threadID)
-        XCTAssertEqual(second.subjectID, "agent:agent-b")
+        XCTAssertEqual(second.subjectID, "agent-manager:agent-b")
         XCTAssertNotEqual(first.subjectID, second.subjectID)
         XCTAssertNotEqual(first.threadID, second.threadID)
         XCTAssertNil(first.includeSubjectMemory)
+    }
+
+    func testTodoMemoryIsStableForOneTodoAndIsolatedFromManagerAndOtherTodos() throws {
+        let manager = try AgentMemoryScope(
+            tenantID: "user-a", agentID: "agent-a", projectID: "project-1",
+            runID: UUID(), runtimeScope: "manager"
+        )
+        let firstAttempt = try AgentMemoryScope(
+            tenantID: "user-a", todoID: "todo-a", runID: UUID(), runtimeScope: "executor-a"
+        )
+        let resumedAttempt = try AgentMemoryScope(
+            tenantID: "user-a", todoID: "todo-a", runID: UUID(), runtimeScope: "executor-b"
+        )
+        let otherTodo = try AgentMemoryScope(
+            tenantID: "user-a", todoID: "todo-b", runID: UUID(), runtimeScope: "executor-c"
+        )
+
+        XCTAssertEqual(firstAttempt.threadID, resumedAttempt.threadID)
+        XCTAssertEqual(firstAttempt.subjectID, resumedAttempt.subjectID)
+        XCTAssertNotEqual(firstAttempt.threadID, otherTodo.threadID)
+        XCTAssertNotEqual(firstAttempt.threadID, manager.threadID)
+        XCTAssertEqual(firstAttempt.includeSubjectMemory, false)
+        XCTAssertTrue(firstAttempt.allowsCrossRunHistory)
     }
 
     func test600ResponsesCallsComposeMemoryOnceAndKeepAuditHistoryComplete() async throws {

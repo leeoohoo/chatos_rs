@@ -5,11 +5,27 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use chatos_mcp_management_sdk::{
-    CreateRuntimeSessionRequest, McpManagementClient, McpManagementClientConfig,
-    McpManagementRuntimeSessionHandle, RuntimeSessionResponse, RuntimeSessionRoutesResponse,
-    RuntimeWorkspaceRouteTarget,
+    ClientProjectContextSnapshot, CreateRuntimeSessionRequest, McpManagementClient,
+    McpManagementClientConfig, McpManagementRuntimeSessionHandle, ProjectContextAuthorization,
+    RuntimeSessionResponse, RuntimeSessionRoutesResponse, RuntimeWorkspaceRouteTarget,
 };
 use chatos_mcp_runtime::{McpAsyncResultTransport, McpHttpServer};
+
+pub async fn authorize_project_context(
+    caller_service: impl Into<String>,
+    owner_user_id: &str,
+    snapshot: &ClientProjectContextSnapshot,
+) -> Result<ProjectContextAuthorization, String> {
+    let config = McpManagementClientConfig::from_env(caller_service.into())
+        .await
+        .map_err(|error| format!("load MCP Management config failed: {error}"))?;
+    let client = McpManagementClient::new(config)
+        .map_err(|error| format!("initialize MCP Management client failed: {error}"))?;
+    client
+        .authorize_project_context(owner_user_id, snapshot)
+        .await
+        .map_err(|error| format!("authorize client project context failed: {error}"))
+}
 
 pub struct McpManagementGatewayBuilder {
     caller_service: String,
@@ -372,7 +388,7 @@ mod tests {
             tenant_id: "tenant-1".to_string(),
             owner_user_id: "user-1".to_string(),
             agent_key: "task_runner_agent".to_string(),
-            project_id: "project-1".to_string(),
+            project_id: Some("project-1".to_string()),
             device_id: Some("device-1".to_string()),
             run_id: run_id.map(ToOwned::to_owned),
             execution_group_id: Some("group-1".to_string()),
@@ -390,6 +406,7 @@ mod tests {
                 "role": "system",
                 "content": "plugin instructions"
             })],
+            protected_skill_instruction_items: Vec::new(),
             mcp_command_queue: "mcp_management.async.dispatch".to_string(),
             mcp_server_url: "http://127.0.0.1:39280/mcp".to_string(),
             runtime_token: "runtime-token".to_string(),
@@ -493,7 +510,7 @@ mod tests {
     fn existing_session_identity_rejects_a_different_project() {
         let request = create_request(Some("run-1"));
         let mut session = routes_response(Some("run-1"));
-        session.project_id = "other-project".to_string();
+        session.project_id = Some("other-project".to_string());
 
         let error = validate_existing_session_identity(&request, &session)
             .expect_err("different project must not be reused");
@@ -506,7 +523,7 @@ mod tests {
     #[test]
     fn existing_session_identity_rejects_missing_expected_identity() {
         let mut request = create_request(Some("run-1"));
-        request.project_id.clear();
+        request.project_id = None;
         let session = routes_response(Some("run-1"));
 
         let error = validate_existing_session_identity(&request, &session)

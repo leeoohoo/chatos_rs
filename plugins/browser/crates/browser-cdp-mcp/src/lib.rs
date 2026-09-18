@@ -1744,17 +1744,17 @@ mod tests {
             assert!(tool.pointer("/_meta/chatos~1timeoutMs").is_some());
             assert!(tool.pointer("/_meta/chatos~1toolResultMaxChars").is_some());
             assert!(tool.pointer("/_meta/chatos~1skillGate/allOf").is_some());
-            assert!(tool
-                .pointer("/_meta/chatos~1skillGate/evidenceArgument")
-                .is_none());
-            assert!(tool
-                .pointer("/_meta/chatos~1skillGate/selectByArgument")
-                .is_none());
-            assert!(tool.pointer("/inputSchema/properties/skillEvidence").is_none());
-            assert!(tool
+            for path in [
+                "/_meta/chatos~1skillGate/evidenceArgument",
+                "/_meta/chatos~1skillGate/selectByArgument",
+                "/inputSchema/properties/skillEvidence",
+            ] {
+                assert!(tool.pointer(path).is_none());
+            }
+            let required = tool
                 .pointer("/inputSchema/required")
-                .and_then(Value::as_array)
-                .map_or(true, |required| !required.contains(&json!("skillEvidence"))));
+                .and_then(Value::as_array);
+            assert!(required.is_none_or(|items| !items.contains(&json!("skillEvidence"))));
             assert!(matches!(
                 tool.pointer("/_meta/chatos~1approvalMode")
                     .and_then(Value::as_str),

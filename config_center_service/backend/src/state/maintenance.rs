@@ -9,6 +9,76 @@ use crate::catalog::{
 };
 
 impl AppState {
+    pub(super) async fn migrate_postgres_pool_config(&self) -> Result<(), String> {
+        let definitions = self.store.list_definitions().await?;
+        let defaults = definitions
+            .iter()
+            .filter(|definition| {
+                definition.key.starts_with("platform.postgres.")
+                    || definition.key.contains(".postgres.")
+            })
+            .map(|definition| (definition.key.clone(), definition.default_value.clone()))
+            .collect::<BTreeMap<_, _>>();
+        if defaults.is_empty() {
+            return Err("PostgreSQL pool configuration definitions are missing".to_string());
+        }
+
+        let mut values_by_release = BTreeMap::new();
+        for mut release in self.store.list_all_releases().await? {
+            let mut changed = Vec::new();
+            for (key, fallback) in &defaults {
+                if !release.values.contains_key(key) {
+                    release.values.insert(key.clone(), fallback.clone());
+                    ensure_changed_key(&mut release.changed_keys, key.as_str());
+                    changed.push(key.clone());
+                }
+            }
+            values_by_release.insert(
+                (release.environment.clone(), release.revision),
+                release.values.clone(),
+            );
+            if !changed.is_empty() {
+                self.store.save_release(&release).await?;
+            }
+        }
+
+        for snapshot in self.store.list_all_snapshots().await? {
+            let all_values = values_by_release
+                .get(&(snapshot.environment.clone(), snapshot.revision))
+                .ok_or_else(|| {
+                    format!(
+                        "release values are unavailable for PostgreSQL snapshot {}/{} revision {}",
+                        snapshot.environment, snapshot.service_name, snapshot.revision
+                    )
+                })?;
+            let mut rebuilt = build_snapshot(
+                snapshot.environment.as_str(),
+                snapshot.service_name.as_str(),
+                snapshot.revision,
+                &definitions,
+                all_values,
+            )?;
+            rebuilt.generated_at = snapshot.generated_at.clone();
+            if rebuilt.values != snapshot.values
+                || rebuilt.env != snapshot.env
+                || rebuilt.checksum != snapshot.checksum
+            {
+                self.store.save_snapshot(&rebuilt).await?;
+            }
+        }
+
+        self.republish_active_releases_to_consul(
+            &definitions,
+            "add managed PostgreSQL pool configuration",
+        )
+        .await?;
+        tracing::info!(
+            definition_count = defaults.len(),
+            "PostgreSQL pool configuration is present in configuration center releases and snapshots"
+        );
+        Ok(())
+    }
+
     pub(super) async fn audit(
         &self,
         environment: Option<&str>,

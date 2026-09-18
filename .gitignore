@@ -69,5 +69,6 @@ clients/wechat-miniprogram/project.private.config.json
 /.chatos
 /.chatos-local-dev
 /docker/secrets/
+/secrets/
 /.chatos-ci-images
 /.tmp-relay-export/

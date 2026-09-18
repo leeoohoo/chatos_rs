@@ -111,6 +111,8 @@ export const api = {
         include_subtasks:
           filters?.include_subtasks === undefined ? undefined : String(filters.include_subtasks),
         source_run_id: filters?.source_run_id,
+        after_updated_at: filters?.after_updated_at,
+        after_id: filters?.after_id,
         limit: filters?.limit === undefined ? undefined : String(filters.limit),
         offset: filters?.offset === undefined ? undefined : String(filters.offset),
       }),
@@ -129,6 +131,8 @@ export const api = {
         include_subtasks:
           filters?.include_subtasks === undefined ? undefined : String(filters.include_subtasks),
         source_run_id: filters?.source_run_id,
+        after_updated_at: filters?.after_updated_at,
+        after_id: filters?.after_id,
         limit: filters?.limit === undefined ? undefined : String(filters.limit),
         offset: filters?.offset === undefined ? undefined : String(filters.offset),
       }),

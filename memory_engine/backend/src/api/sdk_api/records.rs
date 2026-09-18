@@ -72,18 +72,23 @@ pub async fn list_thread_records(
 ) -> Result<Json<ThreadRecordsPageResponse>, (StatusCode, String)> {
     auth.require_tenant(req.tenant_id.as_str())?;
     let asc = !matches!(req.order.as_deref(), Some("desc"));
-    let page = records::list_records_page(
-        &state.pool,
-        thread_id.as_str(),
-        Some(req.tenant_id.as_str()),
-        Some(auth.source_id()),
-        req.role.as_deref(),
-        req.record_type.as_deref(),
-        req.summary_status.as_deref(),
-        req.limit.unwrap_or(100),
-        req.offset.unwrap_or(0),
+    let values = records::ListRecordsQuery {
+        thread_id: thread_id.as_str(),
+        tenant_id: Some(req.tenant_id.as_str()),
+        source_id: Some(auth.source_id()),
+        role: req.role.as_deref(),
+        record_type: req.record_type.as_deref(),
+        summary_status: req.summary_status.as_deref(),
+        after_created_at: req.after_created_at.as_deref(),
+        after_id: req.after_id.as_deref(),
+        limit: req.limit.unwrap_or(100),
+        offset: req.offset.unwrap_or(0),
         asc,
-    )
+    };
+    values
+        .cursor()
+        .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
+    let page = records::list_records_page(&state.pool, values)
     .await
     .map_err(internal_error)?;
     Ok(Json(page))

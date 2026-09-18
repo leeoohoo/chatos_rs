@@ -84,37 +84,6 @@ pub async fn initialize_runtime(cfg: &Config) -> Result<(), String> {
         }
     }
 
-    match services::auth_user_backfill::backfill_legacy_auth_users().await {
-        Ok(report) => {
-            info!(
-                "Legacy auth-user backfill finished: legacy_count={} created_count={} skipped_existing_count={} skipped_invalid_count={}",
-                report.legacy_count,
-                report.created_count,
-                report.skipped_existing_count,
-                report.skipped_invalid_count
-            );
-            core::runtime_health::mark_runtime_check_ok(
-                "auth_user_backfill",
-                false,
-                format!(
-                    "legacy_count={} created_count={} skipped_existing_count={} skipped_invalid_count={}",
-                    report.legacy_count,
-                    report.created_count,
-                    report.skipped_existing_count,
-                    report.skipped_invalid_count
-                ),
-            );
-        }
-        Err(err) => {
-            warn!("Legacy auth-user backfill failed: {err}");
-            core::runtime_health::mark_runtime_check_warn(
-                "auth_user_backfill",
-                false,
-                format!("backfill failed: {err}"),
-            );
-        }
-    }
-
     match services::memory_engine_source_bootstrap::ensure_chatos_memory_engine_source().await {
         Ok(report) => {
             info!(

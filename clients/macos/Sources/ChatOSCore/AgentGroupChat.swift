@@ -1529,6 +1529,83 @@ public struct LocalAgentTodoDependencyDraft: Codable, Sendable, Equatable {
     }
 }
 
+/// The immutable work contract an executor receives instead of the Agent's manager-chat history.
+/// Legacy native callers may omit fields; the Store normalizes title/detail into a minimal contract.
+public struct LocalAgentTodoExecutionContract: Codable, Sendable, Equatable {
+    public let objective: String
+    public let scope: String
+    public let expectedOutputs: [String]
+    public let acceptanceCriteria: [String]
+    public let constraints: [String]
+
+    public init(
+        objective: String = "",
+        scope: String = "",
+        expectedOutputs: [String] = [],
+        acceptanceCriteria: [String] = [],
+        constraints: [String] = []
+    ) {
+        self.objective = objective
+        self.scope = scope
+        self.expectedOutputs = expectedOutputs
+        self.acceptanceCriteria = acceptanceCriteria
+        self.constraints = constraints
+    }
+
+    public func normalized(title: String, detail: String) -> Self {
+        .init(
+            objective: objective.isEmpty ? title : objective,
+            scope: scope.isEmpty ? detail : scope,
+            expectedOutputs: expectedOutputs.isEmpty ? [title] : expectedOutputs,
+            acceptanceCriteria: acceptanceCriteria.isEmpty
+                ? ["完成任务目标并输出可核验的结果总结。"]
+                : acceptanceCriteria,
+            constraints: constraints
+        )
+    }
+
+    public func validate() throws {
+        try AgentGroupChatValidation.text(
+            objective,
+            field: "todoObjective",
+            maximumLength: 8_000
+        )
+        try AgentGroupChatValidation.optionalText(scope, field: "todoScope", maximumLength: 16_000)
+        try Self.validateList(expectedOutputs, field: "todoExpectedOutputs")
+        try Self.validateList(acceptanceCriteria, field: "todoAcceptanceCriteria")
+        try Self.validateList(constraints, field: "todoConstraints", allowEmpty: true)
+    }
+
+    private static func validateList(
+        _ values: [String],
+        field: String,
+        allowEmpty: Bool = false
+    ) throws {
+        guard values.count <= 64, allowEmpty || !values.isEmpty else {
+            throw AgentGroupChatError.invalidField(field)
+        }
+        for value in values {
+            try AgentGroupChatValidation.text(value, field: field, maximumLength: 4_000)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case objective, scope, expectedOutputs, acceptanceCriteria, constraints
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        objective = try container.decodeIfPresent(String.self, forKey: .objective) ?? ""
+        scope = try container.decodeIfPresent(String.self, forKey: .scope) ?? ""
+        expectedOutputs = try container.decodeIfPresent([String].self, forKey: .expectedOutputs) ?? []
+        acceptanceCriteria = try container.decodeIfPresent(
+            [String].self,
+            forKey: .acceptanceCriteria
+        ) ?? []
+        constraints = try container.decodeIfPresent([String].self, forKey: .constraints) ?? []
+    }
+}
+
 /// A durable item on a project team's shared work board. `teamRoomID` is the ownership boundary;
 /// `agentID` is only the current assignee. Source identifiers are host-owned and are replaced with
 /// run-scoped references whenever the record is returned to a model.
@@ -1546,6 +1623,7 @@ public struct LocalAgentTodo: Codable, Sendable, Equatable, Identifiable {
     public let status: LocalAgentTodoStatus
     public let blockedReason: String
     public let result: String
+    public let executionContract: LocalAgentTodoExecutionContract
     public let executionPlan: LocalAgentTodoExecutionPlan
     public let createdAtUnixMs: Int64
     public let updatedAtUnixMs: Int64
@@ -1564,6 +1642,7 @@ public struct LocalAgentTodo: Codable, Sendable, Equatable, Identifiable {
         status: LocalAgentTodoStatus = .pending,
         blockedReason: String = "",
         result: String = "",
+        executionContract: LocalAgentTodoExecutionContract = .init(),
         executionPlan: LocalAgentTodoExecutionPlan = .init(),
         createdAtUnixMs: Int64,
         updatedAtUnixMs: Int64
@@ -1581,6 +1660,7 @@ public struct LocalAgentTodo: Codable, Sendable, Equatable, Identifiable {
         self.status = status
         self.blockedReason = blockedReason
         self.result = result
+        self.executionContract = executionContract
         self.executionPlan = executionPlan
         self.createdAtUnixMs = createdAtUnixMs
         self.updatedAtUnixMs = updatedAtUnixMs
@@ -1608,8 +1688,158 @@ public struct LocalAgentTodo: Codable, Sendable, Equatable, Identifiable {
             maximumLength: 8_000
         )
         try AgentGroupChatValidation.optionalText(result, field: "todoResult", maximumLength: 16_000)
+        try executionContract.validate()
         try executionPlan.validate()
         try AgentGroupChatValidation.timestamps(createdAtUnixMs, updatedAtUnixMs)
+    }
+}
+
+/// Program-computed scheduling state for one Agent. `readyTodo` is derived from pending status and
+/// completed prerequisites; it is never accepted from a model argument.
+public struct LocalAgentTodoScheduleState: Sendable, Equatable {
+    public let runningTodo: LocalAgentTodo?
+    public let readyTodo: LocalAgentTodo?
+
+    public init(runningTodo: LocalAgentTodo?, readyTodo: LocalAgentTodo?) {
+        self.runningTodo = runningTodo
+        self.readyTodo = readyTodo
+    }
+}
+
+public enum LocalAgentTeamAssetCategory: String, Codable, Sendable, CaseIterable {
+    case overview
+    case currentProgress = "current_progress"
+    case techStack = "tech_stack"
+    case architecture
+    case conventions
+    case decision
+    case reference
+}
+
+public enum LocalAgentTeamAssetStatus: String, Codable, Sendable {
+    case active, archived
+}
+
+/// Versioned Markdown maintained by a team's explicit project manager. Agent identifiers are kept
+/// for audit only and are replaced with run-scoped references at the model boundary.
+public struct LocalAgentTeamAsset: Codable, Sendable, Equatable, Identifiable {
+    public let id: String
+    public let ownerUserID: String
+    public let teamRoomID: String
+    public let category: LocalAgentTeamAssetCategory
+    public let title: String
+    public let markdown: String
+    public let revision: Int
+    public let status: LocalAgentTeamAssetStatus
+    public let createdByAgentID: String?
+    public let updatedByAgentID: String?
+    public let createdAtUnixMs: Int64
+    public let updatedAtUnixMs: Int64
+
+    public init(
+        id: String,
+        ownerUserID: String,
+        teamRoomID: String,
+        category: LocalAgentTeamAssetCategory,
+        title: String,
+        markdown: String,
+        revision: Int,
+        status: LocalAgentTeamAssetStatus = .active,
+        createdByAgentID: String? = nil,
+        updatedByAgentID: String? = nil,
+        createdAtUnixMs: Int64,
+        updatedAtUnixMs: Int64
+    ) {
+        self.id = id
+        self.ownerUserID = ownerUserID
+        self.teamRoomID = teamRoomID
+        self.category = category
+        self.title = title
+        self.markdown = markdown
+        self.revision = revision
+        self.status = status
+        self.createdByAgentID = createdByAgentID
+        self.updatedByAgentID = updatedByAgentID
+        self.createdAtUnixMs = createdAtUnixMs
+        self.updatedAtUnixMs = updatedAtUnixMs
+    }
+
+    public func validate() throws {
+        try AgentGroupChatValidation.identifier(id, field: "teamAssetID")
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(teamRoomID, field: "teamID")
+        try AgentGroupChatValidation.text(title, field: "teamAssetTitle", maximumLength: 240)
+        try AgentGroupChatValidation.optionalText(
+            markdown,
+            field: "teamAssetMarkdown",
+            maximumLength: 128_000
+        )
+        if let createdByAgentID {
+            try AgentGroupChatValidation.identifier(createdByAgentID, field: "createdByAgentID")
+        }
+        if let updatedByAgentID {
+            try AgentGroupChatValidation.identifier(updatedByAgentID, field: "updatedByAgentID")
+        }
+        guard revision > 0 else { throw AgentGroupChatError.invalidField("teamAssetRevision") }
+        try AgentGroupChatValidation.timestamps(createdAtUnixMs, updatedAtUnixMs)
+    }
+}
+
+public struct LocalAgentTeamAssetRevision: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { "\(assetID):\(revision)" }
+    public let assetID: String
+    public let revision: Int
+    public let title: String
+    public let markdown: String
+    public let editorAgentID: String?
+    public let createdAtUnixMs: Int64
+
+    public init(
+        assetID: String,
+        revision: Int,
+        title: String,
+        markdown: String,
+        editorAgentID: String?,
+        createdAtUnixMs: Int64
+    ) {
+        self.assetID = assetID
+        self.revision = revision
+        self.title = title
+        self.markdown = markdown
+        self.editorAgentID = editorAgentID
+        self.createdAtUnixMs = createdAtUnixMs
+    }
+}
+
+public struct LocalAgentTodoTeamAssetSnapshot: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { "\(todoID):\(assetID):\(revision)" }
+    public let todoID: String
+    public let assetID: String
+    public let teamRoomID: String
+    public let category: LocalAgentTeamAssetCategory
+    public let title: String
+    public let markdown: String
+    public let revision: Int
+    public let capturedAtUnixMs: Int64
+
+    public init(
+        todoID: String,
+        assetID: String,
+        teamRoomID: String,
+        category: LocalAgentTeamAssetCategory,
+        title: String,
+        markdown: String,
+        revision: Int,
+        capturedAtUnixMs: Int64
+    ) {
+        self.todoID = todoID
+        self.assetID = assetID
+        self.teamRoomID = teamRoomID
+        self.category = category
+        self.title = title
+        self.markdown = markdown
+        self.revision = revision
+        self.capturedAtUnixMs = capturedAtUnixMs
     }
 }
 
@@ -1623,6 +1853,7 @@ public struct LocalAgentTodoDraft: Codable, Sendable, Equatable {
     public let additionalSources: [LocalAgentTodoSourceDraft]
     public let dependencies: [LocalAgentTodoDependencyDraft]
     public let executionPlan: LocalAgentTodoExecutionPlan
+    public let executionContract: LocalAgentTodoExecutionContract
     /// The manager Agent that turned inbox messages into this team Todo. This is used only for
     /// authorization; the assignee remains the `agentID` passed to `createAgentTodo`.
     public let creatorAgentID: String?
@@ -1637,6 +1868,7 @@ public struct LocalAgentTodoDraft: Codable, Sendable, Equatable {
         additionalSources: [LocalAgentTodoSourceDraft] = [],
         dependencies: [LocalAgentTodoDependencyDraft] = [],
         executionPlan: LocalAgentTodoExecutionPlan = .init(),
+        executionContract: LocalAgentTodoExecutionContract = .init(),
         creatorAgentID: String? = nil
     ) {
         self.title = title
@@ -1648,6 +1880,7 @@ public struct LocalAgentTodoDraft: Codable, Sendable, Equatable {
         self.additionalSources = additionalSources
         self.dependencies = dependencies
         self.executionPlan = executionPlan
+        self.executionContract = executionContract
         self.creatorAgentID = creatorAgentID
     }
 
@@ -1660,6 +1893,7 @@ public struct LocalAgentTodoUpdate: Codable, Sendable, Equatable {
     public let status: LocalAgentTodoStatus?
     public let blockedReason: String?
     public let result: String?
+    public let executionContract: LocalAgentTodoExecutionContract?
 
     public init(
         title: String? = nil,
@@ -1667,7 +1901,8 @@ public struct LocalAgentTodoUpdate: Codable, Sendable, Equatable {
         priority: Int? = nil,
         status: LocalAgentTodoStatus? = nil,
         blockedReason: String? = nil,
-        result: String? = nil
+        result: String? = nil,
+        executionContract: LocalAgentTodoExecutionContract? = nil
     ) {
         self.title = title
         self.detail = detail
@@ -1675,6 +1910,7 @@ public struct LocalAgentTodoUpdate: Codable, Sendable, Equatable {
         self.status = status
         self.blockedReason = blockedReason
         self.result = result
+        self.executionContract = executionContract
     }
 }
 
@@ -2069,6 +2305,51 @@ public protocol AgentGroupChatStore: Sendable {
         agentID: String,
         includeTerminal: Bool
     ) async throws -> [LocalAgentTodo]
+    func listTeamAssets(
+        ownerUserID: String,
+        teamRoomID: String,
+        includeArchived: Bool
+    ) async throws -> [LocalAgentTeamAsset]
+    func teamAsset(
+        ownerUserID: String,
+        teamRoomID: String,
+        assetID: String
+    ) async throws -> LocalAgentTeamAsset?
+    func upsertTeamAsset(
+        ownerUserID: String,
+        teamRoomID: String,
+        assetID: String?,
+        editorAgentID: String?,
+        category: LocalAgentTeamAssetCategory,
+        title: String,
+        markdown: String,
+        expectedRevision: Int?,
+        nowUnixMs: Int64
+    ) async throws -> LocalAgentTeamAsset
+    func archiveTeamAsset(
+        ownerUserID: String,
+        teamRoomID: String,
+        assetID: String,
+        editorAgentID: String?,
+        expectedRevision: Int,
+        nowUnixMs: Int64
+    ) async throws -> LocalAgentTeamAsset
+    func listTeamAssetRevisions(
+        ownerUserID: String,
+        teamRoomID: String,
+        assetID: String,
+        limit: Int
+    ) async throws -> [LocalAgentTeamAssetRevision]
+    func listTodoTeamAssetSnapshots(
+        ownerUserID: String,
+        todoID: String
+    ) async throws -> [LocalAgentTodoTeamAssetSnapshot]
+    func todoTeamAssetSnapshot(
+        ownerUserID: String,
+        todoID: String,
+        assetID: String,
+        revision: Int
+    ) async throws -> LocalAgentTodoTeamAssetSnapshot?
     func listTeamTodos(
         ownerUserID: String,
         teamRoomID: String,
@@ -2149,12 +2430,33 @@ public protocol AgentGroupChatStore: Sendable {
         ownerUserID: String,
         deliveryID: String
     ) async throws -> LocalAgentTodo?
+    func agentTodoScheduleState(
+        ownerUserID: String,
+        agentID: String
+    ) async throws -> LocalAgentTodoScheduleState
+    func startNextReadyAgentTodo(
+        ownerUserID: String,
+        agentID: String,
+        nowUnixMs: Int64
+    ) async throws -> ProjectAgentDelivery?
     func enqueueAgentTodoStatus(
         ownerUserID: String,
         agentID: String,
         todoID: String,
+        excludingAgentID: String?,
         nowUnixMs: Int64
-    ) async throws -> ProjectAgentDelivery
+    ) async throws -> [ProjectAgentDelivery]
+    func enqueueAgentTodoReady(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String,
+        nowUnixMs: Int64
+    ) async throws -> ProjectAgentDelivery?
+    func enqueueReadyDependentAgentTodos(
+        ownerUserID: String,
+        prerequisiteTodoID: String,
+        nowUnixMs: Int64
+    ) async throws -> [ProjectAgentDelivery]
     func message(
         ownerUserID: String,
         roomID: String,

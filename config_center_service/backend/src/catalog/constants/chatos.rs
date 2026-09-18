@@ -3,11 +3,6 @@ pub const CHATOS_HOST_CONFIG_KEY: &str = "chatos.runtime.host";
 pub const CHATOS_BACKEND_PORT_CONFIG_KEY: &str = "chatos.runtime.port";
 pub const CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY: &str = "chatos.runtime.internal_mtls_port";
 pub const CHATOS_DATABASE_URL_CONFIG_KEY: &str = "chatos.runtime.database_url";
-pub const CHATOS_MONGODB_DATABASE_CONFIG_KEY: &str = "chatos.runtime.mongodb_database";
-pub const CHATOS_LEGACY_AUTH_DATABASE_URL_CONFIG_KEY: &str =
-    "chatos.runtime.legacy_auth_database_url";
-pub const CHATOS_LEGACY_AUTH_MONGODB_DATABASE_CONFIG_KEY: &str =
-    "chatos.runtime.legacy_auth_mongodb_database";
 pub const CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY: &str = "chatos.downstream.user_service_base_url";
 pub const CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY: &str =
     "chatos.downstream.user_service_internal_base_url";
@@ -67,6 +62,10 @@ pub const CHATOS_OTLP_TRACE_SAMPLE_RATIO_CONFIG_KEY: &str =
 pub const CHATOS_OTLP_EXPORT_TIMEOUT_MS_CONFIG_KEY: &str = "chatos.observability.export_timeout_ms";
 pub const CHATOS_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY: &str = "chatos.mcp.result_rabbitmq_url";
 pub const CHATOS_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY: &str = "chatos.mcp.result_queue_prefix";
+pub const CHATOS_CLOUD_AGENT_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
+    "chatos.cloud_agent.outbox_reconcile_ms";
+pub const CHATOS_CLOUD_AGENT_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =
+    "chatos.cloud_agent.outbox_batch_size";
 pub const CHATOS_CORS_ORIGINS_CONFIG_KEY: &str = "chatos.http.cors_origins";
 pub const CHATOS_PLUGIN_UI_PARENT_ORIGIN_CONFIG_KEY: &str = "chatos.plugin_ui.parent_origin";
 pub const CHATOS_PLUGIN_UI_RESOURCE_ORIGIN_CONFIG_KEY: &str = "chatos.plugin_ui.resource_origin";

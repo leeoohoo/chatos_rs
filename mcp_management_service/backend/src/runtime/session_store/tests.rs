@@ -196,7 +196,7 @@ fn encrypted_snapshot_roundtrip_preserves_private_bindings_without_plaintext_at_
     let cipher = SnapshotCipher::new("shared-session-encryption-secret").unwrap();
     let snapshot = snapshot("encrypted-session");
     let document = cipher.encrypt(&snapshot).unwrap();
-    let encoded = mongodb::bson::to_vec(&document).unwrap();
+    let encoded = serde_json::to_vec(&document).unwrap();
     for secret in [
         b"shared-store-secret".as_slice(),
         b"oauth-private-reference".as_slice(),
@@ -368,10 +368,10 @@ async fn memory_store_stats_report_active_sessions_and_snapshot_sizes() {
 }
 
 #[tokio::test]
-#[ignore = "requires CHATOS_MCP_MANAGEMENT_TEST_DATABASE_URL"]
-async fn mongodb_store_is_shared_across_service_instances() {
-    let database_url = std::env::var("CHATOS_MCP_MANAGEMENT_TEST_DATABASE_URL")
-        .expect("CHATOS_MCP_MANAGEMENT_TEST_DATABASE_URL");
+#[ignore = "requires MCP_MANAGEMENT_TEST_DATABASE_URL and migrated PostgreSQL"]
+async fn postgresql_store_is_shared_across_service_instances() {
+    let database_url = std::env::var("MCP_MANAGEMENT_TEST_DATABASE_URL")
+        .expect("MCP_MANAGEMENT_TEST_DATABASE_URL");
     let session_id = format!("shared-store-test-{}", uuid::Uuid::new_v4());
     let first = RuntimeSessionStore::connect(
         database_url.as_str(),

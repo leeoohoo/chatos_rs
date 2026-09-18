@@ -90,6 +90,13 @@ export function DataSectionContainer(props: DataSectionContainerProps) {
       onReload={() => void threadExplorer.loadThreads()}
       threads={threadExplorer.threads}
       tenantLabelsById={tenantLabelsById}
+      threadPage={threadExplorer.threadPage}
+      threadPageSize={threadExplorer.threadPageSize}
+      threadHasMore={threadExplorer.threadHasMore}
+      threadMaxReachablePage={threadExplorer.threadMaxReachablePage}
+      onThreadPageChange={(page, pageSize) =>
+        void threadExplorer.handleThreadPageChange(page, pageSize)
+      }
       selectedThread={threadExplorer.selectedThread}
       onSelectThread={(thread) =>
         void threadExplorer.loadThreadDetails(thread, { resetPage: true })
@@ -98,10 +105,18 @@ export function DataSectionContainer(props: DataSectionContainerProps) {
       threadRecordPage={threadExplorer.threadRecordPage}
       threadRecordPageSize={threadExplorer.threadRecordPageSize}
       threadRecordTotal={threadExplorer.threadRecordTotal}
+      threadRecordMaxReachablePage={threadExplorer.threadRecordMaxReachablePage}
       onThreadRecordPageChange={(page, pageSize) =>
         void threadExplorer.handleThreadRecordPageChange(page, pageSize)
       }
       threadSummaries={threadExplorer.threadSummaries}
+      threadSummaryPage={threadExplorer.threadSummaryPage}
+      threadSummaryPageSize={threadExplorer.threadSummaryPageSize}
+      threadSummaryHasMore={threadExplorer.threadSummaryHasMore}
+      threadSummaryMaxReachablePage={threadExplorer.threadSummaryMaxReachablePage}
+      onThreadSummaryPageChange={(page, pageSize) =>
+        void threadExplorer.handleThreadSummaryPageChange(page, pageSize)
+      }
       subjectMemories={threadExplorer.subjectMemories}
       detailTab={threadExplorer.detailTab}
       onDetailTabChange={(detailTab) => threadExplorer.setDetailTab(detailTab)}

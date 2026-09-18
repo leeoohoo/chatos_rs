@@ -37,10 +37,15 @@ fn truncate_text_chars(value: &str, max_chars: usize) -> Option<String> {
     if original_chars <= max_chars {
         return None;
     }
-    let preview = value.chars().take(max_chars).collect::<String>();
+    let head_chars = max_chars.saturating_add(1) / 2;
+    let tail_chars = max_chars / 2;
+    let head = value.chars().take(head_chars).collect::<String>();
+    let mut tail = value.chars().rev().take(tail_chars).collect::<Vec<_>>();
+    tail.reverse();
+    let tail = tail.into_iter().collect::<String>();
     Some(format!(
-        "{}\n\n...（内容已截断，原始大小 {} chars）",
-        preview, original_chars
+        "{}\n\n...（内容已截断，原始大小 {} chars）...\n\n{}",
+        head, original_chars, tail
     ))
 }
 

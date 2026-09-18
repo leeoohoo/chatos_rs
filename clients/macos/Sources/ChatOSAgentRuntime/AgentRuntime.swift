@@ -127,12 +127,12 @@ public struct AgentRuntime: Sendable {
                         do {
                             outcome = try await withTimeout(seconds: remainingTime()) { try await execute(call) }
                         } catch {
+                            if error is CancellationError { throw error }
                             if definition.effect == .billable || definition.effect == .write {
                                 state.status = .needsReview
                                 try await emit("needs_review", "\(call.name)：\(error.localizedDescription)")
                                 return snapshot(state)
                             }
-                            if error is CancellationError { throw error }
                             outcome = .failure(error.localizedDescription)
                         }
                     } else { outcome = .failure("工具不可用：\(call.name)。请选择本次提供的工具。") }

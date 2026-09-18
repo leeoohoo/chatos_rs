@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, Query, State},
+    http::StatusCode,
     Json,
 };
 use serde::Deserialize;
@@ -29,6 +30,9 @@ pub struct ListSummariesQuery {
     summary_type: Option<String>,
     status: Option<String>,
     level: Option<i64>,
+    after_level: Option<i64>,
+    after_created_at: Option<String>,
+    after_id: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
 }
@@ -86,20 +90,27 @@ pub async fn list_thread_summaries(
     Query(query): Query<ListSummariesQuery>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
     let tenant_id = auth.resolve_tenant_scope(query.tenant_id.as_deref())?;
-    let items: Vec<EngineSummary> = summaries::list_thread_summaries(
-        &state.pool,
-        thread_id.as_str(),
-        tenant_id.as_deref(),
-        query.source_id.as_deref(),
-        query.summary_type.as_deref(),
-        query.status.as_deref(),
-        query.level,
-        query.limit.unwrap_or(100),
-        query.offset.unwrap_or(0),
-    )
+    let values = summaries::ListSummariesQuery {
+        thread_id: thread_id.as_str(),
+        tenant_id: tenant_id.as_deref(),
+        source_id: query.source_id.as_deref(),
+        summary_type: query.summary_type.as_deref(),
+        status: query.status.as_deref(),
+        level: query.level,
+        after_level: query.after_level,
+        after_created_at: query.after_created_at.as_deref(),
+        after_id: query.after_id.as_deref(),
+        limit: query.limit.unwrap_or(100),
+        offset: query.offset.unwrap_or(0),
+    };
+    values
+        .cursor()
+        .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
+    let (items, has_more): (Vec<EngineSummary>, bool) =
+        summaries::list_thread_summaries(&state.pool, values)
     .await
     .map_err(internal_error)?;
-    Ok(Json(json!({ "items": items })))
+    Ok(Json(json!({ "items": items, "has_more": has_more })))
 }
 
 pub async fn list_summaries_by_thread_label(

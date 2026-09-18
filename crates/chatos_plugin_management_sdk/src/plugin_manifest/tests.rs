@@ -83,7 +83,7 @@ fn preserves_published_manifest_hashes() {
     let fixtures = [
         (
             include_str!("../../../../plugins/computer-use/chatos.plugin.json"),
-            "444eb31564cc2aa0852c2b055874bc2f68edbbc15f7ae2685300437d03c4a205",
+            "86b398bd8d11d1b02d035e7651aa0ba66e5e7a409528b92786f3fb06f0a7d4dc",
             false,
         ),
         (

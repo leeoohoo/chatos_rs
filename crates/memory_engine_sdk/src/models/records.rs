@@ -73,6 +73,8 @@ pub struct SdkListThreadRecordsRequest {
     pub role: Option<String>,
     pub record_type: Option<String>,
     pub summary_status: Option<String>,
+    pub after_created_at: Option<String>,
+    pub after_id: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
     pub order: Option<String>,
@@ -107,6 +109,8 @@ pub struct CountThreadRecordsResponse {
 pub struct ThreadRecordsPageResponse {
     pub items: Vec<EngineRecord>,
     pub total: i64,
+    #[serde(default)]
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

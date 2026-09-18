@@ -33,20 +33,27 @@ pub async fn list_thread_summaries(
     Json(req): Json<SdkListThreadSummariesRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     auth.require_tenant(req.tenant_id.as_str())?;
-    let items: Vec<EngineSummary> = summaries::list_thread_summaries(
-        &state.pool,
-        thread_id.as_str(),
-        Some(req.tenant_id.as_str()),
-        Some(auth.source_id()),
-        req.summary_type.as_deref(),
-        req.status.as_deref(),
-        req.level,
-        req.limit.unwrap_or(100),
-        req.offset.unwrap_or(0),
-    )
+    let values = summaries::ListSummariesQuery {
+        thread_id: thread_id.as_str(),
+        tenant_id: Some(req.tenant_id.as_str()),
+        source_id: Some(auth.source_id()),
+        summary_type: req.summary_type.as_deref(),
+        status: req.status.as_deref(),
+        level: req.level,
+        after_level: req.after_level,
+        after_created_at: req.after_created_at.as_deref(),
+        after_id: req.after_id.as_deref(),
+        limit: req.limit.unwrap_or(100),
+        offset: req.offset.unwrap_or(0),
+    };
+    values
+        .cursor()
+        .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
+    let (items, has_more): (Vec<EngineSummary>, bool) =
+        summaries::list_thread_summaries(&state.pool, values)
     .await
     .map_err(internal_error)?;
-    Ok(Json(json!({ "items": items })))
+    Ok(Json(json!({ "items": items, "has_more": has_more })))
 }
 
 pub async fn delete_thread_summary(

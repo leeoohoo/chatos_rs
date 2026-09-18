@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use mongodb::Client;
 use std::fs;
 use tracing::warn;
 
@@ -35,11 +34,16 @@ impl AppState {
                 config.plugin_artifact_storage_dir.display()
             )
         })?;
-        let client = Client::with_uri_str(config.database_url.as_str())
+        let postgres_config = chatos_postgres::PostgresConfig::from_env(
+            config.database_url.clone(),
+            "plugin-management",
+            "PLUGIN_MANAGEMENT",
+        )
+        .map_err(|err| err.to_string())?;
+        let pool = chatos_postgres::connect(&postgres_config)
             .await
-            .map_err(|err| format!("connect MongoDB failed: {err}"))?;
-        let db = client.database(config.mongodb_database.as_str());
-        let store = AppStore::new(db);
+            .map_err(|err| err.to_string())?;
+        let store = AppStore::new(pool);
         store.initialize().await?;
         store.remove_retired_direct_local_mcps().await?;
         store.remove_retired_builtin_skills().await?;

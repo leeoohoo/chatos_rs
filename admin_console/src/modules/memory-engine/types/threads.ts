@@ -53,6 +53,9 @@ export interface ThreadQuery {
   mapping_version?: string;
   thread_label?: string;
   status?: string;
+  before_updated_at?: string;
+  before_created_at?: string;
+  before_id?: string;
   limit?: number;
   offset?: number;
 }
@@ -63,6 +66,8 @@ export interface ThreadRecordsQuery {
   role?: string;
   record_type?: string;
   summary_status?: string;
+  after_created_at?: string;
+  after_id?: string;
   limit?: number;
   offset?: number;
   order?: string;
@@ -71,4 +76,5 @@ export interface ThreadRecordsQuery {
 export interface ThreadRecordsPage {
   items: EngineRecord[];
   total: number;
+  has_more?: boolean;
 }
