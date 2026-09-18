@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "name": "chatos-solution-studio",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Create traceable requirements, solution designs, and dependency-aware execution plans.",
   "author": { "name": "Chatos" },
   "license": "Apache-2.0",

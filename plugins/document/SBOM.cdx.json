@@ -11,11 +11,11 @@
     ],
     "component": {
       "type": "application",
-      "bom-ref": "pkg:npm/%40chatos/document-mcp@0.1.6",
+      "bom-ref": "pkg:npm/%40chatos/document-mcp@0.1.7",
       "name": "@chatos/document-mcp",
-      "version": "0.1.6",
+      "version": "0.1.7",
       "description": "Local, workspace-bounded MCP tools for Word, Excel, PowerPoint, and PDF files.",
-      "purl": "pkg:npm/%40chatos/document-mcp@0.1.6",
+      "purl": "pkg:npm/%40chatos/document-mcp@0.1.7",
       "licenses": [
         {
           "license": {
@@ -27,11 +27,11 @@
     "properties": [
       {
         "name": "chatos:source:packageLockSha256",
-        "value": "aeebac245d97225652a3f887749f91eba9f8376e0c4a36711e3ba75bc0596850"
+        "value": "cd2ca369967e37bde7b8e00d8f64041041a5e49c3c8b517589a0de57e0974085"
       },
       {
         "name": "chatos:source:esbuildMetafileSha256",
-        "value": "b6f191a833035e0dac189600f0a52d65a02b0a4cf3de3f21ffcacf6882037c49"
+        "value": "e8bde08aaab39f9d232d54839289ebd1369dba94a245c71f85de7084e2061561"
       },
       {
         "name": "chatos:scope",
@@ -1165,11 +1165,11 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/fast-uri@3.1.5",
+      "bom-ref": "pkg:npm/fast-uri@3.1.8",
       "name": "fast-uri",
-      "version": "3.1.5",
+      "version": "3.1.8",
       "scope": "required",
-      "purl": "pkg:npm/fast-uri@3.1.5",
+      "purl": "pkg:npm/fast-uri@3.1.8",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -1178,13 +1178,13 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "807c00d4ef4b0c870aba730a84e6d2fc78a6c2d7a13b59cf50408a02ee53a4a81a3b5f5f716125e1b96259ed635b1545bc85f3b498e34382fc5d0d4453d7fb27"
+          "content": "19932d6544cd4693952040a85f02cd652e7150613e99535b4c1f21ffb4708764c559c05088fcd3832662d39045f543192a42c9bfc5c14494e553bce0f3e65f32"
         }
       ],
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz"
+          "url": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.8.tgz"
         }
       ],
       "properties": [
@@ -1200,11 +1200,11 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/fflate@0.8.2",
+      "bom-ref": "pkg:npm/fflate@0.8.3",
       "name": "fflate",
-      "version": "0.8.2",
+      "version": "0.8.3",
       "scope": "required",
-      "purl": "pkg:npm/fflate@0.8.2",
+      "purl": "pkg:npm/fflate@0.8.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -1213,13 +1213,13 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "70f254e3b39a02809b834a41bf3b20a533e19a1a88e5e26387f248bbcb4f8f9abe4fb88bbd6fc901852a984eca381e11d59c8487305a210a50a5aadd045e73f0"
+          "content": "b5b64db89acbc06529df3b2106d772e16f8e47166e221f1ae629722044030b9ad8d5fdd4db424caf2d0b977581cd4e7c1192ac12e2455e16f9830bfc0ac3ef80"
         }
       ],
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/fflate/-/fflate-0.8.2.tgz"
+          "url": "https://registry.npmjs.org/fflate/-/fflate-0.8.3.tgz"
         }
       ],
       "properties": [
@@ -1523,7 +1523,7 @@
       ]
     },
     {
-      "ref": "pkg:npm/%40chatos/document-mcp@0.1.6",
+      "ref": "pkg:npm/%40chatos/document-mcp@0.1.7",
       "dependsOn": [
         "file:dist/pdfium.wasm",
         "file:vendor/officecli/darwin/arm64/officecli",
@@ -1556,8 +1556,8 @@
         "pkg:npm/ajv-formats@3.0.1",
         "pkg:npm/ajv@8.20.0",
         "pkg:npm/fast-deep-equal@3.1.3",
-        "pkg:npm/fast-uri@3.1.5",
-        "pkg:npm/fflate@0.8.2",
+        "pkg:npm/fast-uri@3.1.8",
+        "pkg:npm/fflate@0.8.3",
         "pkg:npm/json-schema-traverse@1.0.0",
         "pkg:npm/pako@1.0.11",
         "pkg:npm/pdf-lib@1.17.1",

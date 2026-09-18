@@ -6,6 +6,8 @@ The first-party ChatOS plugins are maintained in this repository so client proto
 - `computer-use/`: native macOS and Windows Computer Use MCP implementations.
 - `document/`: TypeScript Office and PDF MCP with workspace and managed-artifact boundaries.
 - `diagram-studio/`: TypeScript MCP plus a packaged local visual workbench for structured diagrams and PlantUML interoperability.
+- `web-design-studio/`: TypeScript MCP plus an AI-first visual website design workbench.
+- `solution-studio/`: TypeScript MCP plus a requirements, solution-design, and execution-planning workbench.
 
 Plugins may provide MCP servers, skills, permission declarations, managed artifacts, and local application surfaces. Runtime data can be isolated by user and project according to the plugin manifest.
 

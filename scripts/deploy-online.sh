@@ -54,6 +54,7 @@ Usage:
   scripts/deploy-online.sh plugin document
   scripts/deploy-online.sh plugin diagram-studio
   scripts/deploy-online.sh plugin web-design-studio
+  scripts/deploy-online.sh plugin solution-studio
   scripts/deploy-online.sh plugin browser computer-use
   scripts/deploy-online.sh client mac
   scripts/deploy-online.sh client windows
@@ -230,6 +231,12 @@ build_plugin_artifact() {
       artifact_name="$(cd "$ROOT_DIR/plugins/web-design-studio" && npm pack --pack-destination "$DEPLOY_TMP" | tail -n 1)"
       printf '%s\n' "$DEPLOY_TMP/$artifact_name"
       ;;
+    solution-studio)
+      echo "[INFO] verifying and building Solution Studio Plugin"
+      npm --prefix "$ROOT_DIR/plugins/solution-studio" run pack:verify >&2
+      artifact_name="$(cd "$ROOT_DIR/plugins/solution-studio" && npm pack --pack-destination "$DEPLOY_TMP" | tail -n 1)"
+      printf '%s\n' "$DEPLOY_TMP/$artifact_name"
+      ;;
     *)
       echo "[ERROR] unknown Plugin: $plugin" >&2
       exit 2
@@ -239,7 +246,7 @@ build_plugin_artifact() {
 
 plugin_publisher_json() {
   case "$1" in
-    browser|document|diagram-studio|web-design-studio)
+    browser|document|diagram-studio|web-design-studio|solution-studio)
       jq -nc '{id:"chatos",name:"Chatos",website:"https://github.com/chatos-ai"}'
       ;;
     computer-use)
@@ -336,7 +343,7 @@ deploy_plugins() {
   local plugins=("$@")
   local plugin
   if [[ ${#plugins[@]} -eq 0 ]]; then
-    echo "[ERROR] expected Plugin: all, browser, computer-use, document, diagram-studio, or web-design-studio" >&2
+    echo "[ERROR] expected Plugin: all, browser, computer-use, document, diagram-studio, web-design-studio, or solution-studio" >&2
     exit 2
   fi
   if [[ "${plugins[0]}" == "all" ]]; then
@@ -344,11 +351,11 @@ deploy_plugins() {
       echo "[ERROR] Plugin 'all' cannot be combined with individual Plugins" >&2
       exit 2
     fi
-    plugins=(browser computer-use document diagram-studio web-design-studio)
+    plugins=(browser computer-use document diagram-studio web-design-studio solution-studio)
   fi
   for plugin in "${plugins[@]}"; do
     case "$plugin" in
-      browser|computer-use|document|diagram-studio|web-design-studio) ;;
+      browser|computer-use|document|diagram-studio|web-design-studio|solution-studio) ;;
       *)
         echo "[ERROR] unknown Plugin: $plugin" >&2
         exit 2
@@ -393,6 +400,7 @@ Plugins:
   document
   diagram-studio
   web-design-studio
+  solution-studio
 Clients:
   mac
   windows
@@ -413,8 +421,9 @@ ChatOS online deployment
  9) Deploy Document Tools
  10) Deploy Diagram Studio
  11) Deploy Web Design Studio
- 12) Show deployment status
- 13) Follow deployment logs
+ 12) Deploy Solution Studio
+ 13) Show deployment status
+ 14) Follow deployment logs
 EOF
   read -r -p "Select: " selection
   case "$selection" in
@@ -434,8 +443,9 @@ EOF
     9) set -- plugin document ;;
     10) set -- plugin diagram-studio ;;
     11) set -- plugin web-design-studio ;;
-    12) set -- status ;;
-    13)
+    12) set -- plugin solution-studio ;;
+    13) set -- status ;;
+    14)
       read -r -p "Service name (empty for all): " service
       set -- logs "$service"
       ;;

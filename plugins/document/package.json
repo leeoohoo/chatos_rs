@@ -1,6 +1,6 @@
 {
   "name": "@chatos/document-mcp",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Local, workspace-bounded MCP tools for Word, Excel, PowerPoint, and PDF files.",
   "license": "Apache-2.0",
   "type": "module",
@@ -44,7 +44,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
     "@hyzyla/pdfium": "2.1.13",
-    "fflate": "0.8.2",
+    "fflate": "0.8.3",
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "4.8.69"
   },

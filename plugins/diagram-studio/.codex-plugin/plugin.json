@@ -1,6 +1,6 @@
 {
   "name": "diagram-studio",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Create architecture, flowchart, swimlane, topology, sequence, and mind-map diagrams with PlantUML interoperability.",
   "author": {
     "name": "Chatos"
