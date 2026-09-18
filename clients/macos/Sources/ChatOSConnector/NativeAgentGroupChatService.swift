@@ -1,3 +1,4 @@
+import ChatOSCore
 import Foundation
 
 public struct NativeAgentGroupChatChange: Sendable, Equatable {
@@ -37,18 +38,72 @@ public actor NativeAgentGroupChatService {
     }
 
     private let databaseURL: URL
+    private let agentArtifactService: (any AgentArtifactRemoteServing)?
     private var openedStore: SQLiteAgentGroupChatStore?
     private var changeObservers: [UUID: ChangeObserver] = [:]
 
-    public init(databaseURL: URL) {
+    public init(
+        databaseURL: URL,
+        agentArtifactService: (any AgentArtifactRemoteServing)? = nil
+    ) {
         self.databaseURL = databaseURL
+        self.agentArtifactService = agentArtifactService
     }
 
     public func store() throws -> SQLiteAgentGroupChatStore {
         if let openedStore { return openedStore }
-        let store = try SQLiteAgentGroupChatStore(databaseURL: databaseURL)
+        let store = try SQLiteAgentGroupChatStore(
+            databaseURL: databaseURL,
+            agentArtifactService: agentArtifactService
+        )
         openedStore = store
         return store
+    }
+
+    @discardableResult
+    public func syncPendingAgentArtifacts(
+        ownerUserID: String,
+        limit: Int = 8
+    ) async throws -> Int {
+        guard let agentArtifactService else { return 0 }
+        guard (1...32).contains(limit) else {
+            throw AgentGroupChatError.invalidField("limit")
+        }
+        let store = try store()
+        var completed = 0
+        for _ in 0..<limit {
+            try Task.checkCancellation()
+            let now = Int64(Date().timeIntervalSince1970 * 1_000)
+            guard let job = try await store.claimNextAgentArtifactUpload(
+                ownerUserID: ownerUserID,
+                nowUnixMs: now
+            ) else { break }
+            do {
+                let metadata = try await agentArtifactService.upload(job.request)
+                guard metadata.sha256 == job.request.sha256,
+                      metadata.size == job.request.data.count else {
+                    throw AgentGroupChatError.storage("Agent artifact metadata mismatch")
+                }
+                try await store.markAgentArtifactUploadSynced(
+                    ownerUserID: ownerUserID,
+                    attachmentID: job.attachmentID,
+                    metadata: metadata,
+                    nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+                )
+                completed += 1
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                try await store.markAgentArtifactUploadFailed(
+                    ownerUserID: ownerUserID,
+                    attachmentID: job.attachmentID,
+                    attempt: job.attempt,
+                    error: "云端同步暂时失败，请稍后重试。",
+                    nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+                )
+            }
+        }
+        return completed
     }
 
     /// Emits process-local invalidations after the durable SQLite write has completed. Consumers

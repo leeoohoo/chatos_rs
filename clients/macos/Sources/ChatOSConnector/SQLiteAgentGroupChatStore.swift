@@ -1,17 +1,40 @@
 import ChatOSAgentRuntime
 import ChatOSCore
+import CryptoKit
 import Foundation
 import SQLite3
+
+public struct ProjectAgentArtifactUploadJob: Sendable, Equatable {
+    public let attachmentID: String
+    public let attempt: Int
+    public let request: AgentArtifactUploadRequest
+
+    public init(attachmentID: String, attempt: Int, request: AgentArtifactUploadRequest) {
+        self.attachmentID = attachmentID
+        self.attempt = attempt
+        self.request = request
+    }
+}
 
 /// Account- and project-scoped local authority for Agent rooms. The transcript and delivery
 /// queue remain usable without the network, Memory Engine, Plugin Management or Codex CLI.
 public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChatRunStoring {
+    private struct StoredMessageAttachment {
+        let attachment: ProjectAgentMessageAttachment
+        let relativePath: String
+    }
+
     private nonisolated(unsafe) var database: OpaquePointer?
     private let attachmentsRootURL: URL
+    private let agentArtifactService: (any AgentArtifactRemoteServing)?
 
-    public init(databaseURL: URL) throws {
+    public init(
+        databaseURL: URL,
+        agentArtifactService: (any AgentArtifactRemoteServing)? = nil
+    ) throws {
         attachmentsRootURL = databaseURL.deletingLastPathComponent()
             .appendingPathComponent("AgentGroupChatAttachments", isDirectory: true)
+        self.agentArtifactService = agentArtifactService
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -2287,7 +2310,8 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             let persistedAttachments = try persistMessageAttachments(
                 ownerUserID: ownerUserID,
                 messageID: messageID,
-                drafts: draft.attachmentItems
+                drafts: draft.attachmentItems,
+                queueAgentArtifacts: draft.senderKind == .agent
             )
 
             let message = ProjectAgentMessage(
@@ -2388,43 +2412,255 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         roomID: String,
         messageID: String,
         attachmentID: String
-    ) throws -> ProjectAgentMessageAttachmentPayload? {
+    ) async throws -> ProjectAgentMessageAttachmentPayload? {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(roomID, field: "roomID")
         try AgentGroupChatValidation.identifier(messageID, field: "messageID")
         try AgentGroupChatValidation.identifier(attachmentID, field: "attachmentID")
-        return try query(
+        guard let stored = try query(
             """
-            SELECT a.id, a.name, a.mime_type, a.size_bytes, a.kind, a.origin, a.relative_path
+            SELECT a.id, a.name, a.mime_type, a.size_bytes, a.kind, a.origin,
+                   a.relative_path, a.sha256, a.sync_status, a.artifact_id,
+                   a.storage_provider, a.bucket, a.object_key, a.remote_view_path,
+                   a.upload_error, a.synced_at_unix_ms
             FROM project_agent_message_attachments a
             JOIN project_agent_messages m
               ON m.owner_user_id = a.owner_user_id AND m.id = a.message_id
             WHERE a.owner_user_id = ? AND a.message_id = ? AND a.id = ? AND m.room_id = ?
             """,
-            [.text(ownerUserID), .text(messageID), .text(attachmentID), .text(roomID)]
-        ) { statement in
-            guard let kind = ConversationAttachmentKind(rawValue: Self.string(statement, 4)),
-                  let origin = ConversationAttachmentOrigin(rawValue: Self.string(statement, 5)) else {
-                throw AgentGroupChatError.storage("invalid message attachment")
+            [.text(ownerUserID), .text(messageID), .text(attachmentID), .text(roomID)],
+            row: { statement in
+                guard let kind = ConversationAttachmentKind(rawValue: Self.string(statement, 4)),
+                      let origin = ConversationAttachmentOrigin(rawValue: Self.string(statement, 5)) else {
+                    throw AgentGroupChatError.storage("invalid message attachment")
+                }
+                let attachment = ProjectAgentMessageAttachment(
+                    id: Self.string(statement, 0),
+                    name: Self.string(statement, 1),
+                    mimeType: Self.string(statement, 2),
+                    size: Int(sqlite3_column_int64(statement, 3)),
+                    kind: kind,
+                    origin: origin,
+                    sha256: Self.optionalString(statement, 7),
+                    syncStatus: ProjectAgentMessageAttachmentSyncStatus(
+                        rawValue: Self.string(statement, 8)
+                    ) ?? .localOnly,
+                    artifactID: Self.optionalString(statement, 9),
+                    storageProvider: Self.optionalString(statement, 10),
+                    bucket: Self.optionalString(statement, 11),
+                    objectKey: Self.optionalString(statement, 12),
+                    remoteViewPath: Self.optionalString(statement, 13),
+                    uploadError: Self.optionalString(statement, 14),
+                    syncedAtUnixMs: Self.optionalInt64(statement, 15)
+                )
+                return StoredMessageAttachment(
+                    attachment: attachment,
+                    relativePath: Self.string(statement, 6)
+                )
             }
-            let attachment = ProjectAgentMessageAttachment(
-                id: Self.string(statement, 0),
-                name: Self.string(statement, 1),
-                mimeType: Self.string(statement, 2),
-                size: Int(sqlite3_column_int64(statement, 3)),
-                kind: kind,
-                origin: origin
-            )
-            let relativePath = Self.string(statement, 6)
-            let fileURL = try self.attachmentFileURL(relativePath: relativePath)
-            guard FileManager.default.fileExists(atPath: fileURL.path) else {
+        ).first else { return nil }
+        let fileURL = try attachmentFileURL(relativePath: stored.relativePath)
+        if !FileManager.default.fileExists(atPath: fileURL.path) {
+            guard stored.attachment.syncStatus == .synced,
+                  let artifactID = stored.attachment.artifactID,
+                  let expectedSHA256 = stored.attachment.sha256,
+                  let agentArtifactService else {
                 throw AgentGroupChatError.storage("message attachment file is missing")
             }
-            return ProjectAgentMessageAttachmentPayload(
-                attachment: attachment,
-                localFileURL: fileURL
+            let data = try await agentArtifactService.download(artifactID: artifactID)
+            guard data.count == stored.attachment.size,
+                  Self.sha256(data) == expectedSHA256 else {
+                throw AgentGroupChatError.storage("restored message attachment failed integrity check")
+            }
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
             )
-        }.first
+            try data.write(to: fileURL, options: .atomic)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: fileURL.path
+            )
+        }
+        return ProjectAgentMessageAttachmentPayload(
+            attachment: stored.attachment,
+            localFileURL: fileURL
+        )
+    }
+
+    public func claimNextAgentArtifactUpload(
+        ownerUserID: String,
+        nowUnixMs: Int64
+    ) throws -> ProjectAgentArtifactUploadJob? {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
+        struct Candidate {
+            let id: String
+            let name: String
+            let mimeType: String
+            let size: Int
+            let sha256: String
+            let relativePath: String
+            let attempt: Int
+        }
+        guard let candidate: Candidate = try transaction({
+            let candidates: [Candidate] = try query(
+                """
+                SELECT a.id, a.name, a.mime_type, a.size_bytes, a.sha256,
+                       a.relative_path, a.upload_attempt
+                FROM project_agent_message_attachments a
+                JOIN project_agent_messages m
+                  ON m.owner_user_id = a.owner_user_id AND m.id = a.message_id
+                WHERE a.owner_user_id = ? AND m.sender_kind = 'agent'
+                  AND a.sync_status IN ('queued', 'failed', 'uploading')
+                  AND a.next_retry_at_unix_ms <= ? AND a.sha256 IS NOT NULL
+                ORDER BY a.next_retry_at_unix_ms, a.id
+                LIMIT 1
+                """,
+                [.text(ownerUserID), .integer(nowUnixMs)]
+            ) { statement in
+                Candidate(
+                    id: Self.string(statement, 0),
+                    name: Self.string(statement, 1),
+                    mimeType: Self.string(statement, 2),
+                    size: Int(sqlite3_column_int64(statement, 3)),
+                    sha256: Self.string(statement, 4),
+                    relativePath: Self.string(statement, 5),
+                    attempt: Int(sqlite3_column_int64(statement, 6)) + 1
+                )
+            }
+            guard let candidate = candidates.first else { return nil }
+            try execute(
+                """
+                UPDATE project_agent_message_attachments
+                SET sync_status = 'uploading', upload_attempt = ?, upload_error = NULL,
+                    next_retry_at_unix_ms = ?
+                WHERE owner_user_id = ? AND id = ?
+                  AND sync_status IN ('queued', 'failed', 'uploading')
+                  AND next_retry_at_unix_ms <= ?
+                """,
+                [
+                    .integer(Int64(candidate.attempt)), .integer(nowUnixMs + 300_000),
+                    .text(ownerUserID), .text(candidate.id), .integer(nowUnixMs),
+                ]
+            )
+            return sqlite3_changes(database) == 1 ? candidate : nil
+        }) else { return nil }
+
+        let fileURL = try attachmentFileURL(relativePath: candidate.relativePath)
+        guard let data = try? Data(contentsOf: fileURL, options: [.mappedIfSafe]),
+              data.count == candidate.size,
+              Self.sha256(data) == candidate.sha256 else {
+            try markAgentArtifactUploadFailed(
+                ownerUserID: ownerUserID,
+                attachmentID: candidate.id,
+                attempt: candidate.attempt,
+                error: "本地文档缺失或完整性校验失败。",
+                nowUnixMs: nowUnixMs
+            )
+            return nil
+        }
+        return ProjectAgentArtifactUploadJob(
+            attachmentID: candidate.id,
+            attempt: candidate.attempt,
+            request: .init(
+                name: candidate.name,
+                mimeType: candidate.mimeType,
+                data: data,
+                sha256: candidate.sha256,
+                idempotencyKey: "agent-attachment:\(candidate.id)"
+            )
+        )
+    }
+
+    public func markAgentArtifactUploadSynced(
+        ownerUserID: String,
+        attachmentID: String,
+        metadata: AgentArtifactRemoteMetadata,
+        nowUnixMs: Int64
+    ) throws {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(attachmentID, field: "attachmentID")
+        guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
+        try execute(
+            """
+            UPDATE project_agent_message_attachments
+            SET sync_status = 'synced', artifact_id = ?, storage_provider = ?, bucket = ?,
+                object_key = ?, remote_view_path = ?, upload_error = NULL,
+                synced_at_unix_ms = ?, next_retry_at_unix_ms = 0
+            WHERE owner_user_id = ? AND id = ? AND sync_status = 'uploading'
+              AND sha256 = ? AND size_bytes = ?
+            """,
+            [
+                .text(metadata.artifactID), .optionalText(metadata.storageProvider),
+                .optionalText(metadata.bucket), .optionalText(metadata.objectKey),
+                .optionalText(metadata.remoteViewPath), .integer(nowUnixMs),
+                .text(ownerUserID), .text(attachmentID), .text(metadata.sha256),
+                .integer(Int64(metadata.size)),
+            ]
+        )
+        guard sqlite3_changes(database) == 1 else { throw AgentGroupChatError.conflict }
+    }
+
+    public func markAgentArtifactUploadFailed(
+        ownerUserID: String,
+        attachmentID: String,
+        attempt: Int,
+        error: String,
+        nowUnixMs: Int64
+    ) throws {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(attachmentID, field: "attachmentID")
+        guard attempt > 0, nowUnixMs >= 0 else {
+            throw AgentGroupChatError.invalidField("artifactUploadFailure")
+        }
+        let exponent = min(10, attempt - 1)
+        let delay = min(Int64(3_600_000), Int64(5_000) * Int64(1 << exponent))
+        let safeError = String(error.prefix(512))
+        try execute(
+            """
+            UPDATE project_agent_message_attachments
+            SET sync_status = 'failed', upload_error = ?, next_retry_at_unix_ms = ?
+            WHERE owner_user_id = ? AND id = ? AND sync_status = 'uploading'
+            """,
+            [
+                .text(safeError), .integer(nowUnixMs + delay),
+                .text(ownerUserID), .text(attachmentID),
+            ]
+        )
+    }
+
+    public func retryAgentArtifactUpload(
+        ownerUserID: String,
+        attachmentID: String
+    ) throws {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(attachmentID, field: "attachmentID")
+        try execute(
+            """
+            UPDATE project_agent_message_attachments
+            SET sync_status = 'queued', upload_error = NULL, next_retry_at_unix_ms = 0
+            WHERE owner_user_id = ? AND id = ? AND sync_status = 'failed'
+            """,
+            [.text(ownerUserID), .text(attachmentID)]
+        )
+    }
+
+    public func nextAgentArtifactSyncDue(ownerUserID: String) throws -> Int64? {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        return try query(
+            """
+            SELECT MIN(next_retry_at_unix_ms)
+            FROM project_agent_message_attachments
+            WHERE owner_user_id = ? AND sync_status IN ('queued', 'failed', 'uploading')
+            """,
+            [.text(ownerUserID)]
+        ) { statement in
+            sqlite3_column_type(statement, 0) == SQLITE_NULL
+                ? nil
+                : sqlite3_column_int64(statement, 0)
+        }.first ?? nil
     }
 
     public func listMessages(
@@ -5167,7 +5403,9 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     ) throws -> [ProjectAgentMessageAttachment] {
         try query(
             """
-            SELECT id, name, mime_type, size_bytes, kind, origin
+            SELECT id, name, mime_type, size_bytes, kind, origin, sha256, sync_status,
+                   artifact_id, storage_provider, bucket, object_key, remote_view_path,
+                   upload_error, synced_at_unix_ms
             FROM project_agent_message_attachments
             WHERE owner_user_id = ? AND message_id = ?
             ORDER BY position
@@ -5184,7 +5422,18 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 mimeType: Self.string(statement, 2),
                 size: Int(sqlite3_column_int64(statement, 3)),
                 kind: kind,
-                origin: origin
+                origin: origin,
+                sha256: Self.optionalString(statement, 6),
+                syncStatus: ProjectAgentMessageAttachmentSyncStatus(
+                    rawValue: Self.string(statement, 7)
+                ) ?? .localOnly,
+                artifactID: Self.optionalString(statement, 8),
+                storageProvider: Self.optionalString(statement, 9),
+                bucket: Self.optionalString(statement, 10),
+                objectKey: Self.optionalString(statement, 11),
+                remoteViewPath: Self.optionalString(statement, 12),
+                uploadError: Self.optionalString(statement, 13),
+                syncedAtUnixMs: Self.optionalInt64(statement, 14)
             )
         }
     }
@@ -5192,7 +5441,8 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     private func persistMessageAttachments(
         ownerUserID: String,
         messageID: String,
-        drafts: [ProjectAgentMessageAttachmentDraft]
+        drafts: [ProjectAgentMessageAttachmentDraft],
+        queueAgentArtifacts: Bool
     ) throws -> [ProjectAgentMessageAttachment] {
         guard !drafts.isEmpty else { return [] }
         let directory = attachmentDirectoryURL(messageID: messageID)
@@ -5211,26 +5461,37 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 [.posixPermissions: 0o600],
                 ofItemAtPath: fileURL.path
             )
+            let sha256 = Self.sha256(draft.data)
+            let shouldQueue = queueAgentArtifacts
+                && draft.mimeType.lowercased().hasPrefix("text/markdown")
+                && draft.data.count <= AgentCommunicationPolicy.standard.maximumDocumentBytes
+            let syncStatus: ProjectAgentMessageAttachmentSyncStatus = shouldQueue
+                ? .queued
+                : .localOnly
             let attachment = ProjectAgentMessageAttachment(
                 id: attachmentID,
                 name: draft.name,
                 mimeType: draft.mimeType,
                 size: draft.data.count,
                 kind: draft.kind,
-                origin: draft.origin
+                origin: draft.origin,
+                sha256: sha256,
+                syncStatus: syncStatus
             )
             try execute(
                 """
                 INSERT INTO project_agent_message_attachments (
                     owner_user_id, message_id, id, position, name, mime_type,
-                    size_bytes, kind, origin, relative_path
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    size_bytes, kind, origin, relative_path, sha256, sync_status,
+                    upload_attempt, next_retry_at_unix_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
                 """,
                 [
                     .text(ownerUserID), .text(messageID), .text(attachmentID),
                     .integer(Int64(position)), .text(draft.name), .text(draft.mimeType),
                     .integer(Int64(draft.data.count)), .text(draft.kind.rawValue),
-                    .text(draft.origin.rawValue), .text(relativePath),
+                    .text(draft.origin.rawValue), .text(relativePath), .text(sha256),
+                    .text(syncStatus.rawValue),
                 ]
             )
             attachments.append(attachment)
@@ -5255,6 +5516,10 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             throw AgentGroupChatError.storage("invalid message attachment path")
         }
         return candidate
+    }
+
+    private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     private func readProposal(_ statement: OpaquePointer) throws -> LocalAgentCreationProposal {
@@ -5669,12 +5934,23 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             kind TEXT NOT NULL CHECK(kind IN ('image', 'file', 'audio')),
             origin TEXT NOT NULL CHECK(origin IN ('file', 'pastedImage', 'pastedDocument', 'pastedText')),
             relative_path TEXT NOT NULL,
+            sha256 TEXT,
+            sync_status TEXT NOT NULL DEFAULT 'local_only'
+                CHECK(sync_status IN ('local_only', 'queued', 'uploading', 'synced', 'failed')),
+            artifact_id TEXT,
+            storage_provider TEXT,
+            bucket TEXT,
+            object_key TEXT,
+            remote_view_path TEXT,
+            upload_error TEXT,
+            synced_at_unix_ms INTEGER,
+            upload_attempt INTEGER NOT NULL DEFAULT 0 CHECK(upload_attempt >= 0),
+            next_retry_at_unix_ms INTEGER NOT NULL DEFAULT 0 CHECK(next_retry_at_unix_ms >= 0),
             PRIMARY KEY(owner_user_id, id),
             UNIQUE(owner_user_id, message_id, position),
             FOREIGN KEY(owner_user_id, message_id)
                 REFERENCES project_agent_messages(owner_user_id, id) ON DELETE CASCADE
         );
-
         CREATE TABLE IF NOT EXISTS project_agent_read_cursors (
             owner_user_id TEXT NOT NULL,
             room_id TEXT NOT NULL,
@@ -6797,6 +7073,48 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             )
             try execute(
                 "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (22)"
+            )
+        }
+        if !hasColumn("sha256", table: "project_agent_message_attachments") {
+            try execute("ALTER TABLE project_agent_message_attachments ADD COLUMN sha256 TEXT")
+        }
+        if !hasColumn("sync_status", table: "project_agent_message_attachments") {
+            try execute(
+                "ALTER TABLE project_agent_message_attachments ADD COLUMN sync_status TEXT NOT NULL DEFAULT 'local_only' CHECK(sync_status IN ('local_only', 'queued', 'uploading', 'synced', 'failed'))"
+            )
+        }
+        for column in [
+            "artifact_id", "storage_provider", "bucket", "object_key", "remote_view_path",
+            "upload_error",
+        ] where !hasColumn(column, table: "project_agent_message_attachments") {
+            try execute("ALTER TABLE project_agent_message_attachments ADD COLUMN \(column) TEXT")
+        }
+        if !hasColumn("synced_at_unix_ms", table: "project_agent_message_attachments") {
+            try execute(
+                "ALTER TABLE project_agent_message_attachments ADD COLUMN synced_at_unix_ms INTEGER"
+            )
+        }
+        if !hasColumn("upload_attempt", table: "project_agent_message_attachments") {
+            try execute(
+                "ALTER TABLE project_agent_message_attachments ADD COLUMN upload_attempt INTEGER NOT NULL DEFAULT 0 CHECK(upload_attempt >= 0)"
+            )
+        }
+        if !hasColumn("next_retry_at_unix_ms", table: "project_agent_message_attachments") {
+            try execute(
+                "ALTER TABLE project_agent_message_attachments ADD COLUMN next_retry_at_unix_ms INTEGER NOT NULL DEFAULT 0 CHECK(next_retry_at_unix_ms >= 0)"
+            )
+        }
+        try execute(
+            """
+            CREATE INDEX IF NOT EXISTS project_agent_attachment_sync_outbox
+            ON project_agent_message_attachments(
+                owner_user_id, sync_status, next_retry_at_unix_ms, id
+            )
+            """
+        )
+        if !hasMigration(23) {
+            try execute(
+                "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (23)"
             )
         }
     }

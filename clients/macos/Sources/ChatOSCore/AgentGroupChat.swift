@@ -1144,6 +1144,15 @@ public struct ProjectAgentMessageAttachment: Codable, Sendable, Equatable, Ident
     public let size: Int
     public let kind: ConversationAttachmentKind
     public let origin: ConversationAttachmentOrigin
+    public let sha256: String?
+    public let syncStatus: ProjectAgentMessageAttachmentSyncStatus
+    public let artifactID: String?
+    public let storageProvider: String?
+    public let bucket: String?
+    public let objectKey: String?
+    public let remoteViewPath: String?
+    public let uploadError: String?
+    public let syncedAtUnixMs: Int64?
 
     public init(
         id: String,
@@ -1151,7 +1160,16 @@ public struct ProjectAgentMessageAttachment: Codable, Sendable, Equatable, Ident
         mimeType: String,
         size: Int,
         kind: ConversationAttachmentKind,
-        origin: ConversationAttachmentOrigin
+        origin: ConversationAttachmentOrigin,
+        sha256: String? = nil,
+        syncStatus: ProjectAgentMessageAttachmentSyncStatus = .localOnly,
+        artifactID: String? = nil,
+        storageProvider: String? = nil,
+        bucket: String? = nil,
+        objectKey: String? = nil,
+        remoteViewPath: String? = nil,
+        uploadError: String? = nil,
+        syncedAtUnixMs: Int64? = nil
     ) {
         self.id = id
         self.name = name
@@ -1159,6 +1177,42 @@ public struct ProjectAgentMessageAttachment: Codable, Sendable, Equatable, Ident
         self.size = size
         self.kind = kind
         self.origin = origin
+        self.sha256 = sha256
+        self.syncStatus = syncStatus
+        self.artifactID = artifactID
+        self.storageProvider = storageProvider
+        self.bucket = bucket
+        self.objectKey = objectKey
+        self.remoteViewPath = remoteViewPath
+        self.uploadError = uploadError
+        self.syncedAtUnixMs = syncedAtUnixMs
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, mimeType, size, kind, origin, sha256, syncStatus, artifactID
+        case storageProvider, bucket, objectKey, remoteViewPath, uploadError, syncedAtUnixMs
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        mimeType = try values.decode(String.self, forKey: .mimeType)
+        size = try values.decode(Int.self, forKey: .size)
+        kind = try values.decode(ConversationAttachmentKind.self, forKey: .kind)
+        origin = try values.decode(ConversationAttachmentOrigin.self, forKey: .origin)
+        sha256 = try values.decodeIfPresent(String.self, forKey: .sha256)
+        syncStatus = try values.decodeIfPresent(
+            ProjectAgentMessageAttachmentSyncStatus.self,
+            forKey: .syncStatus
+        ) ?? .localOnly
+        artifactID = try values.decodeIfPresent(String.self, forKey: .artifactID)
+        storageProvider = try values.decodeIfPresent(String.self, forKey: .storageProvider)
+        bucket = try values.decodeIfPresent(String.self, forKey: .bucket)
+        objectKey = try values.decodeIfPresent(String.self, forKey: .objectKey)
+        remoteViewPath = try values.decodeIfPresent(String.self, forKey: .remoteViewPath)
+        uploadError = try values.decodeIfPresent(String.self, forKey: .uploadError)
+        syncedAtUnixMs = try values.decodeIfPresent(Int64.self, forKey: .syncedAtUnixMs)
     }
 }
 

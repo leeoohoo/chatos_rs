@@ -137,6 +137,7 @@ final class AppModel: ObservableObject {
     private var isApplyingLanguagePreferences = false
     private var languagePreferencesSaveTask: Task<Void, Never>?
     private var agentHeartbeatTask: Task<Void, Never>?
+    private var agentArtifactSyncTask: Task<Void, Never>?
     var mainWindowPresentationHandler: (() -> Void)?
     var settingsWindowPresentationHandler: (() -> Void)?
 
@@ -209,7 +210,8 @@ final class AppModel: ObservableObject {
         self.localProjectsService = localProjectsService
         let agentGroupChatService = NativeAgentGroupChatService(
             databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
-                .appendingPathComponent("AgentGroupChat.sqlite3")
+                .appendingPathComponent("AgentGroupChat.sqlite3"),
+            agentArtifactService: ChatOSAgentArtifactService(client: apiClient)
         )
         let agentSkillLibrary = LocalAgentSkillLibrary(
             fileURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
@@ -354,6 +356,7 @@ final class AppModel: ObservableObject {
             .sink { [weak self] _ in
                 self?.recoverLocalConnector(forceReconnect: true)
                 self?.restartAgentHeartbeatCoordinator()
+                self?.restartAgentArtifactSyncCoordinator()
             }
             .store(in: &cancellables)
         NotificationCenter.default.publisher(for: .agentHeartbeatConfigurationDidChange)
@@ -366,6 +369,7 @@ final class AppModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.recoverLocalConnector(forceReconnect: false)
+                self?.restartAgentArtifactSyncCoordinator()
             }
             .store(in: &cancellables)
         localConnectorControl.$status
@@ -986,6 +990,37 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func restartAgentArtifactSyncCoordinator() {
+        agentArtifactSyncTask?.cancel()
+        guard let ownerUserID = authenticatedUserID else {
+            agentArtifactSyncTask = nil
+            return
+        }
+        let service = agentGroupChatService
+        agentArtifactSyncTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    _ = try await service.syncPendingAgentArtifacts(ownerUserID: ownerUserID)
+                    guard !Task.isCancelled, self?.authenticatedUserID == ownerUserID else {
+                        return
+                    }
+                    let store = try await service.store()
+                    let nextDue = try await store.nextAgentArtifactSyncDue(ownerUserID: ownerUserID)
+                    let now = Int64(Date().timeIntervalSince1970 * 1_000)
+                    let delayMilliseconds = nextDue.map {
+                        min(Int64(60_000), max(Int64(1_000), $0 - now))
+                    } ?? 60_000
+                    try await Task.sleep(for: .milliseconds(delayMilliseconds))
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    try? await Task.sleep(for: .seconds(10))
+                }
+            }
+        }
+    }
+
     func requestConnectorSettings(_ tab: LocalConnectorControlTab) {
         requestedConnectorSettingsTab = tab
     }
@@ -1012,6 +1047,7 @@ final class AppModel: ObservableObject {
             }
             authenticatedUserID = session.user.id
             restartAgentHeartbeatCoordinator()
+            restartAgentArtifactSyncCoordinator()
             mediaStudio.activate(userID: session.user.id)
             loadLanguagePreferences()
             localConnectorControl.activate(
@@ -1025,6 +1061,8 @@ final class AppModel: ObservableObject {
             workspaceAccountGeneration += 1
             agentHeartbeatTask?.cancel()
             agentHeartbeatTask = nil
+            agentArtifactSyncTask?.cancel()
+            agentArtifactSyncTask = nil
             authenticatedUserID = nil
             languagePreferencesSaveTask?.cancel()
             isLanguagePreferencesLoading = false
@@ -1056,6 +1094,7 @@ final class AppModel: ObservableObject {
     }
 
     func prepareForApplicationTermination() {
+        agentArtifactSyncTask?.cancel()
         terminalWorkspace.closeAllTerminals()
         remoteConnectionWorkspaceStore.removeAllWorkspaces()
     }
