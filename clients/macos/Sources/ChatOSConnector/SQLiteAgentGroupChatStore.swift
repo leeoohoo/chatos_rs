@@ -2673,6 +2673,149 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         }.first ?? nil
     }
 
+    public func recordAgentMessageAttempt(
+        ownerUserID: String,
+        characterCount: Int,
+        rejected: Bool,
+        nowUnixMs: Int64
+    ) throws {
+        let dimension: String
+        switch characterCount {
+        case ...300: dimension = "0000_0300"
+        case ...800: dimension = "0301_0800"
+        case ...2_000: dimension = "0801_2000"
+        default: dimension = "2001_plus"
+        }
+        try recordAgentCommunicationMetric(
+            ownerUserID: ownerUserID,
+            name: "message_length",
+            dimension: dimension,
+            value: Int64(max(characterCount, 0)),
+            nowUnixMs: nowUnixMs
+        )
+        if rejected {
+            try recordAgentToolRejection(
+                ownerUserID: ownerUserID,
+                reason: .messageTooLong,
+                nowUnixMs: nowUnixMs
+            )
+        }
+    }
+
+    public func recordAgentDocumentCreation(
+        ownerUserID: String,
+        outcome: AgentDocumentCreationMetricOutcome,
+        bytes: Int = 0,
+        nowUnixMs: Int64
+    ) throws {
+        try recordAgentCommunicationMetric(
+            ownerUserID: ownerUserID,
+            name: "document_create",
+            dimension: outcome.rawValue,
+            value: Int64(max(bytes, 0)),
+            nowUnixMs: nowUnixMs
+        )
+    }
+
+    public func recordAgentArtifactUpload(
+        ownerUserID: String,
+        outcome: AgentArtifactUploadMetricOutcome,
+        bytes: Int,
+        nowUnixMs: Int64
+    ) throws {
+        try recordAgentCommunicationMetric(
+            ownerUserID: ownerUserID,
+            name: "artifact_upload",
+            dimension: outcome.rawValue,
+            value: Int64(max(bytes, 0)),
+            nowUnixMs: nowUnixMs
+        )
+    }
+
+    public func recordAgentDocumentPreview(
+        ownerUserID: String,
+        outcome: AgentDocumentPreviewMetricOutcome,
+        durationMilliseconds: Int64,
+        nowUnixMs: Int64
+    ) throws {
+        try recordAgentCommunicationMetric(
+            ownerUserID: ownerUserID,
+            name: "document_preview",
+            dimension: outcome.rawValue,
+            value: max(durationMilliseconds, 0),
+            nowUnixMs: nowUnixMs
+        )
+    }
+
+    public func recordAgentToolRejection(
+        ownerUserID: String,
+        reason: AgentCommunicationRejectionMetricReason,
+        nowUnixMs: Int64
+    ) throws {
+        try recordAgentCommunicationMetric(
+            ownerUserID: ownerUserID,
+            name: "tool_rejection",
+            dimension: reason.rawValue,
+            value: 1,
+            nowUnixMs: nowUnixMs
+        )
+    }
+
+    public func agentCommunicationMetricSnapshot(
+        ownerUserID: String
+    ) throws -> [AgentCommunicationMetricRow] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        return try query(
+            """
+            SELECT metric_name, dimension, event_count, total_value, maximum_value,
+                   updated_at_unix_ms
+            FROM local_agent_communication_metrics
+            WHERE owner_user_id = ?
+            ORDER BY metric_name, dimension
+            """,
+            [.text(ownerUserID)]
+        ) { statement in
+            AgentCommunicationMetricRow(
+                name: Self.string(statement, 0),
+                dimension: Self.string(statement, 1),
+                count: sqlite3_column_int64(statement, 2),
+                totalValue: sqlite3_column_int64(statement, 3),
+                maximumValue: sqlite3_column_int64(statement, 4),
+                updatedAtUnixMs: sqlite3_column_int64(statement, 5)
+            )
+        }
+    }
+
+    private func recordAgentCommunicationMetric(
+        ownerUserID: String,
+        name: String,
+        dimension: String,
+        value: Int64,
+        nowUnixMs: Int64
+    ) throws {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        guard value >= 0, nowUnixMs >= 0 else {
+            throw AgentGroupChatError.invalidField("communicationMetric")
+        }
+        try execute(
+            """
+            INSERT INTO local_agent_communication_metrics (
+                owner_user_id, metric_name, dimension, event_count, total_value,
+                maximum_value, updated_at_unix_ms
+            ) VALUES (?, ?, ?, 1, ?, ?, ?)
+            ON CONFLICT(owner_user_id, metric_name, dimension) DO UPDATE SET
+                event_count = event_count + 1,
+                total_value = total_value + excluded.total_value,
+                maximum_value = MAX(maximum_value, excluded.maximum_value),
+                updated_at_unix_ms = excluded.updated_at_unix_ms
+            """,
+            [
+                .text(ownerUserID), .text(name), .text(dimension), .integer(value),
+                .integer(value), .integer(nowUnixMs),
+            ]
+        )
+    }
+
     public func listMessages(
         ownerUserID: String,
         roomID: String,
@@ -7125,6 +7268,25 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         if !hasMigration(23) {
             try execute(
                 "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (23)"
+            )
+        }
+        if !hasMigration(24) {
+            try execute(
+                """
+                CREATE TABLE IF NOT EXISTS local_agent_communication_metrics (
+                    owner_user_id TEXT NOT NULL,
+                    metric_name TEXT NOT NULL,
+                    dimension TEXT NOT NULL,
+                    event_count INTEGER NOT NULL CHECK(event_count > 0),
+                    total_value INTEGER NOT NULL CHECK(total_value >= 0),
+                    maximum_value INTEGER NOT NULL CHECK(maximum_value >= 0),
+                    updated_at_unix_ms INTEGER NOT NULL CHECK(updated_at_unix_ms >= 0),
+                    PRIMARY KEY(owner_user_id, metric_name, dimension)
+                )
+                """
+            )
+            try execute(
+                "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (24)"
             )
         }
     }

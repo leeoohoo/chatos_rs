@@ -119,16 +119,38 @@ struct AgentMessageAttachmentChips: View {
         guard loadingAttachmentIDs.insert(attachment.id).inserted else { return }
         Task {
             defer { loadingAttachmentIDs.remove(attachment.id) }
+            let startedAt = ContinuousClock.now
             do {
                 let data = try await attachmentData(attachment)
                 guard let markdown = String(data: data, encoding: .utf8) else {
                     throw AgentAttachmentPresentationError.invalidUTF8
                 }
                 previewedDocument = .init(attachment: attachment, markdown: markdown)
+                await recordPreview(outcome: .succeeded, startedAt: startedAt)
             } catch {
+                await recordPreview(outcome: .failed, startedAt: startedAt)
                 operationError = error.localizedDescription
             }
         }
+    }
+
+    private func recordPreview(
+        outcome: AgentDocumentPreviewMetricOutcome,
+        startedAt: ContinuousClock.Instant
+    ) async {
+        let duration = startedAt.duration(to: .now)
+        let milliseconds = max(
+            0,
+            Int64(duration.components.seconds) * 1_000
+                + Int64(duration.components.attoseconds / 1_000_000_000_000_000)
+        )
+        guard let store = try? await service.store() else { return }
+        try? await store.recordAgentDocumentPreview(
+            ownerUserID: ownerUserID,
+            outcome: outcome,
+            durationMilliseconds: milliseconds,
+            nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+        )
     }
 
     private func saveAttachment(_ attachment: ProjectAgentMessageAttachment) {

@@ -1006,7 +1006,9 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         if let replayed = await replayedSendOutcome(call) { return replayed }
         let arguments = try Self.arguments(call)
         let content = try Self.requiredString(arguments, key: "content")
-        if let failure = Self.messageLengthFailure(content) { return failure }
+        let lengthFailure = Self.messageLengthFailure(content)
+        await recordMessageAttempt(content, rejected: lengthFailure != nil)
+        if let lengthFailure { return lengthFailure }
         let conversationReference = try Self.requiredString(
             arguments,
             key: "conversation_ref"
@@ -2478,6 +2480,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         let title = try Self.requiredString(arguments, key: "title")
         let markdown = try Self.requiredString(arguments, key: "markdown")
         guard let name = Self.sanitizedMarkdownDocumentName(rawName) else {
+            await recordDocumentCreation(.invalidName)
             return Self.structuredFailure(
                 code: "invalid_document_name",
                 field: "name",
@@ -2490,6 +2493,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
               title == title.trimmingCharacters(in: .whitespacesAndNewlines),
               title.count <= 512,
               title.rangeOfCharacter(from: .controlCharacters) == nil else {
+            await recordDocumentCreation(.invalidTitle)
             return Self.structuredFailure(
                 code: "invalid_document_title",
                 field: "title",
@@ -2499,6 +2503,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             )
         }
         guard !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            await recordDocumentCreation(.empty)
             return Self.structuredFailure(
                 code: "empty_document",
                 field: "markdown",
@@ -2514,6 +2519,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 title: title,
                 data: data
             )
+            await recordDocumentCreation(.succeeded, bytes: created.size)
             return try Self.outcome(DocumentCreateResponse(
                 documentReference: created.reference,
                 name: name,
@@ -2526,6 +2532,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         } catch let failure as LocalAgentRunReferenceVault.DocumentCreateFailure {
             switch failure {
             case .empty:
+                await recordDocumentCreation(.empty)
                 return Self.structuredFailure(
                     code: "empty_document",
                     field: "markdown",
@@ -2534,6 +2541,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                     nextTool: Self.createDocumentToolName
                 )
             case .tooLarge:
+                await recordDocumentCreation(.tooLarge, bytes: data.count)
                 return Self.structuredFailure(
                     code: "document_too_large",
                     field: "markdown",
@@ -2542,6 +2550,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                     nextTool: Self.createDocumentToolName
                 )
             case .tooMany:
+                await recordDocumentCreation(.tooMany, bytes: data.count)
                 return Self.structuredFailure(
                     code: "too_many_documents",
                     field: nil,
@@ -2549,6 +2558,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                     retryable: false
                 )
             case .runTooLarge:
+                await recordDocumentCreation(.runLimitExceeded, bytes: data.count)
                 return Self.structuredFailure(
                     code: "document_run_limit_exceeded",
                     field: "markdown",
@@ -2556,6 +2566,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                     retryable: false
                 )
             case .storage:
+                await recordDocumentCreation(.storageFailed, bytes: data.count)
                 return Self.structuredFailure(
                     code: "document_storage_failed",
                     field: nil,
@@ -2650,7 +2661,9 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             )
         }
         let content = try Self.requiredString(arguments, key: "content")
-        if let failure = Self.messageLengthFailure(content) { return failure }
+        let lengthFailure = Self.messageLengthFailure(content)
+        await recordMessageAttempt(content, rejected: lengthFailure != nil)
+        if let lengthFailure { return lengthFailure }
         guard let conversation = try await store.room(
             ownerUserID: context.ownerUserID,
             roomID: conversationID
@@ -2708,7 +2721,9 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         if let replayed = await replayedSendOutcome(call) { return replayed }
         let arguments = try Self.arguments(call)
         let content = try Self.requiredString(arguments, key: "content")
-        if let failure = Self.messageLengthFailure(content) { return failure }
+        let lengthFailure = Self.messageLengthFailure(content)
+        await recordMessageAttempt(content, rejected: lengthFailure != nil)
+        if let lengthFailure { return lengthFailure }
         let teamReference = try Self.requiredString(arguments, key: "team_ref")
         guard let teamRoomID = await references.teamID(reference: teamReference),
               let team = try await store.room(
@@ -2804,7 +2819,9 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         if let replayed = await replayedSendOutcome(call) { return replayed }
         let arguments = try Self.arguments(call)
         let content = try Self.requiredString(arguments, key: "content")
-        if let failure = Self.messageLengthFailure(content) { return failure }
+        let lengthFailure = Self.messageLengthFailure(content)
+        await recordMessageAttempt(content, rejected: lengthFailure != nil)
+        if let lengthFailure { return lengthFailure }
         let mentionReferences = try Self.optionalStringArray(arguments, key: "mention_agent_refs")
         var mentionAgentIDs: [String] = []
         for (index, reference) in mentionReferences.enumerated() {
@@ -3724,6 +3741,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         let documentReferences = try Self.optionalStringArray(arguments, key: "document_refs")
         let policy = AgentCommunicationPolicy.standard
         guard documentReferences.count <= policy.maximumDocumentsPerMessage else {
+            await recordRejection(.tooManyDocumentRefs)
             return .failure(Self.structuredFailure(
                 code: "too_many_document_refs",
                 field: "document_refs",
@@ -3733,6 +3751,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             ))
         }
         guard Set(documentReferences).count == documentReferences.count else {
+            await recordRejection(.duplicateDocumentRef)
             return .failure(Self.structuredFailure(
                 code: "duplicate_document_ref",
                 field: "document_refs",
@@ -3750,6 +3769,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         case let .success(drafts):
             return .ready(references: documentReferences, drafts: drafts)
         case let .invalid(index):
+            await recordRejection(.invalidDocumentRef)
             return .failure(Self.structuredFailure(
                 code: "invalid_document_ref",
                 field: "document_refs[\(index)]",
@@ -3758,6 +3778,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 nextTool: Self.createDocumentToolName
             ))
         case let .integrityChanged(index):
+            await recordRejection(.documentIntegrityChanged)
             return .failure(Self.structuredFailure(
                 code: "document_integrity_changed",
                 field: "document_refs[\(index)]",
@@ -3790,6 +3811,38 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             callID: call.id,
             signature: "\(call.name)\n\(call.arguments)",
             outcome: outcome
+        )
+    }
+
+    private func recordMessageAttempt(_ content: String, rejected: Bool) async {
+        guard let localStore = store as? SQLiteAgentGroupChatStore else { return }
+        try? await localStore.recordAgentMessageAttempt(
+            ownerUserID: context.ownerUserID,
+            characterCount: content.count,
+            rejected: rejected,
+            nowUnixMs: now()
+        )
+    }
+
+    private func recordDocumentCreation(
+        _ outcome: AgentDocumentCreationMetricOutcome,
+        bytes: Int = 0
+    ) async {
+        guard let localStore = store as? SQLiteAgentGroupChatStore else { return }
+        try? await localStore.recordAgentDocumentCreation(
+            ownerUserID: context.ownerUserID,
+            outcome: outcome,
+            bytes: bytes,
+            nowUnixMs: now()
+        )
+    }
+
+    private func recordRejection(_ reason: AgentCommunicationRejectionMetricReason) async {
+        guard let localStore = store as? SQLiteAgentGroupChatStore else { return }
+        try? await localStore.recordAgentToolRejection(
+            ownerUserID: context.ownerUserID,
+            reason: reason,
+            nowUnixMs: now()
         )
     }
 

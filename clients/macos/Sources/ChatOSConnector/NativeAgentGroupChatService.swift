@@ -90,6 +90,12 @@ public actor NativeAgentGroupChatService {
                     metadata: metadata,
                     nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
                 )
+                try? await store.recordAgentArtifactUpload(
+                    ownerUserID: ownerUserID,
+                    outcome: .succeeded,
+                    bytes: job.request.data.count,
+                    nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+                )
                 publishChange(.init(
                     ownerUserID: ownerUserID,
                     roomID: job.roomID,
@@ -104,6 +110,12 @@ public actor NativeAgentGroupChatService {
                     attachmentID: job.attachmentID,
                     attempt: job.attempt,
                     error: "云端同步暂时失败，请稍后重试。",
+                    nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+                )
+                try? await store.recordAgentArtifactUpload(
+                    ownerUserID: ownerUserID,
+                    outcome: .failed,
+                    bytes: job.request.data.count,
                     nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
                 )
                 publishChange(.init(
