@@ -6,11 +6,18 @@ import SQLite3
 
 public struct ProjectAgentArtifactUploadJob: Sendable, Equatable {
     public let attachmentID: String
+    public let roomID: String
     public let attempt: Int
     public let request: AgentArtifactUploadRequest
 
-    public init(attachmentID: String, attempt: Int, request: AgentArtifactUploadRequest) {
+    public init(
+        attachmentID: String,
+        roomID: String,
+        attempt: Int,
+        request: AgentArtifactUploadRequest
+    ) {
         self.attachmentID = attachmentID
+        self.roomID = roomID
         self.attempt = attempt
         self.request = request
     }
@@ -2497,6 +2504,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
         struct Candidate {
             let id: String
+            let roomID: String
             let name: String
             let mimeType: String
             let size: Int
@@ -2507,7 +2515,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         guard let candidate: Candidate = try transaction({
             let candidates: [Candidate] = try query(
                 """
-                SELECT a.id, a.name, a.mime_type, a.size_bytes, a.sha256,
+                SELECT a.id, m.room_id, a.name, a.mime_type, a.size_bytes, a.sha256,
                        a.relative_path, a.upload_attempt
                 FROM project_agent_message_attachments a
                 JOIN project_agent_messages m
@@ -2522,12 +2530,13 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             ) { statement in
                 Candidate(
                     id: Self.string(statement, 0),
-                    name: Self.string(statement, 1),
-                    mimeType: Self.string(statement, 2),
-                    size: Int(sqlite3_column_int64(statement, 3)),
-                    sha256: Self.string(statement, 4),
-                    relativePath: Self.string(statement, 5),
-                    attempt: Int(sqlite3_column_int64(statement, 6)) + 1
+                    roomID: Self.string(statement, 1),
+                    name: Self.string(statement, 2),
+                    mimeType: Self.string(statement, 3),
+                    size: Int(sqlite3_column_int64(statement, 4)),
+                    sha256: Self.string(statement, 5),
+                    relativePath: Self.string(statement, 6),
+                    attempt: Int(sqlite3_column_int64(statement, 7)) + 1
                 )
             }
             guard let candidate = candidates.first else { return nil }
@@ -2563,6 +2572,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         }
         return ProjectAgentArtifactUploadJob(
             attachmentID: candidate.id,
+            roomID: candidate.roomID,
             attempt: candidate.attempt,
             request: .init(
                 name: candidate.name,

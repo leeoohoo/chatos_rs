@@ -481,8 +481,16 @@ struct ProjectAgentGroupChatView: View {
                 }
                 if !message.attachmentItems.isEmpty {
                     AgentMessageAttachmentChips(
+                        ownerUserID: message.ownerUserID,
+                        roomID: message.roomID,
+                        messageID: message.id,
+                        creatorName: viewModel.displayName(
+                            senderID: message.senderID,
+                            kind: message.senderKind
+                        ),
                         attachments: message.attachmentItems,
-                        dataByID: viewModel.attachmentDataByID
+                        dataByID: viewModel.attachmentDataByID,
+                        service: model.agentGroupChatService
                     )
                 }
                 if !message.mentionedAgentIDs.isEmpty {

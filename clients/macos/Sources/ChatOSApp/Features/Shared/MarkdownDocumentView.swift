@@ -114,6 +114,16 @@ struct MarkdownDocumentView: View {
         self.allowsTextSelection = allowsTextSelection
     }
 
+    init(
+        markdown: String,
+        precomputedBlocks: [MarkdownBlock],
+        allowsTextSelection: Bool = true
+    ) {
+        self.markdown = markdown
+        blocks = precomputedBlocks
+        self.allowsTextSelection = allowsTextSelection
+    }
+
     var body: some View {
         MarkdownNativeTextView(
             source: markdown,
@@ -121,6 +131,38 @@ struct MarkdownDocumentView: View {
             allowsTextSelection: allowsTextSelection
         )
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Parses large documents away from the main actor and reuses the same bounded cache as chat
+/// messages. The loading placeholder keeps a 1–2 MiB attachment from stalling sheet presentation.
+struct DeferredMarkdownDocumentView: View {
+    let markdown: String
+    @State private var blocks: [MarkdownBlock]?
+
+    var body: some View {
+        Group {
+            if let blocks {
+                MarkdownDocumentView(markdown: markdown, precomputedBlocks: blocks)
+            } else {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("正在解析 Markdown…")
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 80, alignment: .topLeading)
+            }
+        }
+        .task(id: markdown) {
+            blocks = nil
+            let source = markdown
+            let parsed = await Task.detached(priority: .userInitiated) {
+                MarkdownRenderCache.shared.blocks(for: source)
+            }.value
+            guard !Task.isCancelled else { return }
+            blocks = parsed
+        }
     }
 }
 

@@ -90,6 +90,11 @@ public actor NativeAgentGroupChatService {
                     metadata: metadata,
                     nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
                 )
+                publishChange(.init(
+                    ownerUserID: ownerUserID,
+                    roomID: job.roomID,
+                    kind: .roomUpdated
+                ))
                 completed += 1
             } catch is CancellationError {
                 throw CancellationError()
@@ -101,9 +106,32 @@ public actor NativeAgentGroupChatService {
                     error: "云端同步暂时失败，请稍后重试。",
                     nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
                 )
+                publishChange(.init(
+                    ownerUserID: ownerUserID,
+                    roomID: job.roomID,
+                    kind: .roomUpdated
+                ))
             }
         }
         return completed
+    }
+
+    public func retryAgentArtifactUpload(
+        ownerUserID: String,
+        roomID: String,
+        attachmentID: String
+    ) async throws {
+        let store = try store()
+        try await store.retryAgentArtifactUpload(
+            ownerUserID: ownerUserID,
+            attachmentID: attachmentID
+        )
+        publishChange(.init(
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            kind: .roomUpdated
+        ))
+        _ = try await syncPendingAgentArtifacts(ownerUserID: ownerUserID, limit: 1)
     }
 
     /// Emits process-local invalidations after the durable SQLite write has completed. Consumers

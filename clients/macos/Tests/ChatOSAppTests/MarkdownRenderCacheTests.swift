@@ -37,4 +37,24 @@ struct MarkdownRenderCacheTests {
         #expect(cache.metrics().inlineMisses == 1)
         #expect(cache.metrics().inlineHits == 1)
     }
+
+    @Test
+    func megabyteMarkdownCanParseOffMainAndReuseBoundedCache() async {
+        let cache = MarkdownRenderCache(totalCostLimit: 4 * 1_024 * 1_024, countLimit: 8)
+        let row = "| column | value |\n| --- | --- |\n| key | a moderately long value |\n\n"
+        let source = "# Large document\n\n" + String(repeating: row, count: 16_000)
+        #expect(source.utf8.count > 1_000_000)
+
+        let first = await Task.detached(priority: .userInitiated) {
+            cache.blocks(for: source)
+        }.value
+        let second = await Task.detached(priority: .userInitiated) {
+            cache.blocks(for: source)
+        }.value
+
+        #expect(!first.isEmpty)
+        #expect(first == second)
+        #expect(cache.metrics().blockMisses == 1)
+        #expect(cache.metrics().blockHits == 1)
+    }
 }
