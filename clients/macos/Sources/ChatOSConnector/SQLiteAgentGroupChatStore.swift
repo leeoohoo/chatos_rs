@@ -4081,6 +4081,28 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         return message
     }
 
+    /// Loads message context for a run list in one query instead of issuing one query per run.
+    public func messages(
+        ownerUserID: String,
+        messageIDs: [String]
+    ) throws -> [String: ProjectAgentMessage] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        let ids = Array(Set(messageIDs)).sorted()
+        guard ids.count <= 500 else { throw AgentGroupChatError.invalidField("messageIDs") }
+        for id in ids {
+            try AgentGroupChatValidation.identifier(id, field: "messageID")
+        }
+        guard !ids.isEmpty else { return [:] }
+        let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
+        let values = [.text(ownerUserID)] + ids.map(Value.text)
+        let messages = try query(
+            "SELECT \(Self.messageColumns) FROM project_agent_messages WHERE owner_user_id = ? AND id IN (\(placeholders))",
+            values,
+            row: readMessage
+        )
+        return Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
+    }
+
     public func claimNextDelivery(
         ownerUserID: String,
         agentID: String,
@@ -4172,6 +4194,29 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(deliveryID, field: "deliveryID")
         return try readDelivery(ownerUserID: ownerUserID, deliveryID: deliveryID)
+    }
+
+    /// Loads delivery context for run lists in one query. UI refreshes must not scale as N+1
+    /// SQLite round trips as historical runs accumulate.
+    public func deliveries(
+        ownerUserID: String,
+        deliveryIDs: [String]
+    ) throws -> [String: ProjectAgentDelivery] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        let ids = Array(Set(deliveryIDs)).sorted()
+        guard ids.count <= 500 else { throw AgentGroupChatError.invalidField("deliveryIDs") }
+        for id in ids {
+            try AgentGroupChatValidation.identifier(id, field: "deliveryID")
+        }
+        guard !ids.isEmpty else { return [:] }
+        let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
+        let values = [.text(ownerUserID)] + ids.map(Value.text)
+        let deliveries = try query(
+            "SELECT \(Self.deliveryColumns) FROM project_agent_deliveries WHERE owner_user_id = ? AND id IN (\(placeholders))",
+            values,
+            row: readDelivery
+        )
+        return Dictionary(uniqueKeysWithValues: deliveries.map { ($0.id, $0) })
     }
 
     public func completeDelivery(
@@ -4472,6 +4517,28 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             ORDER BY updated_at_unix_ms DESC, id DESC LIMIT ?
             """,
             [.text(ownerUserID), .text(agentID), .integer(Int64(limit))]
+        ) { Self.string($0, 0) }
+        return try values.map(Self.decodeRun)
+    }
+
+    /// Recent execution history for a team, independent of member count.
+    public func listRoomRuns(
+        ownerUserID: String,
+        roomID: String,
+        limit: Int
+    ) throws -> [LocalAgentGroupChatRun] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(roomID, field: "roomID")
+        guard (1...500).contains(limit) else {
+            throw AgentGroupChatError.invalidField("limit")
+        }
+        let values: [String] = try query(
+            """
+            SELECT run_json FROM local_agent_group_chat_runs
+            WHERE owner_user_id = ? AND room_id = ?
+            ORDER BY updated_at_unix_ms DESC, id DESC LIMIT ?
+            """,
+            [.text(ownerUserID), .text(roomID), .integer(Int64(limit))]
         ) { Self.string($0, 0) }
         return try values.map(Self.decodeRun)
     }

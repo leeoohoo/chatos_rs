@@ -55,6 +55,9 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published private(set) var attachmentDataByID: [String: Data] = [:]
     @Published var selectedMentionAgentIDs: Set<String> = []
     @Published private(set) var isLoading = false
+    @Published private(set) var isLoadingModels = false
+    @Published private(set) var isLoadingOlderMessages = false
+    @Published private(set) var hasOlderMessages = false
     @Published private(set) var isSending = false
     @Published private(set) var isRunningAgents = false
     @Published private(set) var isPausingAgents = false
@@ -65,6 +68,7 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published private(set) var teamProposalActionIDs: Set<String> = []
     @Published private(set) var membershipProposalActionIDs: Set<String> = []
     @Published var errorMessage: String?
+    @Published private(set) var scrollToLatestRequest = 0
 
     private let service: NativeAgentGroupChatService
     private let scheduler: LocalAgentGroupChatScheduler
@@ -74,6 +78,10 @@ final class AgentGroupChatViewModel: ObservableObject {
     private var schedulerTask: Task<Void, Never>?
     private var schedulerNeedsAnotherPass = false
     private var changeObservationTask: Task<Void, Never>?
+    private var supplementaryLoadTask: Task<Void, Never>?
+    private var modelLoadTask: Task<LocalAgentBuilderResources, Error>?
+    private var hasLoadedModels = false
+    private let messagePageSize = 50
 
     init(
         projectID: String,
@@ -93,6 +101,7 @@ final class AgentGroupChatViewModel: ObservableObject {
 
     deinit {
         changeObservationTask?.cancel()
+        supplementaryLoadTask?.cancel()
     }
 
     var profilesByID: [String: LocalAgentProfile] {
@@ -126,139 +135,238 @@ final class AgentGroupChatViewModel: ObservableObject {
             let teams = try await store.listRooms(ownerUserID: ownerUserID, includeArchived: false)
             let room = try await store.activeRoom(ownerUserID: ownerUserID, projectID: projectID)
             let members: [ProjectAgentRoomMember]
-            let messages: [ProjectAgentMessage]
-            let interruptedRuns: [InterruptedRunPresentation]
-            let pendingProposals: [LocalAgentCreationProposal]
-            let pendingRemovalProposals: [LocalAgentRemovalProposal]
-            let pendingTeamProposals: [LocalAgentTeamCreationProposal]
-            let pendingMembershipProposals: [LocalAgentMembershipProposal]
-            let teamTodos: [LocalAgentTodo]
-            let teamAssets: [LocalAgentTeamAsset]
-            let recentTeamRuns: [LocalAgentGroupChatRun]
-            let recentRunDeliveries: [UUID: ProjectAgentDelivery]
+            let messagePage: ProjectAgentMessagePage?
             if let room {
                 members = try await store.listMembers(ownerUserID: ownerUserID, roomID: room.id)
-                messages = try await store.listMessages(
+                messagePage = try await store.pageRecentMessages(
                     ownerUserID: ownerUserID,
                     roomID: room.id,
-                    afterUnixMs: nil,
-                    limit: 500
+                    beforeMessageID: nil,
+                    limit: messagePageSize
                 )
-                let recentRuns = try await store.listUnfinishedRuns(
+            } else {
+                members = []
+                messagePage = nil
+            }
+            self.agents = agents
+            let isSameRoom = self.room?.id == room?.id
+            self.room = room
+            self.members = members
+            let messages = messagePage?.messages ?? []
+            if isSameRoom, !self.messages.isEmpty {
+                self.messages = mergeMessages(self.messages, with: messages)
+            } else {
+                self.messages = messages
+                hasOlderMessages = messagePage?.hasMore ?? false
+            }
+            if room == nil {
+                attachmentDataByID = [:]
+                hasOlderMessages = false
+            }
+            self.teams = teams
+            selectedMentionAgentIDs.formIntersection(Set(members.map(\.agentID)))
+            errorMessage = nil
+            startSupplementaryLoad(
+                store: store,
+                room: room,
+                agents: agents,
+                members: members,
+                messages: messages,
+                mergeAttachments: isSameRoom
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func startSupplementaryLoad(
+        store: SQLiteAgentGroupChatStore,
+        room: ProjectAgentRoom?,
+        agents: [LocalAgentProfile],
+        members: [ProjectAgentRoomMember],
+        messages: [ProjectAgentMessage],
+        mergeAttachments: Bool
+    ) {
+        supplementaryLoadTask?.cancel()
+        guard let room else {
+            interruptedRuns = []
+            pendingProposals = []
+            pendingRemovalProposals = []
+            pendingTeamProposals = []
+            pendingMembershipProposals = []
+            teamTodos = []
+            teamAssets = []
+            recentRuns = []
+            recentRunDeliveries = [:]
+            return
+        }
+
+        supplementaryLoadTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let loadedAttachmentData = try await loadAttachmentData(
+                    messages: messages,
+                    roomID: room.id,
+                    store: store
+                )
+                let pendingProposals = try await store.listAgentProposals(
+                    ownerUserID: ownerUserID,
+                    roomID: room.id,
+                    status: .pending
+                )
+                let pendingRemovalProposals = try await store.listAgentRemovalProposals(
+                    ownerUserID: ownerUserID,
+                    roomID: room.id,
+                    status: .pending
+                )
+                let pendingTeamProposals = try await store.listTeamProposals(
+                    ownerUserID: ownerUserID,
+                    sourceRoomID: room.id,
+                    status: .pending
+                )
+                let pendingMembershipProposals = try await store.listMembershipProposals(
+                    ownerUserID: ownerUserID,
+                    sourceRoomID: room.id,
+                    status: .pending
+                )
+                let teamTodos = try await store.listTeamTodos(
+                    ownerUserID: ownerUserID,
+                    teamRoomID: room.id,
+                    includeTerminal: true
+                )
+                let teamAssets = try await store.listTeamAssets(
+                    ownerUserID: ownerUserID,
+                    teamRoomID: room.id,
+                    includeArchived: false
+                )
+                let unfinishedRuns = try await store.listUnfinishedRuns(
                     ownerUserID: ownerUserID,
                     projectID: projectID,
                     limit: 100
                 )
+                let unfinishedDeliveries = try await store.deliveries(
+                    ownerUserID: ownerUserID,
+                    deliveryIDs: unfinishedRuns.map(\.context.deliveryID)
+                )
                 let profileNames = Dictionary(uniqueKeysWithValues: agents.map { ($0.id, $0.draft.name) })
-                var values: [InterruptedRunPresentation] = []
-                for run in recentRuns where run.checkpoint.status != .completed {
-                    guard let delivery = try await store.delivery(
-                        ownerUserID: ownerUserID,
-                        deliveryID: run.context.deliveryID
-                    ), delivery.status == .running else { continue }
-                    values.append(.init(
+                var interruptedRuns: [InterruptedRunPresentation] = []
+                for run in unfinishedRuns where run.checkpoint.status != .completed {
+                    guard let delivery = unfinishedDeliveries[run.context.deliveryID],
+                          delivery.status == .running else { continue }
+                    interruptedRuns.append(.init(
                         run: run,
                         delivery: delivery,
                         agentName: profileNames[run.context.agentID] ?? run.context.agentID
                     ))
                 }
-                interruptedRuns = values
-                pendingProposals = try await store.listAgentProposals(
+                let recentRuns = try await store.listRoomRuns(
                     ownerUserID: ownerUserID,
                     roomID: room.id,
-                    status: .pending
+                    limit: 500
                 )
-                pendingRemovalProposals = try await store.listAgentRemovalProposals(
+                let deliveriesByID = try await store.deliveries(
                     ownerUserID: ownerUserID,
-                    roomID: room.id,
-                    status: .pending
+                    deliveryIDs: recentRuns.map(\.context.deliveryID)
                 )
-                pendingTeamProposals = try await store.listTeamProposals(
-                    ownerUserID: ownerUserID,
-                    sourceRoomID: room.id,
-                    status: .pending
-                )
-                pendingMembershipProposals = try await store.listMembershipProposals(
-                    ownerUserID: ownerUserID,
-                    sourceRoomID: room.id,
-                    status: .pending
-                )
-                teamTodos = try await store.listTeamTodos(
-                    ownerUserID: ownerUserID,
-                    teamRoomID: room.id,
-                    includeTerminal: true
-                )
-                teamAssets = try await store.listTeamAssets(
-                    ownerUserID: ownerUserID,
-                    teamRoomID: room.id,
-                    includeArchived: false
-                )
-                var runValues: [LocalAgentGroupChatRun] = []
-                for member in members {
-                    runValues.append(contentsOf: try await store.listAgentRuns(
-                        ownerUserID: ownerUserID,
-                        agentID: member.agentID,
-                        limit: 50
-                    ).filter { $0.context.roomID == room.id })
-                }
-                recentTeamRuns = runValues.sorted { $0.updatedAtUnixMs > $1.updatedAtUnixMs }
-                var deliveryValues: [UUID: ProjectAgentDelivery] = [:]
-                for run in recentTeamRuns {
-                    if let delivery = try await store.delivery(
-                        ownerUserID: ownerUserID,
-                        deliveryID: run.context.deliveryID
-                    ) {
-                        deliveryValues[run.id] = delivery
+                let recentRunDeliveries: [UUID: ProjectAgentDelivery] = Dictionary(
+                    uniqueKeysWithValues: recentRuns.compactMap { run -> (UUID, ProjectAgentDelivery)? in
+                        guard let delivery = deliveriesByID[run.context.deliveryID] else { return nil }
+                        return (run.id, delivery)
                     }
-                }
-                recentRunDeliveries = deliveryValues
-            } else {
-                members = []
-                messages = []
-                interruptedRuns = []
-                pendingProposals = []
-                pendingRemovalProposals = []
-                pendingTeamProposals = []
-                pendingMembershipProposals = []
-                teamTodos = []
-                teamAssets = []
-                recentTeamRuns = []
-                recentRunDeliveries = [:]
-            }
-            self.agents = agents
-            self.room = room
-            self.members = members
-            self.messages = messages
-            if let room {
-                attachmentDataByID = try await loadAttachmentData(
-                    messages: messages,
-                    roomID: room.id,
-                    store: store
                 )
-            } else {
-                attachmentDataByID = [:]
+                guard !Task.isCancelled, self.room?.id == room.id else { return }
+                if mergeAttachments {
+                    attachmentDataByID.merge(loadedAttachmentData) { _, new in new }
+                } else {
+                    attachmentDataByID = loadedAttachmentData
+                }
+                self.interruptedRuns = interruptedRuns
+                self.pendingProposals = pendingProposals
+                self.pendingRemovalProposals = pendingRemovalProposals
+                self.pendingTeamProposals = pendingTeamProposals
+                self.pendingMembershipProposals = pendingMembershipProposals
+                self.teamTodos = teamTodos
+                self.teamAssets = teamAssets
+                let activeAssetIDs = Set(teamAssets.map(\.id))
+                teamAssetRevisions = teamAssetRevisions.filter { activeAssetIDs.contains($0.key) }
+                loadingTeamAssetRevisionIDs.formIntersection(activeAssetIDs)
+                self.recentRuns = recentRuns
+                self.recentRunDeliveries = recentRunDeliveries
+            } catch {
+                guard !Task.isCancelled, self.room?.id == room.id else { return }
+                errorMessage = error.localizedDescription
             }
-            self.interruptedRuns = interruptedRuns
-            self.pendingProposals = pendingProposals
-            self.pendingRemovalProposals = pendingRemovalProposals
-            self.pendingTeamProposals = pendingTeamProposals
-            self.pendingMembershipProposals = pendingMembershipProposals
-            self.teams = teams
-            self.teamTodos = teamTodos
-            self.teamAssets = teamAssets
-            let activeAssetIDs = Set(teamAssets.map(\.id))
-            teamAssetRevisions = teamAssetRevisions.filter { activeAssetIDs.contains($0.key) }
-            loadingTeamAssetRevisionIDs.formIntersection(activeAssetIDs)
-            self.recentRuns = recentTeamRuns
-            self.recentRunDeliveries = recentRunDeliveries
-            let builderResources = try? await builderService.loadResources(
-                ownerUserID: ownerUserID
-            )
-            self.availableModels = builderResources?.models ?? []
-            selectedMentionAgentIDs.formIntersection(Set(members.map(\.agentID)))
-            errorMessage = nil
+        }
+    }
+
+    func prepareAgentEditor() async -> Bool {
+        if hasLoadedModels {
+            if availableModels.isEmpty {
+                errorMessage = LocalAgentBuilderError.noAvailableModel.localizedDescription
+                return false
+            }
+            return true
+        }
+        let task: Task<LocalAgentBuilderResources, Error>
+        if let modelLoadTask {
+            task = modelLoadTask
+        } else {
+            let builderService = builderService
+            let ownerUserID = ownerUserID
+            let created = Task {
+                try await builderService.loadResources(ownerUserID: ownerUserID)
+            }
+            modelLoadTask = created
+            task = created
+        }
+        isLoadingModels = true
+        defer {
+            isLoadingModels = false
+            modelLoadTask = nil
+        }
+        do {
+            availableModels = try await task.value.models
+            hasLoadedModels = true
+            guard !availableModels.isEmpty else {
+                errorMessage = LocalAgentBuilderError.noAvailableModel.localizedDescription
+                return false
+            }
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
+    func loadOlderMessages() async -> String? {
+        guard !isLoadingOlderMessages,
+              hasOlderMessages,
+              let room,
+              let firstMessageID = messages.first?.id else { return nil }
+        isLoadingOlderMessages = true
+        defer { isLoadingOlderMessages = false }
+        do {
+            let store = try await resolveStore()
+            let page = try await store.pageRecentMessages(
+                ownerUserID: ownerUserID,
+                roomID: room.id,
+                beforeMessageID: firstMessageID,
+                limit: messagePageSize
+            )
+            messages = mergeMessages(messages, with: page.messages)
+            hasOlderMessages = page.hasMore
+            let loadedAttachmentData = try await loadAttachmentData(
+                messages: page.messages,
+                roomID: room.id,
+                store: store
+            )
+            attachmentDataByID.merge(loadedAttachmentData) { _, new in new }
+            errorMessage = nil
+            return firstMessageID
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
         }
     }
 
@@ -763,6 +871,7 @@ final class AgentGroupChatViewModel: ObservableObject {
         let content = draftMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         let outgoingAttachments = attachments
         guard !content.isEmpty || !outgoingAttachments.isEmpty else { return }
+        guard let mentionedAgentIDs = resolvedMentionAgentIDs(in: content) else { return }
         isSending = true
         defer { isSending = false }
         do {
@@ -774,7 +883,7 @@ final class AgentGroupChatViewModel: ObservableObject {
                     senderKind: .human,
                     senderID: ownerUserID,
                     content: content,
-                    mentionedAgentIDs: selectedMentionAgentIDs.sorted(),
+                    mentionedAgentIDs: mentionedAgentIDs.sorted(),
                     attachments: outgoingAttachments.map(ProjectAgentMessageAttachmentDraft.init)
                 ),
                 limits: .init()
@@ -784,6 +893,7 @@ final class AgentGroupChatViewModel: ObservableObject {
             attachmentError = nil
             selectedMentionAgentIDs.removeAll()
             await load()
+            scrollToLatestRequest &+= 1
             if !post.deliveries.isEmpty {
                 startScheduler()
             }
@@ -798,6 +908,39 @@ final class AgentGroupChatViewModel: ObservableObject {
         } else {
             selectedMentionAgentIDs.insert(agentID)
         }
+    }
+
+    func selectMention(agentID: String) {
+        guard activeMembers.contains(where: { $0.member.agentID == agentID }) else { return }
+        selectedMentionAgentIDs.insert(agentID)
+    }
+
+    private func resolvedMentionAgentIDs(in content: String) -> Set<String>? {
+        var result = selectedMentionAgentIDs
+        let namedMembers = activeMembers.compactMap { item -> (String, String)? in
+            guard let name = item.profile?.draft.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !name.isEmpty else { return nil }
+            return (name, item.member.agentID)
+        }
+        let grouped = Dictionary(grouping: namedMembers) {
+            $0.0.folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: .current
+            )
+        }
+        for members in grouped.values {
+            guard let name = members.first?.0,
+                  AgentChatMentionSyntax.containsMention(named: name, in: content) else {
+                continue
+            }
+            if members.count == 1, let agentID = members.first?.1 {
+                result.insert(agentID)
+            } else if result.isDisjoint(with: Set(members.map(\.1))) {
+                errorMessage = "团队中有多个 Agent 名为“\(name)”，请从 @ 候选列表选择具体成员。"
+                return nil
+            }
+        }
+        return result
     }
 
     func resumeRun(deliveryID: String) async {
@@ -899,6 +1042,19 @@ final class AgentGroupChatViewModel: ObservableObject {
             }
         }
         return result
+    }
+
+    private func mergeMessages(
+        _ current: [ProjectAgentMessage],
+        with incoming: [ProjectAgentMessage]
+    ) -> [ProjectAgentMessage] {
+        var byID = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+        for message in incoming {
+            byID[message.id] = message
+        }
+        return byID.values.sorted {
+            ($0.createdAtUnixMs, $0.id) < ($1.createdAtUnixMs, $1.id)
+        }
     }
 
     private func startScheduler() {

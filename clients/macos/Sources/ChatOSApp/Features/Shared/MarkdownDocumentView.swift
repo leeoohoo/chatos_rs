@@ -1,25 +1,379 @@
 import Foundation
+import AppKit
 import SwiftUI
 
+struct MarkdownRenderCacheMetrics: Equatable {
+    var blockHits = 0
+    var blockMisses = 0
+    var inlineHits = 0
+    var inlineMisses = 0
+}
+
+/// Markdown appears in several frequently refreshed SwiftUI surfaces. Keeping the parsed form
+/// here avoids reparsing every visible message whenever unrelated view state changes.
+final class MarkdownRenderCache: @unchecked Sendable {
+    static let shared = MarkdownRenderCache()
+
+    private final class BlockEntry {
+        let value: [MarkdownBlock]
+
+        init(_ value: [MarkdownBlock]) {
+            self.value = value
+        }
+    }
+
+    private final class InlineEntry {
+        let value: AttributedString
+
+        init(_ value: AttributedString) {
+            self.value = value
+        }
+    }
+
+    private let blockCache = NSCache<NSString, BlockEntry>()
+    private let inlineCache = NSCache<NSString, InlineEntry>()
+    private let metricsLock = NSLock()
+    private var storedMetrics = MarkdownRenderCacheMetrics()
+
+    init(totalCostLimit: Int = 16 * 1_024 * 1_024, countLimit: Int = 128) {
+        // Split the budget between document structure and rendered inline text. NSCache can
+        // discard either half under memory pressure and never turns chat history into an
+        // unbounded in-memory copy.
+        blockCache.totalCostLimit = totalCostLimit / 2
+        inlineCache.totalCostLimit = totalCostLimit / 2
+        blockCache.countLimit = max(countLimit / 2, 1)
+        inlineCache.countLimit = max(countLimit / 2, 1)
+    }
+
+    func blocks(for source: String) -> [MarkdownBlock] {
+        let key = source as NSString
+        if let cached = blockCache.object(forKey: key) {
+            updateMetrics { $0.blockHits += 1 }
+            return cached.value
+        }
+
+        let parsed = MarkdownBlockParser.parse(source)
+        blockCache.setObject(
+            BlockEntry(parsed),
+            forKey: key,
+            cost: max(source.utf8.count, 1)
+        )
+        updateMetrics { $0.blockMisses += 1 }
+        return parsed
+    }
+
+    func attributedInline(for source: String) -> AttributedString {
+        let key = source as NSString
+        if let cached = inlineCache.object(forKey: key) {
+            updateMetrics { $0.inlineHits += 1 }
+            return cached.value
+        }
+
+        let rendered = (try? AttributedString(
+            markdown: source,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(source)
+        inlineCache.setObject(
+            InlineEntry(rendered),
+            forKey: key,
+            cost: max(source.utf8.count * 2, 1)
+        )
+        updateMetrics { $0.inlineMisses += 1 }
+        return rendered
+    }
+
+    func metrics() -> MarkdownRenderCacheMetrics {
+        metricsLock.lock()
+        defer { metricsLock.unlock() }
+        return storedMetrics
+    }
+
+    func removeAll() {
+        blockCache.removeAllObjects()
+        inlineCache.removeAllObjects()
+        metricsLock.lock()
+        storedMetrics = MarkdownRenderCacheMetrics()
+        metricsLock.unlock()
+    }
+
+    private func updateMetrics(_ update: (inout MarkdownRenderCacheMetrics) -> Void) {
+        metricsLock.lock()
+        update(&storedMetrics)
+        metricsLock.unlock()
+    }
+}
+
 struct MarkdownDocumentView: View {
+    private let markdown: String
     private let blocks: [MarkdownBlock]
     private let allowsTextSelection: Bool
 
     init(markdown: String, allowsTextSelection: Bool = true) {
-        blocks = MarkdownBlockParser.parse(markdown)
+        self.markdown = markdown
+        blocks = MarkdownRenderCache.shared.blocks(for: markdown)
         self.allowsTextSelection = allowsTextSelection
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                MarkdownBlockView(
-                    block: block,
-                    allowsTextSelection: allowsTextSelection
+        MarkdownNativeTextView(
+            source: markdown,
+            blocks: blocks,
+            allowsTextSelection: allowsTextSelection
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A single AppKit text layout per Markdown document. SwiftUI's selectable `Text` creates a
+/// `SelectionOverlay` for each rendered fragment. On macOS 26, a document containing many
+/// fragments (especially a fenced SVG block) can enter an AttributeGraph invalidation loop.
+/// NSTextView owns selection and wrapping without involving those overlays.
+private struct MarkdownNativeTextView: NSViewRepresentable {
+    let source: String
+    let blocks: [MarkdownBlock]
+    let allowsTextSelection: Bool
+
+    func makeNSView(context: Context) -> MarkdownLayoutTextView {
+        MarkdownLayoutTextView()
+    }
+
+    func updateNSView(_ textView: MarkdownLayoutTextView, context: Context) {
+        textView.setDocument(
+            source: source,
+            blocks: blocks,
+            allowsTextSelection: allowsTextSelection
+        )
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView textView: MarkdownLayoutTextView,
+        context: Context
+    ) -> CGSize? {
+        guard let width = proposal.width, width > 0 else { return nil }
+        return CGSize(width: width, height: textView.height(fittingWidth: width))
+    }
+}
+
+@MainActor
+private final class MarkdownLayoutTextView: NSTextView {
+    private var source = ""
+    private var measuredHeights: [Int: CGFloat] = [:]
+
+    init() {
+        let storage = NSTextStorage()
+        let layoutManager = NSLayoutManager()
+        let container = NSTextContainer(
+            containerSize: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        )
+        storage.addLayoutManager(layoutManager)
+        layoutManager.addTextContainer(container)
+        super.init(frame: .zero, textContainer: container)
+
+        drawsBackground = false
+        isEditable = false
+        isSelectable = true
+        isRichText = true
+        importsGraphics = false
+        allowsUndo = false
+        textContainerInset = .zero
+        container.lineFragmentPadding = 0
+        container.widthTracksTextView = true
+        container.heightTracksTextView = false
+        isHorizontallyResizable = false
+        isVerticallyResizable = true
+        autoresizingMask = [.width]
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func setDocument(
+        source nextSource: String,
+        blocks: [MarkdownBlock],
+        allowsTextSelection: Bool
+    ) {
+        isSelectable = allowsTextSelection
+        guard source != nextSource else { return }
+        source = nextSource
+        textStorage?.setAttributedString(MarkdownAttributedRenderer.render(blocks))
+        measuredHeights.removeAll(keepingCapacity: true)
+        invalidateIntrinsicContentSize()
+    }
+
+    func height(fittingWidth width: CGFloat) -> CGFloat {
+        let safeWidth = max(width, 1)
+        let widthKey = Int((safeWidth * 2).rounded())
+        if let cached = measuredHeights[widthKey] { return cached }
+        // Measurement must be pure. Mutating NSTextContainer from NSViewRepresentable's
+        // sizeThatFits invalidates the platform view while SwiftUI is placing a lazy stack,
+        // producing an endless size/place cycle for very tall messages.
+        let measured = textStorage?.boundingRect(
+            with: NSSize(width: safeWidth, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).height ?? 1
+        let result = max(ceil(measured), 1)
+        measuredHeights[widthKey] = result
+        return result
+    }
+}
+
+@MainActor
+private enum MarkdownAttributedRenderer {
+    private static let inlineIntentKey = NSAttributedString.Key("NSInlinePresentationIntent")
+
+    static func render(_ blocks: [MarkdownBlock]) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        for (index, block) in blocks.enumerated() {
+            if index > 0 { result.append(NSAttributedString(string: "\n\n")) }
+            append(block, to: result)
+        }
+        return result
+    }
+
+    private static func append(_ block: MarkdownBlock, to result: NSMutableAttributedString) {
+        switch block {
+        case let .heading(level, text):
+            let size: CGFloat = switch level {
+            case 1: 20
+            case 2: 17
+            case 3: 15
+            default: 13
+            }
+            result.append(inline(text, font: .systemFont(ofSize: size, weight: .bold)))
+
+        case let .paragraph(text):
+            result.append(inline(text, font: .systemFont(ofSize: 13)))
+
+        case let .list(items):
+            for (index, item) in items.enumerated() {
+                if index > 0 { result.append(NSAttributedString(string: "\n")) }
+                let indent = String(repeating: "    ", count: item.depth)
+                result.append(NSAttributedString(
+                    string: "\(indent)\(item.marker) ",
+                    attributes: baseAttributes(font: .systemFont(ofSize: 13, weight: .semibold))
+                ))
+                result.append(inline(item.text, font: .systemFont(ofSize: 13)))
+            }
+
+        case let .quote(text):
+            result.append(NSAttributedString(
+                string: "▎ ",
+                attributes: baseAttributes(
+                    font: .systemFont(ofSize: 13, weight: .semibold),
+                    color: .secondaryLabelColor
                 )
+            ))
+            result.append(inline(
+                text,
+                font: .systemFont(ofSize: 13),
+                color: .secondaryLabelColor
+            ))
+
+        case let .code(language, content):
+            if let language, !language.isEmpty {
+                result.append(NSAttributedString(
+                    string: language.uppercased() + "\n",
+                    attributes: baseAttributes(
+                        font: .systemFont(ofSize: 10, weight: .semibold),
+                        color: .secondaryLabelColor
+                    )
+                ))
+            }
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineSpacing = 3
+            paragraph.paragraphSpacingBefore = 6
+            paragraph.paragraphSpacing = 6
+            result.append(NSAttributedString(
+                string: content,
+                attributes: [
+                    .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+                    .foregroundColor: NSColor.labelColor,
+                    .backgroundColor: NSColor.textBackgroundColor.withAlphaComponent(0.65),
+                    .paragraphStyle: paragraph,
+                ]
+            ))
+
+        case .divider:
+            result.append(NSAttributedString(
+                string: "────────────────────────",
+                attributes: baseAttributes(font: .systemFont(ofSize: 10), color: .separatorColor)
+            ))
+
+        case let .table(headers, rows):
+            let values = [headers] + rows
+            for (index, row) in values.enumerated() {
+                if index > 0 { result.append(NSAttributedString(string: "\n")) }
+                result.append(NSAttributedString(
+                    string: row.joined(separator: "  │  "),
+                    attributes: baseAttributes(
+                        font: .monospacedSystemFont(
+                            ofSize: 12,
+                            weight: index == 0 ? .semibold : .regular
+                        )
+                    )
+                ))
+                if index == 0 {
+                    result.append(NSAttributedString(
+                        string: "\n" + String(repeating: "─", count: max(row.count * 10, 10)),
+                        attributes: baseAttributes(
+                            font: .monospacedSystemFont(ofSize: 12, weight: .regular),
+                            color: .separatorColor
+                        )
+                    ))
+                }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private static func inline(
+        _ source: String,
+        font: NSFont,
+        color: NSColor = .labelColor
+    ) -> NSAttributedString {
+        let rendered = NSAttributedString(MarkdownRenderCache.shared.attributedInline(for: source))
+        let result = NSMutableAttributedString(attributedString: rendered)
+        let fullRange = NSRange(location: 0, length: result.length)
+        result.addAttributes(baseAttributes(font: font, color: color), range: fullRange)
+        rendered.enumerateAttribute(inlineIntentKey, in: fullRange) { value, range, _ in
+            guard let rawValue = (value as? NSNumber)?.intValue else { return }
+            var resolvedFont = font
+            if rawValue & 4 != 0 {
+                resolvedFont = .monospacedSystemFont(ofSize: font.pointSize, weight: .regular)
+                result.addAttribute(
+                    .backgroundColor,
+                    value: NSColor.textBackgroundColor.withAlphaComponent(0.65),
+                    range: range
+                )
+            } else {
+                if rawValue & 2 != 0 {
+                    resolvedFont = NSFontManager.shared.convert(resolvedFont, toHaveTrait: .boldFontMask)
+                }
+                if rawValue & 1 != 0 {
+                    resolvedFont = NSFontManager.shared.convert(resolvedFont, toHaveTrait: .italicFontMask)
+                }
+            }
+            result.addAttribute(.font, value: resolvedFont, range: range)
+            if rawValue & 8 != 0 {
+                result.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+            }
+        }
+        return result
+    }
+
+    private static func baseAttributes(
+        font: NSFont,
+        color: NSColor = .labelColor
+    ) -> [NSAttributedString.Key: Any] {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 3
+        return [
+            .font: font,
+            .foregroundColor: color,
+            .paragraphStyle: paragraph,
+        ]
     }
 }
 
@@ -132,10 +486,7 @@ private struct MarkdownInlineText: View {
     }
 
     private var rendered: AttributedString {
-        (try? AttributedString(
-            markdown: text,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        )) ?? AttributedString(text)
+        MarkdownRenderCache.shared.attributedInline(for: text)
     }
 }
 
@@ -199,7 +550,7 @@ extension View {
     }
 }
 
-private enum MarkdownBlock: Equatable {
+enum MarkdownBlock: Equatable, Sendable {
     case heading(level: Int, text: String)
     case paragraph(String)
     case list([MarkdownListItem])
@@ -209,13 +560,13 @@ private enum MarkdownBlock: Equatable {
     case table(headers: [String], rows: [[String]])
 }
 
-private struct MarkdownListItem: Equatable {
+struct MarkdownListItem: Equatable, Sendable {
     var marker: String
     var text: String
     var depth: Int
 }
 
-private enum MarkdownBlockParser {
+enum MarkdownBlockParser {
     static func parse(_ source: String) -> [MarkdownBlock] {
         let normalized = source
             .replacingOccurrences(of: "\r\n", with: "\n")

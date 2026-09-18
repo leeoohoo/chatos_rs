@@ -151,6 +151,9 @@ public struct LocalAgentGroupChatScheduler: Sendable {
     public typealias TodoPluginCatalogProvider = @Sendable (
         _ ownerUserID: String
     ) async throws -> [LocalAgentTodoPluginOption]
+    public typealias ContextLanguageProvider = @Sendable (
+        _ ownerUserID: String
+    ) async -> ChatOSLanguage
 
     private let service: NativeAgentGroupChatService
     private let services: any AgentServiceProviding
@@ -166,6 +169,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
     private let projectTypeProvider: ProjectTypeProvider
     private let professionCatalogProvider: ProfessionCatalogProvider
     private let todoPluginCatalogProvider: TodoPluginCatalogProvider
+    private let contextLanguageProvider: ContextLanguageProvider
     private let now: @Sendable () -> Int64
 
     public init(
@@ -185,6 +189,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
             LocalAgentSkillCatalog.professions
         },
         todoPluginCatalogProvider: @escaping TodoPluginCatalogProvider = { _ in [] },
+        contextLanguageProvider: @escaping ContextLanguageProvider = { _ in .simplifiedChinese },
         additionalToolProviders: @escaping AdditionalToolProviderFactory = { _, _, _ in [] },
         now: @escaping @Sendable () -> Int64 = {
             Int64(Date().timeIntervalSince1970 * 1_000)
@@ -211,6 +216,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         self.projectTypeProvider = projectTypeProvider
         self.professionCatalogProvider = professionCatalogProvider
         self.todoPluginCatalogProvider = todoPluginCatalogProvider
+        self.contextLanguageProvider = contextLanguageProvider
         self.additionalToolProviders = additionalToolProviders
         self.now = now
     }
@@ -288,7 +294,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         maximumRuns: Int
     ) async throws -> [RunResult] {
         let store = try await service.store()
-        var results = try await recoverSafeTechnicalPauses(
+        var results = try await recoverInterruptedRuns(
             store: store,
             ownerUserID: ownerUserID,
             maximumRuns: maximumRuns
@@ -373,10 +379,13 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         return results
     }
 
-    /// Chat surfaces only append/display messages. Recovery belongs to the Agent trigger runtime:
-    /// retry checkpoints paused before an uncertain side effect, while leaving user pauses,
-    /// limits, and `needsReview` runs untouched for explicit Agent-level inspection.
-    private func recoverSafeTechnicalPauses(
+    /// Chat surfaces only append/display messages. Recovery belongs to the Agent trigger runtime.
+    /// A durable `running` checkpoint cannot belong to a live run here because this account drain
+    /// holds the process-wide lease; it was left behind by an app exit or an interrupted provider
+    /// request. Resuming is safe even with an in-flight write marker because AgentRuntime converts
+    /// that checkpoint to `needsReview` before any replay. User pauses, limits, and review states
+    /// remain untouched.
+    private func recoverInterruptedRuns(
         store: SQLiteAgentGroupChatStore,
         ownerUserID: String,
         maximumRuns: Int
@@ -410,6 +419,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
     static func isAutomaticTriggerRecoveryEligible(
         _ checkpoint: AgentRunCheckpoint
     ) -> Bool {
+        if checkpoint.status == .running { return true }
         guard checkpoint.status == .paused,
               checkpoint.pendingCalls.isEmpty,
               checkpoint.inFlightCallID == nil,
@@ -614,6 +624,57 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         }
     }
 
+    /// Explicit Human authorization to retry the single write/billable call whose outcome could
+    /// not be durably recorded. Normal resume deliberately refuses to replay such a call; this
+    /// entry point clears only the in-flight marker while preserving the pending call and its
+    /// stable call id, so idempotent local tools can reconcile an already-applied result.
+    public func retryInterruptedDelivery(
+        ownerUserID: String,
+        projectID: String,
+        deliveryID: String
+    ) async throws -> RunResult {
+        let store = try await service.store()
+        guard let delivery = try await store.delivery(
+            ownerUserID: ownerUserID,
+            deliveryID: deliveryID
+        ), let room = try await store.room(
+            ownerUserID: ownerUserID,
+            roomID: delivery.roomID
+        ), room.projectID == projectID, room.status == .active,
+           delivery.status == .running,
+           var savedRun = try await store.run(
+            ownerUserID: ownerUserID,
+            deliveryID: deliveryID
+           ), savedRun.checkpoint.status == .needsReview,
+           let inFlightCallID = savedRun.checkpoint.inFlightCallID,
+           savedRun.checkpoint.pendingCalls.contains(where: { $0.id == inFlightCallID }) else {
+            throw AgentGroupChatError.conflict
+        }
+
+        savedRun.checkpoint.inFlightCallID = nil
+        savedRun.checkpoint.status = .paused
+        savedRun.checkpoint.stopReason = nil
+        savedRun.events.append(.init(
+            kind: "retry_authorized",
+            detail: "Human 已明确重试中断步骤：\(inFlightCallID)",
+            modelCalls: savedRun.checkpoint.modelCalls
+        ))
+        savedRun.updatedAtUnixMs = max(now(), savedRun.updatedAtUnixMs)
+        try await store.saveRun(savedRun)
+        await service.publishChange(.init(
+            ownerUserID: ownerUserID,
+            roomID: savedRun.context.roomID,
+            agentID: savedRun.context.agentID,
+            runID: savedRun.id,
+            kind: .runUpdated
+        ))
+        return try await resumeDelivery(
+            ownerUserID: ownerUserID,
+            projectID: projectID,
+            deliveryID: deliveryID
+        )
+    }
+
     public func abandonDelivery(
         ownerUserID: String,
         projectID: String,
@@ -802,6 +863,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
             } else {
                 projectType = nil
             }
+            let contextLanguage = await contextLanguageProvider(ownerUserID)
             guard let triggerMessage = try await store.message(
                 ownerUserID: ownerUserID,
                 roomID: room.id,
@@ -826,6 +888,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
                     delivery: delivery,
                     profession: profession,
                     projectType: projectType,
+                    contextLanguage: contextLanguage,
                     triggerMessage: triggerMessage,
                     triggerAttachments: triggerAttachments
                 )
@@ -1164,6 +1227,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         delivery: ProjectAgentDelivery,
         profession: LocalAgentProfessionDefinition,
         projectType: LocalProjectTypeDefinition?,
+        contextLanguage: ChatOSLanguage,
         triggerMessage: ProjectAgentMessage,
         triggerAttachments: [ProjectAgentMessageAttachmentPayload]
     ) -> [AgentMessage] {
@@ -1223,7 +1287,9 @@ public struct LocalAgentGroupChatScheduler: Sendable {
             values: [
                 "skill_name": profession.chatOSSkillName,
                 "profession_key": profession.key,
-                "skill_markdown": profession.skillMarkdown,
+                "skill_markdown": contextLanguage == .english
+                    ? profession.skillMarkdownEN
+                    : profession.skillMarkdown,
             ]
         )
         let projectSkill: String
@@ -1233,7 +1299,9 @@ public struct LocalAgentGroupChatScheduler: Sendable {
                 values: [
                     "skill_name": projectType.skillName,
                     "project_type_key": projectType.key,
-                    "rule_markdown": projectType.ruleMarkdown,
+                    "rule_markdown": contextLanguage == .english
+                        ? projectType.ruleMarkdownEN
+                        : projectType.ruleMarkdown,
                 ]
             )
         } else {

@@ -10,7 +10,11 @@ public enum AgentSchemaValidator {
     }
     private static func check(_ value: Any, schema: [String: Any], path: String, depth: Int) throws {
         guard depth < 24 else { throw ValidationError.invalid(path) }
-        let supported: Set<String> = ["type", "properties", "required", "additionalProperties", "items", "minItems", "maxItems", "minimum", "maximum", "minLength", "maxLength", "enum", "description"]
+        let supported: Set<String> = [
+            "type", "properties", "required", "additionalProperties", "items",
+            "minItems", "maxItems", "uniqueItems", "minimum", "maximum",
+            "minLength", "maxLength", "enum", "description", "default",
+        ]
         guard Set(schema.keys).isSubset(of: supported) else { throw ValidationError.invalid("unsupported schema") }
         switch schema["type"] as? String {
         case "object":
@@ -24,6 +28,18 @@ public enum AgentSchemaValidator {
         case "array":
             guard let array = value as? [Any], array.count >= (schema["minItems"] as? Int ?? 0),
                   array.count <= (schema["maxItems"] as? Int ?? 10_000), let item = schema["items"] as? [String: Any] else { throw ValidationError.invalid(path) }
+            if schema["uniqueItems"] as? Bool == true {
+                var canonicalItems = Set<Data>()
+                for child in array {
+                    let data = try JSONSerialization.data(
+                        withJSONObject: child,
+                        options: [.fragmentsAllowed, .sortedKeys]
+                    )
+                    guard canonicalItems.insert(data).inserted else {
+                        throw ValidationError.invalid(path)
+                    }
+                }
+            }
             for child in array { try check(child, schema: item, path: path + "[]", depth: depth + 1) }
         case "string":
             guard let string = value as? String, string.count >= (schema["minLength"] as? Int ?? 0),

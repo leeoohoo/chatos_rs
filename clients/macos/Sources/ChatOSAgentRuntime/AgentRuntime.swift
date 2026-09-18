@@ -125,12 +125,13 @@ public struct AgentRuntime: Sendable {
                         state.inFlightCallID = call.id
                         try await emit("tool_started", call.name) // Durable before execution.
                         do {
-                            outcome = try await withTimeout(seconds: remainingTime()) { try await execute(call) }
+                            outcome = try await withAgentTimeout(seconds: remainingTime()) { try await execute(call) }
                         } catch {
                             if error is CancellationError { throw error }
                             if definition.effect == .billable || definition.effect == .write {
                                 state.status = .needsReview
-                                try await emit("needs_review", "\(call.name)：\(error.localizedDescription)")
+                                state.stopReason = "\(call.name) 执行中断：\(error.localizedDescription)"
+                                try await emit("needs_review", state.stopReason ?? error.localizedDescription)
                                 return snapshot(state)
                             }
                             outcome = .failure(error.localizedDescription)
@@ -188,7 +189,7 @@ public struct AgentRuntime: Sendable {
                     let requestMessages = messages
                     let timeout = min(Double(policy.requestTimeoutSeconds), remainingTime())
                     do {
-                        response = try await withTimeout(seconds: timeout) {
+                        response = try await withAgentTimeout(seconds: timeout) {
                             try await model.stream(messages: requestMessages, tools: tools, timeout: timeout,
                                                    onEvent: onModelStreamEvent)
                         }
@@ -253,13 +254,90 @@ public struct AgentRuntime: Sendable {
     }
 }
 
-private func withTimeout<T: Sendable>(seconds: Double, operation: @escaping @Sendable () async throws -> T) async throws -> T {
+/// Races an operation against a deadline without waiting for a losing child task to unwind.
+///
+/// A throwing task group cannot provide this guarantee: its scope waits for every child even
+/// after `cancelAll()`. Some provider transports only observe cancellation after their socket
+/// returns, which used to leave an Agent Run durably stuck at `model_request`. The losing task is
+/// still cancelled, but the caller is released immediately so it can persist a terminal state.
+func withAgentTimeout<T: Sendable>(
+    seconds: Double,
+    operation: @escaping @Sendable () async throws -> T
+) async throws -> T {
     guard seconds > 0 else { throw AgentRuntimeError.timeout }
-    return try await withThrowingTaskGroup(of: T.self) { group in
-        group.addTask { try await operation() }
-        group.addTask { try await Task.sleep(for: .seconds(seconds)); throw AgentRuntimeError.timeout }
-        defer { group.cancelAll() }
-        guard let value = try await group.next() else { throw CancellationError() }
-        return value
+    let race = AgentTimeoutRace<T>()
+    return try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { continuation in
+            race.install(continuation)
+            let operationTask = Task {
+                do {
+                    race.resolve(.success(try await operation()))
+                } catch {
+                    race.resolve(.failure(error))
+                }
+            }
+            let timeoutTask = Task {
+                do {
+                    try await Task.sleep(for: .seconds(seconds))
+                    race.resolve(.failure(AgentRuntimeError.timeout))
+                } catch {
+                    // The winner cancels this timer. Its result was already delivered.
+                }
+            }
+            race.installTasks(operationTask, timeoutTask)
+        }
+    } onCancel: {
+        race.resolve(.failure(CancellationError()))
+    }
+}
+
+private final class AgentTimeoutRace<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Error>?
+    private var pendingResult: Result<Value, Error>?
+    private var tasks: [Task<Void, Never>] = []
+    private var isResolved = false
+
+    func install(_ continuation: CheckedContinuation<Value, Error>) {
+        lock.lock()
+        if let pendingResult {
+            self.pendingResult = nil
+            lock.unlock()
+            continuation.resume(with: pendingResult)
+        } else {
+            self.continuation = continuation
+            lock.unlock()
+        }
+    }
+
+    func installTasks(_ tasks: Task<Void, Never>...) {
+        lock.lock()
+        if isResolved {
+            lock.unlock()
+            tasks.forEach { $0.cancel() }
+        } else {
+            self.tasks = tasks
+            lock.unlock()
+        }
+    }
+
+    func resolve(_ result: Result<Value, Error>) {
+        lock.lock()
+        guard !isResolved else {
+            lock.unlock()
+            return
+        }
+        isResolved = true
+        let continuation = continuation
+        self.continuation = nil
+        if continuation == nil {
+            pendingResult = result
+        }
+        let tasks = tasks
+        self.tasks.removeAll()
+        lock.unlock()
+
+        tasks.forEach { $0.cancel() }
+        continuation?.resume(with: result)
     }
 }

@@ -21,6 +21,10 @@ let package = Package(
         ),
     ],
     targets: [
+        .target(
+            name: "ChatOSProcessRuntime",
+            publicHeadersPath: "include"
+        ),
         .target(name: "ChatOSAgentRuntime"),
         .target(
             name: "ChatOSCore",
@@ -35,6 +39,7 @@ let package = Package(
             dependencies: [
                 "ChatOSCore",
                 "ChatOSAgentRuntime",
+                "ChatOSProcessRuntime",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
             linkerSettings: [

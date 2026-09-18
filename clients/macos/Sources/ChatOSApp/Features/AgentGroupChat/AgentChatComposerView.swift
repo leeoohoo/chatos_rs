@@ -9,18 +9,23 @@ struct AgentChatComposerView<LeadingControl: View>: View {
     @Binding var attachmentError: String?
     let isSending: Bool
     let placeholder: String
+    let mentionCandidates: [AgentChatMentionCandidate]
+    let onMentionSelected: (String) -> Void
     let onSend: () -> Void
     @ViewBuilder let leadingControl: () -> LeadingControl
 
     @State private var showsFileImporter = false
     @State private var previewedAttachment: ConversationAttachmentDraft?
     @State private var isDropTargeted = false
+    @State private var highlightedMentionID: String?
+    @State private var suppressesMentionSuggestions = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             controls
             attachmentStrip
             errorView
+            mentionSuggestions
             input
         }
         .padding(12)
@@ -57,6 +62,13 @@ struct AgentChatComposerView<LeadingControl: View>: View {
         }
         .sheet(item: $previewedAttachment) { attachment in
             ComposerAttachmentPreview(attachment: attachment)
+        }
+        .onChange(of: text) { _, _ in
+            suppressesMentionSuggestions = false
+            selectFirstMentionSuggestion()
+        }
+        .onChange(of: mentionCandidates) { _, _ in
+            selectFirstMentionSuggestion()
         }
     }
 
@@ -119,7 +131,8 @@ struct AgentChatComposerView<LeadingControl: View>: View {
                 text: $text,
                 placeholder: placeholder,
                 onSubmit: onSend,
-                onPasteContent: handlePasteContent
+                onPasteContent: handlePasteContent,
+                onCommand: handleTextCommand
             )
             Button(action: onSend) {
                 Group {
@@ -142,6 +155,113 @@ struct AgentChatComposerView<LeadingControl: View>: View {
         .overlay {
             RoundedRectangle(cornerRadius: 11)
                 .stroke(AppPalette.ai.opacity(0.24), lineWidth: 1)
+        }
+    }
+
+    @ViewBuilder
+    private var mentionSuggestions: some View {
+        if !visibleMentionCandidates.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(visibleMentionCandidates.prefix(6)) { candidate in
+                    Button {
+                        selectMention(candidate)
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "person.crop.circle.fill")
+                                .foregroundStyle(.tint)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("@\(candidate.name)")
+                                    .appFont(.body)
+                                    .foregroundStyle(.primary)
+                                if let subtitle = candidate.subtitle, !subtitle.isEmpty {
+                                    Text(subtitle)
+                                        .appFont(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                            if highlightedMentionID == candidate.id {
+                                Text("↩")
+                                    .appFont(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .contentShape(Rectangle())
+                        .background(
+                            highlightedMentionID == candidate.id
+                                ? Color.accentColor.opacity(0.12)
+                                : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(6)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 11))
+            .overlay {
+                RoundedRectangle(cornerRadius: 11)
+                    .stroke(AppPalette.border, lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.10), radius: 10, y: 4)
+        }
+    }
+
+    private var activeMentionQuery: AgentChatMentionQuery? {
+        guard !suppressesMentionSuggestions else { return nil }
+        return AgentChatMentionSyntax.trailingQuery(in: text)
+    }
+
+    private var visibleMentionCandidates: [AgentChatMentionCandidate] {
+        guard let query = activeMentionQuery else { return [] }
+        let normalized = query.value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matches = mentionCandidates.filter {
+            normalized.isEmpty || $0.name.localizedCaseInsensitiveContains(normalized)
+        }
+        return matches.sorted(by: { lhs, rhs in
+            let prefixOptions: String.CompareOptions = [
+                .caseInsensitive,
+                .diacriticInsensitive,
+                .anchored,
+            ]
+            let leftPrefix = lhs.name.range(of: normalized, options: prefixOptions) != nil
+            let rightPrefix = rhs.name.range(of: normalized, options: prefixOptions) != nil
+            if leftPrefix != rightPrefix { return leftPrefix }
+            return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+        })
+    }
+
+    private func selectFirstMentionSuggestion() {
+        let visibleIDs = Set(visibleMentionCandidates.prefix(6).map(\.id))
+        if let highlightedMentionID, visibleIDs.contains(highlightedMentionID) { return }
+        highlightedMentionID = visibleMentionCandidates.first?.id
+    }
+
+    private func selectMention(_ candidate: AgentChatMentionCandidate) {
+        guard let query = AgentChatMentionSyntax.trailingQuery(in: text) else { return }
+        text = AgentChatMentionSyntax.removingTrailingQuery(query, from: text)
+        onMentionSelected(candidate.id)
+        highlightedMentionID = nil
+        suppressesMentionSuggestions = false
+    }
+
+    private func handleTextCommand(_ command: ComposerTextCommand) -> Bool {
+        let candidates = Array(visibleMentionCandidates.prefix(6))
+        guard !candidates.isEmpty else { return false }
+        switch command {
+        case .moveUp, .moveDown:
+            let currentIndex = candidates.firstIndex { $0.id == highlightedMentionID } ?? 0
+            let offset = command == .moveDown ? 1 : -1
+            highlightedMentionID = candidates[(currentIndex + offset + candidates.count) % candidates.count].id
+            return true
+        case .escape:
+            suppressesMentionSuggestions = true
+            return true
+        case .submit:
+            selectMention(candidates.first { $0.id == highlightedMentionID } ?? candidates[0])
+            return true
         }
     }
 

@@ -88,8 +88,9 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             runID: "run-1",
             hopCount: claimed.hopCount
         )
+        let service = NativeAgentGroupChatService(databaseURL: url)
         let relayMCP = LocalAgentRelayMCPServer(
-            service: NativeAgentGroupChatService(databaseURL: url),
+            service: service,
             now: { incoming.message.createdAtUnixMs + 2 }
         )
         let provider = try await relayMCP.connect(context: context)
@@ -102,7 +103,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 "chat_list_members", "chat_read_unread",
                 "chat_read_messages", "chat_read_attachment", "chat_mark_read", "agent_propose_member",
                 "agent_propose_existing_member", "agent_propose_member_removal",
-                "chat_direct_open", "chat_direct_send", "chat_send_message",
+                "chat_direct_open", "chat_direct_send", "chat_team_send", "chat_send_message",
                 "chat_read_all_unread", "chat_inbox_send",
                 "todo_list", "todo_execution_options", "todo_add", "todo_update",
                 "todo_reorder", "todo_read_progress", "todo_dependency_options",
@@ -159,6 +160,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             })?["agent_ref"]
                 as? String
         )
+        let roomChanges = await service.changes(ownerUserID: "alice")
+        var roomChangeIterator = roomChanges.makeAsyncIterator()
         let openedDirect = try await provider.execute(.init(
             id: "call-open-direct",
             name: LocalAgentChatToolProvider.openDirectToolName,
@@ -166,6 +169,11 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         ))
         XCTAssertTrue(openedDirect.content.contains("conversation_ref"))
         XCTAssertFalse(openedDirect.content.contains(third.id))
+        let observedDirectRoomChange = await roomChangeIterator.next()
+        let directRoomChange = try XCTUnwrap(observedDirectRoomChange)
+        XCTAssertEqual(directRoomChange.kind.rawValue, "room_updated")
+        XCTAssertEqual(directRoomChange.agentID, first.id)
+        XCTAssertNotEqual(directRoomChange.roomID, room.id)
         let trigger = try await provider.execute(
             .init(id: "call-trigger", name: "chat_get_trigger", arguments: "{}")
         )
@@ -311,6 +319,28 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertEqual(transcript.count, 2)
         XCTAssertEqual(transcript.last?.senderID, first.id)
         XCTAssertEqual(transcript.last?.sourceRunID, "run-1")
+        let teamAnnouncement = try await provider.execute(.init(
+            id: "call-team-send",
+            name: LocalAgentChatToolProvider.sendTeamToolName,
+            arguments: try toolArguments([
+                "team_ref": teamReference,
+                "content": "@客户端 请在项目群同步实现计划",
+                "mention_agent_refs": [secondReference],
+            ])
+        ))
+        XCTAssertTrue(teamAnnouncement.content.contains(#""spawned_delivery_count":1"#))
+        let teamRoomChangeValue = await roomChangeIterator.next()
+        let teamRoomChange = try XCTUnwrap(teamRoomChangeValue)
+        XCTAssertEqual(teamRoomChange.kind.rawValue, "room_updated")
+        XCTAssertEqual(teamRoomChange.roomID, room.id)
+        let teamMessages = try await store.pageRecentMessages(
+            ownerUserID: "alice",
+            roomID: room.id,
+            beforeMessageID: nil,
+            limit: 20
+        ).messages
+        XCTAssertEqual(teamMessages.last?.content, "@客户端 请在项目群同步实现计划")
+        XCTAssertEqual(teamMessages.last?.mentionedAgentIDs, [second.id])
     }
 
     func testHeartbeatCanCompleteQuietlyWithoutWritingTranscriptMessage() async throws {

@@ -31,7 +31,6 @@ private enum AgentDirectTimelineItem: Identifiable {
 private final class AgentDirectChatViewModel: ObservableObject {
     @Published private(set) var conversation: ProjectAgentRoom?
     @Published private(set) var agents: [LocalAgentProfile] = []
-    @Published private(set) var members: [ProjectAgentRoomMember] = []
     @Published private(set) var messages: [ProjectAgentMessage] = []
     @Published private(set) var pendingAgentProposals: [LocalAgentCreationProposal] = []
     @Published private(set) var pendingTeamProposals: [LocalAgentTeamCreationProposal] = []
@@ -42,10 +41,15 @@ private final class AgentDirectChatViewModel: ObservableObject {
     @Published var attachmentError: String?
     @Published private(set) var attachmentDataByID: [String: Data] = [:]
     @Published private(set) var isLoading = false
+    @Published private(set) var hasCompletedInitialLoad = false
+    @Published private(set) var isLoadingOlderMessages = false
+    @Published private(set) var hasOlderMessages = false
     @Published private(set) var isSending = false
     @Published private(set) var isRunningAgents = false
+    @Published private(set) var isInitialTimelineReady = false
     @Published private(set) var proposalActionIDs: Set<String> = []
     @Published var errorMessage: String?
+    @Published private(set) var scrollToLatestRequest = 0
 
     private let ownerUserID: String
     private let conversationID: String
@@ -56,6 +60,8 @@ private final class AgentDirectChatViewModel: ObservableObject {
     private var openedStore: SQLiteAgentGroupChatStore?
     private var schedulerTask: Task<Void, Never>?
     private var changeObservationTask: Task<Void, Never>?
+    private var supplementaryLoadTask: Task<Void, Never>?
+    private let messagePageSize = 20
 
     init(
         ownerUserID: String,
@@ -75,6 +81,7 @@ private final class AgentDirectChatViewModel: ObservableObject {
 
     deinit {
         changeObservationTask?.cancel()
+        supplementaryLoadTask?.cancel()
     }
 
     var profilesByID: [String: LocalAgentProfile] {
@@ -108,8 +115,8 @@ private final class AgentDirectChatViewModel: ObservableObject {
     }
 
     func activate() async {
-        await load()
         startChangeObservation()
+        await load()
         startScheduler()
     }
 
@@ -135,64 +142,141 @@ private final class AgentDirectChatViewModel: ObservableObject {
     func load() async {
         guard !isLoading else { return }
         isLoading = true
-        defer { isLoading = false }
         do {
             let store = try await resolveStore()
-            guard let conversation = try await store.room(
+            async let loadedConversation = store.room(
                 ownerUserID: ownerUserID,
                 roomID: conversationID
-            ), conversation.conversationKind.isDirect else {
-                throw AgentGroupChatError.notFound
-            }
+            )
             async let loadedAgents = store.listAgents(
                 ownerUserID: ownerUserID,
                 includeArchived: false
             )
-            async let loadedMembers = store.listMembers(
-                ownerUserID: ownerUserID,
-                roomID: conversationID
-            )
-            async let loadedMessages = store.listMessages(
+            async let loadedMessages = store.pageRecentMessages(
                 ownerUserID: ownerUserID,
                 roomID: conversationID,
-                afterUnixMs: nil,
-                limit: 500
+                beforeMessageID: nil,
+                limit: messagePageSize
             )
-            async let loadedProposals = store.listTeamProposals(
-                ownerUserID: ownerUserID,
-                sourceRoomID: conversationID,
-                status: .pending
-            )
-            async let loadedAgentProposals = store.listAgentProposals(
-                ownerUserID: ownerUserID,
-                roomID: conversationID,
-                status: .pending
-            )
-            async let loadedMembershipProposals = store.listMembershipProposals(
-                ownerUserID: ownerUserID,
-                sourceRoomID: conversationID,
-                status: .pending
-            )
-            async let loadedTeams = store.listRooms(
-                ownerUserID: ownerUserID,
-                includeArchived: false
-            )
+            guard let conversation = try await loadedConversation,
+                  conversation.conversationKind.isDirect else {
+                throw AgentGroupChatError.notFound
+            }
+            let messagePage = try await loadedMessages
             self.conversation = conversation
             agents = try await loadedAgents
-            members = try await loadedMembers
-            let nextMessages = try await loadedMessages
-            messages = nextMessages
-            attachmentDataByID = try await loadAttachmentData(
-                messages: nextMessages,
+            let wasEmpty = messages.isEmpty
+            messages = mergeMessages(messages, with: messagePage.messages)
+            if wasEmpty {
+                hasOlderMessages = messagePage.hasMore
+            }
+            errorMessage = nil
+            isLoading = false
+            hasCompletedInitialLoad = true
+            startSupplementaryLoad(
+                conversation: conversation,
+                messages: messagePage.messages,
                 store: store
             )
-            pendingTeamProposals = try await loadedProposals
-            pendingAgentProposals = try await loadedAgentProposals
-            pendingMembershipProposals = try await loadedMembershipProposals
-            teams = try await loadedTeams
+        } catch {
+            isLoading = false
+            hasCompletedInitialLoad = true
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func startSupplementaryLoad(
+        conversation: ProjectAgentRoom,
+        messages: [ProjectAgentMessage],
+        store: SQLiteAgentGroupChatStore
+    ) {
+        supplementaryLoadTask?.cancel()
+        let loadedAttachmentIDs = Set(attachmentDataByID.keys)
+        supplementaryLoadTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let loadedAttachmentData = try await loadAttachmentData(
+                    messages: messages,
+                    excluding: loadedAttachmentIDs,
+                    store: store
+                )
+                guard !Task.isCancelled else { return }
+                attachmentDataByID.merge(loadedAttachmentData) { _, new in new }
+
+                guard conversation.conversationKind == .humanAgentDirect else {
+                    pendingTeamProposals = []
+                    pendingAgentProposals = []
+                    pendingMembershipProposals = []
+                    teams = []
+                    isInitialTimelineReady = true
+                    return
+                }
+                async let loadedProposals = store.listTeamProposals(
+                    ownerUserID: ownerUserID,
+                    sourceRoomID: conversationID,
+                    status: .pending
+                )
+                async let loadedAgentProposals = store.listAgentProposals(
+                    ownerUserID: ownerUserID,
+                    roomID: conversationID,
+                    status: .pending
+                )
+                async let loadedMembershipProposals = store.listMembershipProposals(
+                    ownerUserID: ownerUserID,
+                    sourceRoomID: conversationID,
+                    status: .pending
+                )
+                async let loadedTeams = store.listRooms(
+                    ownerUserID: ownerUserID,
+                    includeArchived: false
+                )
+                let teamProposals = try await loadedProposals
+                let agentProposals = try await loadedAgentProposals
+                let membershipProposals = try await loadedMembershipProposals
+                let rooms = try await loadedTeams
+                guard !Task.isCancelled else { return }
+                pendingTeamProposals = teamProposals
+                pendingAgentProposals = agentProposals
+                pendingMembershipProposals = membershipProposals
+                teams = rooms
+                isInitialTimelineReady = true
+            } catch {
+                guard !Task.isCancelled else { return }
+                errorMessage = error.localizedDescription
+                // Messages are already available. A supplementary-card failure must not leave
+                // the transcript waiting forever before it performs its initial positioning.
+                isInitialTimelineReady = true
+            }
+        }
+    }
+
+    @discardableResult
+    func loadOlderMessages() async -> String? {
+        guard !isLoadingOlderMessages,
+              hasOlderMessages,
+              let firstMessageID = messages.first?.id else { return nil }
+        isLoadingOlderMessages = true
+        defer { isLoadingOlderMessages = false }
+        do {
+            let store = try await resolveStore()
+            let page = try await store.pageRecentMessages(
+                ownerUserID: ownerUserID,
+                roomID: conversationID,
+                beforeMessageID: firstMessageID,
+                limit: messagePageSize
+            )
+            messages = mergeMessages(messages, with: page.messages)
+            hasOlderMessages = page.hasMore
+            let loadedAttachmentData = try await loadAttachmentData(
+                messages: page.messages,
+                store: store
+            )
+            attachmentDataByID.merge(loadedAttachmentData) { _, new in new }
             errorMessage = nil
+            return firstMessageID
         } catch {
             errorMessage = error.localizedDescription
+            return nil
         }
     }
 
@@ -220,6 +304,7 @@ private final class AgentDirectChatViewModel: ObservableObject {
             attachments = []
             attachmentError = nil
             await load()
+            scrollToLatestRequest &+= 1
             if !post.deliveries.isEmpty { startScheduler() }
         } catch {
             errorMessage = error.localizedDescription
@@ -368,11 +453,13 @@ private final class AgentDirectChatViewModel: ObservableObject {
 
     private func loadAttachmentData(
         messages: [ProjectAgentMessage],
+        excluding loadedAttachmentIDs: Set<String> = [],
         store: SQLiteAgentGroupChatStore
     ) async throws -> [String: Data] {
         var result: [String: Data] = [:]
         for message in messages {
-            for attachment in message.attachmentItems where attachment.kind == .image {
+            for attachment in message.attachmentItems
+            where attachment.kind == .image && !loadedAttachmentIDs.contains(attachment.id) {
                 guard let payload = try await store.messageAttachment(
                     ownerUserID: ownerUserID,
                     roomID: conversationID,
@@ -386,6 +473,19 @@ private final class AgentDirectChatViewModel: ObservableObject {
             }
         }
         return result
+    }
+
+    private func mergeMessages(
+        _ current: [ProjectAgentMessage],
+        with incoming: [ProjectAgentMessage]
+    ) -> [ProjectAgentMessage] {
+        var byID = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+        for message in incoming {
+            byID[message.id] = message
+        }
+        return byID.values.sorted {
+            ($0.createdAtUnixMs, $0.id) < ($1.createdAtUnixMs, $1.id)
+        }
     }
 
     private func startScheduler() {
@@ -439,8 +539,9 @@ struct AgentDirectChatView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            if viewModel.isLoading, viewModel.messages.isEmpty {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            if !viewModel.hasCompletedInitialLoad {
+                ProgressView("正在读取聊天记录…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 transcript
             }
@@ -483,60 +584,65 @@ struct AgentDirectChatView: View {
     }
 
     private var transcript: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 14) {
-                    if viewModel.timelineItems.isEmpty {
-                        ContentUnavailableView {
-                            Label("开始对话", systemImage: "bubble.left")
-                        }
-                        .padding(.top, 80)
-                    } else {
-                        ForEach(viewModel.timelineItems) { item in
-                            Group {
-                                switch item {
-                                case let .message(message):
-                                    messageRow(message)
-                                case let .agentProposal(proposal):
-                                    agentProposalCard(proposal)
-                                case let .teamProposal(proposal):
-                                    proposalCard(proposal)
-                                case let .membershipProposal(proposal):
-                                    membershipProposalCard(proposal)
-                                }
-                            }
-                            .id(item.id)
-                        }
+        AgentChatTimelineView(
+            items: viewModel.timelineItems,
+            isInitialContentReady: viewModel.isInitialTimelineReady,
+            hasOlderItems: viewModel.hasOlderMessages,
+            isLoadingOlderItems: viewModel.isLoadingOlderMessages,
+            scrollToLatestRequest: viewModel.scrollToLatestRequest,
+            loadOlderItems: {
+                await viewModel.loadOlderMessages().map { "message:\($0)" }
+            },
+            rowContent: { item in
+                Group {
+                    switch item {
+                    case let .message(message):
+                        messageRow(message)
+                    case let .agentProposal(proposal):
+                        agentProposalCard(proposal)
+                    case let .teamProposal(proposal):
+                        proposalCard(proposal)
+                    case let .membershipProposal(proposal):
+                        membershipProposalCard(proposal)
                     }
                 }
-                .padding(18)
-            }
-            .onChange(of: viewModel.messages.count) {
-                if let id = viewModel.messages.last?.id {
-                    withAnimation { proxy.scrollTo("message:\(id)", anchor: .bottom) }
+            },
+            emptyContent: {
+                ContentUnavailableView {
+                    Label("开始对话", systemImage: "bubble.left")
                 }
+                .padding(.top, 80)
             }
-        }
+        )
     }
 
     private func messageRow(_ message: ProjectAgentMessage) -> some View {
         let isHuman = message.senderKind == .human
-        return HStack {
+        return HStack(alignment: .top, spacing: 12) {
             if isHuman { Spacer(minLength: 80) }
-            VStack(alignment: isHuman ? .trailing : .leading, spacing: 4) {
-                Text(viewModel.displayName(for: message))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            VStack(alignment: isHuman ? .trailing : .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text(viewModel.displayName(for: message))
+                        .font(.caption.weight(.medium))
+                    Text(formattedMessageTime(message.createdAtUnixMs))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .foregroundStyle(.secondary)
                 if !message.content.isEmpty {
-                    Text(message.content)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 9)
-                        .background(
-                            isHuman ? Color.accentColor : Color(nsColor: .controlBackgroundColor),
-                            in: RoundedRectangle(cornerRadius: 12)
-                        )
-                        .foregroundStyle(isHuman ? Color.white : Color.primary)
+                    MarkdownDocumentView(markdown: message.content)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .background(messageBubbleBackground(isHuman: isHuman))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 13)
+                                .stroke(
+                                    isHuman
+                                        ? Color.accentColor.opacity(0.22)
+                                        : Color.primary.opacity(0.07),
+                                    lineWidth: 1
+                                )
+                        }
                 }
                 if !message.attachmentItems.isEmpty {
                     AgentMessageAttachmentChips(
@@ -545,9 +651,21 @@ struct AgentDirectChatView: View {
                     )
                 }
             }
+            .frame(maxWidth: 900, alignment: isHuman ? .trailing : .leading)
             if !isHuman { Spacer(minLength: 80) }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private func messageBubbleBackground(isHuman: Bool) -> AnyShapeStyle {
+        isHuman
+            ? AnyShapeStyle(Color.accentColor.opacity(0.11))
+            : AnyShapeStyle(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private func formattedMessageTime(_ unixMs: Int64) -> String {
+        Date(timeIntervalSince1970: TimeInterval(unixMs) / 1_000)
+            .formatted(date: .omitted, time: .shortened)
     }
 
     private func proposalCard(_ proposal: LocalAgentTeamCreationProposal) -> some View {
@@ -666,6 +784,8 @@ struct AgentDirectChatView: View {
             attachmentError: $viewModel.attachmentError,
             isSending: viewModel.isSending,
             placeholder: "输入消息，或粘贴图片、文档和长文本…",
+            mentionCandidates: [],
+            onMentionSelected: { _ in },
             onSend: { Task { await viewModel.sendMessage() } },
             leadingControl: { EmptyView() }
         )

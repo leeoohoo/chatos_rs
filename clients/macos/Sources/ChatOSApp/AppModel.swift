@@ -180,10 +180,22 @@ final class AppModel: ObservableObject {
         self.localConnectorControl = LocalConnectorControlCenterViewModel(
             service: localConnectorService
         )
-        let agentServices = ChatOSStoryPlanningService(client: apiClient)
+        let remoteAgentServices = ChatOSStoryPlanningService(client: apiClient)
+        let agentServices: any AgentServiceProviding
+        do {
+            agentServices = try OfflineCapableAgentServiceProvider(
+                upstream: remoteAgentServices,
+                databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
+                    .appendingPathComponent("AgentMemoryCache.sqlite3")
+            )
+        } catch {
+            // Storage initialization is validated again by the scheduler. Keep
+            // app startup recoverable if the local cache file needs repair.
+            agentServices = remoteAgentServices
+        }
         self.mediaStudio = MediaStudioViewModel(
             service: ChatOSMediaGenerationService(client: apiClient),
-            storyPlanner: agentServices
+            storyPlanner: remoteAgentServices
         )
         self.localConnectorService = localConnectorService
         self.conversationService = conversationService
@@ -233,6 +245,11 @@ final class AppModel: ObservableObject {
                         description: $0.description
                     )
                 }
+            },
+            contextLanguageProvider: { _ in
+                ChatOSLanguage(normalizing: UserDefaults.standard.string(
+                    forKey: "ChatOS.internalContextLanguage"
+                ))
             },
             additionalToolProviders: { profile, member, runContext in
                 var providers: [any AgentToolProvider] = []

@@ -41,6 +41,37 @@ final class AgentLoopSafetyTests: XCTestCase {
         XCTAssertEqual(result.modelCalls, 0)
     }
 
+    func testWriteFailurePersistsVisibleInterruptionReason() async throws {
+        let model = ScriptModel([
+            .init(role: .assistant, toolCalls: [
+                .init(id: "write-failure", name: "write", arguments: "{}"),
+            ]),
+        ])
+        let result = try await AgentRuntime().run(
+            checkpoint: base,
+            scope: base.scope,
+            policy: .init(),
+            model: model,
+            tools: [
+                .init(
+                    name: "write",
+                    description: "write",
+                    schema: Data(#"{"type":"object","additionalProperties":false}"#.utf8),
+                    effect: .write
+                ),
+            ],
+            execute: { _ in
+                throw NSError(domain: "test", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "database schema is unavailable",
+                ])
+            }
+        )
+
+        XCTAssertEqual(result.status, .needsReview)
+        XCTAssertEqual(result.inFlightCallID, "write-failure")
+        XCTAssertEqual(result.stopReason, "write 执行中断：database schema is unavailable")
+    }
+
     func testExplicitCancellationOfWriteToolPausesWithoutNeedsReview() async throws {
         let model = ScriptModel([
             .init(role: .assistant, toolCalls: [
@@ -147,6 +178,25 @@ final class AgentLoopSafetyTests: XCTestCase {
         XCTAssertEqual(result.status, .failed)
         XCTAssertLessThanOrEqual(result.modelCalls, 1)
         XCTAssertLessThan(result.elapsedSeconds, 11)
+    }
+
+    func testTimeoutDoesNotWaitForProviderThatIgnoresCancellation() async throws {
+        let started = Date()
+        do {
+            _ = try await withAgentTimeout(seconds: 0.05) {
+                await withCheckedContinuation { continuation in
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 0.8) {
+                        continuation.resume(returning: "late")
+                    }
+                }
+            }
+            XCTFail("Expected timeout")
+        } catch AgentRuntimeError.timeout {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.4)
     }
 
     private var base: AgentRunCheckpoint { .init(scope: "test", messages: [.init(role: .user, content: "test")]) }

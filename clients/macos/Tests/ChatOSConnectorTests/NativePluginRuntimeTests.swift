@@ -1,5 +1,6 @@
 @testable import ChatOSConnector
 import ChatOSCore
+import Darwin
 import Foundation
 import Testing
 
@@ -895,6 +896,68 @@ struct NativePluginRuntimeTests {
         )
         #expect(result.jsonObject?["content"]?.jsonArray?.first?.jsonObject?["text"]?.jsonString == "ok")
         await client.terminate()
+    }
+
+    @Test("terminating a stdio plugin also terminates its spawned descendants")
+    func stdioTerminationKillsPluginProcessGroup() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let grandchildPIDFile = root.appendingPathComponent("grandchild.pid")
+        let script = root.appendingPathComponent("fixture.zsh")
+        try """
+        while IFS= read -r line; do
+          if [[ "$line" == *'tools/list'* ]]; then
+            echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"hang","description":"Hang","inputSchema":{"type":"object"}}]}}'
+          elif [[ "$line" == *'tools/call'* ]]; then
+            /bin/sleep 60 &
+            echo $! > '\(grandchildPIDFile.path)'
+            wait
+          elif [[ "$line" == *'initialize'* ]]; then
+            echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}}}}'
+          fi
+        done
+        """.write(to: script, atomically: true, encoding: .utf8)
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data("""
+            {"schemaVersion":3,"name":"fixture","version":"1.0.0","mcpServers":{"fixture":{"type":"stdio","bin":"fixture","args":[]}}}
+            """.utf8)
+        )
+        let launch = NativePreparedPluginLaunch(
+            manifest: manifest,
+            componentKey: "fixture",
+            server: manifest.mcpServers["fixture"]!,
+            executableURL: URL(fileURLWithPath: "/bin/zsh"),
+            arguments: [script.path],
+            environment: [:],
+            installationURL: root,
+            visualSessionURL: root.appendingPathComponent("visual"),
+            artifactURL: root.appendingPathComponent("artifacts"),
+            displayName: "Fixture"
+        )
+        let client = NativePluginStdioClient(launch: launch)
+        try await client.start()
+        _ = try await client.initialize()
+        let call = Task {
+            try await client.callTool(name: "hang", arguments: .object([:]), timeout: .seconds(30))
+        }
+        for _ in 0..<100 where !FileManager.default.fileExists(atPath: grandchildPIDFile.path) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let text = try String(contentsOf: grandchildPIDFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let grandchildPID = try #require(pid_t(text))
+        #expect(Darwin.kill(grandchildPID, 0) == 0)
+
+        await client.terminate()
+        _ = try? await call.value
+        for _ in 0..<100 where Darwin.kill(grandchildPID, 0) == 0 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(Darwin.kill(grandchildPID, 0) == -1)
+        #expect(errno == ESRCH)
     }
 
     @Test("stdio client preserves the byte order of a large chunked response")

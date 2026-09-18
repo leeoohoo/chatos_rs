@@ -34,11 +34,15 @@ private enum AgentSkillContentMode: String, CaseIterable, Identifiable {
 @MainActor
 private final class AgentSkillManagementViewModel: ObservableObject {
     @Published var kind: AgentSkillManagementKind = .profession
+    @Published var language: ChatOSLanguage
     @Published var query = ""
     @Published var selectedKey: String?
     @Published var label = ""
+    @Published var labelEN = ""
     @Published var summary = ""
+    @Published var summaryEN = ""
     @Published var content = ""
+    @Published var contentEN = ""
     @Published private(set) var professions: [LocalAgentProfessionDefinition] = []
     @Published private(set) var projectTypes: [LocalProjectTypeDefinition] = []
     @Published private(set) var isSaving = false
@@ -47,9 +51,14 @@ private final class AgentSkillManagementViewModel: ObservableObject {
     let ownerUserID: String
     let library: LocalAgentSkillLibrary
 
-    init(ownerUserID: String, library: LocalAgentSkillLibrary) {
+    init(
+        ownerUserID: String,
+        library: LocalAgentSkillLibrary,
+        initialLanguage: ChatOSLanguage
+    ) {
         self.ownerUserID = ownerUserID
         self.library = library
+        language = initialLanguage
         reload(preservingSelection: false)
     }
 
@@ -58,9 +67,12 @@ private final class AgentSkillManagementViewModel: ObservableObject {
         guard !query.isEmpty else { return professions }
         return professions.filter {
             $0.label.localizedCaseInsensitiveContains(query)
+                || $0.labelEN.localizedCaseInsensitiveContains(query)
                 || $0.key.localizedCaseInsensitiveContains(query)
                 || $0.categoryLabel.localizedCaseInsensitiveContains(query)
+                || $0.categoryLabelEN.localizedCaseInsensitiveContains(query)
                 || $0.description.localizedCaseInsensitiveContains(query)
+                || $0.descriptionEN.localizedCaseInsensitiveContains(query)
         }
     }
 
@@ -69,19 +81,44 @@ private final class AgentSkillManagementViewModel: ObservableObject {
         guard !query.isEmpty else { return projectTypes }
         return projectTypes.filter {
             $0.label.localizedCaseInsensitiveContains(query)
+                || $0.labelEN.localizedCaseInsensitiveContains(query)
                 || $0.key.localizedCaseInsensitiveContains(query)
                 || $0.categoryLabel.localizedCaseInsensitiveContains(query)
+                || $0.categoryLabelEN.localizedCaseInsensitiveContains(query)
                 || $0.description.localizedCaseInsensitiveContains(query)
+                || $0.descriptionEN.localizedCaseInsensitiveContains(query)
         }
     }
 
     var selectedCategory: String {
         switch kind {
         case .profession:
-            professions.first(where: { $0.key == selectedKey })?.categoryLabel ?? ""
+            guard let item = professions.first(where: { $0.key == selectedKey }) else { return "" }
+            return language == .english ? item.categoryLabelEN : item.categoryLabel
         case .projectType:
-            projectTypes.first(where: { $0.key == selectedKey })?.categoryLabel ?? ""
+            guard let item = projectTypes.first(where: { $0.key == selectedKey }) else { return "" }
+            return language == .english ? item.categoryLabelEN : item.categoryLabel
         }
+    }
+
+    var displayedContent: String {
+        language == .english ? contentEN : content
+    }
+
+    func displayLabel(_ item: LocalAgentProfessionDefinition) -> String {
+        language == .english ? item.labelEN : item.label
+    }
+
+    func displayCategory(_ item: LocalAgentProfessionDefinition) -> String {
+        language == .english ? item.categoryLabelEN : item.categoryLabel
+    }
+
+    func displayLabel(_ item: LocalProjectTypeDefinition) -> String {
+        language == .english ? item.labelEN : item.label
+    }
+
+    func displayCategory(_ item: LocalProjectTypeDefinition) -> String {
+        language == .english ? item.categoryLabelEN : item.categoryLabel
     }
 
     var hasOverride: Bool {
@@ -111,20 +148,26 @@ private final class AgentSkillManagementViewModel: ObservableObject {
         do {
             switch kind {
             case .profession:
-                try library.updateProfession(
+                try library.updateProfessionBilingual(
                     ownerUserID: ownerUserID,
                     key: selectedKey,
                     label: label,
                     description: summary,
-                    skillMarkdown: content
+                    skillMarkdown: content,
+                    labelEN: labelEN,
+                    descriptionEN: summaryEN,
+                    skillMarkdownEN: contentEN
                 )
             case .projectType:
-                try library.updateProjectType(
+                try library.updateProjectTypeBilingual(
                     ownerUserID: ownerUserID,
                     key: selectedKey,
                     label: label,
                     description: summary,
-                    ruleMarkdown: content
+                    ruleMarkdown: content,
+                    labelEN: labelEN,
+                    descriptionEN: summaryEN,
+                    ruleMarkdownEN: contentEN
                 )
             }
             errorMessage = nil
@@ -178,21 +221,30 @@ private final class AgentSkillManagementViewModel: ObservableObject {
     private func loadEditor() {
         guard let selectedKey, !selectedKey.isEmpty else {
             label = ""
+            labelEN = ""
             summary = ""
+            summaryEN = ""
             content = ""
+            contentEN = ""
             return
         }
         switch kind {
         case .profession:
             guard let item = professions.first(where: { $0.key == selectedKey }) else { return }
             label = item.label
+            labelEN = item.labelEN
             summary = item.description
+            summaryEN = item.descriptionEN
             content = item.skillMarkdown
+            contentEN = item.skillMarkdownEN
         case .projectType:
             guard let item = projectTypes.first(where: { $0.key == selectedKey }) else { return }
             label = item.label
+            labelEN = item.labelEN
             summary = item.description
+            summaryEN = item.descriptionEN
             content = item.ruleMarkdown
+            contentEN = item.ruleMarkdownEN
         }
     }
 }
@@ -201,11 +253,19 @@ struct AgentSkillManagementSheet: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: AgentSkillManagementViewModel
     @State private var contentMode: AgentSkillContentMode = .preview
+    private let onLanguageChange: (ChatOSLanguage) -> Void
 
-    init(ownerUserID: String, skillLibrary: LocalAgentSkillLibrary) {
+    init(
+        ownerUserID: String,
+        skillLibrary: LocalAgentSkillLibrary,
+        initialLanguage: ChatOSLanguage,
+        onLanguageChange: @escaping (ChatOSLanguage) -> Void
+    ) {
+        self.onLanguageChange = onLanguageChange
         _viewModel = StateObject(wrappedValue: AgentSkillManagementViewModel(
             ownerUserID: ownerUserID,
-            library: skillLibrary
+            library: skillLibrary,
+            initialLanguage: initialLanguage
         ))
     }
 
@@ -241,6 +301,9 @@ struct AgentSkillManagementSheet: View {
                 Text("管理 Agent 职业与项目类型的完整运行规则。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Text("新建 Agent Run 会使用当前选择的语言版本。")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
             Spacer()
             Picker("类型", selection: $viewModel.kind) {
@@ -251,6 +314,15 @@ struct AgentSkillManagementSheet: View {
             .pickerStyle(.segmented)
             .frame(width: 270)
             .onChange(of: viewModel.kind) { _, _ in viewModel.switchKind() }
+            Picker("Skill 语言", selection: $viewModel.language) {
+                Text("中文").tag(ChatOSLanguage.simplifiedChinese)
+                Text("English").tag(ChatOSLanguage.english)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 180)
+            .onChange(of: viewModel.language) { _, language in
+                onLanguageChange(language)
+            }
         }
         .padding(18)
     }
@@ -268,8 +340,8 @@ struct AgentSkillManagementSheet: View {
                 if viewModel.kind == .profession {
                     ForEach(viewModel.filteredProfessions) { item in
                         catalogRow(
-                            title: item.label,
-                            category: item.categoryLabel,
+                            title: viewModel.displayLabel(item),
+                            category: viewModel.displayCategory(item),
                             key: item.key,
                             customized: viewModel.library.hasProfessionOverride(
                                 ownerUserID: viewModel.ownerUserID,
@@ -281,8 +353,8 @@ struct AgentSkillManagementSheet: View {
                 } else {
                     ForEach(viewModel.filteredProjectTypes) { item in
                         catalogRow(
-                            title: item.label,
-                            category: item.categoryLabel,
+                            title: viewModel.displayLabel(item),
+                            category: viewModel.displayCategory(item),
                             key: item.key,
                             customized: viewModel.library.hasProjectTypeOverride(
                                 ownerUserID: viewModel.ownerUserID,
@@ -335,11 +407,22 @@ struct AgentSkillManagementSheet: View {
                         readOnlyField("分类", value: viewModel.selectedCategory)
                     }
                     editField("名称") {
-                        TextField("Skill 名称", text: $viewModel.label)
+                        TextField(
+                            "Skill 名称",
+                            text: viewModel.language == .english
+                                ? $viewModel.labelEN
+                                : $viewModel.label
+                        )
                             .textFieldStyle(.roundedBorder)
                     }
                     editField("说明") {
-                        TextField("用途说明", text: $viewModel.summary, axis: .vertical)
+                        TextField(
+                            "用途说明",
+                            text: viewModel.language == .english
+                                ? $viewModel.summaryEN
+                                : $viewModel.summary,
+                            axis: .vertical
+                        )
                             .lineLimit(2...4)
                             .textFieldStyle(.roundedBorder)
                     }
@@ -382,7 +465,11 @@ struct AgentSkillManagementSheet: View {
     }
 
     private var markdownEditor: some View {
-        TextEditor(text: $viewModel.content)
+        TextEditor(
+            text: viewModel.language == .english
+                ? $viewModel.contentEN
+                : $viewModel.content
+        )
             .font(.system(.body, design: .monospaced))
             .scrollContentBackground(.hidden)
             .padding(10)
@@ -398,7 +485,9 @@ struct AgentSkillManagementSheet: View {
     private var markdownPreview: some View {
         ScrollView {
             MarkdownDocumentView(
-                markdown: viewModel.content.isEmpty ? "_暂无内容_" : viewModel.content
+                markdown: viewModel.displayedContent.isEmpty
+                    ? "_暂无内容_"
+                    : viewModel.displayedContent
             )
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .padding(20)
@@ -447,8 +536,11 @@ struct AgentSkillManagementSheet: View {
                 .disabled(
                     viewModel.isSaving
                         || viewModel.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || viewModel.labelEN.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         || viewModel.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || viewModel.summaryEN.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         || viewModel.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || viewModel.contentEN.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 )
         }
         .padding(14)

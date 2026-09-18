@@ -14,7 +14,7 @@ public enum LocalAgentSkillLibraryError: Error, LocalizedError, Equatable {
     }
 }
 
-/// Account-scoped local customizations layered over the immutable bundled Relay catalog.
+/// Account-scoped local customizations layered over the immutable bundled ChatOS catalog.
 /// Stable keys and categories remain program-owned; users can edit display metadata and the
 /// complete runtime instructions without changing Agent or project identity bindings.
 public final class LocalAgentSkillLibrary: @unchecked Sendable {
@@ -22,12 +22,18 @@ public final class LocalAgentSkillLibrary: @unchecked Sendable {
         let label: String
         let description: String
         let skillMarkdown: String
+        let labelEN: String?
+        let descriptionEN: String?
+        let skillMarkdownEN: String?
     }
 
     private struct ProjectTypeOverride: Codable {
         let label: String
         let description: String
         let ruleMarkdown: String
+        let labelEN: String?
+        let descriptionEN: String?
+        let ruleMarkdownEN: String?
     }
 
     private struct AccountOverrides: Codable {
@@ -36,7 +42,7 @@ public final class LocalAgentSkillLibrary: @unchecked Sendable {
     }
 
     private struct Payload: Codable {
-        var schemaVersion = 1
+        var schemaVersion = 2
         var accounts: [String: AccountOverrides] = [:]
     }
 
@@ -47,8 +53,9 @@ public final class LocalAgentSkillLibrary: @unchecked Sendable {
     public init(fileURL: URL) {
         self.fileURL = fileURL
         if let data = try? Data(contentsOf: fileURL),
-           let decoded = try? JSONDecoder().decode(Payload.self, from: data),
-           decoded.schemaVersion == 1 {
+           var decoded = try? JSONDecoder().decode(Payload.self, from: data),
+           (1...2).contains(decoded.schemaVersion) {
+            decoded.schemaVersion = 2
             payload = decoded
         } else {
             payload = .init()
@@ -63,15 +70,15 @@ public final class LocalAgentSkillLibrary: @unchecked Sendable {
                 return .init(
                     key: base.key,
                     label: value.label,
-                    labelEN: base.labelEN,
+                    labelEN: value.labelEN ?? base.labelEN,
                     description: value.description,
-                    descriptionEN: base.descriptionEN,
+                    descriptionEN: value.descriptionEN ?? base.descriptionEN,
                     categoryKey: base.categoryKey,
                     categoryLabel: base.categoryLabel,
                     categoryLabelEN: base.categoryLabelEN,
                     skillName: base.skillName,
                     skillMarkdown: value.skillMarkdown,
-                    skillMarkdownEN: base.skillMarkdownEN,
+                    skillMarkdownEN: value.skillMarkdownEN ?? base.skillMarkdownEN,
                     canCreateTasks: base.canCreateTasks
                 )
             }
@@ -86,14 +93,14 @@ public final class LocalAgentSkillLibrary: @unchecked Sendable {
                 return .init(
                     key: base.key,
                     label: value.label,
-                    labelEN: base.labelEN,
+                    labelEN: value.labelEN ?? base.labelEN,
                     description: value.description,
-                    descriptionEN: base.descriptionEN,
+                    descriptionEN: value.descriptionEN ?? base.descriptionEN,
                     categoryKey: base.categoryKey,
                     categoryLabel: base.categoryLabel,
                     categoryLabelEN: base.categoryLabelEN,
                     ruleMarkdown: value.ruleMarkdown,
-                    ruleMarkdownEN: base.ruleMarkdownEN
+                    ruleMarkdownEN: value.ruleMarkdownEN ?? base.ruleMarkdownEN
                 )
             }
         }
@@ -128,6 +135,33 @@ public final class LocalAgentSkillLibrary: @unchecked Sendable {
         description: String,
         skillMarkdown: String
     ) throws {
+        let current = profession(ownerUserID: ownerUserID, key: key)
+            ?? LocalAgentSkillCatalog.profession(key: key)
+        guard let current else {
+            throw LocalAgentSkillLibraryError.invalidField("professionKey")
+        }
+        try updateProfessionBilingual(
+            ownerUserID: ownerUserID,
+            key: key,
+            label: label,
+            description: description,
+            skillMarkdown: skillMarkdown,
+            labelEN: current.labelEN,
+            descriptionEN: current.descriptionEN,
+            skillMarkdownEN: current.skillMarkdownEN
+        )
+    }
+
+    public func updateProfessionBilingual(
+        ownerUserID: String,
+        key: String,
+        label: String,
+        description: String,
+        skillMarkdown: String,
+        labelEN: String,
+        descriptionEN: String,
+        skillMarkdownEN: String
+    ) throws {
         guard LocalAgentSkillCatalog.profession(key: key) != nil else {
             throw LocalAgentSkillLibraryError.invalidField("professionKey")
         }
@@ -137,6 +171,17 @@ public final class LocalAgentSkillLibrary: @unchecked Sendable {
             skillMarkdown: validate(
                 skillMarkdown,
                 field: "skillMarkdown",
+                maximumLength: 500_000
+            ),
+            labelEN: validate(labelEN, field: "labelEN", maximumLength: 120),
+            descriptionEN: validate(
+                descriptionEN,
+                field: "descriptionEN",
+                maximumLength: 4_000
+            ),
+            skillMarkdownEN: validate(
+                skillMarkdownEN,
+                field: "skillMarkdownEN",
                 maximumLength: 500_000
             )
         )
@@ -154,6 +199,33 @@ public final class LocalAgentSkillLibrary: @unchecked Sendable {
         description: String,
         ruleMarkdown: String
     ) throws {
+        let current = projectType(ownerUserID: ownerUserID, key: key)
+            ?? LocalAgentSkillCatalog.projectType(key: key)
+        guard let current else {
+            throw LocalAgentSkillLibraryError.invalidField("projectTypeKey")
+        }
+        try updateProjectTypeBilingual(
+            ownerUserID: ownerUserID,
+            key: key,
+            label: label,
+            description: description,
+            ruleMarkdown: ruleMarkdown,
+            labelEN: current.labelEN,
+            descriptionEN: current.descriptionEN,
+            ruleMarkdownEN: current.ruleMarkdownEN
+        )
+    }
+
+    public func updateProjectTypeBilingual(
+        ownerUserID: String,
+        key: String,
+        label: String,
+        description: String,
+        ruleMarkdown: String,
+        labelEN: String,
+        descriptionEN: String,
+        ruleMarkdownEN: String
+    ) throws {
         guard LocalAgentSkillCatalog.projectType(key: key) != nil else {
             throw LocalAgentSkillLibraryError.invalidField("projectTypeKey")
         }
@@ -163,6 +235,17 @@ public final class LocalAgentSkillLibrary: @unchecked Sendable {
             ruleMarkdown: validate(
                 ruleMarkdown,
                 field: "ruleMarkdown",
+                maximumLength: 500_000
+            ),
+            labelEN: validate(labelEN, field: "labelEN", maximumLength: 120),
+            descriptionEN: validate(
+                descriptionEN,
+                field: "descriptionEN",
+                maximumLength: 4_000
+            ),
+            ruleMarkdownEN: validate(
+                ruleMarkdownEN,
+                field: "ruleMarkdownEN",
                 maximumLength: 500_000
             )
         )

@@ -116,7 +116,7 @@ public struct LocalProjectTypeDefinition: Codable, Sendable, Equatable, Identifi
     }
 }
 
-/// Product-owned, immutable copy of Relay's complete profession and project-type catalogs.
+/// Product-owned ChatOS profession and project-type Skill catalog.
 /// Stable keys are persisted; models never provide or replace Skill markdown.
 public enum LocalAgentSkillCatalog {
     public static let legacyProfessionKey = "general_member"
@@ -129,7 +129,7 @@ public enum LocalAgentSkillCatalog {
 
     private static let payload: Payload = {
         guard let url = Bundle.module.url(
-            forResource: "RelaySkillCatalog",
+            forResource: "ChatOSSkillCatalog",
             withExtension: "json"
         ), let data = try? Data(contentsOf: url),
            let value = try? JSONDecoder().decode(Payload.self, from: data),

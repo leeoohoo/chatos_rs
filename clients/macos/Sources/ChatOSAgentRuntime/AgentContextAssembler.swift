@@ -18,7 +18,8 @@ enum AgentContextAssembler {
                 throw AgentContextError.invalidHistory
             }
             if let index = indices[record.id] {
-                guard all[index] == record.message, selected.insert(index).inserted else {
+                guard messagesAreEquivalent(all[index], record.message),
+                      selected.insert(index).inserted else {
                     throw AgentContextError.invalidHistory
                 }
                 // Current-run pinned instructions and trigger are appended from the authoritative
@@ -48,6 +49,39 @@ enum AgentContextAssembler {
         messages.append(contentsOf: composeRecentRecords(retained))
         messages.append(contentsOf: all.prefix(pins).filter { $0.role == .user })
         return messages
+    }
+
+    /// Memory Engine transports may decode and encode the Responses output again. JSON object
+    /// key ordering is not semantic, so comparing the raw `Data` would reject a valid checkpoint.
+    /// Every other message field stays under strict equality, and malformed JSON remains invalid.
+    private static func messagesAreEquivalent(_ lhs: AgentMessage, _ rhs: AgentMessage) -> Bool {
+        guard lhs.role == rhs.role,
+              lhs.content == rhs.content,
+              lhs.toolCalls == rhs.toolCalls,
+              lhs.toolCallID == rhs.toolCallID,
+              lhs.usage == rhs.usage,
+              lhs.attachments == rhs.attachments else {
+            return false
+        }
+        switch (lhs.responseOutputJSON, rhs.responseOutputJSON) {
+        case (nil, nil):
+            return true
+        case let (.some(left), .some(right)):
+            guard let canonicalLeft = canonicalJSON(left),
+                  let canonicalRight = canonicalJSON(right) else {
+                return false
+            }
+            return canonicalLeft == canonicalRight
+        case (.some, nil), (nil, .some):
+            return false
+        }
+    }
+
+    private static func canonicalJSON(_ data: Data) -> Data? {
+        guard let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else {
+            return nil
+        }
+        return try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .fragmentsAllowed])
     }
 
     /// Chat-completions equivalent of `compose_response_to_input_items_with_budget`.

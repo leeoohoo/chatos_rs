@@ -125,6 +125,71 @@ final class AgentMemoryContextTests: XCTestCase {
         XCTAssertEqual(result.last, checkpoint.messages[1], "Current task contract must remain sticky")
     }
 
+    func testComposeAcceptsEquivalentResponseOutputWithDifferentJSONKeyOrder() throws {
+        var (checkpoint, scope) = try fixture()
+        let checkpointJSON = Data(#"[{"type":"reasoning","id":"item-1","encrypted_content":"secret","summary":[{"type":"summary_text","text":"thinking"}]}]"#.utf8)
+        let memoryJSON = Data(#"[{"summary":[{"text":"thinking","type":"summary_text"}],"encrypted_content":"secret","id":"item-1","type":"reasoning"}]"#.utf8)
+        let message = AgentMessage(
+            role: .assistant,
+            content: "done",
+            toolCalls: [.init(id: "call-1", name: "read", arguments: "{\"path\":\"README.md\"}")],
+            responseOutputJSON: checkpointJSON,
+            usage: .init(inputTokens: 12, cachedTokens: 3, outputTokens: 4, requests: 1)
+        )
+        checkpoint.messages.append(message)
+        var memoryMessage = message
+        memoryMessage.responseOutputJSON = memoryJSON
+        let memory = AgentMemoryCheckpoint(scope: scope, pinnedMessageCount: 2)
+        let context = AgentMemoryContext(
+            blocks: [.init(blockType: "thread_summary", text: "summary")],
+            recentRecords: [.init(id: scope.recordID(at: 2), message: memoryMessage)]
+        )
+
+        XCTAssertNoThrow(try AgentContextAssembler.assemble(
+            checkpoint: checkpoint, memory: memory, context: context
+        ))
+    }
+
+    func testComposeStillRejectsRealResponseMessageChangesAndMalformedJSON() throws {
+        var (checkpoint, scope) = try fixture()
+        let responseJSON = Data(#"[{"type":"reasoning","id":"item-1","encrypted_content":"secret"}]"#.utf8)
+        let message = AgentMessage(
+            role: .assistant,
+            content: "done",
+            toolCalls: [.init(id: "call-1", name: "read", arguments: "{}")],
+            responseOutputJSON: responseJSON,
+            usage: .init(inputTokens: 12, outputTokens: 4, requests: 1)
+        )
+        checkpoint.messages.append(message)
+        let memory = AgentMemoryCheckpoint(scope: scope, pinnedMessageCount: 2)
+
+        var changedContent = message
+        changedContent.content = "changed"
+        var changedCall = message
+        changedCall.toolCalls[0].name = "write"
+        var changedUsage = message
+        changedUsage.usage?.outputTokens = 5
+        var changedEncryptedContent = message
+        changedEncryptedContent.responseOutputJSON = Data(#"[{"type":"reasoning","id":"item-1","encrypted_content":"different"}]"#.utf8)
+        var missingResponseOutput = message
+        missingResponseOutput.responseOutputJSON = nil
+        var malformedResponseOutput = message
+        malformedResponseOutput.responseOutputJSON = Data("not-json".utf8)
+
+        for changed in [changedContent, changedCall, changedUsage, changedEncryptedContent,
+                        missingResponseOutput, malformedResponseOutput] {
+            let context = AgentMemoryContext(
+                blocks: [.init(blockType: "thread_summary", text: "summary")],
+                recentRecords: [.init(id: scope.recordID(at: 2), message: changed)]
+            )
+            XCTAssertThrowsError(try AgentContextAssembler.assemble(
+                checkpoint: checkpoint, memory: memory, context: context
+            )) { error in
+                XCTAssertEqual(error as? AgentContextError, .invalidHistory)
+            }
+        }
+    }
+
     func testLocalAgentComposeAcceptsEarlierRunRecordsOnStableThread() throws {
         let earlierRunID = UUID()
         let currentRunID = UUID()

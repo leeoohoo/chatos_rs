@@ -31,7 +31,7 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         XCTAssertEqual(change, expected)
     }
 
-    func testAutomaticRecoveryOnlyAcceptsSideEffectFreeTechnicalPauses() {
+    func testAutomaticRecoveryAcceptsInterruptedRunsAndSideEffectFreeTechnicalPauses() {
         var checkpoint = AgentRunCheckpoint(
             scope: "account:alice:agent:test:run:test",
             messages: [.init(role: .system, content: "system")]
@@ -39,6 +39,14 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         checkpoint.status = .paused
         checkpoint.stopReason = AgentContextError.unavailable.localizedDescription
         XCTAssertTrue(LocalAgentGroupChatScheduler.isAutomaticTriggerRecoveryEligible(checkpoint))
+
+        checkpoint.status = .running
+        checkpoint.pendingCalls = [.init(id: "write", name: "chat_send_message", arguments: "{}")]
+        checkpoint.inFlightCallID = "write"
+        XCTAssertTrue(
+            LocalAgentGroupChatScheduler.isAutomaticTriggerRecoveryEligible(checkpoint),
+            "AgentRuntime will surface an interrupted side effect as needsReview without replaying it"
+        )
 
         checkpoint.status = .needsReview
         XCTAssertFalse(LocalAgentGroupChatScheduler.isAutomaticTriggerRecoveryEligible(checkpoint))
@@ -56,7 +64,7 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         XCTAssertFalse(LocalAgentGroupChatScheduler.isAutomaticTriggerRecoveryEligible(checkpoint))
     }
 
-    func testDirectConversationInjectsProfessionWithoutProjectType() async throws {
+    func testDirectConversationInjectsSelectedProfessionLanguageWithoutProjectType() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-direct-skill-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -84,12 +92,15 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         let skillLibrary = LocalAgentSkillLibrary(
             fileURL: folder.appendingPathComponent("skill-overrides.json")
         )
-        try skillLibrary.updateProfession(
+        try skillLibrary.updateProfessionBilingual(
             ownerUserID: "alice",
             key: "research_specialist",
             label: "专项研究员",
             description: "完成专项研究",
-            skillMarkdown: "# 当前账户自定义职业规则\n必须给出可核验结论。"
+            skillMarkdown: "# 当前账户自定义职业规则\n必须给出可核验结论。",
+            labelEN: "Specialist Researcher",
+            descriptionEN: "Conduct focused research",
+            skillMarkdownEN: "# Account-specific research role\nProvide verifiable conclusions."
         )
         let scheduler = LocalAgentGroupChatScheduler(
             service: service,
@@ -104,14 +115,16 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
             },
             professionCatalogProvider: { ownerUserID in
                 skillLibrary.professions(ownerUserID: ownerUserID)
-            }
+            },
+            contextLanguageProvider: { _ in .english }
         )
         _ = try await scheduler.drainConversation(ownerUserID: "alice", roomID: room.id)
         let storedRun = try await store.run(ownerUserID: "alice", deliveryID: delivery.id)
         let run = try XCTUnwrap(storedRun)
         let system = run.checkpoint.messages.first?.content ?? ""
         XCTAssertTrue(system.contains(#"name="chatos-profession-research-specialist""#))
-        XCTAssertTrue(system.contains("当前账户自定义职业规则"))
+        XCTAssertTrue(system.contains("Account-specific research role"))
+        XCTAssertFalse(system.contains("当前账户自定义职业规则"))
         XCTAssertFalse(system.contains("chatos-project-type-"))
     }
 
@@ -199,7 +212,7 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         XCTAssertTrue(savedRun?.checkpoint.messages.dropFirst().first?.content.contains("开始实现") == true)
     }
 
-    func testDirectResumeKeepsUnknownWriteInNeedsReviewUntilUserAbandonsIt() async throws {
+    func testDirectResumeKeepsUnknownWriteInNeedsReviewUntilHumanExplicitlyRetriesIt() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-resume-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -247,8 +260,8 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         checkpoint.id = runID
         let call = AgentToolCall(
             id: "unknown-write",
-            name: LocalAgentChatToolProvider.sendMessageToolName,
-            arguments: #"{"content":"可能已经发送"}"#
+            name: LocalAgentChatToolProvider.completeManagerCycleToolName,
+            arguments: "{}"
         )
         checkpoint.pendingCalls = [call]
         checkpoint.inFlightCallID = call.id
@@ -305,24 +318,26 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         )
         XCTAssertEqual(listedRuns.map(\.id), [runID])
 
-        try await scheduler.abandonDelivery(
+        let retried = try await scheduler.retryInterruptedDelivery(
             ownerUserID: "alice",
             projectID: room.projectID,
             deliveryID: delivery.id
         )
-        let failedDelivery = try await store.delivery(
+        XCTAssertEqual(retried.outcome, .completed)
+        let completedDelivery = try await store.delivery(
             ownerUserID: "alice",
             deliveryID: delivery.id
         )
-        let failedRun = try await store.run(ownerUserID: "alice", deliveryID: delivery.id)
-        let unfinishedAfterAbandon = try await store.listUnfinishedRuns(
+        let completedRun = try await store.run(ownerUserID: "alice", deliveryID: delivery.id)
+        let unfinishedAfterRetry = try await store.listUnfinishedRuns(
             ownerUserID: "alice",
             projectID: room.projectID,
             limit: 10
         )
-        XCTAssertEqual(failedDelivery?.status, .failed)
-        XCTAssertEqual(failedRun?.checkpoint.status, .failed)
-        XCTAssertTrue(unfinishedAfterAbandon.isEmpty)
+        XCTAssertEqual(completedDelivery?.status, .completed)
+        XCTAssertEqual(completedRun?.checkpoint.status, .completed)
+        XCTAssertTrue(completedRun?.events.contains(where: { $0.kind == "retry_authorized" }) == true)
+        XCTAssertTrue(unfinishedAfterRetry.isEmpty)
     }
 
     func testAbandoningExecutorBlocksTodoAndWakesManager() async throws {

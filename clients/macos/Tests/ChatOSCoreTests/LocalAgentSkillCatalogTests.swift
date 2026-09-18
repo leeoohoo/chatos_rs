@@ -2,18 +2,28 @@ import ChatOSCore
 import XCTest
 
 final class LocalAgentSkillCatalogTests: XCTestCase {
-    func testBundledRelayCatalogIsCompleteAndCarriesFullRules() throws {
+    func testBundledChatOSCatalogIsCompleteBilingualAndUsesNativeCapabilities() throws {
         XCTAssertEqual(LocalAgentSkillCatalog.professions.count, 33)
         XCTAssertEqual(LocalAgentSkillCatalog.projectTypes.count, 27)
         let engineer = try XCTUnwrap(
             LocalAgentSkillCatalog.profession(key: "backend_engineer")
         )
-        XCTAssertTrue(engineer.skillMarkdown.contains("通用职业工作基线"))
-        XCTAssertTrue(engineer.skillMarkdown.count > 2_000)
+        XCTAssertTrue(engineer.skillMarkdown.contains("工具与插件"))
+        XCTAssertTrue(engineer.skillMarkdown.contains("project_read"))
+        XCTAssertTrue(engineer.skillMarkdownEN.contains("Tools and plugins"))
+        XCTAssertTrue(engineer.skillMarkdownEN.contains("project_write"))
         let web = try XCTUnwrap(LocalAgentSkillCatalog.projectType(key: "web_application"))
-        XCTAssertTrue(web.ruleMarkdown.contains("项目治理与完成定义"))
-        XCTAssertTrue(web.ruleMarkdown.contains("Web"))
-        XCTAssertTrue(web.ruleMarkdown.count > 4_000)
+        XCTAssertTrue(web.ruleMarkdown.contains("Todo 能力与插件"))
+        XCTAssertTrue(web.ruleMarkdown.contains("浏览器"))
+        XCTAssertTrue(web.ruleMarkdownEN.contains("Todo capabilities and plugins"))
+        XCTAssertFalse(engineer.skillMarkdown.contains("Relay"))
+        XCTAssertFalse(engineer.skillMarkdown.contains("company."))
+        XCTAssertFalse(web.ruleMarkdown.contains("company."))
+
+        let taskCreators = LocalAgentSkillCatalog.professions
+            .filter(\.canCreateTasks)
+            .map(\.key)
+        XCTAssertEqual(taskCreators, ["project_manager"])
     }
 
     func testDraftsRejectKeysOutsideProgramOwnedCatalog() {

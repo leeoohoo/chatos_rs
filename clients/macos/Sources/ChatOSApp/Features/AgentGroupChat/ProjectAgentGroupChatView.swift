@@ -444,29 +444,23 @@ struct ProjectAgentGroupChatView: View {
     }
 
     private var transcript: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    if viewModel.messages.isEmpty {
-                        ContentUnavailableView(
-                            "还没有消息",
-                            systemImage: "bubble.left.and.bubble.right",
-                            description: Text("创建 Agent 后，通过 @ 提及开始协作。")
-                        )
-                        .padding(.top, 70)
-                    }
-                    ForEach(viewModel.messages) { message in
-                        messageRow(message)
-                            .id(message.id)
-                    }
-                }
-                .padding(18)
+        AgentChatTimelineView(
+            items: viewModel.messages,
+            isInitialContentReady: !viewModel.isLoading,
+            hasOlderItems: viewModel.hasOlderMessages,
+            isLoadingOlderItems: viewModel.isLoadingOlderMessages,
+            scrollToLatestRequest: viewModel.scrollToLatestRequest,
+            loadOlderItems: { await viewModel.loadOlderMessages() },
+            rowContent: { message in messageRow(message) },
+            emptyContent: {
+                ContentUnavailableView(
+                    "还没有消息",
+                    systemImage: "bubble.left.and.bubble.right",
+                    description: Text("创建 Agent 后，通过 @ 提及开始协作。")
+                )
+                .padding(.top, 70)
             }
-            .onChange(of: viewModel.messages.count) {
-                guard let id = viewModel.messages.last?.id else { return }
-                withAnimation { proxy.scrollTo(id, anchor: .bottom) }
-            }
-        }
+        )
     }
 
     private func messageRow(_ message: ProjectAgentMessage) -> some View {
@@ -483,9 +477,7 @@ struct ProjectAgentGroupChatView: View {
                     }
                 }
                 if !message.content.isEmpty {
-                    Text(message.content)
-                        .appFont(.body)
-                        .textSelection(.enabled)
+                    MarkdownDocumentView(markdown: message.content)
                 }
                 if !message.attachmentItems.isEmpty {
                     AgentMessageAttachmentChips(
@@ -542,6 +534,8 @@ struct ProjectAgentGroupChatView: View {
                 attachmentError: $viewModel.attachmentError,
                 isSending: viewModel.isSending,
                 placeholder: "输入消息；不选择 @ 时交给默认 Agent，也可粘贴图片、文档和长文本…",
+                mentionCandidates: mentionCandidates,
+                onMentionSelected: { viewModel.selectMention(agentID: $0) },
                 onSend: { Task { await viewModel.sendMessage() } }
             ) {
                 Menu {
@@ -569,6 +563,20 @@ struct ProjectAgentGroupChatView: View {
         }
         .padding(12)
         .background(.bar)
+    }
+
+    private var mentionCandidates: [AgentChatMentionCandidate] {
+        viewModel.activeMembers.compactMap { item in
+            guard let profile = item.profile,
+                  !viewModel.selectedMentionAgentIDs.contains(item.member.agentID) else {
+                return nil
+            }
+            return AgentChatMentionCandidate(
+                id: item.member.agentID,
+                name: profile.draft.name,
+                subtitle: profession(profile.draft.professionKey)?.label
+            )
+        }
     }
 
     private var memberSidebar: some View {
@@ -604,13 +612,24 @@ struct ProjectAgentGroupChatView: View {
                     .help("查看此 Agent 的运行情况")
 
                     Button {
-                        editingMember = item
+                        Task {
+                            if await viewModel.prepareAgentEditor() {
+                                editingMember = item
+                            }
+                        }
                     } label: {
-                        Image(systemName: "slider.horizontal.3")
-                            .frame(width: 24, height: 24)
+                        if viewModel.isLoadingModels {
+                            ProgressView()
+                                .controlSize(.small)
+                                .frame(width: 24, height: 24)
+                        } else {
+                            Image(systemName: "slider.horizontal.3")
+                                .frame(width: 24, height: 24)
+                        }
                     }
                     .buttonStyle(.borderless)
                     .help("编辑 Agent")
+                    .disabled(viewModel.isLoadingModels)
                 }
                 .padding(9)
                 .background(
@@ -636,16 +655,29 @@ struct ProjectAgentGroupChatView: View {
             .frame(maxWidth: .infinity)
             Menu {
                 Button("手动创建", systemImage: "square.and.pencil") {
-                    showsCreateAgent = true
+                    Task {
+                        if await viewModel.prepareAgentEditor() {
+                            showsCreateAgent = true
+                        }
+                    }
                 }
                 Button("Agent Builder", systemImage: "sparkles") {
-                    showsAgentBuilder = true
+                    Task {
+                        if await viewModel.prepareAgentEditor() {
+                            showsAgentBuilder = true
+                        }
+                    }
                 }
             } label: {
-                Label("创建新 Agent", systemImage: "plus")
+                if viewModel.isLoadingModels {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Label("创建新 Agent", systemImage: "plus")
+                }
             }
             .buttonStyle(.bordered)
             .frame(maxWidth: .infinity)
+            .disabled(viewModel.isLoadingModels)
         }
         .padding(14)
         .background(Color(nsColor: .controlBackgroundColor))

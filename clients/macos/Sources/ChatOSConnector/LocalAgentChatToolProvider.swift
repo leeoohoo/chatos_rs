@@ -124,6 +124,14 @@ public actor LocalAgentRelayMCPServer {
             todoPluginOptions: todoPluginOptions,
             limits: limits,
             todoCancellationHandler: todoCancellationHandler,
+            roomChangeHandler: { [service] roomID in
+                await service.publishChange(.init(
+                    ownerUserID: context.ownerUserID,
+                    roomID: roomID,
+                    agentID: context.agentID,
+                    kind: .roomUpdated
+                ))
+            },
             now: now
         )
     }
@@ -300,6 +308,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     public static let markReadToolName = "chat_mark_read"
     public static let openDirectToolName = "chat_direct_open"
     public static let sendDirectToolName = "chat_direct_send"
+    public static let sendTeamToolName = "chat_team_send"
     public static let proposeMemberToolName = "agent_propose_member"
     public static let proposeExistingMemberToolName = "agent_propose_existing_member"
     public static let proposeMemberRemovalToolName = "agent_propose_member_removal"
@@ -332,6 +341,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     private let references: LocalAgentRunReferenceVault
     private let todoPluginOptions: [LocalAgentTodoPluginOption]
     private let todoCancellationHandler: @Sendable (String) async -> Void
+    private let roomChangeHandler: @Sendable (String) async -> Void
 
     public init(
         store: any AgentGroupChatStore,
@@ -340,6 +350,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         todoPluginOptions: [LocalAgentTodoPluginOption] = [],
         limits: AgentGroupChatRoutingLimits = .init(),
         todoCancellationHandler: @escaping @Sendable (String) async -> Void = { _ in },
+        roomChangeHandler: @escaping @Sendable (String) async -> Void = { _ in },
         now: @escaping @Sendable () -> Int64 = {
             Int64(Date().timeIntervalSince1970 * 1_000)
         }
@@ -353,6 +364,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         self.references = LocalAgentRunReferenceVault()
         self.todoPluginOptions = todoPluginOptions
         self.todoCancellationHandler = todoCancellationHandler
+        self.roomChangeHandler = roomChangeHandler
     }
 
     public func definitions() async throws -> [AgentToolDefinition] {
@@ -439,6 +451,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             return try await openDirect(call)
         case Self.sendDirectToolName:
             return try await sendDirect(call)
+        case Self.sendTeamToolName:
+            return try await sendTeam(call)
         case Self.proposeMemberToolName:
             return try await proposeMember(call)
         case Self.proposeExistingMemberToolName:
@@ -874,6 +888,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             ),
             limits: limits
         )
+        await roomChangeHandler(roomID)
         return try Self.outcome(InboxSendResponse(
             sent: true,
             notifiedProjectManager: notifyProjectManager,
@@ -2333,6 +2348,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             initiatingAgentID: context.agentID,
             targetAgentID: targetAgentID
         )
+        await roomChangeHandler(conversation.id)
         return try Self.outcome(DirectOpenResponse(
             conversationReference: await references.conversationReference(roomID: conversation.id),
             targetAgentReference: targetReference
@@ -2380,6 +2396,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             ),
             limits: limits
         )
+        await roomChangeHandler(conversationID)
         return try Self.outcome(DirectSendResponse(
             conversationReference: conversationReference,
             messageReference: await references.messageReference(
@@ -2389,6 +2406,84 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             spawnedDeliveryCount: post.deliveries.count,
             routingStopReason: post.routingStopReason
         ))
+    }
+
+    private func sendTeam(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        let arguments = try Self.arguments(call)
+        let teamReference = try Self.requiredString(arguments, key: "team_ref")
+        guard let teamRoomID = await references.teamID(reference: teamReference),
+              let team = try await store.room(
+                ownerUserID: context.ownerUserID,
+                roomID: teamRoomID
+              ), team.status == .active,
+              team.conversationKind == .projectTeam else {
+            return Self.structuredFailure(
+                code: "invalid_team_ref",
+                field: "team_ref",
+                message: "团队引用无效或已经过期，请重新读取账户 Agent 与团队快照。",
+                retryable: true,
+                nextTool: Self.workspaceSnapshotToolName
+            )
+        }
+        let members = try await store.listMembers(
+            ownerUserID: context.ownerUserID,
+            roomID: teamRoomID
+        )
+        let activeMemberIDs = Set(members.filter { $0.status == .active }.map(\.agentID))
+        guard activeMemberIDs.contains(context.agentID) else {
+            throw AgentGroupChatError.notMember
+        }
+        let mentionReferences = try Self.optionalStringArray(arguments, key: "mention_agent_refs")
+        var mentionAgentIDs: [String] = []
+        for (index, reference) in mentionReferences.enumerated() {
+            guard let agentID = await references.agentID(reference: reference) else {
+                return Self.structuredFailure(
+                    code: "invalid_agent_ref",
+                    field: "mention_agent_refs[\(index)]",
+                    message: "被 @ 的 Agent 引用无效或已经过期，请重新读取账户 Agent 与团队快照。",
+                    retryable: true,
+                    nextTool: Self.workspaceSnapshotToolName
+                )
+            }
+            guard activeMemberIDs.contains(agentID) else {
+                return Self.structuredFailure(
+                    code: "agent_not_in_team",
+                    field: "mention_agent_refs[\(index)]",
+                    message: "被 @ 的 Agent 不是该团队的活跃成员，请重新选择团队成员。",
+                    retryable: true,
+                    nextTool: Self.workspaceSnapshotToolName
+                )
+            }
+            if agentID != context.agentID, !mentionAgentIDs.contains(agentID) {
+                mentionAgentIDs.append(agentID)
+            }
+        }
+        let post = try await store.postMessage(
+            ownerUserID: context.ownerUserID,
+            roomID: teamRoomID,
+            draft: .init(
+                senderKind: .agent,
+                senderID: context.agentID,
+                content: try Self.requiredString(arguments, key: "content"),
+                mentionedAgentIDs: mentionAgentIDs,
+                sourceRunID: context.runID,
+                causationID: context.deliveryID,
+                hopCount: context.hopCount + 1
+            ),
+            limits: limits
+        )
+        await roomChangeHandler(teamRoomID)
+        return try Self.outcome(
+            SendResponse(
+                messageReference: await references.messageReference(
+                    roomID: teamRoomID,
+                    messageID: post.message.id
+                ),
+                completed: false,
+                spawnedDeliveryCount: post.deliveries.count,
+                routingStopReason: post.routingStopReason
+            )
+        )
     }
 
     private func sendMessage(_ call: AgentToolCall) async throws -> AgentToolOutcome {
@@ -2450,6 +2545,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             ),
             limits: limits
         )
+        await roomChangeHandler(context.roomID)
         // A substantive reply acknowledges the triggering message. This best-effort cursor update
         // is intentionally secondary to the durable message transaction. Sending no longer ends
         // a manager cycle; the Agent must still inspect scheduling state and call cycle_complete.
@@ -3367,14 +3463,20 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         ),
         .init(
             name: openDirectToolName,
-            description: "使用 agent_workspace_snapshot 或成员列表返回的临时 Agent 引用打开或复用私聊。不能与自己私聊；A 到 B 和 B 到 A 会得到同一个 conversation_ref。",
+            description: "使用 agent_workspace_snapshot 或成员列表返回的临时 Agent 引用打开或复用私聊。不能与自己私聊；A 到 B 和 B 到 A 会得到同一个 conversation_ref。私聊用于一对一补充、敏感事项或非共同团队协作；同一项目团队的启动、分工、依赖、进度、阻塞和交付应优先使用 chat_team_send 在团队群内沟通。",
             schema: Data(#"{"type":"object","properties":{"target_agent_ref":{"type":"string","minLength":1,"maxLength":600}},"required":["target_agent_ref"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
             name: sendDirectToolName,
-            description: "向已经打开的 Agent 私聊发送消息。当前 Agent 必须是该私聊参与者，成功后会通过本地 delivery 唤醒对方。",
+            description: "向已经打开的 Agent 私聊发送消息。当前 Agent 必须是该私聊参与者，成功后会通过本地 delivery 唤醒对方。不得用多个私聊替代同一项目团队本应公开的协作；项目协作默认使用 chat_team_send。",
             schema: Data(#"{"type":"object","properties":{"conversation_ref":{"type":"string","minLength":1,"maxLength":600},"content":{"type":"string","minLength":1,"maxLength":64000}},"required":["conversation_ref","content"],"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
+            name: sendTeamToolName,
+            description: "向 agent_workspace_snapshot 返回的项目团队主动发送一条新群消息，可用同一快照中的 Agent 临时引用精确 @ 团队成员并通过本地 delivery 唤醒他们。当前 Agent 必须是该团队活跃成员，被 @ 的 Agent 也必须属于该团队。项目启动、分工、依赖、进度、阻塞、决策和交付默认使用本工具公开协作；无需唤醒成员的状态同步可不传 mention_agent_refs。",
+            schema: Data(#"{"type":"object","properties":{"team_ref":{"type":"string","minLength":1,"maxLength":600},"content":{"type":"string","minLength":1,"maxLength":64000},"mention_agent_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":64,"uniqueItems":true}},"required":["team_ref","content"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
