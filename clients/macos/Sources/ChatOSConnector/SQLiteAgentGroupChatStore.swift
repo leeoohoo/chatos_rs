@@ -45,41 +45,10 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         attachmentsRootURL = databaseURL.deletingLastPathComponent()
             .appendingPathComponent("AgentGroupChatAttachments", isDirectory: true)
         self.agentArtifactService = agentArtifactService
-        try FileManager.default.createDirectory(
-            at: databaseURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        var handle: OpaquePointer?
-        guard sqlite3_open_v2(
-            databaseURL.path,
-            &handle,
-            SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX,
-            nil
-        ) == SQLITE_OK else {
-            let message = handle.map { String(cString: sqlite3_errmsg($0)) } ?? "open failed"
-            sqlite3_close(handle)
-            throw AgentGroupChatError.storage(message)
-        }
-        do {
-            sqlite3_busy_timeout(handle, 5_000)
-            guard sqlite3_exec(
-                handle,
-                AgentGroupChatSchema.definition,
-                nil,
-                nil,
-                nil
-            ) == SQLITE_OK else {
-                throw AgentGroupChatError.storage(String(cString: sqlite3_errmsg(handle)))
-            }
-            try AgentGroupChatMigrations.migrateConversationSchema(handle)
-            database = handle
-        } catch {
-            sqlite3_close(handle)
-            throw error
-        }
+        database = try AgentGroupChatDatabase.open(at: databaseURL)
     }
 
-    deinit { sqlite3_close(database) }
+    deinit { AgentGroupChatDatabase.close(database) }
 
 #if DEBUG
     /// Test-only counter for repeatable Store baselines. Release builds do not carry the counter.
