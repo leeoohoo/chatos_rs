@@ -541,7 +541,7 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             role: "测试工程师",
             responsibility: "验证项目",
             rolePrompt: "只处理测试工作。",
-            modelConfigID: "default",
+            modelConfigID: "inherit-current",
             rationale: "团队缺少测试能力"
         )
         let proposal = try await store.createAgentProposal(

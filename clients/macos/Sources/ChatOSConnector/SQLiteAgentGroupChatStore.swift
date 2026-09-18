@@ -657,7 +657,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                     professionKey: proposal.draft.professionKey,
                     rationale: proposal.draft.rationale
                 )
-                guard storedModelConfigID.caseInsensitiveCompare("default") == .orderedSame,
+                guard LocalAgentBuilderService.usesProposerModel(storedModelConfigID),
                       approvedDraft == expectedDraft else {
                     throw AgentGroupChatError.conflict
                 }
