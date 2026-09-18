@@ -34,6 +34,9 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     private nonisolated(unsafe) var database: OpaquePointer?
     private let attachmentsRootURL: URL
     private let agentArtifactService: (any AgentArtifactRemoteServing)?
+#if DEBUG
+    private var debugPreparedStatementCount = 0
+#endif
 
     public init(
         databaseURL: URL,
@@ -71,6 +74,13 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     }
 
     deinit { sqlite3_close(database) }
+
+#if DEBUG
+    /// Test-only counter for repeatable Store baselines. Release builds do not carry the counter.
+    func preparedStatementCountForTesting() -> Int {
+        debugPreparedStatementCount
+    }
+#endif
 
     /// Creates a Run-scoped staging directory beneath the existing protected attachment root.
     /// The opaque directory name is never exposed to the model and is removed with the Run vault.
@@ -5866,6 +5876,9 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         _ values: [Value] = [],
         row: (OpaquePointer) throws -> T
     ) throws -> [T] {
+#if DEBUG
+        debugPreparedStatementCount += 1
+#endif
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
               let statement else { throw storageError() }

@@ -1,5 +1,5 @@
 import ChatOSAgentRuntime
-import ChatOSConnector
+@testable import ChatOSConnector
 import ChatOSCore
 import Foundation
 import XCTest
@@ -32,6 +32,9 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
         let workspaceSnapshotMilliseconds: [Double]
         let recentMessagesMilliseconds: [Double]
         let imageAttachmentReadMilliseconds: [Double]
+        let workspaceSnapshotPreparedStatements: [Int]
+        let recentMessagesPreparedStatements: [Int]
+        let imageAttachmentReadPreparedStatements: [Int]
     }
 
     private func databaseURL() -> URL {
@@ -197,6 +200,9 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
         var workspaceSnapshotMilliseconds: [Double] = []
         var recentMessagesMilliseconds: [Double] = []
         var imageAttachmentReadMilliseconds: [Double] = []
+        var workspaceSnapshotPreparedStatements: [Int] = []
+        var recentMessagesPreparedStatements: [Int] = []
+        var imageAttachmentReadPreparedStatements: [Int] = []
 
         for _ in 0..<repetitions {
             let (store, openDuration) = try await elapsedMilliseconds {
@@ -204,6 +210,7 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
             }
             openStoreMilliseconds.append(openDuration)
 
+            let snapshotCountBefore = await store.preparedStatementCountForTesting()
             let (_, snapshotDuration) = try await elapsedMilliseconds {
                 async let room = store.room(
                     ownerUserID: Self.ownerUserID,
@@ -232,7 +239,11 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
                 _ = try await (room, members, messages, runs, todos)
             }
             workspaceSnapshotMilliseconds.append(snapshotDuration)
+            workspaceSnapshotPreparedStatements.append(
+                await store.preparedStatementCountForTesting() - snapshotCountBefore
+            )
 
+            let recentCountBefore = await store.preparedStatementCountForTesting()
             let (_, recentDuration) = try await elapsedMilliseconds {
                 try await store.listMessages(
                     ownerUserID: Self.ownerUserID,
@@ -242,7 +253,11 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
                 )
             }
             recentMessagesMilliseconds.append(recentDuration)
+            recentMessagesPreparedStatements.append(
+                await store.preparedStatementCountForTesting() - recentCountBefore
+            )
 
+            let attachmentCountBefore = await store.preparedStatementCountForTesting()
             let (_, attachmentDuration) = try await elapsedMilliseconds {
                 let payload = try await store.messageAttachment(
                     ownerUserID: Self.ownerUserID,
@@ -253,7 +268,16 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
                 _ = try Data(contentsOf: XCTUnwrap(payload).localFileURL)
             }
             imageAttachmentReadMilliseconds.append(attachmentDuration)
+            imageAttachmentReadPreparedStatements.append(
+                await store.preparedStatementCountForTesting() - attachmentCountBefore
+            )
         }
+
+        // These assertions intentionally freeze the current N+1 baseline. Lower counts are welcome,
+        // but must be accompanied by an evidence-backed performance change and an updated snapshot.
+        XCTAssertEqual(workspaceSnapshotPreparedStatements, [1_008, 1_008, 1_008])
+        XCTAssertEqual(recentMessagesPreparedStatements, [42, 42, 42])
+        XCTAssertEqual(imageAttachmentReadPreparedStatements, [1, 1, 1])
 
         let measurements = Measurements(
             fixtureAgents: 20,
@@ -265,7 +289,10 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
             openStoreMilliseconds: openStoreMilliseconds,
             workspaceSnapshotMilliseconds: workspaceSnapshotMilliseconds,
             recentMessagesMilliseconds: recentMessagesMilliseconds,
-            imageAttachmentReadMilliseconds: imageAttachmentReadMilliseconds
+            imageAttachmentReadMilliseconds: imageAttachmentReadMilliseconds,
+            workspaceSnapshotPreparedStatements: workspaceSnapshotPreparedStatements,
+            recentMessagesPreparedStatements: recentMessagesPreparedStatements,
+            imageAttachmentReadPreparedStatements: imageAttachmentReadPreparedStatements
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
