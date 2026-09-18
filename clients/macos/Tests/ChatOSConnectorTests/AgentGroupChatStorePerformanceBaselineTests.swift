@@ -39,6 +39,9 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
         let idleHeartbeatPoll500Milliseconds: [Double]
         let idleHeartbeatPollPreparedStatements: [Int]
         let idleHeartbeatPollDatabaseChanges: [Int64]
+        let idleAccountDrainMilliseconds: [Double]
+        let idleAccountDrainPreparedStatements: [Int]
+        let idleAccountDrainDatabaseChanges: [Int64]
     }
 
     private func databaseURL() -> URL {
@@ -211,6 +214,9 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
         var idleHeartbeatPoll500Milliseconds: [Double] = []
         var idleHeartbeatPollPreparedStatements: [Int] = []
         var idleHeartbeatPollDatabaseChanges: [Int64] = []
+        var idleAccountDrainMilliseconds: [Double] = []
+        var idleAccountDrainPreparedStatements: [Int] = []
+        var idleAccountDrainDatabaseChanges: [Int64] = []
 
         for _ in 0..<repetitions {
             let (store, openDuration) = try await elapsedMilliseconds {
@@ -319,6 +325,26 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
             idleHeartbeatPollDatabaseChanges.append(
                 await store.totalDatabaseChangesForTesting() - heartbeatDatabaseChangesBefore
             )
+
+            let idleService = NativeAgentGroupChatService(databaseURL: fixture.databaseURL)
+            let idleStore = try await idleService.store()
+            let idleScheduler = LocalAgentGroupChatScheduler(
+                service: idleService,
+                services: IdleSchedulerServices()
+            )
+            let drainStatementCountBefore = await idleStore.preparedStatementCountForTesting()
+            let drainDatabaseChangesBefore = await idleStore.totalDatabaseChangesForTesting()
+            let (drainResults, drainDuration) = try await elapsedMilliseconds {
+                try await idleScheduler.drainAccount(ownerUserID: Self.ownerUserID)
+            }
+            XCTAssertTrue(drainResults.isEmpty)
+            idleAccountDrainMilliseconds.append(drainDuration)
+            idleAccountDrainPreparedStatements.append(
+                await idleStore.preparedStatementCountForTesting() - drainStatementCountBefore
+            )
+            idleAccountDrainDatabaseChanges.append(
+                await idleStore.totalDatabaseChangesForTesting() - drainDatabaseChangesBefore
+            )
         }
 
         // These assertions intentionally freeze the current N+1 baseline. Lower counts are welcome,
@@ -328,6 +354,8 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
         XCTAssertEqual(imageAttachmentReadPreparedStatements, [1, 1, 1])
         XCTAssertEqual(idleHeartbeatPollPreparedStatements, [500, 500, 500])
         XCTAssertEqual(idleHeartbeatPollDatabaseChanges, [0, 0, 0])
+        XCTAssertEqual(idleAccountDrainPreparedStatements, [103, 103, 103])
+        XCTAssertEqual(idleAccountDrainDatabaseChanges, [0, 0, 0])
 
         let measurements = Measurements(
             fixtureAgents: 20,
@@ -346,11 +374,31 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
             publish500RunChangesMilliseconds: publish500RunChangesMilliseconds,
             idleHeartbeatPoll500Milliseconds: idleHeartbeatPoll500Milliseconds,
             idleHeartbeatPollPreparedStatements: idleHeartbeatPollPreparedStatements,
-            idleHeartbeatPollDatabaseChanges: idleHeartbeatPollDatabaseChanges
+            idleHeartbeatPollDatabaseChanges: idleHeartbeatPollDatabaseChanges,
+            idleAccountDrainMilliseconds: idleAccountDrainMilliseconds,
+            idleAccountDrainPreparedStatements: idleAccountDrainPreparedStatements,
+            idleAccountDrainDatabaseChanges: idleAccountDrainDatabaseChanges
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         print("CHATOS_AGENT_GROUP_CHAT_BASELINE \(String(decoding: try encoder.encode(measurements), as: UTF8.self))")
+    }
+}
+
+private enum IdleSchedulerBaselineError: Error {
+    case unexpectedRuntimeRequest
+}
+
+private struct IdleSchedulerServices: AgentServiceProviding {
+    func makeAgentModel(
+        configID: String,
+        policy: AgentRunPolicy
+    ) async throws -> any AgentModelClient {
+        throw IdleSchedulerBaselineError.unexpectedRuntimeRequest
+    }
+
+    func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
+        throw IdleSchedulerBaselineError.unexpectedRuntimeRequest
     }
 }
 
