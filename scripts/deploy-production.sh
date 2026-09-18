@@ -313,6 +313,7 @@ ensure_admin_certificate() {
 start_release_with_retries() {
   local target_release="$1"
   local attempt
+  ensure_release_postgres_running "$target_release"
   for attempt in 1 2 3; do
     if (
       cd "$target_release"
@@ -326,6 +327,57 @@ start_release_with_retries() {
     fi
   done
   return 1
+}
+
+ensure_release_postgres_running() {
+  local target_release="$1"
+  local deadline container_id health
+  if ! (
+    cd "$target_release"
+    docker compose \
+      -f docker/compose.yml \
+      -f docker/compose.platform.yml \
+      --env-file docker/bootstrap.conf \
+      config --services
+  ) | grep -Fxq postgres; then
+    return 0
+  fi
+  (
+    cd "$target_release"
+    docker compose \
+      -f docker/compose.yml \
+      -f docker/compose.platform.yml \
+      --env-file docker/bootstrap.conf \
+      up -d --no-build --pull never postgres
+  )
+  deadline=$((SECONDS + 180))
+  while true; do
+    container_id="$(
+      cd "$target_release"
+      docker compose \
+        -f docker/compose.yml \
+        -f docker/compose.platform.yml \
+        --env-file docker/bootstrap.conf \
+        ps -q postgres
+    )"
+    health=""
+    if [[ -n "$container_id" ]]; then
+      health="$(
+        docker inspect \
+          --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+          "$container_id"
+      )"
+    fi
+    if [[ "$health" == "healthy" || "$health" == "running" ]]; then
+      echo "[OK] PostgreSQL is $health before production import verification"
+      return 0
+    fi
+    if (( SECONDS >= deadline )); then
+      echo "[ERROR] PostgreSQL did not become healthy before production import verification: ${health:-missing}" >&2
+      return 1
+    fi
+    sleep 3
+  done
 }
 
 restart_selected_release_with_retries() {

@@ -104,6 +104,14 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
         self.assertIn("wait_for_http_probe local-connector-route route", deploy)
         self.assertIn('wait_for_http_probe "public-$url" success', deploy)
 
+    def test_full_cloud_deploy_starts_postgres_before_import_verification(self) -> None:
+        deploy = (ROOT / "scripts/deploy-production.sh").read_text()
+        start = deploy.index("start_release_with_retries()")
+        helper_call = deploy.index('ensure_release_postgres_running "$target_release"', start)
+        fast_start = deploy.index("./docker/deploy.sh fast", start)
+        self.assertLess(helper_call, fast_start)
+        self.assertIn("PostgreSQL is $health before production import verification", deploy)
+
 
 if __name__ == "__main__":
     unittest.main()

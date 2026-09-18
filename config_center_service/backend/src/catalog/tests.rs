@@ -41,6 +41,13 @@ fn catalog_does_not_reintroduce_retired_configuration() {
     assert!(definitions
         .iter()
         .all(|definition| !retired.contains(definition.key.as_str())));
+    for retired_mongo_key in [
+        "chatos.runtime.legacy_auth_database_url",
+        "memory_engine.runtime.mongodb_uri",
+        "project_service.runtime.database_url",
+    ] {
+        assert!(retired.contains(retired_mongo_key));
+    }
 }
 
 #[test]

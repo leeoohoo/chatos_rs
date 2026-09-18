@@ -5,6 +5,7 @@ pub const LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS: &[&str] = &[
     "task_runner.execution.max_iterations",
 ];
 pub const RETIRED_CONFIG_KEYS: &[&str] = &[
+    "chatos.runtime.legacy_auth_database_url",
     "chatos.ui.local_project_creation_enabled",
     "local_connector.relay.sandbox_image_request_timeout_ms",
     "local_connector.security.task_runner_internal_api_secret",
@@ -16,6 +17,7 @@ pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "mcp_management.runtime.embedded_work_dir",
     "mcp_management.runtime.sandbox_image_tool_timeout_ms",
     "mcp_management.runtime.sandbox_tool_timeout_ms",
+    "memory_engine.runtime.mongodb_uri",
     "memory_engine.ai.openai_api_key",
     "memory_engine.ai.openai_base_url",
     "memory_engine.ai.openai_model",
@@ -27,6 +29,7 @@ pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "plugin_management.oauth.refresh_skew_seconds",
     "plugin_management.oauth.request_timeout_ms",
     "plugin_management.security.cloud_credential_encryption_secret",
+    "project_service.runtime.database_url",
     "sandbox_manager.docker.build_cache_max_used_space",
     "sandbox_manager.docker.build_cache_reserved_space",
     "sandbox_manager.docker.build_cache_timeout_secs",
