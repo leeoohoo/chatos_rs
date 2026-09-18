@@ -10,6 +10,7 @@ DEPLOY_SERVER="${CHATOS_DEPLOY_SERVER:-root@8.155.171.124}"
 REMOTE_DEPLOY_ROOT="${CHATOS_DEPLOY_ROOT:-/opt/chatos-deploy}"
 ADMIN_AUTH_BASE_URL="${CHATOS_ADMIN_AUTH_BASE_URL:-https://admin.jgoool.com/api/admin/user-service}"
 PLUGIN_API_BASE_URL="${CHATOS_PLUGIN_API_BASE_URL:-https://admin.jgoool.com/api/admin/plugin-management}"
+PLUGIN_MARKETPLACE_ID="${CHATOS_PLUGIN_MARKETPLACE_ID:-chatos-marketplace}"
 ADMIN_USERNAME="${CHATOS_DEPLOY_ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${CHATOS_DEPLOY_ADMIN_PASSWORD:-}"
 DEPLOY_TMP=""
@@ -71,6 +72,7 @@ Environment:
   CHATOS_DEPLOY_ADMIN_PASSWORD Plugin administrator password; prompts when omitted
   CHATOS_ADMIN_AUTH_BASE_URL    Unified admin User Service gateway prefix
   CHATOS_PLUGIN_API_BASE_URL    Unified admin Plugin Management gateway prefix
+  CHATOS_PLUGIN_MARKETPLACE_ID  Plugin marketplace ID (default: chatos-marketplace)
   CHATOS_DEPLOY_WECHAT_DEVELOPMENT_LOGIN_ENABLED
                                 Set true/false to update the server-side Mini Program test-login switch
 EOF
@@ -175,6 +177,29 @@ plugin_admin_token() {
     --data "$(jq -nc --arg username "$ADMIN_USERNAME" --arg password "$ADMIN_PASSWORD" '{username:$username,password:$password}')" \
     "$ADMIN_AUTH_BASE_URL/auth/login" \
     | jq -er '.token'
+}
+
+ensure_plugin_marketplace() {
+  local token marketplaces existing
+  token="$(plugin_admin_token)"
+  marketplaces="$(curl --fail-with-body --silent --show-error \
+    -H "authorization: Bearer $token" \
+    "$PLUGIN_API_BASE_URL/admin/plugin-marketplaces")"
+  existing="$(jq -c --arg id "$PLUGIN_MARKETPLACE_ID" '.items[]? | select(.id == $id)' <<< "$marketplaces")"
+  if [[ -n "$existing" ]]; then
+    if [[ "$(jq -r '.enabled and .source_kind == "admin_registry" and .trust_level == "trusted"' <<< "$existing")" != "true" ]]; then
+      echo "[ERROR] Plugin marketplace $PLUGIN_MARKETPLACE_ID exists but is not an enabled trusted admin registry" >&2
+      exit 1
+    fi
+    return
+  fi
+
+  echo "[INFO] creating Plugin marketplace $PLUGIN_MARKETPLACE_ID"
+  curl --fail-with-body --silent --show-error \
+    -H "authorization: Bearer $token" \
+    -H 'content-type: application/json' \
+    --data "$(jq -nc --arg id "$PLUGIN_MARKETPLACE_ID" '{id:$id,name:$id,source_kind:"admin_registry",catalog_url:null,enabled:true,trust_level:"trusted",trusted_signing_keys:[]}')" \
+    "$PLUGIN_API_BASE_URL/admin/plugin-marketplaces" >/dev/null
 }
 
 ensure_deploy_tmp() {
@@ -319,7 +344,8 @@ publish_plugin() {
         --arg publisher_website "$publisher_website" \
         --arg license_id "$license" \
         --arg license_url "$license_url" \
-        '{artifact_sha256:$artifact_sha256,marketplace_id:"chatos-marketplace",publisher_id:$publisher_id,publisher_name:$publisher_name,publisher_website:$publisher_website,license_id:$license_id,license_url:(if $license_url == "" then null else $license_url end),redistributable:true,visibility:"public",featured:true,release_channel:"stable"}')" \
+        --arg marketplace_id "$PLUGIN_MARKETPLACE_ID" \
+        '{artifact_sha256:$artifact_sha256,marketplace_id:$marketplace_id,publisher_id:$publisher_id,publisher_name:$publisher_name,publisher_website:$publisher_website,license_id:$license_id,license_url:(if $license_url == "" then null else $license_url end),redistributable:true,visibility:"public",featured:true,release_channel:"stable"}')" \
       "$PLUGIN_API_BASE_URL/admin/plugin-package/publish" >/dev/null
     catalog_response="$(curl --fail-with-body --silent --show-error \
       -H "authorization: Bearer $token" \
@@ -363,6 +389,7 @@ deploy_plugins() {
     esac
   done
   ensure_plugin_admin_password
+  ensure_plugin_marketplace
   for plugin in "${plugins[@]}"; do
     publish_plugin "$plugin"
   done
