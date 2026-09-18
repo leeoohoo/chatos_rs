@@ -108,6 +108,7 @@ struct AttachmentObjectClaims {
 enum S3Method {
     Get,
     Put,
+    Delete,
 }
 
 impl S3Method {
@@ -115,6 +116,7 @@ impl S3Method {
         match self {
             Self::Get => "GET",
             Self::Put => "PUT",
+            Self::Delete => "DELETE",
         }
     }
 }
@@ -237,6 +239,38 @@ impl ObjectStorageService {
         })
     }
 
+    pub async fn create_presigned_agent_artifact_upload(
+        &self,
+        user_id: &str,
+        artifact_id: &str,
+        name: &str,
+        mime_type: &str,
+        size: u64,
+    ) -> Result<PresignedUpload, String> {
+        if size == 0 || size > self.config.max_upload_bytes {
+            return Err(format!(
+                "agent artifact exceeds upload limit: {} > {} bytes",
+                size, self.config.max_upload_bytes
+            ));
+        }
+        let object_key = build_agent_artifact_object_key(user_id, artifact_id, name);
+        let upload_url = self.presigned_object_url(
+            S3Method::Put,
+            self.config.bucket.as_str(),
+            object_key.as_str(),
+            self.config.presign_expires_seconds,
+        )?;
+        Ok(PresignedUpload {
+            id: artifact_id.to_string(),
+            bucket: self.config.bucket.clone(),
+            object_key,
+            upload_url,
+            upload_headers: HashMap::from([("Content-Type".to_string(), mime_type.to_string())]),
+            view_url: format!("/api/agent-artifacts/{artifact_id}/content"),
+            expires_in_seconds: self.config.presign_expires_seconds,
+        })
+    }
+
     pub fn signed_object_url(&self, object: SignedObject) -> Result<String, String> {
         let bucket = object
             .object_ref
@@ -344,6 +378,35 @@ impl ObjectStorageService {
             bytes,
             content_type,
         })
+    }
+
+    pub async fn delete_object(&self, object_ref: &StoredObjectRef) -> Result<(), String> {
+        let bucket = object_ref
+            .bucket
+            .as_deref()
+            .unwrap_or(self.config.bucket.as_str());
+        let url = self.presigned_object_url(
+            S3Method::Delete,
+            bucket,
+            object_ref.object_key.as_str(),
+            300,
+        )?;
+        let response = self
+            .http
+            .delete(url)
+            .send()
+            .await
+            .map_err(|err| format!("delete agent artifact object request failed: {err}"))?;
+        if response.status().is_success() || response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(());
+        }
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        Err(format!(
+            "delete agent artifact object failed: status={} body={}",
+            status,
+            truncate_error_body(body.as_str())
+        ))
     }
 
     fn presigned_object_url(
@@ -535,6 +598,21 @@ fn build_object_key(user_id: &str, conversation_id: &str, id: &str, name: &str) 
     )
 }
 
+fn build_agent_artifact_object_key(user_id: &str, artifact_id: &str, name: &str) -> String {
+    let extension = std::path::Path::new(name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(sanitize_key_segment)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "md".to_string());
+    format!(
+        "chatos/users/{}/agent-artifacts/{}.{}",
+        hex::encode(Sha256::digest(user_id.as_bytes())),
+        sanitize_key_segment(artifact_id),
+        extension
+    )
+}
+
 fn sanitize_key_segment(value: &str) -> String {
     let sanitized = value
         .chars()
@@ -612,5 +690,19 @@ mod tests {
         assert_eq!(decoded.object_ref.bucket.as_deref(), Some(DEFAULT_BUCKET));
         assert_eq!(decoded.object_ref.name.as_deref(), Some("file.txt"));
         assert_eq!(decoded.object_ref.mime_type.as_deref(), Some("text/plain"));
+    }
+
+    #[test]
+    fn agent_artifact_object_keys_are_account_scoped_and_ignore_display_paths() {
+        let key =
+            build_agent_artifact_object_key("user/one", "artifact_123", "../../Detailed Plan.md");
+        assert!(key.starts_with("chatos/users/"));
+        assert!(key.ends_with("/agent-artifacts/artifact_123.md"));
+        assert!(!key.contains("Detailed Plan"));
+        assert!(!key.contains(".."));
+        assert_ne!(
+            key,
+            build_agent_artifact_object_key("userone", "artifact_123", "plan.md")
+        );
     }
 }

@@ -55,6 +55,7 @@ impl RequestAccessToken {
     }
 }
 
+pub mod agent_artifacts;
 pub mod agent_chat;
 pub mod agents;
 pub mod applications;
