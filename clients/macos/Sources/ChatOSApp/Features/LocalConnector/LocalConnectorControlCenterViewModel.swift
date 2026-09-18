@@ -58,18 +58,25 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         errorMessage = nil
         Task {
             do {
-                let nextStatus = try await fetchStatusWithStartupRetry()
+                // A restored ChatOS login does not guarantee that the independent Connector
+                // credential is still accepted by the gateway. Refresh it on every authenticated
+                // activation; the native service reuses the existing device/workspace when the
+                // account and deployment are unchanged.
+                let nextStatus = if pairIfNeeded {
+                    try await service.pairWithCurrentChatOSSession(
+                        deviceName: Host.current().localizedName
+                    )
+                } else {
+                    try await fetchStatusWithStartupRetry()
+                }
                 guard generation == refreshGeneration else { return }
                 let ownerMismatch = expectedOwnerUserID.map {
                     nextStatus.user?.id != $0
                 } ?? false
-                if pairIfNeeded && (!nextStatus.configured || ownerMismatch) {
-                    status = try await service.pairWithCurrentChatOSSession(
-                        deviceName: Host.current().localizedName
-                    )
-                } else {
-                    status = nextStatus
+                guard !ownerMismatch else {
+                    throw CancellationError()
                 }
+                status = nextStatus
             } catch {
                 guard generation == refreshGeneration else { return }
                 errorMessage = error.localizedDescription

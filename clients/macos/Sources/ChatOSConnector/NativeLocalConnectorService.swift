@@ -134,6 +134,38 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         try secretStore.save(Data(login.token.utf8), account: Self.accessTokenAccount)
         cachedAccessToken = login.token
         hasLoadedAccessToken = true
+
+        if canReuseExistingPairing(ownerUserID: login.user.id),
+           let deviceID = state.deviceID {
+            do {
+                let existingDevice = try await gateway.device(token: login.token, id: deviceID)
+                guard existingDevice.ownerUserID == login.user.id else {
+                    throw NativeConnectorError.server(
+                        status: 409,
+                        message: "当前登录账号与已配对设备账号不一致"
+                    )
+                }
+                let identity = try deviceIdentity()
+                let workspace = try await ensureDefaultWorkspace(
+                    token: login.token,
+                    deviceID: deviceID,
+                    publicKey: identity.publicKey
+                )
+                state.user = login.user.domainModel
+                state.deviceName = existingDevice.displayName
+                state.workspaces = [workspace]
+                state.gatewayConnectionEnabled = true
+                lastConnectorCredentialRefreshAttemptAt = nil
+                try stateStore.save(state)
+                try await connectGateway()
+                try? await Task.sleep(for: .milliseconds(200))
+                return statusSnapshot()
+            } catch let error as NativeConnectorError where Self.deviceMustBeRecreated(after: error) {
+                // The local pairing belongs to this account/deployment, but the server-side
+                // device was removed. Fall through to create a replacement exactly once.
+            }
+        }
+
         let identity = try deviceIdentity()
         let device = try await gateway.createDevice(
             token: login.token,
@@ -157,6 +189,19 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         try await connectGateway()
         try? await Task.sleep(for: .milliseconds(200))
         return statusSnapshot()
+    }
+
+    func canReuseExistingPairing(ownerUserID: String) -> Bool {
+        pairingMatchesCurrentDeployment
+            && state.deviceID?.trimmedNonEmpty != nil
+            && state.user?.id == ownerUserID
+    }
+
+    static func deviceMustBeRecreated(after error: NativeConnectorError) -> Bool {
+        switch error {
+        case let .server(status, _): status == 403 || status == 404
+        default: false
+        }
     }
 
     public func suspendForSignedOut() async {

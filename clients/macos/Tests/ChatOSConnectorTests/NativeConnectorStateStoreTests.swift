@@ -167,6 +167,46 @@ struct NativeConnectorStateStoreTests {
     }
 
     @Test
+    func loginCanRenewOnlyTheMatchingAccountsExistingDevice() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stateURL = directory.appendingPathComponent("state.json")
+        var state = NativeConnectorPersistentState.empty
+        state.deploymentIdentifier = "production"
+        state.gatewayBaseURL = "https://connector.jgoool.com"
+        state.deviceID = "device-existing"
+        state.user = .init(id: "alice", username: "alice", displayName: "Alice", role: "user")
+        try NativeConnectorStateStore(stateURL: stateURL).save(state)
+
+        let service = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.jgoool.com")!,
+                stateURL: stateURL,
+                deploymentIdentifier: "production"
+            ),
+            ticketProvider: RejectingTicketProvider()
+        )
+
+        #expect(await service.canReuseExistingPairing(ownerUserID: "alice"))
+        #expect(!(await service.canReuseExistingPairing(ownerUserID: "bob")))
+    }
+
+    @Test
+    func missingOrForbiddenServerDeviceIsRecreatedButOtherFailuresAreNot() {
+        #expect(NativeLocalConnectorService.deviceMustBeRecreated(
+            after: .server(status: 404, message: "missing")
+        ))
+        #expect(NativeLocalConnectorService.deviceMustBeRecreated(
+            after: .server(status: 403, message: "forbidden")
+        ))
+        #expect(!NativeLocalConnectorService.deviceMustBeRecreated(
+            after: .server(status: 500, message: "offline")
+        ))
+        #expect(!NativeLocalConnectorService.deviceMustBeRecreated(after: .notPaired))
+    }
+
+    @Test
     func stalePluginIdentityMigratesToRepublishedCatalogEntryByArtifact() throws {
         var state = NativeConnectorPersistentState.empty
         state.installedPluginIDs = ["old-plugin-id"]
