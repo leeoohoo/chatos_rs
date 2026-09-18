@@ -12,5 +12,6 @@
 {{executor_instructions}}
 {{todo_status_instructions}}
 
+{{compact_communication_skill}}
 {{profession_skill}}
 {{project_skill}}

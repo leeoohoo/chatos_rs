@@ -864,6 +864,10 @@ public struct LocalAgentGroupChatScheduler: Sendable {
                 projectType = nil
             }
             let contextLanguage = await contextLanguageProvider(ownerUserID)
+            let communicationSkill = LocalAgentCompactCommunicationSkill.snapshot(
+                language: contextLanguage,
+                audience: delivery.lane == .manager ? .manager : .executor
+            )
             guard let triggerMessage = try await store.message(
                 ownerUserID: ownerUserID,
                 roomID: room.id,
@@ -889,11 +893,21 @@ public struct LocalAgentGroupChatScheduler: Sendable {
                     profession: profession,
                     projectType: projectType,
                     contextLanguage: contextLanguage,
+                    communicationSkill: communicationSkill,
                     triggerMessage: triggerMessage,
                     triggerAttachments: triggerAttachments
                 )
             )
             initial.id = runID
+            initial.instructionBundles = [
+                .init(
+                    name: communicationSkill.name,
+                    version: communicationSkill.version,
+                    contentSHA256: communicationSkill.contentSHA256,
+                    language: communicationSkill.language.rawValue,
+                    audience: communicationSkill.audience.rawValue
+                ),
+            ]
             let createdAt = now()
             run = try LocalAgentGroupChatRun(
                 id: runID,
@@ -1228,6 +1242,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         profession: LocalAgentProfessionDefinition,
         projectType: LocalProjectTypeDefinition?,
         contextLanguage: ChatOSLanguage,
+        communicationSkill: LocalAgentCommunicationSkillSnapshot,
         triggerMessage: ProjectAgentMessage,
         triggerAttachments: [ProjectAgentMessageAttachmentPayload]
     ) -> [AgentMessage] {
@@ -1326,6 +1341,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
                 "manager_instructions": heartbeatInstructions,
                 "executor_instructions": todoInstructions,
                 "todo_status_instructions": todoStatusInstructions,
+                "compact_communication_skill": communicationSkill.promptBlock,
                 "profession_skill": professionSkill,
                 "project_skill": projectSkill,
             ]

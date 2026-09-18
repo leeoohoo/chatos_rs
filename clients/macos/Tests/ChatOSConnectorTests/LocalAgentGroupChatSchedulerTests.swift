@@ -126,6 +126,14 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         XCTAssertTrue(system.contains("Account-specific research role"))
         XCTAssertFalse(system.contains("当前账户自定义职业规则"))
         XCTAssertFalse(system.contains("chatos-project-type-"))
+        XCTAssertTrue(system.contains(#"name="chatos-compact-communication""#))
+        XCTAssertTrue(system.contains("Lead with the conclusion"))
+        let communicationSkill = try XCTUnwrap(run.checkpoint.instructionBundleItems.first)
+        XCTAssertEqual(communicationSkill.name, "chatos-compact-communication")
+        XCTAssertEqual(communicationSkill.version, 1)
+        XCTAssertEqual(communicationSkill.language, ChatOSLanguage.english.rawValue)
+        XCTAssertEqual(communicationSkill.audience, "manager")
+        XCTAssertEqual(communicationSkill.contentSHA256.count, 64)
     }
 
     func testSchedulerRunsDeliveryLocallyAndPersistsCompletedRun() async throws {
@@ -209,6 +217,11 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         XCTAssertTrue(system.contains(#"name="chatos-profession-desktop-engineer""#))
         XCTAssertTrue(system.contains(#"name="chatos-project-type-desktop-application""#))
         XCTAssertTrue(system.contains("Desktop Application Playbook") || system.contains("桌面"))
+        XCTAssertTrue(system.contains(#"name="chatos-compact-communication""#))
+        XCTAssertEqual(
+            savedRun?.checkpoint.instructionBundleItems.first?.audience,
+            "manager"
+        )
         XCTAssertTrue(savedRun?.checkpoint.messages.dropFirst().first?.content.contains("开始实现") == true)
     }
 
@@ -306,6 +319,8 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         let reviewed = try XCTUnwrap(loadedReviewed)
         XCTAssertEqual(reviewed.id, runID)
         XCTAssertEqual(reviewed.checkpoint.status, .needsReview)
+        XCTAssertEqual(reviewed.checkpoint.messages.first?.content, "system")
+        XCTAssertTrue(reviewed.checkpoint.instructionBundleItems.isEmpty)
         let runningDelivery = try await store.delivery(
             ownerUserID: "alice",
             deliveryID: delivery.id
@@ -336,6 +351,8 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         )
         XCTAssertEqual(completedDelivery?.status, .completed)
         XCTAssertEqual(completedRun?.checkpoint.status, .completed)
+        XCTAssertEqual(completedRun?.checkpoint.messages.first?.content, "system")
+        XCTAssertTrue(completedRun?.checkpoint.instructionBundleItems.isEmpty == true)
         XCTAssertTrue(completedRun?.events.contains(where: { $0.kind == "retry_authorized" }) == true)
         XCTAssertTrue(unfinishedAfterRetry.isEmpty)
     }

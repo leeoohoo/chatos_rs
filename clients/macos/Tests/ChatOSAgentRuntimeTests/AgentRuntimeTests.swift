@@ -43,6 +43,34 @@ final class AgentRuntimeTests: XCTestCase {
         XCTAssertLessThan(estimate, 1_200)
     }
 
+    func testLegacyCheckpointWithoutInstructionBundlesStillDecodes() throws {
+        var checkpoint = AgentRunCheckpoint(
+            scope: "legacy",
+            messages: [.init(role: .system, content: "persisted instructions")]
+        )
+        checkpoint.instructionBundles = [
+            .init(
+                name: "future-skill",
+                version: 2,
+                contentSHA256: String(repeating: "a", count: 64),
+                language: "en-US",
+                audience: "manager"
+            ),
+        ]
+        let encoded = try JSONEncoder().encode(checkpoint)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object.removeValue(forKey: "instructionBundles")
+
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try JSONDecoder().decode(AgentRunCheckpoint.self, from: legacyData)
+
+        XCTAssertEqual(decoded.scope, "legacy")
+        XCTAssertEqual(decoded.messages.first?.content, "persisted instructions")
+        XCTAssertTrue(decoded.instructionBundleItems.isEmpty)
+    }
+
     func testDeterministicCompletionCheckFinishesWithoutAnotherModelCall() async throws {
         let checkpoint = AgentRunCheckpoint(scope: "test", messages: [.init(role: .user, content: "work")])
         let model = CompletionCheckModel()

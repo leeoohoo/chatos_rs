@@ -174,6 +174,30 @@ public struct AgentSettingsStore: Sendable {
     }
 }
 
+/// Program-owned instruction identity persisted alongside the exact prompt text in messages.
+/// Optional checkpoint storage keeps runs created before this field fully decodable.
+public struct AgentInstructionBundleCheckpoint: Codable, Equatable, Sendable {
+    public var name: String
+    public var version: Int
+    public var contentSHA256: String
+    public var language: String
+    public var audience: String
+
+    public init(
+        name: String,
+        version: Int,
+        contentSHA256: String,
+        language: String,
+        audience: String
+    ) {
+        self.name = name
+        self.version = version
+        self.contentSHA256 = contentSHA256
+        self.language = language
+        self.audience = audience
+    }
+}
+
 public struct AgentRunCheckpoint: Codable, Equatable, Sendable {
     public enum Status: String, Codable, Sendable { case ready, running, paused, completed, failed, needsReview, limitReached }
     public var id = UUID()
@@ -193,7 +217,12 @@ public struct AgentRunCheckpoint: Codable, Equatable, Sendable {
     public var stopReason: String?
     public var memory: AgentMemoryCheckpoint?
     public var usage: AgentUsage?
+    public var instructionBundles: [AgentInstructionBundleCheckpoint]?
     public init(scope: String, messages: [AgentMessage]) { self.scope = scope; self.messages = messages }
+
+    public var instructionBundleItems: [AgentInstructionBundleCheckpoint] {
+        instructionBundles ?? []
+    }
 }
 
 public struct AgentRunEvent: Codable, Identifiable, Equatable, Sendable {

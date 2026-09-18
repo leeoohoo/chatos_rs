@@ -37,6 +37,7 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
                     "manager_instructions": "manager",
                     "executor_instructions": "executor",
                     "todo_status_instructions": "todo status",
+                    "compact_communication_skill": "compact communication skill",
                     "profession_skill": "profession skill",
                     "project_skill": "project skill",
                 ]

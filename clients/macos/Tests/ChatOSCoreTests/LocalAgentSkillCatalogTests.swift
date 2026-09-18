@@ -39,4 +39,43 @@ final class LocalAgentSkillCatalogTests: XCTestCase {
             projectTypeKey: "made_up"
         ).validate())
     }
+
+    func testCompactCommunicationSkillIsBilingualAudienceScopedAndStable() {
+        let policy = AgentCommunicationPolicy.standard
+        XCTAssertEqual(policy.recommendedMessageCharacters, 800)
+        XCTAssertEqual(policy.maximumMessageCharacters, 2_000)
+        XCTAssertEqual(policy.maximumDocumentsPerMessage, 5)
+        XCTAssertEqual(policy.maximumDocumentBytes, 2 * 1_024 * 1_024)
+        XCTAssertEqual(policy.maximumDocumentBytesPerRun, 8 * 1_024 * 1_024)
+
+        let managerZH = LocalAgentCompactCommunicationSkill.snapshot(
+            language: .simplifiedChinese,
+            audience: .manager
+        )
+        let managerEN = LocalAgentCompactCommunicationSkill.snapshot(
+            language: .english,
+            audience: .manager
+        )
+        let executorZH = LocalAgentCompactCommunicationSkill.snapshot(
+            language: .simplifiedChinese,
+            audience: .executor
+        )
+
+        XCTAssertEqual(managerZH.name, "chatos-compact-communication")
+        XCTAssertEqual(managerZH.version, 1)
+        XCTAssertEqual(managerZH.contentSHA256.count, 64)
+        XCTAssertEqual(
+            managerZH.contentSHA256,
+            LocalAgentCompactCommunicationSkill.snapshot(
+                language: .simplifiedChinese,
+                audience: .manager
+            ).contentSHA256
+        )
+        XCTAssertTrue(managerZH.markdown.contains("chat_document_create"))
+        XCTAssertTrue(managerEN.markdown.contains("Lead with the conclusion"))
+        XCTAssertTrue(executorZH.markdown.contains("todo_progress_append"))
+        XCTAssertNotEqual(managerZH.contentSHA256, managerEN.contentSHA256)
+        XCTAssertNotEqual(managerZH.contentSHA256, executorZH.contentSHA256)
+        XCTAssertTrue(managerZH.promptBlock.contains(#"binding="product-owned""#))
+    }
 }

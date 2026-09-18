@@ -53,7 +53,7 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
                 "role_prompt", "conversation_context", "capability_discovery_skill",
                 "staffing_instructions", "project_instructions", "manager_instructions",
                 "executor_instructions", "todo_status_instructions", "profession_skill",
-                "project_skill",
+                "project_skill", "compact_communication_skill",
             ]
         case .deliveryUser:
             ["trigger_kind", "attachment_count", "trigger_payload", "requested_action"]
