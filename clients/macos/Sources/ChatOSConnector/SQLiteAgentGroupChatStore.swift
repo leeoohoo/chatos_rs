@@ -5964,10 +5964,6 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (7);
         INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (10);
         INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (11);
-        INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (19);
-        INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (20);
-        INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (21);
-        INSERT OR IGNORE INTO local_agent_group_chat_schema_migrations(version) VALUES (22);
         COMMIT;
         """
 
@@ -6667,12 +6663,15 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (20)"
             )
         }
+        // Never trust only the migration marker for columns introduced through ALTER TABLE.
+        // Older builds inserted marker 21 from the bootstrap SQL even when CREATE TABLE IF NOT
+        // EXISTS kept an older local_agent_todos table unchanged.
+        if !hasColumn("execution_contract_json", table: "local_agent_todos") {
+            try execute(
+                "ALTER TABLE local_agent_todos ADD COLUMN execution_contract_json TEXT NOT NULL DEFAULT '{}'"
+            )
+        }
         if !hasMigration(21) {
-            if !hasColumn("execution_contract_json", table: "local_agent_todos") {
-                try execute(
-                    "ALTER TABLE local_agent_todos ADD COLUMN execution_contract_json TEXT NOT NULL DEFAULT '{}'"
-                )
-            }
             try execute(
                 "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (21)"
             )

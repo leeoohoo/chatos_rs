@@ -2398,4 +2398,59 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         ), 1)
         try executeSQLite(url, sql: "PRAGMA foreign_key_check;")
     }
+
+    func testMigration21RepairsMissingColumnEvenWhenMarkerAlreadyExists() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        var initialStore: SQLiteAgentGroupChatStore? = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let agent = try await makeAgent(initialStore!, name: "迁移修复 Agent")
+        let room = try await initialStore!.createRoom(
+            ownerUserID: "alice",
+            projectID: "migration-21-repair-project",
+            draft: .init(name: "迁移修复团队")
+        )
+        _ = try await initialStore!.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id,
+            draft: .init(role: "执行者")
+        )
+        let todo = try await initialStore!.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            requestKey: "migration-21-repair",
+            draft: .init(title: "保留旧任务", teamRoomID: room.id),
+            nowUnixMs: 100
+        )
+        initialStore = nil
+
+        try executeSQLite(
+            url,
+            sql: """
+            PRAGMA foreign_keys = OFF;
+            ALTER TABLE local_agent_todos DROP COLUMN execution_contract_json;
+            PRAGMA foreign_keys = ON;
+            """
+        )
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM local_agent_group_chat_schema_migrations WHERE version = 21"
+        ), 1)
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM pragma_table_info('local_agent_todos') WHERE name = 'execution_contract_json'"
+        ), 0)
+
+        let repairedStore = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let repairedTodo = try await repairedStore.agentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id
+        )
+        XCTAssertEqual(repairedTodo?.title, todo.title)
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM pragma_table_info('local_agent_todos') WHERE name = 'execution_contract_json'"
+        ), 1)
+    }
 }
