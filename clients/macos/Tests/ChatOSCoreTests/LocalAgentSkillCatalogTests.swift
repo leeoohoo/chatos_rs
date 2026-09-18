@@ -45,6 +45,7 @@ final class LocalAgentSkillCatalogTests: XCTestCase {
         XCTAssertEqual(policy.recommendedMessageCharacters, 800)
         XCTAssertEqual(policy.maximumMessageCharacters, 2_000)
         XCTAssertEqual(policy.maximumDocumentsPerMessage, 5)
+        XCTAssertEqual(policy.maximumDocumentsPerRun, 20)
         XCTAssertEqual(policy.maximumDocumentBytes, 2 * 1_024 * 1_024)
         XCTAssertEqual(policy.maximumDocumentBytesPerRun, 8 * 1_024 * 1_024)
 
@@ -62,7 +63,7 @@ final class LocalAgentSkillCatalogTests: XCTestCase {
         )
 
         XCTAssertEqual(managerZH.name, "chatos-compact-communication")
-        XCTAssertEqual(managerZH.version, 1)
+        XCTAssertEqual(managerZH.version, 2)
         XCTAssertEqual(managerZH.contentSHA256.count, 64)
         XCTAssertEqual(
             managerZH.contentSHA256,

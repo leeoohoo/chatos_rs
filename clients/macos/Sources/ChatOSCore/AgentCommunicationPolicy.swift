@@ -7,6 +7,7 @@ public struct AgentCommunicationPolicy: Codable, Sendable, Equatable {
     public let recommendedMessageCharacters: Int
     public let maximumMessageCharacters: Int
     public let maximumDocumentsPerMessage: Int
+    public let maximumDocumentsPerRun: Int
     public let maximumDocumentBytes: Int
     public let maximumDocumentBytesPerRun: Int
 
@@ -14,6 +15,7 @@ public struct AgentCommunicationPolicy: Codable, Sendable, Equatable {
         recommendedMessageCharacters: 800,
         maximumMessageCharacters: 2_000,
         maximumDocumentsPerMessage: 5,
+        maximumDocumentsPerRun: 20,
         maximumDocumentBytes: 2 * 1_024 * 1_024,
         maximumDocumentBytesPerRun: 8 * 1_024 * 1_024
     )
@@ -22,17 +24,20 @@ public struct AgentCommunicationPolicy: Codable, Sendable, Equatable {
         recommendedMessageCharacters: Int,
         maximumMessageCharacters: Int,
         maximumDocumentsPerMessage: Int,
+        maximumDocumentsPerRun: Int,
         maximumDocumentBytes: Int,
         maximumDocumentBytesPerRun: Int
     ) {
         precondition(recommendedMessageCharacters > 0)
         precondition(maximumMessageCharacters >= recommendedMessageCharacters)
         precondition(maximumDocumentsPerMessage > 0)
+        precondition(maximumDocumentsPerRun >= maximumDocumentsPerMessage)
         precondition(maximumDocumentBytes > 0)
         precondition(maximumDocumentBytesPerRun >= maximumDocumentBytes)
         self.recommendedMessageCharacters = recommendedMessageCharacters
         self.maximumMessageCharacters = maximumMessageCharacters
         self.maximumDocumentsPerMessage = maximumDocumentsPerMessage
+        self.maximumDocumentsPerRun = maximumDocumentsPerRun
         self.maximumDocumentBytes = maximumDocumentBytes
         self.maximumDocumentBytesPerRun = maximumDocumentBytesPerRun
     }
@@ -63,7 +68,7 @@ public struct LocalAgentCommunicationSkillSnapshot: Codable, Sendable, Equatable
 /// Immutable product Skill used by every local Agent communication run.
 public enum LocalAgentCompactCommunicationSkill {
     public static let name = "chatos-compact-communication"
-    public static let version = 1
+    public static let version = 2
 
     public static func snapshot(
         language: ChatOSLanguage,

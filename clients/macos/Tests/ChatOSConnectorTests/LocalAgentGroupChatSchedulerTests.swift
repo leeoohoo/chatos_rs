@@ -130,7 +130,7 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         XCTAssertTrue(system.contains("Lead with the conclusion"))
         let communicationSkill = try XCTUnwrap(run.checkpoint.instructionBundleItems.first)
         XCTAssertEqual(communicationSkill.name, "chatos-compact-communication")
-        XCTAssertEqual(communicationSkill.version, 1)
+        XCTAssertEqual(communicationSkill.version, 2)
         XCTAssertEqual(communicationSkill.language, ChatOSLanguage.english.rawValue)
         XCTAssertEqual(communicationSkill.audience, "manager")
         XCTAssertEqual(communicationSkill.contentSHA256.count, 64)

@@ -42,6 +42,27 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
 
     deinit { sqlite3_close(database) }
 
+    /// Creates a Run-scoped staging directory beneath the existing protected attachment root.
+    /// The opaque directory name is never exposed to the model and is removed with the Run vault.
+    public func createAgentDocumentDraftDirectory() throws -> URL {
+        let draftsRoot = attachmentsRootURL.appendingPathComponent(".drafts", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: draftsRoot,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let directory = draftsRoot.appendingPathComponent(
+            UUID().uuidString.lowercased(),
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        return directory
+    }
+
     public func createAgent(
         ownerUserID: String,
         draft: LocalAgentProfileDraft

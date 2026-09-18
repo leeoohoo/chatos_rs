@@ -1,5 +1,6 @@
 import ChatOSAgentRuntime
 import ChatOSCore
+import CryptoKit
 import Foundation
 
 /// Safe catalog metadata supplied by the client. `pluginID` remains inside the provider and is
@@ -117,6 +118,7 @@ public actor LocalAgentRelayMCPServer {
         todoPluginOptions: [LocalAgentTodoPluginOption] = []
     ) async throws -> LocalAgentChatToolProvider {
         let store = try await service.store()
+        let documentDraftDirectoryURL = try await store.createAgentDocumentDraftDirectory()
         return try LocalAgentChatToolProvider(
             store: store,
             context: context,
@@ -132,12 +134,33 @@ public actor LocalAgentRelayMCPServer {
                     kind: .roomUpdated
                 ))
             },
+            documentDraftDirectoryURL: documentDraftDirectoryURL,
             now: now
         )
     }
 }
 
 private actor LocalAgentRunReferenceVault {
+    enum DocumentCreateFailure: Error {
+        case empty
+        case tooLarge
+        case tooMany
+        case runTooLarge
+        case storage
+    }
+
+    enum DocumentReservationResult: Sendable {
+        case success([ProjectAgentMessageAttachmentDraft])
+        case invalid(index: Int)
+        case integrityChanged(index: Int)
+    }
+
+    enum SendReceiptLookup: Sendable {
+        case missing
+        case match(AgentToolOutcome)
+        case callIDConflict
+    }
+
     struct MessageAuthority: Sendable {
         let roomID: String
         let messageID: String
@@ -166,6 +189,21 @@ private actor LocalAgentRunReferenceVault {
         let revision: Int
     }
 
+    private struct DocumentAuthority: Sendable {
+        let localFileURL: URL
+        let name: String
+        let title: String
+        let size: Int
+        let sha256: String
+        var reservedByCallID: String?
+        var consumed: Bool
+    }
+
+    private struct SendReceipt: Sendable {
+        let signature: String
+        let outcome: AgentToolOutcome
+    }
+
     private var conversations: [String: String] = [:]
     private var messages: [String: MessageAuthority] = [:]
     private var todos: [String: TodoAuthority] = [:]
@@ -175,6 +213,23 @@ private actor LocalAgentRunReferenceVault {
     private var plugins: [String: LocalAgentTodoPluginOption] = [:]
     private var attachments: [String: AttachmentAuthority] = [:]
     private var teamAssets: [String: TeamAssetAuthority] = [:]
+    private var documents: [String: DocumentAuthority] = [:]
+    private var createdDocumentBytes = 0
+    private var sendReceipts: [String: SendReceipt] = [:]
+    private let documentDraftDirectoryURL: URL
+    private let communicationPolicy: AgentCommunicationPolicy
+
+    init(
+        documentDraftDirectoryURL: URL,
+        communicationPolicy: AgentCommunicationPolicy = .standard
+    ) {
+        self.documentDraftDirectoryURL = documentDraftDirectoryURL
+        self.communicationPolicy = communicationPolicy
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: documentDraftDirectoryURL)
+    }
 
     func conversationReference(roomID: String) -> String {
         if let existing = conversations.first(where: { $0.value == roomID })?.key {
@@ -291,6 +346,111 @@ private actor LocalAgentRunReferenceVault {
     func teamAssetAuthority(reference: String) -> TeamAssetAuthority? {
         teamAssets[reference]
     }
+
+    func createDocument(name: String, title: String, data: Data) throws -> (
+        reference: String,
+        size: Int,
+        sha256: String
+    ) {
+        guard !data.isEmpty else { throw DocumentCreateFailure.empty }
+        guard data.count <= communicationPolicy.maximumDocumentBytes else {
+            throw DocumentCreateFailure.tooLarge
+        }
+        guard documents.count < communicationPolicy.maximumDocumentsPerRun else {
+            throw DocumentCreateFailure.tooMany
+        }
+        guard createdDocumentBytes + data.count <= communicationPolicy.maximumDocumentBytesPerRun else {
+            throw DocumentCreateFailure.runTooLarge
+        }
+        let localFileURL = documentDraftDirectoryURL.appendingPathComponent(
+            UUID().uuidString.lowercased(),
+            isDirectory: false
+        )
+        do {
+            try data.write(to: localFileURL, options: .atomic)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: localFileURL.path
+            )
+        } catch {
+            try? FileManager.default.removeItem(at: localFileURL)
+            throw DocumentCreateFailure.storage
+        }
+        let sha256 = Self.sha256(data)
+        let reference = "document_\(UUID().uuidString.lowercased())"
+        documents[reference] = .init(
+            localFileURL: localFileURL,
+            name: name,
+            title: title,
+            size: data.count,
+            sha256: sha256,
+            reservedByCallID: nil,
+            consumed: false
+        )
+        createdDocumentBytes += data.count
+        return (reference, data.count, sha256)
+    }
+
+    func reserveDocuments(
+        references requestedReferences: [String],
+        callID: String
+    ) -> DocumentReservationResult {
+        var drafts: [ProjectAgentMessageAttachmentDraft] = []
+        for (index, reference) in requestedReferences.enumerated() {
+            guard let authority = documents[reference],
+                  !authority.consumed,
+                  authority.reservedByCallID == nil || authority.reservedByCallID == callID else {
+                return .invalid(index: index)
+            }
+            guard let data = try? Data(contentsOf: authority.localFileURL, options: [.mappedIfSafe]),
+                  data.count == authority.size,
+                  Self.sha256(data) == authority.sha256 else {
+                return .integrityChanged(index: index)
+            }
+            drafts.append(.init(
+                name: authority.name,
+                mimeType: "text/markdown; charset=utf-8",
+                kind: .file,
+                origin: .file,
+                data: data
+            ))
+        }
+        for reference in requestedReferences {
+            documents[reference]?.reservedByCallID = callID
+        }
+        return .success(drafts)
+    }
+
+    func releaseDocuments(references requestedReferences: [String], callID: String) {
+        for reference in requestedReferences where documents[reference]?.reservedByCallID == callID {
+            documents[reference]?.reservedByCallID = nil
+        }
+    }
+
+    func consumeDocuments(references requestedReferences: [String], callID: String) {
+        for reference in requestedReferences where documents[reference]?.reservedByCallID == callID {
+            guard var authority = documents[reference] else { continue }
+            authority.reservedByCallID = nil
+            authority.consumed = true
+            documents[reference] = authority
+            try? FileManager.default.removeItem(at: authority.localFileURL)
+        }
+    }
+
+    func sendReceipt(callID: String, signature: String) -> SendReceiptLookup {
+        guard let receipt = sendReceipts[callID] else { return .missing }
+        guard receipt.signature == signature else { return .callIDConflict }
+        return .match(receipt.outcome)
+    }
+
+    func recordSendReceipt(callID: String, signature: String, outcome: AgentToolOutcome) {
+        guard sendReceipts[callID] == nil else { return }
+        sendReceipts[callID] = .init(signature: signature, outcome: outcome)
+    }
+
+    private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
 }
 
 /// One identity-bound session on the local Relay MCP. Tool arguments can never select another
@@ -305,6 +465,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     public static let inboxSendToolName = "chat_inbox_send"
     public static let readMessagesToolName = "chat_read_messages"
     public static let readAttachmentToolName = "chat_read_attachment"
+    public static let createDocumentToolName = "chat_document_create"
     public static let markReadToolName = "chat_mark_read"
     public static let openDirectToolName = "chat_direct_open"
     public static let sendDirectToolName = "chat_direct_send"
@@ -351,6 +512,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         limits: AgentGroupChatRoutingLimits = .init(),
         todoCancellationHandler: @escaping @Sendable (String) async -> Void = { _ in },
         roomChangeHandler: @escaping @Sendable (String) async -> Void = { _ in },
+        documentDraftDirectoryURL: URL,
         now: @escaping @Sendable () -> Int64 = {
             Int64(Date().timeIntervalSince1970 * 1_000)
         }
@@ -361,7 +523,9 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         self.professions = professions
         self.limits = limits
         self.now = now
-        self.references = LocalAgentRunReferenceVault()
+        self.references = LocalAgentRunReferenceVault(
+            documentDraftDirectoryURL: documentDraftDirectoryURL
+        )
         self.todoPluginOptions = todoPluginOptions
         self.todoCancellationHandler = todoCancellationHandler
         self.roomChangeHandler = roomChangeHandler
@@ -445,6 +609,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             return try await readMessages(call)
         case Self.readAttachmentToolName:
             return try await readAttachment(call)
+        case Self.createDocumentToolName:
+            return try await createDocument(call)
         case Self.markReadToolName:
             return try await markRead(call)
         case Self.openDirectToolName:
@@ -837,7 +1003,10 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     }
 
     private func sendInboxMessage(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        if let replayed = await replayedSendOutcome(call) { return replayed }
         let arguments = try Self.arguments(call)
+        let content = try Self.requiredString(arguments, key: "content")
+        if let failure = Self.messageLengthFailure(content) { return failure }
         let conversationReference = try Self.requiredString(
             arguments,
             key: "conversation_ref"
@@ -872,24 +1041,37 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             }
             mentionedAgentIDs = [projectManagerAgentID]
         }
-        let post = try await store.postMessage(
-            ownerUserID: context.ownerUserID,
-            roomID: roomID,
-            draft: .init(
-                senderKind: .agent,
-                senderID: context.agentID,
-                content: try Self.requiredString(arguments, key: "content"),
-                mentionedAgentIDs: mentionedAgentIDs,
-                replyToMessageID: replyMessage.id,
-                sourceRunID: context.runID,
-                causationID: context.deliveryID,
-                rootMessageID: replyMessage.rootMessageID,
-                hopCount: min(64, replyMessage.hopCount + 1)
-            ),
-            limits: limits
-        )
+        let resolution = try await resolveDocumentDrafts(arguments: arguments, callID: call.id)
+        guard case let .ready(documentReferences, attachmentDrafts) = resolution else {
+            if case let .failure(failure) = resolution { return failure }
+            fatalError("unreachable document resolution")
+        }
+        let post: AgentGroupChatPostResult
+        do {
+            post = try await store.postMessage(
+                ownerUserID: context.ownerUserID,
+                roomID: roomID,
+                draft: .init(
+                    senderKind: .agent,
+                    senderID: context.agentID,
+                    content: content,
+                    mentionedAgentIDs: mentionedAgentIDs,
+                    replyToMessageID: replyMessage.id,
+                    sourceRunID: context.runID,
+                    causationID: context.deliveryID,
+                    rootMessageID: replyMessage.rootMessageID,
+                    hopCount: min(64, replyMessage.hopCount + 1),
+                    attachments: attachmentDrafts
+                ),
+                limits: limits
+            )
+        } catch {
+            await references.releaseDocuments(references: documentReferences, callID: call.id)
+            throw error
+        }
+        await references.consumeDocuments(references: documentReferences, callID: call.id)
         await roomChangeHandler(roomID)
-        return try Self.outcome(InboxSendResponse(
+        let outcome = try Self.outcome(InboxSendResponse(
             sent: true,
             notifiedProjectManager: notifyProjectManager,
             conversationReference: conversationReference,
@@ -897,6 +1079,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             spawnedDeliveryCount: post.deliveries.count,
             routingStopReason: post.routingStopReason
         ))
+        await recordSendOutcome(outcome, call: call)
+        return outcome
     }
 
     private func listTodos(_ call: AgentToolCall) async throws -> AgentToolOutcome {
@@ -2288,6 +2472,101 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         return try Self.outcome(response)
     }
 
+    private func createDocument(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        let arguments = try Self.arguments(call)
+        let rawName = try Self.requiredString(arguments, key: "name")
+        let title = try Self.requiredString(arguments, key: "title")
+        let markdown = try Self.requiredString(arguments, key: "markdown")
+        guard let name = Self.sanitizedMarkdownDocumentName(rawName) else {
+            return Self.structuredFailure(
+                code: "invalid_document_name",
+                field: "name",
+                message: "文档名称不能为空；客户端会自动清洗路径字符并补充 .md 后缀。",
+                retryable: true,
+                nextTool: Self.createDocumentToolName
+            )
+        }
+        guard !title.isEmpty,
+              title == title.trimmingCharacters(in: .whitespacesAndNewlines),
+              title.count <= 512,
+              title.rangeOfCharacter(from: .controlCharacters) == nil else {
+            return Self.structuredFailure(
+                code: "invalid_document_title",
+                field: "title",
+                message: "文档标题必须是 1～512 个字符，且不能包含控制字符或首尾空白。",
+                retryable: true,
+                nextTool: Self.createDocumentToolName
+            )
+        }
+        guard !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return Self.structuredFailure(
+                code: "empty_document",
+                field: "markdown",
+                message: "Markdown 文档不能为空。",
+                retryable: true,
+                nextTool: Self.createDocumentToolName
+            )
+        }
+        let data = Data(markdown.utf8)
+        do {
+            let created = try await references.createDocument(
+                name: name,
+                title: title,
+                data: data
+            )
+            return try Self.outcome(DocumentCreateResponse(
+                documentReference: created.reference,
+                name: name,
+                title: title,
+                size: created.size,
+                mimeType: "text/markdown",
+                sha256: created.sha256,
+                instruction: "请在下一次发送消息时通过 document_refs 附加该文档。"
+            ))
+        } catch let failure as LocalAgentRunReferenceVault.DocumentCreateFailure {
+            switch failure {
+            case .empty:
+                return Self.structuredFailure(
+                    code: "empty_document",
+                    field: "markdown",
+                    message: "Markdown 文档不能为空。",
+                    retryable: true,
+                    nextTool: Self.createDocumentToolName
+                )
+            case .tooLarge:
+                return Self.structuredFailure(
+                    code: "document_too_large",
+                    field: "markdown",
+                    message: "单个文档超过 \(AgentCommunicationPolicy.standard.maximumDocumentBytes) 字节，请拆分为少量有意义的 Markdown 文档。",
+                    retryable: true,
+                    nextTool: Self.createDocumentToolName
+                )
+            case .tooMany:
+                return Self.structuredFailure(
+                    code: "too_many_documents",
+                    field: nil,
+                    message: "当前 Run 已达到最多 \(AgentCommunicationPolicy.standard.maximumDocumentsPerRun) 个文档。",
+                    retryable: false
+                )
+            case .runTooLarge:
+                return Self.structuredFailure(
+                    code: "document_run_limit_exceeded",
+                    field: "markdown",
+                    message: "当前 Run 创建的文档总量超过 \(AgentCommunicationPolicy.standard.maximumDocumentBytesPerRun) 字节。",
+                    retryable: false
+                )
+            case .storage:
+                return Self.structuredFailure(
+                    code: "document_storage_failed",
+                    field: nil,
+                    message: "客户端无法安全保存本地文档草稿。",
+                    retryable: true,
+                    nextTool: Self.createDocumentToolName
+                )
+            }
+        }
+    }
+
     private func markRead(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         let arguments = try Self.arguments(call)
         let throughReference = try Self.requiredString(arguments, key: "through_message_ref")
@@ -2356,6 +2635,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     }
 
     private func sendDirect(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        if let replayed = await replayedSendOutcome(call) { return replayed }
         let arguments = try Self.arguments(call)
         let conversationReference = try Self.requiredString(arguments, key: "conversation_ref")
         guard let conversationID = await references.roomID(
@@ -2370,6 +2650,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             )
         }
         let content = try Self.requiredString(arguments, key: "content")
+        if let failure = Self.messageLengthFailure(content) { return failure }
         guard let conversation = try await store.room(
             ownerUserID: context.ownerUserID,
             roomID: conversationID
@@ -2383,21 +2664,34 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         guard members.contains(where: { $0.agentID == context.agentID }) else {
             throw AgentGroupChatError.notMember
         }
-        let post = try await store.postMessage(
-            ownerUserID: context.ownerUserID,
-            roomID: conversationID,
-            draft: .init(
-                senderKind: .agent,
-                senderID: context.agentID,
-                content: content,
-                sourceRunID: context.runID,
-                causationID: context.deliveryID,
-                hopCount: context.hopCount + 1
-            ),
-            limits: limits
-        )
+        let resolution = try await resolveDocumentDrafts(arguments: arguments, callID: call.id)
+        guard case let .ready(documentReferences, attachmentDrafts) = resolution else {
+            if case let .failure(failure) = resolution { return failure }
+            fatalError("unreachable document resolution")
+        }
+        let post: AgentGroupChatPostResult
+        do {
+            post = try await store.postMessage(
+                ownerUserID: context.ownerUserID,
+                roomID: conversationID,
+                draft: .init(
+                    senderKind: .agent,
+                    senderID: context.agentID,
+                    content: content,
+                    sourceRunID: context.runID,
+                    causationID: context.deliveryID,
+                    hopCount: context.hopCount + 1,
+                    attachments: attachmentDrafts
+                ),
+                limits: limits
+            )
+        } catch {
+            await references.releaseDocuments(references: documentReferences, callID: call.id)
+            throw error
+        }
+        await references.consumeDocuments(references: documentReferences, callID: call.id)
         await roomChangeHandler(conversationID)
-        return try Self.outcome(DirectSendResponse(
+        let outcome = try Self.outcome(DirectSendResponse(
             conversationReference: conversationReference,
             messageReference: await references.messageReference(
                 roomID: conversationID,
@@ -2406,10 +2700,15 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             spawnedDeliveryCount: post.deliveries.count,
             routingStopReason: post.routingStopReason
         ))
+        await recordSendOutcome(outcome, call: call)
+        return outcome
     }
 
     private func sendTeam(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        if let replayed = await replayedSendOutcome(call) { return replayed }
         let arguments = try Self.arguments(call)
+        let content = try Self.requiredString(arguments, key: "content")
+        if let failure = Self.messageLengthFailure(content) { return failure }
         let teamReference = try Self.requiredString(arguments, key: "team_ref")
         guard let teamRoomID = await references.teamID(reference: teamReference),
               let team = try await store.room(
@@ -2458,22 +2757,35 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 mentionAgentIDs.append(agentID)
             }
         }
-        let post = try await store.postMessage(
-            ownerUserID: context.ownerUserID,
-            roomID: teamRoomID,
-            draft: .init(
-                senderKind: .agent,
-                senderID: context.agentID,
-                content: try Self.requiredString(arguments, key: "content"),
-                mentionedAgentIDs: mentionAgentIDs,
-                sourceRunID: context.runID,
-                causationID: context.deliveryID,
-                hopCount: context.hopCount + 1
-            ),
-            limits: limits
-        )
+        let resolution = try await resolveDocumentDrafts(arguments: arguments, callID: call.id)
+        guard case let .ready(documentReferences, attachmentDrafts) = resolution else {
+            if case let .failure(failure) = resolution { return failure }
+            fatalError("unreachable document resolution")
+        }
+        let post: AgentGroupChatPostResult
+        do {
+            post = try await store.postMessage(
+                ownerUserID: context.ownerUserID,
+                roomID: teamRoomID,
+                draft: .init(
+                    senderKind: .agent,
+                    senderID: context.agentID,
+                    content: content,
+                    mentionedAgentIDs: mentionAgentIDs,
+                    sourceRunID: context.runID,
+                    causationID: context.deliveryID,
+                    hopCount: context.hopCount + 1,
+                    attachments: attachmentDrafts
+                ),
+                limits: limits
+            )
+        } catch {
+            await references.releaseDocuments(references: documentReferences, callID: call.id)
+            throw error
+        }
+        await references.consumeDocuments(references: documentReferences, callID: call.id)
         await roomChangeHandler(teamRoomID)
-        return try Self.outcome(
+        let outcome = try Self.outcome(
             SendResponse(
                 messageReference: await references.messageReference(
                     roomID: teamRoomID,
@@ -2484,11 +2796,15 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 routingStopReason: post.routingStopReason
             )
         )
+        await recordSendOutcome(outcome, call: call)
+        return outcome
     }
 
     private func sendMessage(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        if let replayed = await replayedSendOutcome(call) { return replayed }
         let arguments = try Self.arguments(call)
         let content = try Self.requiredString(arguments, key: "content")
+        if let failure = Self.messageLengthFailure(content) { return failure }
         let mentionReferences = try Self.optionalStringArray(arguments, key: "mention_agent_refs")
         var mentionAgentIDs: [String] = []
         for (index, reference) in mentionReferences.enumerated() {
@@ -2529,22 +2845,35 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
            delivery.rootMessageID == context.rootMessageID else {
             throw AgentGroupChatError.conflict
         }
-        let post = try await store.postMessage(
-            ownerUserID: context.ownerUserID,
-            roomID: context.roomID,
-            draft: .init(
-                senderKind: .agent,
-                senderID: context.agentID,
-                content: content,
-                mentionedAgentIDs: mentionAgentIDs,
-                replyToMessageID: replyToMessageID,
-                sourceRunID: context.runID,
-                causationID: context.deliveryID,
-                rootMessageID: context.rootMessageID,
-                hopCount: context.hopCount + 1
-            ),
-            limits: limits
-        )
+        let resolution = try await resolveDocumentDrafts(arguments: arguments, callID: call.id)
+        guard case let .ready(documentReferences, attachmentDrafts) = resolution else {
+            if case let .failure(failure) = resolution { return failure }
+            fatalError("unreachable document resolution")
+        }
+        let post: AgentGroupChatPostResult
+        do {
+            post = try await store.postMessage(
+                ownerUserID: context.ownerUserID,
+                roomID: context.roomID,
+                draft: .init(
+                    senderKind: .agent,
+                    senderID: context.agentID,
+                    content: content,
+                    mentionedAgentIDs: mentionAgentIDs,
+                    replyToMessageID: replyToMessageID,
+                    sourceRunID: context.runID,
+                    causationID: context.deliveryID,
+                    rootMessageID: context.rootMessageID,
+                    hopCount: context.hopCount + 1,
+                    attachments: attachmentDrafts
+                ),
+                limits: limits
+            )
+        } catch {
+            await references.releaseDocuments(references: documentReferences, callID: call.id)
+            throw error
+        }
+        await references.consumeDocuments(references: documentReferences, callID: call.id)
         await roomChangeHandler(context.roomID)
         // A substantive reply acknowledges the triggering message. This best-effort cursor update
         // is intentionally secondary to the durable message transaction. Sending no longer ends
@@ -2556,7 +2885,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             throughMessageID: context.triggerMessageID,
             nowUnixMs: now()
         )
-        return try Self.outcome(
+        let outcome = try Self.outcome(
             SendResponse(
                 messageReference: await references.messageReference(
                     roomID: context.roomID,
@@ -2567,6 +2896,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 routingStopReason: post.routingStopReason
             )
         )
+        await recordSendOutcome(outcome, call: call)
+        return outcome
     }
 
     private func completeHeartbeat(_ call: AgentToolCall) async throws -> AgentToolOutcome {
@@ -2856,6 +3187,23 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             case name
             case mimeType = "mime_type"
             case size, kind
+        }
+    }
+
+    private struct DocumentCreateResponse: Encodable {
+        let documentReference: String
+        let name: String
+        let title: String
+        let size: Int
+        let mimeType: String
+        let sha256: String
+        let instruction: String
+
+        enum CodingKeys: String, CodingKey {
+            case documentReference = "document_ref"
+            case name, title, size
+            case mimeType = "mime_type"
+            case sha256, instruction
         }
     }
 
@@ -3299,6 +3647,11 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         }
     }
 
+    private enum DocumentDraftResolution {
+        case ready(references: [String], drafts: [ProjectAgentMessageAttachmentDraft])
+        case failure(AgentToolOutcome)
+    }
+
     private static func arguments(_ call: AgentToolCall) throws -> [String: Any] {
         guard let data = call.arguments.data(using: .utf8),
               let value = try? JSONSerialization.jsonObject(with: data),
@@ -3362,6 +3715,124 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             throw AgentGroupChatError.invalidField(key)
         }
         return values
+    }
+
+    private func resolveDocumentDrafts(
+        arguments: [String: Any],
+        callID: String
+    ) async throws -> DocumentDraftResolution {
+        let documentReferences = try Self.optionalStringArray(arguments, key: "document_refs")
+        let policy = AgentCommunicationPolicy.standard
+        guard documentReferences.count <= policy.maximumDocumentsPerMessage else {
+            return .failure(Self.structuredFailure(
+                code: "too_many_document_refs",
+                field: "document_refs",
+                message: "每条消息最多可附加 \(policy.maximumDocumentsPerMessage) 个文档。",
+                retryable: true,
+                nextTool: Self.createDocumentToolName
+            ))
+        }
+        guard Set(documentReferences).count == documentReferences.count else {
+            return .failure(Self.structuredFailure(
+                code: "duplicate_document_ref",
+                field: "document_refs",
+                message: "document_refs 不能包含重复引用。",
+                retryable: true
+            ))
+        }
+        guard !documentReferences.isEmpty else {
+            return .ready(references: [], drafts: [])
+        }
+        switch await references.reserveDocuments(
+            references: documentReferences,
+            callID: callID
+        ) {
+        case let .success(drafts):
+            return .ready(references: documentReferences, drafts: drafts)
+        case let .invalid(index):
+            return .failure(Self.structuredFailure(
+                code: "invalid_document_ref",
+                field: "document_refs[\(index)]",
+                message: "文档引用无效、已消费、属于其他 Run，或正在被另一条消息使用；请重新创建文档。",
+                retryable: true,
+                nextTool: Self.createDocumentToolName
+            ))
+        case let .integrityChanged(index):
+            return .failure(Self.structuredFailure(
+                code: "document_integrity_changed",
+                field: "document_refs[\(index)]",
+                message: "本地文档草稿的大小或哈希已经变化，请重新创建文档。",
+                retryable: true,
+                nextTool: Self.createDocumentToolName
+            ))
+        }
+    }
+
+    private func replayedSendOutcome(_ call: AgentToolCall) async -> AgentToolOutcome? {
+        let signature = "\(call.name)\n\(call.arguments)"
+        switch await references.sendReceipt(callID: call.id, signature: signature) {
+        case .missing:
+            return nil
+        case let .match(outcome):
+            return outcome
+        case .callIDConflict:
+            return Self.structuredFailure(
+                code: "tool_call_id_reused",
+                field: nil,
+                message: "同一工具调用 ID 不能用于不同的发送参数。",
+                retryable: false
+            )
+        }
+    }
+
+    private func recordSendOutcome(_ outcome: AgentToolOutcome, call: AgentToolCall) async {
+        await references.recordSendReceipt(
+            callID: call.id,
+            signature: "\(call.name)\n\(call.arguments)",
+            outcome: outcome
+        )
+    }
+
+    private static func messageLengthFailure(_ content: String) -> AgentToolOutcome? {
+        let maximum = AgentCommunicationPolicy.standard.maximumMessageCharacters
+        guard content.count > maximum else { return nil }
+        return structuredFailure(
+            code: "message_too_long",
+            field: "content",
+            message: "消息正文超过 \(maximum) 字符。请保留结论、风险和下一步，把详细内容写入 Markdown 文档后附加发送。",
+            retryable: true,
+            nextTool: createDocumentToolName
+        )
+    }
+
+    private static func sanitizedMarkdownDocumentName(_ rawValue: String) -> String? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let forbidden = CharacterSet.controlCharacters.union(CharacterSet(charactersIn: "/\\:"))
+        var scalars = String.UnicodeScalarView()
+        for scalar in trimmed.unicodeScalars {
+            if forbidden.contains(scalar) {
+                scalars.append("-")
+            } else {
+                scalars.append(scalar)
+            }
+        }
+        var value = String(scalars)
+        while value.contains("..") {
+            value = value.replacingOccurrences(of: "..", with: ".")
+        }
+        value = value.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(
+            CharacterSet(charactersIn: ".-")
+        ))
+        guard !value.isEmpty else { return nil }
+        if !value.lowercased().hasSuffix(".md") {
+            value += ".md"
+        }
+        if value.count > 240 {
+            let stem = String(value.dropLast(3).prefix(237))
+            value = stem + ".md"
+        }
+        return value
     }
 
     private static func outcome<Value: Encodable>(_ value: Value) throws -> AgentToolOutcome {
@@ -3442,7 +3913,9 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         .init(
             name: inboxSendToolName,
             description: "使用 chat_read_all_unread 本轮返回的临时引用回复原群聊或私聊。普通成员需要把新增工作交给项目经理任务化时，在项目团队会话设置 notify_project_manager=true，由客户端解析并唤醒该团队明确绑定的项目经理。",
-            schema: Data(#"{"type":"object","properties":{"conversation_ref":{"type":"string","minLength":1,"maxLength":600},"reply_to_message_ref":{"type":"string","minLength":1,"maxLength":600},"content":{"type":"string","minLength":1,"maxLength":64000},"notify_project_manager":{"type":"boolean","default":false}},"required":["conversation_ref","reply_to_message_ref","content"],"additionalProperties":false}"#.utf8),
+            schema: Data("""
+            {"type":"object","properties":{"conversation_ref":{"type":"string","minLength":1,"maxLength":600},"reply_to_message_ref":{"type":"string","minLength":1,"maxLength":600},"content":{"type":"string","minLength":1,"maxLength":\(AgentCommunicationPolicy.standard.maximumMessageCharacters)},"document_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":\(AgentCommunicationPolicy.standard.maximumDocumentsPerMessage),"uniqueItems":true},"notify_project_manager":{"type":"boolean","default":false}},"required":["conversation_ref","reply_to_message_ref","content"],"additionalProperties":false}
+            """.utf8),
             effect: .write
         ),
         .init(
@@ -3454,6 +3927,14 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             name: readAttachmentToolName,
             description: "按消息和附件的本轮临时引用读取当前会话附件。文本可用 offset/limit 分段读取；当前触发消息中的图片或 PDF 已由客户端直接作为多模态输入交给模型。",
             schema: Data(#"{"type":"object","properties":{"message_ref":{"type":"string","minLength":1,"maxLength":600},"attachment_ref":{"type":"string","minLength":1,"maxLength":600},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":12000}},"required":["message_ref","attachment_ref"],"additionalProperties":false}"#.utf8)
+        ),
+        .init(
+            name: createDocumentToolName,
+            description: "创建当前 Run 内的 UTF-8 Markdown 文档草稿。客户端清洗文件名、计算大小和 SHA-256，只返回临时 document_ref；创建后必须在同一 Run 的下一条发送消息中通过 document_refs 附加。",
+            schema: Data("""
+            {"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":512},"title":{"type":"string","minLength":1,"maxLength":512},"markdown":{"type":"string","minLength":1,"maxLength":\(AgentCommunicationPolicy.standard.maximumDocumentBytes)}},"required":["name","title","markdown"],"additionalProperties":false}
+            """.utf8),
+            effect: .write
         ),
         .init(
             name: markReadToolName,
@@ -3470,13 +3951,17 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         .init(
             name: sendDirectToolName,
             description: "向已经打开的 Agent 私聊发送消息。当前 Agent 必须是该私聊参与者，成功后会通过本地 delivery 唤醒对方。不得用多个私聊替代同一项目团队本应公开的协作；项目协作默认使用 chat_team_send。",
-            schema: Data(#"{"type":"object","properties":{"conversation_ref":{"type":"string","minLength":1,"maxLength":600},"content":{"type":"string","minLength":1,"maxLength":64000}},"required":["conversation_ref","content"],"additionalProperties":false}"#.utf8),
+            schema: Data("""
+            {"type":"object","properties":{"conversation_ref":{"type":"string","minLength":1,"maxLength":600},"content":{"type":"string","minLength":1,"maxLength":\(AgentCommunicationPolicy.standard.maximumMessageCharacters)},"document_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":\(AgentCommunicationPolicy.standard.maximumDocumentsPerMessage),"uniqueItems":true}},"required":["conversation_ref","content"],"additionalProperties":false}
+            """.utf8),
             effect: .write
         ),
         .init(
             name: sendTeamToolName,
             description: "向 agent_workspace_snapshot 返回的项目团队主动发送一条新群消息，可用同一快照中的 Agent 临时引用精确 @ 团队成员并通过本地 delivery 唤醒他们。当前 Agent 必须是该团队活跃成员，被 @ 的 Agent 也必须属于该团队。项目启动、分工、依赖、进度、阻塞、决策和交付默认使用本工具公开协作；无需唤醒成员的状态同步可不传 mention_agent_refs。",
-            schema: Data(#"{"type":"object","properties":{"team_ref":{"type":"string","minLength":1,"maxLength":600},"content":{"type":"string","minLength":1,"maxLength":64000},"mention_agent_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":64,"uniqueItems":true}},"required":["team_ref","content"],"additionalProperties":false}"#.utf8),
+            schema: Data("""
+            {"type":"object","properties":{"team_ref":{"type":"string","minLength":1,"maxLength":600},"content":{"type":"string","minLength":1,"maxLength":\(AgentCommunicationPolicy.standard.maximumMessageCharacters)},"document_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":\(AgentCommunicationPolicy.standard.maximumDocumentsPerMessage),"uniqueItems":true},"mention_agent_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":64,"uniqueItems":true}},"required":["team_ref","content"],"additionalProperties":false}
+            """.utf8),
             effect: .write
         ),
         .init(
@@ -3500,7 +3985,9 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         .init(
             name: sendMessageToolName,
             description: "以当前 Agent 身份回复当前会话。需要 @ 成员或回复指定消息时，只能使用本轮成员和消息临时引用；发送不会结束通讯周期，仍需检查未读和任务调度并调用 agent_cycle_complete。",
-            schema: Data(#"{"type":"object","properties":{"content":{"type":"string","minLength":1,"maxLength":64000},"mention_agent_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":32,"uniqueItems":true},"reply_to_message_ref":{"type":"string","minLength":1,"maxLength":600}},"required":["content"],"additionalProperties":false}"#.utf8),
+            schema: Data("""
+            {"type":"object","properties":{"content":{"type":"string","minLength":1,"maxLength":\(AgentCommunicationPolicy.standard.maximumMessageCharacters)},"document_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":\(AgentCommunicationPolicy.standard.maximumDocumentsPerMessage),"uniqueItems":true},"mention_agent_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":32,"uniqueItems":true},"reply_to_message_ref":{"type":"string","minLength":1,"maxLength":600}},"required":["content"],"additionalProperties":false}
+            """.utf8),
             effect: .write
         ),
         .init(

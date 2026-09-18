@@ -101,7 +101,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             [
                 "relay_bootstrap", "agent_workspace_snapshot", "chat_get_trigger",
                 "chat_list_members", "chat_read_unread",
-                "chat_read_messages", "chat_read_attachment", "chat_mark_read", "agent_propose_member",
+                "chat_read_messages", "chat_read_attachment", "chat_document_create",
+                "chat_mark_read", "agent_propose_member",
                 "agent_propose_existing_member", "agent_propose_member_removal",
                 "chat_direct_open", "chat_direct_send", "chat_team_send", "chat_send_message",
                 "chat_read_all_unread", "chat_inbox_send",
@@ -111,6 +112,25 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 "team_asset_list", "team_asset_get", "team_asset_upsert", "team_asset_archive",
             ]
         )
+        for toolName in [
+            LocalAgentChatToolProvider.inboxSendToolName,
+            LocalAgentChatToolProvider.sendDirectToolName,
+            LocalAgentChatToolProvider.sendTeamToolName,
+            LocalAgentChatToolProvider.sendMessageToolName,
+        ] {
+            let definition = try XCTUnwrap(definitions.first(where: { $0.name == toolName }))
+            let schema = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: definition.schema) as? [String: Any]
+            )
+            let properties = try XCTUnwrap(schema["properties"] as? [String: Any])
+            let content = try XCTUnwrap(properties["content"] as? [String: Any])
+            let documentReferences = try XCTUnwrap(
+                properties["document_refs"] as? [String: Any]
+            )
+            XCTAssertEqual(content["maxLength"] as? Int, 2_000, toolName)
+            XCTAssertEqual(documentReferences["maxItems"] as? Int, 5, toolName)
+            XCTAssertEqual(documentReferences["uniqueItems"] as? Bool, true, toolName)
+        }
         let bootstrap = try await provider.execute(
             .init(id: "call-bootstrap", name: "relay_bootstrap", arguments: "{}")
         )
@@ -267,9 +287,48 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let proposalSchema = String(decoding: proposalDefinition.schema, as: UTF8.self)
         XCTAssertFalse(proposalSchema.contains("model_config_id"))
 
+        let markdown = "# 技术方案\n\n第一段内容。\n\n第二段内容。"
+        let createdDocument = try await provider.execute(.init(
+            id: "call-create-document",
+            name: LocalAgentChatToolProvider.createDocumentToolName,
+            arguments: try toolArguments([
+                "name": "docs/../技术方案",
+                "title": "技术方案",
+                "markdown": markdown,
+            ])
+        ))
+        XCTAssertFalse(createdDocument.isError)
+        XCTAssertFalse(createdDocument.content.contains("AgentGroupChatAttachments"))
+        XCTAssertFalse(createdDocument.content.contains("/Volumes/"))
+        let createdDocumentJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(createdDocument.content.utf8)) as? [String: Any]
+        )
+        let documentReference = try XCTUnwrap(createdDocumentJSON["document_ref"] as? String)
+        let sanitizedName = try XCTUnwrap(createdDocumentJSON["name"] as? String)
+        XCTAssertTrue(documentReference.hasPrefix("document_"))
+        XCTAssertTrue(sanitizedName.hasSuffix(".md"))
+        XCTAssertFalse(sanitizedName.contains("/"))
+        XCTAssertEqual(createdDocumentJSON["size"] as? Int, Data(markdown.utf8).count)
+        XCTAssertEqual((createdDocumentJSON["sha256"] as? String)?.count, 64)
+        let oversizedDocument = try await provider.execute(.init(
+            id: "call-create-oversized-document",
+            name: LocalAgentChatToolProvider.createDocumentToolName,
+            arguments: try toolArguments([
+                "name": "too-large.md",
+                "title": "Too large",
+                "markdown": String(
+                    repeating: "a",
+                    count: AgentCommunicationPolicy.standard.maximumDocumentBytes + 1
+                ),
+            ])
+        ))
+        XCTAssertTrue(oversizedDocument.isError)
+        XCTAssertTrue(oversizedDocument.content.contains("document_too_large"))
+
         let sendArguments = try toolArguments([
             "content": "方案完成，@客户端 请开始实现。",
             "mention_agent_refs": [secondReference],
+            "document_refs": [documentReference],
         ])
         let sent = try await provider.execute(
             .init(
@@ -280,6 +339,72 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         )
         XCTAssertTrue(sent.content.contains(#""spawned_delivery_count":1"#))
         XCTAssertFalse(sent.content.contains(claimed.id))
+        let replayedSend = try await provider.execute(.init(
+            id: "call-send",
+            name: "chat_send_message",
+            arguments: sendArguments
+        ))
+        XCTAssertEqual(replayedSend, sent)
+        let reusedCallID = try await provider.execute(.init(
+            id: "call-send",
+            name: "chat_send_message",
+            arguments: try toolArguments(["content": "不同参数"])
+        ))
+        XCTAssertTrue(reusedCallID.isError)
+        XCTAssertTrue(reusedCallID.content.contains("tool_call_id_reused"))
+        let historyWithDocument = try await provider.execute(.init(
+            id: "call-history-with-document",
+            name: LocalAgentChatToolProvider.readMessagesToolName,
+            arguments: try toolArguments(["limit": 20])
+        ))
+        let historyWithDocumentJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(historyWithDocument.content.utf8))
+                as? [String: Any]
+        )
+        let historyMessages = try XCTUnwrap(
+            historyWithDocumentJSON["messages"] as? [[String: Any]]
+        )
+        let sentMessage = try XCTUnwrap(historyMessages.last)
+        let sentMessageReference = try XCTUnwrap(sentMessage["message_ref"] as? String)
+        let sentAttachments = try XCTUnwrap(sentMessage["attachments"] as? [[String: Any]])
+        XCTAssertEqual(sentAttachments.count, 1)
+        let attachmentReference = try XCTUnwrap(sentAttachments.first?["attachment_ref"] as? String)
+        let firstDocumentChunk = try await provider.execute(.init(
+            id: "call-read-document-1",
+            name: LocalAgentChatToolProvider.readAttachmentToolName,
+            arguments: try toolArguments([
+                "message_ref": sentMessageReference,
+                "attachment_ref": attachmentReference,
+                "offset": 0,
+                "limit": 8,
+            ])
+        ))
+        XCTAssertTrue(firstDocumentChunk.content.contains(#""has_more":true"#))
+        XCTAssertTrue(firstDocumentChunk.content.contains(#""next_offset":8"#))
+
+        let reusedDocument = try await provider.execute(.init(
+            id: "call-reuse-document",
+            name: LocalAgentChatToolProvider.sendTeamToolName,
+            arguments: try toolArguments([
+                "team_ref": teamReference,
+                "content": "尝试重复使用附件。",
+                "document_refs": [documentReference],
+            ])
+        ))
+        XCTAssertTrue(reusedDocument.isError)
+        XCTAssertTrue(reusedDocument.content.contains("invalid_document_ref"))
+
+        let tooLong = try await provider.execute(.init(
+            id: "call-too-long",
+            name: LocalAgentChatToolProvider.sendTeamToolName,
+            arguments: try toolArguments([
+                "team_ref": teamReference,
+                "content": String(repeating: "长", count: 2_001),
+            ])
+        ))
+        XCTAssertTrue(tooLong.isError)
+        XCTAssertTrue(tooLong.content.contains("message_too_long"))
+        XCTAssertTrue(tooLong.content.contains("chat_document_create"))
         let stillRunning = try await store.delivery(ownerUserID: "alice", deliveryID: claimed.id)
         XCTAssertEqual(stillRunning?.status, .running)
         let next = try await store.claimNextDelivery(
@@ -319,6 +444,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertEqual(transcript.count, 2)
         XCTAssertEqual(transcript.last?.senderID, first.id)
         XCTAssertEqual(transcript.last?.sourceRunID, "run-1")
+        XCTAssertEqual(transcript.last?.attachmentItems.count, 1)
+        XCTAssertEqual(transcript.last?.attachmentItems.first?.name, sanitizedName)
         let teamAnnouncement = try await provider.execute(.init(
             id: "call-team-send",
             name: LocalAgentChatToolProvider.sendTeamToolName,
