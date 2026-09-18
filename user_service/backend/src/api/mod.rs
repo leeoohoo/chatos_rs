@@ -446,6 +446,7 @@ mod tests {
             super_admin_username: "admin".to_string(),
             super_admin_password: "password".to_string(),
             super_admin_display_name: "Admin".to_string(),
+            allow_empty_database_admin_creation: false,
             memory_engine_internal_api_secret: Some(
                 "test-memory-engine-user-service-secret".to_string(),
             ),

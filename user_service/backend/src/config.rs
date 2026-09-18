@@ -25,6 +25,7 @@ pub struct AppConfig {
     pub super_admin_username: String,
     pub super_admin_password: String,
     pub super_admin_display_name: String,
+    pub allow_empty_database_admin_creation: bool,
     pub memory_engine_internal_api_secret: Option<String>,
     pub task_runner_internal_api_secret: Option<String>,
     pub downstream_request_timeout_ms: i64,
@@ -109,6 +110,9 @@ impl AppConfig {
             )?,
             super_admin_display_name: require_config_center_text(
                 "USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME",
+            )?,
+            allow_empty_database_admin_creation: require_config_center_bool(
+                "USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION",
             )?,
             memory_engine_internal_api_secret: Some(require_config_center_secret(
                 "USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
@@ -205,8 +209,7 @@ impl AppConfig {
                     .clamp(10, 24 * 60 * 60),
             ),
             retention_batch_size: usize::try_from(
-                require_config_center_u64("USER_SERVICE_RETENTION_BATCH_SIZE")?
-                    .clamp(1, 10_000),
+                require_config_center_u64("USER_SERVICE_RETENTION_BATCH_SIZE")?.clamp(1, 10_000),
             )
             .map_err(|_| "USER_SERVICE_RETENTION_BATCH_SIZE is too large".to_string())?,
         };

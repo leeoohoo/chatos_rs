@@ -2166,6 +2166,12 @@ fn catalog_exposes_user_service_runtime_routes_via_env_projection() {
             false,
         ),
         (
+            USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION_CONFIG_KEY,
+            "USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION",
+            "boolean",
+            false,
+        ),
+        (
             USER_SERVICE_HARNESS_BASE_URL_CONFIG_KEY,
             "USER_SERVICE_HARNESS_BASE_URL",
             "string",

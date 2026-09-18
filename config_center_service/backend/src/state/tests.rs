@@ -1925,6 +1925,10 @@ fn user_service_runtime_backfill_adds_all_service_defaults() {
         Some(&json!("System Admin"))
     );
     assert_eq!(
+        values.get(USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION_CONFIG_KEY),
+        Some(&json!(false))
+    );
+    assert_eq!(
         values.get(USER_SERVICE_JWT_ISSUER_CONFIG_KEY),
         Some(&json!("user_service"))
     );
@@ -1944,7 +1948,31 @@ fn user_service_runtime_backfill_adds_all_service_defaults() {
     );
     assert!(changed_keys.contains(&USER_SERVICE_HARNESS_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&USER_SERVICE_SUPER_ADMIN_PASSWORD_CONFIG_KEY.to_string()));
+    assert!(changed_keys
+        .contains(&USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&USER_SERVICE_LOGIN_LOCKOUT_SECONDS_CONFIG_KEY.to_string()));
+}
+
+#[test]
+fn explicit_local_admin_bootstrap_override_precedes_user_service_startup() {
+    let mut values = BTreeMap::from([(
+        USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION_CONFIG_KEY.to_string(),
+        json!(false),
+    )]);
+
+    assert!(apply_user_admin_bootstrap_override(
+        &mut values,
+        Some(&json!(true)),
+    ));
+    assert_eq!(
+        values.get(USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION_CONFIG_KEY),
+        Some(&json!(true))
+    );
+    assert!(!apply_user_admin_bootstrap_override(
+        &mut values,
+        Some(&json!(true)),
+    ));
+    assert!(!apply_user_admin_bootstrap_override(&mut values, None));
 }
 
 #[test]
@@ -1999,6 +2027,10 @@ fn user_service_runtime_snapshot_projects_internal_task_runner_url() {
         (
             USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME_CONFIG_KEY.to_string(),
             json!("System Admin"),
+        ),
+        (
+            USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION_CONFIG_KEY.to_string(),
+            json!(false),
         ),
         (
             USER_SERVICE_REGISTER_CODE_TTL_SECONDS_CONFIG_KEY.to_string(),
@@ -2102,6 +2134,12 @@ fn user_service_runtime_snapshot_projects_internal_task_runner_url() {
     assert_eq!(
         snapshot.env.get("USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME"),
         Some(&"System Admin".to_string())
+    );
+    assert_eq!(
+        snapshot
+            .env
+            .get("USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION"),
+        Some(&"false".to_string())
     );
     assert_eq!(
         snapshot

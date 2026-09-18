@@ -20,6 +20,8 @@ pub const USER_SERVICE_SUPER_ADMIN_PASSWORD_CONFIG_KEY: &str =
     "user_service.bootstrap.super_admin_password";
 pub const USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME_CONFIG_KEY: &str =
     "user_service.bootstrap.super_admin_display_name";
+pub const USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION_CONFIG_KEY: &str =
+    "user_service.bootstrap.allow_empty_database_admin_creation";
 pub const USER_SERVICE_JWT_ISSUER_CONFIG_KEY: &str = "user_service.auth.jwt_issuer";
 pub const USER_SERVICE_USER_AUDIENCE_CONFIG_KEY: &str = "user_service.auth.user_audience";
 pub const USER_SERVICE_TASK_RUNNER_AUDIENCE_CONFIG_KEY: &str =
@@ -93,6 +95,7 @@ pub const USER_SERVICE_RUNTIME_CONFIG_KEYS: &[&str] = &[
     USER_SERVICE_SUPER_ADMIN_USERNAME_CONFIG_KEY,
     USER_SERVICE_SUPER_ADMIN_PASSWORD_CONFIG_KEY,
     USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME_CONFIG_KEY,
+    USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION_CONFIG_KEY,
     USER_SERVICE_JWT_ISSUER_CONFIG_KEY,
     USER_SERVICE_USER_AUDIENCE_CONFIG_KEY,
     USER_SERVICE_TASK_RUNNER_AUDIENCE_CONFIG_KEY,

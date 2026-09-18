@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use crate::models::normalize_optional_text;
 use crate::models::{
-    now_rfc3339, CurrentUser, HealthResponse, LocalConnectorSystemStatsResponse,
-    LocalConnectorWorkspace, WORKSPACE_STATUS_ACTIVE, WORKSPACE_STATUS_DISABLED,
+    now_rfc3339, CurrentUser, LocalConnectorSystemStatsResponse, LocalConnectorWorkspace,
+    WORKSPACE_STATUS_ACTIVE, WORKSPACE_STATUS_DISABLED,
 };
 use crate::relay::{
     plugin_artifact_relay_request, PluginArtifactRelayAction, RelayError, RelayRequest,
@@ -36,6 +36,7 @@ mod internal_auth;
 mod managed_requirements;
 mod managed_requirements_admin;
 mod managed_runtime_config;
+mod metrics;
 mod plugin_artifact_relay;
 mod plugin_management_capabilities;
 mod plugin_management_installations;
@@ -121,20 +122,6 @@ struct McpRelayQuery {
 struct PluginRelayQuery {
     workspace_id: Option<String>,
     cwd: Option<String>,
-}
-
-async fn health_handler() -> Json<HealthResponse> {
-    Json(HealthResponse {
-        ok: true,
-        service: "local_connector_service".to_string(),
-    })
-}
-
-async fn prometheus_metrics(State(state): State<AppState>) -> impl IntoResponse {
-    (
-        [(CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
-        chatos_postgres::render_pool_metrics(state.store.pool(), "local-connector"),
-    )
 }
 
 async fn system_stats_handler(

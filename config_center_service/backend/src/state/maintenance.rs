@@ -945,7 +945,7 @@ impl AppState {
         let mut values_by_release = BTreeMap::new();
 
         for mut release in self.store.list_all_releases().await? {
-            let changed_keys = ensure_user_service_runtime_values(&mut release.values, &defaults);
+            let changed_keys = ensure_user_service_startup_values(&mut release.values, &defaults)?;
             let effective_values = defaults
                 .iter()
                 .map(|(key, fallback)| {

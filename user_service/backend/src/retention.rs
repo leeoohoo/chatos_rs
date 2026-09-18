@@ -33,11 +33,7 @@ pub struct UserDataRetention {
 }
 
 impl UserDataRetention {
-    pub fn new(
-        pool: sqlx::PgPool,
-        interval: Duration,
-        batch_size: usize,
-    ) -> Result<Self, String> {
+    pub fn new(pool: sqlx::PgPool, interval: Duration, batch_size: usize) -> Result<Self, String> {
         if interval.is_zero() {
             return Err("user data retention interval must be positive".to_string());
         }
@@ -66,10 +62,9 @@ impl UserDataRetention {
                         tracing::info!(deleted_rows = deleted, "pruned expired user data");
                     }
                     Ok(_) => {}
-                    Err(error) => tracing::warn!(
-                        error = error.as_str(),
-                        "failed to prune expired user data"
-                    ),
+                    Err(error) => {
+                        tracing::warn!(error = error.as_str(), "failed to prune expired user data")
+                    }
                 }
             }
         })
@@ -78,10 +73,7 @@ impl UserDataRetention {
     pub fn stats(&self) -> UserDataRetentionStats {
         let last_success_unix = self.counters.last_success_unix.load(Ordering::Relaxed);
         UserDataRetentionStats {
-            successful_runs_total: self
-                .counters
-                .successful_runs_total
-                .load(Ordering::Relaxed),
+            successful_runs_total: self.counters.successful_runs_total.load(Ordering::Relaxed),
             failed_runs_total: self.counters.failed_runs_total.load(Ordering::Relaxed),
             deleted_rows_total: self.counters.deleted_rows_total.load(Ordering::Relaxed),
             last_success_unix: (last_success_unix > 0).then_some(last_success_unix),
@@ -121,10 +113,7 @@ async fn prune_expired_user_data(pool: &sqlx::PgPool, batch_size: i64) -> Result
         ("wechat_bind_tickets", "id"),
         ("client_sessions", "id"),
     ];
-    let timestamp_expiry_tables = [
-        ("device_proof_nonces", "id"),
-        ("login_throttle", "key"),
-    ];
+    let timestamp_expiry_tables = [("device_proof_nonces", "id"), ("login_throttle", "key")];
     let mut deleted = 0_u64;
     for (table, primary_key) in unix_expiry_tables {
         let statement = format!(

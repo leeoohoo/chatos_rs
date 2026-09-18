@@ -11,6 +11,7 @@ use tracing::Level;
 use crate::state::AppState;
 
 use super::managed_runtime_config::get_managed_runtime_config;
+use super::metrics::{health_handler, prometheus_metrics};
 use super::{
     connect_device, controlled_network_readiness, create_device,
     create_managed_requirements_assignment, create_managed_requirements_policy,
@@ -18,12 +19,12 @@ use super::{
     delete_managed_requirements_assignment, delete_managed_requirements_policy,
     delete_project_binding, delete_sandbox_pairing, delete_workspace, disconnect_device,
     get_agent_prompt_bundle, get_agent_prompt_bundle_manifest, get_device,
-    get_managed_requirements, health_handler, heartbeat_device, list_devices,
+    get_managed_requirements, heartbeat_device, list_devices,
     list_managed_requirements_assignments, list_managed_requirements_policies,
     list_plugin_install_sources, list_project_bindings, list_sandbox_pairings, list_workspaces,
     mcp_relay, plugin_artifact_create_relay, plugin_artifact_list_relay,
     plugin_artifact_read_relay, plugin_artifact_update_relay, plugin_cancel_relay,
-    plugin_execute_relay, plugin_prepare_relay, plugin_ui_asset_relay, prometheus_metrics,
+    plugin_execute_relay, plugin_prepare_relay, plugin_ui_asset_relay,
     proxy_plugin_release_artifact, remote_connection_command_relay, remote_connection_test_relay,
     remote_sftp_relay, remote_terminal_close_relay, remote_terminal_ws_relay,
     require_internal_auth, require_public_auth, resolve_local_runtime_capabilities, revoke_device,

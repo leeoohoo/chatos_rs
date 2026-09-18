@@ -64,12 +64,7 @@ async fn postgres_retention_prunes_expired_ephemeral_user_data() {
         .expect("cleanup user");
 }
 
-async fn insert_unix_expiry_records(
-    pool: &sqlx::PgPool,
-    user_id: &str,
-    id: &str,
-    expired: bool,
-) {
+async fn insert_unix_expiry_records(pool: &sqlx::PgPool, user_id: &str, id: &str, expired: bool) {
     let expiry = if expired {
         "extract(epoch FROM now())::bigint-1"
     } else {
@@ -149,7 +144,12 @@ async fn insert_timestamp_expiry_records(pool: &sqlx::PgPool, id: &str, expired:
 
 fn record_keys(expired: &str, live: &str) -> Vec<(&'static str, &'static str, String, String)> {
     vec![
-        ("revoked_tokens", "jti", expired.to_string(), live.to_string()),
+        (
+            "revoked_tokens",
+            "jti",
+            expired.to_string(),
+            live.to_string(),
+        ),
         (
             "registration_email_codes",
             "email",

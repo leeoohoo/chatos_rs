@@ -30,7 +30,7 @@ impl AppState {
             .map_err(|err| format!("build configuration center HTTP client failed: {err}"))?;
         let mcp_management_http = build_mcp_management_mtls_client(&config)?;
         let memory_engine_http = build_memory_engine_mtls_client(&config)?;
-        let state = Self {
+        let mut state = Self {
             http,
             mcp_management_http,
             memory_engine_http,
@@ -54,7 +54,59 @@ impl AppState {
         state.migrate_user_service_smtp_config().await?;
         state.migrate_chatos_ui_config().await?;
         state.migrate_postgres_pool_config().await?;
+        state.activate_managed_postgres_pool().await?;
         Ok(state)
+    }
+
+    async fn activate_managed_postgres_pool(&mut self) -> Result<(), String> {
+        let effective = self
+            .effective(self.config.default_environment.as_str())
+            .await?;
+        let values = &effective.values;
+        let required_u32 = |key: &str| {
+            values
+                .get(key)
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| format!("{key} must be a valid unsigned integer"))
+        };
+        let required_duration = |key: &str| {
+            values
+                .get(key)
+                .and_then(serde_json::Value::as_u64)
+                .map(std::time::Duration::from_millis)
+                .ok_or_else(|| format!("{key} must be a valid duration in milliseconds"))
+        };
+        let mut config = chatos_postgres::PostgresConfig::new(self.config.database_url.clone())
+            .and_then(|config| config.with_application_name("configuration-center"))
+            .map_err(|error| error.to_string())?;
+        config.max_connections =
+            required_u32("configuration_center.postgres.pool.max_connections")?;
+        config.min_connections =
+            required_u32("configuration_center.postgres.pool.min_connections")?;
+        config.acquire_timeout =
+            required_duration("configuration_center.postgres.pool.acquire_timeout_ms")?;
+        config.idle_timeout =
+            required_duration("configuration_center.postgres.pool.idle_timeout_ms")?;
+        config.max_lifetime =
+            required_duration("configuration_center.postgres.pool.max_lifetime_ms")?;
+        config.statement_timeout =
+            required_duration("configuration_center.postgres.statement_timeout_ms")?;
+        config.lock_timeout = required_duration("configuration_center.postgres.lock_timeout_ms")?;
+        config.validate().map_err(|error| error.to_string())?;
+
+        let pool = chatos_postgres::connect(&config).await.map_err(|error| {
+            format!("activate managed Configuration Center pool failed: {error}")
+        })?;
+        let store = AppStore::new(pool);
+        store.initialize().await?;
+        self.store = store;
+        tracing::info!(
+            max_connections = config.max_connections,
+            min_connections = config.min_connections,
+            "activated managed Configuration Center PostgreSQL pool"
+        );
+        Ok(())
     }
 
     pub(crate) fn http_client(&self) -> &reqwest::Client {
@@ -73,7 +125,9 @@ impl AppState {
         if self.store.get_active(environment).await?.is_some() {
             return Ok(());
         }
-        let values = self.default_values().await?;
+        let mut values = self.default_values().await?;
+        let bootstrap_override = explicit_non_production_user_admin_bootstrap_override()?;
+        apply_user_admin_bootstrap_override(&mut values, bootstrap_override.as_ref());
         self.publish_values(
             environment,
             values,

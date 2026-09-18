@@ -945,6 +945,51 @@ pub(super) fn ensure_user_service_runtime_values(
     changed_keys
 }
 
+pub(super) fn explicit_non_production_user_admin_bootstrap_override(
+) -> Result<Option<Value>, String> {
+    const ENV_KEY: &str = "USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION";
+    if chatos_service_runtime::is_production_environment()
+        || chatos_service_runtime::env_text(ENV_KEY).is_none()
+    {
+        return Ok(None);
+    }
+    chatos_service_runtime::env_bool_strict(ENV_KEY, false).map(|value| Some(Value::Bool(value)))
+}
+
+pub(super) fn apply_user_admin_bootstrap_override(
+    values: &mut BTreeMap<String, Value>,
+    override_value: Option<&Value>,
+) -> bool {
+    let Some(override_value) = override_value else {
+        return false;
+    };
+    if values.get(USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION_CONFIG_KEY)
+        == Some(override_value)
+    {
+        return false;
+    }
+    values.insert(
+        USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION_CONFIG_KEY.to_string(),
+        override_value.clone(),
+    );
+    true
+}
+
+pub(super) fn ensure_user_service_startup_values(
+    values: &mut BTreeMap<String, Value>,
+    defaults: &BTreeMap<String, Value>,
+) -> Result<Vec<String>, String> {
+    let mut changed_keys = ensure_user_service_runtime_values(values, defaults);
+    let bootstrap_override = explicit_non_production_user_admin_bootstrap_override()?;
+    if apply_user_admin_bootstrap_override(values, bootstrap_override.as_ref()) {
+        ensure_changed_key(
+            &mut changed_keys,
+            USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION_CONFIG_KEY,
+        );
+    }
+    Ok(changed_keys)
+}
+
 pub(super) fn ensure_chatos_runtime_values(
     values: &mut BTreeMap<String, Value>,
     defaults: &BTreeMap<String, Value>,

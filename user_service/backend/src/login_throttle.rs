@@ -121,7 +121,6 @@ impl LoginThrottle {
             .map(|_| ())
             .map_err(|err| err.to_string())
     }
-
 }
 
 #[cfg(test)]

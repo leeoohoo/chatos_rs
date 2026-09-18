@@ -19,6 +19,7 @@ use crate::models::{
     UserOptionRecord, UserRecord, UserSummaryPageResponse, UserSummaryRecord,
     USER_ROLE_SUPER_ADMIN,
 };
+use chatos_service_runtime::is_production_environment;
 
 mod model_configs;
 pub(crate) mod wechat_auth;
@@ -46,12 +47,24 @@ impl AppStore {
     }
 
     pub async fn ensure_default_super_admin(&self, config: &AppConfig) -> Result<(), String> {
+        self.ensure_default_super_admin_for_environment(
+            SuperAdminBootstrapConfig::from(config),
+            is_production_environment(),
+        )
+        .await
+    }
+
+    async fn ensure_default_super_admin_for_environment(
+        &self,
+        config: SuperAdminBootstrapConfig<'_>,
+        production: bool,
+    ) -> Result<(), String> {
         let count = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM users")
             .fetch_one(&self.pool)
             .await
             .map_err(db_error)?;
         if count > 0 {
-            let normalized = normalize_username(&config.super_admin_username)?;
+            let normalized = normalize_username(config.username)?;
             if let Some(mut user) = self.find_user_by_username(&normalized).await? {
                 if user.role != USER_ROLE_SUPER_ADMIN {
                     user.role = USER_ROLE_SUPER_ADMIN.to_string();
@@ -61,13 +74,17 @@ impl AppStore {
             }
             return Ok(());
         }
-        let username = normalize_username(&config.super_admin_username)?;
+        ensure_empty_database_bootstrap_allowed(
+            production,
+            config.allow_empty_database_admin_creation,
+        )?;
+        let username = normalize_username(config.username)?;
         let now = now_rfc3339();
         self.insert_user_record(&UserRecord {
             id: Uuid::new_v4().to_string(),
             username: username.clone(),
-            display_name: normalize_display_name(Some(&config.super_admin_display_name), &username),
-            password_hash: hash_password(&config.super_admin_password)?,
+            display_name: normalize_display_name(Some(config.display_name), &username),
+            password_hash: hash_password(config.password)?,
             role: USER_ROLE_SUPER_ADMIN.to_string(),
             enabled: true,
             created_at: now.clone(),
@@ -647,6 +664,44 @@ impl AppStore {
     }
 }
 
+#[derive(Clone, Copy)]
+struct SuperAdminBootstrapConfig<'a> {
+    username: &'a str,
+    password: &'a str,
+    display_name: &'a str,
+    allow_empty_database_admin_creation: bool,
+}
+
+impl<'a> From<&'a AppConfig> for SuperAdminBootstrapConfig<'a> {
+    fn from(config: &'a AppConfig) -> Self {
+        Self {
+            username: config.super_admin_username.as_str(),
+            password: config.super_admin_password.as_str(),
+            display_name: config.super_admin_display_name.as_str(),
+            allow_empty_database_admin_creation: config.allow_empty_database_admin_creation,
+        }
+    }
+}
+
+fn ensure_empty_database_bootstrap_allowed(
+    production: bool,
+    allow_empty_database_admin_creation: bool,
+) -> Result<(), String> {
+    if production {
+        return Err(
+            "User Service refuses to start because the PostgreSQL users table is empty in production; migrate users into PostgreSQL before starting User Service"
+                .to_string(),
+        );
+    }
+    if !allow_empty_database_admin_creation {
+        return Err(
+            "User Service refuses to start because the PostgreSQL users table is empty and automatic administrator creation is disabled; migrate users first or explicitly enable USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION for local development"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 pub(crate) fn timestamp(value: &str) -> Result<DateTime<Utc>, String> {
     DateTime::parse_from_rfc3339(value)
         .map(|value| value.with_timezone(&Utc))
@@ -701,3 +756,6 @@ pub(crate) fn db_error(error: sqlx::Error) -> String {
 pub fn now_rfc3339() -> String {
     Utc::now().to_rfc3339()
 }
+
+#[cfg(test)]
+mod tests;

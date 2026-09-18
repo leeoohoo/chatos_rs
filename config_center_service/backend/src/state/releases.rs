@@ -540,74 +540,6 @@ fn validate_postgres_pool_budget(values: &BTreeMap<String, Value>, errors: &mut 
     }
 }
 
-#[cfg(test)]
-mod postgres_budget_tests {
-    use super::*;
-
-    fn values_with_pool_defaults() -> BTreeMap<String, Value> {
-        let mut values = BTreeMap::from([
-            (
-                "platform.postgres.server_max_connections".to_string(),
-                json!(200),
-            ),
-            (
-                "platform.postgres.reserved_connections".to_string(),
-                json!(40),
-            ),
-        ]);
-        for (namespace, replicas) in [
-            ("configuration_center", 1),
-            ("chatos", 1),
-            ("user_service", 1),
-            ("plugin_management", 1),
-            ("local_connector", 1),
-            ("mcp_management", 1),
-            ("task_runner", 3),
-            ("memory_engine", 2),
-        ] {
-            values.insert(
-                format!("{namespace}.postgres.pool.max_connections"),
-                json!(10),
-            );
-            values.insert(
-                format!("{namespace}.postgres.pool.min_connections"),
-                json!(1),
-            );
-            values.insert(
-                format!("{namespace}.postgres.process_replicas"),
-                json!(replicas),
-            );
-        }
-        values
-    }
-
-    #[test]
-    fn default_pool_budget_leaves_operational_reserve() {
-        let mut errors = Vec::new();
-        validate_postgres_pool_budget(&values_with_pool_defaults(), &mut errors);
-        assert!(errors.is_empty());
-    }
-
-    #[test]
-    fn rejects_over_budget_and_invalid_minimum() {
-        let mut values = values_with_pool_defaults();
-        values.insert(
-            "task_runner.postgres.pool.max_connections".to_string(),
-            json!(60),
-        );
-        values.insert(
-            "task_runner.postgres.pool.min_connections".to_string(),
-            json!(61),
-        );
-        let mut errors = Vec::new();
-        validate_postgres_pool_budget(&values, &mut errors);
-        assert!(errors.iter().any(|error| error.contains("must be less")));
-        assert!(errors
-            .iter()
-            .any(|error| error.contains("connection budget requires")));
-    }
-}
-
 pub(super) fn preserve_user_service_secret_rotation(
     current: &BTreeMap<String, Value>,
     next: &mut BTreeMap<String, Value>,
@@ -702,4 +634,72 @@ pub(super) fn overlay_pressure_state(
         "env": snapshot.env,
     }))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod postgres_budget_tests {
+    use super::*;
+
+    fn values_with_pool_defaults() -> BTreeMap<String, Value> {
+        let mut values = BTreeMap::from([
+            (
+                "platform.postgres.server_max_connections".to_string(),
+                json!(200),
+            ),
+            (
+                "platform.postgres.reserved_connections".to_string(),
+                json!(40),
+            ),
+        ]);
+        for (namespace, replicas) in [
+            ("configuration_center", 1),
+            ("chatos", 1),
+            ("user_service", 1),
+            ("plugin_management", 1),
+            ("local_connector", 1),
+            ("mcp_management", 1),
+            ("task_runner", 3),
+            ("memory_engine", 2),
+        ] {
+            values.insert(
+                format!("{namespace}.postgres.pool.max_connections"),
+                json!(10),
+            );
+            values.insert(
+                format!("{namespace}.postgres.pool.min_connections"),
+                json!(1),
+            );
+            values.insert(
+                format!("{namespace}.postgres.process_replicas"),
+                json!(replicas),
+            );
+        }
+        values
+    }
+
+    #[test]
+    fn default_pool_budget_leaves_operational_reserve() {
+        let mut errors = Vec::new();
+        validate_postgres_pool_budget(&values_with_pool_defaults(), &mut errors);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn rejects_over_budget_and_invalid_minimum() {
+        let mut values = values_with_pool_defaults();
+        values.insert(
+            "task_runner.postgres.pool.max_connections".to_string(),
+            json!(60),
+        );
+        values.insert(
+            "task_runner.postgres.pool.min_connections".to_string(),
+            json!(61),
+        );
+        let mut errors = Vec::new();
+        validate_postgres_pool_budget(&values, &mut errors);
+        assert!(errors.iter().any(|error| error.contains("must be less")));
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("connection budget requires")));
+    }
 }

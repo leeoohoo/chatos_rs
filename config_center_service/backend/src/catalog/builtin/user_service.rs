@@ -1,5 +1,7 @@
 use super::*;
 
+#[path = "user_service/bootstrap.rs"]
+mod bootstrap;
 #[path = "user_service/retention.rs"]
 mod retention;
 
@@ -155,53 +157,10 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             375,
             now,
         ),
-        definition(
-            USER_SERVICE_SUPER_ADMIN_USERNAME_CONFIG_KEY,
-            "超级管理员用户名",
-            "User Service 启动时自动确保存在的超级管理员用户名",
-            "User Service / Bootstrap",
-            "service",
-            Some("user-service"),
-            "string",
-            json!("admin"),
-            None,
-            None,
-            &[],
-            "restart_required",
-            &["USER_SERVICE_SUPER_ADMIN_USERNAME"],
-            37501,
-            now,
-        ),
-        secret_definition(
-            USER_SERVICE_SUPER_ADMIN_PASSWORD_CONFIG_KEY,
-            "超级管理员密码",
-            "User Service 启动时自动确保存在的超级管理员密码",
-            "User Service / Bootstrap",
-            "service",
-            Some("user-service"),
-            json!("admin123456"),
-            "restart_required",
-            &["USER_SERVICE_SUPER_ADMIN_PASSWORD"],
-            37502,
-            now,
-        ),
-        definition(
-            USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME_CONFIG_KEY,
-            "超级管理员显示名",
-            "User Service 启动时自动确保存在的超级管理员显示名称",
-            "User Service / Bootstrap",
-            "service",
-            Some("user-service"),
-            "string",
-            json!("System Admin"),
-            None,
-            None,
-            &[],
-            "restart_required",
-            &["USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME"],
-            37503,
-            now,
-        ),
+        bootstrap::username_definition(now),
+        bootstrap::password_definition(now),
+        bootstrap::display_name_definition(now),
+        bootstrap::empty_database_gate_definition(now),
         definition(
             USER_SERVICE_JWT_ISSUER_CONFIG_KEY,
             "JWT Issuer",
