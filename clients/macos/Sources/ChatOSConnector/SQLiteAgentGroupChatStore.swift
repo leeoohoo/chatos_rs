@@ -80,6 +80,10 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     func preparedStatementCountForTesting() -> Int {
         debugPreparedStatementCount
     }
+
+    func totalDatabaseChangesForTesting() -> Int64 {
+        Int64(sqlite3_total_changes(database))
+    }
 #endif
 
     /// Creates a Run-scoped staging directory beneath the existing protected attachment root.

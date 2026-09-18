@@ -36,6 +36,9 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
         let recentMessagesPreparedStatements: [Int]
         let imageAttachmentReadPreparedStatements: [Int]
         let publish500RunChangesMilliseconds: [Double]
+        let idleHeartbeatPoll500Milliseconds: [Double]
+        let idleHeartbeatPollPreparedStatements: [Int]
+        let idleHeartbeatPollDatabaseChanges: [Int64]
     }
 
     private func databaseURL() -> URL {
@@ -205,6 +208,9 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
         var recentMessagesPreparedStatements: [Int] = []
         var imageAttachmentReadPreparedStatements: [Int] = []
         var publish500RunChangesMilliseconds: [Double] = []
+        var idleHeartbeatPoll500Milliseconds: [Double] = []
+        var idleHeartbeatPollPreparedStatements: [Int] = []
+        var idleHeartbeatPollDatabaseChanges: [Int64] = []
 
         for _ in 0..<repetitions {
             let (store, openDuration) = try await elapsedMilliseconds {
@@ -295,6 +301,24 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
             var iterator = changes.makeAsyncIterator()
             let coalescedChange = await iterator.next()
             XCTAssertEqual(coalescedChange?.runID, lastRunID)
+
+            let heartbeatStatementCountBefore = await store.preparedStatementCountForTesting()
+            let heartbeatDatabaseChangesBefore = await store.totalDatabaseChangesForTesting()
+            let (_, heartbeatPollDuration) = try await elapsedMilliseconds {
+                for _ in 0..<500 {
+                    let nextDue = try await store.nextAgentHeartbeatDue(
+                        ownerUserID: Self.ownerUserID
+                    )
+                    XCTAssertNil(nextDue)
+                }
+            }
+            idleHeartbeatPoll500Milliseconds.append(heartbeatPollDuration)
+            idleHeartbeatPollPreparedStatements.append(
+                await store.preparedStatementCountForTesting() - heartbeatStatementCountBefore
+            )
+            idleHeartbeatPollDatabaseChanges.append(
+                await store.totalDatabaseChangesForTesting() - heartbeatDatabaseChangesBefore
+            )
         }
 
         // These assertions intentionally freeze the current N+1 baseline. Lower counts are welcome,
@@ -302,6 +326,8 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
         XCTAssertEqual(workspaceSnapshotPreparedStatements, [1_008, 1_008, 1_008])
         XCTAssertEqual(recentMessagesPreparedStatements, [42, 42, 42])
         XCTAssertEqual(imageAttachmentReadPreparedStatements, [1, 1, 1])
+        XCTAssertEqual(idleHeartbeatPollPreparedStatements, [500, 500, 500])
+        XCTAssertEqual(idleHeartbeatPollDatabaseChanges, [0, 0, 0])
 
         let measurements = Measurements(
             fixtureAgents: 20,
@@ -317,7 +343,10 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
             workspaceSnapshotPreparedStatements: workspaceSnapshotPreparedStatements,
             recentMessagesPreparedStatements: recentMessagesPreparedStatements,
             imageAttachmentReadPreparedStatements: imageAttachmentReadPreparedStatements,
-            publish500RunChangesMilliseconds: publish500RunChangesMilliseconds
+            publish500RunChangesMilliseconds: publish500RunChangesMilliseconds,
+            idleHeartbeatPoll500Milliseconds: idleHeartbeatPoll500Milliseconds,
+            idleHeartbeatPollPreparedStatements: idleHeartbeatPollPreparedStatements,
+            idleHeartbeatPollDatabaseChanges: idleHeartbeatPollDatabaseChanges
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
