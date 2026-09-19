@@ -3904,13 +3904,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             guard try readTodo(ownerUserID: ownerUserID, agentID: agentID, todoID: todoID) != nil else {
                 throw AgentGroupChatError.notFound
             }
-            let sequence = (try query(
-                """
-                SELECT COALESCE(MAX(sequence), 0) + 1
-                FROM local_agent_todo_events WHERE owner_user_id = ? AND todo_id = ?
-                """,
-                [.text(ownerUserID), .text(todoID)]
-            ) { sqlite3_column_int64($0, 0) }.first) ?? 1
+            let sequence = try AgentTodoRepository.nextProgressSequence(
+                database,
+                ownerUserID: ownerUserID,
+                todoID: todoID,
+                preparedStatement: recordPreparedStatement
+            )
             let progress = LocalAgentTodoProgress(
                 id: UUID().uuidString.lowercased(),
                 ownerUserID: ownerUserID,
