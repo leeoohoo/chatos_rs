@@ -270,8 +270,76 @@ enum AgentProposalRepository {
         ).first
     }
 
+    static func listProjectProposals(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        roomID: String,
+        status: LocalProjectCreationProposalStatus?,
+        preparedStatement: () -> Void
+    ) throws -> [LocalProjectCreationProposal] {
+        var sql = "SELECT \(projectColumns) FROM local_project_creation_proposals WHERE owner_user_id = ? AND room_id = ?"
+        var values: [AgentGroupChatDatabase.Value] = [.text(ownerUserID), .text(roomID)]
+        if let status {
+            sql += " AND status = ?"
+            values.append(.text(status.rawValue))
+        }
+        sql += " ORDER BY created_at_unix_ms, id"
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            sql,
+            values,
+            row: AgentGroupChatRowMapper.projectProposal
+        )
+    }
+
+    static func projectProposal(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        roomID: String,
+        proposalID: String,
+        preparedStatement: () -> Void
+    ) throws -> LocalProjectCreationProposal? {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT \(projectColumns) FROM local_project_creation_proposals
+            WHERE owner_user_id = ? AND room_id = ? AND id = ? LIMIT 1
+            """,
+            [.text(ownerUserID), .text(roomID), .text(proposalID)],
+            row: AgentGroupChatRowMapper.projectProposal
+        ).first
+    }
+
+    static func projectProposal(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        roomID: String,
+        proposerAgentID: String,
+        sourceDeliveryID: String,
+        requestKey: String,
+        preparedStatement: () -> Void
+    ) throws -> LocalProjectCreationProposal? {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT \(projectColumns) FROM local_project_creation_proposals
+            WHERE owner_user_id = ? AND room_id = ? AND proposer_agent_id = ?
+              AND source_delivery_id = ? AND request_key = ? LIMIT 1
+            """,
+            [
+                .text(ownerUserID), .text(roomID), .text(proposerAgentID),
+                .text(sourceDeliveryID), .text(requestKey),
+            ],
+            row: AgentGroupChatRowMapper.projectProposal
+        ).first
+    }
+
     private static let creationColumns = "owner_user_id, id, room_id, proposer_agent_id, source_delivery_id, request_key, draft_json, status, created_agent_id, created_at_unix_ms, resolved_at_unix_ms"
     private static let removalColumns = "owner_user_id, id, room_id, proposer_agent_id, source_delivery_id, request_key, draft_json, status, created_at_unix_ms, resolved_at_unix_ms"
     private static let membershipColumns = "owner_user_id, id, source_room_id, proposer_agent_id, source_delivery_id, request_key, draft_json, status, created_at_unix_ms, resolved_at_unix_ms"
     private static let teamColumns = "owner_user_id, id, source_room_id, proposer_agent_id, source_delivery_id, request_key, draft_json, status, created_room_id, created_at_unix_ms, resolved_at_unix_ms"
+    private static let projectColumns = "owner_user_id, id, room_id, proposer_agent_id, source_delivery_id, request_key, draft_json, status, created_project_id, created_at_unix_ms, resolved_at_unix_ms"
 }
