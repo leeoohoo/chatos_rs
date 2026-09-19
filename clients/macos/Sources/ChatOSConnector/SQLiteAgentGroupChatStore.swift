@@ -1091,14 +1091,13 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         guard try readRoom(ownerUserID: ownerUserID, roomID: roomID) != nil else {
             throw AgentGroupChatError.notFound
         }
-        var sql = "SELECT \(Self.removalProposalColumns) FROM local_agent_removal_proposals WHERE owner_user_id = ? AND room_id = ?"
-        var values: [Value] = [.text(ownerUserID), .text(roomID)]
-        if let status {
-            sql += " AND status = ?"
-            values.append(.text(status.rawValue))
-        }
-        sql += " ORDER BY created_at_unix_ms, id"
-        return try query(sql, values, row: AgentGroupChatRowMapper.removalProposal)
+        return try AgentProposalRepository.listRemovalProposals(
+            database,
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            status: status,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     public func approveAgentRemovalProposal(
@@ -5094,14 +5093,13 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         roomID: String,
         proposalID: String
     ) throws -> LocalAgentRemovalProposal? {
-        try query(
-            """
-            SELECT \(Self.removalProposalColumns) FROM local_agent_removal_proposals
-            WHERE owner_user_id = ? AND room_id = ? AND id = ? LIMIT 1
-            """,
-            [.text(ownerUserID), .text(roomID), .text(proposalID)],
-            row: AgentGroupChatRowMapper.removalProposal
-        ).first
+        try AgentProposalRepository.removalProposal(
+            database,
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            proposalID: proposalID,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     private func readTeamProposal(
@@ -5183,18 +5181,15 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         sourceDeliveryID: String,
         requestKey: String
     ) throws -> LocalAgentRemovalProposal? {
-        try query(
-            """
-            SELECT \(Self.removalProposalColumns) FROM local_agent_removal_proposals
-            WHERE owner_user_id = ? AND room_id = ? AND proposer_agent_id = ?
-              AND source_delivery_id = ? AND request_key = ? LIMIT 1
-            """,
-            [
-                .text(ownerUserID), .text(roomID), .text(proposerAgentID),
-                .text(sourceDeliveryID), .text(requestKey),
-            ],
-            row: AgentGroupChatRowMapper.removalProposal
-        ).first
+        try AgentProposalRepository.removalProposal(
+            database,
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            proposerAgentID: proposerAgentID,
+            sourceDeliveryID: sourceDeliveryID,
+            requestKey: requestKey,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     private func readProjectProposal(
@@ -5530,7 +5525,6 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
 
     private static let messageColumns = "owner_user_id, id, room_id, sender_kind, sender_id, content, reply_to_message_id, source_run_id, causation_id, root_message_id, hop_count, created_at_unix_ms"
     private static let todoColumns = "owner_user_id, id, agent_id, team_room_id, source_room_id, source_message_id, title, detail, priority, sort_order, request_key, status, blocked_reason, result, created_at_unix_ms, updated_at_unix_ms, execution_plan_json, execution_contract_json"
-    private static let removalProposalColumns = "owner_user_id, id, room_id, proposer_agent_id, source_delivery_id, request_key, draft_json, status, created_at_unix_ms, resolved_at_unix_ms"
     private static let membershipProposalColumns = "owner_user_id, id, source_room_id, proposer_agent_id, source_delivery_id, request_key, draft_json, status, created_at_unix_ms, resolved_at_unix_ms"
     private static let teamProposalColumns = "owner_user_id, id, source_room_id, proposer_agent_id, source_delivery_id, request_key, draft_json, status, created_room_id, created_at_unix_ms, resolved_at_unix_ms"
     private static let projectProposalColumns = "owner_user_id, id, room_id, proposer_agent_id, source_delivery_id, request_key, draft_json, status, created_project_id, created_at_unix_ms, resolved_at_unix_ms"
