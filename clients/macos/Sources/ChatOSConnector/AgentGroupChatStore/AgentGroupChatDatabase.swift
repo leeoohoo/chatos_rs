@@ -3,6 +3,14 @@ import Foundation
 import SQLite3
 
 enum AgentGroupChatDatabase {
+    enum Value {
+        case text(String)
+        case integer(Int64)
+        case null
+
+        static func optionalText(_ value: String?) -> Self { value.map(Self.text) ?? .null }
+    }
+
     static func open(at databaseURL: URL) throws -> OpaquePointer? {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
@@ -40,5 +48,48 @@ enum AgentGroupChatDatabase {
 
     static func close(_ handle: OpaquePointer?) {
         sqlite3_close(handle)
+    }
+
+    static func query<T>(
+        _ handle: OpaquePointer?,
+        _ sql: String,
+        _ values: [Value] = [],
+        row: (OpaquePointer) throws -> T
+    ) throws -> [T] {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK,
+              let statement else { throw storageError(handle) }
+        defer { sqlite3_finalize(statement) }
+        for (offset, value) in values.enumerated() {
+            let index = Int32(offset + 1)
+            let result: Int32
+            switch value {
+            case let .text(text):
+                result = sqlite3_bind_text(
+                    statement,
+                    index,
+                    text,
+                    -1,
+                    unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+                )
+            case let .integer(number):
+                result = sqlite3_bind_int64(statement, index, number)
+            case .null:
+                result = sqlite3_bind_null(statement, index)
+            }
+            guard result == SQLITE_OK else { throw storageError(handle) }
+        }
+        var rows: [T] = []
+        while true {
+            switch sqlite3_step(statement) {
+            case SQLITE_ROW: rows.append(try row(statement))
+            case SQLITE_DONE: return rows
+            default: throw storageError(handle)
+            }
+        }
+    }
+
+    private static func storageError(_ handle: OpaquePointer?) -> AgentGroupChatError {
+        .storage(String(cString: sqlite3_errmsg(handle)))
     }
 }

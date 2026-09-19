@@ -5842,13 +5842,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         )
     }
 
-    private enum Value {
-        case text(String)
-        case integer(Int64)
-        case null
-
-        static func optionalText(_ value: String?) -> Self { value.map(Self.text) ?? .null }
-    }
+    private typealias Value = AgentGroupChatDatabase.Value
 
     private func query<T>(
         _ sql: String,
@@ -5858,37 +5852,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
 #if DEBUG
         debugPreparedStatementCount += 1
 #endif
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
-              let statement else { throw storageError() }
-        defer { sqlite3_finalize(statement) }
-        for (offset, value) in values.enumerated() {
-            let index = Int32(offset + 1)
-            let result: Int32
-            switch value {
-            case let .text(text):
-                result = sqlite3_bind_text(
-                    statement,
-                    index,
-                    text,
-                    -1,
-                    unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-                )
-            case let .integer(number):
-                result = sqlite3_bind_int64(statement, index, number)
-            case .null:
-                result = sqlite3_bind_null(statement, index)
-            }
-            guard result == SQLITE_OK else { throw storageError() }
-        }
-        var rows: [T] = []
-        while true {
-            switch sqlite3_step(statement) {
-            case SQLITE_ROW: rows.append(try row(statement))
-            case SQLITE_DONE: return rows
-            default: throw storageError()
-            }
-        }
+        return try AgentGroupChatDatabase.query(database, sql, values, row: row)
     }
 
     private func execute(_ sql: String, _ values: [Value] = []) throws {
@@ -5927,10 +5891,6 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         } catch {
             throw AgentGroupChatError.storage("invalid string list")
         }
-    }
-
-    private func storageError() -> AgentGroupChatError {
-        .storage(String(cString: sqlite3_errmsg(database)))
     }
 
     private static func string(_ statement: OpaquePointer, _ index: Int32) -> String {
