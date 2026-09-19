@@ -3885,33 +3885,14 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
               try readTodo(ownerUserID: ownerUserID, agentID: agentID, todoID: todoID) != nil else {
             throw AgentGroupChatError.invalidField("todoProgressLimit")
         }
-        let newestFirst: [LocalAgentTodoProgress] = try query(
-            """
-            SELECT id, todo_id, sequence, kind, run_id, stage, detail, created_at_unix_ms
-            FROM local_agent_todo_events
-            WHERE owner_user_id = ? AND todo_id = ?
-            ORDER BY sequence DESC
-            LIMIT ?
-            """,
-            [.text(ownerUserID), .text(todoID), .integer(Int64(limit))]
-        ) { statement in
-            guard let kind = LocalAgentTodoProgressKind(rawValue: Self.string(statement, 3)) else {
-                throw AgentGroupChatError.storage("invalid Agent Todo progress kind")
-            }
-            return .init(
-                id: Self.string(statement, 0),
-                ownerUserID: ownerUserID,
-                agentID: agentID,
-                todoID: Self.string(statement, 1),
-                sequence: sqlite3_column_int64(statement, 2),
-                kind: kind,
-                runID: Self.optionalString(statement, 4),
-                stage: Self.string(statement, 5),
-                detail: Self.string(statement, 6),
-                createdAtUnixMs: sqlite3_column_int64(statement, 7)
-            )
-        }
-        return Array(newestFirst.reversed())
+        return try AgentTodoRepository.listProgress(
+            database,
+            ownerUserID: ownerUserID,
+            agentID: agentID,
+            todoID: todoID,
+            limit: limit,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     public func appendAgentTodoProgress(

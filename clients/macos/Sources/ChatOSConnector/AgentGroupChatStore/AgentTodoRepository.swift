@@ -2,6 +2,45 @@ import ChatOSCore
 import SQLite3
 
 enum AgentTodoRepository {
+    static func listProgress(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        agentID: String,
+        todoID: String,
+        limit: Int,
+        preparedStatement: () -> Void
+    ) throws -> [LocalAgentTodoProgress] {
+        preparedStatement()
+        let newestFirst: [LocalAgentTodoProgress] = try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT id, todo_id, sequence, kind, run_id, stage, detail, created_at_unix_ms
+            FROM local_agent_todo_events
+            WHERE owner_user_id = ? AND todo_id = ?
+            ORDER BY sequence DESC
+            LIMIT ?
+            """,
+            [.text(ownerUserID), .text(todoID), .integer(Int64(limit))]
+        ) { statement in
+            guard let kind = LocalAgentTodoProgressKind(rawValue: string(statement, 3)) else {
+                throw AgentGroupChatError.storage("invalid Agent Todo progress kind")
+            }
+            return .init(
+                id: string(statement, 0),
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                todoID: string(statement, 1),
+                sequence: sqlite3_column_int64(statement, 2),
+                kind: kind,
+                runID: optionalString(statement, 4),
+                stage: string(statement, 5),
+                detail: string(statement, 6),
+                createdAtUnixMs: sqlite3_column_int64(statement, 7)
+            )
+        }
+        return Array(newestFirst.reversed())
+    }
+
     static func listDependencies(
         _ handle: OpaquePointer?,
         ownerUserID: String,
@@ -134,6 +173,12 @@ enum AgentTodoRepository {
 
     private static func string(_ statement: OpaquePointer, _ index: Int32) -> String {
         guard let value = sqlite3_column_text(statement, index) else { return "" }
+        return String(cString: value)
+    }
+
+    private static func optionalString(_ statement: OpaquePointer, _ index: Int32) -> String? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL,
+              let value = sqlite3_column_text(statement, index) else { return nil }
         return String(cString: value)
     }
 }
