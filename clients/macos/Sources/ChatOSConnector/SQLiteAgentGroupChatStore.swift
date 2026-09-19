@@ -3135,12 +3135,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         try AgentGroupChatValidation.identifier(teamRoomID, field: "teamRoomID")
         guard try readRoom(ownerUserID: ownerUserID, roomID: teamRoomID)?.conversationKind
             == .projectTeam else { throw AgentGroupChatError.notFound }
-        return try query(
-            "SELECT \(Self.teamAssetColumns) FROM local_agent_team_assets WHERE owner_user_id = ? AND team_room_id = ?"
-                + (includeArchived ? "" : " AND status = 'active'")
-                + " ORDER BY category, updated_at_unix_ms DESC, id",
-            [.text(ownerUserID), .text(teamRoomID)],
-            row: AgentGroupChatRowMapper.teamAsset
+        return try AgentTeamAssetRepository.list(
+            database,
+            ownerUserID: ownerUserID,
+            teamRoomID: teamRoomID,
+            includeArchived: includeArchived,
+            preparedStatement: recordPreparedStatement
         )
     }
 
@@ -3152,11 +3152,13 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(teamRoomID, field: "teamRoomID")
         try AgentGroupChatValidation.identifier(assetID, field: "teamAssetID")
-        return try query(
-            "SELECT \(Self.teamAssetColumns) FROM local_agent_team_assets WHERE owner_user_id = ? AND team_room_id = ? AND id = ? LIMIT 1",
-            [.text(ownerUserID), .text(teamRoomID), .text(assetID)],
-            row: AgentGroupChatRowMapper.teamAsset
-        ).first
+        return try AgentTeamAssetRepository.find(
+            database,
+            ownerUserID: ownerUserID,
+            teamRoomID: teamRoomID,
+            assetID: assetID,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     public func upsertTeamAsset(
@@ -3199,11 +3201,13 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 }
             }
             let resolvedID = assetID ?? UUID().uuidString.lowercased()
-            let existing = try query(
-                "SELECT \(Self.teamAssetColumns) FROM local_agent_team_assets WHERE owner_user_id = ? AND team_room_id = ? AND id = ? LIMIT 1",
-                [.text(ownerUserID), .text(teamRoomID), .text(resolvedID)],
-                row: AgentGroupChatRowMapper.teamAsset
-            ).first
+            let existing = try AgentTeamAssetRepository.find(
+                database,
+                ownerUserID: ownerUserID,
+                teamRoomID: teamRoomID,
+                assetID: resolvedID,
+                preparedStatement: recordPreparedStatement
+            )
             let asset: LocalAgentTeamAsset
             if let existing {
                 guard existing.status == .active,
@@ -3365,24 +3369,13 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         ) != nil, (1...500).contains(limit) else {
             throw AgentGroupChatError.notFound
         }
-        return try query(
-            """
-            SELECT asset_id, revision, title, markdown, editor_agent_id, created_at_unix_ms
-            FROM local_agent_team_asset_revisions
-            WHERE owner_user_id = ? AND asset_id = ?
-            ORDER BY revision DESC LIMIT ?
-            """,
-            [.text(ownerUserID), .text(assetID), .integer(Int64(limit))]
-        ) { statement in
-            .init(
-                assetID: Self.string(statement, 0),
-                revision: Int(sqlite3_column_int64(statement, 1)),
-                title: Self.string(statement, 2),
-                markdown: Self.string(statement, 3),
-                editorAgentID: Self.optionalString(statement, 4),
-                createdAtUnixMs: sqlite3_column_int64(statement, 5)
-            )
-        }
+        return try AgentTeamAssetRepository.listRevisions(
+            database,
+            ownerUserID: ownerUserID,
+            assetID: assetID,
+            limit: limit,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     public func listTodoTeamAssetSnapshots(
@@ -3391,16 +3384,11 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     ) throws -> [LocalAgentTodoTeamAssetSnapshot] {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(todoID, field: "todoID")
-        return try query(
-            """
-            SELECT todo_id, asset_id, team_room_id, category, title, markdown,
-                   revision, captured_at_unix_ms
-            FROM local_agent_todo_asset_snapshots
-            WHERE owner_user_id = ? AND todo_id = ?
-            ORDER BY category, asset_id
-            """,
-            [.text(ownerUserID), .text(todoID)],
-            row: AgentGroupChatRowMapper.todoTeamAssetSnapshot
+        return try AgentTeamAssetRepository.listTodoSnapshots(
+            database,
+            ownerUserID: ownerUserID,
+            todoID: todoID,
+            preparedStatement: recordPreparedStatement
         )
     }
 
@@ -3414,17 +3402,14 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         try AgentGroupChatValidation.identifier(todoID, field: "todoID")
         try AgentGroupChatValidation.identifier(assetID, field: "teamAssetID")
         guard revision > 0 else { throw AgentGroupChatError.invalidField("teamAssetRevision") }
-        return try query(
-            """
-            SELECT todo_id, asset_id, team_room_id, category, title, markdown,
-                   revision, captured_at_unix_ms
-            FROM local_agent_todo_asset_snapshots
-            WHERE owner_user_id = ? AND todo_id = ? AND asset_id = ? AND revision = ?
-            LIMIT 1
-            """,
-            [.text(ownerUserID), .text(todoID), .text(assetID), .integer(Int64(revision))],
-            row: AgentGroupChatRowMapper.todoTeamAssetSnapshot
-        ).first
+        return try AgentTeamAssetRepository.todoSnapshot(
+            database,
+            ownerUserID: ownerUserID,
+            todoID: todoID,
+            assetID: assetID,
+            revision: revision,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     public func listAgentTodos(
@@ -5546,7 +5531,6 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
 
     private static let messageColumns = "owner_user_id, id, room_id, sender_kind, sender_id, content, reply_to_message_id, source_run_id, causation_id, root_message_id, hop_count, created_at_unix_ms"
     private static let todoColumns = "owner_user_id, id, agent_id, team_room_id, source_room_id, source_message_id, title, detail, priority, sort_order, request_key, status, blocked_reason, result, created_at_unix_ms, updated_at_unix_ms, execution_plan_json, execution_contract_json"
-    private static let teamAssetColumns = "owner_user_id, id, team_room_id, category, title, markdown, revision, status, created_by_agent_id, updated_by_agent_id, created_at_unix_ms, updated_at_unix_ms"
     private static let proposalColumns = "owner_user_id, id, room_id, proposer_agent_id, source_delivery_id, request_key, draft_json, status, created_agent_id, created_at_unix_ms, resolved_at_unix_ms"
     private static let removalProposalColumns = "owner_user_id, id, room_id, proposer_agent_id, source_delivery_id, request_key, draft_json, status, created_at_unix_ms, resolved_at_unix_ms"
     private static let membershipProposalColumns = "owner_user_id, id, source_room_id, proposer_agent_id, source_delivery_id, request_key, draft_json, status, created_at_unix_ms, resolved_at_unix_ms"

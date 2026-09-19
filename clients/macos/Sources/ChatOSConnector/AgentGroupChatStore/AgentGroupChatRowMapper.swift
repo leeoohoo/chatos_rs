@@ -147,6 +147,19 @@ enum AgentGroupChatRowMapper {
         return asset
     }
 
+    static func teamAssetRevision(
+        _ statement: OpaquePointer
+    ) -> LocalAgentTeamAssetRevision {
+        .init(
+            assetID: string(statement, 0),
+            revision: Int(sqlite3_column_int64(statement, 1)),
+            title: string(statement, 2),
+            markdown: string(statement, 3),
+            editorAgentID: optionalString(statement, 4),
+            createdAtUnixMs: sqlite3_column_int64(statement, 5)
+        )
+    }
+
     static func todoTeamAssetSnapshot(
         _ statement: OpaquePointer
     ) throws -> LocalAgentTodoTeamAssetSnapshot {
