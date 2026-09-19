@@ -2058,12 +2058,11 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         includeArchived: Bool = false
     ) throws -> [ProjectAgentRoom] {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
-        return try query(
-            "SELECT \(Self.roomColumns) FROM project_agent_rooms WHERE owner_user_id = ? AND conversation_kind = 'project_team'"
-                + (includeArchived ? "" : " AND status = 'active'")
-                + " ORDER BY updated_at_unix_ms DESC, id DESC",
-            [.text(ownerUserID)],
-            row: AgentGroupChatRowMapper.room
+        return try AgentConversationRepository.listProjectRooms(
+            database,
+            ownerUserID: ownerUserID,
+            includeArchived: includeArchived,
+            preparedStatement: recordPreparedStatement
         )
     }
 
@@ -2072,12 +2071,11 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         includeArchived: Bool = false
     ) throws -> [ProjectAgentRoom] {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
-        return try query(
-            "SELECT \(Self.roomColumns) FROM project_agent_rooms WHERE owner_user_id = ? AND conversation_kind != 'project_team'"
-                + (includeArchived ? "" : " AND status = 'active'")
-                + " ORDER BY updated_at_unix_ms DESC, id DESC",
-            [.text(ownerUserID)],
-            row: AgentGroupChatRowMapper.room
+        return try AgentConversationRepository.listDirectRooms(
+            database,
+            ownerUserID: ownerUserID,
+            includeArchived: includeArchived,
+            preparedStatement: recordPreparedStatement
         )
     }
 
@@ -2156,14 +2154,11 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         guard try readRoom(ownerUserID: ownerUserID, roomID: roomID) != nil else {
             throw AgentGroupChatError.notFound
         }
-        return try query(
-            """
-            SELECT \(Self.memberColumns) FROM project_agent_room_members
-            WHERE owner_user_id = ? AND room_id = ? AND status = 'active'
-            ORDER BY joined_at_unix_ms, agent_id
-            """,
-            [.text(ownerUserID), .text(roomID)],
-            row: AgentGroupChatRowMapper.member
+        return try AgentConversationRepository.listMembers(
+            database,
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            preparedStatement: recordPreparedStatement
         )
     }
 
@@ -4943,35 +4938,30 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     }
 
     private func readActiveRoom(ownerUserID: String, projectID: String) throws -> ProjectAgentRoom? {
-        try query(
-            """
-            SELECT \(Self.roomColumns) FROM project_agent_rooms
-            WHERE owner_user_id = ? AND project_id = ?
-              AND conversation_kind = 'project_team' AND status = 'active' LIMIT 1
-            """,
-            [.text(ownerUserID), .text(projectID)],
-            row: AgentGroupChatRowMapper.room
-        ).first
+        try AgentConversationRepository.activeProjectRoom(
+            database,
+            ownerUserID: ownerUserID,
+            projectID: projectID,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     private func readDirectRoom(ownerUserID: String, directKey: String) throws -> ProjectAgentRoom? {
-        try query(
-            """
-            SELECT \(Self.roomColumns) FROM project_agent_rooms
-            WHERE owner_user_id = ? AND direct_key = ?
-              AND conversation_kind != 'project_team' AND status = 'active' LIMIT 1
-            """,
-            [.text(ownerUserID), .text(directKey)],
-            row: AgentGroupChatRowMapper.room
-        ).first
+        try AgentConversationRepository.directRoom(
+            database,
+            ownerUserID: ownerUserID,
+            directKey: directKey,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     private func readRoom(ownerUserID: String, roomID: String) throws -> ProjectAgentRoom? {
-        try query(
-            "SELECT \(Self.roomColumns) FROM project_agent_rooms WHERE owner_user_id = ? AND id = ?",
-            [.text(ownerUserID), .text(roomID)],
-            row: AgentGroupChatRowMapper.room
-        ).first
+        try AgentConversationRepository.room(
+            database,
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     private func readAgent(ownerUserID: String, agentID: String) throws -> LocalAgentProfile? {
@@ -4988,14 +4978,13 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         roomID: String,
         agentID: String
     ) throws -> ProjectAgentRoomMember? {
-        try query(
-            """
-            SELECT \(Self.memberColumns) FROM project_agent_room_members
-            WHERE owner_user_id = ? AND room_id = ? AND agent_id = ?
-            """,
-            [.text(ownerUserID), .text(roomID), .text(agentID)],
-            row: AgentGroupChatRowMapper.member
-        ).first
+        try AgentConversationRepository.member(
+            database,
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            agentID: agentID,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     private func insertConversation(_ room: ProjectAgentRoom) throws {
@@ -5555,8 +5544,6 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
 
     private static func now() -> Int64 { Int64(Date().timeIntervalSince1970 * 1_000) }
 
-    private static let roomColumns = "owner_user_id, id, project_id, name, goal, default_agent_id, status, created_at_unix_ms, updated_at_unix_ms, conversation_kind, direct_key, project_manager_agent_id"
-    private static let memberColumns = "owner_user_id, room_id, agent_id, role, responsibility, plugin_allowlist_json, status, joined_at_unix_ms"
     private static let messageColumns = "owner_user_id, id, room_id, sender_kind, sender_id, content, reply_to_message_id, source_run_id, causation_id, root_message_id, hop_count, created_at_unix_ms"
     private static let todoColumns = "owner_user_id, id, agent_id, team_room_id, source_room_id, source_message_id, title, detail, priority, sort_order, request_key, status, blocked_reason, result, created_at_unix_ms, updated_at_unix_ms, execution_plan_json, execution_contract_json"
     private static let teamAssetColumns = "owner_user_id, id, team_room_id, category, title, markdown, revision, status, created_by_agent_id, updated_by_agent_id, created_at_unix_ms, updated_at_unix_ms"
