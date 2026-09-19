@@ -4828,16 +4828,13 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         guard (1...500).contains(limit) else {
             throw AgentGroupChatError.invalidField("limit")
         }
-        let values: [String] = try query(
-            """
-            SELECT run_json FROM local_agent_group_chat_runs
-            WHERE owner_user_id = ? AND project_id = ?
-              AND status NOT IN ('completed', 'failed')
-            ORDER BY updated_at_unix_ms DESC, id DESC LIMIT ?
-            """,
-            [.text(ownerUserID), .text(projectID), .integer(Int64(limit))]
-        ) { Self.string($0, 0) }
-        return try values.map(AgentGroupChatRowMapper.run)
+        return try AgentRunRepository.listUnfinished(
+            database,
+            ownerUserID: ownerUserID,
+            projectID: projectID,
+            limit: limit,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     /// Trigger Runs belong to an Agent, independent of whether their source is a private chat,
@@ -4852,15 +4849,13 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         guard (1...500).contains(limit) else {
             throw AgentGroupChatError.invalidField("limit")
         }
-        let values: [String] = try query(
-            """
-            SELECT run_json FROM local_agent_group_chat_runs
-            WHERE owner_user_id = ? AND agent_id = ?
-            ORDER BY updated_at_unix_ms DESC, id DESC LIMIT ?
-            """,
-            [.text(ownerUserID), .text(agentID), .integer(Int64(limit))]
-        ) { Self.string($0, 0) }
-        return try values.map(AgentGroupChatRowMapper.run)
+        return try AgentRunRepository.listForAgent(
+            database,
+            ownerUserID: ownerUserID,
+            agentID: agentID,
+            limit: limit,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     /// Recent execution history for a team, independent of member count.
@@ -4874,15 +4869,13 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         guard (1...500).contains(limit) else {
             throw AgentGroupChatError.invalidField("limit")
         }
-        let values: [String] = try query(
-            """
-            SELECT run_json FROM local_agent_group_chat_runs
-            WHERE owner_user_id = ? AND room_id = ?
-            ORDER BY updated_at_unix_ms DESC, id DESC LIMIT ?
-            """,
-            [.text(ownerUserID), .text(roomID), .integer(Int64(limit))]
-        ) { Self.string($0, 0) }
-        return try values.map(AgentGroupChatRowMapper.run)
+        return try AgentRunRepository.listForRoom(
+            database,
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            limit: limit,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     private func readActiveRoom(ownerUserID: String, projectID: String) throws -> ProjectAgentRoom? {
@@ -5207,15 +5200,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         ownerUserID: String,
         deliveryID: String
     ) throws -> LocalAgentGroupChatRun? {
-        let values: [String] = try query(
-            """
-            SELECT run_json FROM local_agent_group_chat_runs
-            WHERE owner_user_id = ? AND delivery_id = ? LIMIT 1
-            """,
-            [.text(ownerUserID), .text(deliveryID)]
-        ) { Self.string($0, 0) }
-        guard let json = values.first else { return nil }
-        return try AgentGroupChatRowMapper.run(json)
+        try AgentRunRepository.run(
+            database,
+            ownerUserID: ownerUserID,
+            deliveryID: deliveryID,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     private func requireMessage(ownerUserID: String, roomID: String, messageID: String) throws {
