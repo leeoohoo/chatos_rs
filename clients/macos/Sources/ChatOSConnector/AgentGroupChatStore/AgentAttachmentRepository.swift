@@ -12,6 +12,28 @@ struct AgentArtifactUploadCandidate {
 }
 
 enum AgentAttachmentRepository {
+    static func nextSyncDue(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        preparedStatement: () -> Void
+    ) throws -> Int64? {
+        preparedStatement()
+        let values: [Int64?] = try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT MIN(next_retry_at_unix_ms)
+            FROM project_agent_message_attachments
+            WHERE owner_user_id = ? AND sync_status IN ('queued', 'failed', 'uploading')
+            """,
+            [.text(ownerUserID)]
+        ) { statement in
+            sqlite3_column_type(statement, 0) == SQLITE_NULL
+                ? nil
+                : sqlite3_column_int64(statement, 0)
+        }
+        return values.first ?? nil
+    }
+
     static func nextUploadCandidate(
         _ handle: OpaquePointer?,
         ownerUserID: String,

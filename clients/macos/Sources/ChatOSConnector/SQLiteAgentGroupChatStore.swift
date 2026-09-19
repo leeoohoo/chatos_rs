@@ -2602,18 +2602,11 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
 
     public func nextAgentArtifactSyncDue(ownerUserID: String) throws -> Int64? {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
-        return try query(
-            """
-            SELECT MIN(next_retry_at_unix_ms)
-            FROM project_agent_message_attachments
-            WHERE owner_user_id = ? AND sync_status IN ('queued', 'failed', 'uploading')
-            """,
-            [.text(ownerUserID)]
-        ) { statement in
-            sqlite3_column_type(statement, 0) == SQLITE_NULL
-                ? nil
-                : sqlite3_column_int64(statement, 0)
-        }.first ?? nil
+        return try AgentAttachmentRepository.nextSyncDue(
+            database,
+            ownerUserID: ownerUserID,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     public func recordAgentMessageAttempt(
