@@ -5205,13 +5205,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         }
         let messageID = Self.string(statement, 1)
         let ownerUserID = Self.string(statement, 0)
-        let mentions: [String] = try query(
-            """
-            SELECT agent_id FROM project_agent_message_mentions
-            WHERE owner_user_id = ? AND message_id = ? ORDER BY position
-            """,
-            [.text(ownerUserID), .text(messageID)]
-        ) { Self.string($0, 0) }
+        let mentions = try AgentMessageRepository.mentions(
+            database,
+            ownerUserID: ownerUserID,
+            messageID: messageID,
+            preparedStatement: recordPreparedStatement
+        )
         let attachments = try readMessageAttachments(
             ownerUserID: ownerUserID,
             messageID: messageID

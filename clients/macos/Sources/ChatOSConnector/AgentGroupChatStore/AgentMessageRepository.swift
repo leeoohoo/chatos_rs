@@ -214,4 +214,26 @@ enum AgentMessageRepository {
             row: row
         )
     }
+
+    static func mentions(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        messageID: String,
+        preparedStatement: () -> Void
+    ) throws -> [String] {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT agent_id FROM project_agent_message_mentions
+            WHERE owner_user_id = ? AND message_id = ? ORDER BY position
+            """,
+            [.text(ownerUserID), .text(messageID)]
+        ) { string($0, 0) }
+    }
+
+    private static func string(_ statement: OpaquePointer, _ index: Int32) -> String {
+        guard let value = sqlite3_column_text(statement, index) else { return "" }
+        return String(cString: value)
+    }
 }
