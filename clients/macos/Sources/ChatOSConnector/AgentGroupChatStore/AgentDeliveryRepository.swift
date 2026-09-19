@@ -49,5 +49,50 @@ enum AgentDeliveryRepository {
         )
     }
 
+    static func nextPendingDeliveryID(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        agentID: String,
+        roomID: String?,
+        preparedStatement: () -> Void
+    ) throws -> String? {
+        var sql = """
+            SELECT d.id FROM project_agent_deliveries d
+            JOIN project_agent_rooms r
+              ON r.owner_user_id = d.owner_user_id AND r.id = d.room_id
+            JOIN project_agent_room_members m
+              ON m.owner_user_id = d.owner_user_id
+             AND m.room_id = d.room_id AND m.agent_id = d.target_agent_id
+            WHERE d.owner_user_id = ? AND d.target_agent_id = ?
+              AND d.status = 'pending' AND r.status = 'active' AND m.status = 'active'
+              AND NOT EXISTS (
+                SELECT 1 FROM project_agent_deliveries active
+                WHERE active.owner_user_id = d.owner_user_id
+                  AND active.target_agent_id = d.target_agent_id
+                  AND active.status = 'running'
+                  AND (
+                    (d.trigger_kind = 'todo' AND active.trigger_kind = 'todo')
+                    OR
+                    (d.trigger_kind != 'todo' AND active.trigger_kind != 'todo')
+                  )
+              )
+            """
+        var values: [AgentGroupChatDatabase.Value] = [.text(ownerUserID), .text(agentID)]
+        if let roomID {
+            sql += " AND d.room_id = ?"
+            values.append(.text(roomID))
+        }
+        sql += " ORDER BY d.created_at_unix_ms, d.id LIMIT 1"
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(handle, sql, values) {
+            string($0, 0)
+        }.first
+    }
+
+    private static func string(_ statement: OpaquePointer, _ index: Int32) -> String {
+        guard let value = sqlite3_column_text(statement, index) else { return "" }
+        return String(cString: value)
+    }
+
     private static let columns = "owner_user_id, id, room_id, message_id, root_message_id, target_agent_id, trigger_kind, status, attempt, hop_count, deduplication_key, response_message_id, last_error, claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms"
 }

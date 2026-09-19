@@ -4515,38 +4515,13 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         try AgentGroupChatValidation.identifier(agentID, field: "agentID")
         guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
         return try transaction {
-            var sql = """
-                SELECT d.id FROM project_agent_deliveries d
-                JOIN project_agent_rooms r
-                  ON r.owner_user_id = d.owner_user_id AND r.id = d.room_id
-                JOIN project_agent_room_members m
-                  ON m.owner_user_id = d.owner_user_id
-                 AND m.room_id = d.room_id AND m.agent_id = d.target_agent_id
-                WHERE d.owner_user_id = ? AND d.target_agent_id = ?
-                  AND d.status = 'pending' AND r.status = 'active' AND m.status = 'active'
-                  AND NOT EXISTS (
-                    SELECT 1 FROM project_agent_deliveries active
-                    WHERE active.owner_user_id = d.owner_user_id
-                      AND active.target_agent_id = d.target_agent_id
-                      AND active.status = 'running'
-                      AND (
-                        (d.trigger_kind = 'todo' AND active.trigger_kind = 'todo')
-                        OR
-                        (d.trigger_kind != 'todo' AND active.trigger_kind != 'todo')
-                      )
-                  )
-                """
-            var values: [Value] = [.text(ownerUserID), .text(agentID)]
-            if let roomID {
-                sql += " AND d.room_id = ?"
-                values.append(.text(roomID))
-            }
-            sql += " ORDER BY d.created_at_unix_ms, d.id LIMIT 1"
-            let ids: [String] = try query(
-                sql,
-                values
-            ) { Self.string($0, 0) }
-            guard let id = ids.first else { return nil }
+            guard let id = try AgentDeliveryRepository.nextPendingDeliveryID(
+                database,
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                roomID: roomID,
+                preparedStatement: recordPreparedStatement
+            ) else { return nil }
             try execute(
                 """
                 UPDATE project_agent_deliveries
