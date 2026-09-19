@@ -4217,7 +4217,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             if let existing = try query(
                 "SELECT \(Self.deliveryColumns) FROM project_agent_deliveries WHERE owner_user_id = ? AND deduplication_key = ? LIMIT 1",
                 [.text(ownerUserID), .text(key)],
-                row: readDelivery
+                row: AgentGroupChatRowMapper.delivery
             ).first {
                 try insertTodoEventRecipient(
                     ownerUserID: ownerUserID,
@@ -4376,7 +4376,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 if let existing = try query(
                     "SELECT \(Self.deliveryColumns) FROM project_agent_deliveries WHERE owner_user_id = ? AND deduplication_key = ? LIMIT 1",
                     [.text(ownerUserID), .text(key)],
-                    row: readDelivery
+                    row: AgentGroupChatRowMapper.delivery
                 ).first {
                     try insertTodoEventRecipient(
                         ownerUserID: ownerUserID,
@@ -4614,7 +4614,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         let deliveries = try query(
             "SELECT \(Self.deliveryColumns) FROM project_agent_deliveries WHERE owner_user_id = ? AND id IN (\(placeholders))",
             values,
-            row: readDelivery
+            row: AgentGroupChatRowMapper.delivery
         )
         return Dictionary(uniqueKeysWithValues: deliveries.map { ($0.id, $0) })
     }
@@ -4895,7 +4895,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             """,
             [.text(ownerUserID), .text(projectID), .integer(Int64(limit))]
         ) { Self.string($0, 0) }
-        return try values.map(Self.decodeRun)
+        return try values.map(AgentGroupChatRowMapper.run)
     }
 
     /// Trigger Runs belong to an Agent, independent of whether their source is a private chat,
@@ -4918,7 +4918,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             """,
             [.text(ownerUserID), .text(agentID), .integer(Int64(limit))]
         ) { Self.string($0, 0) }
-        return try values.map(Self.decodeRun)
+        return try values.map(AgentGroupChatRowMapper.run)
     }
 
     /// Recent execution history for a team, independent of member count.
@@ -4940,7 +4940,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             """,
             [.text(ownerUserID), .text(roomID), .integer(Int64(limit))]
         ) { Self.string($0, 0) }
-        return try values.map(Self.decodeRun)
+        return try values.map(AgentGroupChatRowMapper.run)
     }
 
     private func readActiveRoom(ownerUserID: String, projectID: String) throws -> ProjectAgentRoom? {
@@ -5267,7 +5267,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         try query(
             "SELECT \(Self.deliveryColumns) FROM project_agent_deliveries WHERE owner_user_id = ? AND id = ?",
             [.text(ownerUserID), .text(deliveryID)],
-            row: readDelivery
+            row: AgentGroupChatRowMapper.delivery
         ).first
     }
 
@@ -5283,19 +5283,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             [.text(ownerUserID), .text(deliveryID)]
         ) { Self.string($0, 0) }
         guard let json = values.first else { return nil }
-        return try Self.decodeRun(json)
-    }
-
-    private static func decodeRun(_ json: String) throws -> LocalAgentGroupChatRun {
-        do {
-            let run = try JSONDecoder().decode(LocalAgentGroupChatRun.self, from: Data(json.utf8))
-            try run.validate()
-            return run
-        } catch let error as AgentGroupChatError {
-            throw error
-        } catch {
-            throw AgentGroupChatError.storage("invalid Agent run record")
-        }
+        return try AgentGroupChatRowMapper.run(json)
     }
 
     private func requireMessage(ownerUserID: String, roomID: String, messageID: String) throws {
@@ -5501,31 +5489,6 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
 
     private static func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
-
-    private func readDelivery(_ statement: OpaquePointer) throws -> ProjectAgentDelivery {
-        guard let triggerKind = ProjectAgentDeliveryTriggerKind(rawValue: Self.string(statement, 6)),
-              let status = ProjectAgentDeliveryStatus(rawValue: Self.string(statement, 7)) else {
-            throw AgentGroupChatError.storage("invalid delivery state")
-        }
-        return ProjectAgentDelivery(
-            id: Self.string(statement, 1),
-            ownerUserID: Self.string(statement, 0),
-            roomID: Self.string(statement, 2),
-            messageID: Self.string(statement, 3),
-            rootMessageID: Self.string(statement, 4),
-            targetAgentID: Self.string(statement, 5),
-            triggerKind: triggerKind,
-            status: status,
-            attempt: Int(sqlite3_column_int64(statement, 8)),
-            hopCount: Int(sqlite3_column_int64(statement, 9)),
-            deduplicationKey: Self.string(statement, 10),
-            responseMessageID: Self.optionalString(statement, 11),
-            lastError: Self.optionalString(statement, 12),
-            claimedAtUnixMs: Self.optionalInt64(statement, 13),
-            completedAtUnixMs: Self.optionalInt64(statement, 14),
-            createdAtUnixMs: sqlite3_column_int64(statement, 15)
-        )
     }
 
     private typealias Value = AgentGroupChatDatabase.Value

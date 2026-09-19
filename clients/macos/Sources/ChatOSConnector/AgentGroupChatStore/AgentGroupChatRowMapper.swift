@@ -323,6 +323,43 @@ enum AgentGroupChatRowMapper {
         return proposal
     }
 
+    static func delivery(_ statement: OpaquePointer) throws -> ProjectAgentDelivery {
+        guard let triggerKind = ProjectAgentDeliveryTriggerKind(rawValue: string(statement, 6)),
+              let status = ProjectAgentDeliveryStatus(rawValue: string(statement, 7)) else {
+            throw AgentGroupChatError.storage("invalid delivery state")
+        }
+        return ProjectAgentDelivery(
+            id: string(statement, 1),
+            ownerUserID: string(statement, 0),
+            roomID: string(statement, 2),
+            messageID: string(statement, 3),
+            rootMessageID: string(statement, 4),
+            targetAgentID: string(statement, 5),
+            triggerKind: triggerKind,
+            status: status,
+            attempt: Int(sqlite3_column_int64(statement, 8)),
+            hopCount: Int(sqlite3_column_int64(statement, 9)),
+            deduplicationKey: string(statement, 10),
+            responseMessageID: optionalString(statement, 11),
+            lastError: optionalString(statement, 12),
+            claimedAtUnixMs: optionalInt64(statement, 13),
+            completedAtUnixMs: optionalInt64(statement, 14),
+            createdAtUnixMs: sqlite3_column_int64(statement, 15)
+        )
+    }
+
+    static func run(_ json: String) throws -> LocalAgentGroupChatRun {
+        do {
+            let run = try JSONDecoder().decode(LocalAgentGroupChatRun.self, from: Data(json.utf8))
+            try run.validate()
+            return run
+        } catch let error as AgentGroupChatError {
+            throw error
+        } catch {
+            throw AgentGroupChatError.storage("invalid Agent run record")
+        }
+    }
+
     private static func decodeStrings(_ value: String) throws -> [String] {
         do {
             return try JSONDecoder().decode([String].self, from: Data(value.utf8))
