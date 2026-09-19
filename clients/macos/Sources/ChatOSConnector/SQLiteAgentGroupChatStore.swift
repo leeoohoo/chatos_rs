@@ -137,7 +137,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 + (includeArchived ? "" : " AND status = 'active'")
                 + " ORDER BY name, id",
             [.text(ownerUserID)],
-            row: readAgent
+            row: AgentGroupChatRowMapper.agent
         )
     }
 
@@ -2064,7 +2064,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 + (includeArchived ? "" : " AND status = 'active'")
                 + " ORDER BY updated_at_unix_ms DESC, id DESC",
             [.text(ownerUserID)],
-            row: readRoom
+            row: AgentGroupChatRowMapper.room
         )
     }
 
@@ -2078,7 +2078,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 + (includeArchived ? "" : " AND status = 'active'")
                 + " ORDER BY updated_at_unix_ms DESC, id DESC",
             [.text(ownerUserID)],
-            row: readRoom
+            row: AgentGroupChatRowMapper.room
         )
     }
 
@@ -2164,7 +2164,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             ORDER BY joined_at_unix_ms, agent_id
             """,
             [.text(ownerUserID), .text(roomID)],
-            row: readMember
+            row: AgentGroupChatRowMapper.member
         )
     }
 
@@ -4951,7 +4951,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
               AND conversation_kind = 'project_team' AND status = 'active' LIMIT 1
             """,
             [.text(ownerUserID), .text(projectID)],
-            row: readRoom
+            row: AgentGroupChatRowMapper.room
         ).first
     }
 
@@ -4963,7 +4963,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
               AND conversation_kind != 'project_team' AND status = 'active' LIMIT 1
             """,
             [.text(ownerUserID), .text(directKey)],
-            row: readRoom
+            row: AgentGroupChatRowMapper.room
         ).first
     }
 
@@ -4971,7 +4971,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         try query(
             "SELECT \(Self.roomColumns) FROM project_agent_rooms WHERE owner_user_id = ? AND id = ?",
             [.text(ownerUserID), .text(roomID)],
-            row: readRoom
+            row: AgentGroupChatRowMapper.room
         ).first
     }
 
@@ -4979,7 +4979,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         try query(
             "SELECT \(Self.agentColumns) FROM local_agent_profiles WHERE owner_user_id = ? AND id = ?",
             [.text(ownerUserID), .text(agentID)],
-            row: readAgent
+            row: AgentGroupChatRowMapper.agent
         ).first
     }
 
@@ -4994,7 +4994,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             WHERE owner_user_id = ? AND room_id = ? AND agent_id = ?
             """,
             [.text(ownerUserID), .text(roomID), .text(agentID)],
-            row: readMember
+            row: AgentGroupChatRowMapper.member
         ).first
     }
 
@@ -5378,80 +5378,6 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(deliveryID, field: "deliveryID")
         guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
-    }
-
-    private func readAgent(_ statement: OpaquePointer) throws -> LocalAgentProfile {
-        guard let status = LocalAgentProfileStatus(rawValue: Self.string(statement, 15)) else {
-            throw AgentGroupChatError.storage("invalid agent status")
-        }
-        let profile = LocalAgentProfile(
-            id: Self.string(statement, 1),
-            ownerUserID: Self.string(statement, 0),
-            draft: .init(
-                name: Self.string(statement, 2),
-                description: Self.string(statement, 3),
-                rolePrompt: Self.string(statement, 4),
-                modelConfigID: Self.string(statement, 5),
-                thinkingLevel: Self.optionalString(statement, 6),
-                professionKey: Self.string(statement, 7),
-                defaultPluginIDs: try decodeStrings(Self.string(statement, 8)),
-                defaultSkillIDs: try decodeStrings(Self.string(statement, 9)),
-                heartbeatEnabled: sqlite3_column_int64(statement, 10) != 0,
-                heartbeatIntervalSeconds: Int(sqlite3_column_int64(statement, 11)),
-                heartbeatPrompt: Self.string(statement, 12)
-            ),
-            status: status,
-            createdAtUnixMs: sqlite3_column_int64(statement, 16),
-            updatedAtUnixMs: sqlite3_column_int64(statement, 17),
-            lastHeartbeatAtUnixMs: Self.optionalInt64(statement, 13),
-            nextHeartbeatAtUnixMs: Self.optionalInt64(statement, 14)
-        )
-        try profile.validate()
-        return profile
-    }
-
-    private func readRoom(_ statement: OpaquePointer) throws -> ProjectAgentRoom {
-        guard let status = ProjectAgentRoomStatus(rawValue: Self.string(statement, 6)),
-              let conversationKind = LocalAgentConversationKind(
-                rawValue: Self.string(statement, 9)
-              ) else {
-            throw AgentGroupChatError.storage("invalid room status")
-        }
-        let room = ProjectAgentRoom(
-            id: Self.string(statement, 1),
-            ownerUserID: Self.string(statement, 0),
-            projectID: Self.string(statement, 2),
-            draft: .init(name: Self.string(statement, 3), goal: Self.string(statement, 4)),
-            defaultAgentID: Self.optionalString(statement, 5),
-            projectManagerAgentID: Self.optionalString(statement, 11),
-            conversationKind: conversationKind,
-            directKey: Self.optionalString(statement, 10),
-            status: status,
-            createdAtUnixMs: sqlite3_column_int64(statement, 7),
-            updatedAtUnixMs: sqlite3_column_int64(statement, 8)
-        )
-        try room.validate()
-        return room
-    }
-
-    private func readMember(_ statement: OpaquePointer) throws -> ProjectAgentRoomMember {
-        guard let status = ProjectAgentRoomMemberStatus(rawValue: Self.string(statement, 6)) else {
-            throw AgentGroupChatError.storage("invalid member status")
-        }
-        let member = ProjectAgentRoomMember(
-            ownerUserID: Self.string(statement, 0),
-            roomID: Self.string(statement, 1),
-            agentID: Self.string(statement, 2),
-            draft: .init(
-                role: Self.string(statement, 3),
-                responsibility: Self.string(statement, 4),
-                pluginAllowlist: try decodeStrings(Self.string(statement, 5))
-            ),
-            status: status,
-            joinedAtUnixMs: sqlite3_column_int64(statement, 7)
-        )
-        try member.validate()
-        return member
     }
 
     private func readMessage(_ statement: OpaquePointer) throws -> ProjectAgentMessage {
@@ -5885,14 +5811,6 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return String(decoding: try encoder.encode(value), as: UTF8.self)
-    }
-
-    private func decodeStrings(_ value: String) throws -> [String] {
-        do {
-            return try JSONDecoder().decode([String].self, from: Data(value.utf8))
-        } catch {
-            throw AgentGroupChatError.storage("invalid string list")
-        }
     }
 
     private static func string(_ statement: OpaquePointer, _ index: Int32) -> String {
