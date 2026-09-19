@@ -4462,12 +4462,11 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         for id in ids {
             try AgentGroupChatValidation.identifier(id, field: "messageID")
         }
-        guard !ids.isEmpty else { return [:] }
-        let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
-        let values = [.text(ownerUserID)] + ids.map(Value.text)
-        let messages = try query(
-            "SELECT \(Self.messageColumns) FROM project_agent_messages WHERE owner_user_id = ? AND id IN (\(placeholders))",
-            values,
+        let messages = try AgentMessageRepository.findMany(
+            database,
+            ownerUserID: ownerUserID,
+            messageIDs: ids,
+            preparedStatement: recordPreparedStatement,
             row: readMessage
         )
         return Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
@@ -4969,11 +4968,13 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     }
 
     private func readMessage(ownerUserID: String, messageID: String) throws -> ProjectAgentMessage? {
-        try query(
-            "SELECT \(Self.messageColumns) FROM project_agent_messages WHERE owner_user_id = ? AND id = ?",
-            [.text(ownerUserID), .text(messageID)],
+        try AgentMessageRepository.find(
+            database,
+            ownerUserID: ownerUserID,
+            messageID: messageID,
+            preparedStatement: recordPreparedStatement,
             row: readMessage
-        ).first
+        )
     }
 
     private func readCursor(
