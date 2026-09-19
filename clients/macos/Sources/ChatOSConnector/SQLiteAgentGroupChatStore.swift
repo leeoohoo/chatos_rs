@@ -4190,11 +4190,10 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             guard incomplete == 0 else { return nil }
             let eventKey = "ready:\(todo.id):\(todo.updatedAtUnixMs)"
             let key = "todo-ready:\(todo.id):\(todo.updatedAtUnixMs):\(agentID)"
-            if let existing = try query(
-                "SELECT \(Self.deliveryColumns) FROM project_agent_deliveries WHERE owner_user_id = ? AND deduplication_key = ? LIMIT 1",
-                [.text(ownerUserID), .text(key)],
-                row: AgentGroupChatRowMapper.delivery
-            ).first {
+            if let existing = try readDelivery(
+                ownerUserID: ownerUserID,
+                deduplicationKey: key
+            ) {
                 try insertTodoEventRecipient(
                     ownerUserID: ownerUserID,
                     eventKey: eventKey,
@@ -4349,11 +4348,10 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                     throw AgentGroupChatError.storage("Todo status room is missing")
                 }
                 let key = "todo-status:\(todo.id):\(todo.status.rawValue):\(todo.updatedAtUnixMs):\(recipientID)"
-                if let existing = try query(
-                    "SELECT \(Self.deliveryColumns) FROM project_agent_deliveries WHERE owner_user_id = ? AND deduplication_key = ? LIMIT 1",
-                    [.text(ownerUserID), .text(key)],
-                    row: AgentGroupChatRowMapper.delivery
-                ).first {
+                if let existing = try readDelivery(
+                    ownerUserID: ownerUserID,
+                    deduplicationKey: key
+                ) {
                     try insertTodoEventRecipient(
                         ownerUserID: ownerUserID,
                         eventKey: eventKey,
@@ -4585,12 +4583,11 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             try AgentGroupChatValidation.identifier(id, field: "deliveryID")
         }
         guard !ids.isEmpty else { return [:] }
-        let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
-        let values = [.text(ownerUserID)] + ids.map(Value.text)
-        let deliveries = try query(
-            "SELECT \(Self.deliveryColumns) FROM project_agent_deliveries WHERE owner_user_id = ? AND id IN (\(placeholders))",
-            values,
-            row: AgentGroupChatRowMapper.delivery
+        let deliveries = try AgentDeliveryRepository.deliveries(
+            database,
+            ownerUserID: ownerUserID,
+            deliveryIDs: ids,
+            preparedStatement: recordPreparedStatement
         )
         return Dictionary(uniqueKeysWithValues: deliveries.map { ($0.id, $0) })
     }
@@ -5217,11 +5214,24 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     }
 
     private func readDelivery(ownerUserID: String, deliveryID: String) throws -> ProjectAgentDelivery? {
-        try query(
-            "SELECT \(Self.deliveryColumns) FROM project_agent_deliveries WHERE owner_user_id = ? AND id = ?",
-            [.text(ownerUserID), .text(deliveryID)],
-            row: AgentGroupChatRowMapper.delivery
-        ).first
+        try AgentDeliveryRepository.delivery(
+            database,
+            ownerUserID: ownerUserID,
+            deliveryID: deliveryID,
+            preparedStatement: recordPreparedStatement
+        )
+    }
+
+    private func readDelivery(
+        ownerUserID: String,
+        deduplicationKey: String
+    ) throws -> ProjectAgentDelivery? {
+        try AgentDeliveryRepository.delivery(
+            database,
+            ownerUserID: ownerUserID,
+            deduplicationKey: deduplicationKey,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     private func readRun(
@@ -5510,6 +5520,4 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
 
     private static let messageColumns = "owner_user_id, id, room_id, sender_kind, sender_id, content, reply_to_message_id, source_run_id, causation_id, root_message_id, hop_count, created_at_unix_ms"
     private static let todoColumns = "owner_user_id, id, agent_id, team_room_id, source_room_id, source_message_id, title, detail, priority, sort_order, request_key, status, blocked_reason, result, created_at_unix_ms, updated_at_unix_ms, execution_plan_json, execution_contract_json"
-    private static let deliveryColumns = "owner_user_id, id, room_id, message_id, root_message_id, target_agent_id, trigger_kind, status, attempt, hop_count, deduplication_key, response_message_id, last_error, claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms"
-
 }
