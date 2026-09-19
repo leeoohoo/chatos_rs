@@ -803,7 +803,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             values.append(.text(status.rawValue))
         }
         sql += " ORDER BY created_at_unix_ms, id"
-        return try query(sql, values, row: readProposal)
+        return try query(sql, values, row: AgentGroupChatRowMapper.agentProposal)
     }
 
     public func approveAgentProposal(
@@ -1100,7 +1100,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             values.append(.text(status.rawValue))
         }
         sql += " ORDER BY created_at_unix_ms, id"
-        return try query(sql, values, row: readRemovalProposal)
+        return try query(sql, values, row: AgentGroupChatRowMapper.removalProposal)
     }
 
     public func approveAgentRemovalProposal(
@@ -1333,7 +1333,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             values.append(.text(status.rawValue))
         }
         sql += " ORDER BY created_at_unix_ms, id"
-        return try query(sql, values, row: readMembershipProposal)
+        return try query(sql, values, row: AgentGroupChatRowMapper.membershipProposal)
     }
 
     public func approveMembershipProposal(
@@ -1593,7 +1593,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             values.append(.text(status.rawValue))
         }
         sql += " ORDER BY created_at_unix_ms, id"
-        return try query(sql, values, row: readTeamProposal)
+        return try query(sql, values, row: AgentGroupChatRowMapper.teamProposal)
     }
 
     public func approveTeamProposal(
@@ -1796,7 +1796,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             values.append(.text(status.rawValue))
         }
         sql += " ORDER BY created_at_unix_ms, id"
-        return try query(sql, values, row: readProjectProposal)
+        return try query(sql, values, row: AgentGroupChatRowMapper.projectProposal)
     }
 
     public func approveProjectProposal(
@@ -5094,7 +5094,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             WHERE owner_user_id = ? AND room_id = ? AND id = ? LIMIT 1
             """,
             [.text(ownerUserID), .text(roomID), .text(proposalID)],
-            row: readProposal
+            row: AgentGroupChatRowMapper.agentProposal
         ).first
     }
 
@@ -5109,7 +5109,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             WHERE owner_user_id = ? AND room_id = ? AND id = ? LIMIT 1
             """,
             [.text(ownerUserID), .text(roomID), .text(proposalID)],
-            row: readProjectProposal
+            row: AgentGroupChatRowMapper.projectProposal
         ).first
     }
 
@@ -5124,7 +5124,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             WHERE owner_user_id = ? AND room_id = ? AND id = ? LIMIT 1
             """,
             [.text(ownerUserID), .text(roomID), .text(proposalID)],
-            row: readRemovalProposal
+            row: AgentGroupChatRowMapper.removalProposal
         ).first
     }
 
@@ -5139,7 +5139,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             WHERE owner_user_id = ? AND source_room_id = ? AND id = ? LIMIT 1
             """,
             [.text(ownerUserID), .text(sourceRoomID), .text(proposalID)],
-            row: readTeamProposal
+            row: AgentGroupChatRowMapper.teamProposal
         ).first
     }
 
@@ -5154,7 +5154,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             WHERE owner_user_id = ? AND source_room_id = ? AND id = ? LIMIT 1
             """,
             [.text(ownerUserID), .text(sourceRoomID), .text(proposalID)],
-            row: readMembershipProposal
+            row: AgentGroupChatRowMapper.membershipProposal
         ).first
     }
 
@@ -5175,7 +5175,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 .text(ownerUserID), .text(sourceRoomID), .text(proposerAgentID),
                 .text(sourceDeliveryID), .text(requestKey),
             ],
-            row: readTeamProposal
+            row: AgentGroupChatRowMapper.teamProposal
         ).first
     }
 
@@ -5196,7 +5196,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 .text(ownerUserID), .text(sourceRoomID), .text(proposerAgentID),
                 .text(sourceDeliveryID), .text(requestKey),
             ],
-            row: readMembershipProposal
+            row: AgentGroupChatRowMapper.membershipProposal
         ).first
     }
 
@@ -5217,7 +5217,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 .text(ownerUserID), .text(roomID), .text(proposerAgentID),
                 .text(sourceDeliveryID), .text(requestKey),
             ],
-            row: readRemovalProposal
+            row: AgentGroupChatRowMapper.removalProposal
         ).first
     }
 
@@ -5238,7 +5238,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 .text(ownerUserID), .text(roomID), .text(proposerAgentID),
                 .text(sourceDeliveryID), .text(requestKey),
             ],
-            row: readProjectProposal
+            row: AgentGroupChatRowMapper.projectProposal
         ).first
     }
 
@@ -5259,7 +5259,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 .text(ownerUserID), .text(roomID), .text(proposerAgentID),
                 .text(sourceDeliveryID), .text(requestKey),
             ],
-            row: readProposal
+            row: AgentGroupChatRowMapper.agentProposal
         ).first
     }
 
@@ -5501,158 +5501,6 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
 
     private static func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
-
-    private func readProposal(_ statement: OpaquePointer) throws -> LocalAgentCreationProposal {
-        let draft: LocalAgentDraft
-        do {
-            draft = try JSONDecoder().decode(
-                LocalAgentDraft.self,
-                from: Data(Self.string(statement, 6).utf8)
-            )
-        } catch {
-            throw AgentGroupChatError.storage("invalid Agent creation proposal")
-        }
-        guard let status = LocalAgentCreationProposalStatus(rawValue: Self.string(statement, 7)) else {
-            throw AgentGroupChatError.storage("invalid Agent creation proposal status")
-        }
-        let proposal = LocalAgentCreationProposal(
-            id: Self.string(statement, 1),
-            ownerUserID: Self.string(statement, 0),
-            roomID: Self.string(statement, 2),
-            proposerAgentID: Self.string(statement, 3),
-            sourceDeliveryID: Self.string(statement, 4),
-            requestKey: Self.string(statement, 5),
-            draft: draft,
-            status: status,
-            createdAgentID: Self.optionalString(statement, 8),
-            createdAtUnixMs: sqlite3_column_int64(statement, 9),
-            resolvedAtUnixMs: Self.optionalInt64(statement, 10)
-        )
-        try proposal.validate()
-        return proposal
-    }
-
-    private func readProjectProposal(_ statement: OpaquePointer) throws -> LocalProjectCreationProposal {
-        let draft: LocalProjectCreationProposalDraft
-        do {
-            draft = try JSONDecoder().decode(
-                LocalProjectCreationProposalDraft.self,
-                from: Data(Self.string(statement, 6).utf8)
-            )
-        } catch {
-            throw AgentGroupChatError.storage("invalid project creation proposal")
-        }
-        guard let status = LocalProjectCreationProposalStatus(rawValue: Self.string(statement, 7)) else {
-            throw AgentGroupChatError.storage("invalid project creation proposal status")
-        }
-        let proposal = LocalProjectCreationProposal(
-            id: Self.string(statement, 1),
-            ownerUserID: Self.string(statement, 0),
-            roomID: Self.string(statement, 2),
-            proposerAgentID: Self.string(statement, 3),
-            sourceDeliveryID: Self.string(statement, 4),
-            requestKey: Self.string(statement, 5),
-            draft: draft,
-            status: status,
-            createdProjectID: Self.optionalString(statement, 8),
-            createdAtUnixMs: sqlite3_column_int64(statement, 9),
-            resolvedAtUnixMs: Self.optionalInt64(statement, 10)
-        )
-        try proposal.validate()
-        return proposal
-    }
-
-    private func readRemovalProposal(_ statement: OpaquePointer) throws -> LocalAgentRemovalProposal {
-        let draft: LocalAgentRemovalProposalDraft
-        do {
-            draft = try JSONDecoder().decode(
-                LocalAgentRemovalProposalDraft.self,
-                from: Data(Self.string(statement, 6).utf8)
-            )
-        } catch {
-            throw AgentGroupChatError.storage("invalid Agent removal proposal")
-        }
-        guard let status = LocalAgentRemovalProposalStatus(rawValue: Self.string(statement, 7)) else {
-            throw AgentGroupChatError.storage("invalid Agent removal proposal status")
-        }
-        let proposal = LocalAgentRemovalProposal(
-            id: Self.string(statement, 1),
-            ownerUserID: Self.string(statement, 0),
-            roomID: Self.string(statement, 2),
-            proposerAgentID: Self.string(statement, 3),
-            sourceDeliveryID: Self.string(statement, 4),
-            requestKey: Self.string(statement, 5),
-            draft: draft,
-            status: status,
-            createdAtUnixMs: sqlite3_column_int64(statement, 8),
-            resolvedAtUnixMs: Self.optionalInt64(statement, 9)
-        )
-        try proposal.validate()
-        return proposal
-    }
-
-    private func readTeamProposal(_ statement: OpaquePointer) throws -> LocalAgentTeamCreationProposal {
-        let draft: LocalAgentTeamCreationProposalDraft
-        do {
-            draft = try JSONDecoder().decode(
-                LocalAgentTeamCreationProposalDraft.self,
-                from: Data(Self.string(statement, 6).utf8)
-            )
-        } catch {
-            throw AgentGroupChatError.storage("invalid team creation proposal")
-        }
-        guard let status = LocalAgentTeamCreationProposalStatus(rawValue: Self.string(statement, 7)) else {
-            throw AgentGroupChatError.storage("invalid team creation proposal status")
-        }
-        let proposal = LocalAgentTeamCreationProposal(
-            id: Self.string(statement, 1),
-            ownerUserID: Self.string(statement, 0),
-            sourceRoomID: Self.string(statement, 2),
-            proposerAgentID: Self.string(statement, 3),
-            sourceDeliveryID: Self.string(statement, 4),
-            requestKey: Self.string(statement, 5),
-            draft: draft,
-            status: status,
-            createdRoomID: Self.optionalString(statement, 8),
-            createdAtUnixMs: sqlite3_column_int64(statement, 9),
-            resolvedAtUnixMs: Self.optionalInt64(statement, 10)
-        )
-        try proposal.validate()
-        return proposal
-    }
-
-    private func readMembershipProposal(
-        _ statement: OpaquePointer
-    ) throws -> LocalAgentMembershipProposal {
-        let draft: LocalAgentMembershipProposalDraft
-        do {
-            draft = try JSONDecoder().decode(
-                LocalAgentMembershipProposalDraft.self,
-                from: Data(Self.string(statement, 6).utf8)
-            )
-        } catch {
-            throw AgentGroupChatError.storage("invalid membership proposal")
-        }
-        guard let status = LocalAgentMembershipProposalStatus(
-            rawValue: Self.string(statement, 7)
-        ) else {
-            throw AgentGroupChatError.storage("invalid membership proposal status")
-        }
-        let proposal = LocalAgentMembershipProposal(
-            id: Self.string(statement, 1),
-            ownerUserID: Self.string(statement, 0),
-            sourceRoomID: Self.string(statement, 2),
-            proposerAgentID: Self.string(statement, 3),
-            sourceDeliveryID: Self.string(statement, 4),
-            requestKey: Self.string(statement, 5),
-            draft: draft,
-            status: status,
-            createdAtUnixMs: sqlite3_column_int64(statement, 8),
-            resolvedAtUnixMs: Self.optionalInt64(statement, 9)
-        )
-        try proposal.validate()
-        return proposal
     }
 
     private func readDelivery(_ statement: OpaquePointer) throws -> ProjectAgentDelivery {

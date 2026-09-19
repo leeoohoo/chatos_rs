@@ -165,6 +165,164 @@ enum AgentGroupChatRowMapper {
         )
     }
 
+    static func agentProposal(_ statement: OpaquePointer) throws -> LocalAgentCreationProposal {
+        let draft: LocalAgentDraft
+        do {
+            draft = try JSONDecoder().decode(
+                LocalAgentDraft.self,
+                from: Data(string(statement, 6).utf8)
+            )
+        } catch {
+            throw AgentGroupChatError.storage("invalid Agent creation proposal")
+        }
+        guard let status = LocalAgentCreationProposalStatus(rawValue: string(statement, 7)) else {
+            throw AgentGroupChatError.storage("invalid Agent creation proposal status")
+        }
+        let proposal = LocalAgentCreationProposal(
+            id: string(statement, 1),
+            ownerUserID: string(statement, 0),
+            roomID: string(statement, 2),
+            proposerAgentID: string(statement, 3),
+            sourceDeliveryID: string(statement, 4),
+            requestKey: string(statement, 5),
+            draft: draft,
+            status: status,
+            createdAgentID: optionalString(statement, 8),
+            createdAtUnixMs: sqlite3_column_int64(statement, 9),
+            resolvedAtUnixMs: optionalInt64(statement, 10)
+        )
+        try proposal.validate()
+        return proposal
+    }
+
+    static func projectProposal(
+        _ statement: OpaquePointer
+    ) throws -> LocalProjectCreationProposal {
+        let draft: LocalProjectCreationProposalDraft
+        do {
+            draft = try JSONDecoder().decode(
+                LocalProjectCreationProposalDraft.self,
+                from: Data(string(statement, 6).utf8)
+            )
+        } catch {
+            throw AgentGroupChatError.storage("invalid project creation proposal")
+        }
+        guard let status = LocalProjectCreationProposalStatus(rawValue: string(statement, 7)) else {
+            throw AgentGroupChatError.storage("invalid project creation proposal status")
+        }
+        let proposal = LocalProjectCreationProposal(
+            id: string(statement, 1),
+            ownerUserID: string(statement, 0),
+            roomID: string(statement, 2),
+            proposerAgentID: string(statement, 3),
+            sourceDeliveryID: string(statement, 4),
+            requestKey: string(statement, 5),
+            draft: draft,
+            status: status,
+            createdProjectID: optionalString(statement, 8),
+            createdAtUnixMs: sqlite3_column_int64(statement, 9),
+            resolvedAtUnixMs: optionalInt64(statement, 10)
+        )
+        try proposal.validate()
+        return proposal
+    }
+
+    static func removalProposal(
+        _ statement: OpaquePointer
+    ) throws -> LocalAgentRemovalProposal {
+        let draft: LocalAgentRemovalProposalDraft
+        do {
+            draft = try JSONDecoder().decode(
+                LocalAgentRemovalProposalDraft.self,
+                from: Data(string(statement, 6).utf8)
+            )
+        } catch {
+            throw AgentGroupChatError.storage("invalid Agent removal proposal")
+        }
+        guard let status = LocalAgentRemovalProposalStatus(rawValue: string(statement, 7)) else {
+            throw AgentGroupChatError.storage("invalid Agent removal proposal status")
+        }
+        let proposal = LocalAgentRemovalProposal(
+            id: string(statement, 1),
+            ownerUserID: string(statement, 0),
+            roomID: string(statement, 2),
+            proposerAgentID: string(statement, 3),
+            sourceDeliveryID: string(statement, 4),
+            requestKey: string(statement, 5),
+            draft: draft,
+            status: status,
+            createdAtUnixMs: sqlite3_column_int64(statement, 8),
+            resolvedAtUnixMs: optionalInt64(statement, 9)
+        )
+        try proposal.validate()
+        return proposal
+    }
+
+    static func teamProposal(
+        _ statement: OpaquePointer
+    ) throws -> LocalAgentTeamCreationProposal {
+        let draft: LocalAgentTeamCreationProposalDraft
+        do {
+            draft = try JSONDecoder().decode(
+                LocalAgentTeamCreationProposalDraft.self,
+                from: Data(string(statement, 6).utf8)
+            )
+        } catch {
+            throw AgentGroupChatError.storage("invalid team creation proposal")
+        }
+        guard let status = LocalAgentTeamCreationProposalStatus(rawValue: string(statement, 7)) else {
+            throw AgentGroupChatError.storage("invalid team creation proposal status")
+        }
+        let proposal = LocalAgentTeamCreationProposal(
+            id: string(statement, 1),
+            ownerUserID: string(statement, 0),
+            sourceRoomID: string(statement, 2),
+            proposerAgentID: string(statement, 3),
+            sourceDeliveryID: string(statement, 4),
+            requestKey: string(statement, 5),
+            draft: draft,
+            status: status,
+            createdRoomID: optionalString(statement, 8),
+            createdAtUnixMs: sqlite3_column_int64(statement, 9),
+            resolvedAtUnixMs: optionalInt64(statement, 10)
+        )
+        try proposal.validate()
+        return proposal
+    }
+
+    static func membershipProposal(
+        _ statement: OpaquePointer
+    ) throws -> LocalAgentMembershipProposal {
+        let draft: LocalAgentMembershipProposalDraft
+        do {
+            draft = try JSONDecoder().decode(
+                LocalAgentMembershipProposalDraft.self,
+                from: Data(string(statement, 6).utf8)
+            )
+        } catch {
+            throw AgentGroupChatError.storage("invalid membership proposal")
+        }
+        guard let status = LocalAgentMembershipProposalStatus(
+            rawValue: string(statement, 7)
+        ) else {
+            throw AgentGroupChatError.storage("invalid membership proposal status")
+        }
+        let proposal = LocalAgentMembershipProposal(
+            id: string(statement, 1),
+            ownerUserID: string(statement, 0),
+            sourceRoomID: string(statement, 2),
+            proposerAgentID: string(statement, 3),
+            sourceDeliveryID: string(statement, 4),
+            requestKey: string(statement, 5),
+            draft: draft,
+            status: status,
+            createdAtUnixMs: sqlite3_column_int64(statement, 8),
+            resolvedAtUnixMs: optionalInt64(statement, 9)
+        )
+        try proposal.validate()
+        return proposal
+    }
+
     private static func decodeStrings(_ value: String) throws -> [String] {
         do {
             return try JSONDecoder().decode([String].self, from: Data(value.utf8))
