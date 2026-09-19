@@ -232,6 +232,28 @@ enum AgentMessageRepository {
         ) { string($0, 0) }
     }
 
+    static func attachments(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        messageID: String,
+        preparedStatement: () -> Void
+    ) throws -> [ProjectAgentMessageAttachment] {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT id, name, mime_type, size_bytes, kind, origin, sha256, sync_status,
+                   artifact_id, storage_provider, bucket, object_key, remote_view_path,
+                   upload_error, synced_at_unix_ms
+            FROM project_agent_message_attachments
+            WHERE owner_user_id = ? AND message_id = ?
+            ORDER BY position
+            """,
+            [.text(ownerUserID), .text(messageID)],
+            row: AgentGroupChatRowMapper.messageAttachment
+        )
+    }
+
     private static func string(_ statement: OpaquePointer, _ index: Int32) -> String {
         guard let value = sqlite3_column_text(statement, index) else { return "" }
         return String(cString: value)

@@ -384,6 +384,34 @@ enum AgentGroupChatRowMapper {
         )
     }
 
+    static func messageAttachment(
+        _ statement: OpaquePointer
+    ) throws -> ProjectAgentMessageAttachment {
+        guard let kind = ConversationAttachmentKind(rawValue: string(statement, 4)),
+              let origin = ConversationAttachmentOrigin(rawValue: string(statement, 5)) else {
+            throw AgentGroupChatError.storage("invalid message attachment")
+        }
+        return .init(
+            id: string(statement, 0),
+            name: string(statement, 1),
+            mimeType: string(statement, 2),
+            size: Int(sqlite3_column_int64(statement, 3)),
+            kind: kind,
+            origin: origin,
+            sha256: optionalString(statement, 6),
+            syncStatus: ProjectAgentMessageAttachmentSyncStatus(
+                rawValue: string(statement, 7)
+            ) ?? .localOnly,
+            artifactID: optionalString(statement, 8),
+            storageProvider: optionalString(statement, 9),
+            bucket: optionalString(statement, 10),
+            objectKey: optionalString(statement, 11),
+            remoteViewPath: optionalString(statement, 12),
+            uploadError: optionalString(statement, 13),
+            syncedAtUnixMs: optionalInt64(statement, 14)
+        )
+    }
+
     private static func decodeStrings(_ value: String) throws -> [String] {
         do {
             return try JSONDecoder().decode([String].self, from: Data(value.utf8))

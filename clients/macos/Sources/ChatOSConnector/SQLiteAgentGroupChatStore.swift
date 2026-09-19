@@ -5211,9 +5211,11 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             messageID: messageID,
             preparedStatement: recordPreparedStatement
         )
-        let attachments = try readMessageAttachments(
+        let attachments = try AgentMessageRepository.attachments(
+            database,
             ownerUserID: ownerUserID,
-            messageID: messageID
+            messageID: messageID,
+            preparedStatement: recordPreparedStatement
         )
         let draft = ProjectAgentMessageDraft(
             senderKind: senderKind,
@@ -5235,47 +5237,6 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             attachments: attachments,
             createdAtUnixMs: sqlite3_column_int64(statement, 11)
         )
-    }
-
-    private func readMessageAttachments(
-        ownerUserID: String,
-        messageID: String
-    ) throws -> [ProjectAgentMessageAttachment] {
-        try query(
-            """
-            SELECT id, name, mime_type, size_bytes, kind, origin, sha256, sync_status,
-                   artifact_id, storage_provider, bucket, object_key, remote_view_path,
-                   upload_error, synced_at_unix_ms
-            FROM project_agent_message_attachments
-            WHERE owner_user_id = ? AND message_id = ?
-            ORDER BY position
-            """,
-            [.text(ownerUserID), .text(messageID)]
-        ) { statement in
-            guard let kind = ConversationAttachmentKind(rawValue: Self.string(statement, 4)),
-                  let origin = ConversationAttachmentOrigin(rawValue: Self.string(statement, 5)) else {
-                throw AgentGroupChatError.storage("invalid message attachment")
-            }
-            return ProjectAgentMessageAttachment(
-                id: Self.string(statement, 0),
-                name: Self.string(statement, 1),
-                mimeType: Self.string(statement, 2),
-                size: Int(sqlite3_column_int64(statement, 3)),
-                kind: kind,
-                origin: origin,
-                sha256: Self.optionalString(statement, 6),
-                syncStatus: ProjectAgentMessageAttachmentSyncStatus(
-                    rawValue: Self.string(statement, 7)
-                ) ?? .localOnly,
-                artifactID: Self.optionalString(statement, 8),
-                storageProvider: Self.optionalString(statement, 9),
-                bucket: Self.optionalString(statement, 10),
-                objectKey: Self.optionalString(statement, 11),
-                remoteViewPath: Self.optionalString(statement, 12),
-                uploadError: Self.optionalString(statement, 13),
-                syncedAtUnixMs: Self.optionalInt64(statement, 14)
-            )
-        }
     }
 
     private func persistMessageAttachments(
