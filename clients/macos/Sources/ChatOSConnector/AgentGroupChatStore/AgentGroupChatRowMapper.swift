@@ -77,6 +77,94 @@ enum AgentGroupChatRowMapper {
         return member
     }
 
+    static func todo(_ statement: OpaquePointer) throws -> LocalAgentTodo {
+        guard let status = LocalAgentTodoStatus(rawValue: string(statement, 11)) else {
+            throw AgentGroupChatError.storage("invalid Agent todo status")
+        }
+        let executionPlan: LocalAgentTodoExecutionPlan
+        let executionContract: LocalAgentTodoExecutionContract
+        do {
+            executionPlan = try JSONDecoder().decode(
+                LocalAgentTodoExecutionPlan.self,
+                from: Data(string(statement, 16).utf8)
+            )
+            executionContract = try JSONDecoder().decode(
+                LocalAgentTodoExecutionContract.self,
+                from: Data(string(statement, 17).utf8)
+            ).normalized(
+                title: string(statement, 6),
+                detail: string(statement, 7)
+            )
+        } catch {
+            throw AgentGroupChatError.storage("invalid Agent Todo execution contract")
+        }
+        guard let teamRoomID = optionalString(statement, 3) else {
+            throw AgentGroupChatError.storage("Agent Todo is missing its team binding")
+        }
+        let todo = LocalAgentTodo(
+            id: string(statement, 1),
+            ownerUserID: string(statement, 0),
+            agentID: string(statement, 2),
+            teamRoomID: teamRoomID,
+            sourceRoomID: optionalString(statement, 4),
+            sourceMessageID: optionalString(statement, 5),
+            title: string(statement, 6),
+            detail: string(statement, 7),
+            priority: Int(sqlite3_column_int64(statement, 8)),
+            sortOrder: sqlite3_column_int64(statement, 9),
+            status: status,
+            blockedReason: string(statement, 12),
+            result: string(statement, 13),
+            executionContract: executionContract,
+            executionPlan: executionPlan,
+            createdAtUnixMs: sqlite3_column_int64(statement, 14),
+            updatedAtUnixMs: sqlite3_column_int64(statement, 15)
+        )
+        try todo.validate()
+        return todo
+    }
+
+    static func teamAsset(_ statement: OpaquePointer) throws -> LocalAgentTeamAsset {
+        guard let category = LocalAgentTeamAssetCategory(rawValue: string(statement, 3)),
+              let status = LocalAgentTeamAssetStatus(rawValue: string(statement, 7)) else {
+            throw AgentGroupChatError.storage("invalid team asset")
+        }
+        let asset = LocalAgentTeamAsset(
+            id: string(statement, 1),
+            ownerUserID: string(statement, 0),
+            teamRoomID: string(statement, 2),
+            category: category,
+            title: string(statement, 4),
+            markdown: string(statement, 5),
+            revision: Int(sqlite3_column_int64(statement, 6)),
+            status: status,
+            createdByAgentID: optionalString(statement, 8),
+            updatedByAgentID: optionalString(statement, 9),
+            createdAtUnixMs: sqlite3_column_int64(statement, 10),
+            updatedAtUnixMs: sqlite3_column_int64(statement, 11)
+        )
+        try asset.validate()
+        return asset
+    }
+
+    static func todoTeamAssetSnapshot(
+        _ statement: OpaquePointer
+    ) throws -> LocalAgentTodoTeamAssetSnapshot {
+        guard let category = LocalAgentTeamAssetCategory(rawValue: string(statement, 3)) else {
+            throw AgentGroupChatError.storage("invalid Todo team asset snapshot")
+        }
+        return .init(
+            todoID: string(statement, 0),
+            assetID: string(statement, 1),
+            teamRoomID: string(statement, 2),
+            category: category,
+            title: string(statement, 4),
+            markdown: string(statement, 5),
+            revision: Int(sqlite3_column_int64(statement, 6)),
+            capturedAtUnixMs: sqlite3_column_int64(statement, 7)
+        )
+    }
+
     private static func decodeStrings(_ value: String) throws -> [String] {
         do {
             return try JSONDecoder().decode([String].self, from: Data(value.utf8))

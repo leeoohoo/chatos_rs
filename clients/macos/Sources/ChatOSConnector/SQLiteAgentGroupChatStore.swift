@@ -357,7 +357,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                     LIMIT 1
                     """,
                     [.text(ownerUserID), .text(agentID)],
-                    row: readTodo
+                    row: AgentGroupChatRowMapper.todo
                 ).first else { continue }
                 let roomID = todo.teamRoomID
                 let messageID = UUID().uuidString.lowercased()
@@ -428,7 +428,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 LIMIT 1
                 """,
                 [.text(ownerUserID), .text(agentID)],
-                row: readTodo
+                row: AgentGroupChatRowMapper.todo
             ).first
             let ready = try query(
                 """
@@ -456,7 +456,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 LIMIT 1
                 """,
                 [.text(ownerUserID), .text(agentID)],
-                row: readTodo
+                row: AgentGroupChatRowMapper.todo
             ).first
             return .init(runningTodo: running, readyTodo: ready)
         }
@@ -518,7 +518,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 LIMIT 1
                 """,
                 [.text(ownerUserID), .text(agentID)],
-                row: readTodo
+                row: AgentGroupChatRowMapper.todo
             ).first else { return nil }
 
             let messageID = UUID().uuidString.lowercased()
@@ -3146,7 +3146,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 + (includeArchived ? "" : " AND status = 'active'")
                 + " ORDER BY category, updated_at_unix_ms DESC, id",
             [.text(ownerUserID), .text(teamRoomID)],
-            row: readTeamAsset
+            row: AgentGroupChatRowMapper.teamAsset
         )
     }
 
@@ -3161,7 +3161,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         return try query(
             "SELECT \(Self.teamAssetColumns) FROM local_agent_team_assets WHERE owner_user_id = ? AND team_room_id = ? AND id = ? LIMIT 1",
             [.text(ownerUserID), .text(teamRoomID), .text(assetID)],
-            row: readTeamAsset
+            row: AgentGroupChatRowMapper.teamAsset
         ).first
     }
 
@@ -3208,7 +3208,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             let existing = try query(
                 "SELECT \(Self.teamAssetColumns) FROM local_agent_team_assets WHERE owner_user_id = ? AND team_room_id = ? AND id = ? LIMIT 1",
                 [.text(ownerUserID), .text(teamRoomID), .text(resolvedID)],
-                row: readTeamAsset
+                row: AgentGroupChatRowMapper.teamAsset
             ).first
             let asset: LocalAgentTeamAsset
             if let existing {
@@ -3406,7 +3406,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             ORDER BY category, asset_id
             """,
             [.text(ownerUserID), .text(todoID)],
-            row: readTodoTeamAssetSnapshot
+            row: AgentGroupChatRowMapper.todoTeamAssetSnapshot
         )
     }
 
@@ -3429,7 +3429,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             LIMIT 1
             """,
             [.text(ownerUserID), .text(todoID), .text(assetID), .integer(Int64(revision))],
-            row: readTodoTeamAssetSnapshot
+            row: AgentGroupChatRowMapper.todoTeamAssetSnapshot
         ).first
     }
 
@@ -3445,7 +3445,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 + (includeTerminal ? "" : " AND status NOT IN ('completed', 'cancelled')")
                 + " ORDER BY priority DESC, sort_order, created_at_unix_ms, id",
             [.text(ownerUserID), .text(agentID)],
-            row: readTodo
+            row: AgentGroupChatRowMapper.todo
         )
     }
 
@@ -3465,7 +3465,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 + (includeTerminal ? "" : " AND status NOT IN ('completed', 'cancelled')")
                 + " ORDER BY priority DESC, sort_order, created_at_unix_ms, id",
             [.text(ownerUserID), .text(teamRoomID)],
-            row: readTodo
+            row: AgentGroupChatRowMapper.todo
         )
     }
 
@@ -3506,7 +3506,7 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             if let existing = try query(
                 "SELECT \(Self.todoColumns) FROM local_agent_todos WHERE owner_user_id = ? AND agent_id = ? AND request_key = ? LIMIT 1",
                 [.text(ownerUserID), .text(agentID), .text(requestKey)],
-                row: readTodo
+                row: AgentGroupChatRowMapper.todo
             ).first { return existing }
             guard try readAgent(ownerUserID: ownerUserID, agentID: agentID)?.status == .active else {
                 throw AgentGroupChatError.notFound
@@ -5079,49 +5079,8 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         try query(
             "SELECT \(Self.todoColumns) FROM local_agent_todos WHERE owner_user_id = ? AND agent_id = ? AND id = ? LIMIT 1",
             [.text(ownerUserID), .text(agentID), .text(todoID)],
-            row: readTodo
+            row: AgentGroupChatRowMapper.todo
         ).first
-    }
-
-    private func readTeamAsset(_ statement: OpaquePointer) throws -> LocalAgentTeamAsset {
-        guard let category = LocalAgentTeamAssetCategory(rawValue: Self.string(statement, 3)),
-              let status = LocalAgentTeamAssetStatus(rawValue: Self.string(statement, 7)) else {
-            throw AgentGroupChatError.storage("invalid team asset")
-        }
-        let asset = LocalAgentTeamAsset(
-            id: Self.string(statement, 1),
-            ownerUserID: Self.string(statement, 0),
-            teamRoomID: Self.string(statement, 2),
-            category: category,
-            title: Self.string(statement, 4),
-            markdown: Self.string(statement, 5),
-            revision: Int(sqlite3_column_int64(statement, 6)),
-            status: status,
-            createdByAgentID: Self.optionalString(statement, 8),
-            updatedByAgentID: Self.optionalString(statement, 9),
-            createdAtUnixMs: sqlite3_column_int64(statement, 10),
-            updatedAtUnixMs: sqlite3_column_int64(statement, 11)
-        )
-        try asset.validate()
-        return asset
-    }
-
-    private func readTodoTeamAssetSnapshot(
-        _ statement: OpaquePointer
-    ) throws -> LocalAgentTodoTeamAssetSnapshot {
-        guard let category = LocalAgentTeamAssetCategory(rawValue: Self.string(statement, 3)) else {
-            throw AgentGroupChatError.storage("invalid Todo team asset snapshot")
-        }
-        return .init(
-            todoID: Self.string(statement, 0),
-            assetID: Self.string(statement, 1),
-            teamRoomID: Self.string(statement, 2),
-            category: category,
-            title: Self.string(statement, 4),
-            markdown: Self.string(statement, 5),
-            revision: Int(sqlite3_column_int64(statement, 6)),
-            capturedAtUnixMs: sqlite3_column_int64(statement, 7)
-        )
     }
 
     private func readProposal(
@@ -5417,53 +5376,6 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             attachments: attachments,
             createdAtUnixMs: sqlite3_column_int64(statement, 11)
         )
-    }
-
-    private func readTodo(_ statement: OpaquePointer) throws -> LocalAgentTodo {
-        guard let status = LocalAgentTodoStatus(rawValue: Self.string(statement, 11)) else {
-            throw AgentGroupChatError.storage("invalid Agent todo status")
-        }
-        let executionPlan: LocalAgentTodoExecutionPlan
-        let executionContract: LocalAgentTodoExecutionContract
-        do {
-            executionPlan = try JSONDecoder().decode(
-                LocalAgentTodoExecutionPlan.self,
-                from: Data(Self.string(statement, 16).utf8)
-            )
-            executionContract = try JSONDecoder().decode(
-                LocalAgentTodoExecutionContract.self,
-                from: Data(Self.string(statement, 17).utf8)
-            ).normalized(
-                title: Self.string(statement, 6),
-                detail: Self.string(statement, 7)
-            )
-        } catch {
-            throw AgentGroupChatError.storage("invalid Agent Todo execution contract")
-        }
-        guard let teamRoomID = Self.optionalString(statement, 3) else {
-            throw AgentGroupChatError.storage("Agent Todo is missing its team binding")
-        }
-        let todo = LocalAgentTodo(
-            id: Self.string(statement, 1),
-            ownerUserID: Self.string(statement, 0),
-            agentID: Self.string(statement, 2),
-            teamRoomID: teamRoomID,
-            sourceRoomID: Self.optionalString(statement, 4),
-            sourceMessageID: Self.optionalString(statement, 5),
-            title: Self.string(statement, 6),
-            detail: Self.string(statement, 7),
-            priority: Int(sqlite3_column_int64(statement, 8)),
-            sortOrder: sqlite3_column_int64(statement, 9),
-            status: status,
-            blockedReason: Self.string(statement, 12),
-            result: Self.string(statement, 13),
-            executionContract: executionContract,
-            executionPlan: executionPlan,
-            createdAtUnixMs: sqlite3_column_int64(statement, 14),
-            updatedAtUnixMs: sqlite3_column_int64(statement, 15)
-        )
-        try todo.validate()
-        return todo
     }
 
     private func readMessageAttachments(
