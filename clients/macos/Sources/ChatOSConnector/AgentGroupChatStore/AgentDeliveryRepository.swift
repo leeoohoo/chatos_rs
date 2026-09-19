@@ -108,6 +108,41 @@ enum AgentDeliveryRepository {
         )
     }
 
+    static func countForRootMessage(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        rootMessageID: String,
+        preparedStatement: () -> Void
+    ) throws -> Int64 {
+        preparedStatement()
+        return try AgentGroupChatDatabase.scalarInt64(
+            handle,
+            """
+            SELECT COUNT(*) FROM project_agent_deliveries
+            WHERE owner_user_id = ? AND root_message_id = ?
+            """,
+            [.text(ownerUserID), .text(rootMessageID)]
+        )
+    }
+
+    static func outstandingDeliveryIDs(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        roomID: String,
+        preparedStatement: () -> Void
+    ) throws -> [String] {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT id FROM project_agent_deliveries
+            WHERE owner_user_id = ? AND room_id = ? AND status IN ('pending', 'running')
+            ORDER BY created_at_unix_ms, id
+            """,
+            [.text(ownerUserID), .text(roomID)]
+        ) { string($0, 0) }
+    }
+
     private static func string(_ statement: OpaquePointer, _ index: Int32) -> String {
         guard let value = sqlite3_column_text(statement, index) else { return "" }
         return String(cString: value)

@@ -2325,12 +2325,11 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             let targets = candidates.filter {
                 !(draft.senderKind == .agent && $0 == draft.senderID)
             }
-            let existingRunCount = try scalarInt64(
-                """
-                SELECT COUNT(*) FROM project_agent_deliveries
-                WHERE owner_user_id = ? AND root_message_id = ?
-                """,
-                [.text(ownerUserID), .text(rootMessageID)]
+            let existingRunCount = try AgentDeliveryRepository.countForRootMessage(
+                database,
+                ownerUserID: ownerUserID,
+                rootMessageID: rootMessageID,
+                preparedStatement: recordPreparedStatement
             )
             let stopReason: String?
             if draft.hopCount > limits.maximumHopCount {
@@ -4711,14 +4710,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             guard try readRoom(ownerUserID: ownerUserID, roomID: roomID) != nil else {
                 throw AgentGroupChatError.notFound
             }
-            let deliveryIDs: [String] = try query(
-                """
-                SELECT id FROM project_agent_deliveries
-                WHERE owner_user_id = ? AND room_id = ? AND status IN ('pending', 'running')
-                ORDER BY created_at_unix_ms, id
-                """,
-                [.text(ownerUserID), .text(roomID)]
-            ) { Self.string($0, 0) }
+            let deliveryIDs = try AgentDeliveryRepository.outstandingDeliveryIDs(
+                database,
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                preparedStatement: recordPreparedStatement
+            )
             guard !deliveryIDs.isEmpty else { return 0 }
 
             let encoder = JSONEncoder()
