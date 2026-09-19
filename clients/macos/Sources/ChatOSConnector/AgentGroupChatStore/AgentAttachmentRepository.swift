@@ -1,4 +1,10 @@
+import ChatOSCore
 import SQLite3
+
+struct StoredMessageAttachment {
+    let attachment: ProjectAgentMessageAttachment
+    let relativePath: String
+}
 
 struct AgentArtifactUploadCandidate {
     let id: String
@@ -12,6 +18,58 @@ struct AgentArtifactUploadCandidate {
 }
 
 enum AgentAttachmentRepository {
+    static func messageAttachment(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        messageID: String,
+        attachmentID: String,
+        roomID: String,
+        preparedStatement: () -> Void
+    ) throws -> StoredMessageAttachment? {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT a.id, a.name, a.mime_type, a.size_bytes, a.kind, a.origin,
+                   a.relative_path, a.sha256, a.sync_status, a.artifact_id,
+                   a.storage_provider, a.bucket, a.object_key, a.remote_view_path,
+                   a.upload_error, a.synced_at_unix_ms
+            FROM project_agent_message_attachments a
+            JOIN project_agent_messages m
+              ON m.owner_user_id = a.owner_user_id AND m.id = a.message_id
+            WHERE a.owner_user_id = ? AND a.message_id = ? AND a.id = ? AND m.room_id = ?
+            """,
+            [.text(ownerUserID), .text(messageID), .text(attachmentID), .text(roomID)]
+        ) { statement in
+            guard let kind = ConversationAttachmentKind(rawValue: string(statement, 4)),
+                  let origin = ConversationAttachmentOrigin(rawValue: string(statement, 5)) else {
+                throw AgentGroupChatError.storage("invalid message attachment")
+            }
+            return StoredMessageAttachment(
+                attachment: .init(
+                    id: string(statement, 0),
+                    name: string(statement, 1),
+                    mimeType: string(statement, 2),
+                    size: Int(sqlite3_column_int64(statement, 3)),
+                    kind: kind,
+                    origin: origin,
+                    sha256: optionalString(statement, 7),
+                    syncStatus: ProjectAgentMessageAttachmentSyncStatus(
+                        rawValue: string(statement, 8)
+                    ) ?? .localOnly,
+                    artifactID: optionalString(statement, 9),
+                    storageProvider: optionalString(statement, 10),
+                    bucket: optionalString(statement, 11),
+                    objectKey: optionalString(statement, 12),
+                    remoteViewPath: optionalString(statement, 13),
+                    uploadError: optionalString(statement, 14),
+                    syncedAtUnixMs: optionalInt64(statement, 15)
+                ),
+                relativePath: string(statement, 6)
+            )
+        }.first
+    }
+
     static func nextSyncDue(
         _ handle: OpaquePointer?,
         ownerUserID: String,
@@ -73,5 +131,17 @@ enum AgentAttachmentRepository {
     private static func string(_ statement: OpaquePointer, _ index: Int32) -> String {
         guard let value = sqlite3_column_text(statement, index) else { return "" }
         return String(cString: value)
+    }
+
+    private static func optionalString(_ statement: OpaquePointer, _ index: Int32) -> String? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL,
+              let value = sqlite3_column_text(statement, index) else { return nil }
+        return String(cString: value)
+    }
+
+    private static func optionalInt64(_ statement: OpaquePointer, _ index: Int32) -> Int64? {
+        sqlite3_column_type(statement, index) == SQLITE_NULL
+            ? nil
+            : sqlite3_column_int64(statement, index)
     }
 }

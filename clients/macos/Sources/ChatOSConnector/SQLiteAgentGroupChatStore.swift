@@ -26,11 +26,6 @@ public struct ProjectAgentArtifactUploadJob: Sendable, Equatable {
 /// Account- and project-scoped local authority for Agent rooms. The transcript and delivery
 /// queue remain usable without the network, Memory Engine, Plugin Management or Codex CLI.
 public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChatRunStoring {
-    private struct StoredMessageAttachment {
-        let attachment: ProjectAgentMessageAttachment
-        let relativePath: String
-    }
-
     private nonisolated(unsafe) var database: OpaquePointer?
     private let attachmentsRootURL: URL
     private let agentArtifactService: (any AgentArtifactRemoteServing)?
@@ -2398,48 +2393,14 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         try AgentGroupChatValidation.identifier(roomID, field: "roomID")
         try AgentGroupChatValidation.identifier(messageID, field: "messageID")
         try AgentGroupChatValidation.identifier(attachmentID, field: "attachmentID")
-        guard let stored = try query(
-            """
-            SELECT a.id, a.name, a.mime_type, a.size_bytes, a.kind, a.origin,
-                   a.relative_path, a.sha256, a.sync_status, a.artifact_id,
-                   a.storage_provider, a.bucket, a.object_key, a.remote_view_path,
-                   a.upload_error, a.synced_at_unix_ms
-            FROM project_agent_message_attachments a
-            JOIN project_agent_messages m
-              ON m.owner_user_id = a.owner_user_id AND m.id = a.message_id
-            WHERE a.owner_user_id = ? AND a.message_id = ? AND a.id = ? AND m.room_id = ?
-            """,
-            [.text(ownerUserID), .text(messageID), .text(attachmentID), .text(roomID)],
-            row: { statement in
-                guard let kind = ConversationAttachmentKind(rawValue: Self.string(statement, 4)),
-                      let origin = ConversationAttachmentOrigin(rawValue: Self.string(statement, 5)) else {
-                    throw AgentGroupChatError.storage("invalid message attachment")
-                }
-                let attachment = ProjectAgentMessageAttachment(
-                    id: Self.string(statement, 0),
-                    name: Self.string(statement, 1),
-                    mimeType: Self.string(statement, 2),
-                    size: Int(sqlite3_column_int64(statement, 3)),
-                    kind: kind,
-                    origin: origin,
-                    sha256: Self.optionalString(statement, 7),
-                    syncStatus: ProjectAgentMessageAttachmentSyncStatus(
-                        rawValue: Self.string(statement, 8)
-                    ) ?? .localOnly,
-                    artifactID: Self.optionalString(statement, 9),
-                    storageProvider: Self.optionalString(statement, 10),
-                    bucket: Self.optionalString(statement, 11),
-                    objectKey: Self.optionalString(statement, 12),
-                    remoteViewPath: Self.optionalString(statement, 13),
-                    uploadError: Self.optionalString(statement, 14),
-                    syncedAtUnixMs: Self.optionalInt64(statement, 15)
-                )
-                return StoredMessageAttachment(
-                    attachment: attachment,
-                    relativePath: Self.string(statement, 6)
-                )
-            }
-        ).first else { return nil }
+        guard let stored = try AgentAttachmentRepository.messageAttachment(
+            database,
+            ownerUserID: ownerUserID,
+            messageID: messageID,
+            attachmentID: attachmentID,
+            roomID: roomID,
+            preparedStatement: recordPreparedStatement
+        ) else { return nil }
         let fileURL = try attachmentFileURL(relativePath: stored.relativePath)
         if !FileManager.default.fileExists(atPath: fileURL.path) {
             guard stored.attachment.syncStatus == .synced,
