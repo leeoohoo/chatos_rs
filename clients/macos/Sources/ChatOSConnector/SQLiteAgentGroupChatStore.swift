@@ -197,13 +197,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             }
             var deliveries: [ProjectAgentDelivery] = []
             for agent in dueAgents {
-                let outstanding = try scalarInt64(
-                    """
-                    SELECT COUNT(*) FROM project_agent_deliveries
-                    WHERE owner_user_id = ? AND target_agent_id = ?
-                      AND trigger_kind = 'heartbeat' AND status IN ('pending', 'running')
-                    """,
-                    [.text(ownerUserID), .text(agent.id)]
+                let outstanding = try AgentDeliveryRepository.outstandingCount(
+                    database,
+                    ownerUserID: ownerUserID,
+                    targetAgentID: agent.id,
+                    triggerKind: .heartbeat,
+                    preparedStatement: recordPreparedStatement
                 )
                 if outstanding == 0 {
                     let directKey = "human:\(ownerUserID)|agent:\(agent.id)"
@@ -321,13 +320,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             ) { Self.string($0, 0) }
             var deliveries: [ProjectAgentDelivery] = []
             for agentID in agentIDs {
-                let outstanding = try scalarInt64(
-                    """
-                    SELECT COUNT(*) FROM project_agent_deliveries
-                    WHERE owner_user_id = ? AND target_agent_id = ?
-                      AND trigger_kind = 'todo' AND status IN ('pending', 'running')
-                    """,
-                    [.text(ownerUserID), .text(agentID)]
+                let outstanding = try AgentDeliveryRepository.outstandingCount(
+                    database,
+                    ownerUserID: ownerUserID,
+                    targetAgentID: agentID,
+                    triggerKind: .todo,
+                    preparedStatement: recordPreparedStatement
                 )
                 guard outstanding == 0 else { continue }
                 guard let todo = try query(
@@ -475,13 +473,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             guard try readAgent(ownerUserID: ownerUserID, agentID: agentID)?.status == .active else {
                 throw AgentGroupChatError.notFound
             }
-            let outstanding = try scalarInt64(
-                """
-                SELECT COUNT(*) FROM project_agent_deliveries
-                WHERE owner_user_id = ? AND target_agent_id = ?
-                  AND trigger_kind = 'todo' AND status IN ('pending', 'running')
-                """,
-                [.text(ownerUserID), .text(agentID)]
+            let outstanding = try AgentDeliveryRepository.outstandingCount(
+                database,
+                ownerUserID: ownerUserID,
+                targetAgentID: agentID,
+                triggerKind: .todo,
+                preparedStatement: recordPreparedStatement
             )
             let runningTodoCount = try scalarInt64(
                 """

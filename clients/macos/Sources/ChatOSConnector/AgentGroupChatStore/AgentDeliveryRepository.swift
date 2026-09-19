@@ -89,6 +89,25 @@ enum AgentDeliveryRepository {
         }.first
     }
 
+    static func outstandingCount(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        targetAgentID: String,
+        triggerKind: ProjectAgentDeliveryTriggerKind,
+        preparedStatement: () -> Void
+    ) throws -> Int64 {
+        preparedStatement()
+        return try AgentGroupChatDatabase.scalarInt64(
+            handle,
+            """
+            SELECT COUNT(*) FROM project_agent_deliveries
+            WHERE owner_user_id = ? AND target_agent_id = ?
+              AND trigger_kind = '\(triggerKind.rawValue)' AND status IN ('pending', 'running')
+            """,
+            [.text(ownerUserID), .text(targetAgentID)]
+        )
+    }
+
     private static func string(_ statement: OpaquePointer, _ index: Int32) -> String {
         guard let value = sqlite3_column_text(statement, index) else { return "" }
         return String(cString: value)
