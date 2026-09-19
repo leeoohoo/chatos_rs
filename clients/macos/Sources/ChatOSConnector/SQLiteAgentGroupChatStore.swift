@@ -2657,25 +2657,11 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         ownerUserID: String
     ) throws -> [AgentCommunicationMetricRow] {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
-        return try query(
-            """
-            SELECT metric_name, dimension, event_count, total_value, maximum_value,
-                   updated_at_unix_ms
-            FROM local_agent_communication_metrics
-            WHERE owner_user_id = ?
-            ORDER BY metric_name, dimension
-            """,
-            [.text(ownerUserID)]
-        ) { statement in
-            AgentCommunicationMetricRow(
-                name: Self.string(statement, 0),
-                dimension: Self.string(statement, 1),
-                count: sqlite3_column_int64(statement, 2),
-                totalValue: sqlite3_column_int64(statement, 3),
-                maximumValue: sqlite3_column_int64(statement, 4),
-                updatedAtUnixMs: sqlite3_column_int64(statement, 5)
-            )
-        }
+        return try AgentCommunicationMetricRepository.snapshot(
+            database,
+            ownerUserID: ownerUserID,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     private func recordAgentCommunicationMetric(
