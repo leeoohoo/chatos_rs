@@ -3419,12 +3419,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     ) throws -> [LocalAgentTodo] {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(agentID, field: "agentID")
-        return try query(
-            "SELECT \(Self.todoColumns) FROM local_agent_todos WHERE owner_user_id = ? AND agent_id = ?"
-                + (includeTerminal ? "" : " AND status NOT IN ('completed', 'cancelled')")
-                + " ORDER BY priority DESC, sort_order, created_at_unix_ms, id",
-            [.text(ownerUserID), .text(agentID)],
-            row: AgentGroupChatRowMapper.todo
+        return try AgentTodoRepository.listForAgent(
+            database,
+            ownerUserID: ownerUserID,
+            agentID: agentID,
+            includeTerminal: includeTerminal,
+            preparedStatement: recordPreparedStatement
         )
     }
 
@@ -3439,12 +3439,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             == .projectTeam else {
             throw AgentGroupChatError.notFound
         }
-        return try query(
-            "SELECT \(Self.todoColumns) FROM local_agent_todos WHERE owner_user_id = ? AND team_room_id = ?"
-                + (includeTerminal ? "" : " AND status NOT IN ('completed', 'cancelled')")
-                + " ORDER BY priority DESC, sort_order, created_at_unix_ms, id",
-            [.text(ownerUserID), .text(teamRoomID)],
-            row: AgentGroupChatRowMapper.todo
+        return try AgentTodoRepository.listForTeam(
+            database,
+            ownerUserID: ownerUserID,
+            teamRoomID: teamRoomID,
+            includeTerminal: includeTerminal,
+            preparedStatement: recordPreparedStatement
         )
     }
 
@@ -3482,11 +3482,13 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             )
         }
         return try transaction {
-            if let existing = try query(
-                "SELECT \(Self.todoColumns) FROM local_agent_todos WHERE owner_user_id = ? AND agent_id = ? AND request_key = ? LIMIT 1",
-                [.text(ownerUserID), .text(agentID), .text(requestKey)],
-                row: AgentGroupChatRowMapper.todo
-            ).first { return existing }
+            if let existing = try AgentTodoRepository.find(
+                database,
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                requestKey: requestKey,
+                preparedStatement: recordPreparedStatement
+            ) { return existing }
             guard try readAgent(ownerUserID: ownerUserID, agentID: agentID)?.status == .active else {
                 throw AgentGroupChatError.notFound
             }
@@ -5050,11 +5052,13 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         agentID: String,
         todoID: String
     ) throws -> LocalAgentTodo? {
-        try query(
-            "SELECT \(Self.todoColumns) FROM local_agent_todos WHERE owner_user_id = ? AND agent_id = ? AND id = ? LIMIT 1",
-            [.text(ownerUserID), .text(agentID), .text(todoID)],
-            row: AgentGroupChatRowMapper.todo
-        ).first
+        try AgentTodoRepository.find(
+            database,
+            ownerUserID: ownerUserID,
+            agentID: agentID,
+            todoID: todoID,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     private func readProposal(
