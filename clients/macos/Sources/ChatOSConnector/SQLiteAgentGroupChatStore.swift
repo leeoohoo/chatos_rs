@@ -132,12 +132,11 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         includeArchived: Bool = false
     ) throws -> [LocalAgentProfile] {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
-        return try query(
-            "SELECT \(Self.agentColumns) FROM local_agent_profiles WHERE owner_user_id = ?"
-                + (includeArchived ? "" : " AND status = 'active'")
-                + " ORDER BY name, id",
-            [.text(ownerUserID)],
-            row: AgentGroupChatRowMapper.agent
+        return try AgentProfileRepository.list(
+            database,
+            ownerUserID: ownerUserID,
+            includeArchived: includeArchived,
+            preparedStatement: recordPreparedStatement
         )
     }
 
@@ -4976,11 +4975,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
     }
 
     private func readAgent(ownerUserID: String, agentID: String) throws -> LocalAgentProfile? {
-        try query(
-            "SELECT \(Self.agentColumns) FROM local_agent_profiles WHERE owner_user_id = ? AND id = ?",
-            [.text(ownerUserID), .text(agentID)],
-            row: AgentGroupChatRowMapper.agent
-        ).first
+        try AgentProfileRepository.find(
+            database,
+            ownerUserID: ownerUserID,
+            agentID: agentID,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     private func readMember(
@@ -5555,7 +5555,6 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
 
     private static func now() -> Int64 { Int64(Date().timeIntervalSince1970 * 1_000) }
 
-    private static let agentColumns = "owner_user_id, id, name, description, role_prompt, model_config_id, thinking_level, profession_key, default_plugin_ids_json, default_skill_ids_json, heartbeat_enabled, heartbeat_interval_seconds, heartbeat_prompt, last_heartbeat_at_unix_ms, next_heartbeat_at_unix_ms, status, created_at_unix_ms, updated_at_unix_ms"
     private static let roomColumns = "owner_user_id, id, project_id, name, goal, default_agent_id, status, created_at_unix_ms, updated_at_unix_ms, conversation_kind, direct_key, project_manager_agent_id"
     private static let memberColumns = "owner_user_id, room_id, agent_id, role, responsibility, plugin_allowlist_json, status, joined_at_unix_ms"
     private static let messageColumns = "owner_user_id, id, room_id, sender_kind, sender_id, content, reply_to_message_id, source_run_id, causation_id, root_message_id, hop_count, created_at_unix_ms"
