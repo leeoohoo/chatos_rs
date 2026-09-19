@@ -89,6 +89,41 @@ enum AgentGroupChatDatabase {
         }
     }
 
+    static func execute(
+        _ handle: OpaquePointer?,
+        _ sql: String,
+        _ values: [Value] = []
+    ) throws {
+        let _: [Int] = try query(handle, sql, values) { _ in 0 }
+    }
+
+    static func scalarInt64(
+        _ handle: OpaquePointer?,
+        _ sql: String,
+        _ values: [Value]
+    ) throws -> Int64 {
+        try query(handle, sql, values) { sqlite3_column_int64($0, 0) }.first ?? 0
+    }
+
+    static func transaction<T>(
+        _ handle: OpaquePointer?,
+        preparedStatement: () -> Void,
+        body: () throws -> T
+    ) throws -> T {
+        preparedStatement()
+        try execute(handle, "BEGIN IMMEDIATE")
+        do {
+            let result = try body()
+            preparedStatement()
+            try execute(handle, "COMMIT")
+            return result
+        } catch {
+            preparedStatement()
+            try? execute(handle, "ROLLBACK")
+            throw error
+        }
+    }
+
     private static func storageError(_ handle: OpaquePointer?) -> AgentGroupChatError {
         .storage(String(cString: sqlite3_errmsg(handle)))
     }

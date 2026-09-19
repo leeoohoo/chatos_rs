@@ -5849,30 +5849,32 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         _ values: [Value] = [],
         row: (OpaquePointer) throws -> T
     ) throws -> [T] {
-#if DEBUG
-        debugPreparedStatementCount += 1
-#endif
+        recordPreparedStatement()
         return try AgentGroupChatDatabase.query(database, sql, values, row: row)
     }
 
     private func execute(_ sql: String, _ values: [Value] = []) throws {
-        let _: [Int] = try query(sql, values) { _ in 0 }
+        recordPreparedStatement()
+        try AgentGroupChatDatabase.execute(database, sql, values)
     }
 
     private func scalarInt64(_ sql: String, _ values: [Value]) throws -> Int64 {
-        try query(sql, values) { sqlite3_column_int64($0, 0) }.first ?? 0
+        recordPreparedStatement()
+        return try AgentGroupChatDatabase.scalarInt64(database, sql, values)
     }
 
     private func transaction<T>(_ body: () throws -> T) throws -> T {
-        try execute("BEGIN IMMEDIATE")
-        do {
-            let result = try body()
-            try execute("COMMIT")
-            return result
-        } catch {
-            try? execute("ROLLBACK")
-            throw error
-        }
+        try AgentGroupChatDatabase.transaction(
+            database,
+            preparedStatement: recordPreparedStatement,
+            body: body
+        )
+    }
+
+    private func recordPreparedStatement() {
+#if DEBUG
+        debugPreparedStatementCount += 1
+#endif
     }
 
     private func encodeStrings(_ values: [String]) throws -> String {
