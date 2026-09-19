@@ -2805,20 +2805,16 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         guard try readRoom(ownerUserID: ownerUserID, roomID: roomID) != nil else {
             throw AgentGroupChatError.notFound
         }
-        var values: [Value] = [.text(ownerUserID), .text(roomID)]
-        var predicate = "owner_user_id = ? AND room_id = ? AND NOT (sender_kind = 'system' AND causation_id IN ('heartbeat', 'todo', 'todo_status'))"
         if let afterUnixMs {
             guard afterUnixMs >= 0 else { throw AgentGroupChatError.invalidField("afterUnixMs") }
-            predicate += " AND created_at_unix_ms > ?"
-            values.append(.integer(afterUnixMs))
         }
-        values.append(.integer(Int64(limit)))
-        return try query(
-            """
-            SELECT \(Self.messageColumns) FROM project_agent_messages
-            WHERE \(predicate) ORDER BY created_at_unix_ms, id LIMIT ?
-            """,
-            values,
+        return try AgentMessageRepository.list(
+            database,
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            afterUnixMs: afterUnixMs,
+            limit: limit,
+            preparedStatement: recordPreparedStatement,
             row: readMessage
         )
     }
