@@ -2,6 +2,30 @@ import ChatOSCore
 import SQLite3
 
 enum AgentTodoRepository {
+    static func pendingDependents(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        prerequisiteTodoID: String,
+        preparedStatement: () -> Void
+    ) throws -> [(agentID: String, todoID: String)] {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT todo.agent_id, todo.id
+            FROM local_agent_todo_dependencies dependency
+            JOIN local_agent_todos todo
+              ON todo.owner_user_id = dependency.owner_user_id AND todo.id = dependency.todo_id
+            WHERE dependency.owner_user_id = ? AND dependency.prerequisite_todo_id = ?
+              AND todo.status = 'pending'
+            ORDER BY todo.priority DESC, todo.sort_order, todo.id
+            """,
+            [.text(ownerUserID), .text(prerequisiteTodoID)]
+        ) { statement in
+            (string(statement, 0), string(statement, 1))
+        }
+    }
+
     static func listProgress(
         _ handle: OpaquePointer?,
         ownerUserID: String,

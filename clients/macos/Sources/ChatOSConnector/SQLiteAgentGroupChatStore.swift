@@ -4088,20 +4088,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(prerequisiteTodoID, field: "prerequisiteTodoID")
         guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
-        let dependents: [(agentID: String, todoID: String)] = try query(
-            """
-            SELECT todo.agent_id, todo.id
-            FROM local_agent_todo_dependencies dependency
-            JOIN local_agent_todos todo
-              ON todo.owner_user_id = dependency.owner_user_id AND todo.id = dependency.todo_id
-            WHERE dependency.owner_user_id = ? AND dependency.prerequisite_todo_id = ?
-              AND todo.status = 'pending'
-            ORDER BY todo.priority DESC, todo.sort_order, todo.id
-            """,
-            [.text(ownerUserID), .text(prerequisiteTodoID)]
-        ) { statement in
-            (Self.string(statement, 0), Self.string(statement, 1))
-        }
+        let dependents = try AgentTodoRepository.pendingDependents(
+            database,
+            ownerUserID: ownerUserID,
+            prerequisiteTodoID: prerequisiteTodoID,
+            preparedStatement: recordPreparedStatement
+        )
         var deliveries: [ProjectAgentDelivery] = []
         for dependent in dependents {
             if let delivery = try enqueueAgentTodoReady(
