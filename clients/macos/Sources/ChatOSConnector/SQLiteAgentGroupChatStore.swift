@@ -2833,27 +2833,25 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         guard try readRoom(ownerUserID: ownerUserID, roomID: roomID) != nil else {
             throw AgentGroupChatError.notFound
         }
-        var predicate = "owner_user_id = ? AND room_id = ? AND NOT (sender_kind = 'system' AND causation_id IN ('heartbeat', 'todo', 'todo_status'))"
-        var values: [Value] = [.text(ownerUserID), .text(roomID)]
+        var messageCursor: AgentMessageRepository.Cursor?
         if let afterMessageID {
             try AgentGroupChatValidation.identifier(afterMessageID, field: "afterMessageID")
             guard let cursor = try readMessage(ownerUserID: ownerUserID, messageID: afterMessageID),
                   cursor.roomID == roomID else {
                 throw AgentGroupChatError.notFound
             }
-            predicate += " AND (created_at_unix_ms > ? OR (created_at_unix_ms = ? AND id > ?))"
-            values.append(contentsOf: [
-                .integer(cursor.createdAtUnixMs), .integer(cursor.createdAtUnixMs),
-                .text(cursor.id),
-            ])
+            messageCursor = .init(
+                createdAtUnixMs: cursor.createdAtUnixMs,
+                messageID: cursor.id
+            )
         }
-        values.append(.integer(Int64(limit + 1)))
-        let loaded = try query(
-            """
-            SELECT \(Self.messageColumns) FROM project_agent_messages
-            WHERE \(predicate) ORDER BY created_at_unix_ms, id LIMIT ?
-            """,
-            values,
+        let loaded = try AgentMessageRepository.pageForward(
+            database,
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            after: messageCursor,
+            limit: limit,
+            preparedStatement: recordPreparedStatement,
             row: readMessage
         )
         let messages = Array(loaded.prefix(limit))
