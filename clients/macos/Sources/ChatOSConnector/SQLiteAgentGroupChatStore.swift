@@ -3693,26 +3693,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         guard try readTodo(ownerUserID: ownerUserID, agentID: agentID, todoID: todoID) != nil else {
             throw AgentGroupChatError.notFound
         }
-        return try query(
-            """
-            SELECT todo_id, conversation_id, message_id, relation, created_at_unix_ms
-            FROM local_agent_todo_sources
-            WHERE owner_user_id = ? AND todo_id = ?
-            ORDER BY created_at_unix_ms, message_id, relation
-            """,
-            [.text(ownerUserID), .text(todoID)]
-        ) { statement in
-            guard let relation = LocalAgentTodoSourceRelation(
-                rawValue: Self.string(statement, 3)
-            ) else { throw AgentGroupChatError.storage("invalid Agent Todo source relation") }
-            return .init(
-                todoID: Self.string(statement, 0),
-                conversationID: Self.string(statement, 1),
-                messageID: Self.string(statement, 2),
-                relation: relation,
-                createdAtUnixMs: sqlite3_column_int64(statement, 4)
-            )
-        }
+        return try AgentTodoRepository.listSources(
+            database,
+            ownerUserID: ownerUserID,
+            todoID: todoID,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     public func listAgentTodoDependencies(
