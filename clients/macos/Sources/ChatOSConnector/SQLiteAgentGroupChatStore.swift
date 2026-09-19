@@ -137,17 +137,11 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
 
     public func nextAgentHeartbeatDue(ownerUserID: String) throws -> Int64? {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
-        return try query(
-            """
-            SELECT next_heartbeat_at_unix_ms
-            FROM local_agent_profiles
-            WHERE owner_user_id = ? AND status = 'active' AND heartbeat_enabled = 1
-              AND next_heartbeat_at_unix_ms IS NOT NULL
-            ORDER BY next_heartbeat_at_unix_ms
-            LIMIT 1
-            """,
-            [.text(ownerUserID)]
-        ) { sqlite3_column_int64($0, 0) }.first
+        return try AgentProfileRepository.nextHeartbeatDue(
+            database,
+            ownerUserID: ownerUserID,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     /// Creates exactly one account-wide inbox wake-up for each due Agent. The wake-up is anchored

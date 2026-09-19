@@ -2,6 +2,26 @@ import ChatOSCore
 import SQLite3
 
 enum AgentProfileRepository {
+    static func nextHeartbeatDue(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        preparedStatement: () -> Void
+    ) throws -> Int64? {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT next_heartbeat_at_unix_ms
+            FROM local_agent_profiles
+            WHERE owner_user_id = ? AND status = 'active' AND heartbeat_enabled = 1
+              AND next_heartbeat_at_unix_ms IS NOT NULL
+            ORDER BY next_heartbeat_at_unix_ms
+            LIMIT 1
+            """,
+            [.text(ownerUserID)]
+        ) { sqlite3_column_int64($0, 0) }.first
+    }
+
     static func list(
         _ handle: OpaquePointer?,
         ownerUserID: String,
