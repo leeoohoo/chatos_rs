@@ -2,6 +2,20 @@ import ChatOSCore
 import SQLite3
 
 enum AgentTodoRepository {
+    static func nextSortOrder(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        agentID: String,
+        preparedStatement: () -> Void
+    ) throws -> Int64 {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM local_agent_todos WHERE owner_user_id = ? AND agent_id = ?",
+            [.text(ownerUserID), .text(agentID)]
+        ) { sqlite3_column_int64($0, 0) }.first ?? 0
+    }
+
     static func pendingDependents(
         _ handle: OpaquePointer?,
         ownerUserID: String,

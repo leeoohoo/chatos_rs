@@ -3407,10 +3407,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                )?.status == .active else {
                 throw AgentGroupChatError.invalidField("teamRef")
             }
-            let nextOrder = (try query(
-                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM local_agent_todos WHERE owner_user_id = ? AND agent_id = ?",
-                [.text(ownerUserID), .text(agentID)]
-            ) { sqlite3_column_int64($0, 0) }.first) ?? 0
+            let nextOrder = try AgentTodoRepository.nextSortOrder(
+                database,
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                preparedStatement: recordPreparedStatement
+            )
             let todo = LocalAgentTodo(
                 id: UUID().uuidString.lowercased(),
                 ownerUserID: ownerUserID,
