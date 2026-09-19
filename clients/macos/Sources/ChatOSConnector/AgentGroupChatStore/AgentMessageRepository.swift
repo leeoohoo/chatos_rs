@@ -115,6 +115,41 @@ enum AgentMessageRepository {
         )
     }
 
+    static func listUnread(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        roomID: String,
+        agentID: String,
+        after cursor: Cursor?,
+        limit: Int,
+        preparedStatement: () -> Void,
+        row: (OpaquePointer) throws -> ProjectAgentMessage
+    ) throws -> [ProjectAgentMessage] {
+        var predicate = "owner_user_id = ? AND room_id = ? AND NOT (sender_kind = 'system' AND causation_id IN ('heartbeat', 'todo', 'todo_status'))"
+        var values: [AgentGroupChatDatabase.Value] = [.text(ownerUserID), .text(roomID)]
+        if let cursor {
+            predicate += " AND (created_at_unix_ms > ? OR (created_at_unix_ms = ? AND id > ?))"
+            values.append(contentsOf: [
+                .integer(cursor.createdAtUnixMs), .integer(cursor.createdAtUnixMs),
+                .text(cursor.messageID),
+            ])
+        }
+        // An Agent's own persisted replies are transcript context, but never unread work for it.
+        predicate += " AND NOT (sender_kind = 'agent' AND sender_id = ?)"
+        values.append(.text(agentID))
+        values.append(.integer(Int64(limit + 1)))
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT \(columns) FROM project_agent_messages
+            WHERE \(predicate) ORDER BY created_at_unix_ms, id LIMIT ?
+            """,
+            values,
+            row: row
+        )
+    }
+
     static func findMany(
         _ handle: OpaquePointer?,
         ownerUserID: String,
