@@ -3712,26 +3712,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
         guard try readTodo(ownerUserID: ownerUserID, agentID: agentID, todoID: todoID) != nil else {
             throw AgentGroupChatError.notFound
         }
-        return try query(
-            """
-            SELECT d.todo_id, d.prerequisite_todo_id, prerequisite.agent_id,
-                   d.created_at_unix_ms
-            FROM local_agent_todo_dependencies d
-            JOIN local_agent_todos prerequisite
-              ON prerequisite.owner_user_id = d.owner_user_id
-             AND prerequisite.id = d.prerequisite_todo_id
-            WHERE d.owner_user_id = ? AND d.todo_id = ?
-            ORDER BY d.created_at_unix_ms, d.prerequisite_todo_id
-            """,
-            [.text(ownerUserID), .text(todoID)]
-        ) { statement in
-            .init(
-                todoID: Self.string(statement, 0),
-                prerequisiteTodoID: Self.string(statement, 1),
-                prerequisiteAgentID: Self.string(statement, 2),
-                createdAtUnixMs: sqlite3_column_int64(statement, 3)
-            )
-        }
+        return try AgentTodoRepository.listDependencies(
+            database,
+            ownerUserID: ownerUserID,
+            todoID: todoID,
+            preparedStatement: recordPreparedStatement
+        )
     }
 
     public func setAgentTodoDependencies(
