@@ -373,6 +373,17 @@ enum AgentGroupChatRowMapper {
         }
     }
 
+    static func readCursor(_ statement: OpaquePointer) -> ProjectAgentReadCursor {
+        .init(
+            ownerUserID: string(statement, 0),
+            roomID: string(statement, 1),
+            agentID: string(statement, 2),
+            messageID: string(statement, 3),
+            messageCreatedAtUnixMs: sqlite3_column_int64(statement, 4),
+            updatedAtUnixMs: sqlite3_column_int64(statement, 5)
+        )
+    }
+
     private static func decodeStrings(_ value: String) throws -> [String] {
         do {
             return try JSONDecoder().decode([String].self, from: Data(value.utf8))
