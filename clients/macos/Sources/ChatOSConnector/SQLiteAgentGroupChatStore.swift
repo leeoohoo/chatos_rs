@@ -3031,38 +3031,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             guard try readAgent(ownerUserID: ownerUserID, agentID: agentID)?.status == .active else {
                 throw AgentGroupChatError.notFound
             }
-            let messages = try query(
-                """
-                SELECT msg.owner_user_id, msg.id, msg.room_id, msg.sender_kind, msg.sender_id,
-                       msg.content, msg.reply_to_message_id, msg.source_run_id,
-                       msg.causation_id, msg.root_message_id, msg.hop_count,
-                       msg.created_at_unix_ms
-                FROM project_agent_messages msg
-                JOIN project_agent_rooms room
-                  ON room.owner_user_id = msg.owner_user_id AND room.id = msg.room_id
-                JOIN project_agent_room_members member
-                  ON member.owner_user_id = msg.owner_user_id
-                 AND member.room_id = msg.room_id AND member.agent_id = ?
-                LEFT JOIN project_agent_read_cursors cursor
-                  ON cursor.owner_user_id = msg.owner_user_id
-                 AND cursor.room_id = msg.room_id AND cursor.agent_id = ?
-                WHERE msg.owner_user_id = ? AND room.status = 'active'
-                  AND member.status = 'active'
-                  AND NOT (msg.sender_kind = 'system' AND msg.causation_id IN ('heartbeat', 'todo', 'todo_status'))
-                  AND NOT (msg.sender_kind = 'agent' AND msg.sender_id = ?)
-                  AND (
-                    cursor.message_id IS NULL
-                    OR msg.created_at_unix_ms > cursor.message_created_at_unix_ms
-                    OR (msg.created_at_unix_ms = cursor.message_created_at_unix_ms
-                        AND msg.id > cursor.message_id)
-                  )
-                ORDER BY msg.created_at_unix_ms, msg.id
-                LIMIT ?
-                """,
-                [
-                    .text(agentID), .text(agentID), .text(ownerUserID), .text(agentID),
-                    .integer(Int64(limit)),
-                ],
+            let messages = try AgentMessageRepository.listAllUnread(
+                database,
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                limit: limit,
+                preparedStatement: recordPreparedStatement,
                 row: readMessage
             )
             guard !messages.isEmpty else { return [] }
