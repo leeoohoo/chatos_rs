@@ -36,4 +36,15 @@ final class LocalAgentDraftTests: XCTestCase {
         let draft = try JSONDecoder().decode(LocalAgentDraft.self, from: data)
         XCTAssertNil(draft.thinkingLevel)
     }
+
+    func testAutomaticThinkingLevelIsValidForEveryResponsesProviderCatalog() {
+        for provider in ["gpt", "deepseek", "glm", "kimi"] {
+            let values = LocalAgentThinkingLevelCatalog.values(provider: provider)
+            XCTAssertTrue(values.contains("auto"), "Missing auto for \(provider)")
+            XCTAssertEqual(
+                LocalAgentThinkingLevelCatalog.normalized("auto", allowedValues: values),
+                "auto"
+            )
+        }
+    }
 }

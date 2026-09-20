@@ -235,10 +235,10 @@ public enum LocalAgentThinkingLevelCatalog {
 
     public static func values(provider: String?) -> [String] {
         switch normalizedProvider(provider) {
-        case "deepseek": ["none", "high", "max"]
+        case "deepseek": ["auto", "none", "high", "max"]
         case "kimi", "kimik2", "moonshot": ["auto", "none"]
-        case "glm", "zhipu", "zai": ["none", "low", "medium", "high", "xhigh"]
-        default: ["none", "minimal", "low", "medium", "high", "xhigh"]
+        case "glm", "zhipu", "zai": ["auto", "none", "low", "medium", "high", "xhigh"]
+        default: ["auto", "none", "minimal", "low", "medium", "high", "xhigh"]
         }
     }
 

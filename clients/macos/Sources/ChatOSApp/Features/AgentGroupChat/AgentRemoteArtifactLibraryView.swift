@@ -35,6 +35,7 @@ struct AgentRemoteArtifactLibraryView: View {
         } message: {
             Text(errorMessage ?? "")
         }
+        .workspaceFill(alignment: .topLeading)
     }
 
     private var header: some View {
