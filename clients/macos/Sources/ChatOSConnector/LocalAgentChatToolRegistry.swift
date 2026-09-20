@@ -11,7 +11,7 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: workspaceSnapshotToolName,
-            description: "读取当前账户在本机已有的全部活跃 Agent、项目团队、成员关系和显式项目经理。私聊中的 relay_bootstrap 只描述当前会话，不能据此判断其他团队或 Agent 不存在；回答组织现状、既有团队、成员或人员缺口前必须调用本工具。仅返回本轮临时引用，不暴露真实 Agent、团队或项目 ID。",
+            description: "读取当前账户在本机已有的全部活跃 Agent、项目团队、成员关系和显式项目经理。私聊中的 relay_bootstrap 只描述当前会话，不能据此判断其他团队或 Agent 不存在；回答组织现状、既有团队、成员或人员缺口前必须调用本工具。仅返回同一 Run 内有效的临时引用，不暴露真实 Agent、团队或项目 ID；暂停、重启并恢复该 Run 后引用仍可使用。",
             schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8)
         ),
         .init(
@@ -31,12 +31,12 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: readAllUnreadToolName,
-            description: "读取当前 Agent 在全部群聊和私聊中的未读消息。返回内容即视为已读并自动推进各会话游标；只返回本轮临时引用，不暴露真实会话、消息或项目 ID。消息不一定需要行动，请自行判断是否回复、忽略或加入 TodoList。",
+            description: "读取当前 Agent 在全部群聊和私聊中的未读消息。返回内容即视为已读并自动推进各会话游标；只返回同一 Run 内有效的临时引用，不暴露真实会话、消息或项目 ID，暂停、重启并恢复该 Run 后引用仍可使用。消息不一定需要行动，请自行判断是否回复、忽略或加入 TodoList。",
             schema: Data(#"{"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":false}"#.utf8)
         ),
         .init(
             name: inboxSendToolName,
-            description: "使用 chat_read_all_unread 本轮返回的临时引用回复原群聊或私聊。普通成员需要把新增工作交给项目经理任务化时，在项目团队会话设置 notify_project_manager=true，由客户端解析并唤醒该团队明确绑定的项目经理。",
+            description: "使用 chat_read_all_unread 在同一 Run 返回的临时引用回复原群聊或私聊；暂停、重启并恢复该 Run 后旧引用仍可使用。普通成员需要把新增工作交给项目经理任务化时，在项目团队会话设置 notify_project_manager=true，由客户端解析并唤醒该团队明确绑定的项目经理。",
             schema: Data("""
             {"type":"object","properties":{"conversation_ref":{"type":"string","minLength":1,"maxLength":600},"reply_to_message_ref":{"type":"string","minLength":1,"maxLength":600},"content":{"type":"string","minLength":1,"maxLength":\(AgentCommunicationPolicy.standard.maximumMessageCharacters)},"document_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":\(AgentCommunicationPolicy.standard.maximumDocumentsPerMessage),"uniqueItems":true},"notify_project_manager":{"type":"boolean","default":false}},"required":["conversation_ref","reply_to_message_ref","content"],"additionalProperties":false}
             """.utf8),
@@ -44,12 +44,12 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: readMessagesToolName,
-            description: "从最近一页开始，向更早方向分页读取当前会话记录。需要更早消息时，把响应中的 next_before_message_ref 作为 before_message_ref 继续读取。所有引用只在本轮有效。",
+            description: "从最近一页开始，向更早方向分页读取当前会话记录。需要更早消息时，把响应中的 next_before_message_ref 作为 before_message_ref 继续读取。所有引用在同一 Run 内有效，客户端暂停、重启并恢复该 Run 后仍可继续使用。",
             schema: Data(#"{"type":"object","properties":{"before_message_ref":{"type":"string","minLength":1,"maxLength":600},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false}"#.utf8)
         ),
         .init(
             name: readAttachmentToolName,
-            description: "按消息和附件的本轮临时引用读取当前会话附件。文本可用 offset/limit 分段读取；当前触发消息中的图片或 PDF 已由客户端直接作为多模态输入交给模型。",
+            description: "按消息和附件在同一 Run 内有效的临时引用读取当前会话附件。文本可用 offset/limit 分段读取；当前触发消息中的图片或 PDF 已由客户端直接作为多模态输入交给模型。",
             schema: Data(#"{"type":"object","properties":{"message_ref":{"type":"string","minLength":1,"maxLength":600},"attachment_ref":{"type":"string","minLength":1,"maxLength":600},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":12000}},"required":["message_ref","attachment_ref"],"additionalProperties":false}"#.utf8)
         ),
         .init(
@@ -108,7 +108,7 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: sendMessageToolName,
-            description: "以当前 Agent 身份回复当前会话。需要 @ 成员或回复指定消息时，只能使用本轮成员和消息临时引用；发送不会结束通讯周期，仍需检查未读和任务调度并调用 agent_cycle_complete。",
+            description: "以当前 Agent 身份回复当前会话。需要 @ 成员或回复指定消息时，只能使用同一 Run 内的成员和消息临时引用；暂停、重启并恢复该 Run 后旧引用仍可使用。发送不会结束通讯周期，仍需检查未读和任务调度并调用 agent_cycle_complete。",
             schema: Data("""
             {"type":"object","properties":{"content":{"type":"string","minLength":1,"maxLength":\(AgentCommunicationPolicy.standard.maximumMessageCharacters)},"document_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":\(AgentCommunicationPolicy.standard.maximumDocumentsPerMessage),"uniqueItems":true},"mention_agent_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":32,"uniqueItems":true},"reply_to_message_ref":{"type":"string","minLength":1,"maxLength":600}},"required":["content"],"additionalProperties":false}
             """.utf8),
@@ -154,7 +154,7 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: todoAddToolName,
-            description: "仅供项目经理在共享团队任务板创建 Todo。必须明确目标、范围、交付物、验收条件和约束，并选择负责人、前置任务及可信执行能力。team_ref/assignee_ref/plugin_ref 必须来自 todo_execution_options，真实 ID 由客户端解析和校验。",
+            description: "仅供项目经理在共享团队任务板创建 Todo。必须明确目标、范围、交付物、验收条件和约束，并选择负责人、前置任务及可信执行能力。team_ref/assignee_ref/plugin_ref 必须来自 todo_execution_options，source_message_refs 必须来自 chat_get_trigger、relay_bootstrap、chat_read_unread、chat_read_all_unread 或 chat_read_messages；这些工具引用在同一 Run 暂停、重启和恢复后仍有效。真实 ID 由客户端解析和校验。",
             schema: Data(#"{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":500},"detail":{"type":"string","maxLength":16000},"objective":{"type":"string","minLength":1,"maxLength":8000},"scope":{"type":"string","minLength":1,"maxLength":16000},"expected_outputs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":4000},"minItems":1,"maxItems":64},"acceptance_criteria":{"type":"array","items":{"type":"string","minLength":1,"maxLength":4000},"minItems":1,"maxItems":64},"constraints":{"type":"array","items":{"type":"string","minLength":1,"maxLength":4000},"maxItems":64},"priority":{"type":"integer","minimum":0,"maximum":100,"default":50},"team_ref":{"type":"string","minLength":1,"maxLength":600},"assignee_ref":{"type":"string","minLength":1,"maxLength":600},"depends_on_todo_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":64,"uniqueItems":true},"source_message_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"minItems":1,"maxItems":64,"uniqueItems":true},"requires_execution":{"type":"boolean","default":true},"builtin_capabilities":{"type":"array","items":{"type":"string","enum":["project_read","project_write","terminal"]},"maxItems":3,"uniqueItems":true},"plugin_hints":{"type":"array","items":{"type":"object","properties":{"plugin_ref":{"type":"string","minLength":1,"maxLength":600},"reason":{"type":"string","maxLength":1000}},"required":["plugin_ref"],"additionalProperties":false},"maxItems":32}},"required":["title","objective","scope","expected_outputs","acceptance_criteria","team_ref","assignee_ref","source_message_refs","requires_execution","builtin_capabilities"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),

@@ -60,9 +60,9 @@ extension LocalAgentChatToolProvider {
                 return Self.structuredFailure(
                     code: "invalid_source_message_ref",
                     field: "source_message_refs",
-                    message: "补充来源消息无效、已过期，或不属于当前 Agent 的本轮收件箱。",
+                    message: "补充来源消息引用不是当前 Run 的工具签发值、已损坏，或不属于当前 Agent。若来源是本次唤醒消息，请重新调用 chat_get_trigger；若来源是新收件箱消息，请调用 chat_read_all_unread。",
                     retryable: true,
-                    nextTool: Self.readAllUnreadToolName
+                    nextTool: Self.getTriggerToolName
                 )
             }
             linkedSources.append(.init(

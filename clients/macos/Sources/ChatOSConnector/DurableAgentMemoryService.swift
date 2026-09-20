@@ -153,7 +153,7 @@ actor SQLiteAgentMemoryCacheStore {
         let attempted: Bool
     }
 
-    private struct StoredEntry: Codable {
+    private struct StoredEntry: Codable, Equatable {
         let id: String
         let index: Int
         let message: AgentMessage
@@ -168,6 +168,13 @@ actor SQLiteAgentMemoryCacheStore {
 
         var entry: AgentMemoryEntry {
             .init(id: id, index: index, message: message, createdAt: createdAt)
+        }
+
+        func isEquivalent(to entry: AgentMemoryEntry) -> Bool {
+            id == entry.id
+                && index == entry.index
+                && message == entry.message
+                && abs(createdAt.timeIntervalSince(entry.createdAt)) <= 0.001
         }
     }
 
@@ -291,6 +298,9 @@ actor SQLiteAgentMemoryCacheStore {
         guard !entries.isEmpty, entries.count <= 32 else { throw AgentContextError.invalidHistory }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .millisecondsSince1970
+        encoder.outputFormatting = [.sortedKeys]
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .millisecondsSince1970
         try transaction {
             for entry in entries {
                 guard entry.id == scope.recordID(at: entry.index) else {
@@ -302,7 +312,10 @@ actor SQLiteAgentMemoryCacheStore {
                     [.text(scope.threadID), .text(entry.id)],
                     row: { blob($0, 0) }
                 ).first {
-                    guard existing == encoded else { throw AgentContextError.invalidHistory }
+                    guard let stored = try? decoder.decode(StoredEntry.self, from: existing),
+                          stored.isEquivalent(to: entry) else {
+                        throw AgentContextError.invalidHistory
+                    }
                     continue
                 }
                 try execute(

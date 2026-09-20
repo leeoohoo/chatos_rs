@@ -73,7 +73,9 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         self.limits = limits
         self.now = now
         self.references = LocalAgentRunReferenceVault(
-            documentDraftDirectoryURL: documentDraftDirectoryURL
+            documentDraftDirectoryURL: documentDraftDirectoryURL,
+            runContext: context,
+            pluginOptions: todoPluginOptions
         )
         self.todoPluginOptions = todoPluginOptions
         self.todoCancellationHandler = todoCancellationHandler

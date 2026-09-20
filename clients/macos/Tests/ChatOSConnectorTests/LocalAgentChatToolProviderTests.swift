@@ -670,10 +670,11 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             nowUnixMs: anchor.message.createdAtUnixMs + 1
         )
         let claimed = try XCTUnwrap(claimedValue)
-        let provider = try await LocalAgentRelayMCPServer(
+        let relayMCP = LocalAgentRelayMCPServer(
             service: service,
             now: { anchor.message.createdAtUnixMs + 2 }
-        ).connect(context: try .init(
+        )
+        let context = try LocalAgentChatRunContext(
             ownerUserID: "alice",
             projectID: direct.projectID,
             roomID: direct.id,
@@ -683,13 +684,18 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             rootMessageID: claimed.rootMessageID,
             runID: "inbox-run",
             hopCount: 0
-        ), todoPluginOptions: [
+        )
+        let pluginOptions: [LocalAgentTodoPluginOption] = [
             .init(
                 pluginID: "internal-plugin-secret",
                 displayName: "本地测试插件",
                 description: "只暴露安全目录信息"
             ),
-        ])
+        ]
+        let provider = try await relayMCP.connect(
+            context: context,
+            todoPluginOptions: pluginOptions
+        )
 
         let inbox = try await provider.execute(.init(
             id: "read-all",
@@ -802,7 +808,48 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 ($0["name"] as? String) == second.draft.name
             })?["assignees"] as? [[String: Any]])?.first?["assignee_ref"] as? String
         )
-        let invalidTeam = try await provider.execute(.init(
+        // A restored runtime creates a fresh tool provider after the inbox cursor was already
+        // advanced. Every opaque authority issued earlier in the same Run must still resolve.
+        let resumedProvider = try await relayMCP.connect(
+            context: context,
+            todoPluginOptions: pluginOptions
+        )
+        let emptyAfterResume = try await resumedProvider.execute(.init(
+            id: "read-all-after-resume",
+            name: LocalAgentChatToolProvider.readAllUnreadToolName,
+            arguments: "{}"
+        ))
+        XCTAssertTrue(emptyAfterResume.content.contains(#""message_count":0"#))
+
+        let foreignRunProvider = try await relayMCP.connect(
+            context: try .init(
+                ownerUserID: context.ownerUserID,
+                projectID: context.projectID,
+                roomID: context.roomID,
+                agentID: context.agentID,
+                deliveryID: context.deliveryID,
+                triggerMessageID: context.triggerMessageID,
+                rootMessageID: context.rootMessageID,
+                runID: "different-inbox-run",
+                hopCount: context.hopCount
+            ),
+            todoPluginOptions: pluginOptions
+        )
+        let crossRunReference = try await foreignRunProvider.execute(.init(
+            id: "todo-cross-run-reference",
+            name: LocalAgentChatToolProvider.todoAddToolName,
+            arguments: try toolArguments([
+                "title": "跨 Run 引用",
+                "team_ref": teamRef,
+                "source_message_refs": [actionableMessageRef],
+                "requires_execution": true,
+                "builtin_capabilities": [],
+            ])
+        ))
+        XCTAssertTrue(crossRunReference.isError)
+        XCTAssertTrue(crossRunReference.content.contains(#""code":"invalid_team_ref""#))
+
+        let invalidTeam = try await resumedProvider.execute(.init(
             id: "todo-invalid-team",
             name: LocalAgentChatToolProvider.todoAddToolName,
             arguments: try toolArguments([
@@ -817,7 +864,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertTrue(invalidTeam.content.contains(#""code":"invalid_team_ref""#))
         XCTAssertTrue(invalidTeam.content.contains(#""next_tool":"todo_execution_options""#))
         XCTAssertFalse(invalidTeam.content.contains(second.id))
-        let invalidMessage = try await provider.execute(.init(
+        let invalidMessage = try await resumedProvider.execute(.init(
             id: "todo-invalid-message",
             name: LocalAgentChatToolProvider.todoAddToolName,
             arguments: try toolArguments([
@@ -830,7 +877,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         ))
         XCTAssertTrue(invalidMessage.isError)
         XCTAssertTrue(invalidMessage.content.contains(#""code":"invalid_source_message_ref""#))
-        XCTAssertTrue(invalidMessage.content.contains(#""next_tool":"chat_read_all_unread""#))
+        XCTAssertTrue(invalidMessage.content.contains(#""next_tool":"chat_get_trigger""#))
         let todoArguments = try toolArguments([
             "title": "修复登录错误",
             "objective": "修复客户端登录流程中的错误并验证恢复连接。",
@@ -849,7 +896,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 "reason": "验证 Todo 创建时可信选择 Plugin",
             ]],
         ])
-        let created = try await provider.execute(.init(
+        let created = try await resumedProvider.execute(.init(
             id: "todo-actionable",
             name: LocalAgentChatToolProvider.todoAddToolName,
             arguments: todoArguments
