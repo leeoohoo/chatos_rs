@@ -158,32 +158,13 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             throw AgentGroupChatError.invalidField("agentLimit")
         }
         return try transaction {
-            struct DueAgent {
-                let id: String
-                let intervalSeconds: Int64
-                let prompt: String
-                let scheduledAtUnixMs: Int64
-            }
-            let dueAgents: [DueAgent] = try query(
-                """
-                SELECT id, heartbeat_interval_seconds, heartbeat_prompt,
-                       next_heartbeat_at_unix_ms
-                FROM local_agent_profiles
-                WHERE owner_user_id = ? AND status = 'active' AND heartbeat_enabled = 1
-                  AND next_heartbeat_at_unix_ms IS NOT NULL
-                  AND next_heartbeat_at_unix_ms <= ?
-                ORDER BY next_heartbeat_at_unix_ms, id
-                LIMIT ?
-                """,
-                [.text(ownerUserID), .integer(nowUnixMs), .integer(Int64(agentLimit))]
-            ) { statement in
-                DueAgent(
-                    id: Self.string(statement, 0),
-                    intervalSeconds: sqlite3_column_int64(statement, 1),
-                    prompt: Self.string(statement, 2),
-                    scheduledAtUnixMs: sqlite3_column_int64(statement, 3)
-                )
-            }
+            let dueAgents = try AgentProfileRepository.dueHeartbeatAgents(
+                database,
+                ownerUserID: ownerUserID,
+                nowUnixMs: nowUnixMs,
+                limit: agentLimit,
+                preparedStatement: recordPreparedStatement
+            )
             var deliveries: [ProjectAgentDelivery] = []
             for agent in dueAgents {
                 let outstanding = try AgentDeliveryRepository.outstandingCount(
