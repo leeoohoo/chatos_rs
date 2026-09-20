@@ -570,3 +570,7 @@
 "Skill 语言" = "Skill Language";
 "中文" = "Chinese";
 "新建 Agent Run 会使用当前选择的语言版本。" = "New Agent runs use the currently selected language version.";
+"另存为" = "Save As";
+"另存为…" = "Save As…";
+"搜索文档" = "Search Document";
+"正在解析 Markdown…" = "Parsing Markdown…";
