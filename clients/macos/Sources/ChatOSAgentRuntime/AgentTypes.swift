@@ -269,6 +269,14 @@ public extension AgentModelClient {
 
 public enum AgentRuntimeError: LocalizedError, Sendable {
     case invalidPolicy, invalidResponse, invalidAttachment, contextTooLarge, contextOverflow, timeout, scopeMismatch
+    case modelConfigurationUnavailable
+    case responsesStreamUnexpectedContentType
+    case responsesStreamMissingCompletion
+    case responsesIncomplete(String)
+    case responsesFailed(String)
+    case responsesStreamError(String)
+    case invalidResponsesEnvelope
+    case invalidResponsesFunctionCall
     case provider(Int)
     case providerDetail(Int, String)
     public var errorDescription: String? {
@@ -280,6 +288,22 @@ public enum AgentRuntimeError: LocalizedError, Sendable {
         case .contextOverflow: "模型报告上下文超出窗口，需要压缩后才能继续。"
         case .timeout: "Agent 已达到设置中的超时时限。"
         case .scopeMismatch: "运行记录不属于当前账户、项目或业务版本。"
+        case .modelConfigurationUnavailable:
+            "Agent 绑定的模型配置已失效、已删除或不可用。请编辑该 Agent 并重新选择模型；客户端不会自动换用其他模型。"
+        case .responsesStreamUnexpectedContentType:
+            "模型端点没有返回 OpenAI Responses 规范的 SSE 数据流，本轮已停止。"
+        case .responsesStreamMissingCompletion:
+            "OpenAI Responses 数据流在 response.completed 之前结束，本轮未执行任何工具。"
+        case .responsesIncomplete(let reason):
+            "OpenAI Responses 明确返回 response.incomplete（原因：\(reason)），本轮未执行任何工具。"
+        case .responsesFailed(let code):
+            "OpenAI Responses 明确返回 response.failed（代码：\(code)），本轮未执行任何工具。"
+        case .responsesStreamError(let code):
+            "OpenAI Responses 数据流返回 error 事件（代码：\(code)），本轮未执行任何工具。"
+        case .invalidResponsesEnvelope:
+            "模型返回的 OpenAI Responses 终态缺少必需字段，本轮已按协议错误停止。"
+        case .invalidResponsesFunctionCall:
+            "模型返回的 function_call 缺少 call_id、name 或 arguments，本轮未执行该工具。"
         case .provider(let code): "模型请求失败（HTTP \(code)）。"
         case .providerDetail(let code, let detail): "模型请求失败（HTTP \(code)）：\(detail)"
         }

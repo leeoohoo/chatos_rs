@@ -104,33 +104,50 @@ final class MarkdownRenderCache: @unchecked Sendable {
 }
 
 struct MarkdownDocumentView: View {
+    enum WidthBehavior: Equatable {
+        case fill
+        case fitContent
+    }
+
     private let markdown: String
     private let blocks: [MarkdownBlock]
     private let allowsTextSelection: Bool
+    private let widthBehavior: WidthBehavior
 
-    init(markdown: String, allowsTextSelection: Bool = true) {
+    init(
+        markdown: String,
+        allowsTextSelection: Bool = true,
+        widthBehavior: WidthBehavior = .fill
+    ) {
         self.markdown = markdown
         blocks = MarkdownRenderCache.shared.blocks(for: markdown)
         self.allowsTextSelection = allowsTextSelection
+        self.widthBehavior = widthBehavior
     }
 
     init(
         markdown: String,
         precomputedBlocks: [MarkdownBlock],
-        allowsTextSelection: Bool = true
+        allowsTextSelection: Bool = true,
+        widthBehavior: WidthBehavior = .fill
     ) {
         self.markdown = markdown
         blocks = precomputedBlocks
         self.allowsTextSelection = allowsTextSelection
+        self.widthBehavior = widthBehavior
     }
 
     var body: some View {
         MarkdownNativeTextView(
             source: markdown,
             blocks: blocks,
-            allowsTextSelection: allowsTextSelection
+            allowsTextSelection: allowsTextSelection,
+            widthBehavior: widthBehavior
         )
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(
+            maxWidth: widthBehavior == .fill ? .infinity : nil,
+            alignment: .leading
+        )
     }
 }
 
@@ -174,6 +191,7 @@ private struct MarkdownNativeTextView: NSViewRepresentable {
     let source: String
     let blocks: [MarkdownBlock]
     let allowsTextSelection: Bool
+    let widthBehavior: MarkdownDocumentView.WidthBehavior
 
     func makeNSView(context: Context) -> MarkdownLayoutTextView {
         MarkdownLayoutTextView()
@@ -192,7 +210,11 @@ private struct MarkdownNativeTextView: NSViewRepresentable {
         nsView textView: MarkdownLayoutTextView,
         context: Context
     ) -> CGSize? {
-        guard let width = proposal.width, width > 0 else { return nil }
+        guard let proposedWidth = proposal.width, proposedWidth > 0 else { return nil }
+        let width = switch widthBehavior {
+        case .fill: proposedWidth
+        case .fitContent: textView.width(fittingMaxWidth: proposedWidth)
+        }
         return CGSize(width: width, height: textView.height(fittingWidth: width))
     }
 }
@@ -259,6 +281,15 @@ private final class MarkdownLayoutTextView: NSTextView {
         let result = max(ceil(measured), 1)
         measuredHeights[widthKey] = result
         return result
+    }
+
+    func width(fittingMaxWidth maxWidth: CGFloat) -> CGFloat {
+        let safeMaxWidth = max(maxWidth, 1)
+        let measured = textStorage?.boundingRect(
+            with: NSSize(width: safeMaxWidth, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).width ?? 1
+        return min(max(ceil(measured), 1), safeMaxWidth)
     }
 }
 

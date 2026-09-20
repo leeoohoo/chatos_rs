@@ -98,6 +98,10 @@ public actor AgentResponsesModelClient: AgentModelClient {
             }
             try validate(status: response.statusCode, errorBody: body)
         }
+        if let contentType = response.headers["content-type"]?.lowercased(),
+           !contentType.contains("text/event-stream") {
+            throw AgentRuntimeError.responsesStreamUnexpectedContentType
+        }
 
         await onEvent(.responseCreated)
         var parser = ResponsesSSEParser()
@@ -276,10 +280,23 @@ public actor AgentResponsesModelClient: AgentModelClient {
     }
 
     fileprivate static func decodeResponse(_ root: [String: Any]) throws -> ParsedResponse {
+        let status = root["status"] as? String
+        if status == "incomplete" {
+            let details = root["incomplete_details"] as? [String: Any]
+            throw AgentRuntimeError.responsesIncomplete(
+                safeProtocolToken(details?["reason"], fallback: "unknown")
+            )
+        }
+        if status == "failed" {
+            let error = root["error"] as? [String: Any]
+            throw AgentRuntimeError.responsesFailed(
+                safeProtocolToken(error?["code"], fallback: "unknown")
+            )
+        }
         guard let id = root["id"] as? String, !id.isEmpty,
-              (root["status"] as? String ?? "completed") == "completed",
+              (status ?? "completed") == "completed",
               let output = root["output"] as? [[String: Any]] else {
-            throw AgentRuntimeError.invalidResponse
+            throw AgentRuntimeError.invalidResponsesEnvelope
         }
         var content = ""
         var calls: [AgentToolCall] = []
@@ -297,7 +314,7 @@ public actor AgentResponsesModelClient: AgentModelClient {
                       !callID.isEmpty,
                       let name = item["name"] as? String, !name.isEmpty,
                       let arguments = item["arguments"] as? String else {
-                    throw AgentRuntimeError.invalidResponse
+                    throw AgentRuntimeError.invalidResponsesFunctionCall
                 }
                 calls.append(.init(id: callID, name: name, arguments: arguments))
             default:
@@ -310,6 +327,14 @@ public actor AgentResponsesModelClient: AgentModelClient {
             role: .assistant, content: content, toolCalls: calls,
             responseOutputJSON: outputJSON, usage: usage
         ))
+    }
+
+    fileprivate static func safeProtocolToken(_ value: Any?, fallback: String) -> String {
+        guard let value = value as? String, !value.isEmpty, value.count <= 80,
+              value.unicodeScalars.allSatisfy({
+                  CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-")).contains($0)
+              }) else { return fallback }
+        return value
     }
 
     private func validate(status: Int, errorBody data: Data) throws {
@@ -395,7 +420,7 @@ private struct ResponsesSSEParser {
             _ = try consume(buffer)
             buffer.removeAll()
         }
-        guard let terminal else { throw AgentRuntimeError.invalidResponse }
+        guard let terminal else { throw AgentRuntimeError.responsesStreamMissingCompletion }
         return terminal
     }
 
@@ -413,7 +438,7 @@ private struct ResponsesSSEParser {
         guard let data = dataText.data(using: .utf8),
               let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = root["type"] as? String else {
-            throw AgentRuntimeError.invalidResponse
+            throw AgentRuntimeError.invalidResponsesEnvelope
         }
         parsedEvents += 1
         guard parsedEvents <= 100_000 else { throw AgentRuntimeError.invalidResponse }
@@ -440,12 +465,28 @@ private struct ResponsesSSEParser {
             )]
         case "response.completed":
             guard let response = root["response"] as? [String: Any] else {
-                throw AgentRuntimeError.invalidResponse
+                throw AgentRuntimeError.invalidResponsesEnvelope
             }
             terminal = try AgentResponsesModelClient.decodeResponse(response)
             return []
-        case "response.incomplete", "response.failed", "error":
-            throw AgentRuntimeError.invalidResponse
+        case "response.incomplete":
+            let response = root["response"] as? [String: Any]
+            let details = response?["incomplete_details"] as? [String: Any]
+            throw AgentRuntimeError.responsesIncomplete(
+                AgentResponsesModelClient.safeProtocolToken(
+                    details?["reason"], fallback: "unknown"
+                )
+            )
+        case "response.failed":
+            let response = root["response"] as? [String: Any]
+            let error = response?["error"] as? [String: Any]
+            throw AgentRuntimeError.responsesFailed(
+                AgentResponsesModelClient.safeProtocolToken(error?["code"], fallback: "unknown")
+            )
+        case "error":
+            throw AgentRuntimeError.responsesStreamError(
+                AgentResponsesModelClient.safeProtocolToken(root["code"], fallback: "unknown")
+            )
         default:
             return []
         }

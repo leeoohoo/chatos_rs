@@ -102,6 +102,25 @@ final class ChatOSStoryPlanningServiceTests: XCTestCase {
         XCTAssertEqual(calls.count, 1)
     }
 
+    func testMissingBoundModelIsReportedWithoutAutomaticFallback() async throws {
+        let transport = StoryPlanningTransport(scenario: "missing-model")
+        do {
+            _ = try await makeService(transport).makeAgentModel(
+                configID: "deleted-model",
+                policy: .init()
+            )
+            XCTFail("A deleted model binding must fail")
+        } catch {
+            guard case AgentRuntimeError.modelConfigurationUnavailable = error else {
+                return XCTFail("Expected explicit missing model error, got \(error)")
+            }
+            XCTAssertTrue(error.localizedDescription.contains("客户端不会自动换用其他模型"))
+        }
+        let calls = await transport.requests()
+        XCTAssertEqual(calls.count, 1, "Missing binding must not call or fall back to another model")
+        XCTAssertTrue(calls[0].url.path.contains("deleted-model"))
+    }
+
     func testUsesConfiguredModelAndAllowsOnlyTheCurrentPlanningTool() async throws {
         let transport = StoryPlanningTransport()
         let service = makeService(transport)
@@ -162,6 +181,13 @@ private actor StoryPlanningTransport: HTTPTransport {
         calls.append(request)
         let body: [String: Any]
         if request.url.path.contains("ai-model-configs") {
+            if scenario == "missing-model" {
+                return .init(
+                    statusCode: 404,
+                    headers: [:],
+                    body: Data(#"{"detail":"load ai model config via user_service failed"}"#.utf8)
+                )
+            }
             body = [
                 "enabled": true,
                 "provider": scenario == "native" ? "anthropic" : "gpt",

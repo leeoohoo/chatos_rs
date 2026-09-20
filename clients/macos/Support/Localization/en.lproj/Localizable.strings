@@ -581,3 +581,4 @@
 "还没有云端 Agent 文档" = "No Cloud Agent Documents Yet";
 "Agent 创建并成功同步的 Markdown 会出现在这里。" = "Markdown created and successfully synced by Agents appears here.";
 "预览" = "Preview";
+"关闭错误提示" = "Dismiss Error";

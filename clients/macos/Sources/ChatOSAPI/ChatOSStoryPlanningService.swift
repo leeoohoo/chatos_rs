@@ -25,10 +25,15 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
     ) async throws -> any AgentModelClient {
         try policy.validate()
         let session = try await client.currentAuthenticationSessionID()
-        let config: Config = try await client.request("/ai-model-configs/\(configID.urlPathEncoded)?include_secret=true",
-                                                     expectedAuthenticationSessionID: session)
+        let config = try await loadModelConfig(
+            id: configID,
+            expectedAuthenticationSessionID: session
+        )
         guard config.enabled, let key = config.apiKey, !key.isEmpty,
-              let raw = config.baseURL, let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)) else { throw StoryError.missingModel }
+              let raw = config.baseURL,
+              let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            throw AgentRuntimeError.modelConfigurationUnavailable
+        }
         let send: AgentResponsesModelClient.Transport = { request in
             guard let url = request.url else { throw ChatOSAPIError.invalidEndpoint }
             let response = try await transport.send(.init(url: url, method: "POST", headers: request.allHTTPHeaderFields ?? [:],
@@ -53,11 +58,13 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
     }
 
     public func plan(_ request: StoryPlanningRequest) async throws -> Data {
-        let config: Config = try await client.request("/ai-model-configs/\(request.modelConfigID.urlPathEncoded)?include_secret=true")
+        let config = try await loadModelConfig(id: request.modelConfigID)
         guard config.enabled, let key = config.apiKey, !key.isEmpty,
               let raw = config.baseURL, let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
               ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil,
-              url.user == nil, url.password == nil else { throw StoryError.missingModel }
+              url.user == nil, url.password == nil else {
+            throw AgentRuntimeError.modelConfigurationUnavailable
+        }
         let send: AgentResponsesModelClient.Transport = { urlRequest in
             guard let requestURL = urlRequest.url else { throw ChatOSAPIError.invalidEndpoint }
             let response = try await transport.send(.init(
@@ -86,6 +93,22 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
               let data = response.toolCalls[0].arguments.data(using: .utf8),
               (try? JSONSerialization.jsonObject(with: data)) is [String: Any] else { throw StoryError.invalidPlan }
         return data
+    }
+
+    private func loadModelConfig(
+        id: String,
+        expectedAuthenticationSessionID: UUID? = nil
+    ) async throws -> Config {
+        do {
+            return try await client.request(
+                "/ai-model-configs/\(id.urlPathEncoded)?include_secret=true",
+                expectedAuthenticationSessionID: expectedAuthenticationSessionID
+            )
+        } catch ChatOSAPIError.server(let statusCode, _) where statusCode == 404 {
+            throw AgentRuntimeError.modelConfigurationUnavailable
+        } catch ChatOSAPIError.serverDetail(let statusCode, _, _, _) where statusCode == 404 {
+            throw AgentRuntimeError.modelConfigurationUnavailable
+        }
     }
 }
 

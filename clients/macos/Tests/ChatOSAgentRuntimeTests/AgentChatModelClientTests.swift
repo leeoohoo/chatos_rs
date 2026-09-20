@@ -97,6 +97,101 @@ final class AgentChatModelClientTests: XCTestCase {
         XCTAssertTrue(captured.contains(.textDelta("checking")))
     }
 
+    func testResponsesStreamingReportsOfficialTerminalFailuresPrecisely() async throws {
+        let cases: [(String, String)] = [
+            (
+                #"data: {"type":"response.incomplete","response":{"id":"resp_1","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}"# + "\n\n",
+                "OpenAI Responses 明确返回 response.incomplete（原因：max_output_tokens）"
+            ),
+            (
+                #"data: {"type":"response.failed","response":{"id":"resp_2","status":"failed","error":{"code":"server_error","message":"do-not-display-this-value"}}}"# + "\n\n",
+                "OpenAI Responses 明确返回 response.failed（代码：server_error）"
+            ),
+            (
+                #"data: {"type":"error","code":"rate_limit_exceeded","message":"do-not-display-this-value","param":null,"sequence_number":1}"# + "\n\n",
+                "OpenAI Responses 数据流返回 error 事件（代码：rate_limit_exceeded）"
+            ),
+        ]
+        for (sse, expectedPrefix) in cases {
+            let client = try responsesStreamingClient(sse: sse)
+            do {
+                _ = try await client.stream(
+                    messages: [.init(role: .user, content: "test")],
+                    tools: runtimeTestTools,
+                    timeout: 20,
+                    onEvent: { _ in }
+                )
+                XCTFail("Official failure terminal must stop the run")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.hasPrefix(expectedPrefix))
+                XCTAssertFalse(error.localizedDescription.contains("do-not-display-this-value"))
+            }
+        }
+    }
+
+    func testResponsesStreamingRejectsMissingCompletionAndInvalidFunctionCall() async throws {
+        let missingCompletion = try responsesStreamingClient(sse: """
+        data: {"type":"response.created","response":{"id":"resp_partial","status":"in_progress"}}
+
+        """)
+        do {
+            _ = try await missingCompletion.stream(
+                messages: [.init(role: .user, content: "test")], tools: runtimeTestTools,
+                timeout: 20, onEvent: { _ in }
+            )
+            XCTFail("A stream without response.completed must fail")
+        } catch {
+            guard case AgentRuntimeError.responsesStreamMissingCompletion = error else {
+                return XCTFail("Expected missing completion, got \(error)")
+            }
+        }
+
+        let invalidCall = try responsesStreamingClient(sse: """
+        data: {"type":"response.completed","response":{"id":"resp_invalid","status":"completed","output":[{"type":"function_call","name":"finish","arguments":"{}"}]}}
+
+        """)
+        do {
+            _ = try await invalidCall.stream(
+                messages: [.init(role: .user, content: "test")], tools: runtimeTestTools,
+                timeout: 20, onEvent: { _ in }
+            )
+            XCTFail("A function call without call_id must fail")
+        } catch {
+            guard case AgentRuntimeError.invalidResponsesFunctionCall = error else {
+                return XCTFail("Expected invalid function call, got \(error)")
+            }
+        }
+    }
+
+    func testResponsesStreamingRejectsNonSSESuccessBody() async throws {
+        let client = try AgentResponsesModelClient(
+            baseURL: URL(string: "https://api.openai.com/v1")!,
+            model: "gpt-test",
+            apiKey: "secret",
+            streamTransport: { _ in
+                let pair = AsyncThrowingStream<Data, Error>.makeStream()
+                pair.continuation.yield(Data(#"{"id":"resp_json","status":"completed","output":[]}"#.utf8))
+                pair.continuation.finish()
+                return .init(
+                    statusCode: 200,
+                    headers: ["content-type": "application/json"],
+                    body: pair.stream
+                )
+            }
+        )
+        do {
+            _ = try await client.stream(
+                messages: [.init(role: .user, content: "test")], tools: runtimeTestTools,
+                timeout: 20, onEvent: { _ in }
+            )
+            XCTFail("A streaming request must receive SSE")
+        } catch {
+            guard case AgentRuntimeError.responsesStreamUnexpectedContentType = error else {
+                return XCTFail("Expected content type failure, got \(error)")
+            }
+        }
+    }
+
     func testWireAdapterKeepsToolCallIDsAndHonorsOutputReserve() async throws {
         let client = try AgentChatModelClient(baseURL: URL(string: "https://model.example/prefix/v1/responses")!, model: "test", apiKey: "secret",
             maximumOutputTokens: 1_200, temperature: 0, transport: { request in
@@ -209,6 +304,24 @@ final class AgentChatModelClientTests: XCTestCase {
 
     private static func body(_ request: URLRequest) throws -> [String: Any] {
         try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any])
+    }
+
+    private func responsesStreamingClient(sse: String) throws -> AgentResponsesModelClient {
+        try AgentResponsesModelClient(
+            baseURL: URL(string: "https://api.openai.com/v1")!,
+            model: "gpt-test",
+            apiKey: "secret",
+            streamTransport: { _ in
+                let pair = AsyncThrowingStream<Data, Error>.makeStream()
+                pair.continuation.yield(Data(sse.utf8))
+                pair.continuation.finish()
+                return .init(
+                    statusCode: 200,
+                    headers: ["content-type": "text/event-stream"],
+                    body: pair.stream
+                )
+            }
+        )
     }
 }
 

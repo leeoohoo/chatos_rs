@@ -172,7 +172,6 @@ private final class AgentDirectChatViewModel: ObservableObject {
             if wasEmpty {
                 hasOlderMessages = messagePage.hasMore
             }
-            errorMessage = nil
             isLoading = false
             hasCompletedInitialLoad = true
             startSupplementaryLoad(
@@ -274,7 +273,6 @@ private final class AgentDirectChatViewModel: ObservableObject {
                 store: store
             )
             attachmentDataByID.merge(loadedAttachmentData) { _, new in new }
-            errorMessage = nil
             return firstMessageID
         } catch {
             errorMessage = error.localizedDescription
@@ -287,6 +285,7 @@ private final class AgentDirectChatViewModel: ObservableObject {
         let content = draftMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         let outgoingAttachments = attachments
         guard !content.isEmpty || !outgoingAttachments.isEmpty else { return }
+        errorMessage = nil
         isSending = true
         defer { isSending = false }
         do {
@@ -513,6 +512,10 @@ private final class AgentDirectChatViewModel: ObservableObject {
             schedulerTask = nil
         }
     }
+
+    func dismissError() {
+        errorMessage = nil
+    }
 }
 
 struct AgentDirectChatView: View {
@@ -547,6 +550,10 @@ struct AgentDirectChatView: View {
             } else {
                 transcript
             }
+            if let errorMessage = viewModel.errorMessage {
+                Divider()
+                errorBanner(errorMessage)
+            }
             if viewModel.isHumanDirect {
                 Divider()
                 composer
@@ -554,14 +561,28 @@ struct AgentDirectChatView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task { await viewModel.activate() }
-        .alert("私聊错误", isPresented: Binding(
-            get: { viewModel.errorMessage != nil },
-            set: { if !$0 { viewModel.errorMessage = nil } }
-        )) {
-            Button("好", role: .cancel) { viewModel.errorMessage = nil }
-        } message: {
-            Text(viewModel.errorMessage ?? "")
+    }
+
+    private func errorBanner(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+            Text(message)
+                .font(.callout)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                viewModel.dismissError()
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+            .help("关闭错误提示")
+            .accessibilityLabel("关闭错误提示")
         }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 10)
+        .background(Color.red.opacity(0.08))
     }
 
     private var header: some View {
@@ -632,7 +653,7 @@ struct AgentDirectChatView: View {
                 }
                 .foregroundStyle(.secondary)
                 if !message.content.isEmpty {
-                    MarkdownDocumentView(markdown: message.content)
+                    MarkdownDocumentView(markdown: message.content, widthBehavior: .fitContent)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
                         .background(messageBubbleBackground(isHuman: isHuman))
