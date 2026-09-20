@@ -3988,17 +3988,11 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                 agentID: agentID,
                 todoID: todoID
             ), todo.status == .pending else { return nil }
-            let incomplete = try scalarInt64(
-                """
-                SELECT COUNT(*)
-                FROM local_agent_todo_dependencies dependency
-                JOIN local_agent_todos prerequisite
-                  ON prerequisite.owner_user_id = dependency.owner_user_id
-                 AND prerequisite.id = dependency.prerequisite_todo_id
-                WHERE dependency.owner_user_id = ? AND dependency.todo_id = ?
-                  AND prerequisite.status != 'completed'
-                """,
-                [.text(ownerUserID), .text(todoID)]
+            let incomplete = try AgentTodoRepository.incompleteDependencyCount(
+                database,
+                ownerUserID: ownerUserID,
+                todoID: todoID,
+                preparedStatement: recordPreparedStatement
             )
             guard incomplete == 0 else { return nil }
             let eventKey = "ready:\(todo.id):\(todo.updatedAtUnixMs)"

@@ -2,6 +2,28 @@ import ChatOSCore
 import SQLite3
 
 enum AgentTodoRepository {
+    static func incompleteDependencyCount(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        todoID: String,
+        preparedStatement: () -> Void
+    ) throws -> Int64 {
+        preparedStatement()
+        return try AgentGroupChatDatabase.scalarInt64(
+            handle,
+            """
+            SELECT COUNT(*)
+            FROM local_agent_todo_dependencies dependency
+            JOIN local_agent_todos prerequisite
+              ON prerequisite.owner_user_id = dependency.owner_user_id
+             AND prerequisite.id = dependency.prerequisite_todo_id
+            WHERE dependency.owner_user_id = ? AND dependency.todo_id = ?
+              AND prerequisite.status != 'completed'
+            """,
+            [.text(ownerUserID), .text(todoID)]
+        )
+    }
+
     static func nextProgressSequence(
         _ handle: OpaquePointer?,
         ownerUserID: String,
