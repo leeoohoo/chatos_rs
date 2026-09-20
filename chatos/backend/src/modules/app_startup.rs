@@ -41,6 +41,7 @@ pub async fn initialize_runtime(cfg: &Config) -> Result<(), String> {
         true,
         "Cloud Agent consumer and outbox reconciler started",
     );
+    services::agent_artifact_maintenance::spawn_reconciler();
 
     match crate::repositories::user_settings::purge_managed_runtime_settings().await {
         Ok(modified_count) => {

@@ -42,6 +42,7 @@ struct CreateAgentArtifactUploadItem {
 
 pub fn router() -> Router {
     Router::new()
+        .route("/api/agent-artifacts", delete(delete_all_artifacts))
         .route("/api/agent-artifacts/uploads", post(create_uploads))
         .route(
             "/api/agent-artifacts/{artifact_id}/complete",
@@ -296,27 +297,19 @@ async fn delete_artifact(
     Path(artifact_id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<Value>)> {
     let record = require_owned(&auth, artifact_id.as_str()).await?;
-    let storage = object_storage_service().await.map_err(|error| {
-        json_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "object_storage_unavailable",
-            error.as_str(),
-        )
-    })?;
-    storage
-        .delete_object(&object_ref(&record))
-        .await
-        .map_err(|error| {
-            json_error(
-                StatusCode::BAD_GATEWAY,
-                "delete_agent_artifact_failed",
-                error.as_str(),
-            )
-        })?;
-    agent_artifacts::delete_owned(auth.user_id.as_str(), record.id.as_str())
+    agent_artifacts::enqueue_delete_owned(auth.user_id.as_str(), record.id.as_str())
         .await
         .map_err(repository_error)?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(StatusCode::ACCEPTED)
+}
+
+async fn delete_all_artifacts(
+    auth: AuthUser,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    let enqueued = agent_artifacts::enqueue_all_owned(auth.user_id.as_str())
+        .await
+        .map_err(repository_error)?;
+    Ok((StatusCode::ACCEPTED, Json(json!({ "enqueued": enqueued }))))
 }
 
 async fn require_owned(

@@ -22,6 +22,12 @@ pub struct AgentArtifactRecord {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentArtifactDeletionJob {
+    pub record: AgentArtifactRecord,
+    pub attempt: i32,
+}
+
 type ArtifactRow = (
     String,
     String,
@@ -159,18 +165,175 @@ pub async fn mark_uploaded(user_id: &str, artifact_id: &str) -> Result<bool, Str
     .await
 }
 
-pub async fn delete_owned(user_id: &str, artifact_id: &str) -> Result<bool, String> {
+pub async fn enqueue_delete_owned(user_id: &str, artifact_id: &str) -> Result<bool, String> {
     let user_id = user_id.to_string();
     let artifact_id = artifact_id.to_string();
     with_db(|pool| {
         Box::pin(async move {
-            sqlx::query("DELETE FROM agent_artifacts WHERE user_id=$1 AND id=$2")
+            let mut transaction = pool.begin().await.map_err(db_error)?;
+            let updated = sqlx::query(
+                "UPDATE agent_artifacts SET status='deleting',updated_at=now() WHERE user_id=$1 AND id=$2",
+            )
+            .bind(&user_id)
+            .bind(&artifact_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(db_error)?
+            .rows_affected()
+                == 1;
+            if updated {
+                sqlx::query(
+                    "INSERT INTO agent_artifact_deletion_outbox(artifact_id,user_id,attempt,next_attempt_at,last_error,created_at,updated_at) VALUES($1,$2,0,now(),NULL,now(),now()) ON CONFLICT(artifact_id) DO UPDATE SET next_attempt_at=LEAST(agent_artifact_deletion_outbox.next_attempt_at,excluded.next_attempt_at),updated_at=now()",
+                )
+                .bind(&artifact_id)
+                .bind(&user_id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(db_error)?;
+            }
+            transaction.commit().await.map_err(db_error)?;
+            Ok(updated)
+        })
+    })
+    .await
+}
+
+pub async fn enqueue_all_owned(user_id: &str) -> Result<u64, String> {
+    let user_id = user_id.to_string();
+    with_db(|pool| {
+        Box::pin(async move {
+            let mut transaction = pool.begin().await.map_err(db_error)?;
+            let rows = sqlx::query_scalar::<_, String>(
+                "UPDATE agent_artifacts SET status='deleting',updated_at=now() WHERE user_id=$1 RETURNING id",
+            )
+            .bind(&user_id)
+            .fetch_all(&mut *transaction)
+            .await
+            .map_err(db_error)?;
+            for artifact_id in &rows {
+                sqlx::query(
+                    "INSERT INTO agent_artifact_deletion_outbox(artifact_id,user_id,attempt,next_attempt_at,last_error,created_at,updated_at) VALUES($1,$2,0,now(),NULL,now(),now()) ON CONFLICT(artifact_id) DO UPDATE SET next_attempt_at=LEAST(agent_artifact_deletion_outbox.next_attempt_at,excluded.next_attempt_at),updated_at=now()",
+                )
+                .bind(artifact_id)
+                .bind(&user_id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(db_error)?;
+            }
+            transaction.commit().await.map_err(db_error)?;
+            Ok(rows.len() as u64)
+        })
+    })
+    .await
+}
+
+pub async fn enqueue_expired_staged(cutoff: DateTime<Utc>, limit: i64) -> Result<u64, String> {
+    with_db(|pool| {
+        Box::pin(async move {
+            let mut transaction = pool.begin().await.map_err(db_error)?;
+            let rows = sqlx::query_as::<_, (String, String)>(
+                "WITH candidates AS (SELECT id,user_id FROM agent_artifacts WHERE status='staged' AND created_at < $1 ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT $2) UPDATE agent_artifacts a SET status='deleting',updated_at=now() FROM candidates c WHERE a.id=c.id RETURNING a.id,a.user_id",
+            )
+            .bind(cutoff)
+            .bind(limit)
+            .fetch_all(&mut *transaction)
+            .await
+            .map_err(db_error)?;
+            for (artifact_id, user_id) in &rows {
+                sqlx::query(
+                    "INSERT INTO agent_artifact_deletion_outbox(artifact_id,user_id,attempt,next_attempt_at,last_error,created_at,updated_at) VALUES($1,$2,0,now(),NULL,now(),now()) ON CONFLICT(artifact_id) DO NOTHING",
+                )
+                .bind(artifact_id)
                 .bind(user_id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(db_error)?;
+            }
+            transaction.commit().await.map_err(db_error)?;
+            Ok(rows.len() as u64)
+        })
+    })
+    .await
+}
+
+pub async fn claim_deletions(limit: i64) -> Result<Vec<AgentArtifactDeletionJob>, String> {
+    with_db(|pool| {
+        Box::pin(async move {
+            let sql = format!(
+                "WITH candidates AS (SELECT artifact_id FROM agent_artifact_deletion_outbox WHERE next_attempt_at <= now() ORDER BY next_attempt_at,artifact_id FOR UPDATE SKIP LOCKED LIMIT $1), claimed AS (UPDATE agent_artifact_deletion_outbox o SET attempt=o.attempt+1,next_attempt_at=now()+interval '5 minutes',updated_at=now() FROM candidates c WHERE o.artifact_id=c.artifact_id RETURNING o.artifact_id,o.attempt) SELECT {COLUMNS},claimed.attempt FROM claimed JOIN agent_artifacts a ON a.id=claimed.artifact_id ORDER BY a.id"
+            );
+            type DeletionRow = (
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                i64,
+                String,
+                String,
+                String,
+                DateTime<Utc>,
+                DateTime<Utc>,
+                i32,
+            );
+            sqlx::query_as::<_, DeletionRow>(sql.as_str())
+                .bind(limit)
+                .fetch_all(pool)
+                .await
+                .map(|rows| {
+                    rows.into_iter()
+                        .map(|row| AgentArtifactDeletionJob {
+                            record: from_row((
+                                row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7,
+                                row.8, row.9, row.10, row.11,
+                            )),
+                            attempt: row.12,
+                        })
+                        .collect()
+                })
+                .map_err(db_error)
+        })
+    })
+    .await
+}
+
+pub async fn complete_deletion(artifact_id: &str) -> Result<bool, String> {
+    let artifact_id = artifact_id.to_string();
+    with_db(|pool| {
+        Box::pin(async move {
+            sqlx::query("DELETE FROM agent_artifacts WHERE id=$1 AND status='deleting'")
                 .bind(artifact_id)
                 .execute(pool)
                 .await
                 .map(|result| result.rows_affected() == 1)
                 .map_err(db_error)
+        })
+    })
+    .await
+}
+
+pub async fn fail_deletion(
+    artifact_id: &str,
+    attempt: i32,
+    next_attempt_at: DateTime<Utc>,
+    error: &str,
+) -> Result<bool, String> {
+    let artifact_id = artifact_id.to_string();
+    let error = error.chars().take(512).collect::<String>();
+    with_db(|pool| {
+        Box::pin(async move {
+            sqlx::query(
+                "UPDATE agent_artifact_deletion_outbox SET next_attempt_at=$1,last_error=$2,updated_at=now() WHERE artifact_id=$3 AND attempt=$4",
+            )
+            .bind(next_attempt_at)
+            .bind(error)
+            .bind(artifact_id)
+            .bind(attempt)
+            .execute(pool)
+            .await
+            .map(|result| result.rows_affected() == 1)
+            .map_err(db_error)
         })
     })
     .await
