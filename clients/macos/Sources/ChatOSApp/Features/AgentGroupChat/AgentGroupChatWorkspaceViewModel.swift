@@ -101,7 +101,9 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
             } else {
                 self.selectedRoomID = nil
             }
-            errorMessage = nil
+            // Passive room/delivery refreshes may arrive immediately after a run action reports
+            // an error. Keep that error visible until the Human dismisses it or a later explicit
+            // action succeeds; otherwise the SwiftUI alert closes itself before it can be read.
         } catch {
             errorMessage = error.localizedDescription
         }

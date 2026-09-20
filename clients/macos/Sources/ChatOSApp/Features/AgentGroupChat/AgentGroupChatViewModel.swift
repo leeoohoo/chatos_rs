@@ -165,7 +165,9 @@ final class AgentGroupChatViewModel: ObservableObject {
             }
             self.teams = teams
             selectedMentionAgentIDs.formIntersection(Set(members.map(\.agentID)))
-            errorMessage = nil
+            // Background room updates must not dismiss an action error. The alert owner clears
+            // it explicitly after the Human acknowledges it, while successful user actions can
+            // still clear their own stale error state.
             startSupplementaryLoad(
                 store: store,
                 room: room,
