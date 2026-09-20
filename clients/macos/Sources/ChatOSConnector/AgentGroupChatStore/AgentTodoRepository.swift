@@ -2,6 +2,36 @@ import ChatOSCore
 import SQLite3
 
 enum AgentTodoRepository {
+    static func dependencyCreatesCycle(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        prerequisiteTodoID: String,
+        todoID: String,
+        preparedStatement: () -> Void
+    ) throws -> Bool {
+        preparedStatement()
+        return try AgentGroupChatDatabase.scalarInt64(
+            handle,
+            """
+            WITH RECURSIVE ancestors(id) AS (
+                SELECT prerequisite_todo_id
+                FROM local_agent_todo_dependencies
+                WHERE owner_user_id = ? AND todo_id = ?
+                UNION
+                SELECT dependency.prerequisite_todo_id
+                FROM local_agent_todo_dependencies dependency
+                JOIN ancestors ON dependency.todo_id = ancestors.id
+                WHERE dependency.owner_user_id = ?
+            )
+            SELECT COUNT(*) FROM ancestors WHERE id = ?
+            """,
+            [
+                .text(ownerUserID), .text(prerequisiteTodoID),
+                .text(ownerUserID), .text(todoID),
+            ]
+        ) > 0
+    }
+
     static func incompleteDependencyCount(
         _ handle: OpaquePointer?,
         ownerUserID: String,

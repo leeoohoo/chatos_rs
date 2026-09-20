@@ -3768,25 +3768,13 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
                   ), prerequisite.teamRoomID == todo.teamRoomID else {
                 throw AgentGroupChatError.invalidField("todoDependencies")
             }
-            let createsCycle = try scalarInt64(
-                """
-                WITH RECURSIVE ancestors(id) AS (
-                    SELECT prerequisite_todo_id
-                    FROM local_agent_todo_dependencies
-                    WHERE owner_user_id = ? AND todo_id = ?
-                    UNION
-                    SELECT dependency.prerequisite_todo_id
-                    FROM local_agent_todo_dependencies dependency
-                    JOIN ancestors ON dependency.todo_id = ancestors.id
-                    WHERE dependency.owner_user_id = ?
-                )
-                SELECT COUNT(*) FROM ancestors WHERE id = ?
-                """,
-                [
-                    .text(ownerUserID), .text(dependency.prerequisiteTodoID),
-                    .text(ownerUserID), .text(todoID),
-                ]
-            ) > 0
+            let createsCycle = try AgentTodoRepository.dependencyCreatesCycle(
+                database,
+                ownerUserID: ownerUserID,
+                prerequisiteTodoID: dependency.prerequisiteTodoID,
+                todoID: todoID,
+                preparedStatement: recordPreparedStatement
+            )
             guard !createsCycle else {
                 throw AgentGroupChatError.invalidField("todoDependencyCycle")
             }
