@@ -26,17 +26,23 @@ final class ChatOSAgentArtifactServiceTests: XCTestCase {
             sha256: sha256,
             idempotencyKey: "agent-attachment:local-1"
         ))
+        let page = try await service.list(limit: 50, cursor: nil)
         let restored = try await service.download(artifactID: metadata.artifactID)
 
         XCTAssertEqual(metadata.artifactID, "artifact_0123456789abcdef0123456789abcdef")
         XCTAssertEqual(metadata.objectKey, "private/object-key")
+        XCTAssertEqual(page.artifacts.map(\.artifactID), [metadata.artifactID])
+        XCTAssertEqual(page.artifacts.first?.name, "方案.md")
+        XCTAssertEqual(page.nextCursor, "next-page")
         XCTAssertEqual(restored, Data("# restored".utf8))
         let requests = await apiTransport.recordedRequests()
         XCTAssertEqual(requests.map(\.url.path), [
             "/api/chatos/agent-artifacts/uploads",
             "/api/chatos/agent-artifacts/artifact_0123456789abcdef0123456789abcdef/complete",
+            "/api/chatos/agent-artifacts",
             "/api/chatos/agent-artifacts/artifact_0123456789abcdef0123456789abcdef/content",
         ])
+        XCTAssertEqual(requests[2].url.query, "limit=50")
         let signingBody = try XCTUnwrap(requests.first?.body)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: signingBody) as? [String: Any])
         let item = try XCTUnwrap((json["artifacts"] as? [[String: Any]])?.first)
@@ -72,6 +78,12 @@ private actor AgentArtifactAPITransport: HTTPTransport {
                 statusCode: 200,
                 headers: [:],
                 body: Data(#"{"artifactId":"artifact_0123456789abcdef0123456789abcdef","name":"方案.md","mimeType":"text/markdown; charset=utf-8","size":14,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"uploaded","remoteViewPath":"/api/agent-artifacts/artifact_0123456789abcdef0123456789abcdef/content"}"#.utf8)
+            )
+        case "/api/chatos/agent-artifacts":
+            return .init(
+                statusCode: 200,
+                headers: [:],
+                body: Data(#"{"artifacts":[{"artifactId":"artifact_0123456789abcdef0123456789abcdef","name":"方案.md","mimeType":"text/markdown; charset=utf-8","size":14,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"uploaded","remoteViewPath":"/api/agent-artifacts/artifact_0123456789abcdef0123456789abcdef/content","createdAt":"2026-09-20T03:00:00.123Z","updatedAt":"2026-09-20T03:00:01Z"}],"nextCursor":"next-page"}"#.utf8)
             )
         case let path where path.hasSuffix("/content"):
             return .init(

@@ -125,7 +125,12 @@ struct AgentMessageAttachmentChips: View {
                 guard let markdown = String(data: data, encoding: .utf8) else {
                     throw AgentAttachmentPresentationError.invalidUTF8
                 }
-                previewedDocument = .init(attachment: attachment, markdown: markdown)
+                previewedDocument = .init(
+                    id: attachment.id,
+                    name: attachment.name,
+                    size: attachment.size,
+                    markdown: markdown
+                )
                 await recordPreview(outcome: .succeeded, startedAt: startedAt)
             } catch {
                 await recordPreview(outcome: .failed, startedAt: startedAt)
@@ -260,14 +265,14 @@ private enum AgentAttachmentPresentationError: LocalizedError {
     }
 }
 
-private struct AgentMarkdownPreviewItem: Identifiable {
-    let attachment: ProjectAgentMessageAttachment
+struct AgentMarkdownPreviewItem: Identifiable {
+    let id: String
+    let name: String
+    let size: Int
     let markdown: String
-
-    var id: String { attachment.id }
 }
 
-private struct AgentMarkdownAttachmentPreview: View {
+struct AgentMarkdownAttachmentPreview: View {
     let item: AgentMarkdownPreviewItem
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
@@ -277,8 +282,8 @@ private struct AgentMarkdownAttachmentPreview: View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(item.attachment.name).appFont(.headline)
-                    Text(formattedSize(item.attachment.size))
+                    Text(item.name).appFont(.headline)
+                    Text(formattedSize(item.size))
                         .appFont(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -322,7 +327,7 @@ private struct AgentMarkdownAttachmentPreview: View {
 
     private func saveMarkdown() {
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = item.attachment.name
+        panel.nameFieldStringValue = item.name
         panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }

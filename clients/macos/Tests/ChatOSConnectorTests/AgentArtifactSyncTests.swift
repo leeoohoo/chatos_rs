@@ -82,6 +82,12 @@ final class AgentArtifactSyncTests: XCTestCase {
         XCTAssertEqual(attachment.syncStatus, .synced)
         XCTAssertNotNil(attachment.artifactID)
         XCTAssertNil(attachment.uploadError)
+        let remotePage = try await resumedService.remoteAgentArtifacts()
+        XCTAssertEqual(
+            remotePage.artifacts.map(\.artifactID),
+            [try XCTUnwrap(attachment.artifactID)]
+        )
+        XCTAssertEqual(remotePage.artifacts.first?.name, "方案.md")
 
         let localResult = try await resumedStore.messageAttachment(
             ownerUserID: "alice",
@@ -189,6 +195,7 @@ private enum AgentArtifactRemoteStubError: Error { case offline }
 private actor AgentArtifactRemoteStub: AgentArtifactRemoteServing {
     private var failuresBeforeSuccess: Int
     private var artifacts: [String: Data] = [:]
+    private var metadataByID: [String: AgentArtifactRemoteItem] = [:]
     private var downloads = 0
     private var successfulUploads = 0
 
@@ -203,6 +210,17 @@ private actor AgentArtifactRemoteStub: AgentArtifactRemoteServing {
         }
         let artifactID = "artifact_0123456789abcdef0123456789abcdef"
         artifacts[artifactID] = request.data
+        metadataByID[artifactID] = .init(
+            artifactID: artifactID,
+            name: request.name,
+            mimeType: request.mimeType,
+            size: request.data.count,
+            sha256: request.sha256,
+            status: "uploaded",
+            remoteViewPath: "/api/agent-artifacts/\(artifactID)/content",
+            createdAtUnixMs: 1,
+            updatedAtUnixMs: 1
+        )
         successfulUploads += 1
         return .init(
             artifactID: artifactID,
@@ -217,6 +235,15 @@ private actor AgentArtifactRemoteStub: AgentArtifactRemoteServing {
         )
     }
 
+    func list(limit: Int, cursor: String?) async throws -> AgentArtifactRemotePage {
+        .init(
+            artifacts: Array(metadataByID.values.sorted {
+                $0.artifactID < $1.artifactID
+            }.prefix(limit)),
+            nextCursor: nil
+        )
+    }
+
     func download(artifactID: String) async throws -> Data {
         downloads += 1
         guard let data = artifacts[artifactID] else { throw AgentArtifactRemoteStubError.offline }
@@ -225,6 +252,7 @@ private actor AgentArtifactRemoteStub: AgentArtifactRemoteServing {
 
     func delete(artifactID: String) async throws {
         artifacts.removeValue(forKey: artifactID)
+        metadataByID.removeValue(forKey: artifactID)
     }
 
     func downloadCount() -> Int { downloads }

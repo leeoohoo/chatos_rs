@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use axum::body::Body;
-use axum::extract::Path;
+use axum::extract::{Path, Query};
 use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -10,8 +10,10 @@ use axum::{
     routing::{delete, get, post},
     Json, Router,
 };
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use chrono::Utc;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -21,6 +23,8 @@ use crate::repositories::agent_artifacts::{self, AgentArtifactRecord};
 use crate::services::object_storage::{service as object_storage_service, StoredObjectRef};
 
 const MAX_AGENT_ARTIFACTS_PER_REQUEST: usize = 20;
+const DEFAULT_AGENT_ARTIFACT_LIST_LIMIT: usize = 50;
+const MAX_AGENT_ARTIFACT_LIST_LIMIT: usize = 100;
 const DEFAULT_MAX_AGENT_ARTIFACT_BYTES: u64 = 2 * 1024 * 1024;
 const MARKDOWN_MIME_TYPE: &str = "text/markdown; charset=utf-8";
 
@@ -40,9 +44,24 @@ struct CreateAgentArtifactUploadItem {
     idempotency_key: String,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct ListAgentArtifactsQuery {
+    limit: Option<usize>,
+    cursor: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct AgentArtifactCursor {
+    created_at: chrono::DateTime<Utc>,
+    artifact_id: String,
+}
+
 pub fn router() -> Router {
     Router::new()
-        .route("/api/agent-artifacts", delete(delete_all_artifacts))
+        .route(
+            "/api/agent-artifacts",
+            get(list_artifacts).delete(delete_all_artifacts),
+        )
         .route("/api/agent-artifacts/uploads", post(create_uploads))
         .route(
             "/api/agent-artifacts/{artifact_id}/complete",
@@ -60,6 +79,46 @@ pub fn router() -> Router {
             "/api/agent-artifacts/{artifact_id}",
             delete(delete_artifact),
         )
+}
+
+async fn list_artifacts(
+    auth: AuthUser,
+    Query(query): Query<ListAgentArtifactsQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let limit = query.limit.unwrap_or(DEFAULT_AGENT_ARTIFACT_LIST_LIMIT);
+    if !(1..=MAX_AGENT_ARTIFACT_LIST_LIMIT).contains(&limit) {
+        return Err(json_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_agent_artifact_list_limit",
+            "limit must be between 1 and 100",
+        ));
+    }
+    let before = query
+        .cursor
+        .as_deref()
+        .map(decode_cursor)
+        .transpose()?
+        .map(|cursor| (cursor.created_at, cursor.artifact_id));
+    let mut artifacts = agent_artifacts::list_uploaded_owned(
+        auth.user_id.as_str(),
+        before,
+        limit.saturating_add(1) as i64,
+    )
+    .await
+    .map_err(repository_error)?;
+    let has_more = artifacts.len() > limit;
+    if has_more {
+        artifacts.truncate(limit);
+    }
+    let next_cursor = if has_more {
+        artifacts.last().map(encode_cursor).transpose()?
+    } else {
+        None
+    };
+    Ok(Json(json!({
+        "artifacts": artifacts.iter().map(metadata_json).collect::<Vec<_>>(),
+        "nextCursor": next_cursor,
+    })))
 }
 
 async fn create_uploads(
@@ -460,6 +519,37 @@ fn valid_artifact_id(value: &str) -> bool {
             .all(|character| character.is_ascii_hexdigit())
 }
 
+fn encode_cursor(record: &AgentArtifactRecord) -> Result<String, (StatusCode, Json<Value>)> {
+    serde_json::to_vec(&AgentArtifactCursor {
+        created_at: record.created_at,
+        artifact_id: record.id.clone(),
+    })
+    .map(|value| URL_SAFE_NO_PAD.encode(value))
+    .map_err(|_| {
+        json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "encode_agent_artifact_cursor_failed",
+            "could not create the next artifact page cursor",
+        )
+    })
+}
+
+fn decode_cursor(value: &str) -> Result<AgentArtifactCursor, (StatusCode, Json<Value>)> {
+    let cursor = URL_SAFE_NO_PAD
+        .decode(value)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<AgentArtifactCursor>(&bytes).ok())
+        .filter(|cursor| valid_artifact_id(cursor.artifact_id.as_str()))
+        .ok_or_else(|| {
+            json_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_agent_artifact_cursor",
+                "artifact page cursor is invalid or expired",
+            )
+        })?;
+    Ok(cursor)
+}
+
 fn is_lower_sha256(value: &str) -> bool {
     value.len() == 64
         && value
@@ -508,6 +598,9 @@ fn json_error(status: StatusCode, code: &str, message: &str) -> (StatusCode, Jso
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use axum::http::{Method, Request};
+    use tower::ServiceExt;
 
     #[test]
     fn upload_validation_accepts_only_bounded_markdown_and_cleans_the_name() {
@@ -569,5 +662,61 @@ mod tests {
             validate_uploaded_markdown(Some("text/markdown; charset=iso-8859-1"), b"# plan")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn artifact_page_cursor_round_trips_and_rejects_tampering() {
+        let now = Utc::now();
+        let record = AgentArtifactRecord {
+            id: "artifact_0123456789abcdef0123456789abcdef".to_string(),
+            user_id: "owner".to_string(),
+            idempotency_key: "key".to_string(),
+            status: "uploaded".to_string(),
+            name: "plan.md".to_string(),
+            mime_type: MARKDOWN_MIME_TYPE.to_string(),
+            size_bytes: 12,
+            sha256: "a".repeat(64),
+            bucket: "private".to_string(),
+            object_key: "private/object".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+        let encoded = encode_cursor(&record).expect("encode cursor");
+        let decoded = decode_cursor(encoded.as_str()).expect("decode cursor");
+        assert_eq!(decoded.artifact_id, record.id);
+        assert_eq!(decoded.created_at, record.created_at);
+        assert!(decode_cursor("not-a-cursor").is_err());
+    }
+
+    #[tokio::test]
+    async fn artifact_routes_require_an_authenticated_account() {
+        for (method, uri) in [
+            (Method::GET, "/api/agent-artifacts"),
+            (
+                Method::GET,
+                "/api/agent-artifacts/artifact_0123456789abcdef0123456789abcdef/metadata",
+            ),
+            (
+                Method::GET,
+                "/api/agent-artifacts/artifact_0123456789abcdef0123456789abcdef/content",
+            ),
+            (
+                Method::DELETE,
+                "/api/agent-artifacts/artifact_0123456789abcdef0123456789abcdef",
+            ),
+            (Method::DELETE, "/api/agent-artifacts"),
+        ] {
+            let response = router()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .expect("artifact request"),
+                )
+                .await
+                .expect("artifact route response");
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{uri}");
+        }
     }
 }

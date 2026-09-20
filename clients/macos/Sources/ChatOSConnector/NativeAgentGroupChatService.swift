@@ -146,6 +146,23 @@ public actor NativeAgentGroupChatService {
         _ = try await syncPendingAgentArtifacts(ownerUserID: ownerUserID, limit: 1)
     }
 
+    public func remoteAgentArtifacts(
+        limit: Int = 50,
+        cursor: String? = nil
+    ) async throws -> AgentArtifactRemotePage {
+        guard let agentArtifactService else {
+            throw AgentGroupChatError.storage("Agent artifact service is unavailable")
+        }
+        return try await agentArtifactService.list(limit: limit, cursor: cursor)
+    }
+
+    public func remoteAgentArtifactData(artifactID: String) async throws -> Data {
+        guard let agentArtifactService else {
+            throw AgentGroupChatError.storage("Agent artifact service is unavailable")
+        }
+        return try await agentArtifactService.download(artifactID: artifactID)
+    }
+
     /// Emits process-local invalidations after the durable SQLite write has completed. Consumers
     /// always re-read SQLite, so this stream is only a wake-up signal and never a second source of
     /// truth. `bufferingNewest` coalesces rapid model/tool checkpoint updates for slow UI readers.

@@ -64,10 +64,57 @@ public struct AgentArtifactRemoteMetadata: Sendable, Equatable {
     }
 }
 
+public struct AgentArtifactRemoteItem: Identifiable, Sendable, Equatable {
+    public let artifactID: String
+    public let name: String
+    public let mimeType: String
+    public let size: Int
+    public let sha256: String
+    public let status: String
+    public let remoteViewPath: String?
+    public let createdAtUnixMs: Int64
+    public let updatedAtUnixMs: Int64
+
+    public var id: String { artifactID }
+
+    public init(
+        artifactID: String,
+        name: String,
+        mimeType: String,
+        size: Int,
+        sha256: String,
+        status: String,
+        remoteViewPath: String? = nil,
+        createdAtUnixMs: Int64,
+        updatedAtUnixMs: Int64
+    ) {
+        self.artifactID = artifactID
+        self.name = name
+        self.mimeType = mimeType
+        self.size = size
+        self.sha256 = sha256
+        self.status = status
+        self.remoteViewPath = remoteViewPath
+        self.createdAtUnixMs = createdAtUnixMs
+        self.updatedAtUnixMs = updatedAtUnixMs
+    }
+}
+
+public struct AgentArtifactRemotePage: Sendable, Equatable {
+    public let artifacts: [AgentArtifactRemoteItem]
+    public let nextCursor: String?
+
+    public init(artifacts: [AgentArtifactRemoteItem], nextCursor: String?) {
+        self.artifacts = artifacts
+        self.nextCursor = nextCursor
+    }
+}
+
 /// Authenticated account service for Agent-authored Markdown artifacts. Implementations must not
 /// expose upload URLs, object keys or authorization material to an Agent tool result.
 public protocol AgentArtifactRemoteServing: Sendable {
     func upload(_ request: AgentArtifactUploadRequest) async throws -> AgentArtifactRemoteMetadata
+    func list(limit: Int, cursor: String?) async throws -> AgentArtifactRemotePage
     func download(artifactID: String) async throws -> Data
     func delete(artifactID: String) async throws
 }

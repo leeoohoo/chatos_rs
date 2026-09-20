@@ -83,6 +83,42 @@ pub async fn get_owned(
     .await
 }
 
+pub async fn list_uploaded_owned(
+    user_id: &str,
+    before: Option<(DateTime<Utc>, String)>,
+    limit: i64,
+) -> Result<Vec<AgentArtifactRecord>, String> {
+    let user_id = user_id.to_string();
+    with_db(|pool| {
+        Box::pin(async move {
+            let rows = if let Some((created_at, artifact_id)) = before {
+                let sql = format!(
+                    "SELECT {COLUMNS} FROM agent_artifacts WHERE user_id=$1 AND status='uploaded' AND (created_at < $2 OR (created_at = $2 AND id < $3)) ORDER BY created_at DESC,id DESC LIMIT $4"
+                );
+                sqlx::query_as::<_, ArtifactRow>(sql.as_str())
+                    .bind(&user_id)
+                    .bind(created_at)
+                    .bind(artifact_id)
+                    .bind(limit)
+                    .fetch_all(pool)
+                    .await
+            } else {
+                let sql = format!(
+                    "SELECT {COLUMNS} FROM agent_artifacts WHERE user_id=$1 AND status='uploaded' ORDER BY created_at DESC,id DESC LIMIT $2"
+                );
+                sqlx::query_as::<_, ArtifactRow>(sql.as_str())
+                    .bind(&user_id)
+                    .bind(limit)
+                    .fetch_all(pool)
+                    .await
+            };
+            rows.map(|values| values.into_iter().map(from_row).collect())
+                .map_err(db_error)
+        })
+    })
+    .await
+}
+
 pub async fn get_by_idempotency_key(
     user_id: &str,
     idempotency_key: &str,
