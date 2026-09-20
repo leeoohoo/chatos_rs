@@ -144,6 +144,22 @@ extension LocalAgentChatToolProvider {
         )
     }
 
+    func recordSuccessfulMessage(_ content: String, documentCount: Int) async {
+        guard let localStore = store as? SQLiteAgentGroupChatStore else { return }
+        let identity = [context.ownerUserID, context.agentID, context.runID]
+            .joined(separator: "\u{0}")
+        let fingerprint = SHA256.hash(data: Data(identity.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        try? await localStore.recordAgentMessageSent(
+            ownerUserID: context.ownerUserID,
+            runFingerprint: fingerprint,
+            characterCount: content.count,
+            documentCount: documentCount,
+            nowUnixMs: now()
+        )
+    }
+
     func recordDocumentCreation(
         _ outcome: AgentDocumentCreationMetricOutcome,
         bytes: Int = 0

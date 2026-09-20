@@ -86,6 +86,7 @@ extension LocalAgentChatToolProvider {
             throw error
         }
         await references.consumeDocuments(references: documentReferences, callID: call.id)
+        await recordSuccessfulMessage(content, documentCount: attachmentDrafts.count)
         await roomChangeHandler(conversationID)
         let outcome = try Self.outcome(DirectSendResponse(
             conversationReference: conversationReference,

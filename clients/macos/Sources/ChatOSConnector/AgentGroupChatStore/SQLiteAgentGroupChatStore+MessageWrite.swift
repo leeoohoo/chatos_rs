@@ -455,7 +455,7 @@ extension SQLiteAgentGroupChatStore {
         )
     }
 
-    private func recordAgentCommunicationMetric(
+    func recordAgentCommunicationMetric(
         ownerUserID: String,
         name: String,
         dimension: String,

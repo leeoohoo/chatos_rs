@@ -405,6 +405,7 @@ extension LocalAgentChatToolProvider {
             throw error
         }
         await references.consumeDocuments(references: documentReferences, callID: call.id)
+        await recordSuccessfulMessage(content, documentCount: attachmentDrafts.count)
         await roomChangeHandler(roomID)
         let outcome = try Self.outcome(InboxSendResponse(
             sent: true,

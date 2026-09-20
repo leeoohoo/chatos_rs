@@ -807,5 +807,31 @@ enum AgentGroupChatMigrations {
                 "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (24)"
             )
         }
+        if !hasMigration(25) {
+            try execute(
+                """
+                CREATE TABLE IF NOT EXISTS local_agent_message_sequence_events (
+                    owner_user_id TEXT NOT NULL,
+                    run_fingerprint TEXT NOT NULL,
+                    sequence INTEGER NOT NULL CHECK(sequence > 0),
+                    character_count INTEGER NOT NULL CHECK(character_count >= 0),
+                    document_count INTEGER NOT NULL CHECK(document_count >= 0),
+                    created_at_unix_ms INTEGER NOT NULL CHECK(created_at_unix_ms >= 0),
+                    PRIMARY KEY(owner_user_id, run_fingerprint, sequence)
+                )
+                """
+            )
+            try execute(
+                """
+                CREATE INDEX IF NOT EXISTS local_agent_message_sequence_events_window
+                ON local_agent_message_sequence_events(
+                    owner_user_id, run_fingerprint, created_at_unix_ms, sequence
+                )
+                """
+            )
+            try execute(
+                "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (25)"
+            )
+        }
     }
 }

@@ -86,6 +86,7 @@ extension LocalAgentChatToolProvider {
             throw error
         }
         await references.consumeDocuments(references: documentReferences, callID: call.id)
+        await recordSuccessfulMessage(content, documentCount: attachmentDrafts.count)
         await roomChangeHandler(teamRoomID)
         let outcome = try Self.outcome(
             SendResponse(
@@ -178,6 +179,7 @@ extension LocalAgentChatToolProvider {
             throw error
         }
         await references.consumeDocuments(references: documentReferences, callID: call.id)
+        await recordSuccessfulMessage(content, documentCount: attachmentDrafts.count)
         await roomChangeHandler(context.roomID)
         // A substantive reply acknowledges the triggering message. This best-effort cursor update
         // is intentionally secondary to the durable message transaction. Sending no longer ends
