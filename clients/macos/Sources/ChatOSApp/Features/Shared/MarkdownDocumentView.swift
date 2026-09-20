@@ -210,7 +210,9 @@ private struct MarkdownNativeTextView: NSViewRepresentable {
         nsView textView: MarkdownLayoutTextView,
         context: Context
     ) -> CGSize? {
-        guard let proposedWidth = proposal.width, proposedWidth > 0 else { return nil }
+        guard let proposedWidth = MarkdownLayoutGeometry.finitePositiveWidth(proposal.width) else {
+            return nil
+        }
         let width = switch widthBehavior {
         case .fill: proposedWidth
         case .fitContent: textView.width(fittingMaxWidth: proposedWidth)
@@ -219,10 +221,22 @@ private struct MarkdownNativeTextView: NSViewRepresentable {
     }
 }
 
+enum MarkdownLayoutGeometry {
+    static func finitePositiveWidth(_ width: CGFloat?) -> CGFloat? {
+        guard let width, width.isFinite, width > 0 else { return nil }
+        return width
+    }
+
+    static func widthCacheKey(fittingWidth width: CGFloat) -> UInt64? {
+        guard let width = finitePositiveWidth(width) else { return nil }
+        return Double(max(width, 1)).bitPattern
+    }
+}
+
 @MainActor
 private final class MarkdownLayoutTextView: NSTextView {
     private var source = ""
-    private var measuredHeights: [Int: CGFloat] = [:]
+    private var measuredHeights: [UInt64: CGFloat] = [:]
 
     init() {
         let storage = NSTextStorage()
@@ -268,8 +282,10 @@ private final class MarkdownLayoutTextView: NSTextView {
     }
 
     func height(fittingWidth width: CGFloat) -> CGFloat {
-        let safeWidth = max(width, 1)
-        let widthKey = Int((safeWidth * 2).rounded())
+        guard let safeWidth = MarkdownLayoutGeometry.finitePositiveWidth(width),
+              let widthKey = MarkdownLayoutGeometry.widthCacheKey(fittingWidth: safeWidth) else {
+            return 1
+        }
         if let cached = measuredHeights[widthKey] { return cached }
         // Measurement must be pure. Mutating NSTextContainer from NSViewRepresentable's
         // sizeThatFits invalidates the platform view while SwiftUI is placing a lazy stack,
@@ -284,7 +300,9 @@ private final class MarkdownLayoutTextView: NSTextView {
     }
 
     func width(fittingMaxWidth maxWidth: CGFloat) -> CGFloat {
-        let safeMaxWidth = max(maxWidth, 1)
+        guard let safeMaxWidth = MarkdownLayoutGeometry.finitePositiveWidth(maxWidth) else {
+            return 1
+        }
         let measured = textStorage?.boundingRect(
             with: NSSize(width: safeMaxWidth, height: CGFloat.greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading]

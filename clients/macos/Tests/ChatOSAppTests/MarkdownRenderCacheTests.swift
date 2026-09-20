@@ -4,6 +4,25 @@ import Testing
 
 struct MarkdownRenderCacheTests {
     @Test
+    func markdownLayoutRejectsNonFiniteAndNonPositiveWidths() {
+        #expect(MarkdownLayoutGeometry.finitePositiveWidth(nil) == nil)
+        #expect(MarkdownLayoutGeometry.finitePositiveWidth(.infinity) == nil)
+        #expect(MarkdownLayoutGeometry.finitePositiveWidth(-.infinity) == nil)
+        #expect(MarkdownLayoutGeometry.finitePositiveWidth(.nan) == nil)
+        #expect(MarkdownLayoutGeometry.finitePositiveWidth(0) == nil)
+        #expect(MarkdownLayoutGeometry.finitePositiveWidth(-1) == nil)
+        #expect(MarkdownLayoutGeometry.finitePositiveWidth(320) == 320)
+    }
+
+    @Test
+    func markdownLayoutOnlyBuildsCacheKeysForFinitePositiveWidths() {
+        #expect(MarkdownLayoutGeometry.widthCacheKey(fittingWidth: .infinity) == nil)
+        #expect(MarkdownLayoutGeometry.widthCacheKey(fittingWidth: .nan) == nil)
+        #expect(MarkdownLayoutGeometry.widthCacheKey(fittingWidth: 0) == nil)
+        #expect(MarkdownLayoutGeometry.widthCacheKey(fittingWidth: 320) != nil)
+    }
+
+    @Test
     func repeatedDocumentParsingUsesBoundedCache() {
         let cache = MarkdownRenderCache(totalCostLimit: 1_024 * 1_024, countLimit: 16)
         let source = """
