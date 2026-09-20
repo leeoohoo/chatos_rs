@@ -189,6 +189,12 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         ))
         XCTAssertTrue(openedDirect.content.contains("conversation_ref"))
         XCTAssertFalse(openedDirect.content.contains(third.id))
+        let openedDirectJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(openedDirect.content.utf8)) as? [String: Any]
+        )
+        let directConversationReference = try XCTUnwrap(
+            openedDirectJSON["conversation_ref"] as? String
+        )
         let observedDirectRoomChange = await roomChangeIterator.next()
         let directRoomChange = try XCTUnwrap(observedDirectRoomChange)
         XCTAssertEqual(directRoomChange.kind.rawValue, "room_updated")
@@ -446,6 +452,20 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertEqual(transcript.last?.sourceRunID, "run-1")
         XCTAssertEqual(transcript.last?.attachmentItems.count, 1)
         XCTAssertEqual(transcript.last?.attachmentItems.first?.name, sanitizedName)
+        let teamDocument = try await provider.execute(.init(
+            id: "call-create-team-document",
+            name: LocalAgentChatToolProvider.createDocumentToolName,
+            arguments: try toolArguments([
+                "name": "team-plan.md",
+                "title": "团队计划",
+                "markdown": "# 团队计划\n\n按里程碑推进。",
+            ])
+        ))
+        let teamDocumentJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(teamDocument.content.utf8)) as? [String: Any]
+        )
+        let teamDocumentReference = try XCTUnwrap(teamDocumentJSON["document_ref"] as? String)
+        let teamDocumentName = try XCTUnwrap(teamDocumentJSON["name"] as? String)
         let teamAnnouncement = try await provider.execute(.init(
             id: "call-team-send",
             name: LocalAgentChatToolProvider.sendTeamToolName,
@@ -453,6 +473,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 "team_ref": teamReference,
                 "content": "@客户端 请在项目群同步实现计划",
                 "mention_agent_refs": [secondReference],
+                "document_refs": [teamDocumentReference],
             ])
         ))
         XCTAssertTrue(teamAnnouncement.content.contains(#""spawned_delivery_count":1"#))
@@ -468,6 +489,42 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         ).messages
         XCTAssertEqual(teamMessages.last?.content, "@客户端 请在项目群同步实现计划")
         XCTAssertEqual(teamMessages.last?.mentionedAgentIDs, [second.id])
+        XCTAssertEqual(teamMessages.last?.attachmentItems.map(\.name), [teamDocumentName])
+
+        let directDocument = try await provider.execute(.init(
+            id: "call-create-direct-document",
+            name: LocalAgentChatToolProvider.createDocumentToolName,
+            arguments: try toolArguments([
+                "name": "direct-note.md",
+                "title": "私聊说明",
+                "markdown": "# 私聊说明\n\n请单独验证。",
+            ])
+        ))
+        let directDocumentJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(directDocument.content.utf8)) as? [String: Any]
+        )
+        let directDocumentReference = try XCTUnwrap(
+            directDocumentJSON["document_ref"] as? String
+        )
+        let directDocumentName = try XCTUnwrap(directDocumentJSON["name"] as? String)
+        let directSend = try await provider.execute(.init(
+            id: "call-direct-send",
+            name: LocalAgentChatToolProvider.sendDirectToolName,
+            arguments: try toolArguments([
+                "conversation_ref": directConversationReference,
+                "content": "请查看私聊附件。",
+                "document_refs": [directDocumentReference],
+            ])
+        ))
+        XCTAssertFalse(directSend.isError)
+        let directMessages = try await store.pageRecentMessages(
+            ownerUserID: "alice",
+            roomID: directRoomChange.roomID,
+            beforeMessageID: nil,
+            limit: 20
+        ).messages
+        XCTAssertEqual(directMessages.last?.content, "请查看私聊附件。")
+        XCTAssertEqual(directMessages.last?.attachmentItems.map(\.name), [directDocumentName])
     }
 
     func testHeartbeatCanCompleteQuietlyWithoutWritingTranscriptMessage() async throws {
@@ -686,10 +743,27 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let informationalMessageRef = try XCTUnwrap(
             informationalMessage["message_ref"] as? String
         )
+        let inboxDocument = try await provider.execute(.init(
+            id: "create-inbox-document",
+            name: LocalAgentChatToolProvider.createDocumentToolName,
+            arguments: try toolArguments([
+                "name": "inbox-response.md",
+                "title": "收件箱回复",
+                "markdown": "# 收件箱回复\n\n问题处理步骤。",
+            ])
+        ))
+        let inboxDocumentJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(inboxDocument.content.utf8)) as? [String: Any]
+        )
+        let inboxDocumentReference = try XCTUnwrap(
+            inboxDocumentJSON["document_ref"] as? String
+        )
+        let inboxDocumentName = try XCTUnwrap(inboxDocumentJSON["name"] as? String)
         let replyArguments = try toolArguments([
             "conversation_ref": actionableConversationRef,
             "reply_to_message_ref": actionableMessageRef,
             "content": "收到，我会处理。",
+            "document_refs": [inboxDocumentReference],
         ])
         let reply = try await provider.execute(.init(
             id: "reply-from-inbox",
@@ -698,6 +772,14 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         ))
         XCTAssertTrue(reply.content.contains(#""sent":true"#))
         XCTAssertFalse(reply.content.contains(second.id))
+        let repliedMessages = try await store.pageRecentMessages(
+            ownerUserID: "alice",
+            roomID: second.id,
+            beforeMessageID: nil,
+            limit: 20
+        ).messages
+        XCTAssertEqual(repliedMessages.last?.content, "收到，我会处理。")
+        XCTAssertEqual(repliedMessages.last?.attachmentItems.map(\.name), [inboxDocumentName])
         let options = try await provider.execute(.init(
             id: "todo-options",
             name: LocalAgentChatToolProvider.todoExecutionOptionsToolName,
