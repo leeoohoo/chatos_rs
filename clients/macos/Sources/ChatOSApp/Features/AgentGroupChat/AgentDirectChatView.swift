@@ -130,11 +130,13 @@ private final class AgentDirectChatViewModel: ObservableObject {
                 ownerUserID: ownerUserID,
                 roomID: conversationID
             )
+            let refreshCoalescer = AgentChangeRefreshCoalescer { [weak self] in
+                await self?.load()
+            }
+            defer { refreshCoalescer.cancel() }
             for await _ in changes {
                 guard !Task.isCancelled else { break }
-                try? await Task.sleep(for: .milliseconds(120))
-                guard !Task.isCancelled else { break }
-                await self?.load()
+                refreshCoalescer.signal()
             }
         }
     }
