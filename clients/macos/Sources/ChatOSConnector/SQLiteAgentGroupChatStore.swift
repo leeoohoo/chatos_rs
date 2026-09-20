@@ -1040,14 +1040,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             )
             guard sqlite3_changes(database) == 1 else { throw AgentGroupChatError.conflict }
             if room.defaultAgentID == proposal.draft.targetAgentID {
-                let replacement: String? = try query(
-                    """
-                    SELECT agent_id FROM project_agent_room_members
-                    WHERE owner_user_id = ? AND room_id = ? AND status = 'active'
-                    ORDER BY joined_at_unix_ms, agent_id LIMIT 1
-                    """,
-                    [.text(ownerUserID), .text(roomID)]
-                ) { Self.string($0, 0) }.first
+                let replacement = try AgentConversationRepository.firstActiveMemberID(
+                    database,
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    preparedStatement: recordPreparedStatement
+                )
                 try execute(
                     """
                     UPDATE project_agent_rooms SET default_agent_id = ?, updated_at_unix_ms = ?
@@ -2199,14 +2197,12 @@ public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChat
             )
             let candidates: [String]
             if room.conversationKind.isDirect {
-                candidates = try query(
-                    """
-                    SELECT agent_id FROM project_agent_room_members
-                    WHERE owner_user_id = ? AND room_id = ? AND status = 'active'
-                    ORDER BY joined_at_unix_ms, agent_id
-                    """,
-                    [.text(ownerUserID), .text(roomID)]
-                ) { Self.string($0, 0) }
+                candidates = try AgentConversationRepository.activeMemberIDs(
+                    database,
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    preparedStatement: recordPreparedStatement
+                )
             } else if !draft.mentionedAgentIDs.isEmpty {
                 candidates = draft.mentionedAgentIDs
             } else if draft.senderKind == .human, let defaultAgentID = room.defaultAgentID {

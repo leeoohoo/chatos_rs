@@ -2,6 +2,42 @@ import ChatOSCore
 import SQLite3
 
 enum AgentConversationRepository {
+    static func firstActiveMemberID(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        roomID: String,
+        preparedStatement: () -> Void
+    ) throws -> String? {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT agent_id FROM project_agent_room_members
+            WHERE owner_user_id = ? AND room_id = ? AND status = 'active'
+            ORDER BY joined_at_unix_ms, agent_id LIMIT 1
+            """,
+            [.text(ownerUserID), .text(roomID)]
+        ) { string($0, 0) }.first
+    }
+
+    static func activeMemberIDs(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        roomID: String,
+        preparedStatement: () -> Void
+    ) throws -> [String] {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT agent_id FROM project_agent_room_members
+            WHERE owner_user_id = ? AND room_id = ? AND status = 'active'
+            ORDER BY joined_at_unix_ms, agent_id
+            """,
+            [.text(ownerUserID), .text(roomID)]
+        ) { string($0, 0) }
+    }
+
     static func listProjectRooms(
         _ handle: OpaquePointer?,
         ownerUserID: String,
@@ -129,4 +165,9 @@ enum AgentConversationRepository {
 
     private static let roomColumns = "owner_user_id, id, project_id, name, goal, default_agent_id, status, created_at_unix_ms, updated_at_unix_ms, conversation_kind, direct_key, project_manager_agent_id"
     private static let memberColumns = "owner_user_id, room_id, agent_id, role, responsibility, plugin_allowlist_json, status, joined_at_unix_ms"
+
+    private static func string(_ statement: OpaquePointer, _ index: Int32) -> String {
+        guard let value = sqlite3_column_text(statement, index) else { return "" }
+        return String(cString: value)
+    }
 }
