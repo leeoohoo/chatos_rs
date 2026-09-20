@@ -2,6 +2,104 @@ import ChatOSCore
 import SQLite3
 
 enum AgentTodoRepository {
+    static func pendingAgentIDs(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        limit: Int,
+        preparedStatement: () -> Void
+    ) throws -> [String] {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT DISTINCT t.agent_id
+            FROM local_agent_todos t
+            JOIN local_agent_profiles a
+              ON a.owner_user_id = t.owner_user_id AND a.id = t.agent_id
+            WHERE t.owner_user_id = ? AND t.status = 'pending'
+              AND t.team_room_id IS NOT NULL AND a.status = 'active'
+            ORDER BY t.agent_id
+            LIMIT ?
+            """,
+            [.text(ownerUserID), .integer(Int64(limit))]
+        ) { string($0, 0) }
+    }
+
+    static func running(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        agentID: String,
+        preparedStatement: () -> Void
+    ) throws -> LocalAgentTodo? {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT \(columns) FROM local_agent_todos t
+            WHERE t.owner_user_id = ? AND t.agent_id = ? AND t.status = 'in_progress'
+            ORDER BY t.updated_at_unix_ms, t.id
+            LIMIT 1
+            """,
+            [.text(ownerUserID), .text(agentID)],
+            row: AgentGroupChatRowMapper.todo
+        ).first
+    }
+
+    static func runningCount(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        agentID: String,
+        preparedStatement: () -> Void
+    ) throws -> Int64 {
+        preparedStatement()
+        return try AgentGroupChatDatabase.scalarInt64(
+            handle,
+            """
+            SELECT COUNT(*) FROM local_agent_todos
+            WHERE owner_user_id = ? AND agent_id = ? AND status = 'in_progress'
+            """,
+            [.text(ownerUserID), .text(agentID)]
+        )
+    }
+
+    static func nextReady(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        agentID: String,
+        preparedStatement: () -> Void
+    ) throws -> LocalAgentTodo? {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT \(columns) FROM local_agent_todos t
+            WHERE t.owner_user_id = ? AND t.agent_id = ? AND t.status = 'pending'
+              AND EXISTS (
+                SELECT 1 FROM project_agent_rooms r
+                JOIN project_agent_room_members m
+                  ON m.owner_user_id = r.owner_user_id AND m.room_id = r.id
+                WHERE r.owner_user_id = t.owner_user_id AND r.id = t.team_room_id
+                  AND r.status = 'active' AND m.agent_id = t.agent_id
+                  AND m.status = 'active'
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM local_agent_todo_dependencies dependency
+                JOIN local_agent_todos prerequisite
+                  ON prerequisite.owner_user_id = dependency.owner_user_id
+                 AND prerequisite.id = dependency.prerequisite_todo_id
+                WHERE dependency.owner_user_id = t.owner_user_id
+                  AND dependency.todo_id = t.id
+                  AND prerequisite.status != 'completed'
+              )
+            ORDER BY t.priority DESC, t.sort_order, t.created_at_unix_ms, t.id
+            LIMIT 1
+            """,
+            [.text(ownerUserID), .text(agentID)],
+            row: AgentGroupChatRowMapper.todo
+        ).first
+    }
+
     static func dependencyCreatesCycle(
         _ handle: OpaquePointer?,
         ownerUserID: String,
