@@ -3,7 +3,7 @@ import ChatOSConnector
 import ChatOSCore
 import SwiftUI
 
-private enum AgentTeamSection: String, CaseIterable, Identifiable {
+enum AgentTeamSection: String, CaseIterable, Identifiable {
     case chat = "聊天"
     case tasks = "任务"
     case assets = "共享资产"
@@ -13,16 +13,16 @@ private enum AgentTeamSection: String, CaseIterable, Identifiable {
 }
 
 struct ProjectAgentGroupChatView: View {
-    @EnvironmentObject private var model: AppModel
-    @StateObject private var viewModel: AgentGroupChatViewModel
+    @EnvironmentObject var model: AppModel
+    @StateObject var viewModel: AgentGroupChatViewModel
     @State private var showsCreateRoom = false
-    @State private var showsCreateAgent = false
-    @State private var showsAddExistingAgent = false
-    @State private var showsAgentBuilder = false
+    @State var showsCreateAgent = false
+    @State var showsAddExistingAgent = false
+    @State var showsAgentBuilder = false
     @State private var showsStopAllConfirmation = false
-    @State private var editingMember: AgentGroupChatViewModel.MemberPresentation?
-    @State private var selectedSection: AgentTeamSection = .chat
-    @State private var selectedRunAgentID: String?
+    @State var editingMember: AgentGroupChatViewModel.MemberPresentation?
+    @State var selectedSection: AgentTeamSection = .chat
+    @State var selectedRunAgentID: String?
     @State private var editingAsset: LocalAgentTeamAsset?
     @State private var historyAsset: LocalAgentTeamAsset?
     @State private var inspectingRun: LocalAgentGroupChatRun?
@@ -386,7 +386,7 @@ struct ProjectAgentGroupChatView: View {
         .background(Color.accentColor.opacity(0.07))
     }
 
-    private func profession(_ key: String) -> LocalAgentProfessionDefinition? {
+    func profession(_ key: String) -> LocalAgentProfessionDefinition? {
         guard let owner = model.localProjectOwnerUserID else { return nil }
         return model.agentSkillLibrary.profession(ownerUserID: owner, key: key)
     }
@@ -443,282 +443,4 @@ struct ProjectAgentGroupChatView: View {
         .padding(.vertical, 10)
     }
 
-    private var transcript: some View {
-        AgentChatTimelineView(
-            items: viewModel.messages,
-            isInitialContentReady: !viewModel.isLoading,
-            hasOlderItems: viewModel.hasOlderMessages,
-            isLoadingOlderItems: viewModel.isLoadingOlderMessages,
-            scrollToLatestRequest: viewModel.scrollToLatestRequest,
-            loadOlderItems: { await viewModel.loadOlderMessages() },
-            rowContent: { message in messageRow(message) },
-            emptyContent: {
-                ContentUnavailableView(
-                    "还没有消息",
-                    systemImage: "bubble.left.and.bubble.right",
-                    description: Text("创建 Agent 后，通过 @ 提及开始协作。")
-                )
-                .padding(.top, 70)
-            }
-        )
-    }
-
-    private func messageRow(_ message: ProjectAgentMessage) -> some View {
-        let isHuman = message.senderKind == .human
-        return HStack {
-            if isHuman { Spacer(minLength: 80) }
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Text(viewModel.displayName(senderID: message.senderID, kind: message.senderKind))
-                        .appFont(.caption).fontWeight(.semibold)
-                    if message.hopCount > 0 {
-                        Text("第 \(message.hopCount) 跳")
-                            .appFont(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-                if !message.content.isEmpty {
-                    MarkdownDocumentView(markdown: message.content)
-                }
-                if !message.attachmentItems.isEmpty {
-                    AgentMessageAttachmentChips(
-                        ownerUserID: message.ownerUserID,
-                        roomID: message.roomID,
-                        messageID: message.id,
-                        creatorName: viewModel.displayName(
-                            senderID: message.senderID,
-                            kind: message.senderKind
-                        ),
-                        attachments: message.attachmentItems,
-                        dataByID: viewModel.attachmentDataByID,
-                        service: model.agentGroupChatService
-                    )
-                }
-                if !message.mentionedAgentIDs.isEmpty {
-                    Text(message.mentionedAgentIDs.compactMap { id in
-                        guard let name = viewModel.profilesByID[id]?.draft.name else { return nil }
-                        return "@\(name)"
-                    }.joined(separator: "  "))
-                    .appFont(.caption)
-                    .foregroundStyle(.tint)
-                }
-            }
-            .padding(12)
-            .background(
-                isHuman ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.10),
-                in: RoundedRectangle(cornerRadius: 12)
-            )
-            if !isHuman { Spacer(minLength: 80) }
-        }
-    }
-
-    private var composer: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if viewModel.isRunningAgents {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("本地 Agent 正在处理群聊…")
-                        .appFont(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            if !viewModel.selectedMentionAgentIDs.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(viewModel.selectedMentionAgentIDs.sorted(), id: \.self) { id in
-                            Button {
-                                viewModel.toggleMention(agentID: id)
-                            } label: {
-                                Text("@\(viewModel.profilesByID[id]?.draft.name ?? id)  ×")
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                        }
-                    }
-                }
-            }
-            AgentChatComposerView(
-                text: $viewModel.draftMessage,
-                attachments: $viewModel.attachments,
-                attachmentError: $viewModel.attachmentError,
-                isSending: viewModel.isSending,
-                placeholder: "输入消息；不选择 @ 时交给默认 Agent，也可粘贴图片、文档和长文本…",
-                mentionCandidates: mentionCandidates,
-                onMentionSelected: { viewModel.selectMention(agentID: $0) },
-                onSend: { Task { await viewModel.sendMessage() } }
-            ) {
-                Menu {
-                    if viewModel.activeMembers.isEmpty {
-                        Text("先创建 Agent")
-                    }
-                    ForEach(viewModel.activeMembers) { item in
-                        Button {
-                            viewModel.toggleMention(agentID: item.member.agentID)
-                        } label: {
-                            Label(
-                                item.profile?.draft.name ?? item.member.agentID,
-                                systemImage: viewModel.selectedMentionAgentIDs.contains(item.member.agentID)
-                                    ? "checkmark.circle.fill" : "circle"
-                            )
-                        }
-                    }
-                } label: {
-                    Image(systemName: "at")
-                }
-                .menuStyle(.borderlessButton)
-                .disabled(viewModel.activeMembers.isEmpty)
-                .help("选择要 @ 的 Agent；不选择时交给默认 Agent")
-            }
-        }
-        .padding(12)
-        .background(.bar)
-    }
-
-    private var mentionCandidates: [AgentChatMentionCandidate] {
-        viewModel.activeMembers.compactMap { item in
-            guard let profile = item.profile,
-                  !viewModel.selectedMentionAgentIDs.contains(item.member.agentID) else {
-                return nil
-            }
-            return AgentChatMentionCandidate(
-                id: item.member.agentID,
-                name: profile.draft.name,
-                subtitle: profession(profile.draft.professionKey)?.label
-            )
-        }
-    }
-
-    private var memberSidebar: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("成员").appFont(.headline)
-                Spacer()
-                Text("\(viewModel.members.count)")
-                    .appFont(.caption).foregroundStyle(.secondary)
-            }
-            if viewModel.activeMembers.isEmpty {
-                Text("还没有 Agent。创建第一个成员后，它会成为默认 Agent。")
-                    .appFont(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if !viewModel.activeMembers.isEmpty,
-               viewModel.room?.projectManagerAgentID == nil {
-                Label("尚未指定项目经理，团队任务板暂不可创建任务。", systemImage: "exclamationmark.triangle")
-                    .appFont(.caption)
-                    .foregroundStyle(.orange)
-            }
-            ForEach(viewModel.activeMembers) { item in
-                HStack(spacing: 8) {
-                    Button {
-                        selectedRunAgentID = item.member.agentID
-                        selectedSection = .runs
-                    } label: {
-                        memberSummary(item)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .help("查看此 Agent 的运行情况")
-
-                    Button {
-                        Task {
-                            if await viewModel.prepareAgentEditor() {
-                                editingMember = item
-                            }
-                        }
-                    } label: {
-                        if viewModel.isLoadingModels {
-                            ProgressView()
-                                .controlSize(.small)
-                                .frame(width: 24, height: 24)
-                        } else {
-                            Image(systemName: "slider.horizontal.3")
-                                .frame(width: 24, height: 24)
-                        }
-                    }
-                    .buttonStyle(.borderless)
-                    .help("编辑 Agent")
-                    .disabled(viewModel.isLoadingModels)
-                }
-                .padding(9)
-                .background(
-                    selectedRunAgentID == item.member.agentID && selectedSection == .runs
-                        ? Color.accentColor.opacity(0.12)
-                        : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 9)
-                )
-                .overlay {
-                    if selectedRunAgentID == item.member.agentID && selectedSection == .runs {
-                        RoundedRectangle(cornerRadius: 9)
-                            .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
-                    }
-                }
-            }
-            Spacer()
-            Button {
-                showsAddExistingAgent = true
-            } label: {
-                Label("邀请 Agent", systemImage: "person.crop.circle.badge.plus")
-            }
-            .buttonStyle(.borderedProminent)
-            .frame(maxWidth: .infinity)
-            Menu {
-                Button("手动创建", systemImage: "square.and.pencil") {
-                    Task {
-                        if await viewModel.prepareAgentEditor() {
-                            showsCreateAgent = true
-                        }
-                    }
-                }
-                Button("Agent Builder", systemImage: "sparkles") {
-                    Task {
-                        if await viewModel.prepareAgentEditor() {
-                            showsAgentBuilder = true
-                        }
-                    }
-                }
-            } label: {
-                if viewModel.isLoadingModels {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Label("创建新 Agent", systemImage: "plus")
-                }
-            }
-            .buttonStyle(.bordered)
-            .frame(maxWidth: .infinity)
-            .disabled(viewModel.isLoadingModels)
-        }
-        .padding(14)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .onChange(of: viewModel.activeMembers.map(\.member.agentID)) { _, agentIDs in
-            guard let selectedRunAgentID, !agentIDs.contains(selectedRunAgentID) else { return }
-            self.selectedRunAgentID = nil
-        }
-    }
-
-    private func memberSummary(_ item: AgentGroupChatViewModel.MemberPresentation) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack {
-                Image(systemName: "person.crop.circle.fill")
-                    .foregroundStyle(.tint)
-                Text(item.profile?.draft.name ?? item.member.agentID)
-                    .appFont(.body).fontWeight(.medium)
-                Spacer()
-                Image(systemName: "waveform.path.ecg")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            Text(item.member.draft.role)
-                .appFont(.caption).foregroundStyle(.secondary)
-            HStack(spacing: 7) {
-                if viewModel.room?.defaultAgentID == item.member.agentID {
-                    Text("默认 Agent")
-                        .appFont(.caption2).foregroundStyle(.tint)
-                }
-                if viewModel.room?.projectManagerAgentID == item.member.agentID {
-                    Text("项目经理")
-                        .appFont(.caption2).foregroundStyle(.green)
-                }
-            }
-        }
-    }
 }
