@@ -574,3 +574,10 @@
 "另存为…" = "Save As…";
 "搜索文档" = "Search Document";
 "正在解析 Markdown…" = "Parsing Markdown…";
+"云端 Agent 文档" = "Cloud Agent Documents";
+"跨设备发现与预览" = "Discover and Preview Across Devices";
+"显示当前账户已完成同步的 Markdown；用于其他设备发现和预览，不代表本地消息记录已跨设备同步。" = "Shows Markdown synced by the current account for discovery and preview on other devices. Local message history is not synced across devices.";
+"正在读取云端文档…" = "Loading Cloud Documents…";
+"还没有云端 Agent 文档" = "No Cloud Agent Documents Yet";
+"Agent 创建并成功同步的 Markdown 会出现在这里。" = "Markdown created and successfully synced by Agents appears here.";
+"预览" = "Preview";
