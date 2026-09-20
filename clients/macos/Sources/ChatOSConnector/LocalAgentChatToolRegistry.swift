@@ -36,7 +36,7 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: inboxSendToolName,
-            description: "使用 chat_read_all_unread 在同一 Run 返回的临时引用回复原群聊或私聊；暂停、重启并恢复该 Run 后旧引用仍可使用。普通成员需要把新增工作交给项目经理任务化时，在项目团队会话设置 notify_project_manager=true，由客户端解析并唤醒该团队明确绑定的项目经理。",
+            description: "使用 chat_read_all_unread 或 todo_list 在同一 Run 返回的临时引用回复原群聊或私聊；暂停、重启并恢复该 Run 后旧引用仍可使用。Todo 来源可能是创建任务的项目经理私聊，负责人未必是参与者；若返回 source_conversation_not_accessible，必须调用 agent_workspace_snapshot 后改用 chat_team_send 在 Todo 所属团队公开汇报，不要重试本工具。普通成员需要把新增工作交给项目经理任务化时，仅在可访问的项目团队会话设置 notify_project_manager=true。",
             schema: Data("""
             {"type":"object","properties":{"conversation_ref":{"type":"string","minLength":1,"maxLength":600},"reply_to_message_ref":{"type":"string","minLength":1,"maxLength":600},"content":{"type":"string","minLength":1,"maxLength":\(AgentCommunicationPolicy.standard.maximumMessageCharacters)},"document_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":\(AgentCommunicationPolicy.standard.maximumDocumentsPerMessage),"uniqueItems":true},"notify_project_manager":{"type":"boolean","default":false}},"required":["conversation_ref","reply_to_message_ref","content"],"additionalProperties":false}
             """.utf8),
@@ -128,7 +128,7 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: todoListToolName,
-            description: "读取当前 Agent 所属项目团队的共享任务板，并标明团队、负责人、依赖和是否分配给自己。普通成员只能查看；只有团队明确指定的项目经理可以修改。默认不返回已完成或已取消任务。",
+            description: "读取当前 Agent 所属项目团队的共享任务板，并标明团队、负责人、来源、依赖和是否分配给自己。来源只表示项目经理创建任务时引用的会话，并不保证当前负责人是该来源私聊的参与者；chat_inbox_send 若返回 source_conversation_not_accessible，应改用 agent_workspace_snapshot 与 chat_team_send 向所属团队公开汇报。普通成员只能查看；只有团队明确指定的项目经理可以修改。默认不返回已完成或已取消任务。",
             schema: Data(#"{"type":"object","properties":{"include_terminal":{"type":"boolean","default":false}},"additionalProperties":false}"#.utf8)
         ),
         .init(

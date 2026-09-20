@@ -355,7 +355,19 @@ extension LocalAgentChatToolProvider {
                ownerUserID: context.ownerUserID,
                roomID: roomID,
                messageID: source.messageID
-           ) else { throw AgentGroupChatError.invalidField("inbox_reference") }
+           ) else {
+            // Reference validation is a recoverable model-input error, including when a Run
+            // created by the pre-sealed-reference client resumes after an application update.
+            // Never turn it into an interrupted write that requires Human review: no side effect
+            // has started yet, and the model can refresh durable Todo sources and retry safely.
+            return Self.structuredFailure(
+                code: "invalid_inbox_reference",
+                field: "inbox_reference",
+                message: "会话或回复消息引用不是当前 Run 的有效工具签发值。若引用来自 Todo 来源，请重新调用 todo_list 并使用其 sources 中的新 conversation_ref 与 message_ref；若回复当前触发消息，请调用 relay_bootstrap；不要重复提交旧引用。",
+                retryable: true,
+                nextTool: Self.todoListToolName
+            )
+        }
         let notifyProjectManager = try Self.optionalBoolean(
             arguments,
             key: "notify_project_manager"
@@ -399,6 +411,20 @@ extension LocalAgentChatToolProvider {
                     attachments: attachmentDrafts
                 ),
                 limits: limits
+            )
+        } catch AgentGroupChatError.notMember {
+            await references.releaseDocuments(references: documentReferences, callID: call.id)
+            // A Todo source records where its manager originally captured the work. The
+            // assignee is intentionally allowed to read that source reference from the shared
+            // board even when it was captured from a private conversation the assignee cannot
+            // join. Treat that topology as a recoverable routing choice, not an interrupted
+            // write requiring Human review.
+            return Self.structuredFailure(
+                code: "source_conversation_not_accessible",
+                field: "conversation_ref",
+                message: "当前 Agent 不是该 Todo 来源会话的参与者，不能向该私聊回报。请调用 agent_workspace_snapshot 获取 Todo 所属团队和项目经理的临时引用，再使用 chat_team_send 在团队群公开汇报；不要重复调用 chat_inbox_send。",
+                retryable: true,
+                nextTool: Self.workspaceSnapshotToolName
             )
         } catch {
             await references.releaseDocuments(references: documentReferences, callID: call.id)

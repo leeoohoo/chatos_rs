@@ -849,6 +849,22 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertTrue(crossRunReference.isError)
         XCTAssertTrue(crossRunReference.content.contains(#""code":"invalid_team_ref""#))
 
+        let legacyInboxReference = try await resumedProvider.execute(.init(
+            id: "legacy-inbox-reference-after-resume",
+            name: LocalAgentChatToolProvider.inboxSendToolName,
+            arguments: try toolArguments([
+                "conversation_ref": "conversation_legacy-random-reference",
+                "reply_to_message_ref": "message_legacy-random-reference",
+                "content": "这条消息不得发送。",
+            ])
+        ))
+        XCTAssertTrue(legacyInboxReference.isError)
+        XCTAssertTrue(
+            legacyInboxReference.content.contains(#""code":"invalid_inbox_reference""#)
+        )
+        XCTAssertTrue(legacyInboxReference.content.contains(#""next_tool":"todo_list""#))
+        XCTAssertTrue(legacyInboxReference.content.contains("不要重复提交旧引用"))
+
         let invalidTeam = try await resumedProvider.execute(.init(
             id: "todo-invalid-team",
             name: LocalAgentChatToolProvider.todoAddToolName,
@@ -1384,5 +1400,190 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             limit: 20
         )
         XCTAssertEqual(directTranscript.map(\.content), ["并行处理通讯消息"])
+    }
+
+    func testTodoAssigneeRoutesPrivateSourceReportToTeamWithoutInterrupting() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let service = NativeAgentGroupChatService(databaseURL: url)
+        let store = try await service.store()
+        let manager = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "项目经理",
+                rolePrompt: "管理团队任务。",
+                modelConfigID: "model",
+                professionKey: "project_manager"
+            )
+        )
+        let assignee = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(name: "测试员", rolePrompt: "执行验收。", modelConfigID: "model")
+        )
+        let team = try await store.createRoom(
+            ownerUserID: "alice",
+            projectID: "private-source-routing-project",
+            draft: .init(name: "交付团队")
+        )
+        for (agent, role) in [(manager, "项目经理"), (assignee, "测试员")] {
+            _ = try await store.addMember(
+                ownerUserID: "alice",
+                roomID: team.id,
+                agentID: agent.id,
+                draft: .init(role: role)
+            )
+        }
+        _ = try await store.setProjectManager(
+            ownerUserID: "alice",
+            roomID: team.id,
+            agentID: manager.id
+        )
+        let managerDirect = try await store.openHumanAgentDirect(
+            ownerUserID: "alice",
+            agentID: manager.id
+        )
+        let source = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: managerDirect.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "请建立验收清单"),
+            limits: .init()
+        ).message
+        _ = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: assignee.id,
+            requestKey: "private-source-routing-todo",
+            draft: .init(
+                title: "建立验收清单",
+                teamRoomID: team.id,
+                sourceRoomID: managerDirect.id,
+                sourceMessageID: source.id,
+                creatorAgentID: manager.id
+            ),
+            nowUnixMs: source.createdAtUnixMs + 1
+        )
+        let assigneeDirect = try await store.openHumanAgentDirect(
+            ownerUserID: "alice",
+            agentID: assignee.id
+        )
+        let wake = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: assigneeDirect.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "检查任务状态"),
+            limits: .init()
+        ).message
+        let claimedDelivery = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: assignee.id,
+            nowUnixMs: wake.createdAtUnixMs + 1
+        )
+        let delivery = try XCTUnwrap(claimedDelivery)
+        let provider = try await LocalAgentRelayMCPServer(
+            service: service,
+            now: { wake.createdAtUnixMs + 2 }
+        ).connect(context: try .init(
+            ownerUserID: "alice",
+            projectID: assigneeDirect.projectID,
+            roomID: assigneeDirect.id,
+            agentID: assignee.id,
+            deliveryID: delivery.id,
+            triggerMessageID: delivery.messageID,
+            rootMessageID: delivery.rootMessageID,
+            runID: "private-source-routing-run",
+            hopCount: delivery.hopCount
+        ))
+
+        let listed = try await provider.execute(.init(
+            id: "list-private-source-todo",
+            name: LocalAgentChatToolProvider.todoListToolName,
+            arguments: "{}"
+        ))
+        let listedJSON = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(listed.content.utf8)) as? [[String: Any]]
+        )
+        let sourceJSON = try XCTUnwrap(
+            (listedJSON.first?["sources"] as? [[String: Any]])?.first
+        )
+        let conversationReference = try XCTUnwrap(sourceJSON["conversation_ref"] as? String)
+        let messageReference = try XCTUnwrap(sourceJSON["message_ref"] as? String)
+        let document = try await provider.execute(.init(
+            id: "create-private-source-report",
+            name: LocalAgentChatToolProvider.createDocumentToolName,
+            arguments: try toolArguments([
+                "name": "acceptance-report.md",
+                "title": "验收报告",
+                "markdown": "# 验收结果\n\n全部通过。",
+            ])
+        ))
+        let documentJSON = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(document.content.utf8)) as? [String: Any]
+        )
+        let documentReference = try XCTUnwrap(documentJSON["document_ref"] as? String)
+        let privateMessageCount = try await store.listMessages(
+            ownerUserID: "alice",
+            roomID: managerDirect.id,
+            limit: 20
+        ).count
+        let inaccessible = try await provider.execute(.init(
+            id: "report-to-private-source",
+            name: LocalAgentChatToolProvider.inboxSendToolName,
+            arguments: try toolArguments([
+                "conversation_ref": conversationReference,
+                "reply_to_message_ref": messageReference,
+                "content": "验收已经完成。",
+                "document_refs": [documentReference],
+            ])
+        ))
+        XCTAssertTrue(inaccessible.isError)
+        XCTAssertTrue(
+            inaccessible.content.contains(#""code":"source_conversation_not_accessible""#)
+        )
+        XCTAssertTrue(
+            inaccessible.content.contains(#""next_tool":"agent_workspace_snapshot""#)
+        )
+        XCTAssertTrue(inaccessible.content.contains("不要重复调用 chat_inbox_send"))
+        let unchangedPrivateMessageCount = try await store.listMessages(
+            ownerUserID: "alice",
+            roomID: managerDirect.id,
+            limit: 20
+        ).count
+        XCTAssertEqual(unchangedPrivateMessageCount, privateMessageCount)
+
+        let workspace = try await provider.execute(.init(
+            id: "workspace-after-private-source",
+            name: LocalAgentChatToolProvider.workspaceSnapshotToolName,
+            arguments: "{}"
+        ))
+        let workspaceJSON = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(workspace.content.utf8)) as? [String: Any]
+        )
+        let teamJSON = try XCTUnwrap(
+            (workspaceJSON["teams"] as? [[String: Any]])?.first(where: {
+                ($0["name"] as? String) == "交付团队"
+            })
+        )
+        let teamReference = try XCTUnwrap(teamJSON["team_ref"] as? String)
+        let managerReference = try XCTUnwrap(
+            (teamJSON["members"] as? [[String: Any]])?.first(where: {
+                ($0["is_project_manager"] as? Bool) == true
+            })?["agent_ref"] as? String
+        )
+        let teamReport = try await provider.execute(.init(
+            id: "report-to-team-after-private-source",
+            name: LocalAgentChatToolProvider.sendTeamToolName,
+            arguments: try toolArguments([
+                "team_ref": teamReference,
+                "content": "验收已经完成。",
+                "document_refs": [documentReference],
+                "mention_agent_refs": [managerReference],
+            ])
+        ))
+        XCTAssertFalse(teamReport.isError)
+        let teamMessages = try await store.listMessages(
+            ownerUserID: "alice",
+            roomID: team.id,
+            limit: 20
+        )
+        XCTAssertEqual(teamMessages.last?.content, "验收已经完成。")
+        XCTAssertEqual(teamMessages.last?.attachmentItems.map(\.name), ["acceptance-report.md"])
     }
 }
