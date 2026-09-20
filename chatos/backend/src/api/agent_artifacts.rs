@@ -21,7 +21,7 @@ use crate::repositories::agent_artifacts::{self, AgentArtifactRecord};
 use crate::services::object_storage::{service as object_storage_service, StoredObjectRef};
 
 const MAX_AGENT_ARTIFACTS_PER_REQUEST: usize = 20;
-const MAX_AGENT_ARTIFACT_BYTES: u64 = 2 * 1024 * 1024;
+const DEFAULT_MAX_AGENT_ARTIFACT_BYTES: u64 = 2 * 1024 * 1024;
 const MARKDOWN_MIME_TYPE: &str = "text/markdown; charset=utf-8";
 
 #[derive(Debug, Deserialize)]
@@ -86,7 +86,9 @@ async fn create_uploads(
             error.as_str(),
         )
     })?;
-    let maximum_bytes = storage.max_upload_bytes().min(MAX_AGENT_ARTIFACT_BYTES);
+    let maximum_bytes = storage
+        .max_upload_bytes()
+        .min(configured_max_agent_artifact_bytes());
     let mut uploads = Vec::with_capacity(request.artifacts.len());
     for item in request.artifacts {
         let item = validate_upload_item(item, maximum_bytes)?;
@@ -213,6 +215,7 @@ async fn complete_upload(
             "uploaded artifact size or sha256 does not match",
         ));
     }
+    validate_uploaded_markdown(object.content_type.as_deref(), object.bytes.as_ref())?;
     agent_artifacts::mark_uploaded(auth.user_id.as_str(), record.id.as_str())
         .await
         .map_err(repository_error)?;
@@ -382,6 +385,56 @@ fn validate_upload_item(
     Ok(item)
 }
 
+fn configured_max_agent_artifact_bytes() -> u64 {
+    std::env::var("CHATOS_AGENT_ARTIFACT_MAX_BYTES")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MAX_AGENT_ARTIFACT_BYTES)
+}
+
+fn validate_uploaded_markdown(
+    content_type: Option<&str>,
+    bytes: &[u8],
+) -> Result<(), (StatusCode, Json<Value>)> {
+    let Some(content_type) = content_type else {
+        return Err(json_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_agent_artifact_content_type",
+            "uploaded artifact is missing its Markdown content type",
+        ));
+    };
+    let mut components = content_type
+        .split(';')
+        .map(|value| value.trim().to_ascii_lowercase());
+    if components.next().as_deref() != Some("text/markdown") {
+        return Err(json_error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "invalid_agent_artifact_content_type",
+            "uploaded artifact must use the text/markdown content type",
+        ));
+    }
+    for parameter in components {
+        if let Some(charset) = parameter.strip_prefix("charset=") {
+            if charset.trim_matches(['\"', '\'']) != "utf-8" {
+                return Err(json_error(
+                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                    "invalid_agent_artifact_charset",
+                    "uploaded Markdown artifact must declare UTF-8",
+                ));
+            }
+        }
+    }
+    std::str::from_utf8(bytes).map_err(|_| {
+        json_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_agent_artifact_utf8",
+            "uploaded Markdown artifact is not valid UTF-8",
+        )
+    })?;
+    Ok(())
+}
+
 fn normalize_markdown_name(value: &str) -> String {
     let mut name = value
         .trim()
@@ -473,7 +526,7 @@ mod tests {
                 sha256: "a".repeat(64),
                 idempotency_key: "local-message:attachment".to_string(),
             },
-            MAX_AGENT_ARTIFACT_BYTES,
+            DEFAULT_MAX_AGENT_ARTIFACT_BYTES,
         )
         .expect("valid Markdown artifact");
         assert_eq!(item.name, "plan.md");
@@ -501,12 +554,27 @@ mod tests {
             CreateAgentArtifactUploadItem {
                 name: "plan.md".to_string(),
                 mime_type: "text/markdown".to_string(),
-                size: MAX_AGENT_ARTIFACT_BYTES + 1,
+                size: DEFAULT_MAX_AGENT_ARTIFACT_BYTES + 1,
                 sha256: "a".repeat(64),
                 idempotency_key: "key-3".to_string(),
             },
         ] {
-            assert!(validate_upload_item(item, MAX_AGENT_ARTIFACT_BYTES).is_err());
+            assert!(validate_upload_item(item, DEFAULT_MAX_AGENT_ARTIFACT_BYTES).is_err());
         }
+    }
+
+    #[test]
+    fn completed_upload_requires_utf8_markdown_content() {
+        assert!(validate_uploaded_markdown(
+            Some("text/markdown; charset=utf-8"),
+            "# 方案".as_bytes()
+        )
+        .is_ok());
+        assert!(validate_uploaded_markdown(Some("text/plain"), b"# plan").is_err());
+        assert!(validate_uploaded_markdown(Some("text/markdown"), &[0xff, 0xfe]).is_err());
+        assert!(
+            validate_uploaded_markdown(Some("text/markdown; charset=iso-8859-1"), b"# plan")
+                .is_err()
+        );
     }
 }

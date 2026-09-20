@@ -3,8 +3,14 @@ import CoreFoundation
 
 /// Supported JSON Schema subset used by first-party tools. Unknown schema keywords fail closed.
 public enum AgentSchemaValidator {
+    /// A tool argument envelope may contain a document whose decoded UTF-8 payload is 2 MiB.
+    /// JSON escaping can expand that payload substantially, so the transport envelope must not
+    /// reuse the product document limit. Field-level schemas and execution checks remain the
+    /// authority for individual values.
+    public static let maximumArgumentBytes = 16 * 1_024 * 1_024
+
     public static func validate(arguments: String, schema: Data) throws {
-        guard let data = arguments.data(using: .utf8), data.count <= 2 * 1024 * 1024,
+        guard let data = arguments.data(using: .utf8), data.count <= maximumArgumentBytes,
               let specification = try JSONSerialization.jsonObject(with: schema) as? [String: Any] else { throw ValidationError.invalid("schema") }
         try check(try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]), schema: specification, path: "$", depth: 0)
     }

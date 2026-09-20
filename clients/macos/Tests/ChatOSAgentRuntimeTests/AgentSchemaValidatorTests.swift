@@ -48,4 +48,27 @@ final class AgentSchemaValidatorTests: XCTestCase {
             XCTAssertEqual(error.localizedDescription, "工具参数不符合 Schema：unsupported schema")
         }
     }
+
+    func testDocumentAtProductByteLimitFitsInsideToolArgumentEnvelope() throws {
+        let maximumDocumentBytes = 2 * 1_024 * 1_024
+        let markdown = String(repeating: "\\", count: maximumDocumentBytes)
+        let arguments = try JSONSerialization.data(
+            withJSONObject: ["markdown": markdown],
+            options: [.sortedKeys]
+        )
+        let schema = Data(
+            """
+            {"type":"object","properties":{"markdown":{"type":"string","maxLength":\(maximumDocumentBytes)}},"required":["markdown"],"additionalProperties":false}
+            """.utf8
+        )
+
+        XCTAssertGreaterThan(arguments.count, maximumDocumentBytes)
+        XCTAssertLessThan(arguments.count, AgentSchemaValidator.maximumArgumentBytes)
+        XCTAssertNoThrow(
+            try AgentSchemaValidator.validate(
+                arguments: String(decoding: arguments, as: UTF8.self),
+                schema: schema
+            )
+        )
+    }
 }

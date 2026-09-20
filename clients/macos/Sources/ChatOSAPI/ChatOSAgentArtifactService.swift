@@ -35,7 +35,8 @@ public struct ChatOSAgentArtifactService: AgentArtifactRemoteServing {
         )
         guard response.uploads.count == 1, let target = response.uploads.first,
               target.size == request.data.count,
-              target.sha256 == request.sha256 else {
+              target.sha256 == request.sha256,
+              Self.isUTF8Markdown(target.mimeType) else {
             throw ChatOSAPIError.invalidResponse
         }
         guard let uploadURL = URL(string: target.uploadURL) else {
@@ -71,7 +72,8 @@ public struct ChatOSAgentArtifactService: AgentArtifactRemoteServing {
         guard completed.artifactID == target.artifactID,
               completed.size == request.data.count,
               completed.sha256 == request.sha256,
-              completed.status == "uploaded" else {
+              completed.status == "uploaded",
+              Self.isUTF8Markdown(completed.mimeType) else {
             throw ChatOSAPIError.invalidResponse
         }
         return target.metadata
@@ -86,7 +88,11 @@ public struct ChatOSAgentArtifactService: AgentArtifactRemoteServing {
             expectedAuthenticationSessionID: authenticationSessionID
         )
         guard !response.body.isEmpty,
-              response.body.count <= AgentCommunicationPolicy.standard.maximumDocumentBytes else {
+              response.body.count <= AgentCommunicationPolicy.standard.maximumDocumentBytes,
+              String(data: response.body, encoding: .utf8) != nil,
+              Self.isUTF8Markdown(response.headers.first(where: {
+                  $0.key.caseInsensitiveCompare("Content-Type") == .orderedSame
+              })?.value) else {
             throw ChatOSAPIError.invalidResponse
         }
         return response.body
@@ -100,6 +106,19 @@ public struct ChatOSAgentArtifactService: AgentArtifactRemoteServing {
             method: "DELETE",
             expectedAuthenticationSessionID: authenticationSessionID
         )
+    }
+
+    private static func isUTF8Markdown(_ value: String?) -> Bool {
+        guard let value else { return false }
+        let components = value.split(separator: ";", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        guard components.first == "text/markdown" else { return false }
+        let charsetValues = components.dropFirst().compactMap { component -> String? in
+            guard component.hasPrefix("charset=") else { return nil }
+            return String(component.dropFirst("charset=".count))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        }
+        return charsetValues.isEmpty || charsetValues.allSatisfy { $0 == "utf-8" }
     }
 }
 
