@@ -135,7 +135,10 @@ deploy_branch="$3"
 source_repo="$4"
 deploy_root="$5"
 deploy_services_arg="$6"
-deploy_wechat_development_login_enabled="$7"
+# OpenSSH reconstructs the remote command through a shell, which drops an empty
+# trailing argument. Keep the optional deployment override empty when the caller
+# did not provide a seventh positional argument instead of failing under `set -u`.
+deploy_wechat_development_login_enabled="${7:-}"
 if [[ "$deploy_services_arg" == "__CHATOS_ALL_SERVICES__" ]]; then
   deploy_services_csv=""
 else
