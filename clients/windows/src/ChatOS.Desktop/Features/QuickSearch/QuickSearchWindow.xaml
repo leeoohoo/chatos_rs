@@ -1,0 +1,42 @@
+<Window
+    x:Class="ChatOS.Desktop.Features.QuickSearch.QuickSearchWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:domain="using:ChatOS.Core.Domain"
+    mc:Ignorable="d"
+    Title="Quick Search">
+    <Window.Resources>
+        <DataTemplate x:Key="SearchResultTemplate" x:DataType="domain:QuickSearchResult">
+            <Grid Padding="12,9" ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="28" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <FontIcon Glyph="{x:Bind Glyph}" VerticalAlignment="Center" />
+                <StackPanel Grid.Column="1" Spacing="2">
+                    <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                    <TextBlock Text="{x:Bind Subtitle}" Style="{StaticResource ChatOSCaptionTextStyle}" TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+                <TextBlock Grid.Column="2" Text="{x:Bind Kind}" Style="{StaticResource ChatOSCaptionTextStyle}" VerticalAlignment="Center" />
+            </Grid>
+        </DataTemplate>
+    </Window.Resources>
+    <Border BorderBrush="{StaticResource ChatOSBorderBrush}" BorderThickness="1" CornerRadius="14" Background="{StaticResource ChatOSContentBackgroundBrush}">
+        <Grid x:Name="Root" KeyDown="OnKeyDown">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <TextBox x:Name="SearchBox" AutomationProperties.AutomationId="ChatOS.QuickSearch.Input" Margin="14" FontSize="19" BorderThickness="0" PlaceholderText="搜索；&gt; 动作  @ ChatOS  / 文件" Text="{x:Bind ViewModel.Query, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+            <ListView x:Name="ResultList" Grid.Row="1" AutomationProperties.AutomationId="ChatOS.QuickSearch.Results" ItemsSource="{x:Bind ViewModel.Results}" ItemTemplate="{StaticResource SearchResultTemplate}" SelectedIndex="{x:Bind ViewModel.SelectedIndex, Mode=TwoWay}" DoubleTapped="OnResultDoubleTapped" />
+            <Grid Grid.Row="2" Margin="14,8" ColumnSpacing="8">
+                <TextBlock Text="↑↓ 选择 · Enter 打开 · Esc 关闭" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                <ProgressRing Width="18" Height="18" HorizontalAlignment="Right" IsActive="{x:Bind ViewModel.IsSearching, Mode=OneWay}" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

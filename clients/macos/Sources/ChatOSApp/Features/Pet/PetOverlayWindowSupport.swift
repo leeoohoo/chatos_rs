@@ -2,6 +2,7 @@
 import ChatOSCore
 import Combine
 import SwiftUI
+
 struct PetStackedPanelPlacement {
     static func origin(
         size: NSSize,
@@ -218,5 +219,155 @@ final class PetInteractionHostingView<Content: View>: NSHostingView<Content> {
         let completedDrag = didMoveWindow || max(mouseDistance, windowDistance) >= 3
         didMoveWindow = false
         onInteractionEnded(completedDrag)
+    }
+}
+
+enum PetOverlayPositionKey {
+    static let x = "ChatOS.pet.position.x"
+    static let y = "ChatOS.pet.position.y"
+}
+
+enum PetOverlayLayout {
+    static let compactMessageSize = NSSize(width: 310, height: 112)
+    static let expandedMessageWidth: CGFloat = 400
+    static let quickChatWidth: CGFloat = 420
+    static let quickChatConversationHeight: CGFloat = 500
+    static let fileWorkbenchSize = NSSize(width: 760, height: 560)
+    // Keep the process inspector compact and stable. Its timeline already scrolls,
+    // so reserving space for several hypothetical nodes only creates empty space
+    // for the common one-node case and makes the panel appear to jump in size.
+    static let taskProcessMessageSize = NSSize(width: 580, height: 300)
+}
+
+@MainActor
+enum PetOverlayPanelFactory {
+    static func makePanel(
+        size: NSSize,
+        acceptsKeyboardInput: Bool = false
+    ) -> NSPanel {
+        let contentRect = NSRect(origin: .zero, size: size)
+        let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel]
+        let panel: NSPanel = acceptsKeyboardInput
+            ? PetMessagePanel(
+                contentRect: contentRect,
+                styleMask: styleMask,
+                backing: .buffered,
+                defer: false
+            )
+            : NSPanel(
+                contentRect: contentRect,
+                styleMask: styleMask,
+                backing: .buffered,
+                defer: false
+            )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.level = .floating
+        panel.animationBehavior = .utilityWindow
+        panel.isMovable = true
+        panel.isMovableByWindowBackground = false
+        // SwiftUI's TextEditor does not reliably advertise that a borderless
+        // non-activating panel needs key status. The interactive message panel
+        // therefore takes key status on click while the pet panel stays passive.
+        panel.becomesKeyOnlyIfNeeded = !acceptsKeyboardInput
+        return panel
+    }
+
+    static func makeFileWorkbenchPanel(size: NSSize) -> NSPanel {
+        let panel = PetFileWorkbenchPanel(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.borderless, .nonactivatingPanel, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.level = .floating
+        panel.animationBehavior = .utilityWindow
+        panel.isMovable = true
+        panel.isMovableByWindowBackground = true
+        panel.becomesKeyOnlyIfNeeded = false
+        panel.contentMinSize = NSSize(width: 520, height: 360)
+        panel.contentMaxSize = NSSize(width: 1_200, height: 920)
+        return panel
+    }
+}
+
+@MainActor
+enum PetOverlaySizing {
+    static func expandedMessageSize(
+        scope: PetMessageActivityScope,
+        store: PetOverlayStore,
+        interactionState: PetOverlayInteractionState
+    ) -> NSSize {
+        if interactionState.inspectedTaskActivity != nil {
+            return PetOverlayLayout.taskProcessMessageSize
+        }
+        let selectedActivity = interactionState.selectedActivityID.flatMap { selectedID in
+            store.activities.first(where: {
+                $0.id == selectedID && scope.contains($0)
+            })
+        }
+        let fallbackActivity: PetActivity?
+        switch scope {
+        case .primary:
+            fallbackActivity = store.presentation.primaryActivity.flatMap {
+                scope.contains($0) ? $0 : nil
+            }
+        case .running:
+            fallbackActivity = store.activities.first(where: scope.contains)
+        }
+        guard let activity = selectedActivity ?? fallbackActivity else {
+            return NSSize(width: PetOverlayLayout.expandedMessageWidth, height: 250)
+        }
+        let completedTaskCount = scope == .primary
+            ? store.activities.filter {
+                $0.kind == .succeeded
+                    && ($0.source == .taskRunner || $0.source == .taskBoard)
+            }.count
+            : 0
+        let height: CGFloat
+        switch activity.kind {
+        case .waitingForApproval:
+            height = store.presentation.attentionCount > 1 ? 470 : 390
+        case .blocked, .failed:
+            height = 345
+        case .working, .reviewing:
+            let taskCount = max(1, store.presentation.activeWorkCount)
+            height = min(320, 148 + CGFloat(min(taskCount - 1, 3)) * 57)
+        case .waitingForUser:
+            height = 470
+        case .succeeded, .cancelled:
+            height = min(345, 235 + (completedTaskCount > 1 ? 110 : 0))
+        }
+        return NSSize(width: PetOverlayLayout.expandedMessageWidth, height: height)
+    }
+
+    static func quickChatMessageSize(
+        selectedResourceID: String?,
+        resources: [PetQuickChatResource]
+    ) -> NSSize {
+        guard selectedResourceID == nil else {
+            return NSSize(
+                width: PetOverlayLayout.quickChatWidth,
+                height: PetOverlayLayout.quickChatConversationHeight
+            )
+        }
+
+        let rowCount = max(1, resources.count)
+        let rowHeight = CGFloat(rowCount) * 56
+        let rowSpacing = CGFloat(max(0, rowCount - 1)) * 8
+        let favoriteHintHeight: CGFloat = resources.allSatisfy { $0.kind == .contact } ? 38 : 0
+        let contentHeight = 78 + rowHeight + rowSpacing + favoriteHintHeight
+        return NSSize(
+            width: PetOverlayLayout.quickChatWidth,
+            height: min(410, max(190, contentHeight))
+        )
     }
 }

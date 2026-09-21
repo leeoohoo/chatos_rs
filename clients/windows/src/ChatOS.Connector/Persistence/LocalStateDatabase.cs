@@ -94,6 +94,29 @@ public sealed class LocalStateDatabase
                 expires_at TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS clipboard_history (
+                id TEXT PRIMARY KEY NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN ('text', 'url', 'files', 'image')),
+                preview TEXT NOT NULL,
+                content_hash TEXT NOT NULL UNIQUE,
+                source_application TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                is_pinned INTEGER NOT NULL DEFAULT 0,
+                byte_count INTEGER NOT NULL,
+                payload_text TEXT,
+                payload_blob BLOB
+            );
+
+            CREATE INDEX IF NOT EXISTS ix_clipboard_history_order
+                ON clipboard_history(is_pinned DESC, updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS quick_search_usage (
+                result_id TEXT PRIMARY KEY NOT NULL,
+                use_count INTEGER NOT NULL,
+                last_used_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS connector_state (
                 key TEXT PRIMARY KEY NOT NULL,
                 value TEXT NOT NULL,
@@ -257,6 +280,12 @@ public sealed class LocalStateDatabase
 
             INSERT OR IGNORE INTO schema_migrations(version, applied_at)
             VALUES (7, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+            INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+            VALUES (8, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+            INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+            VALUES (9, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
             """;
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }

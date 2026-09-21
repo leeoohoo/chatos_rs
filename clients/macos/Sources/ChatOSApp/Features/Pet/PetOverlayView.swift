@@ -121,9 +121,9 @@ struct PetMessageView: View {
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
-                    Image(systemName: messageIcon(for: activity.kind))
-                        .foregroundStyle(messageTint(for: activity.kind))
-                    Text(displayTitle(for: activity))
+                    Image(systemName: PetActivityPresentation.messageIcon(for: activity.kind))
+                        .foregroundStyle(PetActivityPresentation.messageTint(for: activity.kind))
+                    Text(PetActivityPresentation.displayTitle(for: activity, model: model))
                         .font(.system(size: 13, weight: .semibold))
                         .lineLimit(2)
                     Spacer(minLength: 4)
@@ -132,7 +132,7 @@ struct PetMessageView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if let detail = displayText(activity.detail) {
+                if let detail = PetActivityPresentation.displayText(activity.detail) {
                     Text(detail)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
@@ -180,13 +180,13 @@ struct PetMessageView: View {
                     .buttonStyle(.plain)
                     .help("返回任务列表")
                 }
-                Image(systemName: messageIcon(for: activity.kind))
+                Image(systemName: PetActivityPresentation.messageIcon(for: activity.kind))
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(messageTint(for: activity.kind))
+                    .foregroundStyle(PetActivityPresentation.messageTint(for: activity.kind))
                     .frame(width: 28, height: 28)
-                    .background(messageTint(for: activity.kind).opacity(0.11), in: Circle())
+                    .background(PetActivityPresentation.messageTint(for: activity.kind).opacity(0.11), in: Circle())
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(isInspectingTask ? displayTitle(for: activity) : expandedPanelTitle(for: activity))
+                    Text(isInspectingTask ? PetActivityPresentation.displayTitle(for: activity, model: model) : expandedPanelTitle(for: activity))
                         .font(.system(size: 14, weight: .semibold))
                         .lineLimit(2)
                     HStack(spacing: 4) {
@@ -283,7 +283,7 @@ struct PetMessageView: View {
                                     Image(systemName: "checkmark.circle.fill")
                                         .foregroundStyle(.green)
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(displayTitle(for: completed))
+                                        Text(PetActivityPresentation.displayTitle(for: completed, model: model))
                                             .font(.system(size: 11, weight: .medium))
                                             .lineLimit(1)
                                         Text(completed.updatedAt, style: .relative)
@@ -338,9 +338,9 @@ struct PetMessageView: View {
                             interactionState.selectedActivityID = activity.id
                         } label: {
                             HStack(spacing: 8) {
-                                Image(systemName: messageIcon(for: activity.kind))
-                                    .foregroundStyle(messageTint(for: activity.kind))
-                                Text(displayTitle(for: activity))
+                                Image(systemName: PetActivityPresentation.messageIcon(for: activity.kind))
+                                    .foregroundStyle(PetActivityPresentation.messageTint(for: activity.kind))
+                                Text(PetActivityPresentation.displayTitle(for: activity, model: model))
                                     .font(.system(size: 11, weight: .medium))
                                     .lineLimit(1)
                                 Spacer()
@@ -366,12 +366,12 @@ struct PetMessageView: View {
     private func approvalContent(_ approval: LocalConnectorPendingApproval) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Text(riskLabel(approval.risk))
+                Text(PetActivityPresentation.riskLabel(approval.risk, model: model))
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(riskColor(approval.risk))
+                    .foregroundStyle(PetActivityPresentation.riskColor(approval.risk))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(riskColor(approval.risk).opacity(0.12), in: Capsule())
+                    .background(PetActivityPresentation.riskColor(approval.risk).opacity(0.12), in: Capsule())
                 Text(approval.source)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
@@ -395,7 +395,7 @@ struct PetMessageView: View {
                     Label(approval.cwd, systemImage: "folder")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(.secondary)
-                    if let reason = displayText(approval.reason) {
+                    if let reason = PetActivityPresentation.displayText(approval.reason) {
                         Text(reason)
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
@@ -433,7 +433,7 @@ struct PetMessageView: View {
 
     private func retryContent(_ activity: PetActivity) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let detail = displayText(activity.detail) {
+            if let detail = PetActivityPresentation.displayText(activity.detail) {
                 ScrollView {
                     Text(detail)
                         .font(.system(size: 12))
@@ -506,7 +506,7 @@ struct PetMessageView: View {
 
     private func genericContent(_ activity: PetActivity) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let detail = displayText(activity.detail) {
+            if let detail = PetActivityPresentation.displayText(activity.detail) {
                 ScrollView {
                     Text(detail)
                         .font(.system(size: 12))
@@ -515,7 +515,7 @@ struct PetMessageView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                Text(genericMessage(for: activity))
+                Text(PetActivityPresentation.genericMessage(for: activity, model: model))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -568,7 +568,7 @@ struct PetMessageView: View {
             return true
         }
         if activity.kind == .succeeded, activity.source == .chat {
-            return displayText(activity.detail) == nil
+            return PetActivityPresentation.displayText(activity.detail) == nil
         }
         return true
     }
@@ -598,7 +598,7 @@ struct PetMessageView: View {
                                 .controlSize(.small)
                                 .tint(.indigo)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(displayTitle(for: activity))
+                                Text(PetActivityPresentation.displayTitle(for: activity, model: model))
                                     .font(.system(size: 11, weight: .medium))
                                     .lineLimit(1)
                                 HStack(spacing: 3) {
@@ -695,12 +695,12 @@ struct PetMessageView: View {
     }
 
     private func canRetry(_ activity: PetActivity) -> Bool {
-        displayText(activity.route.messageID) != nil && displayText(activity.route.runID) != nil
+        PetActivityPresentation.displayText(activity.route.messageID) != nil && PetActivityPresentation.displayText(activity.route.runID) != nil
     }
 
     private func canLoadTask(_ activity: PetActivity) -> Bool {
-        displayText(activity.route.messageID) != nil
-            && displayText(activity.route.taskID) != nil
+        PetActivityPresentation.displayText(activity.route.messageID) != nil
+            && PetActivityPresentation.displayText(activity.route.taskID) != nil
     }
 
     private func showTaskProcess(_ activity: PetActivity) {
@@ -715,13 +715,13 @@ struct PetMessageView: View {
 
     private func canCancel(_ activity: PetActivity) -> Bool {
         guard activity.kind == .working || activity.kind == .reviewing else { return false }
-        if displayText(activity.route.messageID) != nil,
-           displayText(activity.route.taskID) != nil {
+        if PetActivityPresentation.displayText(activity.route.messageID) != nil,
+           PetActivityPresentation.displayText(activity.route.taskID) != nil {
             return true
         }
         if activity.source == .chat {
-            return displayText(activity.route.conversationID) != nil
-                && displayText(activity.route.turnID) != nil
+            return PetActivityPresentation.displayText(activity.route.conversationID) != nil
+                && PetActivityPresentation.displayText(activity.route.turnID) != nil
         }
         return false
     }
@@ -784,7 +784,7 @@ struct PetMessageView: View {
         if activity.kind == .working || activity.kind == .reviewing {
             return model.localized("任务动态", english: "Task Activity")
         }
-        return displayTitle(for: activity)
+        return PetActivityPresentation.displayTitle(for: activity, model: model)
     }
 
     private func expandedPanelSubtitle(for activity: PetActivity) -> String {
@@ -795,78 +795,4 @@ struct PetMessageView: View {
         return expandedSubtitle(for: activity)
     }
 
-    private func genericMessage(for activity: PetActivity) -> String {
-        switch activity.kind {
-        case .waitingForUser: model.localized("打开对应输入表单后即可继续任务。", english: "Open the input form to continue the task.")
-        case .working, .reviewing: model.localized("任务仍在执行，可以打开查看完整过程。", english: "The task is still running. Open it to view the full process.")
-        case .succeeded: model.localized("任务已经完成，可以打开查看结果。", english: "The task is complete. Open it to view the result.")
-        case .cancelled: model.localized("任务已经取消。", english: "The task was cancelled.")
-        case .waitingForApproval: model.localized("打开审批详情进行处理。", english: "Open approval details to decide.")
-        case .failed, .blocked: model.localized("打开任务详情进行处理。", english: "Open task details to resolve it.")
-        }
-    }
-
-    private func riskLabel(_ risk: String) -> String {
-        switch risk.lowercased() {
-        case "high", "critical": model.localized("高风险", english: "High Risk")
-        case "medium": model.localized("中风险", english: "Medium Risk")
-        default: model.localized("低风险", english: "Low Risk")
-        }
-    }
-
-    private func riskColor(_ risk: String) -> Color {
-        switch risk.lowercased() {
-        case "high", "critical": .red
-        case "medium": .orange
-        default: .green
-        }
-    }
-
-    private func messageIcon(for kind: PetActivityKind) -> String {
-        switch kind {
-        case .waitingForApproval, .waitingForUser: "bell.badge.fill"
-        case .failed, .blocked: "exclamationmark.triangle.fill"
-        case .succeeded: "checkmark.seal.fill"
-        case .reviewing: "eye.fill"
-        case .working: "sparkles"
-        case .cancelled: "xmark.circle.fill"
-        }
-    }
-
-    private func messageTint(for kind: PetActivityKind) -> Color {
-        switch kind {
-        case .waitingForApproval, .waitingForUser: .orange
-        case .failed, .blocked: .red
-        case .succeeded: .green
-        case .reviewing: .purple
-        case .working: .accentColor
-        case .cancelled: .secondary
-        }
-    }
-
-    private func displayTitle(for activity: PetActivity) -> String {
-        if let title = displayText(activity.title) {
-            return title
-        }
-        return switch activity.kind {
-        case .waitingForApproval: model.localized("有操作等待审批", english: "An Operation Needs Approval")
-        case .waitingForUser: model.localized("AI 正在等待你的输入", english: "AI Is Waiting for Your Input")
-        case .failed: model.localized("任务执行失败", english: "Task Failed")
-        case .blocked: model.localized("任务执行被阻塞", english: "Task Blocked")
-        case .succeeded: model.localized("任务已完成", english: "Task Completed")
-        case .reviewing: model.localized("AI 正在检查结果", english: "AI Is Reviewing the Result")
-        case .working: model.localized("AI 正在处理任务", english: "AI Is Working on the Task")
-        case .cancelled: model.localized("任务已取消", english: "Task Cancelled")
-        }
-    }
-
-    private func displayText(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              trimmed.unicodeScalars.contains(where: CharacterSet.alphanumerics.contains) else {
-            return nil
-        }
-        return trimmed
-    }
 }

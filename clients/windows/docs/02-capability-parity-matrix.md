@@ -51,11 +51,15 @@ macOS 后续 Bug 修复、功能更新和协议变化先进入 `10-macos-change-
 | 宠物 | 叽咕狸与常用项目快捷聊天 | Windows 验收 | 叽咕狸固定首项、项目常用开关、本地持久化、项目会话准备、最近消息、Realtime 和发送已接入 |
 | 设置 | 常规、连接、模型、插件、权限控制、审批 | Windows 验收 | 插件、模型同步、AI 审批 reviewer、审批策略、待处理/审计和 AppContainer 文件/网络边界设置已完成 |
 | 设置 | 宠物、语言和字号 | Windows 验收 | SQLite 持久化和运行时即时生效已完成，等待 Windows 视觉与重启验收 |
+| 全局效率 | 失效模型清理 | Windows 验收 | 权威目录移除模型后同步清除 SQLite 审批模型 ID，自动化覆盖刷新和 ViewModel 重建；等待设置页与聊天页真机验收 |
+| 全局效率 | 全局快速搜索 | Windows 验收 | ChatOS、应用、Indexed Library 文件与内建动作四类 provider、模式前缀、排序、频次和快捷键冲突回退已完成；等待焦点与启动行为真机验收 |
+| 全局效率 | 剪贴板历史 | Windows 验收 | 文本、URL、文件和图片采集/恢复、SHA-256 去重、固定、搜索、500 条/30 天清理、20MB 限制与敏感内容过滤已完成；等待跨应用真机验收 |
+| 全局效率 | 原生屏幕录制 | Windows 验收 | Windows 原生录屏负责显示器/窗口选择、系统音频、H.264 MP4 与停止条；ChatOS 状态机自动检测完成文件并归档到 `Videos/ChatOS`，等待 Windows 版本和媒体参数真机验收 |
 | 安全 | 受控域名网络 | 实现中 | Windows SID 由设备私钥签名连接上报并服务端绑定，域名只从托管权限配置推导；后端策略签发、Relay、exec/ConPTY 挂起进程 lease、每进程 SID、Service/broker、WFP 驱动和端到端脚本均已完成；已增加 Hardware Dev Center CAB/微软签名结果导入，严格区分 unsigned、local_test、microsoft_production，正式验收只接受 Microsoft Hardware Compatibility Publisher；仅剩实际 WDK 编译、微软生产签名及不可绕过真机证据 |
 | 发布 | x64 MSIX | Windows 验收 | manifest、品牌资源、隔离的 x64 输出目录、证书签名校验和自动安装/升级/打包启动/UI smoke/卸载证据脚本已接入；待干净 Windows 账号执行 |
 | 发布 | ARM64 MSIX | Windows 验收 | ARM64 构建、隔离的未签名/签名包和同一生命周期验收脚本已接入；需 ARM64 Windows 真机执行 |
-| 质量 | Core/API 自动化测试 | Windows 验收 | 当前 Core 20、API 49、Presentation 52、Connector 242、NetworkGuard 19，共 382 项测试通过；其中 9 项 WindowsNative 和 2 项显式启用的 NetworkGuard 端到端测试需在 Windows 执行真实系统 API |
-| 质量 | Connector 集成测试 | Windows 验收 | 当前 Connector 242 项，覆盖插件、AI 审批、AppContainer profile/ACL 回收、NetworkGuard 策略/协议/lease/broker、服务端 Controlled readiness、宠物、终端和 Desktop Automation ID 静态契约；WindowsNative 还验证 suspended-before-lease、ConPTY acquire 失败不恢复进程和 Credential Manager |
+| 质量 | Core/API 自动化测试 | Windows 验收 | 当前 Core 25、API 45、Presentation 47、Connector 311、NetworkGuard 19，共 447 项测试通过；WindowsNative 和显式启用的 NetworkGuard 端到端测试仍需在 Windows 执行真实系统 API |
+| 质量 | Connector 集成测试 | Windows 验收 | 当前 Connector 311 项，覆盖插件、AI 审批、AppContainer profile/ACL 回收、NetworkGuard 策略/协议/lease/broker、服务端 Controlled readiness、宠物、终端、剪贴板、快速搜索和 Desktop 静态契约；WindowsNative 还验证系统 API 与 Credential Manager |
 | 质量 | NetworkGuard 自动化测试 | 实现中 | 当前 19 项单元/服务测试通过；端到端验收要求两个指定测试真实出现在 TRX，覆盖 Microsoft 生产签名门禁、同 IP denied SNI、HTTP/TLS、IP literal、DNS/DoH/QUIC/UDP、无 SNI、子进程、服务/驱动重启和 lease residue=0，等待 Windows 专用验收机生成证据 |
 | 质量 | Windows CI | Windows 验收 | Windows 2022 x64/ARM64 restore、串行测试、WindowsNative TRX/JSON、Desktop Release、未签名/签名 MSIX，以及 x64/ARM64 unsigned WDK SYS/CAT/INF/Service 编译与 schema v2 hash 报告上传均已接入；生产驱动签名由 Hardware Dev Center 外部流程完成，统一校验器拒绝 local_test 冒充生产、零测试、缺项、残留或伪通过，等待远端首次运行 |
 | 质量 | UI 自动化与可访问性 | Windows 验收 | 76 个稳定 Automation ID 覆盖登录、Shell、设置、聊天、项目导航、本机终端、全局审批和宠物关键路径；静态测试校验唯一性/必备项/显式 accessible name，smoke 支持匿名登录页和 Secret 驱动的真实登录后 Shell → 设置路径，等待 Windows CI 首次运行 |

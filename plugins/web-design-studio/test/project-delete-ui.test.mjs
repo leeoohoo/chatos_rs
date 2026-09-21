@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-const studio = readFileSync('ui-src/studio/WebDesignStudioApp.tsx', 'utf8');
+const studio = [
+  'ui-src/studio/WebDesignStudioApp.tsx',
+  'ui-src/studio/WebDesignStudioWorkspace.tsx',
+  'ui-src/studio/WebDesignCoreActions.ts',
+  'ui-src/studio/WebDesignInsertActions.ts'
+].map((path) => readFileSync(path, 'utf8')).join('\n');
 const styles = readFileSync('ui-src/styles.css', 'utf8');
 
 test('project design deletion uses an in-app confirmation that works inside sandboxed plugin views', () => {

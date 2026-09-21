@@ -93,7 +93,9 @@ extension NativeLocalConnectorService {
             try stateStore.save(state)
             try? await sendPluginInstallationStatus()
         }
-        return sources.items.map { source in
+        var plugins: [LocalConnectorPlugin] = []
+        plugins.reserveCapacity(sources.items.count)
+        for source in sources.items {
             let id = source.catalog.id
             let installedRecord = state.installedPluginRecords?[id]
             let installed = installedRecord != nil || state.installedPluginIDs.contains(id)
@@ -102,7 +104,7 @@ extension NativeLocalConnectorService {
             if let installedRecord,
                let manifest = try? installedPluginManifest(record: installedRecord) {
                 installedManifest = manifest
-                permissions = NativePluginPermissionInspector.permissions(
+                permissions = await NativePluginPermissionInspector.permissions(
                     record: installedRecord,
                     manifest: manifest
                 )
@@ -110,7 +112,7 @@ extension NativeLocalConnectorService {
                 installedManifest = nil
                 permissions = []
             }
-            return .init(
+            plugins.append(.init(
                 pluginID: id,
                 packageName: source.catalog.name,
                 pluginKey: source.catalog.pluginKey,
@@ -135,8 +137,9 @@ extension NativeLocalConnectorService {
                 enabled: state.pluginPreferences[id] ?? source.preference?.enabled ?? true,
                 hasUI: source.catalog.hasUI ?? installedManifest.map { !$0.ui.isEmpty },
                 permissions: permissions
-            )
+            ))
         }
+        return plugins
     }
 
     static func pluginUpdateAvailable(
@@ -265,7 +268,7 @@ extension NativeLocalConnectorService {
             throw NativeConnectorError.pluginInstallation("Plugin 尚未安装")
         }
         let manifest = try installedPluginManifest(record: record)
-        if try NativePluginPermissionInspector.request(
+        if try await NativePluginPermissionInspector.request(
             record: record,
             manifest: manifest,
             permissionID: permissionID

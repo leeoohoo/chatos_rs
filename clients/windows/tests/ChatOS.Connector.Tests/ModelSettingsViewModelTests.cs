@@ -26,14 +26,21 @@ public sealed class ModelSettingsViewModelTests
     [Fact]
     public async Task MissingPreviousModelRequiresExplicitReplacement()
     {
+        var store = new MemoryModelSettingsStore(new ConnectorModelSettings(5, "removed-model"));
         var viewModel = Create(
             new FakeRuntimeSettingsService(),
-            new MemoryModelSettingsStore(new ConnectorModelSettings(5, "removed-model")));
+            store);
 
         await viewModel.LoadAsync();
 
         Assert.Null(viewModel.SelectedApprovalModel);
+        Assert.Null(store.Settings.CommandApprovalModelConfigId);
         Assert.Contains("不可用", viewModel.ActionMessage);
+
+        var reloaded = Create(new FakeRuntimeSettingsService(), store);
+        await reloaded.LoadAsync();
+        Assert.Null(reloaded.SelectedApprovalModel);
+        Assert.Null(reloaded.ActionMessage);
     }
 
     [Fact]

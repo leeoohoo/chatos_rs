@@ -2001,7 +2001,7 @@ struct NativePluginRuntimeTests {
     }
 
     @Test("plugin permissions use the installed app's real diagnostic state")
-    func pluginPermissionDiagnostics() throws {
+    func pluginPermissionDiagnostics() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let bin = root.appendingPathComponent("bin", isDirectory: true)
@@ -2041,7 +2041,7 @@ struct NativePluginRuntimeTests {
             installedAt: "2026-08-27T00:00:00Z"
         )
 
-        let permissions = NativePluginPermissionInspector.permissions(
+        let permissions = await NativePluginPermissionInspector.permissions(
             record: record,
             manifest: manifest
         )
@@ -2074,7 +2074,7 @@ struct NativePluginRuntimeTests {
     }
 
     @Test("plugin capabilities are reported as available instead of ambiguous on-demand permissions")
-    func pluginCapabilityStatusIsExplicit() throws {
+    func pluginCapabilityStatusIsExplicit() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -2103,7 +2103,7 @@ struct NativePluginRuntimeTests {
             installedAt: "2026-08-27T00:00:00Z"
         )
 
-        let permissions = NativePluginPermissionInspector.permissions(
+        let permissions = await NativePluginPermissionInspector.permissions(
             record: record,
             manifest: manifest
         )
@@ -2116,7 +2116,7 @@ struct NativePluginRuntimeTests {
     }
 
     @Test("older plugin launchers show a non-blocking unknown permission state")
-    func oldPluginPermissionLauncherDoesNotStartMCP() throws {
+    func oldPluginPermissionLauncherDoesNotStartMCP() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let bin = root.appendingPathComponent("bin", isDirectory: true)
@@ -2153,7 +2153,7 @@ struct NativePluginRuntimeTests {
         )
 
         let permission = try #require(
-            NativePluginPermissionInspector.permissions(record: record, manifest: manifest)
+            await NativePluginPermissionInspector.permissions(record: record, manifest: manifest)
                 .first(where: { $0.permissionID == "computer.screen-recording" })
         )
 

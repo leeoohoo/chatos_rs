@@ -79,7 +79,7 @@ Windows 状态只允许使用：
   4. 确认聊天模型选择器清除已失效选择，不保留不可用模型名称。
   5. 刷新、退出重进和客户端重启后仍保持空列表，且 SQLite 不再恢复旧审批模型 ID。
   6. 在 Windows 真机连接线上账号完成一次设置页与聊天页验收。
-- Windows 状态：`待实现`。
+- Windows 状态：`待真机验收`；已实现失效审批模型 ID 的 SQLite 清理，并覆盖 ViewModel 重建回归。
 
 ### CP-20260831-002：Raycast 风格全局快速搜索
 
@@ -92,7 +92,7 @@ Windows 状态只允许使用：
 - macOS 验证证据：`QuickSearchRankingTests` 通过；全量 Swift 测试 110 个 XCTest 与 93 个 Swift Testing 测试通过；本地化审计无缺项。
 - Windows 是否需要代码修改：需要。Windows 应使用原生 WinUI 浮层、Windows Search/索引 API 和 Shell 应用启动，不共享 macOS Spotlight 实现。
 - Windows 必做项：实现 ChatOS 数据、应用、文件、动作四类 provider；复刻排序、前缀、最近使用和键盘交互；完成全局快捷键、焦点恢复、应用启动与文件打开真机验收。
-- Windows 状态：`待实现`。
+- Windows 状态：`待真机验收`；已实现 ChatOS、应用、文件、内建动作四类 provider、排序、模式前缀、使用频次和全局快捷键回退。
 
 ### CP-20260831-003：本地剪贴板历史
 
@@ -105,7 +105,7 @@ Windows 状态只允许使用：
 - macOS 验证证据：`ClipboardHistoryStoreTests` 覆盖文本去重、固定、删除以及文件和图片往返；全量测试与本地化审计通过。
 - Windows 是否需要代码修改：需要。Windows 应使用原生剪贴板事件、SQLite 和 WinUI 面板，并实现等价的敏感格式过滤与容量策略。
 - Windows 必做项：实现文本、URL、文件、图片采集与恢复；敏感格式过滤；SQLite/payload 生命周期；全局快捷键、焦点恢复、持久化和重启回归。
-- Windows 状态：`待实现`。
+- Windows 状态：`待真机验收`；已实现 Windows Clipboard 监听、SQLite/payload、去重、固定、删除、恢复抑制、容量清理与搜索面板，自动化通过。
 
 ### CP-20260831-004：原生屏幕录制
 
@@ -118,7 +118,7 @@ Windows 状态只允许使用：
 - macOS 验证证据：全量 Swift 测试通过；Retina 窗口按 `contentRect × pointPixelScale` 计算偶数像素尺寸；本地化审计无缺项。
 - Windows 是否需要代码修改：需要。Windows 应使用 Windows Graphics Capture/Media Foundation 或等价原生链路，不能复用 ScreenCaptureKit。
 - Windows 必做项：实现显示器与窗口选择、系统音频、30fps H.264、悬浮停止条、仅排除录制控制条、结果提示和高 DPI 验收；显示器录制必须包含 ChatOS 主窗口和宠物。
-- Windows 状态：`待实现`。
+- Windows 状态：`待真机验收`；已接入 Windows 原生录屏选择、系统音频和停止控制条，并在录制完成后自动归档 MP4 到 `Videos/ChatOS`，状态机自动化通过。
 
 ## 新记录模板
 

@@ -33,6 +33,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IProjectRegistry, SqliteProjectRegistry>();
         services.AddSingleton<ILocalProjectsService, LocalProjectsService>();
         services.AddSingleton<IAppPreferencesStore, SqliteAppPreferencesStore>();
+        services.AddSingleton<IClipboardHistoryStore, SqliteClipboardHistoryStore>();
+        services.AddSingleton<IQuickSearchUsageStore, SqliteQuickSearchUsageStore>();
         services.AddSingleton<AppPreferencesManager>();
         services.AddSingleton<IPetActivitySuppressionStore, SqlitePetActivitySuppressionStore>();
         services.AddSingleton<IPetWindowPlacementStore, SqlitePetWindowPlacementStore>();

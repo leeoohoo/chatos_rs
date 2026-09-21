@@ -5,8 +5,8 @@ enum NativePluginPermissionInspector {
     static func permissions(
         record: NativeInstalledPluginRecord,
         manifest: NativePluginManifest
-    ) -> [LocalConnectorPluginPermission] {
-        let diagnostics = permissionDiagnostics(record: record, manifest: manifest)
+    ) async -> [LocalConnectorPluginPermission] {
+        let diagnostics = await permissionDiagnostics(record: record, manifest: manifest)
         var requirements = manifest.permissions.map(PermissionRequirement.init)
         if manifest.name == "open-computer-use" {
             for permissionID in ["computer.accessibility", "computer.screen-recording"]
@@ -23,20 +23,20 @@ enum NativePluginPermissionInspector {
         record: NativeInstalledPluginRecord,
         manifest: NativePluginManifest,
         permissionID: String
-    ) throws -> Bool {
+    ) async throws -> Bool {
         guard isSystemPermission(permissionID) else { return false }
         guard manifest.name == "open-computer-use" else { return false }
-        _ = try runLauncher(record: record, command: "doctor", timeout: 35)
+        _ = try await runLauncher(record: record, command: "doctor", timeout: 35)
         return true
     }
 
     private static func permissionDiagnostics(
         record: NativeInstalledPluginRecord,
         manifest: NativePluginManifest
-    ) -> [String: DiagnosticPermission] {
+    ) async -> [String: DiagnosticPermission] {
         guard manifest.name == "open-computer-use",
               launcherSupportsPermissionCheck(record: record),
-              let data = try? runLauncher(
+              let data = try? await runLauncher(
                 record: record,
                 command: "check-permissions",
                 timeout: 15
@@ -115,8 +115,23 @@ enum NativePluginPermissionInspector {
         record: NativeInstalledPluginRecord,
         command: String,
         timeout: TimeInterval
+    ) async throws -> Data {
+        let installationPath = record.installationPath
+        return try await Task.detached(priority: .userInitiated) {
+            try runLauncherBlocking(
+                installationPath: installationPath,
+                command: command,
+                timeout: timeout
+            )
+        }.value
+    }
+
+    private static func runLauncherBlocking(
+        installationPath: String,
+        command: String,
+        timeout: TimeInterval
     ) throws -> Data {
-        let launcher = URL(fileURLWithPath: record.installationPath, isDirectory: true)
+        let launcher = URL(fileURLWithPath: installationPath, isDirectory: true)
             .appendingPathComponent("bin/open-computer-use")
         let values = try launcher.resourceValues(forKeys: [
             .isRegularFileKey, .isSymbolicLinkKey, .isExecutableKey,
@@ -129,7 +144,7 @@ enum NativePluginPermissionInspector {
         let process = Process()
         process.executableURL = launcher
         process.arguments = [command]
-        process.currentDirectoryURL = URL(fileURLWithPath: record.installationPath, isDirectory: true)
+        process.currentDirectoryURL = URL(fileURLWithPath: installationPath, isDirectory: true)
         process.environment = NativePluginProcessEnvironment.make()
         let output = Pipe()
         let errors = Pipe()

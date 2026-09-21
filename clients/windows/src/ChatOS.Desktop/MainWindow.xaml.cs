@@ -7,6 +7,7 @@ using ChatOS.Desktop.Features.Remote;
 using ChatOS.Desktop.Features.Pet;
 using ChatOS.Desktop.Features.Plugins;
 using ChatOS.Desktop.Features.Terminal;
+using ChatOS.Desktop.Features.Clipboard;
 using ChatOS.Connector.Approval;
 using ChatOS.Core.Domain;
 using ChatOS.Core.State;
@@ -36,6 +37,7 @@ public sealed partial class MainWindow : Window
         PetWindowController petWindowController,
         PluginVisualSessionController visualSessionController,
         PluginArtifactsWindow artifactsWindow,
+        ClipboardHistoryWindow clipboardHistoryWindow,
         PluginApplicationsPage pluginApplicationsPage)
     {
         ViewModel = viewModel;
@@ -51,6 +53,7 @@ public sealed partial class MainWindow : Window
         PetWindowController = petWindowController;
         VisualSessionController = visualSessionController;
         ArtifactsWindow = artifactsWindow;
+        ClipboardHistoryWindow = clipboardHistoryWindow;
         PluginApplicationsPage = pluginApplicationsPage;
         InitializeComponent();
 
@@ -101,6 +104,8 @@ public sealed partial class MainWindow : Window
     public PluginVisualSessionController VisualSessionController { get; }
 
     public PluginArtifactsWindow ArtifactsWindow { get; }
+
+    public ClipboardHistoryWindow ClipboardHistoryWindow { get; }
 
     private ConnectorPendingApproval? ActiveApproval { get; set; }
 
@@ -192,6 +197,9 @@ public sealed partial class MainWindow : Window
     private async void OnArtifactsClicked(object sender, RoutedEventArgs e) =>
         await ArtifactsWindow.ShowAsync();
 
+    private async void OnClipboardHistoryClicked(object sender, RoutedEventArgs e) =>
+        await ClipboardHistoryWindow.ShowAsync();
+
     private void OnNotepadCloseRequested(object? sender, EventArgs e)
     {
         _ = NotepadPage.ViewModel.CloseAsync();
@@ -207,6 +215,8 @@ public sealed partial class MainWindow : Window
         }
         RestoreSelectedContent();
     }
+
+    public void OpenSettings() => ShowSettings();
 
     private void ShowSettings() => WorkspaceContent.Content = SettingsPage;
 

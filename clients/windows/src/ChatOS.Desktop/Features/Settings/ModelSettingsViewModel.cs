@@ -94,6 +94,16 @@ public sealed partial class ModelSettingsViewModel : ObservableObject
                 .Where(static value => value.TaskEnabled && value.HasApiKey)
                 .Select(value => new ConnectorModelOptionViewModel(value, _localization))
                 .ToArray();
+            var staleSelection = settings.CommandApprovalModelConfigId is not null
+                && items.All(value => !string.Equals(
+                    value.Id,
+                    settings.CommandApprovalModelConfigId,
+                    StringComparison.Ordinal));
+            if (staleSelection)
+            {
+                settings = settings with { CommandApprovalModelConfigId = null };
+                await _store.SaveAsync(settings, token).ConfigureAwait(false);
+            }
             await _dispatcher.InvokeAsync(() =>
             {
                 AvailableModels.Clear();
@@ -104,7 +114,7 @@ public sealed partial class ModelSettingsViewModel : ObservableObject
                     value.Id,
                     settings.CommandApprovalModelConfigId,
                     StringComparison.Ordinal));
-                if (settings.CommandApprovalModelConfigId is not null && SelectedApprovalModel is null)
+                if (staleSelection)
                 {
                     ActionMessage = _localization.Text(
                         "之前选择的审批模型已不可用，请重新选择并保存。",

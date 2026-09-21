@@ -2,7 +2,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-const studio = readFileSync('ui-src/studio/WebDesignStudioApp.tsx', 'utf8');
+const studio = [
+  'ui-src/studio/WebDesignStudioApp.tsx',
+  'ui-src/studio/useWebDesignStudioState.ts',
+  'ui-src/studio/WebDesignCoreActions.ts',
+  'ui-src/studio/WebDesignViewportActions.ts',
+  'ui-src/studio/WebDesignRenderHelpers.tsx',
+  'ui-src/studio/WebDesignStudioWorkspace.tsx'
+].map((path) => readFileSync(path, 'utf8')).join('\n');
 const sceneCanvas = readFileSync('ui-src/studio/SceneArtboardCanvas.tsx', 'utf8');
 const styles = readFileSync('ui-src/styles.css', 'utf8');
 
