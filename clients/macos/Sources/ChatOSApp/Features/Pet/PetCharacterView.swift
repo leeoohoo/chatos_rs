@@ -14,6 +14,7 @@ final class PetOverlayInteractionState: ObservableObject {
     @Published var inspectedTaskActivity: PetActivity?
     @Published var isQuickChatPresented = false
     @Published var selectedQuickChatResourceID: String?
+    @Published var isAnimationActive = false
 }
 
 enum PetMessageActivityScope: Equatable {
@@ -39,7 +40,8 @@ struct PetCharacterView: View {
         PetSpriteAnimationView(
             animationState: store.presentation.animationState,
             isDragging: interactionState.isDragging,
-            dragDirection: interactionState.dragDirection
+            dragDirection: interactionState.dragDirection,
+            isAnimationActive: interactionState.isAnimationActive
         )
         .contentShape(Rectangle())
         .accessibilityLabel(accessibilityText)

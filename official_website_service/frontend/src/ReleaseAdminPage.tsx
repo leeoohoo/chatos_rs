@@ -115,7 +115,7 @@ function ReleaseAdminPage() {
       document.head.appendChild(robots);
     }
     robots.content = 'noindex,nofollow';
-    document.title = '安装包发布管理 | Okra';
+    document.title = '安装包发布管理 | 叽咕狸';
     void refreshCatalog();
     return () => {
       document.title = previousTitle;
@@ -230,7 +230,7 @@ function ReleaseAdminPage() {
 
       setProgress(100);
       setPhase('success');
-      setStatusText(`Okra Local Connector ${payload.manifest.version} 已发布`);
+      setStatusText(`叽咕狸桌面客户端 ${payload.manifest.version} 已发布`);
       await refreshCatalog();
     } catch (error) {
       setPhase('error');
@@ -241,9 +241,9 @@ function ReleaseAdminPage() {
   return (
     <main className="admin-shell">
       <header className="admin-header">
-        <a className="brand" href="/" aria-label="返回 Okra 官网">
+        <a className="brand" href="/" aria-label="返回叽咕狸官网">
           <BrandMark />
-          <span>Okra</span>
+          <span>叽咕狸</span>
         </a>
         <span className="admin-header-title">官方管理后台</span>
         <a className="admin-back-link" href="/"><ArrowLeft size={16} /> 返回官网</a>
@@ -253,7 +253,7 @@ function ReleaseAdminPage() {
         <div>
           <span className="admin-eyebrow"><PackageCheck size={16} /> Release Center</span>
           <h1>安装包发布管理</h1>
-          <p>上传桌面连接器安装包、生成版本清单，并把最新稳定版安全地发布到官网。</p>
+          <p>上传叽咕狸桌面客户端安装包、生成版本清单，并把最新稳定版安全地发布到官网。</p>
         </div>
         <div className="admin-security-note">
           <ShieldCheck size={21} />

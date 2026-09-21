@@ -1,6 +1,6 @@
 {
-  "name": "Okra",
-  "short_name": "Okra",
+  "name": "叽咕狸",
+  "short_name": "叽咕狸",
   "description": "一位能理解项目、使用工具并持续推进任务的 AI 工程搭档。",
   "start_url": "/",
   "display": "standalone",
@@ -8,8 +8,8 @@
   "theme_color": "#147a51",
   "icons": [
     {
-      "src": "/brand/okra-logo-mark.png",
-      "sizes": "512x512",
+      "src": "/brand/jiguli-logo.png",
+      "sizes": "192x208",
       "type": "image/png",
       "purpose": "any"
     }

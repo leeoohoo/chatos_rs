@@ -28,7 +28,6 @@ struct ProjectWorkspaceView: View {
             selectedWorkspace
                 .workspaceFill()
         }
-        .workspaceFill()
         .navigationTitle(
             model.projects.first(where: { $0.id == projectID })?.title ?? projectID
         )
@@ -60,6 +59,5 @@ struct ProjectWorkspaceView: View {
                 )
             }
         }
-        .workspaceFill()
     }
 }

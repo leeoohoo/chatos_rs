@@ -33,6 +33,18 @@ if [[ ! -x "$EXECUTABLE" ]]; then
   exit 1
 fi
 
+# A binary produced by SwiftPM's alternate build path can compile and launch
+# while carrying an older LC_BUILD_VERSION SDK. AppKit then selects legacy
+# control rendering (notably square segmented controls), so never package a
+# product that was linked against a different SDK than the active Xcode SDK.
+EXPECTED_SDK_VERSION=$(xcrun --sdk macosx --show-sdk-version)
+LINKED_SDK_VERSION=$(vtool -show-build "$EXECUTABLE" | awk '$1 == "sdk" { print $2; exit }')
+if [[ -z "$LINKED_SDK_VERSION" || "$LINKED_SDK_VERSION" != "$EXPECTED_SDK_VERSION" ]]; then
+  echo "ChatOSSwift SDK mismatch: linked=${LINKED_SDK_VERSION:-unknown}, expected=$EXPECTED_SDK_VERSION" >&2
+  echo "Refusing to package an incompatible UI binary." >&2
+  exit 1
+fi
+
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$TOOLS_DIR" "$RIPGREP_NOTICE_DIR" "$SWIFTTERM_NOTICE_DIR" "$PET_DIR" "$EN_LOCALIZATION_DIR" "$ZH_HANS_LOCALIZATION_DIR"
 cp "$EXECUTABLE" "$MACOS_DIR/ChatOSSwift"

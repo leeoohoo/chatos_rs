@@ -255,28 +255,24 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
                 agentID: selectedAgentID,
                 limit: 100
             )
-            var presentations: [TriggerRunPresentation] = []
-            presentations.reserveCapacity(runs.count)
-            for run in runs {
-                let delivery = try await store.delivery(
-                    ownerUserID: ownerUserID,
-                    deliveryID: run.context.deliveryID
-                )
-                let room = try await store.room(
-                    ownerUserID: ownerUserID,
-                    roomID: run.context.roomID
-                )
-                let triggerMessage = try await store.message(
-                    ownerUserID: ownerUserID,
-                    roomID: run.context.roomID,
-                    messageID: run.context.triggerMessageID
-                )
-                presentations.append(.init(
+            let deliveriesByID = try await store.deliveries(
+                ownerUserID: ownerUserID,
+                deliveryIDs: runs.map(\.context.deliveryID)
+            )
+            let messagesByID = try await store.messages(
+                ownerUserID: ownerUserID,
+                messageIDs: runs.map(\.context.triggerMessageID)
+            )
+            let roomsByID = Dictionary(uniqueKeysWithValues:
+                (rooms + directConversations).map { ($0.id, $0) }
+            )
+            let presentations = runs.map { run in
+                TriggerRunPresentation(
                     run: run,
-                    delivery: delivery,
-                    room: room,
-                    triggerMessage: triggerMessage
-                ))
+                    delivery: deliveriesByID[run.context.deliveryID],
+                    room: roomsByID[run.context.roomID],
+                    triggerMessage: messagesByID[run.context.triggerMessageID]
+                )
             }
             guard self.selectedAgentID == selectedAgentID else { return }
             triggerRuns = presentations

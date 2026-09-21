@@ -63,6 +63,7 @@ final class ConversationSessionViewModel: ObservableObject {
     private var viewportUpdateGeneration: Int64 = 0
     private var taskGraphAvailabilityTasks: [String: Task<Void, Never>] = [:]
     private var taskGraphAvailabilityRevisions: [String: Int64] = [:]
+    private var isActive = false
 
     init(
         sessionID: String,
@@ -106,8 +107,25 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     func activate() {
+        guard !isActive else { return }
+        isActive = true
         refreshLatestSilently()
         startRealtime()
+    }
+
+    func deactivate() {
+        guard isActive else { return }
+        isActive = false
+        realtimeTask?.cancel()
+        realtimeTask = nil
+        historyRetryTask?.cancel()
+        historyRetryTask = nil
+        latestRefreshDebounceTask?.cancel()
+        latestRefreshDebounceTask = nil
+        latestRefreshDebouncePresentation = nil
+        latestRefreshPending = nil
+        taskGraphAvailabilityTasks.values.forEach { $0.cancel() }
+        taskGraphAvailabilityTasks.removeAll()
     }
 
     func refreshLatestSilently() {
@@ -118,7 +136,7 @@ final class ConversationSessionViewModel: ObservableObject {
         presentation: LatestRefreshPresentation,
         debounce: Bool
     ) {
-        guard let remoteService else { return }
+        guard isActive, let remoteService else { return }
 
         if debounce {
             let scheduledPresentation = latestRefreshDebouncePresentation?
@@ -208,7 +226,9 @@ final class ConversationSessionViewModel: ObservableObject {
             .seconds(10),
             .seconds(20),
         ]
-        guard historyRetryTask == nil, historyRetryAttempt < delays.count else { return }
+        guard isActive,
+              historyRetryTask == nil,
+              historyRetryAttempt < delays.count else { return }
         let delay = delays[historyRetryAttempt]
         historyRetryAttempt += 1
         historyRetryTask = Task { [weak self] in
@@ -352,8 +372,10 @@ final class ConversationSessionViewModel: ObservableObject {
         _ = await (runtimeSettings, prompts)
         await historyStore.mergeCachedTurns(initialTurns, sessionID: sessionID)
         await refreshSnapshot()
-        refreshLatest()
-        startRealtime()
+        if isActive {
+            refreshLatest()
+            startRealtime()
+        }
     }
 
     var selectedModelDisplayName: String {
@@ -532,9 +554,10 @@ final class ConversationSessionViewModel: ObservableObject {
                     }
                 }
             } catch {
-                guard let self else { return }
+                guard !Task.isCancelled, let self else { return }
                 self.historyError = error.localizedDescription
             }
+            self?.realtimeTask = nil
         }
     }
 

@@ -1,19 +1,37 @@
+import ChatOSProcessRuntime
 import ChatOSCore
 import Darwin
 import Foundation
 
 actor NativePluginApplicationRuntime {
     private struct RunningApplication {
-        var process: Process
+        var processID: pid_t
         var baseURL: URL
         var healthPath: String
         var releaseID: String
         var artifactSHA256: String
         var standardOutput: Pipe
         var standardError: Pipe
+        var exitSource: DispatchSourceProcess
     }
 
+    nonisolated let processRegistry: NativePluginApplicationProcessRegistry
     private var running: [String: RunningApplication] = [:]
+
+    init(
+        processStateURL: URL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ChatOSPluginApplication-\(UUID().uuidString).json"),
+        pluginInstallationRootURL: URL = FileManager.default.temporaryDirectory
+    ) {
+        self.processRegistry = NativePluginApplicationProcessRegistry(
+            stateURL: processStateURL,
+            pluginInstallationRootURL: pluginInstallationRootURL
+        )
+    }
+
+    nonisolated func terminateAllSynchronously() {
+        processRegistry.terminateAllSynchronously()
+    }
 
     func launch(
         record: NativeInstalledPluginRecord,
@@ -35,7 +53,7 @@ actor NativePluginApplicationRuntime {
         if let current = running[key],
            current.releaseID == record.releaseID,
            current.artifactSHA256 == record.artifactSHA256,
-           current.process.isRunning,
+           Self.isProcessRunning(current.processID),
            await isHealthy(baseURL: current.baseURL, healthPath: current.healthPath) {
             return .init(
                 application: application,
@@ -46,7 +64,7 @@ actor NativePluginApplicationRuntime {
                 artifactSHA256: record.artifactSHA256
             )
         }
-        stop(key: key)
+        await stop(key: key)
 
         let installationURL = URL(fileURLWithPath: record.installationPath, isDirectory: true)
             .standardizedFileURL
@@ -94,16 +112,10 @@ actor NativePluginApplicationRuntime {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
 
-        let process = Process()
-        process.executableURL = executableURL
-        process.arguments = runtime.args
-        process.currentDirectoryURL = installationURL
         let output = Pipe()
         let error = Pipe()
         output.fileHandleForReading.readabilityHandler = { handle in _ = handle.availableData }
         error.fileHandleForReading.readabilityHandler = { handle in _ = handle.availableData }
-        process.standardOutput = output
-        process.standardError = error
         var overrides = [
             "CHATOS_PLUGIN_ROOT": installationURL.path,
             "CHATOS_PLUGIN_DATA_DIR": dataURL.path,
@@ -118,33 +130,75 @@ actor NativePluginApplicationRuntime {
         ]
         overrides.merge(resolvedContext.environment, uniquingKeysWith: { _, runtime in runtime })
         let environment = NativePluginProcessEnvironment.make(overrides: overrides)
-        process.environment = environment
-
-        do {
-            try process.run()
-        } catch {
+        let arguments = [executableURL.path] + runtime.args
+        let nullInput = open("/dev/null", O_RDONLY)
+        guard nullInput >= 0 else {
+            throw NativeConnectorError.pluginInstallation("Plugin 应用后端启动失败：无法打开标准输入")
+        }
+        defer { close(nullInput) }
+        var processID: pid_t = 0
+        let spawnResult = Self.withCStringArray(arguments) { argv in
+            Self.withCStringArray(environment.map { "\($0.key)=\($0.value)" }) { envp in
+                chatos_spawn_process_group(
+                    executableURL.path,
+                    argv,
+                    envp,
+                    installationURL.path,
+                    nullInput,
+                    output.fileHandleForWriting.fileDescriptor,
+                    error.fileHandleForWriting.fileDescriptor,
+                    &processID
+                )
+            }
+        }
+        output.fileHandleForWriting.closeFile()
+        error.fileHandleForWriting.closeFile()
+        guard spawnResult == 0, processID > 0 else {
+            output.fileHandleForReading.readabilityHandler = nil
+            error.fileHandleForReading.readabilityHandler = nil
             throw NativeConnectorError.pluginInstallation(
-                "Plugin 应用后端启动失败：\(error.localizedDescription)"
+                "Plugin 应用后端启动失败：\(String(cString: strerror(spawnResult)))"
             )
         }
+        let launchedProcessID = processID
+        do {
+            try processRegistry.register(pid: launchedProcessID)
+        } catch {
+            _ = chatos_signal_process_group(launchedProcessID, SIGKILL)
+            var exitCode: Int32 = 0
+            _ = chatos_reap_process(launchedProcessID, &exitCode)
+            throw NativeConnectorError.pluginInstallation(
+                "Plugin 应用后端启动失败：无法登记进程所有权"
+            )
+        }
+        let exitSource = DispatchSource.makeProcessSource(
+            identifier: launchedProcessID,
+            eventMask: .exit,
+            queue: .global(qos: .utility)
+        )
+        exitSource.setEventHandler { [weak self] in
+            Task { await self?.processDidExit(key: key, processID: launchedProcessID) }
+        }
         running[key] = .init(
-            process: process,
+            processID: launchedProcessID,
             baseURL: baseURL,
             healthPath: healthPath,
             releaseID: record.releaseID,
             artifactSHA256: record.artifactSHA256,
             standardOutput: output,
-            standardError: error
+            standardError: error,
+            exitSource: exitSource
         )
+        exitSource.resume()
         do {
             try await waitUntilHealthy(
-                process: process,
+                processID: launchedProcessID,
                 baseURL: baseURL,
                 healthPath: healthPath,
                 timeoutMilliseconds: timeoutMilliseconds
             )
         } catch {
-            stop(key: key)
+            await stop(key: key)
             throw error
         }
         return .init(
@@ -157,30 +211,47 @@ actor NativePluginApplicationRuntime {
         )
     }
 
-    func stop(pluginID: String) {
+    func stop(pluginID: String) async {
         let prefix = "\(pluginID):"
         for key in running.keys.filter({ $0.hasPrefix(prefix) }) {
-            stop(key: key)
+            await stop(key: key)
         }
     }
 
-    func stopAll() {
+    func stopAll() async {
         for key in Array(running.keys) {
-            stop(key: key)
+            await stop(key: key)
         }
     }
 
-    private func stop(key: String) {
+    private func stop(key: String) async {
         guard let instance = running.removeValue(forKey: key) else { return }
+        instance.exitSource.cancel()
         instance.standardOutput.fileHandleForReading.readabilityHandler = nil
         instance.standardError.fileHandleForReading.readabilityHandler = nil
-        if instance.process.isRunning {
-            instance.process.terminate()
+        _ = chatos_signal_process_group(instance.processID, SIGTERM)
+        let deadline = ContinuousClock.now + .seconds(2)
+        var reaped = false
+        while ContinuousClock.now < deadline {
+            var exitCode: Int32 = 0
+            var didExit: Int32 = 0
+            _ = chatos_try_reap_process(instance.processID, &exitCode, &didExit)
+            reaped = didExit != 0
+            if reaped, kill(-instance.processID, 0) != 0 { break }
+            try? await Task.sleep(for: .milliseconds(50))
         }
+        if kill(-instance.processID, 0) == 0 {
+            _ = chatos_signal_process_group(instance.processID, SIGKILL)
+        }
+        if !reaped {
+            var exitCode: Int32 = 0
+            _ = chatos_reap_process(instance.processID, &exitCode)
+        }
+        processRegistry.unregister(pid: instance.processID)
     }
 
     private func waitUntilHealthy(
-        process: Process,
+        processID: pid_t,
         baseURL: URL,
         healthPath: String,
         timeoutMilliseconds: UInt64
@@ -188,13 +259,37 @@ actor NativePluginApplicationRuntime {
         let clock = ContinuousClock()
         let deadline = clock.now + .milliseconds(Int64(timeoutMilliseconds))
         while clock.now < deadline {
-            guard process.isRunning else {
+            guard Self.isProcessRunning(processID) else {
                 throw NativeConnectorError.pluginInstallation("Plugin 应用后端在启动阶段退出")
             }
             if await isHealthy(baseURL: baseURL, healthPath: healthPath) { return }
             try await Task.sleep(for: .milliseconds(80))
         }
         throw NativeConnectorError.pluginInstallation("等待 Plugin 应用后端就绪超时")
+    }
+
+    private func processDidExit(key: String, processID: pid_t) {
+        guard let instance = running[key], instance.processID == processID else { return }
+        running.removeValue(forKey: key)
+        instance.exitSource.cancel()
+        instance.standardOutput.fileHandleForReading.readabilityHandler = nil
+        instance.standardError.fileHandleForReading.readabilityHandler = nil
+        var exitCode: Int32 = 0
+        _ = chatos_reap_process(processID, &exitCode)
+        processRegistry.unregister(pid: processID)
+    }
+
+    private static func isProcessRunning(_ processID: pid_t) -> Bool {
+        kill(processID, 0) == 0 || errno == EPERM
+    }
+
+    private static func withCStringArray<Result>(
+        _ values: [String],
+        _ body: ([UnsafeMutablePointer<CChar>?]) throws -> Result
+    ) rethrows -> Result {
+        let pointers = values.map { strdup($0) }
+        defer { pointers.forEach { free($0) } }
+        return try body(pointers + [nil])
     }
 
     private func isHealthy(baseURL: URL, healthPath: String) async -> Bool {

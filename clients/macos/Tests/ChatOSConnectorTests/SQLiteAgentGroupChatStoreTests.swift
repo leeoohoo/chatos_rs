@@ -1312,6 +1312,22 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             limit: 10
         )
         XCTAssertEqual(listedForAgent, [run])
+        let listedForRoom = try await reopened.listRoomRuns(
+            ownerUserID: "alice",
+            roomID: room.id,
+            limit: 10
+        )
+        XCTAssertEqual(listedForRoom, [run])
+        let deliveriesByID = try await reopened.deliveries(
+            ownerUserID: "alice",
+            deliveryIDs: [claimed.id, claimed.id]
+        )
+        XCTAssertEqual(deliveriesByID, [claimed.id: claimed])
+        let messagesByID = try await reopened.messages(
+            ownerUserID: "alice",
+            messageIDs: [post.message.id, post.message.id]
+        )
+        XCTAssertEqual(messagesByID, [post.message.id: post.message])
         let otherAgent = try await makeAgent(reopened, name: "其他成员")
         let listedForOtherAgent = try await reopened.listAgentRuns(
             ownerUserID: "alice",

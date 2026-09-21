@@ -1,6 +1,7 @@
 #include "ChatOSProcessRuntime.h"
 
 #include <errno.h>
+#include <libproc.h>
 #include <signal.h>
 #include <spawn.h>
 #include <sys/wait.h>
@@ -72,4 +73,62 @@ int chatos_reap_process(pid_t pid, int *exit_code) {
         *exit_code = 1;
     }
     return 0;
+}
+
+int chatos_try_reap_process(pid_t pid, int *exit_code, int *did_exit) {
+    if (pid <= 0 || exit_code == NULL || did_exit == NULL) return EINVAL;
+    *did_exit = 0;
+    int status = 0;
+    pid_t result;
+    do {
+        result = waitpid(pid, &status, WNOHANG);
+    } while (result == -1 && errno == EINTR);
+    if (result == 0) return 0;
+    if (result == -1) {
+        if (errno == ECHILD) {
+            *did_exit = 1;
+            return 0;
+        }
+        return errno;
+    }
+    *did_exit = 1;
+    if (WIFEXITED(status)) {
+        *exit_code = WEXITSTATUS(status);
+    } else if (WIFSIGNALED(status)) {
+        *exit_code = 128 + WTERMSIG(status);
+    } else {
+        *exit_code = 1;
+    }
+    return 0;
+}
+
+int chatos_process_start_time(
+    pid_t pid,
+    uint64_t *seconds,
+    uint64_t *microseconds
+) {
+    if (pid <= 0 || seconds == NULL || microseconds == NULL) return EINVAL;
+    struct proc_bsdinfo info;
+    int bytes = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info));
+    if (bytes != sizeof(info)) return errno == 0 ? ESRCH : errno;
+    *seconds = (uint64_t)info.pbi_start_tvsec;
+    *microseconds = (uint64_t)info.pbi_start_tvusec;
+    return 0;
+}
+
+int chatos_process_matches_start_time(
+    pid_t pid,
+    uint64_t seconds,
+    uint64_t microseconds
+) {
+    uint64_t current_seconds = 0;
+    uint64_t current_microseconds = 0;
+    int result = chatos_process_start_time(
+        pid,
+        &current_seconds,
+        &current_microseconds
+    );
+    if (result == ESRCH) return 0;
+    if (result != 0) return result;
+    return current_seconds == seconds && current_microseconds == microseconds ? 1 : 0;
 }

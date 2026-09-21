@@ -52,7 +52,8 @@ struct StoryWorkbenchView: View {
                 sectionBar
                 if isAgentDraftVisible || recoverableAgentRun != nil { agentDraftBanner }
                 workspaceContent
-                    .frame(maxWidth: 1_520, maxHeight: .infinity, alignment: .top)
+                    .frame(maxWidth: 1_520, alignment: .top)
+                    .layoutPriority(1)
                     .padding(.horizontal, 24)
                     .padding(.top, 22)
                     .padding(.bottom, section == .segments && !project.segments.isEmpty ? 14 : 24)

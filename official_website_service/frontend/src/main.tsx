@@ -8,6 +8,7 @@ import BrowserBridgePrivacyPage from './BrowserBridgePrivacyPage';
 import ReleaseAdminPage from './ReleaseAdminPage';
 import './styles.css';
 import './styles-responsive.css';
+import './home.css';
 
 const normalizedPath = window.location.pathname.replace(/\/+$/, '') || '/';
 const page = normalizedPath === '/admin/releases'

@@ -27,7 +27,7 @@ extension AppModel {
                 workspaceProjects = []
                 contacts = []
                 projects = []
-                conversationCache = [:]
+                deactivateAllConversations()
                 projectConversation = nil
                 contactConversation = nil
                 preparingProjectConversationIDs = []
@@ -71,7 +71,7 @@ extension AppModel {
             pluginApplications = []
             isPluginApplicationsLoading = false
             pluginApplicationsError = nil
-            conversationCache = [:]
+            deactivateAllConversations()
             projectConversation = nil
             contactConversation = nil
             preparingProjectConversationIDs = []
@@ -83,8 +83,18 @@ extension AppModel {
 
     func prepareForApplicationTermination() {
         agentArtifactSyncTask?.cancel()
+        deactivateAllConversations()
+        stopVisualSessionMonitoring()
+        globalUtilityCoordinator.stop()
+        localConnectorService.terminatePluginApplicationsForHostExit()
         terminalWorkspace.closeAllTerminals()
         remoteConnectionWorkspaceStore.removeAllWorkspaces()
+    }
+
+    private func deactivateAllConversations() {
+        conversationCache.values.forEach { $0.deactivate() }
+        conversationCache.removeAll()
+        conversationCacheRecency.removeAll()
     }
 
     func loadLanguagePreferences() {

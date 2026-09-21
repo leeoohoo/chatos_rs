@@ -24,7 +24,7 @@
 16. [远端连接与 SFTP 入口](./screens/16-remote-connection.svg)
 17. [Local Connector 模型配置](./screens/17-connector-models.svg)
 18. [Local Connector 运行与系统权限](./screens/18-connector-runtime-permissions.svg)
-19. [Local Connector 权限控制](./screens/19-connector-sandbox.svg)
+19. [Local Connector 权限控制](./screens/19-connector-permissions.svg)
 20. [系统上下文工作区](./screens/20-system-context.svg)
 21. [独立用户偏好设置窗口](./screens/21-user-preferences.svg)
 22. [浅色原生全宽本地终端](./screens/22-local-terminal.svg)

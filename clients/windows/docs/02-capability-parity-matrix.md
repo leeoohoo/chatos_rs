@@ -49,7 +49,7 @@ macOS 后续 Bug 修复、功能更新和协议变化先进入 `10-macos-change-
 | 宠物 | 完成、阻塞和运行中任务 | Windows 验收 | 完成/阻塞保留详情，可忽略、标记处理；运行中按精确任务或会话 identity 取消 |
 | 宠物 | 审批与 Ask User 原地处理 | Windows 验收 | 本机审批可拒绝/本次/本会话允许；Ask User 完整字段、选项、密文和提交在宠物窗口内处理 |
 | 宠物 | 叽咕狸与常用项目快捷聊天 | Windows 验收 | 叽咕狸固定首项、项目常用开关、本地持久化、项目会话准备、最近消息、Realtime 和发送已接入 |
-| 设置 | 常规、连接、模型、插件、沙箱、审批 | Windows 验收 | 插件、模型同步、AI 审批 reviewer、审批策略、待处理/审计和 AppContainer 文件/网络边界设置已完成 |
+| 设置 | 常规、连接、模型、插件、权限控制、审批 | Windows 验收 | 插件、模型同步、AI 审批 reviewer、审批策略、待处理/审计和 AppContainer 文件/网络边界设置已完成 |
 | 设置 | 宠物、语言和字号 | Windows 验收 | SQLite 持久化和运行时即时生效已完成，等待 Windows 视觉与重启验收 |
 | 安全 | 受控域名网络 | 实现中 | Windows SID 由设备私钥签名连接上报并服务端绑定，域名只从托管权限配置推导；后端策略签发、Relay、exec/ConPTY 挂起进程 lease、每进程 SID、Service/broker、WFP 驱动和端到端脚本均已完成；已增加 Hardware Dev Center CAB/微软签名结果导入，严格区分 unsigned、local_test、microsoft_production，正式验收只接受 Microsoft Hardware Compatibility Publisher；仅剩实际 WDK 编译、微软生产签名及不可绕过真机证据 |
 | 发布 | x64 MSIX | Windows 验收 | manifest、品牌资源、隔离的 x64 输出目录、证书签名校验和自动安装/升级/打包启动/UI smoke/卸载证据脚本已接入；待干净 Windows 账号执行 |

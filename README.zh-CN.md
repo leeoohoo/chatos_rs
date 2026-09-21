@@ -10,13 +10,14 @@ ChatOS 是一个让 AI 在真实项目环境中持续工作的原生桌面工作
 
 ## 产品界面
 
-![ChatOS 原生桌面客户端视觉预览](./official_website_service/frontend/public/showcase/chatos-main.png)
+官网与公开资料只展示用户实际使用的原生客户端，不再使用 Memory Engine、Task Runner 或内部管理控制台截图代替产品界面。
 
-![ChatOS Task Runner 界面](./official_website_service/frontend/public/showcase/task-runner.png)
-
-| 长期记忆 | 沙箱与执行隔离 |
+| 客户端区域 | 当前能力 |
 | --- | --- |
-| ![ChatOS Memory Engine 界面](./official_website_service/frontend/public/showcase/memory-engine.png) | ![ChatOS 沙箱管理界面](./official_website_service/frontend/public/showcase/sandbox-manager.png) |
+| 项目工作区 | 项目目录、用户消息、项目设置、Git、终端与运行配置 |
+| AI 创作 | 图片、视频、剧情模式与创作记录 |
+| Agent | Agent 管理、私聊与项目团队协作 |
+| 桌面能力 | 应用、远端连接、桌面宠物、快速搜索、剪贴板、截图与录屏 |
 
 ## 现在的项目是什么
 
@@ -25,7 +26,7 @@ ChatOS 是一个让 AI 在真实项目环境中持续工作的原生桌面工作
 - **设备侧能力执行：** 每个项目绑定一个明确授权的本机工作区。文件、Git、命令、本地 MCP、插件应用和设备权限通过原生客户端内置的 Local Connector 执行。
 - **可观察的后台任务：** 复杂需求可以进入可恢复的任务生命周期，持续保留进度、日志、工具调用、审批、重试和最终结果。
 - **长期项目上下文：** 会话摘要、项目事实和角色记忆可以跨会话继续使用。
-- **可扩展本机能力：** 插件平台支持 MCP Server、Skill、受管理产物以及沙箱化的本地应用界面。
+- **可扩展本机能力：** 插件平台支持 MCP Server、Skill、受管理产物以及客户端内的本地应用界面。
 
 ChatOS 不会把设备侧操作静默切换到服务端文件系统或另一台机器。绑定的 Local Connector 离线时，相关操作会明确等待或失败。
 
@@ -102,7 +103,7 @@ Windows 客户端使用相同的产品协议与视觉语言，同时拥有独立
 | `user_service/backend` | 账号、认证、模型供应商与用户设置。 |
 | `config_center_service/backend` | 动态服务配置与版本发布。 |
 | `plugins` | 第一方插件及其打包元数据。 |
-| `crates` | Rust 共享协议、SDK、运行时、认证、沙箱与可观测性库。 |
+| `crates` | Rust 共享协议、SDK、运行时、认证、工作区与可观测性库。 |
 | `admin_console` | React 管理控制台。 |
 | `official_website_service` | 官网、注册和客户端版本分发。 |
 | `docker` | Compose 拓扑、部署脚本、网关与可观测性配置。 |

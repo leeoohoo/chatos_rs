@@ -59,7 +59,15 @@ extension AppModel {
             }
             return nil
         }
-        return conversation(for: conversationID)
+        let conversation = conversation(for: conversationID)
+        conversation.activate()
+        return conversation
+    }
+
+    func deactivatePetConversation(_ conversation: ConversationSessionViewModel) {
+        guard projectConversation !== conversation,
+              contactConversation !== conversation else { return }
+        conversation.deactivate()
     }
 
     func registerCreatedProject(_ project: WorkspaceProject) {
@@ -110,7 +118,8 @@ extension AppModel {
         projectConversationPreparationErrors.removeValue(forKey: id)
         petPreferences.setFavorite(false, projectID: id)
         for conversationID in conversationIDs {
-            conversationCache.removeValue(forKey: conversationID)
+            conversationCache.removeValue(forKey: conversationID)?.deactivate()
+            conversationCacheRecency.remove(conversationID)
         }
 
         if selection == .project(id) {
@@ -196,6 +205,8 @@ extension AppModel {
     }
 
     func activateConversation(for selection: SidebarSelection?) {
+        let previousProjectConversation = projectConversation
+        let previousContactConversation = contactConversation
         switch selection {
         case let .project(id):
             let conversationID = projects.first(where: { $0.id == id })?.conversationID
@@ -226,6 +237,16 @@ extension AppModel {
         default:
             projectConversation = nil
             contactConversation = nil
+        }
+        if let previousProjectConversation,
+           previousProjectConversation !== projectConversation,
+           previousProjectConversation !== contactConversation {
+            previousProjectConversation.deactivate()
+        }
+        if let previousContactConversation,
+           previousContactConversation !== projectConversation,
+           previousContactConversation !== contactConversation {
+            previousContactConversation.deactivate()
         }
     }
 
@@ -318,6 +339,7 @@ extension AppModel {
         for sessionID: String
     ) -> ConversationSessionViewModel {
         if let cached = conversationCache[sessionID] {
+            touchConversationRecency(sessionID)
             return cached
         }
         let created = ConversationSessionViewModel(
@@ -333,6 +355,64 @@ extension AppModel {
             askUserPromptService: askUserPromptService
         )
         conversationCache[sessionID] = created
+        touchConversationRecency(sessionID)
         return created
+    }
+
+    private func touchConversationRecency(_ sessionID: String) {
+        let protected = Set([
+            sessionID,
+            projectConversation?.sessionID,
+            contactConversation?.sessionID,
+        ].compactMap { $0 }).union(
+            conversationCache.values.lazy
+                .filter(\.isSending)
+                .map(\.sessionID)
+        )
+        evictConversations(conversationCacheRecency.touch(
+            sessionID,
+            protected: protected
+        ))
+    }
+
+    private func evictConversations(_ sessionIDs: [String]) {
+        let protected = Set([
+            projectConversation?.sessionID,
+            contactConversation?.sessionID,
+        ].compactMap { $0 })
+        for sessionID in sessionIDs where !protected.contains(sessionID) {
+            conversationCache.removeValue(forKey: sessionID)?.deactivate()
+        }
+    }
+}
+
+struct ConversationCacheRecency: Equatable {
+    let capacity: Int
+    private(set) var sessionIDs: [String] = []
+
+    init(capacity: Int) {
+        self.capacity = max(1, capacity)
+    }
+
+    mutating func touch(
+        _ sessionID: String,
+        protected: Set<String> = []
+    ) -> [String] {
+        sessionIDs.removeAll { $0 == sessionID }
+        sessionIDs.append(sessionID)
+        var evicted: [String] = []
+        while sessionIDs.count > capacity,
+              let index = sessionIDs.firstIndex(where: { !protected.contains($0) }) {
+            evicted.append(sessionIDs.remove(at: index))
+        }
+        return evicted
+    }
+
+    mutating func remove(_ sessionID: String) {
+        sessionIDs.removeAll { $0 == sessionID }
+    }
+
+    mutating func removeAll() {
+        sessionIDs.removeAll()
     }
 }

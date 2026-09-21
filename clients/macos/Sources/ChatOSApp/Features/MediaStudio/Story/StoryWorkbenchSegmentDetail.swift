@@ -212,7 +212,6 @@ extension StoryWorkbenchView {
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .storySurface(tint: .blue)
         } else {
             VStack(spacing: 14) {

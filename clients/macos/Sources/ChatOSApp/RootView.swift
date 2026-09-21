@@ -14,29 +14,22 @@ struct RootView: View {
             ResourceSidebar()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 244, max: 290)
         } detail: {
-            ZStack(alignment: .topTrailing) {
-                detail
-                    .workspaceFill()
-
-                GlobalApprovalOverlayHost(viewModel: model.localConnectorControl)
+            detail
+                .overlay(alignment: .topTrailing) {
+                    GlobalApprovalOverlayHost(viewModel: model.localConnectorControl)
+                        .padding(18)
+                        .zIndex(30)
+                }
+                .overlay(alignment: model.localConnectorControl.pendingApprovals.isEmpty
+                    ? .topTrailing
+                    : .bottomTrailing) {
+                    VisualSessionOverlayHost(
+                        store: model.visualSessionStore,
+                        currentConversationID: model.currentConversationID
+                    )
                     .padding(18)
-                    .zIndex(30)
-
-                VisualSessionOverlayHost(
-                    store: model.visualSessionStore,
-                    currentConversationID: model.currentConversationID
-                )
-                .padding(18)
-                .frame(
-                    maxWidth: .infinity,
-                    maxHeight: .infinity,
-                    alignment: model.localConnectorControl.pendingApprovals.isEmpty
-                        ? .topTrailing
-                        : .bottomTrailing
-                )
-                .zIndex(20)
-            }
-            .workspaceFill()
+                    .zIndex(20)
+                }
         }
         .navigationSplitViewStyle(.balanced)
         .toolbar(removing: .sidebarToggle)
@@ -105,7 +98,6 @@ struct RootView: View {
                 )
             }
         }
-        .workspaceFill()
     }
 }
 

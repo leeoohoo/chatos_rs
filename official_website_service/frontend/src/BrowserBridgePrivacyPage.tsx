@@ -10,7 +10,7 @@ const EFFECTIVE_DATE = 'September 1, 2026';
 function BrowserBridgePrivacyPage() {
   useEffect(() => {
     const previousTitle = document.title;
-    document.title = 'Chatos Browser Bridge Privacy Policy | Okra';
+    document.title = 'Chatos Browser Bridge Privacy Policy | 叽咕狸';
     return () => {
       document.title = previousTitle;
     };
@@ -19,9 +19,9 @@ function BrowserBridgePrivacyPage() {
   return (
     <main className="privacy-shell">
       <header className="privacy-header">
-        <a className="brand" href="/" aria-label="Okra home">
+        <a className="brand" href="/" aria-label="叽咕狸首页">
           <BrandMark />
-          <span>Okra</span>
+          <span>叽咕狸</span>
         </a>
         <a className="privacy-home-link" href="/"><ArrowLeft size={16} /> Back to home</a>
       </header>
@@ -92,7 +92,7 @@ function BrowserBridgePrivacyPage() {
             program remain on the user&apos;s computer.
           </p>
           <p>
-            When the user asks a Chatos or Okra task to inspect or operate a page, the task may send
+            When the user asks a Chatos or 叽咕狸 task to inspect or operate a page, the task may send
             the minimum necessary page data to the AI model or service configured for that task. That
             processing is initiated by the user and is necessary to complete the requested feature.
             The applicable provider&apos;s privacy and retention terms may also apply. The extension does
@@ -211,7 +211,7 @@ function BrowserBridgePrivacyPage() {
       </article>
 
       <footer className="privacy-footer">
-        <span>© 2025–2026 Okra</span>
+        <span>© 2025–2026 叽咕狸</span>
         <a href="/">Home</a>
         <a href="/privacy/browser-bridge" aria-current="page">Privacy</a>
       </footer>

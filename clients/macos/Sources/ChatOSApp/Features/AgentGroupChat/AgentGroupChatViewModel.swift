@@ -172,7 +172,6 @@ final class AgentGroupChatViewModel: ObservableObject {
                 store: store,
                 room: room,
                 agents: agents,
-                members: members,
                 messages: messages,
                 mergeAttachments: isSameRoom
             )
@@ -185,7 +184,6 @@ final class AgentGroupChatViewModel: ObservableObject {
         store: SQLiteAgentGroupChatStore,
         room: ProjectAgentRoom?,
         agents: [LocalAgentProfile],
-        members: [ProjectAgentRoomMember],
         messages: [ProjectAgentMessage],
         mergeAttachments: Bool
     ) {

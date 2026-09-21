@@ -42,7 +42,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let mcpTerminalStore = NativeMCPTerminalStore()
     let pluginRuntimeStore = NativePluginRuntimeStore()
     var pluginSkillRuntimeSessions: [String: NativePluginSkillRuntimeSession] = [:]
-    let pluginApplicationRuntime = NativePluginApplicationRuntime()
+    let pluginApplicationRuntime: NativePluginApplicationRuntime
     let browserExtensionPairingRuntime = NativeBrowserExtensionPairingRuntime()
     let pluginRuntimeRootURL: URL
     let remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)?
@@ -96,17 +96,28 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             rootURL: configuration.stateURL.deletingLastPathComponent()
                 .appendingPathComponent("Secrets", isDirectory: true)
         )
-        self.pluginInstaller = NativePluginInstaller(
-            rootURL: configuration.stateURL
-                .deletingLastPathComponent()
-                .appendingPathComponent("Plugins", isDirectory: true)
-        )
-        self.pluginRuntimeRootURL = configuration.stateURL
-            .deletingLastPathComponent()
+        let connectorRootURL = configuration.stateURL.deletingLastPathComponent()
+        let pluginInstallationRootURL = connectorRootURL
+            .appendingPathComponent("Plugins", isDirectory: true)
+        let pluginRuntimeRootURL = connectorRootURL
             .appendingPathComponent("PluginRuntime", isDirectory: true)
+        self.pluginInstaller = NativePluginInstaller(rootURL: pluginInstallationRootURL)
+        self.pluginRuntimeRootURL = pluginRuntimeRootURL
+        self.pluginApplicationRuntime = NativePluginApplicationRuntime(
+            processStateURL: pluginRuntimeRootURL
+                .appendingPathComponent("application-processes.json"),
+            pluginInstallationRootURL: pluginInstallationRootURL
+        )
         self.remoteConnectionRuntime = remoteConnectionRuntime
         self.approvalMemoryProviderFactory = approvalMemoryProviderFactory
         self.state = (try? stateStore.load()) ?? .empty
+    }
+
+    /// NSApplication's termination callback is synchronous. Keep this entry
+    /// point nonisolated so child process groups are signalled before the host
+    /// process disappears and launchd adopts them.
+    public nonisolated func terminatePluginApplicationsForHostExit() {
+        pluginApplicationRuntime.terminateAllSynchronously()
     }
 
     public func fetchStatus() async throws -> LocalConnectorStatus {

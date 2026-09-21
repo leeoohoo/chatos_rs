@@ -12,12 +12,12 @@ extension StoryWorkbenchView {
             HStack(alignment: .top, spacing: 16) {
                 overview.frame(width: 410)
                 detailPanel
-                    .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity,
-                           alignment: .topLeading)
+                    .frame(minWidth: 560, maxWidth: .infinity, alignment: .topLeading)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Both columns own a vertical ScrollView. Infinite-height flex frames in
+        // this subtree create a circular size proposal on macOS. The parent VStack
+        // gives this high-priority workspace its finite remaining window height.
         .onAppear { selectFirstSegmentIfNeeded(project.segments.map(\.id)) }
         .onChange(of: project.segments.map(\.id)) { _, ids in selectFirstSegmentIfNeeded(ids) }
     }
@@ -61,7 +61,6 @@ extension StoryWorkbenchView {
             }
         }
         .padding(18)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .storySurface(tint: .blue)
     }
 

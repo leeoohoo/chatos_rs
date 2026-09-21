@@ -8,7 +8,7 @@ type BrandMarkProps = {
 export function BrandMark({ className = 'brand-mark' }: BrandMarkProps) {
   return (
     <span className={className} aria-hidden="true">
-      <img src="/brand/okra-logo-mark.png" alt="" />
+      <img src="/brand/jiguli-logo.png" alt="" />
     </span>
   );
 }

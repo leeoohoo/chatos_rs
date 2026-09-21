@@ -25,6 +25,8 @@ struct NativePluginRuntimeTests {
         let launcher = binDirectory.appendingPathComponent("demo-app")
         let script = #"""
         #!/bin/sh
+        sleep 60 &
+        echo $! > "$CHATOS_PLUGIN_DATA_DIR/child.pid"
         exec node -e 'const http=require("http");const port=Number(process.env.CHATOS_PLUGIN_APP_PORT);http.createServer((req,res)=>{res.writeHead(200,{"content-type":"text/html"});res.end(process.env.CHATOS_PLUGIN_RELEASE_ID)}).listen(port,"127.0.0.1")'
         """#
         try Data(script.utf8).write(to: launcher)
@@ -94,6 +96,8 @@ struct NativePluginRuntimeTests {
         #expect(FileManager.default.fileExists(
             atPath: runtimeRoot.appendingPathComponent("data", isDirectory: true).path
         ))
+        let childPID = try await waitForPID(below: runtimeRoot)
+        #expect(processExists(childPID))
 
         var updatedRecord = record
         updatedRecord.releaseID = "release-demo-2"
@@ -116,6 +120,28 @@ struct NativePluginRuntimeTests {
         let updatedBody = try await URLSession.shared.data(from: updatedLaunch.url).0
         #expect(String(decoding: updatedBody, as: UTF8.self) == "release-demo-2")
         await runtime.stopAll()
+        #expect(!processExists(childPID))
+    }
+
+    private func waitForPID(below root: URL) async throws -> pid_t {
+        for _ in 0..<50 {
+            let url = FileManager.default.enumerator(
+                at: root,
+                includingPropertiesForKeys: nil
+            )?.compactMap { $0 as? URL }
+                .first { $0.lastPathComponent == "child.pid" }
+            if let url,
+               let value = try? String(contentsOf: url, encoding: .utf8),
+               let pid = pid_t(value.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                return pid
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        throw CocoaError(.fileReadNoSuchFile)
+    }
+
+    private func processExists(_ pid: pid_t) -> Bool {
+        kill(pid, 0) == 0 || errno == EPERM
     }
 
     @Test("all plugins use different data directories for different ChatOS users")

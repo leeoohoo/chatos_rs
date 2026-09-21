@@ -7,8 +7,52 @@ import Combine
 import Foundation
 import SwiftUI
 
+enum VisualSessionPollingPolicy {
+    static func interval(
+        hasSessions: Bool,
+        hasSelectedConversation: Bool
+    ) -> Duration {
+        if !hasSessions { return .seconds(5) }
+        if !hasSelectedConversation { return .milliseconds(1_500) }
+        return .milliseconds(450)
+    }
+}
+
 @MainActor
 extension AppModel {
+    func startVisualSessionMonitoring() {
+        guard visualSessionMonitorTask == nil else { return }
+        let service = localConnectorService
+        visualSessionMonitorTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let hasSelectedConversation = self?.currentConversationID != nil
+                let selectedAdapterSessionID = hasSelectedConversation
+                    ? self?.visualSessionStore.selectedAdapterSessionID
+                    : nil
+                let preferredAdapterSessionIDs = selectedAdapterSessionID.map { Set([$0]) } ?? []
+                let sessions = await service.fetchPluginVisualSessions(
+                    loadFrameDataForAdapterSessionIDs: preferredAdapterSessionIDs
+                )
+                guard !Task.isCancelled else { return }
+                self?.applyPluginVisualSessions(sessions)
+                let interval = VisualSessionPollingPolicy.interval(
+                    hasSessions: !sessions.isEmpty,
+                    hasSelectedConversation: hasSelectedConversation
+                )
+                do {
+                    try await Task.sleep(for: interval)
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    func stopVisualSessionMonitoring() {
+        visualSessionMonitorTask?.cancel()
+        visualSessionMonitorTask = nil
+    }
+
     var interfaceDynamicTypeSize: DynamicTypeSize {
         switch Int(interfaceFontSize.rounded()) {
         case ...12: .small

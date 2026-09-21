@@ -61,6 +61,7 @@ public struct ProjectFileContent: Sendable, Equatable {
     public var size: Int64
     public var modifiedAt: Date?
     public var content: String
+    public var binaryData: Data?
 
     public init(
         path: String,
@@ -71,7 +72,8 @@ public struct ProjectFileContent: Sendable, Equatable {
         isWritable: Bool,
         size: Int64,
         modifiedAt: Date?,
-        content: String
+        content: String,
+        binaryData: Data? = nil
     ) {
         self.path = path
         self.displayPath = displayPath
@@ -82,6 +84,7 @@ public struct ProjectFileContent: Sendable, Equatable {
         self.size = size
         self.modifiedAt = modifiedAt
         self.content = content
+        self.binaryData = binaryData
     }
 }
 

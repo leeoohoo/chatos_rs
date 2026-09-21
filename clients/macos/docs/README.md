@@ -36,7 +36,8 @@
 17. [全局效率工具实施方案](./17-global-productivity-tools-implementation-plan.md)
 18. [macOS / Windows 跨平台变更登记](./18-cross-platform-change-register.md)
 19. [微信小程序伴随控制端实施方案](./19-wechat-mini-program-companion-implementation-plan.md)
-20. [页面设计稿](./design/README.md)
+20. [macOS 客户端性能问题与修复计划](./20-performance-remediation-plan.md)
+21. [页面设计稿](./design/README.md)
 
 ## 设计预览
 

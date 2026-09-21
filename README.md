@@ -10,13 +10,14 @@ The cloud coordinates conversations, tasks, memory, and capabilities. Native cli
 
 ## Product interfaces
 
-![ChatOS native desktop client preview](./official_website_service/frontend/public/showcase/chatos-main.png)
+The website and other public-facing material show the native client that users actually operate. Internal Memory Engine, Task Runner, and administration-console screenshots are not used as product UI.
 
-![ChatOS Task Runner interface](./official_website_service/frontend/public/showcase/task-runner.png)
-
-| Long-term memory | Sandbox and execution isolation |
+| Client area | Current capabilities |
 | --- | --- |
-| ![ChatOS Memory Engine interface](./official_website_service/frontend/public/showcase/memory-engine.png) | ![ChatOS sandbox management interface](./official_website_service/frontend/public/showcase/sandbox-manager.png) |
+| Project workspace | Project files, messages, project settings, Git, terminals, and run configuration |
+| AI Creation | Images, video, Story Mode, and creation history |
+| Agent | Agent management, direct conversations, and project teams |
+| Desktop tools | Applications, remote connections, desktop pet, quick search, clipboard, capture, and recording |
 
 ## What the project is today
 
@@ -25,7 +26,7 @@ The cloud coordinates conversations, tasks, memory, and capabilities. Native cli
 - **Device-side execution:** every project binds an explicitly authorized local workspace. Files, Git, commands, local MCP servers, plugin applications, and device permissions execute through the Local Connector built into the native client.
 - **Observable background work:** complex requests can become resumable tasks with progress, logs, tool calls, approvals, retries, and final results.
 - **Long-term project context:** conversation summaries, project facts, and role-specific memory can be reused across sessions.
-- **Extensible local capabilities:** the plugin platform supports MCP servers, skills, managed artifacts, and sandboxed local application surfaces.
+- **Extensible local capabilities:** the plugin platform supports MCP servers, skills, managed artifacts, and local application surfaces inside the client.
 
 ChatOS does not silently move a device-scoped operation to a server filesystem or another machine. If the bound Local Connector is offline, the operation waits or fails explicitly.
 
@@ -102,7 +103,7 @@ Plugins can combine MCP servers, skills, permission declarations, managed artifa
 | `user_service/backend` | Accounts, authentication, model providers, and user settings. |
 | `config_center_service/backend` | Dynamic service configuration and release publication. |
 | `plugins` | First-party plugins and their packaging metadata. |
-| `crates` | Shared Rust protocols, SDKs, runtimes, auth, sandbox, and observability libraries. |
+| `crates` | Shared Rust protocols, SDKs, runtimes, auth, workspace, and observability libraries. |
 | `admin_console` | React administration console. |
 | `official_website_service` | Product website, registration, and client release distribution. |
 | `docker` | Compose topology, deployment scripts, gateway, and observability configuration. |

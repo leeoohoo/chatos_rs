@@ -42,77 +42,15 @@ pub struct ShowcaseImage {
 
 pub fn site_manifest(config: &AppConfig) -> SiteManifest {
     SiteManifest {
-        product_name: "Okra",
+        product_name: "叽咕狸",
         tagline: "给你的项目一位真正能动手的 AI 搭档。",
         app_url: config.app_url.clone(),
         registration_enabled: !config.user_service_base_url.is_empty(),
         downloads_enabled: config.release_storage.is_some(),
-        default_ports: vec![
-            DefaultPort {
-                name: "Chat OS main",
-                backend: Some(3997),
-                frontend: Some(8088),
-            },
-            DefaultPort {
-                name: "Memory Engine",
-                backend: Some(7081),
-                frontend: Some(4178),
-            },
-            DefaultPort {
-                name: "Task Runner",
-                backend: Some(39090),
-                frontend: Some(39091),
-            },
-            DefaultPort {
-                name: "User Service",
-                backend: Some(39190),
-                frontend: Some(39191),
-            },
-            DefaultPort {
-                name: "Official Website",
-                backend: Some(39250),
-                frontend: Some(39251),
-            },
-        ],
-        services: vec![
-            ServiceInfo {
-                name: "chatos",
-                directory: "chatos/",
-                role: "主应用微服务",
-                capability: "frontend 提供联系人驱动的主交互界面，backend 承载消息、流式响应、工具路由和跨服务编排。",
-            },
-            ServiceInfo {
-                name: "memory_engine",
-                directory: "memory_engine/",
-                role: "长期记忆微服务",
-                capability: "把线程、消息、摘要、主题记忆和上下文组装从主聊天中解耦。",
-            },
-            ServiceInfo {
-                name: "task_runner_service",
-                directory: "task_runner_service/",
-                role: "异步执行链路",
-                capability: "让复杂任务排队、执行、复核、回调，并保留可观察运行记录。",
-            },
-            ServiceInfo {
-                name: "user_service",
-                directory: "user_service/",
-                role: "统一身份与模型配置",
-                capability: "管理真实用户、agent account、令牌交换和共享模型配置。",
-            },
-        ],
-        showcase_images: vec![
-            ShowcaseImage {
-                id: "memory-engine",
-                title: "Memory Engine 控制台",
-                path: "/showcase/memory-engine.png",
-                source_url: "http://127.0.0.1:4178",
-            },
-            ShowcaseImage {
-                id: "task-runner",
-                title: "Task Runner 运行台",
-                path: "/showcase/task-runner.png",
-                source_url: "http://127.0.0.1:39091",
-            },
-        ],
+        // Public website metadata must not expose internal service dashboards or ports.
+        // The product page renders native-client surfaces directly from the frontend.
+        default_ports: vec![],
+        services: vec![],
+        showcase_images: vec![],
     }
 }

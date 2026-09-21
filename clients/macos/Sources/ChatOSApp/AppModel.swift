@@ -123,6 +123,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let wechatCompanionService: ChatOSWeChatCompanionService
     let userLanguagePreferencesService: ChatOSUserLanguagePreferencesService
     var conversationCache: [String: ConversationSessionViewModel] = [:]
+    var conversationCacheRecency = ConversationCacheRecency(capacity: 8)
     var projectConversationPreparationTasks: [String: Task<String, Error>] = [:]
     var workspaceLoadGeneration: Int64 = 0
     var pluginApplicationsLoadGeneration: Int64 = 0
@@ -372,6 +373,14 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 self?.restartAgentArtifactSyncCoordinator()
             }
             .store(in: &cancellables)
+        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.stopVisualSessionMonitoring() }
+            .store(in: &cancellables)
+        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.startVisualSessionMonitoring() }
+            .store(in: &cancellables)
         localConnectorControl.$status
             .map { $0?.connectorRunning == true }
             .removeDuplicates()
@@ -396,17 +405,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 self?.activateConversation(for: selection)
             }
             .store(in: &cancellables)
-        visualSessionMonitorTask = Task { [weak self, localConnectorService] in
-            while !Task.isCancelled {
-                let selectedAdapterSessionID = self?.visualSessionStore.selectedAdapterSessionID
-                let preferredAdapterSessionIDs = selectedAdapterSessionID.map { Set([$0]) } ?? []
-                let sessions = await localConnectorService.fetchPluginVisualSessions(
-                    loadFrameDataForAdapterSessionIDs: preferredAdapterSessionIDs
-                )
-                self?.applyPluginVisualSessions(sessions)
-                try? await Task.sleep(for: .milliseconds(450))
-            }
-        }
+        startVisualSessionMonitoring()
         Task { [weak self, localConnectorService] in
             guard let self else { return }
             await localConnectorService.setCompanionRuntime(self)

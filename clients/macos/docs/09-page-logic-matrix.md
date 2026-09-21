@@ -271,11 +271,11 @@
 | 本机审批 Agent | Prompt 与能力策略版本、检查更新、更新 |
 | 系统权限 | 本地目录、终端、HTTPS、辅助功能、屏幕录制、Office 自动化；插件权限与 Connector 自身权限分开 |
 
-### 16.7 权限控制
+### 16.7 权限控制（历史兼容接口仍含 `sandbox` 命名）
 
 | 项目 | 真实逻辑 |
 | --- | --- |
-| 组件 | `SandboxPanel.tsx`、`SandboxPolicySettings.tsx` |
+| 组件 | `SandboxPanel.tsx`、`SandboxPolicySettings.tsx`（旧代码名；产品界面统一称“权限控制”） |
 | 默认策略 | 本机进程隔离；文件仅授权项目；网络默认关闭；AI 可审批联网和项目外临时访问 |
 | 高级信息 | capability、settings、当前运行 lease；开启后每 6 秒刷新 lease |
 | 接口 | `/api/local/sandbox/capabilities`、settings、leases |

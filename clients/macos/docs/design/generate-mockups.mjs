@@ -301,7 +301,7 @@ function pageIntro(x, eyebrow, titleValue, subtitle) {
   let body = pageIntro(270, 'CONNECTION', '设备配对', '查看本机设备、云端连接与安全边界。');
   body += card(270, 250, 550, 250, `${text(294, 282, '连接状态', 16, 700)}${circle(298, 318, 7, C.green)}${text(318, 323, '已连接', 13, 650, C.green)}${text(294, 356, 'Core 地址', 11, 600, C.secondary)}${text(430, 356, 'http://127.0.0.1:39230', 12, 500, C.text, 'start', mono)}${text(294, 390, '用户', 11, 600, C.secondary)}${text(430, 390, '设计账号', 12, 500)}${text(294, 424, '设备', 11, 600, C.secondary)}${text(430, 424, 'Local Connector', 12, 500)}${text(294, 458, 'Device ID', 11, 600, C.secondary)}${text(430, 458, 'c27f…1251', 12, 500, C.text, 'start', mono)}${button(662, 444, '退出本机配对', false, 126)}`);
   body += card(844, 250, 566, 250, `${text(868, 282, '本机边界', 16, 700)}${text(868, 318, '文件、终端和本机权限控制运行在当前电脑。', 13, 500)}${text(868, 344, '云端只通过已登录设备的长连接发起授权请求。', 12, 400, C.secondary)}${line(868, 372, 1384, 372)}${text(868, 404, '文件路由', 11, 600, C.secondary)}${text(1368, 404, '自动连接本机', 12, 600, C.green, 'end')}${text(868, 438, '权限控制', 11, 600, C.secondary)}${text(1368, 438, '设置页管理', 12, 600, C.blue, 'end')}${text(868, 472, '运行方式', 11, 600, C.secondary)}${text(1368, 472, '本机进程', 12, 600, C.text, 'end')}`);
-  body += card(270, 530, 1140, 160, `${text(294, 562, '关键说明', 14, 680)}${text(294, 598, 'Local Connector 默认连接本机文件系统，无需另行登记目录。', 13, 600)}${text(294, 626, '任务文件权限、沙箱策略和 macOS 系统权限仍然独立生效。', 12, 400, C.secondary)}${pill(1164, 554, '本机安全边界', C.greenSoft, C.green, 112)}`, '#F8F8FA', 12);
+  body += card(270, 530, 1140, 160, `${text(294, 562, '关键说明', 14, 680)}${text(294, 598, 'Local Connector 默认连接本机文件系统，无需另行登记目录。', 13, 600)}${text(294, 626, '任务文件权限、执行策略和 macOS 系统权限仍然独立生效。', 12, 400, C.secondary)}${pill(1164, 554, '本机安全边界', C.greenSoft, C.green, 112)}`, '#F8F8FA', 12);
   write('08-connector-device-pairing.svg', connectorShell('设备配对', body));
 }
 
@@ -447,7 +447,7 @@ function pageIntro(x, eyebrow, titleValue, subtitle) {
   let body = pageIntro(270, 'PERMISSIONS', '权限控制', '管理任务文件、网络与 AI 审批策略。');
   body += card(270, 248, 1140, 496, `${text(294, 280, '本机权限控制', 15, 700)}${text(294, 306, '默认只读写授权项目；联网或访问项目外文件时按策略审批。', 12, 400, C.secondary)}${button(1228, 270, '恢复推荐设置', false, 130)}${line(294, 336, 1386, 336)}${text(294, 374, '任务运行方式', 11, 600, C.secondary)}${pill(500, 358, '本机进程隔离', C.greenSoft, C.green, 102)}${text(294, 422, '本地文件访问', 11, 600, C.secondary)}${rect(500, 400, 360, 38, C.panel, 8, C.line)}${text(516, 424, '仅授权项目（推荐）⌄', 11, 500)}${text(294, 478, '互联网访问', 11, 600, C.secondary)}${pill(500, 462, '默认关闭', '#EEEFF2', C.secondary, 72)}${text(590, 478, '确需联网时由审批模型决定批准、拒绝或转交给你', 11, 400, C.secondary)}${text(294, 534, '联网模式', 11, 600, C.secondary)}${rect(500, 512, 360, 38, C.panel, 8, C.line)}${text(516, 536, '默认关闭 ⌄', 11, 500)}${text(294, 590, 'AI 自动审批', 11, 600, C.secondary)}${pill(500, 574, '开启', C.blueSoft, C.blue, 54)}${text(572, 590, '同时适用于联网和项目外文件临时访问', 11, 400, C.secondary)}${text(294, 646, '技术信息', 11, 650, C.secondary)}${text(294, 678, '▸ capability、backend 与安全策略详情', 11, 500)}${text(294, 714, '▸ 高级运行信息 · 当前本机任务租约', 11, 500)}`);
   body += card(270, 768, 1140, 74, `${circle(294, 805, 6, C.green)}${text(314, 809, '当前没有运行中的本机任务租约', 12, 500, C.secondary)}${button(1294, 789, '刷新', false, 84)}`);
-  write('19-connector-sandbox.svg', connectorShell('权限控制', body));
+  write('19-connector-permissions.svg', connectorShell('权限控制', body));
 }
 
 // 20 系统上下文

@@ -39,6 +39,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
     private var isProgrammaticMove = false
     private var isDraggingPet = false
     private var lastDragOriginX: CGFloat?
+    private var isPetRequestedVisible = false
 
     init(
         model: AppModel,
@@ -175,6 +176,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         applyCollectionBehavior()
         restoreOrPlaceDefault()
         bind()
+        bindAnimationActivity()
     }
 
     @available(*, unavailable)
@@ -184,6 +186,8 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
 
     func setVisible(_ visible: Bool) {
         guard let window else { return }
+        isPetRequestedVisible = visible
+        updateAnimationActivity()
         if visible {
             window.orderFrontRegardless()
             updateMessageVisibility()
@@ -198,6 +202,37 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
             runningActivityPanel.orderOut(nil)
             activityPanel.orderOut(nil)
         }
+    }
+
+    private func bindAnimationActivity() {
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .merge(with: NotificationCenter.default.publisher(
+                for: NSApplication.didResignActiveNotification
+            ))
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateAnimationActivity() }
+            .store(in: &cancellables)
+
+        NSWorkspace.shared.notificationCenter.publisher(
+            for: NSWorkspace.screensDidSleepNotification
+        )
+        .merge(with: NSWorkspace.shared.notificationCenter.publisher(
+            for: NSWorkspace.screensDidWakeNotification
+        ))
+        .receive(on: RunLoop.main)
+        .sink { [weak self] notification in
+            guard let self else { return }
+            if notification.name == NSWorkspace.screensDidSleepNotification {
+                interactionState.isAnimationActive = false
+            } else {
+                updateAnimationActivity()
+            }
+        }
+        .store(in: &cancellables)
+    }
+
+    private func updateAnimationActivity() {
+        interactionState.isAnimationActive = isPetRequestedVisible && NSApp.isActive
     }
 
     func openFile(_ request: PetFileOpenRequest) {

@@ -178,6 +178,11 @@ private struct PetQuickChatConversationView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .onDisappear {
+            if let conversation {
+                model.deactivatePetConversation(conversation)
+            }
+        }
     }
 
     private var header: some View {
