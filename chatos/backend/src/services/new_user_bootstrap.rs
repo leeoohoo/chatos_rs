@@ -4,9 +4,13 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 
+use crate::core::chat_runtime::{
+    contact_agent_id_from_metadata, contact_id_from_metadata, project_id_from_metadata,
+};
 use crate::core::validation::{normalize_non_empty, normalize_non_empty_str};
 use crate::models::chatos_agent_types::{ChatosAgentDto, CreateChatosAgentRequest};
 use crate::models::memory_mapping_types::{CreateMemoryContactRequestDto, MemoryContactDto};
+use crate::models::session::Session;
 use crate::modules::conversation_runtime::sessions::{
     create_session as create_conversation_session, CreateConversationSessionInput,
 };
@@ -74,7 +78,13 @@ async fn bootstrap_new_user_defaults_inner(
     }
 
     let contact = ensure_default_contact(&context, &agent, &mut report).await?;
-    if should_create_starter_session(context.user_id.as_str()).await? {
+    if should_create_starter_session(
+        context.user_id.as_str(),
+        agent.id.as_str(),
+        contact.id.as_str(),
+    )
+    .await?
+    {
         create_starter_session(&context, &agent, &contact).await?;
         report.created_starter_session = true;
     }
@@ -138,10 +148,31 @@ async fn ensure_default_contact(
     Ok(response.contact)
 }
 
-async fn should_create_starter_session(user_id: &str) -> Result<bool, String> {
+async fn should_create_starter_session(
+    user_id: &str,
+    agent_id: &str,
+    contact_id: &str,
+) -> Result<bool, String> {
     let sessions =
-        chatos_sessions::list_sessions(Some(user_id), None, Some(1), 0, false, false).await?;
-    Ok(sessions.is_empty())
+        chatos_sessions::list_sessions(Some(user_id), None, Some(500), 0, false, false).await?;
+    Ok(!sessions
+        .iter()
+        .any(|session| is_starter_session(session, agent_id, contact_id)))
+}
+
+fn is_starter_session(session: &Session, agent_id: &str, contact_id: &str) -> bool {
+    let metadata = session.metadata.as_ref();
+    let has_project_scope = session
+        .project_id
+        .as_deref()
+        .and_then(normalize_non_empty_str)
+        .is_some()
+        || project_id_from_metadata(metadata).is_some();
+    if has_project_scope {
+        return false;
+    }
+    contact_id_from_metadata(metadata).as_deref() == Some(contact_id)
+        || contact_agent_id_from_metadata(metadata).as_deref() == Some(agent_id)
 }
 
 async fn create_starter_session(
@@ -206,8 +237,8 @@ fn build_starter_session_metadata(agent: &ChatosAgentDto, contact: &MemoryContac
 mod tests {
     use super::{
         build_starter_session_metadata, default_agent_description, find_default_agent,
-        has_shared_user_service_agent_account, BootstrapContext, ChatosAgentDto, MemoryContactDto,
-        DEFAULT_AGENT_DESCRIPTION, DEFAULT_AGENT_NAME,
+        has_shared_user_service_agent_account, is_starter_session, BootstrapContext,
+        ChatosAgentDto, MemoryContactDto, Session, DEFAULT_AGENT_DESCRIPTION, DEFAULT_AGENT_NAME,
     };
     use serde_json::json;
 
@@ -303,5 +334,36 @@ mod tests {
 
         agent.task_runner_agent_account_id = Some("agent_account_1".to_string());
         assert!(has_shared_user_service_agent_account(&agent));
+    }
+
+    #[test]
+    fn project_session_does_not_replace_default_contact_private_chat() {
+        let agent = sample_agent(DEFAULT_AGENT_NAME);
+        let contact = sample_contact();
+        let mut session = Session::new(
+            "project chat".to_string(),
+            None,
+            Some(build_starter_session_metadata(&agent, &contact)),
+            Some("user_1".to_string()),
+            Some("project_1".to_string()),
+        );
+        session.project_id = Some("project_1".to_string());
+
+        assert!(!is_starter_session(&session, &agent.id, &contact.id));
+    }
+
+    #[test]
+    fn direct_default_contact_chat_is_a_starter_session() {
+        let agent = sample_agent(DEFAULT_AGENT_NAME);
+        let contact = sample_contact();
+        let session = Session::new(
+            "direct chat".to_string(),
+            None,
+            Some(build_starter_session_metadata(&agent, &contact)),
+            Some("user_1".to_string()),
+            None,
+        );
+
+        assert!(is_starter_session(&session, &agent.id, &contact.id));
     }
 }
