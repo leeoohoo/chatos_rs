@@ -5,6 +5,71 @@ import Foundation
 import SQLite3
 
 extension SQLiteAgentGroupChatStore {
+    /// Persists the Human's proposal decision as ordinary unread communication for the Agent
+    /// that submitted it. The message and its delivery are written in the same transaction as
+    /// the proposal state change, so the Agent cannot miss a successful decision after a crash.
+    func enqueueProposalResolutionNotification(
+        ownerUserID: String,
+        roomID: String,
+        proposerAgentID: String,
+        proposalID: String,
+        proposalLabel: String,
+        approved: Bool,
+        nowUnixMs: Int64
+    ) throws {
+        guard try readRoom(ownerUserID: ownerUserID, roomID: roomID)?.status == .active,
+              try readMember(
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                agentID: proposerAgentID
+              )?.status == .active else { return }
+
+        let decision = approved ? "批准" : "拒绝"
+        let followUp = approved
+            ? "该决定已经生效。请重新读取工作区快照确认最新状态，并在当前会话回复 Human 后继续处理需要跟进的事项；不要等待 Human 再次提醒。"
+            : "请在当前会话确认你已知晓，不要再次提交相同提案；如需替代方案，先根据 Human 的最新要求调整。"
+        let content = "Human 已\(decision)你提交的\(proposalLabel)（proposal_id: \(proposalID)）。\(followUp)"
+        let messageID = UUID().uuidString.lowercased()
+        try execute(
+            """
+            INSERT INTO project_agent_messages (
+                owner_user_id, id, room_id, sender_kind, sender_id, content,
+                reply_to_message_id, source_run_id, causation_id, root_message_id,
+                hop_count, created_at_unix_ms
+            ) VALUES (?, ?, ?, 'system', 'system', ?, NULL, NULL, ?, ?, 0, ?)
+            """,
+            [
+                .text(ownerUserID), .text(messageID), .text(roomID), .text(content),
+                .text(proposalID), .text(messageID), .integer(nowUnixMs),
+            ]
+        )
+        try execute(
+            """
+            INSERT INTO project_agent_message_mentions (
+                owner_user_id, message_id, agent_id, position
+            ) VALUES (?, ?, ?, 0)
+            """,
+            [.text(ownerUserID), .text(messageID), .text(proposerAgentID)]
+        )
+        let deliveryID = UUID().uuidString.lowercased()
+        try execute(
+            """
+            INSERT INTO project_agent_deliveries (
+                owner_user_id, id, room_id, message_id, root_message_id,
+                target_agent_id, trigger_kind, status, attempt, hop_count,
+                deduplication_key, response_message_id, last_error,
+                claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, 'mention', 'pending', 0, 0, ?, NULL, NULL, NULL, NULL, ?)
+            """,
+            [
+                .text(ownerUserID), .text(deliveryID), .text(roomID), .text(messageID),
+                .text(messageID), .text(proposerAgentID),
+                .text("proposal-resolution:\(proposalID):\(proposerAgentID)"),
+                .integer(nowUnixMs),
+            ]
+        )
+    }
+
     func requireMessage(ownerUserID: String, roomID: String, messageID: String) throws {
         guard try readMessage(ownerUserID: ownerUserID, messageID: messageID)?.roomID == roomID else {
             throw AgentGroupChatError.invalidField("messageReference")

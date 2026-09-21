@@ -592,3 +592,13 @@
 "暂无图片生成记录，仍可从本机选择。" = "No generated images yet. You can still choose one from your Mac.";
 "从图片生成记录复制一张图片作为头像。" = "Copy an image from generation history to use as the avatar.";
 "正在准备 Agent 设置…" = "Preparing Agent settings…";
+"范围" = "Scope";
+"执行结果" = "Execution Result";
+"查看完整结果" = "View Full Result";
+"只注册这个现有目录，不会创建、移动、复制或链接目录。" = "This only registers the existing directory; it won't create, move, copy, or link it.";
+"任务授权" = "Task Authorization";
+"执行模式" = "Execution Mode";
+"内置工具" = "Built-in Tools";
+"插件" = "Plugins";
+"插件的具体工具在执行时通过 capability_search → capability_describe 按需加载，并由 capability_invoke 调用。" = "Plugin tools are loaded on demand during execution through capability_search → capability_describe and invoked with capability_invoke.";
+"这里展示任务创建时锁定的执行授权；Agent 职业与项目规则不属于本 Todo 单独授权。" = "This shows the execution authorization locked when the task was created. Agent roles and project rules are not separate authorizations for this Todo.";

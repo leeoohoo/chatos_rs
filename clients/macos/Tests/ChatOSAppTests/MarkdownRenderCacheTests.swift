@@ -23,6 +23,41 @@ struct MarkdownRenderCacheTests {
     }
 
     @Test
+    func inlineMarkdownHeightIsCappedButReaderUsesViewportHeight() {
+        #expect(MarkdownLayoutGeometry.resolvedHeight(
+            contentHeight: 1_800,
+            proposedHeight: nil,
+            viewport: .bounded(maximumHeight: 520)
+        ) == 520)
+        #expect(MarkdownLayoutGeometry.resolvedHeight(
+            contentHeight: 1_800,
+            proposedHeight: 640,
+            viewport: .reader
+        ) == 640)
+        #expect(MarkdownLayoutGeometry.resolvedHeight(
+            contentHeight: 240,
+            proposedHeight: nil,
+            viewport: .bounded(maximumHeight: 520)
+        ) == 240)
+    }
+
+    @Test
+    func largeMarkdownIsSelectedForBackgroundParsing() {
+        #expect(!MarkdownLayoutPolicy.shouldParseOffMain("# Short\n\nBody"))
+        #expect(MarkdownLayoutPolicy.shouldParseOffMain(
+            String(repeating: "long markdown row\n", count: 600)
+        ))
+    }
+
+    @Test
+    func onlyLongInlineMarkdownGetsItsOwnBoundedViewport() {
+        #expect(!MarkdownLayoutPolicy.shouldUseBoundedViewport("**Short** reply"))
+        #expect(MarkdownLayoutPolicy.shouldUseBoundedViewport(
+            String(repeating: "long task result line\n", count: 80)
+        ))
+    }
+
+    @Test
     func repeatedDocumentParsingUsesBoundedCache() {
         let cache = MarkdownRenderCache(totalCostLimit: 1_024 * 1_024, countLimit: 16)
         let source = """

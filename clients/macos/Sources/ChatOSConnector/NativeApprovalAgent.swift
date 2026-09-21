@@ -1,5 +1,6 @@
 import ChatOSAgentRuntime
 import ChatOSCore
+import CryptoKit
 import Foundation
 
 enum NativeApprovalDecision: Sendable, Equatable {
@@ -20,6 +21,9 @@ struct NativeApprovalAgentRequest: Sendable {
 }
 
 struct NativeApprovalAgent: Sendable {
+    static let agentKey = "local_connector_command_approval_agent"
+    static let maximumManagedPromptBytes = 256 * 1024
+
     private let tools = NativeApprovalAgentTools()
     private let settingsStore: AgentSettingsStore
 
@@ -28,6 +32,7 @@ struct NativeApprovalAgent: Sendable {
     func evaluate(
         request: NativeApprovalAgentRequest,
         model: GatewayModelConfigDTO,
+        systemPrompt: String,
         thinkingLevel: String?,
         runID: UUID = UUID(),
         runtimeScope: String? = nil,
@@ -36,6 +41,7 @@ struct NativeApprovalAgent: Sendable {
         do {
             let policy = try settingsStore.load().effective(.approval)
             guard model.enabled != false,
+                  model.taskEnabled != false,
                   let apiKey = model.apiKey?.trimmedNonEmpty,
                   let baseURLText = model.baseURL?.trimmedNonEmpty,
                   let baseURL = URL(string: baseURLText), !model.model.isEmpty else {
@@ -50,7 +56,7 @@ struct NativeApprovalAgent: Sendable {
                 promptCacheKey: "approval-agent:\(model.id)"
             )
             return await evaluate(
-                request: request, modelClient: client, policy: policy,
+                request: request, modelClient: client, systemPrompt: systemPrompt, policy: policy,
                 runID: runID, runtimeScope: runtimeScope, contextProvider: contextProvider
             )
         } catch {
@@ -62,9 +68,13 @@ struct NativeApprovalAgent: Sendable {
     /// a Memory Engine context so prompts, tool calls, and tool results share the
     /// same durable audit contract as the story and server Agents.
     func evaluate(request: NativeApprovalAgentRequest, modelClient: any AgentModelClient,
+                  systemPrompt: String,
                   policy: AgentRunPolicy, runID: UUID = UUID(), runtimeScope: String? = nil,
                   contextProvider: AgentMemoryContextProvider? = nil) async -> NativeApprovalDecision {
         do {
+            guard systemPrompt.trimmedNonEmpty != nil else {
+                throw NativeApprovalAgentError.invalidManagedPrompt
+            }
             let definitions = try Self.toolSchemas.map { schema -> AgentToolDefinition in
                 guard let function = schema["function"] as? [String: Any],
                       let name = function["name"] as? String,
@@ -78,7 +88,7 @@ struct NativeApprovalAgent: Sendable {
             }
             let scope = runtimeScope ?? "approval:\(runID.uuidString)"
             var checkpoint = AgentRunCheckpoint(scope: scope, messages: [
-                .init(role: .system, content: LocalAgentPromptCatalog.render(.approvalSystem)),
+                .init(role: .system, content: systemPrompt),
                 .init(role: .user, content: prompt(for: request)),
             ])
             checkpoint.id = runID
@@ -101,6 +111,69 @@ struct NativeApprovalAgent: Sendable {
             return try decision(from: decodeArguments(output))
         } catch {
             return .askUser(reason: "本机审批 Agent 不可用：\(error.localizedDescription)")
+        }
+    }
+
+    static func resolveManagedSystemPrompt(
+        model: GatewayModelConfigDTO,
+        bundle: GatewayAgentPromptBundleDTO,
+        capability: GatewayAgentCapabilityDTO,
+        ownerUserID: String
+    ) throws -> String {
+        guard capability.agentEnabled,
+              capability.agentKey == agentKey,
+              capability.ownerUserID == ownerUserID,
+              capability.policyRevision.trimmedNonEmpty != nil else {
+            throw NativeApprovalAgentError.invalidManagedCapability
+        }
+        guard bundle.bundleVersion > 0 else {
+            throw NativeApprovalAgentError.invalidManagedPrompt
+        }
+        let vendor = try normalizedPromptVendor(
+            explicitVendor: model.promptVendor,
+            provider: model.provider
+        )
+        guard let prompt = bundle.prompts.first(where: {
+            $0.agentKey == agentKey && $0.vendor.caseInsensitiveCompare(vendor) == .orderedSame
+        }), prompt.revision > 0 else {
+            throw NativeApprovalAgentError.invalidManagedPrompt
+        }
+        guard prompt.content.trimmedNonEmpty != nil,
+              prompt.content.lengthOfBytes(using: .utf8) <= maximumManagedPromptBytes else {
+            throw NativeApprovalAgentError.invalidManagedPrompt
+        }
+        let digest = SHA256.hash(data: Data(prompt.content.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        guard prompt.checksum.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            == "sha256:\(digest)" else {
+            throw NativeApprovalAgentError.invalidManagedPrompt
+        }
+        return prompt.content
+    }
+
+    private static func normalizedPromptVendor(
+        explicitVendor: String?,
+        provider: String
+    ) throws -> String {
+        let provider = provider.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+        let normalizedProvider: String
+        switch provider {
+        case "openai", "gpt": normalizedProvider = "gpt"
+        case "moonshot", "kimik2", "kimi": normalizedProvider = "kimi"
+        case "zhipu", "zhipuai", "zai", "chatglm", "glm": normalizedProvider = "glm"
+        case "deepseek": normalizedProvider = "deepseek"
+        default: throw NativeApprovalAgentError.unsupportedPromptVendor
+        }
+        let candidate = explicitVendor?.trimmedNonEmpty?.lowercased() ?? normalizedProvider
+        switch candidate {
+        case "gpt", "openai": return "gpt"
+        case "deepseek": return "deepseek"
+        case "kimi", "moonshot": return "kimi"
+        case "glm", "zhipu", "zai": return "glm"
+        default: throw NativeApprovalAgentError.unsupportedPromptVendor
         }
     }
 
@@ -196,6 +269,9 @@ struct NativeApprovalAgent: Sendable {
 
 private enum NativeApprovalAgentError: LocalizedError {
     case invalidModelConfiguration
+    case invalidManagedCapability
+    case invalidManagedPrompt
+    case unsupportedPromptVendor
     case invalidResponse
     case invalidToolArguments
     case invalidDecision
@@ -204,6 +280,9 @@ private enum NativeApprovalAgentError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidModelConfiguration: "审批模型配置缺少 Base URL、模型名或 API Key"
+        case .invalidManagedCapability: "审批 Agent 的能力策略缺失或校验失败"
+        case .invalidManagedPrompt: "审批 Agent 的托管 Prompt 缺失或校验失败"
+        case .unsupportedPromptVendor: "审批模型不支持对应的托管 Prompt 类型"
         case .invalidResponse: "审批模型返回格式无效"
         case .invalidToolArguments: "审批模型返回了无效工具参数"
         case .invalidDecision: "审批模型没有返回有效审批结论"

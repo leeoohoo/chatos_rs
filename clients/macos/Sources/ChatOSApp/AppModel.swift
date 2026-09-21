@@ -269,6 +269,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                         projectTypes: agentSkillLibrary.projectTypes(
                             ownerUserID: runContext.ownerUserID
                         ),
+                        projectsService: localProjectsService,
                         context: runContext
                     ))
                 }

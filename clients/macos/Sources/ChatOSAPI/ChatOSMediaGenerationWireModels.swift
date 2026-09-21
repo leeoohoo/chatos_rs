@@ -51,11 +51,16 @@ struct ProviderVideoJob: Sendable {
     var progress: Double?
     var model: String?
     var errorMessage: String?
+    var hasExplicitError: Bool
     var contentURL: URL?
+    var hasMetadataContentURL: Bool
 
-    var isPending: Bool {
-        status == "queued" || status == "in_progress"
-    }
+    var isCompleted: Bool { status == "completed" }
+    var isFailed: Bool { status == "failed" || hasExplicitError }
+
+    // NewAPI used to expose a freshly-created NOT_START task as `unknown`.
+    // Any non-terminal status must remain pollable instead of being reported as a failure.
+    var shouldPoll: Bool { !isCompleted && !isFailed }
 }
 
 enum MediaGenerationClientError: LocalizedError, MediaGenerationSubmissionFailure {
@@ -75,6 +80,7 @@ enum MediaGenerationClientError: LocalizedError, MediaGenerationSubmissionFailur
     case invalidReferenceVideo
     case invalidReferenceAudio
     case unsupportedReferenceVideoProtocol
+    case unsupportedVideoModel(String)
     case mixedFrameAndReferenceVideoInputs
     case missingReferenceVideo
     case mediaUploadFailed(String)
@@ -108,6 +114,8 @@ enum MediaGenerationClientError: LocalizedError, MediaGenerationSubmissionFailur
             "参考音频必须是有效的 MP3、WAV、M4A 或 AAC，且文件不能超过 20 MB。"
         case .unsupportedReferenceVideoProtocol:
             "当前视频模型或接口不支持使用上一段视频作为参考。"
+        case let .unsupportedVideoModel(model):
+            "当前视频生成仅支持 MiniMax-H3，模型 \(model) 暂不支持。"
         case .mixedFrameAndReferenceVideoInputs:
             "参考视频或参考音频不能与首帧、尾帧同时发送，请重新选择生成方式。"
         case .missingReferenceVideo:
@@ -131,7 +139,8 @@ enum MediaGenerationClientError: LocalizedError, MediaGenerationSubmissionFailur
              .invalidVideoOptions, .invalidMiniMaxPrompt, .invalidMiniMaxImageDimensions,
              .unsupportedLastFrameProtocol, .invalidReferenceVideo,
              .invalidReferenceAudio,
-             .unsupportedReferenceVideoProtocol, .mixedFrameAndReferenceVideoInputs,
+             .unsupportedReferenceVideoProtocol, .unsupportedVideoModel,
+             .mixedFrameAndReferenceVideoInputs,
              .missingReferenceVideo, .mediaUploadFailed:
             false
         case .invalidProviderResponse, .responseTooLarge, .providerRejected,

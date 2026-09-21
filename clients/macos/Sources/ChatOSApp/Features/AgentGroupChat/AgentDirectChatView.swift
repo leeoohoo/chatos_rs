@@ -49,6 +49,7 @@ private final class AgentDirectChatViewModel: ObservableObject {
     @Published private(set) var isInitialTimelineReady = false
     @Published private(set) var proposalActionIDs: Set<String> = []
     @Published var errorMessage: String?
+    @Published private(set) var schedulerIssue: AgentSchedulerIssue?
     @Published private(set) var scrollToLatestRequest = 0
 
     private let ownerUserID: String
@@ -59,6 +60,7 @@ private final class AgentDirectChatViewModel: ObservableObject {
     private let projectsService: NativeLocalProjectsService
     private var openedStore: SQLiteAgentGroupChatStore?
     private var schedulerTask: Task<Void, Never>?
+    private var schedulerNeedsAnotherPass = false
     private var changeObservationTask: Task<Void, Never>?
     private var supplementaryLoadTask: Task<Void, Never>?
     private let messagePageSize = 20
@@ -95,6 +97,10 @@ private final class AgentDirectChatViewModel: ObservableObject {
     var title: String { conversation?.draft.name ?? "私聊" }
 
     var isHumanDirect: Bool { conversation?.conversationKind == .humanAgentDirect }
+
+    var presentedErrorMessage: String? {
+        errorMessage ?? schedulerIssue?.message
+    }
 
     var timelineItems: [AgentDirectTimelineItem] {
         let items = messages.map(AgentDirectTimelineItem.message)
@@ -167,6 +173,7 @@ private final class AgentDirectChatViewModel: ObservableObject {
             let messagePage = try await loadedMessages
             self.conversation = conversation
             agents = try await loadedAgents
+            try await reconcilePersistedSchedulerIssue(store: store)
             let wasEmpty = messages.isEmpty
             messages = mergeMessages(messages, with: messagePage.messages)
             if wasEmpty {
@@ -251,6 +258,40 @@ private final class AgentDirectChatViewModel: ObservableObject {
         }
     }
 
+    private func reconcilePersistedSchedulerIssue(
+        store: SQLiteAgentGroupChatStore
+    ) async throws {
+        guard let issue = schedulerIssue else { return }
+        guard let delivery = try await store.delivery(
+            ownerUserID: ownerUserID,
+            deliveryID: issue.deliveryID
+        ), delivery.roomID == conversationID else {
+            schedulerIssue = nil
+            return
+        }
+        guard let run = try await store.run(
+                ownerUserID: ownerUserID,
+                deliveryID: issue.deliveryID
+              ), run.checkpoint.status == .completed else { return }
+        schedulerIssue = nil
+    }
+
+    private func reconcileSchedulerResults(
+        _ receipts: [LocalAgentGroupChatScheduler.DeliveryAttemptReceipt]
+    ) async throws {
+        let store = try await resolveStore()
+        let deliveries = try await store.deliveries(
+            ownerUserID: ownerUserID,
+            deliveryIDs: receipts.map(\.deliveryID)
+        )
+        schedulerIssue = AgentSchedulerIssueReducer.reconcile(
+            current: schedulerIssue,
+            receipts: receipts,
+            roomIDByDeliveryID: deliveries.mapValues(\.roomID),
+            roomID: conversationID
+        )
+    }
+
     @discardableResult
     func loadOlderMessages() async -> String? {
         guard !isLoadingOlderMessages,
@@ -330,6 +371,15 @@ private final class AgentDirectChatViewModel: ObservableObject {
                 }
                 createdProject = nil
                 resolvedProjectID = project.id
+            } else if let importedDraft = proposal.draft.importedProjectDraft,
+                      let absolutePath = proposal.draft.importedProjectAbsolutePath {
+                let project = try await projectsService.createFromExistingDirectory(
+                    ownerUserID: ownerUserID,
+                    draft: importedDraft,
+                    absolutePath: absolutePath
+                )
+                createdProject = project
+                resolvedProjectID = project.id
             } else if let newProjectName = proposal.draft.newProjectName {
                 let project = try await projectsService.createInDefaultWorkspace(
                     ownerUserID: ownerUserID,
@@ -353,6 +403,7 @@ private final class AgentDirectChatViewModel: ObservableObject {
             )
             NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
             await load()
+            startScheduler()
             return createdProject
         } catch {
             errorMessage = error.localizedDescription
@@ -371,6 +422,7 @@ private final class AgentDirectChatViewModel: ObservableObject {
             )
             NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
             await load()
+            startScheduler()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -388,6 +440,7 @@ private final class AgentDirectChatViewModel: ObservableObject {
                 nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
             )
             await load()
+            startScheduler()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -405,6 +458,7 @@ private final class AgentDirectChatViewModel: ObservableObject {
                 nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
             )
             await load()
+            startScheduler()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -423,6 +477,7 @@ private final class AgentDirectChatViewModel: ObservableObject {
             )
             NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
             await load()
+            startScheduler()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -440,6 +495,7 @@ private final class AgentDirectChatViewModel: ObservableObject {
                 nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
             )
             await load()
+            startScheduler()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -490,31 +546,36 @@ private final class AgentDirectChatViewModel: ObservableObject {
     }
 
     private func startScheduler() {
+        schedulerNeedsAnotherPass = true
         guard schedulerTask == nil else { return }
         isRunningAgents = true
         schedulerTask = Task { [weak self] in
             guard let self else { return }
-            var schedulerMessage: String?
-            do {
-                let results = try await scheduler.drainAccount(ownerUserID: ownerUserID)
-                if let failure = results.last(where: { $0.outcome == .failed }) {
-                    schedulerMessage = failure.detail ?? "Agent 运行失败。"
-                } else if let suspended = results.last(where: { $0.outcome == .suspended }) {
-                    schedulerMessage = suspended.detail ?? "Agent 已暂停。"
+            repeat {
+                schedulerNeedsAnotherPass = false
+                do {
+                    let receipts = try await scheduler.drainAccount(ownerUserID: ownerUserID)
+                    try await reconcileSchedulerResults(receipts)
+                } catch is CancellationError {
+                    // Another visible surface may already own the account drain. Its durable
+                    // changes will refresh this conversation; cancellation is not a room error.
+                } catch {
+                    errorMessage = error.localizedDescription
                 }
-            } catch {
-                schedulerMessage = error.localizedDescription
-            }
-            await load()
-            NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
-            if let schedulerMessage { errorMessage = schedulerMessage }
+                await load()
+                NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
+            } while schedulerNeedsAnotherPass
             isRunningAgents = false
             schedulerTask = nil
         }
     }
 
     func dismissError() {
-        errorMessage = nil
+        if errorMessage != nil {
+            errorMessage = nil
+        } else {
+            schedulerIssue = nil
+        }
     }
 }
 
@@ -550,7 +611,7 @@ struct AgentDirectChatView: View {
             } else {
                 transcript
             }
-            if let errorMessage = viewModel.errorMessage {
+            if let errorMessage = viewModel.presentedErrorMessage {
                 Divider()
                 errorBanner(errorMessage)
             }
@@ -593,8 +654,8 @@ struct AgentDirectChatView: View {
                 AgentAvatarView(
                     name: agent.draft.name,
                     data: agent.draft.avatarData,
-                    size: 38,
-                    cornerRadius: 12
+                    size: AgentAvatarMetrics.header,
+                    cornerRadius: 24
                 )
             } else {
                 Image(systemName: "person.2.wave.2.fill")
@@ -658,8 +719,8 @@ struct AgentDirectChatView: View {
                 AgentAvatarView(
                     name: displayName,
                     data: viewModel.profilesByID[message.senderID]?.draft.avatarData,
-                    size: 32,
-                    cornerRadius: 10
+                    size: AgentAvatarMetrics.message,
+                    cornerRadius: 20
                 )
             }
             VStack(alignment: isHuman ? .trailing : .leading, spacing: 6) {
@@ -700,7 +761,12 @@ struct AgentDirectChatView: View {
             }
             .frame(maxWidth: 900, alignment: isHuman ? .trailing : .leading)
             if isHuman {
-                AgentAvatarView(name: "你", data: nil, size: 32, cornerRadius: 10)
+                AgentAvatarView(
+                    name: "你",
+                    data: nil,
+                    size: AgentAvatarMetrics.message,
+                    cornerRadius: 20
+                )
             }
             if !isHuman { Spacer(minLength: 80) }
         }
@@ -720,9 +786,25 @@ struct AgentDirectChatView: View {
 
     private func proposalCard(_ proposal: LocalAgentTeamCreationProposal) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("创建团队", systemImage: "person.3.sequence.fill")
+            Label(
+                proposal.draft.importedProjectDraft == nil ? "创建团队" : "导入目录并创建团队",
+                systemImage: "person.3.sequence.fill"
+            )
                 .font(.headline)
             Text(proposal.draft.teamName)
+            if let importedDraft = proposal.draft.importedProjectDraft,
+               let absolutePath = proposal.draft.importedProjectAbsolutePath {
+                Text("项目：\(importedDraft.name)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("目录：\(absolutePath)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                Text("只注册这个现有目录，不会创建、移动、复制或链接目录。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
             if let key = proposal.draft.newProjectTypeKey,
                let type = projectType(key) {
                 Text("项目类型：\(type.label)")
@@ -736,7 +818,11 @@ struct AgentDirectChatView: View {
                 Button("拒绝", role: .destructive) {
                     Task { await viewModel.rejectTeamProposal(proposal) }
                 }
-                Button(proposal.draft.newProjectName == nil ? "确认创建团队" : "确认创建项目和团队") {
+                Button(
+                    proposal.draft.existingProjectID == nil
+                        ? "确认创建项目和团队"
+                        : "确认创建团队"
+                ) {
                     Task {
                         if let project = await viewModel.approveTeamProposal(proposal) {
                             model.registerCreatedProject(project)

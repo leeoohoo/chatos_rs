@@ -62,6 +62,13 @@ final class MarkdownRenderCache: @unchecked Sendable {
         return parsed
     }
 
+    func cachedBlocks(for source: String) -> [MarkdownBlock]? {
+        let key = source as NSString
+        guard let cached = blockCache.object(forKey: key) else { return nil }
+        updateMetrics { $0.blockHits += 1 }
+        return cached.value
+    }
+
     func attributedInline(for source: String) -> AttributedString {
         let key = source as NSString
         if let cached = inlineCache.object(forKey: key) {
@@ -109,78 +116,196 @@ struct MarkdownDocumentView: View {
         case fitContent
     }
 
+    private struct LoadedDocument {
+        let source: String
+        let blocks: [MarkdownBlock]
+    }
+
     private let markdown: String
-    private let blocks: [MarkdownBlock]
     private let allowsTextSelection: Bool
     private let widthBehavior: WidthBehavior
+    private let viewport: MarkdownViewport
+
+    @State private var loadedDocument: LoadedDocument?
 
     init(
         markdown: String,
         allowsTextSelection: Bool = true,
-        widthBehavior: WidthBehavior = .fill
+        widthBehavior: WidthBehavior = .fill,
+        maximumHeight: CGFloat = MarkdownLayoutPolicy.maximumInlineHeight
     ) {
         self.markdown = markdown
-        blocks = MarkdownRenderCache.shared.blocks(for: markdown)
         self.allowsTextSelection = allowsTextSelection
         self.widthBehavior = widthBehavior
+        viewport = .bounded(maximumHeight: maximumHeight)
+
+        let initialBlocks: [MarkdownBlock]?
+        if let cached = MarkdownRenderCache.shared.cachedBlocks(for: markdown) {
+            initialBlocks = cached
+        } else if MarkdownLayoutPolicy.shouldParseOffMain(markdown) {
+            initialBlocks = nil
+        } else {
+            initialBlocks = MarkdownRenderCache.shared.blocks(for: markdown)
+        }
+        _loadedDocument = State(
+            initialValue: initialBlocks.map { LoadedDocument(source: markdown, blocks: $0) }
+        )
     }
 
-    init(
+    private init(
         markdown: String,
-        precomputedBlocks: [MarkdownBlock],
         allowsTextSelection: Bool = true,
-        widthBehavior: WidthBehavior = .fill
+        widthBehavior: WidthBehavior = .fill,
+        viewport: MarkdownViewport
     ) {
         self.markdown = markdown
-        blocks = precomputedBlocks
         self.allowsTextSelection = allowsTextSelection
         self.widthBehavior = widthBehavior
-    }
+        self.viewport = viewport
 
-    var body: some View {
-        MarkdownNativeTextView(
-            source: markdown,
-            blocks: blocks,
-            allowsTextSelection: allowsTextSelection,
-            widthBehavior: widthBehavior
-        )
-        .frame(
-            maxWidth: widthBehavior == .fill ? .infinity : nil,
-            alignment: .leading
+        let initialBlocks = MarkdownRenderCache.shared.cachedBlocks(for: markdown)
+        _loadedDocument = State(
+            initialValue: initialBlocks.map { LoadedDocument(source: markdown, blocks: $0) }
         )
     }
-}
-
-/// Parses large documents away from the main actor and reuses the same bounded cache as chat
-/// messages. The loading placeholder keeps a 1–2 MiB attachment from stalling sheet presentation.
-struct DeferredMarkdownDocumentView: View {
-    let markdown: String
-    @State private var blocks: [MarkdownBlock]?
 
     var body: some View {
         Group {
-            if let blocks {
-                MarkdownDocumentView(markdown: markdown, precomputedBlocks: blocks)
-            } else {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("正在解析 Markdown…")
-                        .appFont(.caption)
-                        .foregroundStyle(.secondary)
+            if let loadedDocument, loadedDocument.source == markdown {
+                if viewport.fillsAvailableHeight
+                    || MarkdownLayoutPolicy.shouldUseBoundedViewport(markdown) {
+                    MarkdownNativeScrollView(
+                        source: markdown,
+                        blocks: loadedDocument.blocks,
+                        allowsTextSelection: allowsTextSelection,
+                        widthBehavior: widthBehavior,
+                        viewport: viewport
+                    )
+                    .frame(
+                        maxWidth: widthBehavior == .fill ? .infinity : nil,
+                        maxHeight: viewport.fillsAvailableHeight ? .infinity : nil,
+                        alignment: .leading
+                    )
+                } else {
+                    MarkdownNativeTextView(
+                        source: markdown,
+                        blocks: loadedDocument.blocks,
+                        allowsTextSelection: allowsTextSelection,
+                        widthBehavior: widthBehavior
+                    )
+                    .frame(
+                        maxWidth: widthBehavior == .fill ? .infinity : nil,
+                        alignment: .leading
+                    )
                 }
-                .frame(maxWidth: .infinity, minHeight: 80, alignment: .topLeading)
+            } else {
+                markdownLoadingPlaceholder
             }
         }
         .task(id: markdown) {
-            blocks = nil
+            guard loadedDocument?.source != markdown else { return }
             let source = markdown
             let parsed = await Task.detached(priority: .userInitiated) {
                 MarkdownRenderCache.shared.blocks(for: source)
             }.value
-            guard !Task.isCancelled else { return }
-            blocks = parsed
+            guard !Task.isCancelled, source == markdown else { return }
+            loadedDocument = LoadedDocument(source: source, blocks: parsed)
         }
     }
+
+    @ViewBuilder
+    private var markdownLoadingPlaceholder: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text("正在解析 Markdown…")
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: viewport.fillsAvailableHeight ? nil : 64,
+            maxHeight: viewport.fillsAvailableHeight ? .infinity : nil,
+            alignment: .topLeading
+        )
+    }
+
+    fileprivate static func reader(
+        markdown: String,
+        allowsTextSelection: Bool
+    ) -> Self {
+        Self(
+            markdown: markdown,
+            allowsTextSelection: allowsTextSelection,
+            viewport: .reader
+        )
+    }
+
+    fileprivate static func deferred(
+        markdown: String,
+        allowsTextSelection: Bool,
+        maximumHeight: CGFloat
+    ) -> Self {
+        Self(
+            markdown: markdown,
+            allowsTextSelection: allowsTextSelection,
+            viewport: .bounded(maximumHeight: maximumHeight)
+        )
+    }
+}
+
+struct DeferredMarkdownDocumentView: View {
+    let markdown: String
+    var allowsTextSelection = true
+    var maximumHeight: CGFloat = MarkdownLayoutPolicy.maximumInlineHeight
+
+    var body: some View {
+        MarkdownDocumentView.deferred(
+            markdown: markdown,
+            allowsTextSelection: allowsTextSelection,
+            maximumHeight: maximumHeight
+        )
+    }
+}
+
+/// A full-document reader owns its viewport and scrolling in AppKit. SwiftUI receives a stable
+/// rectangle instead of repeatedly measuring the entire document inside a lazy stack.
+struct MarkdownReaderView: View {
+    let markdown: String
+    var allowsTextSelection = true
+
+    var body: some View {
+        MarkdownDocumentView.reader(
+            markdown: markdown,
+            allowsTextSelection: allowsTextSelection
+        )
+    }
+}
+
+enum MarkdownLayoutPolicy {
+    static let maximumInlineHeight: CGFloat = 520
+    static let backgroundParsingByteThreshold = 8 * 1_024
+    static let backgroundParsingLineThreshold = 120
+    static let boundedViewportByteThreshold = 1_500
+    static let boundedViewportLineThreshold = 32
+
+    static func shouldParseOffMain(_ source: String) -> Bool {
+        source.utf8.count >= backgroundParsingByteThreshold
+            || source.lazy.filter(\.isNewline).prefix(backgroundParsingLineThreshold).count
+                >= backgroundParsingLineThreshold
+    }
+
+    static func shouldUseBoundedViewport(_ source: String) -> Bool {
+        source.utf8.count >= boundedViewportByteThreshold
+            || source.lazy.filter(\.isNewline).prefix(boundedViewportLineThreshold).count
+                >= boundedViewportLineThreshold
+    }
+}
+
+enum MarkdownViewport: Equatable {
+    case bounded(maximumHeight: CGFloat)
+    case reader
+
+    var fillsAvailableHeight: Bool { self == .reader }
 }
 
 /// A single AppKit text layout per Markdown document. SwiftUI's selectable `Text` creates a
@@ -221,6 +346,47 @@ private struct MarkdownNativeTextView: NSViewRepresentable {
     }
 }
 
+private struct MarkdownNativeScrollView: NSViewRepresentable {
+    let source: String
+    let blocks: [MarkdownBlock]
+    let allowsTextSelection: Bool
+    let widthBehavior: MarkdownDocumentView.WidthBehavior
+    let viewport: MarkdownViewport
+
+    func makeNSView(context: Context) -> MarkdownScrollContainerView {
+        MarkdownScrollContainerView()
+    }
+
+    func updateNSView(_ scrollView: MarkdownScrollContainerView, context: Context) {
+        scrollView.setDocument(
+            source: source,
+            blocks: blocks,
+            allowsTextSelection: allowsTextSelection
+        )
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView scrollView: MarkdownScrollContainerView,
+        context: Context
+    ) -> CGSize? {
+        guard let proposedWidth = MarkdownLayoutGeometry.finitePositiveWidth(proposal.width) else {
+            return nil
+        }
+        let width = switch widthBehavior {
+        case .fill: proposedWidth
+        case .fitContent: scrollView.textWidth(fittingMaxWidth: proposedWidth)
+        }
+        let contentHeight = scrollView.textHeight(fittingWidth: width)
+        let height = MarkdownLayoutGeometry.resolvedHeight(
+            contentHeight: contentHeight,
+            proposedHeight: proposal.height,
+            viewport: viewport
+        )
+        return CGSize(width: width, height: height)
+    }
+}
+
 enum MarkdownLayoutGeometry {
     static func finitePositiveWidth(_ width: CGFloat?) -> CGFloat? {
         guard let width, width.isFinite, width > 0 else { return nil }
@@ -230,6 +396,89 @@ enum MarkdownLayoutGeometry {
     static func widthCacheKey(fittingWidth width: CGFloat) -> UInt64? {
         guard let width = finitePositiveWidth(width) else { return nil }
         return Double(max(width, 1)).bitPattern
+    }
+
+    static func resolvedHeight(
+        contentHeight: CGFloat,
+        proposedHeight: CGFloat?,
+        viewport: MarkdownViewport
+    ) -> CGFloat {
+        let safeContentHeight = finitePositiveWidth(contentHeight) ?? 1
+        switch viewport {
+        case let .bounded(maximumHeight):
+            let safeMaximumHeight = finitePositiveWidth(maximumHeight)
+                ?? MarkdownLayoutPolicy.maximumInlineHeight
+            return min(safeContentHeight, safeMaximumHeight)
+        case .reader:
+            return finitePositiveWidth(proposedHeight)
+                ?? min(safeContentHeight, MarkdownLayoutPolicy.maximumInlineHeight)
+        }
+    }
+}
+
+@MainActor
+private final class MarkdownScrollContainerView: NSScrollView {
+    private let markdownTextView = MarkdownLayoutTextView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        drawsBackground = false
+        borderType = .noBorder
+        hasHorizontalScroller = false
+        hasVerticalScroller = true
+        autohidesScrollers = true
+        scrollerStyle = .overlay
+        horizontalScrollElasticity = .none
+        verticalScrollElasticity = .automatic
+        automaticallyAdjustsContentInsets = false
+        contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+        documentView = markdownTextView
+
+        markdownTextView.minSize = .zero
+        markdownTextView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        markdownTextView.isHorizontallyResizable = false
+        markdownTextView.isVerticallyResizable = true
+        markdownTextView.autoresizingMask = [.width]
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        let width = max(contentSize.width, 1)
+        let height = max(markdownTextView.height(fittingWidth: width), contentSize.height)
+        let nextSize = NSSize(width: width, height: height)
+        if abs(markdownTextView.frame.width - nextSize.width) > 0.5
+            || abs(markdownTextView.frame.height - nextSize.height) > 0.5 {
+            markdownTextView.setFrameSize(nextSize)
+        }
+    }
+
+    func setDocument(
+        source: String,
+        blocks: [MarkdownBlock],
+        allowsTextSelection: Bool
+    ) {
+        markdownTextView.setDocument(
+            source: source,
+            blocks: blocks,
+            allowsTextSelection: allowsTextSelection
+        )
+        needsLayout = true
+    }
+
+    func textHeight(fittingWidth width: CGFloat) -> CGFloat {
+        markdownTextView.height(fittingWidth: width)
+    }
+
+    func textWidth(fittingMaxWidth maxWidth: CGFloat) -> CGFloat {
+        markdownTextView.width(fittingMaxWidth: maxWidth)
     }
 }
 

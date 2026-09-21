@@ -3,6 +3,50 @@ import ChatOSCore
 import Combine
 import Foundation
 
+struct AgentSchedulerIssue: Equatable {
+    let deliveryID: String
+    let outcome: LocalAgentGroupChatScheduler.DeliveryAttemptOutcome
+    let message: String
+
+    init(_ receipt: LocalAgentGroupChatScheduler.DeliveryAttemptReceipt) {
+        deliveryID = receipt.deliveryID
+        outcome = receipt.outcome
+        let fallback = switch receipt.outcome {
+        case .failed: "本地 Agent 运行失败。"
+        case .suspended: "本地 Agent 已暂停，运行检查点已保存。"
+        case .completed: ""
+        }
+        message = receipt.detail ?? fallback
+    }
+}
+
+enum AgentSchedulerIssueReducer {
+    /// Account draining is intentionally global so Relay deliveries continue in conversations
+    /// that are not visible. Presentation is local: only results for the visible room may change
+    /// its issue, and a later completion clears the issue for that same delivery.
+    static func reconcile(
+        current: AgentSchedulerIssue?,
+        receipts: [LocalAgentGroupChatScheduler.DeliveryAttemptReceipt],
+        roomIDByDeliveryID: [String: String],
+        roomID: String
+    ) -> AgentSchedulerIssue? {
+        var issues: [String: (order: Int, issue: AgentSchedulerIssue)] = [:]
+        if let current {
+            issues[current.deliveryID] = (-1, current)
+        }
+        for (order, receipt) in receipts.enumerated()
+        where roomIDByDeliveryID[receipt.deliveryID] == roomID {
+            switch receipt.outcome {
+            case .completed:
+                issues.removeValue(forKey: receipt.deliveryID)
+            case .failed, .suspended:
+                issues[receipt.deliveryID] = (order, AgentSchedulerIssue(receipt))
+            }
+        }
+        return issues.values.max(by: { $0.order < $1.order })?.issue
+    }
+}
+
 @MainActor
 final class AgentGroupChatViewModel: ObservableObject {
     struct MemberPresentation: Identifiable {
@@ -68,6 +112,7 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published var teamProposalActionIDs: Set<String> = []
     @Published var membershipProposalActionIDs: Set<String> = []
     @Published var errorMessage: String?
+    @Published private(set) var schedulerIssue: AgentSchedulerIssue?
     @Published var scrollToLatestRequest = 0
 
     let service: NativeAgentGroupChatService
@@ -117,6 +162,35 @@ final class AgentGroupChatViewModel: ObservableObject {
         Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
     }
 
+    var presentedErrorMessage: String? {
+        errorMessage ?? schedulerIssue?.message
+    }
+
+    func dismissPresentedError() {
+        if errorMessage != nil {
+            errorMessage = nil
+        } else {
+            schedulerIssue = nil
+        }
+    }
+
+    func reconcileSchedulerResults(
+        _ receipts: [LocalAgentGroupChatScheduler.DeliveryAttemptReceipt],
+        roomID: String
+    ) async throws {
+        let store = try await resolveStore()
+        let deliveries = try await store.deliveries(
+            ownerUserID: ownerUserID,
+            deliveryIDs: receipts.map(\.deliveryID)
+        )
+        schedulerIssue = AgentSchedulerIssueReducer.reconcile(
+            current: schedulerIssue,
+            receipts: receipts,
+            roomIDByDeliveryID: deliveries.mapValues(\.roomID),
+            roomID: roomID
+        )
+    }
+
     func displayName(senderID: String, kind: ProjectAgentMessageSenderKind) -> String {
         switch kind {
         case .human: "你"
@@ -152,6 +226,7 @@ final class AgentGroupChatViewModel: ObservableObject {
             let isSameRoom = self.room?.id == room?.id
             self.room = room
             self.members = members
+            try await reconcilePersistedSchedulerIssue(store: store, roomID: room?.id)
             let messages = messagePage?.messages ?? []
             if isSameRoom, !self.messages.isEmpty {
                 self.messages = mergeMessages(self.messages, with: messages)
@@ -178,6 +253,25 @@ final class AgentGroupChatViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func reconcilePersistedSchedulerIssue(
+        store: SQLiteAgentGroupChatStore,
+        roomID: String?
+    ) async throws {
+        guard let issue = schedulerIssue else { return }
+        guard let delivery = try await store.delivery(
+            ownerUserID: ownerUserID,
+            deliveryID: issue.deliveryID
+        ), delivery.roomID == roomID else {
+            schedulerIssue = nil
+            return
+        }
+        guard let run = try await store.run(
+                ownerUserID: ownerUserID,
+                deliveryID: issue.deliveryID
+              ), run.checkpoint.status == .completed else { return }
+        schedulerIssue = nil
     }
 
     private func startSupplementaryLoad(

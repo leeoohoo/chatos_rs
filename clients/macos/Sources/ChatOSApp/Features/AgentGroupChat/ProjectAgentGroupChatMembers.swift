@@ -147,8 +147,8 @@ extension ProjectAgentGroupChatView {
             AgentAvatarView(
                 name: item.profile?.draft.name ?? "A",
                 data: item.profile?.draft.avatarData,
-                size: 32,
-                cornerRadius: 10
+                size: AgentAvatarMetrics.message,
+                cornerRadius: 20
             )
 
             VStack(alignment: .leading, spacing: 4) {

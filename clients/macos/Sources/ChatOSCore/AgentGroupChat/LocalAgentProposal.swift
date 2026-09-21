@@ -311,14 +311,16 @@ public enum LocalAgentTeamCreationProposalStatus: String, Codable, Sendable {
     case pending, approved, rejected
 }
 
-/// The project identifier is resolved from a run-scoped opaque option entirely inside the client,
-/// then copied verbatim into this durable proposal. It never enters model input or output. Project
-/// names remain display metadata and are never used to resolve the target project.
+/// Existing project identifiers are resolved from run-scoped opaque options inside the client and
+/// never enter model input or output. A Human-supplied absolute path may be stored for an import
+/// proposal only after the host resolves it to a paired workspace and a canonical relative root.
 public struct LocalAgentTeamCreationProposalDraft: Codable, Sendable, Equatable {
     public let existingProjectID: String?
     public let newProjectName: String?
     public let newProjectDescription: String
     public let newProjectTypeKey: String?
+    public let importedProjectDraft: LocalProjectDraft?
+    public let importedProjectAbsolutePath: String?
     public let teamName: String
     public let teamGoal: String
 
@@ -331,6 +333,8 @@ public struct LocalAgentTeamCreationProposalDraft: Codable, Sendable, Equatable 
         newProjectName = nil
         newProjectDescription = ""
         newProjectTypeKey = nil
+        importedProjectDraft = nil
+        importedProjectAbsolutePath = nil
         self.teamName = teamName
         self.teamGoal = teamGoal
     }
@@ -346,12 +350,35 @@ public struct LocalAgentTeamCreationProposalDraft: Codable, Sendable, Equatable 
         self.newProjectName = newProjectName
         self.newProjectDescription = newProjectDescription
         self.newProjectTypeKey = newProjectTypeKey
+        importedProjectDraft = nil
+        importedProjectAbsolutePath = nil
+        self.teamName = teamName
+        self.teamGoal = teamGoal
+    }
+
+    public init(
+        importedProjectDraft: LocalProjectDraft,
+        importedProjectAbsolutePath: String,
+        teamName: String,
+        teamGoal: String = ""
+    ) {
+        existingProjectID = nil
+        newProjectName = nil
+        newProjectDescription = ""
+        newProjectTypeKey = nil
+        self.importedProjectDraft = importedProjectDraft
+        self.importedProjectAbsolutePath = importedProjectAbsolutePath
         self.teamName = teamName
         self.teamGoal = teamGoal
     }
 
     public func validate() throws {
-        guard (existingProjectID == nil) != (newProjectName == nil) else {
+        let selectionCount = [
+            existingProjectID != nil,
+            newProjectName != nil,
+            importedProjectDraft != nil,
+        ].filter { $0 }.count
+        guard selectionCount == 1 else {
             throw AgentGroupChatError.invalidField("projectSelection")
         }
         if let existingProjectID {
@@ -361,6 +388,9 @@ public struct LocalAgentTeamCreationProposalDraft: Codable, Sendable, Equatable 
             }
             guard newProjectTypeKey == nil else {
                 throw AgentGroupChatError.invalidField("newProjectTypeKey")
+            }
+            guard importedProjectAbsolutePath == nil else {
+                throw AgentGroupChatError.invalidField("importedProjectAbsolutePath")
             }
         }
         if let newProjectName {
@@ -381,6 +411,27 @@ public struct LocalAgentTeamCreationProposalDraft: Codable, Sendable, Equatable 
                     throw AgentGroupChatError.invalidField("newProjectTypeKey")
                 }
             }
+            guard importedProjectAbsolutePath == nil else {
+                throw AgentGroupChatError.invalidField("importedProjectAbsolutePath")
+            }
+        }
+        if let importedProjectDraft {
+            guard let importedProjectAbsolutePath,
+                  importedProjectAbsolutePath.hasPrefix("/"),
+                  importedProjectAbsolutePath == importedProjectAbsolutePath.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                  ),
+                  importedProjectAbsolutePath.rangeOfCharacter(from: .controlCharacters) == nil,
+                  importedProjectAbsolutePath.count <= 4_096 else {
+                throw AgentGroupChatError.invalidField("importedProjectAbsolutePath")
+            }
+            do {
+                try importedProjectDraft.validate()
+            } catch {
+                throw AgentGroupChatError.invalidField("importedProjectDraft")
+            }
+        } else if importedProjectAbsolutePath != nil {
+            throw AgentGroupChatError.invalidField("importedProjectAbsolutePath")
         }
         try AgentGroupChatValidation.text(teamName, field: "teamName", maximumLength: 160)
         try AgentGroupChatValidation.optionalText(teamGoal, field: "teamGoal", maximumLength: 8_000)

@@ -166,8 +166,8 @@ struct AgentManagementView: View {
                 AgentAvatarView(
                     name: agent.draft.name,
                     data: agent.draft.avatarData,
-                    size: 42,
-                    cornerRadius: 13
+                    size: AgentAvatarMetrics.managementCard,
+                    cornerRadius: 26
                 )
                 VStack(alignment: .leading, spacing: 3) {
                     Text(agent.draft.name)

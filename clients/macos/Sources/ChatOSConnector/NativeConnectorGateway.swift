@@ -88,6 +88,20 @@ struct NativeConnectorGateway: Sendable {
         )
     }
 
+    func agentPromptBundle(token: String) async throws -> GatewayAgentPromptBundleDTO {
+        try await request(
+            "/api/plugin-management/agent-prompts/bundle",
+            token: token
+        )
+    }
+
+    func agentCapability(token: String, agentKey: String) async throws -> GatewayAgentCapabilityDTO {
+        try await request(
+            "/api/plugin-management/agent-capabilities/\(agentKey.urlPathEncoded)",
+            token: token
+        )
+    }
+
     func updateModelConfig(
         token: String,
         id: String,
@@ -495,6 +509,47 @@ struct GatewayModelConfigDTO: Decodable, Sendable {
         case supportsImages = "supports_images"
         case supportsReasoning = "supports_reasoning"
         case supportsResponses = "supports_responses"
+    }
+}
+
+struct GatewayAgentPromptBundleDTO: Decodable, Sendable {
+    var bundleVersion: Int64
+    var updatedAt: String
+    var prompts: [GatewayAgentPromptDTO]
+
+    enum CodingKeys: String, CodingKey {
+        case prompts
+        case bundleVersion = "bundle_version"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct GatewayAgentPromptDTO: Decodable, Sendable {
+    var agentKey: String
+    var vendor: String
+    var content: String
+    var revision: Int64
+    var checksum: String
+    var publishedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case vendor, content, revision, checksum
+        case agentKey = "agent_key"
+        case publishedAt = "published_at"
+    }
+}
+
+struct GatewayAgentCapabilityDTO: Decodable, Sendable {
+    var agentKey: String
+    var ownerUserID: String
+    var policyRevision: String
+    var agentEnabled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case agentKey = "agent_key"
+        case ownerUserID = "owner_user_id"
+        case policyRevision = "policy_revision"
+        case agentEnabled = "agent_enabled"
     }
 }
 

@@ -1,4 +1,4 @@
-import ChatOSConnector
+@testable import ChatOSConnector
 import ChatOSCore
 import ChatOSAgentRuntime
 import Foundation
@@ -6,10 +6,21 @@ import SQLite3
 import XCTest
 
 final class SQLiteAgentGroupChatStoreTests: XCTestCase {
+    private struct NoNetworkTicketProvider: LocalConnectorPairingTicketProviding {
+        func issueLocalConnectorPairingTicket() async throws -> String {
+            throw URLError(.notConnectedToInternet)
+        }
+    }
+
     private func databaseURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("agent-group-chat-\(UUID().uuidString)")
             .appendingPathComponent("group-chat.db")
+    }
+
+    private func toolArguments(_ value: [String: Any]) throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+        return try XCTUnwrap(String(data: data, encoding: .utf8))
     }
 
     private func executeSQLite(_ databaseURL: URL, sql: String) throws {
@@ -1078,11 +1089,45 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let localRoot = url.deletingLastPathComponent()
+        let importedDirectory = localRoot.appendingPathComponent("import-target", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: importedDirectory,
+            withIntermediateDirectories: true
+        )
+        let connectorStateURL = localRoot.appendingPathComponent("connector.json")
+        var connectorState = NativeConnectorPersistentState.empty
+        connectorState.user = .init(
+            id: "alice",
+            username: "alice",
+            displayName: nil,
+            role: "user"
+        )
+        connectorState.deviceID = "device"
+        connectorState.workspaces = [.init(
+            id: "workspace-1",
+            alias: "workspace",
+            absoluteRoot: localRoot.path,
+            fingerprint: "fingerprint"
+        )]
+        try NativeConnectorStateStore(stateURL: connectorStateURL).save(connectorState)
+        let connector = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
+                stateURL: connectorStateURL
+            ),
+            ticketProvider: NoNetworkTicketProvider()
+        )
+        let projectsService = NativeLocalProjectsService(
+            connector: connector,
+            databaseURL: localRoot.appendingPathComponent("projects.db")
+        )
         let agent = try await makeAgent(
             store,
             name: "团队负责人",
             canAccessLocalProjects: true
         )
+        XCTAssertEqual(agent.draft.professionKey, "general_member")
         let room = try await makeRoom(store, projectID: "source-project")
         _ = try await store.addMember(
             ownerUserID: "alice",
@@ -1133,19 +1178,94 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         let provider = LocalAgentProjectToolProvider(
             store: store,
             projects: [target],
+            projectsService: projectsService,
             context: context,
             now: { post.message.createdAtUnixMs + 2 }
         )
         let definitions = try await provider.definitions()
-        XCTAssertEqual(definitions.map(\.name), ["team_propose"])
-        let schema = String(decoding: try XCTUnwrap(definitions.first).schema, as: UTF8.self)
+        XCTAssertEqual(definitions.map(\.name), [
+            "project_catalog",
+            "team_propose_existing",
+            "team_propose_new_project",
+            "team_propose_import_directory",
+        ])
+        XCTAssertFalse(definitions.map(\.name).contains("team_propose"))
+        for definition in definitions {
+            XCTAssertTrue(
+                definition.description.contains("不要求")
+                    && definition.description.contains("项目经理"),
+                definition.name
+            )
+        }
+        let catalog = try await provider.execute(.init(
+            id: "project-catalog-call",
+            name: "project_catalog",
+            arguments: "{}"
+        ))
+        XCTAssertTrue(catalog.content.contains(#""total_project_count":1"#))
+        XCTAssertTrue(catalog.content.contains(#""available_for_team_count":1"#))
+        let teamDefinition = try XCTUnwrap(definitions.first {
+            $0.name == LocalAgentProjectToolProvider.proposeExistingTeamToolName
+        })
+        let schema = String(decoding: teamDefinition.schema, as: UTF8.self)
         XCTAssertTrue(schema.contains("设计系统"))
         XCTAssertTrue(schema.contains("existing_1"))
         XCTAssertFalse(schema.contains(secretProjectID))
+        XCTAssertFalse(schema.contains("absolute_path"))
+        XCTAssertFalse(schema.contains("project_name"))
+        let newProjectDefinition = try XCTUnwrap(definitions.first {
+            $0.name == LocalAgentProjectToolProvider.proposeNewProjectTeamToolName
+        })
+        let newProjectSchema = String(
+            decoding: newProjectDefinition.schema,
+            as: UTF8.self
+        )
+        XCTAssertFalse(newProjectSchema.contains("absolute_path"))
+        XCTAssertFalse(newProjectSchema.contains("project_option"))
+        XCTAssertThrowsError(try AgentSchemaValidator.validate(
+            arguments: #"{"project_name":"错误混参","project_type":"software_development","team_name":"团队","absolute_path":"/"}"#,
+            schema: newProjectDefinition.schema
+        ))
+        let importDefinition = try XCTUnwrap(definitions.first {
+            $0.name == LocalAgentProjectToolProvider.proposeImportedDirectoryTeamToolName
+        })
+        XCTAssertTrue(importDefinition.description.contains("GitHub/GitLab URL"))
+        let importSchema = String(decoding: importDefinition.schema, as: UTF8.self)
+        XCTAssertTrue(importSchema.contains("absolute_path"))
+        XCTAssertFalse(importSchema.contains("project_option"))
+        let rejectedRepositoryURL = try await provider.execute(.init(
+            id: "remote-repository-must-not-be-imported",
+            name: "team_propose_import_directory",
+            arguments: #"{"absolute_path":"https://github.com/TencentCloud/CubeSandbox.git","project_type":"software_development","team_name":"错误团队"}"#
+        ))
+        XCTAssertTrue(rejectedRepositoryURL.isError)
+        XCTAssertTrue(rejectedRepositoryURL.content.contains("不是本机路径"))
+        XCTAssertTrue(rejectedRepositoryURL.content.contains("不得猜测或编造 /"))
+
+        let newProjectResult = try await provider.execute(.init(
+            id: "new-project-team-proposal-call",
+            name: "team_propose_new_project",
+            arguments: #"{"project_name":"新建调研项目","project_description":"独立新项目","project_type":"software_development","team_name":"新项目团队","team_goal":"完成调研"}"#
+        ))
+        XCTAssertFalse(newProjectResult.isError)
+        XCTAssertTrue(newProjectResult.content.contains(#""creates_new_project":true"#))
+
+        let importResult = try await provider.execute(.init(
+            id: "import-directory-team-proposal-call",
+            name: "team_propose_import_directory",
+            arguments: try toolArguments([
+                "absolute_path": importedDirectory.path,
+                "project_type": "software_development",
+                "team_name": "现有目录团队",
+                "team_goal": "在原目录工作",
+            ])
+        ))
+        XCTAssertFalse(importResult.isError)
+        XCTAssertTrue(importResult.content.contains(#""creates_new_project":true"#))
 
         let result = try await provider.execute(.init(
             id: "team-proposal-call",
-            name: "team_propose",
+            name: "team_propose_existing",
             arguments: #"{"project_option":"existing_1","team_name":"设计团队","team_goal":"完成产品设计"}"#
         ))
         XCTAssertFalse(result.content.contains(secretProjectID))
@@ -1154,8 +1274,30 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             sourceRoomID: room.id,
             status: .pending
         )
-        let proposal = try XCTUnwrap(proposals.first)
+        let proposal = try XCTUnwrap(proposals.first(where: {
+            $0.requestKey == "team-proposal-call"
+        }))
         XCTAssertEqual(proposal.draft.existingProjectID, secretProjectID)
+        let newProjectProposal = try XCTUnwrap(proposals.first(where: {
+            $0.requestKey == "new-project-team-proposal-call"
+        }))
+        XCTAssertEqual(newProjectProposal.draft.newProjectName, "新建调研项目")
+        XCTAssertNil(newProjectProposal.draft.importedProjectDraft)
+        let importedProposal = try XCTUnwrap(proposals.first(where: {
+            $0.requestKey == "import-directory-team-proposal-call"
+        }))
+        XCTAssertEqual(importedProposal.draft.importedProjectAbsolutePath, importedDirectory.path)
+        XCTAssertEqual(importedProposal.draft.importedProjectDraft?.relativeRoot, "import-target")
+        XCTAssertNil(importedProposal.draft.newProjectName)
+
+        // The proposal was submitted from a running communication cycle. Resolve that source
+        // delivery before the Human decision so the follow-up delivery can be claimed normally.
+        _ = try await store.failDelivery(
+            ownerUserID: "alice",
+            deliveryID: delivery.id,
+            error: "test source cycle finished",
+            nowUnixMs: post.message.createdAtUnixMs + 3
+        )
 
         do {
             _ = try await store.approveTeamProposal(
@@ -1177,6 +1319,26 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             nowUnixMs: post.message.createdAtUnixMs + 3
         )
         XCTAssertEqual(approval.room.projectID, secretProjectID)
+        let claimedResolutionDelivery = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: post.message.createdAtUnixMs + 4
+        )
+        let resolutionDelivery = try XCTUnwrap(claimedResolutionDelivery)
+        XCTAssertEqual(resolutionDelivery.roomID, room.id)
+        XCTAssertEqual(resolutionDelivery.targetAgentID, agent.id)
+        XCTAssertEqual(resolutionDelivery.triggerKind, .mention)
+        let loadedResolutionMessage = try await store.message(
+            ownerUserID: "alice",
+            roomID: room.id,
+            messageID: resolutionDelivery.messageID
+        )
+        let resolutionMessage = try XCTUnwrap(loadedResolutionMessage)
+        XCTAssertEqual(resolutionMessage.senderKind, .system)
+        XCTAssertEqual(resolutionMessage.causationID, proposal.id)
+        XCTAssertEqual(resolutionMessage.mentionedAgentIDs, [agent.id])
+        XCTAssertTrue(resolutionMessage.content.contains("Human 已批准"))
+        XCTAssertTrue(resolutionMessage.content.contains("不要等待 Human 再次提醒"))
     }
 
     func testAgentCannotImpersonateHumanOrMentionNonMember() async throws {

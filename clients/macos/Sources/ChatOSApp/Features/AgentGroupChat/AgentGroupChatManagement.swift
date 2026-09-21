@@ -422,6 +422,7 @@ extension AgentGroupChatViewModel {
                 proposal: proposal
             )
             await load()
+            startScheduler()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -439,6 +440,7 @@ extension AgentGroupChatViewModel {
                 nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
             )
             await load()
+            startScheduler()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -456,6 +458,7 @@ extension AgentGroupChatViewModel {
                 nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
             )
             await load()
+            startScheduler()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -473,6 +476,7 @@ extension AgentGroupChatViewModel {
                 nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
             )
             await load()
+            startScheduler()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -497,6 +501,15 @@ extension AgentGroupChatViewModel {
                 }
                 createdProject = nil
                 resolvedProjectID = project.id
+            } else if let importedDraft = proposal.draft.importedProjectDraft,
+                      let absolutePath = proposal.draft.importedProjectAbsolutePath {
+                let project = try await projectsService.createFromExistingDirectory(
+                    ownerUserID: ownerUserID,
+                    draft: importedDraft,
+                    absolutePath: absolutePath
+                )
+                createdProject = project
+                resolvedProjectID = project.id
             } else if let newProjectName = proposal.draft.newProjectName {
                 let project = try await projectsService.createInDefaultWorkspace(
                     ownerUserID: ownerUserID,
@@ -519,6 +532,7 @@ extension AgentGroupChatViewModel {
             )
             await load()
             NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
+            startScheduler()
             return createdProject
         } catch {
             errorMessage = error.localizedDescription
@@ -538,6 +552,7 @@ extension AgentGroupChatViewModel {
                 nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
             )
             await load()
+            startScheduler()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -556,6 +571,7 @@ extension AgentGroupChatViewModel {
             )
             await load()
             NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
+            startScheduler()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -573,6 +589,7 @@ extension AgentGroupChatViewModel {
                 nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
             )
             await load()
+            startScheduler()
         } catch {
             errorMessage = error.localizedDescription
         }

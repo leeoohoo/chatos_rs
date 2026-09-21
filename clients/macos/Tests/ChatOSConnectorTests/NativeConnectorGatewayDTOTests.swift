@@ -138,4 +138,51 @@ struct NativeConnectorGatewayDTOTests {
         #expect(settings.memorySummaryModelConfigID == "memory-model")
         #expect(settings.memorySummaryThinkingLevel == "low")
     }
+
+    @Test
+    func managedAgentPromptBundleDecodesGatewayContract() throws {
+        let data = Data(
+            """
+            {
+              "bundle_version": 12,
+              "updated_at": "2026-09-21T00:00:00Z",
+              "prompts": [{
+                "agent_key": "local_connector_command_approval_agent",
+                "vendor": "gpt",
+                "content": "managed approval prompt",
+                "revision": 3,
+                "checksum": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "published_at": "2026-09-21T00:00:00Z"
+              }]
+            }
+            """.utf8
+        )
+
+        let bundle = try JSONDecoder().decode(GatewayAgentPromptBundleDTO.self, from: data)
+        let prompt = try #require(bundle.prompts.first)
+        #expect(bundle.bundleVersion == 12)
+        #expect(prompt.agentKey == NativeApprovalAgent.agentKey)
+        #expect(prompt.vendor == "gpt")
+        #expect(prompt.revision == 3)
+    }
+
+    @Test
+    func managedAgentCapabilityDecodesGatewayContract() throws {
+        let data = Data(
+            """
+            {
+              "agent_key": "local_connector_command_approval_agent",
+              "owner_user_id": "owner-1",
+              "policy_revision": "policy-9",
+              "agent_enabled": true
+            }
+            """.utf8
+        )
+
+        let capability = try JSONDecoder().decode(GatewayAgentCapabilityDTO.self, from: data)
+        #expect(capability.agentKey == NativeApprovalAgent.agentKey)
+        #expect(capability.ownerUserID == "owner-1")
+        #expect(capability.policyRevision == "policy-9")
+        #expect(capability.agentEnabled)
+    }
 }

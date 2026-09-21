@@ -11,7 +11,7 @@ extension LocalAgentGroupChatScheduler {
         ownerUserID: String,
         projectID: String,
         maximumRuns: Int = 32
-    ) async throws -> [RunResult] {
+    ) async throws -> [DeliveryAttemptReceipt] {
         guard maximumRuns > 0 else { return [] }
         let store = try await service.store()
         guard let room = try await store.activeRoom(
@@ -32,7 +32,7 @@ extension LocalAgentGroupChatScheduler {
         ownerUserID: String,
         roomID: String,
         maximumRuns: Int = 32
-    ) async throws -> [RunResult] {
+    ) async throws -> [DeliveryAttemptReceipt] {
         guard maximumRuns > 0 else { return [] }
         let store = try await service.store()
         guard let room = try await store.room(ownerUserID: ownerUserID, roomID: roomID),
@@ -52,7 +52,7 @@ extension LocalAgentGroupChatScheduler {
     public func drainAccount(
         ownerUserID: String,
         maximumRuns: Int = 64
-    ) async throws -> [RunResult] {
+    ) async throws -> [DeliveryAttemptReceipt] {
         guard maximumRuns > 0 else { return [] }
         guard await accountDrainCoordinator.acquire(ownerUserID: ownerUserID) else {
             throw CancellationError()
@@ -74,7 +74,7 @@ extension LocalAgentGroupChatScheduler {
     func drainAccountWithLease(
         ownerUserID: String,
         maximumRuns: Int
-    ) async throws -> [RunResult] {
+    ) async throws -> [DeliveryAttemptReceipt] {
         let store = try await service.store()
         var results = try await recoverInterruptedRuns(
             store: store,
@@ -110,7 +110,7 @@ extension LocalAgentGroupChatScheduler {
             var claimedWork: [ClaimedWork] = []
             claimedWork.reserveCapacity(remainingCapacity)
             for agentID in agentIDs where claimedWork.count < remainingCapacity {
-                // A single Agent owns two independent durable lanes. Claiming twice lets its
+                // A single Agent owns two independent durable work queues. Claiming twice lets its
                 // manager keep receiving messages while one project-bound executor is working.
                 for _ in 0..<2 where claimedWork.count < remainingCapacity {
                     guard let delivery = try await store.claimNextDelivery(
@@ -171,9 +171,9 @@ extension LocalAgentGroupChatScheduler {
         store: SQLiteAgentGroupChatStore,
         ownerUserID: String,
         maximumRuns: Int
-    ) async throws -> [RunResult] {
+    ) async throws -> [DeliveryAttemptReceipt] {
         let agents = try await store.listAgents(ownerUserID: ownerUserID, includeArchived: false)
-        var results: [RunResult] = []
+        var results: [DeliveryAttemptReceipt] = []
         for agent in agents where results.count < maximumRuns {
             let runs = try await store.listAgentRuns(
                 ownerUserID: ownerUserID,
@@ -208,7 +208,6 @@ extension LocalAgentGroupChatScheduler {
               let reason = checkpoint.stopReason else { return false }
         return [
             AgentContextError.unavailable.localizedDescription,
-            AgentContextError.invalidHistory.localizedDescription,
             AgentContextError.syncUncertain.localizedDescription,
         ].contains(reason)
     }
@@ -218,8 +217,8 @@ extension LocalAgentGroupChatScheduler {
         ownerUserID: String,
         room: ProjectAgentRoom,
         maximumRuns: Int
-    ) async throws -> [RunResult] {
-        var results: [RunResult] = []
+    ) async throws -> [DeliveryAttemptReceipt] {
+        var results: [DeliveryAttemptReceipt] = []
         while results.count < maximumRuns {
             if Task.isCancelled { break }
             let members = try await store.listMembers(ownerUserID: ownerUserID, roomID: room.id)
@@ -257,8 +256,8 @@ extension LocalAgentGroupChatScheduler {
         _ claimedWork: [ClaimedWork],
         store: SQLiteAgentGroupChatStore,
         ownerUserID: String
-    ) async throws -> [RunResult] {
-        var running: [(task: Task<OrderedRunResult, Never>, todoID: String?, handle: LocalAgentExecutorCancellationHandle?)] = []
+    ) async throws -> [DeliveryAttemptReceipt] {
+        var running: [(task: Task<OrderedDeliveryAttemptReceipt, Never>, todoID: String?, handle: LocalAgentExecutorCancellationHandle?)] = []
         running.reserveCapacity(claimedWork.count)
         // Register executor handles before manager tasks can invoke todo_update(status=cancelled).
         let launchOrder = claimedWork.sorted {
@@ -275,10 +274,10 @@ extension LocalAgentGroupChatScheduler {
                 )?.id
                 : nil
             let handle = todoID == nil ? nil : LocalAgentExecutorCancellationHandle()
-            let task: Task<OrderedRunResult, Never> = Task {
-                let result: RunResult
+            let task: Task<OrderedDeliveryAttemptReceipt, Never> = Task {
+                let receipt: DeliveryAttemptReceipt
                 do {
-                    result = try await runClaimedDeliveryHandlingFailure(
+                    receipt = try await runClaimedDeliveryHandlingFailure(
                         store: store,
                         ownerUserID: ownerUserID,
                         projectID: work.room.projectID,
@@ -287,14 +286,14 @@ extension LocalAgentGroupChatScheduler {
                         delivery: work.delivery
                     )
                 } catch {
-                    result = .init(
+                    receipt = .init(
                         deliveryID: work.delivery.id,
                         agentID: work.delivery.targetAgentID,
                         outcome: .failed,
                         detail: Self.failureDetail(error)
                     )
                 }
-                return OrderedRunResult(order: work.order, result: result)
+                return OrderedDeliveryAttemptReceipt(order: work.order, receipt: receipt)
             }
             handle?.install { task.cancel() }
             if let todoID, let handle {
@@ -302,7 +301,7 @@ extension LocalAgentGroupChatScheduler {
             }
             running.append((task, todoID, handle))
         }
-        var round: [OrderedRunResult] = []
+        var round: [OrderedDeliveryAttemptReceipt] = []
         round.reserveCapacity(running.count)
         for entry in running {
             round.append(await entry.task.value)
@@ -311,7 +310,7 @@ extension LocalAgentGroupChatScheduler {
             }
         }
         round.sort { $0.order < $1.order }
-        return round.map(\.result)
+        return round.map(\.receipt)
     }
 
     static func memberKey(roomID: String, agentID: String) -> String {

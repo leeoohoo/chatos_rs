@@ -5,19 +5,17 @@ import XCTest
 
 @MainActor
 final class MediaStudioViewModelTests: XCTestCase {
-    func testModelChangesResetUnsupportedResolutionAndDuration() async throws {
+    func testOnlyMiniMaxH3IsExposedForVideoGeneration() async throws {
         let viewModel = MediaStudioViewModel(service: MediaStudioFailureService())
         viewModel.activate(userID: "media-studio-test")
         viewModel.loadIfNeeded()
         for _ in 0..<100 where viewModel.isLoadingModels {
             try await Task.sleep(for: .milliseconds(10))
         }
+        XCTAssertEqual(viewModel.videoModels.map(\.id), ["h3"])
+        XCTAssertEqual(viewModel.selectedVideoModelID, "h3")
         XCTAssertEqual(viewModel.videoSize, "768P")
         XCTAssertEqual(viewModel.videoSeconds, 4)
-        viewModel.videoSize = "2K"
-        viewModel.selectedVideoModelID = "max"
-        XCTAssertEqual(viewModel.videoSize, "768P")
-        XCTAssertEqual(viewModel.videoSeconds, 5)
     }
 
     func testRejectedCreationClearsQueuedProgressAndAllowsRetry() async throws {

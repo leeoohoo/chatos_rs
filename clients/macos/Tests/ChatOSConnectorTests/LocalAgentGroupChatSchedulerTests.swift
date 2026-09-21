@@ -40,6 +40,15 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         checkpoint.stopReason = AgentContextError.unavailable.localizedDescription
         XCTAssertTrue(LocalAgentGroupChatScheduler.isAutomaticTriggerRecoveryEligible(checkpoint))
 
+        checkpoint.stopReason = AgentContextError.syncUncertain.localizedDescription
+        XCTAssertTrue(LocalAgentGroupChatScheduler.isAutomaticTriggerRecoveryEligible(checkpoint))
+
+        checkpoint.stopReason = AgentContextError.invalidHistory.localizedDescription
+        XCTAssertFalse(
+            LocalAgentGroupChatScheduler.isAutomaticTriggerRecoveryEligible(checkpoint),
+            "A deterministic integrity mismatch must not retry forever on every account drain"
+        )
+
         checkpoint.status = .running
         checkpoint.pendingCalls = [.init(id: "write", name: "chat_send_message", arguments: "{}")]
         checkpoint.inFlightCallID = "write"

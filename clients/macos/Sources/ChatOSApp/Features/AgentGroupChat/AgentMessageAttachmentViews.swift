@@ -303,11 +303,8 @@ struct AgentMarkdownAttachmentPreview: View {
             }
             .padding(16)
             Divider()
-            ScrollView {
-                DeferredMarkdownDocumentView(markdown: item.markdown)
-                    .padding(24)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            MarkdownReaderView(markdown: item.markdown)
+                .padding(24)
         }
         .frame(minWidth: 760, idealWidth: 960, minHeight: 560, idealHeight: 740)
         .task(id: query) {

@@ -290,11 +290,8 @@ struct PetFileWorkbenchView: View {
         } else if ["md", "markdown"].contains(
             URL(fileURLWithPath: file.name).pathExtension.lowercased()
         ), tab.targetLine == nil {
-            ScrollView {
-                MarkdownDocumentView(markdown: file.content)
-                    .padding(24)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
+            MarkdownReaderView(markdown: file.content)
+                .padding(24)
         } else {
             CodePreviewView(
                 content: file.content,

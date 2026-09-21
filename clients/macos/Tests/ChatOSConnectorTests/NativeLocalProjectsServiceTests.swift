@@ -71,6 +71,57 @@ final class NativeLocalProjectsServiceTests: XCTestCase {
         )
     }
 
+    func testImportsExistingAbsoluteDirectoryWithoutChangingOrLinkingIt() async throws {
+        let context = try context(rootWorkspaceFirst: true)
+        defer { try? FileManager.default.removeItem(at: context.root) }
+        let directory = context.root.appendingPathComponent("import-me", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        let sentinel = directory.appendingPathComponent("keep.txt")
+        try Data("unchanged".utf8).write(to: sentinel)
+        let before = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+
+        let prepared = try await context.service.prepareExistingDirectoryImport(
+            ownerUserID: "alice",
+            absolutePath: directory.path,
+            name: nil,
+            description: "Existing source"
+        )
+        XCTAssertEqual(prepared.absolutePath, directory.path)
+        XCTAssertEqual(prepared.draft.name, "import-me")
+        XCTAssertEqual(prepared.draft.workspaceID, "ws")
+        XCTAssertEqual(prepared.draft.relativeRoot, "import-me")
+
+        let project = try await context.service.createFromExistingDirectory(
+            ownerUserID: "alice",
+            draft: prepared.draft,
+            absolutePath: prepared.absolutePath
+        )
+        XCTAssertEqual(project.displayRootPath, directory.path)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), before)
+        XCTAssertEqual(try String(contentsOf: sentinel, encoding: .utf8), "unchanged")
+        XCTAssertFalse(try directory.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink ?? true)
+    }
+
+    func testExistingDirectoryImportRejectsSymbolicLinkPath() async throws {
+        let context = try context()
+        defer { try? FileManager.default.removeItem(at: context.root) }
+        let directory = context.root.appendingPathComponent("real-import", isDirectory: true)
+        let link = context.root.appendingPathComponent("linked-import", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: directory)
+
+        do {
+            _ = try await context.service.prepareExistingDirectoryImport(
+                ownerUserID: "alice",
+                absolutePath: link.path,
+                name: nil
+            )
+            XCTFail("A symbolic-link project path must not be imported")
+        } catch {
+            XCTAssertEqual(error as? ProjectRegistryError, .invalidField("absolutePath.symbolicLink"))
+        }
+    }
+
     func testSignedOutSuspensionPreservesPersistentProjectAccessState() async throws {
         let context = try context()
         defer { try? FileManager.default.removeItem(at: context.root) }

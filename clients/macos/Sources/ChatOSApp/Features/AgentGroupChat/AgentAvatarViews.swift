@@ -3,11 +3,19 @@ import ChatOSCore
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum AgentAvatarMetrics {
+    static let navigation: CGFloat = 50
+    static let message: CGFloat = 68
+    static let header: CGFloat = 81
+    static let managementCard: CGFloat = 95
+    static let editorPreview: CGFloat = 104
+}
+
 struct AgentAvatarView: View {
     let name: String
     let data: Data?
-    var size: CGFloat = 36
-    var cornerRadius: CGFloat = 11
+    var size: CGFloat = 63
+    var cornerRadius: CGFloat = 19
 
     var body: some View {
         Group {
@@ -17,7 +25,7 @@ struct AgentAvatarView: View {
                     .scaledToFill()
             } else {
                 Text(String(name.prefix(1)))
-                    .appFont(.caption.weight(.semibold))
+                    .font(.system(size: max(12, size * 0.34), weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(AppPalette.ai)
@@ -46,8 +54,8 @@ struct AgentAvatarEditor: View {
                     name: agentName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         ? "A" : agentName,
                     data: avatarData,
-                    size: 58,
-                    cornerRadius: 17
+                    size: AgentAvatarMetrics.editorPreview,
+                    cornerRadius: 30
                 )
 
                 VStack(alignment: .leading, spacing: 7) {

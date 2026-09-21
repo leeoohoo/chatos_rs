@@ -46,7 +46,7 @@ actor LocalAgentExecutorTaskRegistry {
 
 /// Serializes account-wide drain passes created by multiple windows and the heartbeat loop. The
 /// durable SQLite queue remains authoritative; this lease only prevents two local consumers from
-/// observing the same Agent lane as busy and leaving newly queued work stranded between passes.
+/// observing the same Agent work queue as busy and leaving newly queued work stranded between passes.
 actor LocalAgentAccountDrainCoordinator {
     private struct Waiter {
         let id: UUID
@@ -103,17 +103,31 @@ actor LocalAgentAccountDrainCoordinator {
 /// only through `AgentServiceProviding` for account-owned model credentials and Memory Engine;
 /// it never selects an Agent, routes a message, or owns a run checkpoint.
 public struct LocalAgentGroupChatScheduler: Sendable {
-    public enum RunOutcome: String, Sendable, Equatable {
+    public enum DeliveryAttemptOutcome: String, Sendable, Equatable {
         case completed
         case suspended
         case failed
     }
 
-    public struct RunResult: Sendable {
+    /// Ephemeral receipt returned to the scheduler caller after one durable delivery attempt.
+    /// Agent context, Memory and conversation history live elsewhere; this is not model input.
+    public struct DeliveryAttemptReceipt: Sendable, Equatable {
         public let deliveryID: String
         public let agentID: String
-        public let outcome: RunOutcome
+        public let outcome: DeliveryAttemptOutcome
         public let detail: String?
+
+        public init(
+            deliveryID: String,
+            agentID: String,
+            outcome: DeliveryAttemptOutcome,
+            detail: String?
+        ) {
+            self.deliveryID = deliveryID
+            self.agentID = agentID
+            self.outcome = outcome
+            self.detail = detail
+        }
     }
 
     struct ClaimedWork: Sendable {
@@ -123,9 +137,9 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         let delivery: ProjectAgentDelivery
     }
 
-    struct OrderedRunResult: Sendable {
+    struct OrderedDeliveryAttemptReceipt: Sendable {
         let order: Int
-        let result: RunResult
+        let receipt: DeliveryAttemptReceipt
     }
 
     public typealias AdditionalToolProviderFactory = @Sendable (

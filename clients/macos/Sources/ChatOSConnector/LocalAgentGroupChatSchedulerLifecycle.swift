@@ -34,7 +34,7 @@ extension LocalAgentGroupChatScheduler {
         ownerUserID: String,
         projectID: String,
         deliveryID: String
-    ) async throws -> RunResult {
+    ) async throws -> DeliveryAttemptReceipt {
         let store = try await service.store()
         guard let delivery = try await store.delivery(
             ownerUserID: ownerUserID,
@@ -99,7 +99,7 @@ extension LocalAgentGroupChatScheduler {
         ownerUserID: String,
         projectID: String,
         deliveryID: String
-    ) async throws -> RunResult {
+    ) async throws -> DeliveryAttemptReceipt {
         let store = try await service.store()
         guard let delivery = try await store.delivery(
             ownerUserID: ownerUserID,
@@ -202,7 +202,7 @@ extension LocalAgentGroupChatScheduler {
         room: ProjectAgentRoom,
         member: ProjectAgentRoomMember,
         delivery: ProjectAgentDelivery
-    ) async throws -> RunResult {
+    ) async throws -> DeliveryAttemptReceipt {
         do {
             return try await runClaimedDelivery(
                 store: store,

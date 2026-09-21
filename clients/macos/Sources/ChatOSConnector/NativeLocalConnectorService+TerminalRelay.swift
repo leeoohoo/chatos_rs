@@ -570,6 +570,11 @@ extension NativeLocalConnectorService {
             do {
                 let token = try requireAccessToken()
                 async let model = gateway.modelConfig(token: token, id: modelID, includeSecret: true)
+                async let promptBundle = gateway.agentPromptBundle(token: token)
+                async let capability = gateway.agentCapability(
+                    token: token,
+                    agentKey: NativeApprovalAgent.agentKey
+                )
                 guard let tenantID = state.user?.id,
                       let workspaceID,
                       let approvalMemoryProviderFactory else {
@@ -579,6 +584,13 @@ extension NativeLocalConnectorService {
                 let runtimeScope = "approval:\(runID.uuidString)"
                 async let contextProvider = approvalMemoryProviderFactory(
                     tenantID, workspaceID, runID, runtimeScope
+                )
+                let resolvedModel = try await model
+                let systemPrompt = try NativeApprovalAgent.resolveManagedSystemPrompt(
+                    model: resolvedModel,
+                    bundle: try await promptBundle,
+                    capability: try await capability,
+                    ownerUserID: tenantID
                 )
                 let decision = await NativeApprovalAgent().evaluate(
                     request: .init(
@@ -591,7 +603,8 @@ extension NativeLocalConnectorService {
                         riskReason: risk.reason,
                         requestedPermissionsDescription: requestedPermissionsDescription
                     ),
-                    model: try await model,
+                    model: resolvedModel,
+                    systemPrompt: systemPrompt,
                     thinkingLevel: state.commandApprovalThinkingLevel,
                     runID: runID,
                     runtimeScope: runtimeScope,

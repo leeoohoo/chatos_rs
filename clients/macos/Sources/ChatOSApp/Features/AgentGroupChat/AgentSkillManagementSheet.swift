@@ -483,15 +483,12 @@ struct AgentSkillManagementSheet: View {
     }
 
     private var markdownPreview: some View {
-        ScrollView {
-            MarkdownDocumentView(
-                markdown: viewModel.displayedContent.isEmpty
-                    ? "_暂无内容_"
-                    : viewModel.displayedContent
-            )
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .padding(20)
-        }
+        MarkdownReaderView(
+            markdown: viewModel.displayedContent.isEmpty
+                ? "_暂无内容_"
+                : viewModel.displayedContent
+        )
+        .padding(20)
         .frame(minHeight: 520)
         .background(Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 9))

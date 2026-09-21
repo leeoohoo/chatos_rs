@@ -11,7 +11,7 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: workspaceSnapshotToolName,
-            description: "读取当前账户在本机已有的全部活跃 Agent、项目团队、成员关系和显式项目经理。私聊中的 relay_bootstrap 只描述当前会话，不能据此判断其他团队或 Agent 不存在；回答组织现状、既有团队、成员或人员缺口前必须调用本工具。仅返回同一 Run 内有效的临时引用，不暴露真实 Agent、团队或项目 ID；暂停、重启并恢复该 Run 后引用仍可使用。",
+            description: "读取当前账户在本机已有的全部活跃 Agent、项目团队、成员关系和显式项目经理。私聊中的 relay_bootstrap 只描述当前会话。非项目经理收到需要任务化或分配成员的请求时，先用本工具判断自己是否属于目标团队并取得显式项目经理的 agent_ref：团队成员走 chat_team_send，非团队成员走 chat_direct_open → chat_direct_send。仅返回同一 Run 内有效的临时引用，不暴露真实 ID。",
             schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8)
         ),
         .init(
@@ -36,7 +36,7 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: inboxSendToolName,
-            description: "使用 chat_read_all_unread 或 todo_list 在同一 Run 返回的临时引用回复原群聊或私聊；暂停、重启并恢复该 Run 后旧引用仍可使用。Todo 来源可能是创建任务的项目经理私聊，负责人未必是参与者；若返回 source_conversation_not_accessible，必须调用 agent_workspace_snapshot 后改用 chat_team_send 在 Todo 所属团队公开汇报，不要重试本工具。普通成员需要把新增工作交给项目经理任务化时，仅在可访问的项目团队会话设置 notify_project_manager=true。",
+            description: "使用 chat_read_all_unread 或 todo_list 返回的临时引用回复原会话。notify_project_manager=true 仅适用于当前 Agent 可访问、且已绑定显式项目经理的项目团队会话；Human-Agent 私聊或 Agent 私聊不能用它通知项目经理。非项目经理在私聊收到任务化请求时，应先调用 agent_workspace_snapshot，再按成员关系使用 chat_team_send 或 chat_direct_open → chat_direct_send。Todo 私聊来源不可访问时也不要重试本工具。",
             schema: Data("""
             {"type":"object","properties":{"conversation_ref":{"type":"string","minLength":1,"maxLength":600},"reply_to_message_ref":{"type":"string","minLength":1,"maxLength":600},"content":{"type":"string","minLength":1,"maxLength":\(AgentCommunicationPolicy.standard.maximumMessageCharacters)},"document_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":\(AgentCommunicationPolicy.standard.maximumDocumentsPerMessage),"uniqueItems":true},"notify_project_manager":{"type":"boolean","default":false}},"required":["conversation_ref","reply_to_message_ref","content"],"additionalProperties":false}
             """.utf8),
@@ -68,13 +68,13 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: openDirectToolName,
-            description: "使用 agent_workspace_snapshot 或成员列表返回的临时 Agent 引用打开或复用私聊。不能与自己私聊；A 到 B 和 B 到 A 会得到同一个 conversation_ref。私聊用于一对一补充、敏感事项或非共同团队协作；同一项目团队的启动、分工、依赖、进度、阻塞和交付应优先使用 chat_team_send 在团队群内沟通。",
+            description: "使用 agent_workspace_snapshot 或成员列表返回的临时 Agent 引用打开或复用私聊。非项目经理不属于目标团队、无法 chat_team_send 时，用本工具打开与该团队显式项目经理的私聊，再用 chat_direct_send 转交完整任务简报。不能与自己私聊；同一团队成员之间的项目协作仍优先使用 chat_team_send。",
             schema: Data(#"{"type":"object","properties":{"target_agent_ref":{"type":"string","minLength":1,"maxLength":600}},"required":["target_agent_ref"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
             name: sendDirectToolName,
-            description: "向已经打开的 Agent 私聊发送消息。当前 Agent 必须是该私聊参与者，成功后会通过本地 delivery 唤醒对方。不得用多个私聊替代同一项目团队本应公开的协作；项目协作默认使用 chat_team_send。",
+            description: "向 chat_direct_open 返回的 Agent 私聊发送消息，成功后通过本地 delivery 唤醒对方。非项目经理向目标团队项目经理转交任务时，消息必须包含 Human 原始目标与来源、目标团队、范围、交付物、验收建议和关键 URL；不得声称 Todo 已创建。当前 Agent 必须是该私聊参与者。",
             schema: Data("""
             {"type":"object","properties":{"conversation_ref":{"type":"string","minLength":1,"maxLength":600},"content":{"type":"string","minLength":1,"maxLength":\(AgentCommunicationPolicy.standard.maximumMessageCharacters)},"document_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":\(AgentCommunicationPolicy.standard.maximumDocumentsPerMessage),"uniqueItems":true}},"required":["conversation_ref","content"],"additionalProperties":false}
             """.utf8),
@@ -82,7 +82,7 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: sendTeamToolName,
-            description: "向 agent_workspace_snapshot 返回的项目团队主动发送一条新群消息，可用同一快照中的 Agent 临时引用精确 @ 团队成员并通过本地 delivery 唤醒他们。当前 Agent 必须是该团队活跃成员，被 @ 的 Agent 也必须属于该团队。项目启动、分工、依赖、进度、阻塞、决策和交付默认使用本工具公开协作；无需唤醒成员的状态同步可不传 mention_agent_refs。",
+            description: "向 agent_workspace_snapshot 返回的项目团队主动发送群消息并精确 @ 成员。当前 Agent 必须是该团队活跃成员。非项目经理属于目标团队且需要项目经理任务化新增工作时，用本工具发送完整任务简报，并在 mention_agent_refs 中传该团队显式项目经理的 agent_ref；若当前 Agent 不属于该团队，改用 chat_direct_open → chat_direct_send。",
             schema: Data("""
             {"type":"object","properties":{"team_ref":{"type":"string","minLength":1,"maxLength":600},"content":{"type":"string","minLength":1,"maxLength":\(AgentCommunicationPolicy.standard.maximumMessageCharacters)},"document_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":\(AgentCommunicationPolicy.standard.maximumDocumentsPerMessage),"uniqueItems":true},"mention_agent_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":64,"uniqueItems":true}},"required":["team_ref","content"],"additionalProperties":false}
             """.utf8),
@@ -144,7 +144,7 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: todoExecutionOptionsToolName,
-            description: "仅供项目经理读取自己管理的团队、可分配成员、基础能力和本机 Plugin 临时选项。创建 Todo 前必须调用；真实团队、项目、Agent 和 Plugin ID 不会返回。",
+            description: "仅供项目经理读取自己管理的团队、可分配成员、基础能力和本机 Plugin 临时选项。Human 要求‘建立/创建任务’、‘找个人/分配成员’，或要求下载、克隆、查看、运行、分析 GitHub/GitLab 等远程仓库时，必须先调用本工具，再用 todo_add 创建团队 Todo；不要调用 team_propose_*。真实团队、项目、Agent 和 Plugin ID 不会返回。",
             schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8)
         ),
         .init(
@@ -154,7 +154,7 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: todoAddToolName,
-            description: "仅供项目经理在共享团队任务板创建 Todo。必须明确目标、范围、交付物、验收条件和约束，并选择负责人、前置任务及可信执行能力。team_ref/assignee_ref/plugin_ref 必须来自 todo_execution_options，source_message_refs 必须来自 chat_get_trigger、relay_bootstrap、chat_read_unread、chat_read_all_unread 或 chat_read_messages；这些工具引用在同一 Run 暂停、重启和恢复后仍有效。真实 ID 由客户端解析和校验。",
+            description: "仅供项目经理在共享团队任务板创建 Todo。适用于 Human 要求建立任务、找成员执行，以及下载/克隆/查看/运行/分析远程 Git 仓库；仓库 URL 应原样写入 objective、scope 或 detail，需要 git clone 或命令行时在 builtin_capabilities 选择 terminal。此工具不创建 ChatOS 项目或团队，不得因正文出现‘项目’或 Git URL 而改用 team_propose_*。必须明确目标、范围、交付物、验收条件和约束，并选择负责人、前置任务及可信执行能力。team_ref/assignee_ref/plugin_ref 必须来自 todo_execution_options，source_message_refs 必须来自 chat_get_trigger、relay_bootstrap、chat_read_unread、chat_read_all_unread 或 chat_read_messages；真实 ID 由客户端解析和校验。",
             schema: Data(#"{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":500},"detail":{"type":"string","maxLength":16000},"objective":{"type":"string","minLength":1,"maxLength":8000},"scope":{"type":"string","minLength":1,"maxLength":16000},"expected_outputs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":4000},"minItems":1,"maxItems":64},"acceptance_criteria":{"type":"array","items":{"type":"string","minLength":1,"maxLength":4000},"minItems":1,"maxItems":64},"constraints":{"type":"array","items":{"type":"string","minLength":1,"maxLength":4000},"maxItems":64},"priority":{"type":"integer","minimum":0,"maximum":100,"default":50},"team_ref":{"type":"string","minLength":1,"maxLength":600},"assignee_ref":{"type":"string","minLength":1,"maxLength":600},"depends_on_todo_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":64,"uniqueItems":true},"source_message_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"minItems":1,"maxItems":64,"uniqueItems":true},"requires_execution":{"type":"boolean","default":true},"builtin_capabilities":{"type":"array","items":{"type":"string","enum":["project_read","project_write","terminal"]},"maxItems":3,"uniqueItems":true},"plugin_hints":{"type":"array","items":{"type":"object","properties":{"plugin_ref":{"type":"string","minLength":1,"maxLength":600},"reason":{"type":"string","maxLength":1000}},"required":["plugin_ref"],"additionalProperties":false},"maxItems":32}},"required":["title","objective","scope","expected_outputs","acceptance_criteria","team_ref","assignee_ref","source_message_refs","requires_execution","builtin_capabilities"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),

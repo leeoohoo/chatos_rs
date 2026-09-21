@@ -112,6 +112,21 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 "team_asset_list", "team_asset_get", "team_asset_upsert", "team_asset_archive",
             ]
         )
+        let descriptions = Dictionary(uniqueKeysWithValues: definitions.map {
+            ($0.name, $0.description)
+        })
+        XCTAssertTrue(descriptions[LocalAgentChatToolProvider.workspaceSnapshotToolName]?.contains(
+            "非团队成员走 chat_direct_open → chat_direct_send"
+        ) == true)
+        XCTAssertTrue(descriptions[LocalAgentChatToolProvider.openDirectToolName]?.contains(
+            "非项目经理不属于目标团队"
+        ) == true)
+        XCTAssertTrue(descriptions[LocalAgentChatToolProvider.sendDirectToolName]?.contains(
+            "不得声称 Todo 已创建"
+        ) == true)
+        XCTAssertTrue(descriptions[LocalAgentChatToolProvider.inboxSendToolName]?.contains(
+            "Human-Agent 私聊"
+        ) == true)
         for toolName in [
             LocalAgentChatToolProvider.inboxSendToolName,
             LocalAgentChatToolProvider.sendDirectToolName,

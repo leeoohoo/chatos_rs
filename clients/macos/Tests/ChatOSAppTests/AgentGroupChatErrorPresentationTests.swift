@@ -7,6 +7,54 @@ import XCTest
 
 @MainActor
 final class AgentGroupChatErrorPresentationTests: XCTestCase {
+    func testSchedulerIssueIgnoresAnotherConversation() {
+        let result = LocalAgentGroupChatScheduler.DeliveryAttemptReceipt(
+            deliveryID: "delivery-1",
+            agentID: "agent-1",
+            outcome: .suspended,
+            detail: "另一个会话暂停"
+        )
+
+        let issue = AgentSchedulerIssueReducer.reconcile(
+            current: nil,
+            receipts: [result],
+            roomIDByDeliveryID: ["delivery-1": "other-room"],
+            roomID: "visible-room"
+        )
+
+        XCTAssertNil(issue)
+    }
+
+    func testSchedulerIssueClearsWhenSameDeliveryCompletes() throws {
+        let suspended = LocalAgentGroupChatScheduler.DeliveryAttemptReceipt(
+            deliveryID: "delivery-1",
+            agentID: "agent-1",
+            outcome: .suspended,
+            detail: "暂时暂停"
+        )
+        let current = try XCTUnwrap(AgentSchedulerIssueReducer.reconcile(
+            current: nil,
+            receipts: [suspended],
+            roomIDByDeliveryID: ["delivery-1": "visible-room"],
+            roomID: "visible-room"
+        ))
+        let completed = LocalAgentGroupChatScheduler.DeliveryAttemptReceipt(
+            deliveryID: "delivery-1",
+            agentID: "agent-1",
+            outcome: .completed,
+            detail: nil
+        )
+
+        let issue = AgentSchedulerIssueReducer.reconcile(
+            current: current,
+            receipts: [completed],
+            roomIDByDeliveryID: ["delivery-1": "visible-room"],
+            roomID: "visible-room"
+        )
+
+        XCTAssertNil(issue)
+    }
+
     func testWorkspaceRefreshDoesNotDismissRunActionError() async throws {
         let fixture = makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.rootURL) }

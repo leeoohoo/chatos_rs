@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight, BrainCircuit, Check, ChevronRight, Download, Laptop,
   Mail, MonitorDown, ShieldCheck, Sparkles, TerminalSquare, Workflow,
@@ -23,6 +23,7 @@ const heroVideos = [
 ];
 const fallbackManifest: SiteManifest = { product_name: productName, tagline: '把每一个工具做好，陪你把每一件事做好。', app_url: '#download', registration_enabled: true, downloads_enabled: false };
 const initialRegistration: RegistrationForm = { email: '', displayName: '', inviteCode: '', verificationCode: '', password: '', confirmPassword: '' };
+const transitionText = '想要做好一件事，要学会让自己慢下来。';
 
 function buildInitialHeroPath() {
   return 'M .08 0 L .31 0 L .31 .58 C .31 .78 .39 .87 .5 .87 C .61 .87 .69 .78 .69 .58 L .69 0 L .92 0 L .92 .58 C .92 .86 .74 1 .5 1 C .26 1 .08 .86 .08 .58 L .08 0 Z';
@@ -245,6 +246,8 @@ function App() {
     const scene = sceneRef.current;
     if (!scene) return undefined;
     let animationFrame = 0;
+    let lastProgress = 0;
+    let foxDirection = 1;
     const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
     const smoothstep = (from: number, to: number, value: number) => {
       const amount = clamp01((value - from) / (to - from));
@@ -255,60 +258,49 @@ function App() {
       const rect = scene.getBoundingClientRect();
       const range = Math.max(scene.offsetHeight - window.innerHeight, 1);
       const progress = clamp01(-rect.top / range);
-      const mainOut = smoothstep(.15, .21, progress);
-      const creationIn = smoothstep(.18, .24, progress);
-      const creationOut = smoothstep(.39, .45, progress);
-      const agentIn = smoothstep(.38, .44, progress);
-      const agentOut = smoothstep(.59, .66, progress);
-      const convergenceIn = smoothstep(.58, .69, progress);
-      const packetProgress = smoothstep(.63, .79, progress);
-      const portalClose = smoothstep(.83, .98, progress);
-      const stageLift = smoothstep(.05, .17, progress);
-      const heading = scene.querySelector<HTMLElement>('.scene-heading');
-      const headingBottom = heading
-        ? heading.offsetTop + heading.offsetHeight
-        : (window.innerWidth <= 820 ? 205 : 260);
-      const desiredHeadingGap = window.innerWidth <= 820 ? 46 : 72;
-      const stageTopStart = Math.min(
-        Math.max(180, window.innerHeight - 170),
-        headingBottom + desiredHeadingGap,
-      );
-      const stageTopEnd = window.innerWidth <= 820 ? 110 : 72;
-      const portalStartWidth = Math.min(1120, window.innerWidth * .94);
-      const portalStartHeight = Math.min(620, window.innerHeight * .66);
-      const portalEndSize = window.innerWidth <= 560 ? 136 : window.innerWidth <= 820 ? 156 : 184;
-      scene.style.setProperty('--scene-heading-opacity', `${1 - smoothstep(.05, .16, progress)}`);
-      scene.style.setProperty('--scene-stage-top', `${stageTopStart + (stageTopEnd - stageTopStart) * stageLift}px`);
-      scene.style.setProperty('--scene-main-opacity', `${1 - mainOut}`);
-      scene.style.setProperty('--scene-main-y', `${-80 * mainOut}px`);
-      scene.style.setProperty('--scene-main-scale', `${1 - .055 * mainOut}`);
-      scene.style.setProperty('--scene-creation-opacity', `${creationIn * (1 - creationOut)}`);
-      scene.style.setProperty('--scene-creation-y', `${78 * (1 - creationIn) - 68 * creationOut}px`);
-      scene.style.setProperty('--scene-creation-scale', `${.94 + .06 * creationIn - .04 * creationOut}`);
-      scene.style.setProperty('--scene-agent-opacity', `${agentIn * (1 - agentOut)}`);
-      scene.style.setProperty('--scene-agent-y', `${78 * (1 - agentIn) - 68 * agentOut}px`);
-      scene.style.setProperty('--scene-agent-scale', `${.94 + .06 * agentIn - .04 * agentOut}`);
-      scene.style.setProperty('--scene-convergence-opacity', `${convergenceIn}`);
-      scene.style.setProperty('--scene-convergence-scale', `${.86 + .14 * convergenceIn}`);
-      scene.style.setProperty('--scene-portal-width', `${portalStartWidth + (portalEndSize - portalStartWidth) * portalClose}px`);
-      scene.style.setProperty('--scene-portal-height', `${portalStartHeight + (portalEndSize - portalStartHeight) * portalClose}px`);
-      scene.style.setProperty('--scene-portal-radius', `${20 + (portalEndSize / 2 - 20) * portalClose}px`);
-      scene.style.setProperty('--scene-portal-screen-opacity', `${smoothstep(.69, .79, progress) * (1 - smoothstep(.84, .94, progress))}`);
-      scene.style.setProperty('--scene-core-opacity', `${smoothstep(.86, .96, progress)}`);
-      scene.style.setProperty('--scene-orbit-opacity', `${convergenceIn * (1 - smoothstep(.91, .98, progress))}`);
-      scene.style.setProperty('--scene-packet-opacity', `${convergenceIn * (1 - smoothstep(.78, .84, progress))}`);
-      scene.style.setProperty('--scene-packet-scale', `${.82 - .58 * packetProgress}`);
-      scene.style.setProperty('--scene-packet-one-x', `${(-.31 + .31 * packetProgress) * window.innerWidth}px`);
-      scene.style.setProperty('--scene-packet-one-y', `${(-.2 + .2 * packetProgress) * window.innerHeight}px`);
-      scene.style.setProperty('--scene-packet-two-x', `${(.31 - .31 * packetProgress) * window.innerWidth}px`);
-      scene.style.setProperty('--scene-packet-two-y', `${(-.12 + .12 * packetProgress) * window.innerHeight}px`);
-      scene.style.setProperty('--scene-packet-three-x', `${(-.23 + .23 * packetProgress) * window.innerWidth}px`);
-      scene.style.setProperty('--scene-packet-three-y', `${(.22 - .22 * packetProgress) * window.innerHeight}px`);
-      scene.style.setProperty('--scene-final-opacity', `${smoothstep(.94, .99, progress)}`);
-      scene.style.setProperty('--scene-one-active', `${1 - smoothstep(.17, .25, progress)}`);
-      scene.style.setProperty('--scene-two-active', `${creationIn * (1 - creationOut)}`);
-      scene.style.setProperty('--scene-three-active', `${agentIn * (1 - agentOut)}`);
-      scene.style.setProperty('--scene-four-active', `${convergenceIn}`);
+      if (Math.abs(progress - lastProgress) > .0002) foxDirection = progress > lastProgress ? 1 : -1;
+      lastProgress = progress;
+      const projectOut = smoothstep(.15, .22, progress);
+      const creationIn = smoothstep(.15, .22, progress);
+      const creationOut = smoothstep(.3, .37, progress);
+      const agentsIn = smoothstep(.3, .37, progress);
+      const showcaseOut = smoothstep(.48, .54, progress);
+      const transition = clamp01((progress - .5) / .5);
+      const diveShift = .72 * clamp01((transition - .04) / .92);
+      const holeProgress = smoothstep(.08, .9, transition);
+      const mobile = window.innerWidth <= 820;
+      const orbStart = mobile ? .49 : .43;
+      const orbEnd = mobile ? .62 : .66;
+      const orbTravel = smoothstep(.05, .46, progress);
+      const startRadius = Math.hypot(window.innerWidth, window.innerHeight) * 1.08;
+      const endRadius = mobile ? 58 : 80;
+      const holeRadius = startRadius + (endRadius - startRadius) * holeProgress;
+      const holeX = window.innerWidth * (1.035 - .239 * smoothstep(.58, .98, transition));
+      const textInner = scene.querySelector<HTMLElement>('.outro-text-inner');
+      const textWidth = textInner?.scrollWidth || window.innerWidth * 1.9;
+      const foxEnter = smoothstep(.73, .98, transition);
+      const foxRunX = textWidth * (.17 + .42 * diveShift);
+      const foxRunY = window.innerHeight * (.29 + Math.sin(transition * Math.PI * 2) * .018);
+      const foxX = foxRunX + (holeX - foxRunX) * foxEnter;
+      const foxY = foxRunY + (window.innerHeight * .5 - foxRunY) * foxEnter;
+      const foxScale = (.95 + Math.sin(transition * Math.PI * 3) * .045) * (1 - .44 * foxEnter);
+
+      scene.style.setProperty('--scene-platform-opacity', `${1 - showcaseOut}`);
+      scene.style.setProperty('--scene-project-active', `${1 - projectOut}`);
+      scene.style.setProperty('--scene-creation-active', `${creationIn * (1 - creationOut)}`);
+      scene.style.setProperty('--scene-agents-active', `${agentsIn * (1 - showcaseOut)}`);
+      scene.style.setProperty('--scene-orb-y', `${(orbStart + (orbEnd - orbStart) * orbTravel) * window.innerHeight}px`);
+      scene.style.setProperty('--scene-orb-turn', `${-5 + 10 * orbTravel}deg`);
+      scene.style.setProperty('--scene-outro-opacity', `${smoothstep(.48, .52, progress)}`);
+      scene.style.setProperty('--scene-hole-x', `${holeX}px`);
+      scene.style.setProperty('--scene-hole-r', `${holeRadius}px`);
+      scene.style.setProperty('--scene-dive-shift', `${diveShift}`);
+      scene.style.setProperty('--scene-text-width', `${textWidth}px`);
+      scene.style.setProperty('--scene-fox-x', `${foxX}px`);
+      scene.style.setProperty('--scene-fox-y', `${foxY}px`);
+      scene.style.setProperty('--scene-fox-opacity', `${smoothstep(.54, .59, progress)}`);
+      scene.style.setProperty('--scene-fox-scale', `${foxScale}`);
+      scene.style.setProperty('--scene-fox-flip', `${foxDirection}`);
     };
     const requestUpdate = () => { if (!animationFrame) animationFrame = window.requestAnimationFrame(updateScene); };
     updateScene();
@@ -390,27 +382,27 @@ function App() {
 
       <section className="scene-section" id="scene" ref={sceneRef}>
         <div className="scene-sticky">
-          <div className="scene-tech-field" aria-hidden="true"><i /><i /><i /><span>CLIENT SIGNAL　/　LIVE</span></div>
-          <div className="editorial-heading scene-heading"><div><span>02</span><small>JIGULI DESKTOP</small></div><h2>一件件好用的工具，<br />组成完整的桌面工作台。</h2></div>
-          <div className="scene-stepper" aria-hidden="true"><span>01　PROJECT</span><span>02　CREATE</span><span>03　AGENTS</span><span>04　TOGETHER</span></div>
-          <div className="scene-stage">
-            <article className="scene-feature scene-step scene-main"><span className="scene-live-badge">● LIVE CLIENT　01</span><div className="scene-shot"><ClientWorkspacePreview /></div><div className="scene-copy"><span>CLIENT WORKSPACE</span><h3>项目、对话与执行，<br />都在一个客户端里。</h3><p>围绕真实项目组织目录、用户消息和运行设置。叽咕狸能看见当前工作，也让你随时看见它正在做什么。</p><ul><li><Check size={15} /> 浏览、搜索和编辑项目文件</li><li><Check size={15} /> 对话、任务进度与结果连续呈现</li><li><Check size={15} /> Git、终端和运行设置集中管理</li></ul></div></article>
-            <article className="scene-feature scene-step compact amber scene-creation"><div className="scene-copy"><span>AI CREATION</span><h3>图片、视频、剧情，<br />在独立工作台完成。</h3><p>从单张图片到分段故事，在客户端里规划素材、首尾帧与视频生成，并保留完整创作记录。</p></div><div className="scene-shot"><CreationStudioPreview /></div></article>
-            <article className="scene-feature scene-step compact mint scene-agents"><div className="scene-copy"><span>AGENT TEAMS</span><h3>分工更清楚，<br />协作更具体。</h3><p>把不同职责的 Agent 作为可配置的协作工具，通过私聊或项目团队分工，任务、过程与产出都有迹可循。</p></div><div className="scene-shot"><AgentWorkspacePreview /></div></article>
-            <div className="scene-convergence" aria-label="多个客户端工作场景汇入叽咕狸桌面工作台的动画">
-              <div className="convergence-packet packet-one"><b>01</b><span>PROJECT</span></div><div className="convergence-packet packet-two"><b>02</b><span>CREATE</span></div><div className="convergence-packet packet-three"><b>03</b><span>AGENTS</span></div>
-              <div className="convergence-orbits" aria-hidden="true"><i /><i /><i /></div>
-              <div className="convergence-window">
-                <div className="convergence-topbar"><span className="mock-traffic"><i /><i /><i /></span><b>叽咕狸桌面工作台</b><small>PROJECT　/　CREATE　/　AGENTS</small></div>
-                <div className="convergence-screen">
-                  <aside><BrandMark className="convergence-mini-logo" /><strong>叽咕狸</strong><span className="active">▣ 项目</span><span>✦ AI 创作</span><span>◎ Agent 团队</span><span>⌁ 终端与 Git</span></aside>
-                  <main><div className="convergence-heading"><small>GOOD AFTERNOON</small><strong>需要的工具，都在这里。</strong></div><div className="convergence-grid"><article className="project"><span>01　PROJECT</span><b>官网改版</b><small>12 个文件 · 3 个任务运行中</small></article><article className="create"><span>02　CREATE</span><b>AI 创作</b><small>图片、视频与剧情工作台</small></article><article className="agents"><span>03　AGENTS</span><b>项目团队</b><small>3 位 Agent 正在协作</small></article></div></main>
-                </div>
-                <div className="convergence-core"><BrandMark className="convergence-logo" /><strong>叽咕狸</strong><small>JIGULI</small></div>
-              </div>
+          <div className="platform-showcase">
+            <header className="platform-heading"><span>02　JIGULI DESKTOP</span><h2>Inside Jiguli</h2><p>不是把功能堆在一起，<br />而是让每一步自然接上。</p></header>
+            <div className="platform-list">
+              <article className="platform-item project-item"><i>✦</i><div><h3>项目工作台</h3><p>文件、对话、终端与 Git，围绕同一个项目展开。</p></div></article>
+              <article className="platform-item creation-item"><i>♥</i><div><h3>AI 创作</h3><p>图片、视频与剧情分段，在一处连续完成。</p></div></article>
+              <article className="platform-item agents-item"><i>●</i><div><h3>Agent 团队</h3><p>清楚分工，看见过程，也看见每一份交付。</p></div></article>
+            </div>
+            <div className="platform-orb" aria-label="随页面滚动轮换的叽咕狸客户端界面">
+              <div className="orb-ring" aria-hidden="true" />
+              <div className="orb-preview project-preview"><ClientWorkspacePreview /></div>
+              <div className="orb-preview creation-preview"><CreationStudioPreview /></div>
+              <div className="orb-preview agents-preview"><AgentWorkspacePreview /></div>
+              <span className="orb-caption"><b>SCROLL</b><i /><em>01 — 03</em></span>
             </div>
           </div>
-          <div className="scene-scroll-hint">SCROLL TO EXPLORE <i>↓</i></div>
+          <div className="platform-outro" aria-label="想要做好一件事，要学会让自己慢下来。">
+            <span className="outro-blue-face" aria-hidden="true" />
+            <div className="outro-text-layer outro-text-dark" aria-hidden="true"><div className="outro-text-inner"><span className="outro-line">{Array.from(transitionText).map((char, index) => <i className={index < 7 ? 'outro-char-highlight' : ''} key={`${char}-${index}`} style={{ '--char-start': index * .0125 } as CSSProperties}>{char}</i>)}</span></div></div>
+            <div className="outro-text-layer outro-text-white" aria-hidden="true"><div className="outro-text-inner"><span className="outro-line">{Array.from(transitionText).map((char, index) => <i key={`${char}-${index}`} style={{ '--char-start': index * .0125 } as CSSProperties}>{char}</i>)}</span></div></div>
+            <span className="outro-fox" aria-hidden="true" />
+          </div>
         </div>
       </section>
 

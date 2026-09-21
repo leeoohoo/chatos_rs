@@ -211,29 +211,43 @@ struct AgentGroupChatWorkspaceView: View {
                                 .foregroundStyle(.secondary)
                         } else {
                             ForEach(viewModel.directConversations) { conversation in
-                                Label {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(conversation.draft.name)
-                                            .font(.body.weight(.medium))
-                                        Text(conversation.conversationKind == .humanAgentDirect
-                                             ? "Agent 私聊" : "Agent 之间")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                } icon: {
+                                HStack(spacing: 12) {
                                     if conversation.conversationKind == .humanAgentDirect,
                                        let agentID = conversation.defaultAgentID,
                                        let agent = viewModel.agents.first(where: { $0.id == agentID }) {
                                         AgentAvatarView(
                                             name: agent.draft.name,
                                             data: agent.draft.avatarData,
-                                            size: 22,
-                                            cornerRadius: 7
+                                            size: AgentAvatarMetrics.navigation,
+                                            cornerRadius: 15
                                         )
                                     } else {
                                         Image(systemName: "person.2.wave.2")
+                                            .foregroundStyle(AppPalette.ai)
+                                            .frame(
+                                                width: AgentAvatarMetrics.navigation,
+                                                height: AgentAvatarMetrics.navigation
+                                            )
+                                            .background(
+                                                AppPalette.aiSoft,
+                                                in: RoundedRectangle(cornerRadius: 15)
+                                            )
                                     }
+
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(conversation.draft.name)
+                                            .font(.body.weight(.medium))
+                                            .lineLimit(1)
+                                        Text(conversation.conversationKind == .humanAgentDirect
+                                             ? "Agent 私聊" : "Agent 之间")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                    Spacer(minLength: 0)
                                 }
+                                .frame(minHeight: AgentAvatarMetrics.navigation + 8)
+                                .contentShape(Rectangle())
                                 .padding(.vertical, 4)
                                 .tag(AgentGroupChatWorkspaceDestination.direct(conversation.id))
                             }

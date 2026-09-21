@@ -1,6 +1,11 @@
 import ChatOSCore
 import Foundation
 
+public struct PreparedLocalProjectImport: Sendable, Equatable {
+    public let draft: LocalProjectDraft
+    public let absolutePath: String
+}
+
 /// Host entrypoint for local CRUD. Never creates or updates a remote project.
 public actor NativeLocalProjectsService {
     private let connector: NativeLocalConnectorService
@@ -144,6 +149,87 @@ public actor NativeLocalProjectsService {
                 projectTypeKey: projectTypeKey
             )
         )
+    }
+
+    /// Resolves an existing directory into host-owned project metadata without moving, copying,
+    /// creating, or linking anything. The selected directory itself cannot be a symbolic link and
+    /// its resolved location must already be covered by a paired workspace.
+    public func prepareExistingDirectoryImport(
+        ownerUserID: String,
+        absolutePath: String,
+        name: String?,
+        description: String = "",
+        projectTypeKey: String = LocalAgentSkillCatalog.legacyProjectTypeKey
+    ) async throws -> PreparedLocalProjectImport {
+        _ = try await connector.localProjectDeviceID(ownerUserID: ownerUserID)
+        let requestedPath = absolutePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard requestedPath.hasPrefix("/"),
+              requestedPath == absolutePath,
+              requestedPath.rangeOfCharacter(from: .controlCharacters) == nil else {
+            throw ProjectRegistryError.invalidField("absolutePath")
+        }
+        let requestedURL = URL(
+            fileURLWithPath: requestedPath,
+            isDirectory: true
+        ).standardizedFileURL
+        guard FileManager.default.fileExists(atPath: requestedURL.path) else {
+            throw ProjectRegistryError.notFound
+        }
+        let values = try requestedURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard values.isSymbolicLink != true else {
+            throw ProjectRegistryError.invalidField("absolutePath.symbolicLink")
+        }
+        guard values.isDirectory == true else {
+            throw ProjectRegistryError.invalidField("absolutePath")
+        }
+        let status = try await connector.fetchStatus()
+        guard status.user?.id == ownerUserID,
+              let workspace = Self.mostSpecificWorkspace(
+                containing: requestedURL,
+                workspaces: status.workspaces
+              ),
+              let relativePath = Self.relativePath(of: requestedURL, inside: workspace) else {
+            throw NativeConnectorError.workspaceUnavailable
+        }
+        let projectName = (name ?? requestedURL.lastPathComponent)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let draft = LocalProjectDraft(
+            name: projectName,
+            description: description.trimmingCharacters(in: .whitespacesAndNewlines),
+            workspaceID: workspace.id,
+            relativeRoot: relativePath == "." ? "" : relativePath,
+            projectTypeKey: projectTypeKey
+        )
+        try draft.validate()
+        return .init(draft: draft, absolutePath: requestedURL.path)
+    }
+
+    /// Revalidates a previously prepared import at Human approval time, then registers the same
+    /// existing directory. The filesystem directory itself is never modified.
+    public func createFromExistingDirectory(
+        ownerUserID: String,
+        draft: LocalProjectDraft,
+        absolutePath: String
+    ) async throws -> WorkspaceProject {
+        let prepared = try await prepareExistingDirectoryImport(
+            ownerUserID: ownerUserID,
+            absolutePath: absolutePath,
+            name: draft.name,
+            description: draft.description,
+            projectTypeKey: draft.projectTypeKey
+        )
+        guard prepared.draft == draft, prepared.absolutePath == absolutePath else {
+            throw ProjectRegistryError.revisionConflict
+        }
+        let existing = try await registry().list(ownerUserID: ownerUserID, includeInactive: true)
+        guard !existing.contains(where: {
+            $0.status != .removed
+                && $0.draft.workspaceID == draft.workspaceID
+                && $0.draft.relativeRoot == draft.relativeRoot
+        }) else {
+            throw ProjectRegistryError.revisionConflict
+        }
+        return try await create(ownerUserID: ownerUserID, draft: draft)
     }
 
     public func rename(ownerUserID: String, id: String, name: String, expectedRevision: Int64) async throws {

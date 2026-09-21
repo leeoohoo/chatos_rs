@@ -88,13 +88,13 @@ struct ProjectAgentGroupChatView: View {
         .alert(
             "Agent 群聊错误",
             isPresented: Binding(
-                get: { viewModel.errorMessage != nil },
-                set: { if !$0 { viewModel.errorMessage = nil } }
+                get: { viewModel.presentedErrorMessage != nil },
+                set: { if !$0 { viewModel.dismissPresentedError() } }
             )
         ) {
-            Button("好", role: .cancel) { viewModel.errorMessage = nil }
+            Button("好", role: .cancel) { viewModel.dismissPresentedError() }
         } message: {
-            Text(viewModel.errorMessage ?? "")
+            Text(viewModel.presentedErrorMessage ?? "")
         }
         .confirmationDialog(
             "停止当前项目的全部 Agent？",
@@ -316,9 +316,11 @@ struct ProjectAgentGroupChatView: View {
             ForEach(viewModel.pendingTeamProposals) { proposal in
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(proposal.draft.newProjectName == nil
-                            ? "为已有项目创建团队"
-                            : "新建项目并创建团队")
+                        Text(proposal.draft.importedProjectDraft != nil
+                            ? "导入现有目录并创建团队"
+                            : (proposal.draft.newProjectName == nil
+                                ? "为已有项目创建团队"
+                                : "新建项目并创建团队"))
                             .appFont(.body)
                             .fontWeight(.medium)
                         if let newProjectName = proposal.draft.newProjectName {
@@ -332,6 +334,15 @@ struct ProjectAgentGroupChatView: View {
                                     .appFont(.caption)
                                     .foregroundStyle(.secondary)
                             }
+                        } else if let importedDraft = proposal.draft.importedProjectDraft,
+                                  let absolutePath = proposal.draft.importedProjectAbsolutePath {
+                            Text("项目：\(importedDraft.name)")
+                                .appFont(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("目录：\(absolutePath)")
+                                .appFont(.caption)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
                         } else if let projectID = proposal.draft.existingProjectID {
                             Text("项目：\(model.workspaceProjects.first(where: { $0.id == projectID })?.name ?? "本地项目")")
                                 .appFont(.caption)
@@ -341,9 +352,11 @@ struct ProjectAgentGroupChatView: View {
                         Text("团队：\(proposal.draft.teamName)")
                             .appFont(.caption)
                             .foregroundStyle(.secondary)
-                        Text(proposal.draft.newProjectName == nil
-                            ? "真实项目 ID 由客户端内部透传；Agent 不会看到它。"
-                            : "确认后 ChatOS 会在默认工作区新建项目，并用生成的 ID 绑定团队。")
+                        Text(proposal.draft.importedProjectDraft != nil
+                            ? "确认后只注册这个现有目录；不会创建、移动、复制或链接目录。"
+                            : (proposal.draft.newProjectName == nil
+                                ? "真实项目 ID 由客户端内部透传；Agent 不会看到它。"
+                                : "确认后 ChatOS 会在默认工作区新建项目，并用生成的 ID 绑定团队。"))
                             .appFont(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -356,7 +369,11 @@ struct ProjectAgentGroupChatView: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        Button(proposal.draft.newProjectName == nil ? "确认创建团队" : "确认创建项目和团队") {
+                        Button(
+                            proposal.draft.existingProjectID == nil
+                                ? "确认创建项目和团队"
+                                : "确认创建团队"
+                        ) {
                             Task {
                                 if let project = await viewModel.approveTeamProposal(proposal) {
                                     model.registerCreatedProject(project)

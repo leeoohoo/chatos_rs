@@ -128,7 +128,8 @@ extension SQLiteAgentGroupChatStore {
                     throw AgentGroupChatError.permissionDenied
                 }
             } else {
-                guard proposal.draft.newProjectName != nil else {
+                guard proposal.draft.newProjectName != nil
+                        || proposal.draft.importedProjectDraft != nil else {
                     throw AgentGroupChatError.conflict
                 }
             }
@@ -178,6 +179,15 @@ extension SQLiteAgentGroupChatStore {
                     sourceRoomID: sourceRoomID,
                     proposalID: proposalID
                   ) else { throw AgentGroupChatError.conflict }
+            try enqueueProposalResolutionNotification(
+                ownerUserID: ownerUserID,
+                roomID: sourceRoomID,
+                proposerAgentID: approved.proposerAgentID,
+                proposalID: approved.id,
+                proposalLabel: "项目与团队创建提案",
+                approved: true,
+                nowUnixMs: nowUnixMs
+            )
             return .init(proposal: approved, room: room)
         }
     }
@@ -207,6 +217,15 @@ extension SQLiteAgentGroupChatStore {
                     sourceRoomID: sourceRoomID,
                     proposalID: proposalID
                   ) else { throw AgentGroupChatError.conflict }
+            try enqueueProposalResolutionNotification(
+                ownerUserID: ownerUserID,
+                roomID: sourceRoomID,
+                proposerAgentID: rejected.proposerAgentID,
+                proposalID: rejected.id,
+                proposalLabel: "项目与团队创建提案",
+                approved: false,
+                nowUnixMs: nowUnixMs
+            )
             return rejected
         }
     }

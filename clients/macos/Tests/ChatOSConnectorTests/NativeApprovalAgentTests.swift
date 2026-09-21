@@ -1,4 +1,5 @@
 import ChatOSAgentRuntime
+import CryptoKit
 import Foundation
 import XCTest
 @testable import ChatOSConnector
@@ -10,7 +11,10 @@ final class NativeApprovalAgentTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         try Data((1...12).map { "line \($0)" }.joined(separator: "\n").utf8).write(to: root.appendingPathComponent("sample.txt"))
         let model = ApprovalTestModel(finishAt: 11)
-        let result = await NativeApprovalAgent().evaluate(request: request(root), modelClient: model, policy: .init())
+        let result = await NativeApprovalAgent().evaluate(
+            request: request(root), modelClient: model,
+            systemPrompt: "managed approval prompt", policy: .init()
+        )
         XCTAssertEqual(result, .approve(reason: "checked", rememberAllow: false))
         let calls = await model.calls
         XCTAssertEqual(calls, 11)
@@ -30,13 +34,15 @@ final class NativeApprovalAgentTests: XCTestCase {
 
         let result = await NativeApprovalAgent().evaluate(
             request: request(FileManager.default.temporaryDirectory),
-            modelClient: ApprovalTestModel(finishAt: 2), policy: .init(),
+            modelClient: ApprovalTestModel(finishAt: 2),
+            systemPrompt: "managed approval prompt", policy: .init(),
             runID: runID, runtimeScope: runtimeScope, contextProvider: provider
         )
 
         XCTAssertEqual(result, .approve(reason: "checked", rememberAllow: false))
         let messages = await memory.entries.map(\.message)
         XCTAssertEqual(messages.map(\.role), [.system, .user, .assistant, .tool, .assistant, .tool])
+        XCTAssertEqual(messages.first?.content, "managed approval prompt")
         XCTAssertEqual(messages[2].toolCalls.first?.id, "read-1")
         XCTAssertEqual(messages[3].toolCallID, "read-1")
         XCTAssertEqual(messages[4].toolCalls.first?.id, "decision")
@@ -49,7 +55,10 @@ final class NativeApprovalAgentTests: XCTestCase {
         var policy = AgentRunPolicy(); policy.maximumModelCalls = 1
         for fail in [false, true] {
             let model = ApprovalTestModel(finishAt: 2, fail: fail)
-            let result = await NativeApprovalAgent().evaluate(request: request(FileManager.default.temporaryDirectory), modelClient: model, policy: policy)
+            let result = await NativeApprovalAgent().evaluate(
+                request: request(FileManager.default.temporaryDirectory), modelClient: model,
+                systemPrompt: "managed approval prompt", policy: policy
+            )
             guard case .askUser = result else { return XCTFail("Errors and limits must never grant approval") }
         }
     }
@@ -57,7 +66,8 @@ final class NativeApprovalAgentTests: XCTestCase {
     func testInvalidTerminalDecisionDoesNotApprove() async throws {
         var policy = AgentRunPolicy(); policy.maximumModelCalls = 1
         let result = await NativeApprovalAgent().evaluate(request: request(FileManager.default.temporaryDirectory),
-            modelClient: ApprovalTestModel(finishAt: 1, invalidDecision: true), policy: policy)
+            modelClient: ApprovalTestModel(finishAt: 1, invalidDecision: true),
+            systemPrompt: "managed approval prompt", policy: policy)
         guard case .askUser = result else { return XCTFail("Invalid decision cannot approve") }
     }
 
@@ -73,6 +83,91 @@ final class NativeApprovalAgentTests: XCTestCase {
             XCTAssertTrue(result.hasPrefix("工具执行失败："))
             XCTAssertFalse(result.contains("private-outside-content"))
         }
+    }
+
+    func testManagedPromptSelectsModelVendorAndValidatesChecksum() throws {
+        let content = "managed approval prompt"
+        let bundle = promptBundle(content: content, vendor: "gpt")
+        let resolved = try NativeApprovalAgent.resolveManagedSystemPrompt(
+            model: model(provider: "openai", promptVendor: nil),
+            bundle: bundle,
+            capability: capability(),
+            ownerUserID: "owner-1"
+        )
+        XCTAssertEqual(resolved, content)
+    }
+
+    func testManagedPromptRejectsInvalidChecksumAndUnsupportedVendor() throws {
+        var invalid = promptBundle(content: "managed approval prompt", vendor: "gpt")
+        invalid.prompts[0].checksum = "sha256:\(String(repeating: "0", count: 64))"
+        XCTAssertThrowsError(try NativeApprovalAgent.resolveManagedSystemPrompt(
+            model: model(provider: "gpt", promptVendor: nil),
+            bundle: invalid,
+            capability: capability(),
+            ownerUserID: "owner-1"
+        ))
+        XCTAssertThrowsError(try NativeApprovalAgent.resolveManagedSystemPrompt(
+            model: model(provider: "minimax", promptVendor: nil),
+            bundle: promptBundle(content: "managed approval prompt", vendor: "gpt"),
+            capability: capability(),
+            ownerUserID: "owner-1"
+        ))
+    }
+
+    func testManagedPromptRejectsInvalidCapabilityPolicy() throws {
+        let bundle = promptBundle(content: "managed approval prompt", vendor: "gpt")
+        var invalid = capability()
+        invalid.agentEnabled = false
+        XCTAssertThrowsError(try NativeApprovalAgent.resolveManagedSystemPrompt(
+            model: model(provider: "gpt", promptVendor: nil),
+            bundle: bundle,
+            capability: invalid,
+            ownerUserID: "owner-1"
+        ))
+        XCTAssertThrowsError(try NativeApprovalAgent.resolveManagedSystemPrompt(
+            model: model(provider: "gpt", promptVendor: nil),
+            bundle: bundle,
+            capability: capability(),
+            ownerUserID: "another-owner"
+        ))
+    }
+
+    private func model(provider: String, promptVendor: String?) -> GatewayModelConfigDTO {
+        .init(
+            id: "model-1", sourceProviderID: nil, name: "Approval", provider: provider,
+            promptVendor: promptVendor, model: "model", apiKey: "key",
+            baseURL: "https://example.com/v1", taskUsageScenario: nil,
+            taskThinkingLevel: nil, temperature: 0, maxOutputTokens: 1_200,
+            enabled: true, taskEnabled: true, hasAPIKey: true, supportsImages: false,
+            supportsReasoning: true, supportsResponses: true
+        )
+    }
+
+    private func promptBundle(content: String, vendor: String) -> GatewayAgentPromptBundleDTO {
+        let checksum = SHA256.hash(data: Data(content.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return .init(
+            bundleVersion: 1,
+            updatedAt: "2026-09-21T00:00:00Z",
+            prompts: [.init(
+                agentKey: NativeApprovalAgent.agentKey,
+                vendor: vendor,
+                content: content,
+                revision: 1,
+                checksum: "sha256:\(checksum)",
+                publishedAt: "2026-09-21T00:00:00Z"
+            )]
+        )
+    }
+
+    private func capability() -> GatewayAgentCapabilityDTO {
+        .init(
+            agentKey: NativeApprovalAgent.agentKey,
+            ownerUserID: "owner-1",
+            policyRevision: "policy-1",
+            agentEnabled: true
+        )
     }
 
     private func request(_ root: URL) -> NativeApprovalAgentRequest {

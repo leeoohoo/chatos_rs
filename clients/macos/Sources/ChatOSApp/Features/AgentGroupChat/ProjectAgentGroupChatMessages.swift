@@ -103,14 +103,19 @@ extension ProjectAgentGroupChatView {
             Text("你")
                 .appFont(.caption.weight(.semibold))
                 .foregroundStyle(AppPalette.ai)
-                .frame(width: 32, height: 32)
-                .background(AppPalette.aiSoft, in: RoundedRectangle(cornerRadius: 10))
+                .frame(width: AgentAvatarMetrics.message, height: AgentAvatarMetrics.message)
+                .background(AppPalette.aiSoft, in: RoundedRectangle(cornerRadius: 20))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: 20)
                         .stroke(AppPalette.ai.opacity(0.20), lineWidth: 1)
                 }
         } else {
-            AgentAvatarView(name: name, data: avatarData, size: 32, cornerRadius: 10)
+            AgentAvatarView(
+                name: name,
+                data: avatarData,
+                size: AgentAvatarMetrics.message,
+                cornerRadius: 20
+            )
         }
     }
 

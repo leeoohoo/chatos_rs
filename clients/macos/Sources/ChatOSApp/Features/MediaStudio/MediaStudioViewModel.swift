@@ -496,7 +496,10 @@ final class MediaStudioViewModel: ObservableObject {
                 let next = try await service.fetchModels()
                 guard sessionID == session else { return }
                 models = next
-                videoModels = next.filter(\.isLikelyVideoModel)
+                videoModels = next.filter {
+                    $0.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .caseInsensitiveCompare("MiniMax-H3") == .orderedSame
+                }
                 if !next.contains(where: { $0.id == selectedModelID }) {
                     selectedModelID = next.first?.id
                 }

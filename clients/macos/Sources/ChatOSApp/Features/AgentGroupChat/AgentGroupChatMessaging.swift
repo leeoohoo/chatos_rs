@@ -204,20 +204,19 @@ extension AgentGroupChatViewModel {
             guard let self else { return }
             repeat {
                 schedulerNeedsAnotherPass = false
-                var schedulerMessage: String?
                 do {
                     let results = try await scheduler.drainAccount(ownerUserID: ownerUserID)
-                    if let failure = results.last(where: { $0.outcome == .failed }) {
-                        schedulerMessage = failure.detail ?? "本地 Agent 运行失败。"
-                    } else if let suspended = results.last(where: { $0.outcome == .suspended }) {
-                        schedulerMessage = suspended.detail ?? "本地 Agent 已暂停，运行检查点已保存。"
+                    if let roomID = room?.id {
+                        try await reconcileSchedulerResults(results, roomID: roomID)
                     }
+                } catch is CancellationError {
+                    // Account draining is process-wide. A competing surface owning the lease is
+                    // normal and its durable updates will be observed by this room.
                 } catch {
-                    schedulerMessage = error.localizedDescription
+                    errorMessage = error.localizedDescription
                 }
                 await load()
                 NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
-                if let schedulerMessage { errorMessage = schedulerMessage }
             } while schedulerNeedsAnotherPass
             isRunningAgents = false
             schedulerTask = nil

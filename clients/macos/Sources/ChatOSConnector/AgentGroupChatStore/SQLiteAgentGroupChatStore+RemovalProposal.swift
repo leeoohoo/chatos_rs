@@ -192,6 +192,15 @@ extension SQLiteAgentGroupChatStore {
                     roomID: roomID,
                     proposalID: proposalID
                   ) else { throw AgentGroupChatError.conflict }
+            try enqueueProposalResolutionNotification(
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                proposerAgentID: approved.proposerAgentID,
+                proposalID: approved.id,
+                proposalLabel: "Agent 移出团队提案",
+                approved: true,
+                nowUnixMs: nowUnixMs
+            )
             return approved
         }
     }
@@ -221,6 +230,15 @@ extension SQLiteAgentGroupChatStore {
                     roomID: roomID,
                     proposalID: proposalID
                   ) else { throw AgentGroupChatError.conflict }
+            try enqueueProposalResolutionNotification(
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                proposerAgentID: rejected.proposerAgentID,
+                proposalID: rejected.id,
+                proposalLabel: "Agent 移出团队提案",
+                approved: false,
+                nowUnixMs: nowUnixMs
+            )
             return rejected
         }
     }

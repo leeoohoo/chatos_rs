@@ -162,7 +162,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
             .init(
                 modelConfigID: "video-model",
                 prompt: "camera circles a paper city",
-                size: "1280x720",
+                size: "768P",
                 seconds: 4
             )
         ) { value in
@@ -170,7 +170,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         }
 
         XCTAssertEqual(result.id, "video-1")
-        XCTAssertEqual(result.modelName, "sora-2")
+        XCTAssertEqual(result.modelName, "MiniMax-H3")
         XCTAssertEqual(result.videoData, Data("mp4-data".utf8))
         XCTAssertEqual(result.mimeType, "video/mp4")
         let progressValues = await progress.values()
@@ -193,8 +193,8 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
 
         let body = try XCTUnwrap(requests[1].body)
         let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
-        XCTAssertEqual(payload["model"] as? String, "sora-2")
-        XCTAssertEqual(payload["size"] as? String, "1280x720")
+        XCTAssertEqual(payload["model"] as? String, "MiniMax-H3")
+        XCTAssertEqual(payload["size"] as? String, "768p")
         XCTAssertEqual(payload["duration"] as? Int, 4)
         XCTAssertEqual(payload["prompt"] as? String, "camera circles a paper city")
     }
@@ -225,7 +225,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         }
     }
 
-    func testUnifiedH3UploadsFirstAndLastFramesIntoMetadata() async throws {
+    func testUnifiedH3EncodesFirstAndLastFramesAsDataURLs() async throws {
         let transport = NewAPIVideoTransport()
         let bitmap = try XCTUnwrap(NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: 256, pixelsHigh: 256,
@@ -244,13 +244,30 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(create.body)) as? [String: Any])
         let metadata = try XCTUnwrap(payload["metadata"] as? [String: Any])
         XCTAssertEqual(payload["prompt"] as? String, "Move")
-        XCTAssertEqual(metadata["first_frame_image"] as? String, "https://media.example/asset/0")
-        XCTAssertEqual(metadata["last_frame_image"] as? String, "https://media.example/asset/1")
+        let expectedDataURL = "data:image/png;base64,\(png.base64EncodedString())"
+        XCTAssertEqual(metadata["first_frame_image"] as? String, expectedDataURL)
+        XCTAssertEqual(metadata["last_frame_image"] as? String, expectedDataURL)
         XCTAssertEqual(metadata["ratio"] as? String, "adaptive")
         XCTAssertNil(payload["content"])
+        XCTAssertFalse(requests.contains { $0.url.path == "/api/chatos/media/uploads" })
+        XCTAssertFalse(requests.contains { $0.url.host == "storage.example" })
     }
 
-    func testGenerateVideoUploadsFirstFrameAndSendsUnifiedPublicURLMetadata() async throws {
+    func testNonH3VideoModelIsRejectedBeforeSubmission() async throws {
+        let transport = NewAPIVideoTransport(model: "doubao-seedance-2-5-260628")
+        do {
+            _ = try await unifiedVideoService(transport).generateVideo(.init(
+                modelConfigID: "h3", prompt: "Animate this", size: "720p", seconds: 4
+            )) { _ in }
+            XCTFail("Only MiniMax-H3 may use video generation")
+        } catch MediaGenerationClientError.unsupportedVideoModel(let model) {
+            XCTAssertEqual(model, "doubao-seedance-2-5-260628")
+            let requests = await transport.allRequests()
+            XCTAssertEqual(requests.count, 1)
+        }
+    }
+
+    func testGenerateVideoSendsFirstFrameDataURLDirectlyToNewAPI() async throws {
         let transport = MediaGenerationTransport()
         let client = ChatOSAPIClient(
             configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
@@ -258,6 +275,12 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
             transport: transport
         )
 
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 256, pixelsHigh: 256,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
         _ = try await ChatOSMediaGenerationService(
             client: client,
             providerTransport: transport,
@@ -266,29 +289,19 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
             .init(
                 modelConfigID: "video-model",
                 prompt: "the paper boat starts moving",
-                size: "1280x720",
+                size: "768P",
                 seconds: 4,
                 inputImage: .init(
                     name: "first-frame.png",
                     mimeType: "image/png",
-                    base64Data: "aW1hZ2U="
+                    base64Data: png.base64EncodedString()
                 )
             )
         ) { _ in }
 
         let requests = await transport.allRequests()
-        let signing = try XCTUnwrap(requests.first { $0.url.path == "/api/chatos/media/uploads" })
-        let signingJSON = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: try XCTUnwrap(signing.body)) as? [String: Any]
-        )
-        let assets = try XCTUnwrap(signingJSON["assets"] as? [[String: Any]])
-        XCTAssertEqual(assets.first?["name"] as? String, "first-frame.png")
-        XCTAssertEqual(assets.first?["mimeType"] as? String, "image/png")
-        let upload = try XCTUnwrap(requests.first { $0.url.host == "storage.example" })
-        XCTAssertEqual(upload.method, "PUT")
-        XCTAssertEqual(upload.body, Data("image".utf8))
-        XCTAssertEqual(upload.headers["Content-Type"], "image/png")
-        XCTAssertNil(upload.headers["Authorization"])
+        XCTAssertFalse(requests.contains { $0.url.path == "/api/chatos/media/uploads" })
+        XCTAssertFalse(requests.contains { $0.url.host == "storage.example" })
 
         let create = try XCTUnwrap(requests.first { $0.url.path == "/v1/videos" })
         XCTAssertEqual(create.headers["Content-Type"], "application/json")
@@ -296,8 +309,10 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
             JSONSerialization.jsonObject(with: try XCTUnwrap(create.body)) as? [String: Any]
         )
         let metadata = try XCTUnwrap(payload["metadata"] as? [String: Any])
-        XCTAssertEqual(metadata["first_frame_image"] as? String, "https://media.example/first-frame.png")
-        XCTAssertFalse(String(decoding: try XCTUnwrap(create.body), as: UTF8.self).contains("aW1hZ2U="))
+        XCTAssertEqual(
+            metadata["first_frame_image"] as? String,
+            "data:image/png;base64,\(png.base64EncodedString())"
+        )
     }
 
     func testAllConfiguredProvidersUseUnifiedNewAPIProtocol() async throws {
@@ -333,7 +348,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         }
     }
 
-    func testUnifiedH3ReferenceImageUsesUploadedURLAndAdaptiveRatio() async throws {
+    func testUnifiedH3ReferenceImageUsesDataURLAndAdaptiveRatio() async throws {
         let bitmap = try XCTUnwrap(NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: 256, pixelsHigh: 256,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
@@ -349,7 +364,10 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         let create = try XCTUnwrap(requests.first { $0.url.path == "/v1/videos" })
         let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(create.body)) as? [String: Any])
         let metadata = try XCTUnwrap(payload["metadata"] as? [String: Any])
-        XCTAssertEqual(metadata["first_frame_image"] as? String, "https://media.example/asset/0")
+        XCTAssertEqual(
+            metadata["first_frame_image"] as? String,
+            "data:image/png;base64,\(png.base64EncodedString())"
+        )
         XCTAssertNil(payload["input_reference"])
         XCTAssertNil(payload["content"])
         XCTAssertEqual(metadata["ratio"] as? String, "adaptive")
@@ -357,11 +375,10 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         XCTAssertEqual(payload["size"] as? String, "2k")
     }
 
-    func testNewAPISeedanceUploadsReferenceVideoAndUsesUnifiedExtendMetadata() async throws {
-        let transport = NewAPIVideoTransport(model: "doubao-seedance-2-5-260628")
-        let progress = VideoProgressRecorder()
+    func testH3EncodesReferenceVideoAndAudioAsDataURLs() async throws {
+        let transport = NewAPIVideoTransport()
         _ = try await unifiedVideoService(transport).generateVideo(.init(
-            modelConfigID: "h3", prompt: "继续镜头", size: "720p", seconds: 8,
+            modelConfigID: "h3", prompt: "参考这段视频", size: "768P", seconds: 8,
             referenceVideo: .init(
                 name: "previous.mp4", mimeType: "video/mp4",
                 base64Data: Data("video-bytes".utf8).base64EncodedString()
@@ -370,54 +387,103 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
                 name: "rhythm.mp3", mimeType: "audio/mpeg",
                 base64Data: Data("audio-bytes".utf8).base64EncodedString()
             ),
-            referencePurpose: .extend,
+            referencePurpose: .reference,
             ratio: "16:9"
-        )) { await progress.append($0) }
+        )) { _ in }
 
         let requests = await transport.allRequests()
-        let uploads = requests.filter { $0.url.host == "storage.example" }
-        XCTAssertEqual(uploads.map(\.body), [Data("video-bytes".utf8), Data("audio-bytes".utf8)])
-        XCTAssertEqual(uploads.map { $0.headers["Content-Type"] }, ["video/mp4", "audio/mpeg"])
+        XCTAssertFalse(requests.contains { $0.url.path == "/api/chatos/media/uploads" })
         let create = try XCTUnwrap(requests.first { $0.url.path == "/v1/videos" })
         let payload = try XCTUnwrap(
             JSONSerialization.jsonObject(with: try XCTUnwrap(create.body)) as? [String: Any]
         )
-        XCTAssertEqual(payload["model"] as? String, "doubao-seedance-2-5-260628")
+        XCTAssertEqual(payload["model"] as? String, "MiniMax-H3")
         XCTAssertEqual(payload["duration"] as? Int, 8)
-        XCTAssertEqual(payload["size"] as? String, "720p")
-        XCTAssertTrue((payload["prompt"] as? String)?.hasPrefix("延长@视频1") == true)
+        XCTAssertEqual(payload["size"] as? String, "768p")
         let metadata = try XCTUnwrap(payload["metadata"] as? [String: Any])
-        XCTAssertEqual(metadata["video_url"] as? String, "https://media.example/asset/0")
-        XCTAssertEqual(metadata["audio_url"] as? String, "https://media.example/asset/1")
-        XCTAssertEqual(metadata["omni_reference_task_type"] as? String, "extend")
-        XCTAssertEqual(metadata["generate_audio"] as? Bool, true)
-        XCTAssertEqual(metadata["output_format"] as? String, "mp4")
-        XCTAssertEqual(metadata["ratio"] as? String, "adaptive")
-        let statuses = await progress.values().map(\.status)
-        XCTAssertEqual(statuses, ["uploading", "queued", "completed", "downloading"])
+        XCTAssertEqual(metadata["video_url"] as? String, "data:video/mp4;base64,dmlkZW8tYnl0ZXM=")
+        XCTAssertEqual(metadata["audio_url"] as? String, "data:audio/mpeg;base64,YXVkaW8tYnl0ZXM=")
     }
 
-    func testCompletedTaskRequiresMetadataURLAndNeverUsesLegacyContentFallback() async throws {
+    func testCompletedTaskWithoutMetadataURLFallsBackToContentEndpoint() async throws {
         for result in [NewAPIVideoResult.missingURL, .legacyContentURL] {
             let transport = NewAPIVideoTransport(result: result)
-            do {
-                _ = try await unifiedVideoService(transport).generateVideo(.init(
-                    modelConfigID: "h3", prompt: "dog", size: "768P", seconds: 4
-                )) { _ in }
-                XCTFail("A completed task without metadata.url must fail")
-            } catch MediaGenerationClientError.invalidProviderResponse {
-                let requests = await transport.allRequests()
-                XCTAssertFalse(requests.contains { $0.url.path.hasSuffix("/content") })
-                XCTAssertFalse(requests.contains { $0.url.host == "cdn.example" })
-            }
+            let generated = try await unifiedVideoService(transport).generateVideo(.init(
+                modelConfigID: "h3", prompt: "dog", size: "768P", seconds: 4
+            )) { _ in }
+
+            XCTAssertEqual(generated.videoData, Data("mp4-data".utf8))
+            let requests = await transport.allRequests()
+            let contentRequest = try XCTUnwrap(
+                requests.first { $0.url.path == "/v1/videos/video-h3/content" }
+            )
+            XCTAssertEqual(contentRequest.headers["Authorization"], "Bearer new-api-token")
+            XCTAssertEqual(contentRequest.headers["Accept"], "video/mp4")
+            XCTAssertFalse(requests.contains { $0.url.host == "cdn.example" })
+        }
+    }
+
+    func testUnknownVideoStatusKeepsPollingUntilCompleted() async throws {
+        let transport = NewAPIVideoTransport(
+            creationStatus: "unknown",
+            pollStatuses: ["queued", "in_progress", "completed"]
+        )
+        let progress = VideoProgressRecorder()
+
+        let generated = try await unifiedVideoService(transport).generateVideo(.init(
+            modelConfigID: "h3", prompt: "dog", size: "768P", seconds: 4
+        )) { await progress.append($0) }
+
+        XCTAssertEqual(generated.videoData, Data("mp4-data".utf8))
+        let updates = await progress.values()
+        XCTAssertEqual(
+            updates.map(\.status),
+            ["unknown", "queued", "in_progress", "completed", "downloading"]
+        )
+        let requests = await transport.allRequests()
+        XCTAssertEqual(
+            requests.filter { $0.url.path == "/v1/videos/video-h3" }.count,
+            3
+        )
+    }
+
+    func testExplicitVideoErrorFailsEvenWhenStatusIsQueued() async throws {
+        let transport = NewAPIVideoTransport(
+            creationStatus: "queued",
+            jobError: "provider rejected the prompt"
+        )
+
+        do {
+            _ = try await unifiedVideoService(transport).generateVideo(.init(
+                modelConfigID: "h3", prompt: "dog", size: "768P", seconds: 4
+            )) { _ in }
+            XCTFail("An explicit provider error must fail the task")
+        } catch MediaGenerationClientError.videoFailed(let detail) {
+            XCTAssertEqual(detail, "provider rejected the prompt")
+            let requests = await transport.allRequests()
+            XCTAssertFalse(requests.contains { $0.url.path == "/v1/videos/video-h3" })
+        }
+    }
+
+    func testFailedVideoStatusStopsPolling() async throws {
+        let transport = NewAPIVideoTransport(creationStatus: "failed")
+
+        do {
+            _ = try await unifiedVideoService(transport).generateVideo(.init(
+                modelConfigID: "h3", prompt: "dog", size: "768P", seconds: 4
+            )) { _ in }
+            XCTFail("A failed provider status must fail the task")
+        } catch MediaGenerationClientError.videoFailed {
+            let requests = await transport.allRequests()
+            XCTAssertFalse(requests.contains { $0.url.path == "/v1/videos/video-h3" })
         }
     }
 
     func testUnifiedProtocolKeepsConfiguredRoutingPrefix() async throws {
         for base in ["https://api.minimax.io/v1", "https://relay.example/route/v1/"] {
-            let transport = NewAPIVideoTransport(base: base, model: "MiniMax-H3-Max")
+            let transport = NewAPIVideoTransport(base: base, model: "MiniMax-H3")
             _ = try await unifiedVideoService(transport).generateVideo(.init(
-                modelConfigID: "h3", prompt: "dog", size: "480P", seconds: 5
+                modelConfigID: "h3", prompt: "dog", size: "768P", seconds: 5
             )) { _ in }
             let requests = await transport.allRequests()
             XCTAssertEqual(requests[1].url.absoluteString, base.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/videos")
@@ -486,12 +552,16 @@ private enum NewAPIVideoResult: Sendable {
 /// Independent fixture for the single NewAPI client-facing contract.
 private actor NewAPIVideoTransport: HTTPTransport {
     private var requests: [HTTPRequest] = []
+    private var pollResponseIndex = 0
     let provider: String
     let base: String
     let model: String
     let failAt: String?
     let htmlError: Bool
     let result: NewAPIVideoResult
+    let creationStatus: String
+    let pollStatuses: [String]
+    let jobError: String?
 
     init(
         provider: String = "gpt",
@@ -499,7 +569,10 @@ private actor NewAPIVideoTransport: HTTPTransport {
         model: String = "MiniMax-H3",
         failAt: String? = nil,
         htmlError: Bool = false,
-        result: NewAPIVideoResult = .metadataURL
+        result: NewAPIVideoResult = .metadataURL,
+        creationStatus: String = "queued",
+        pollStatuses: [String] = ["completed"],
+        jobError: String? = nil
     ) {
         self.provider = provider
         self.base = base
@@ -507,6 +580,9 @@ private actor NewAPIVideoTransport: HTTPTransport {
         self.failAt = failAt
         self.htmlError = htmlError
         self.result = result
+        self.creationStatus = creationStatus
+        self.pollStatuses = pollStatuses
+        self.jobError = jobError
     }
 
     func send(_ request: HTTPRequest) async throws -> HTTPResponse {
@@ -519,37 +595,39 @@ private actor NewAPIVideoTransport: HTTPTransport {
             payload = config
         } else if request.url.absoluteString == root && request.method == "POST" {
             if failAt == "create" { return failure() }
-            payload = [
+            var created: [String: Any] = [
                 "id": "video-h3", "task_id": "video-h3",
-                "status": "queued", "model": model,
+                "status": creationStatus, "model": model,
             ]
+            if let jobError { created["error"] = ["message": jobError] }
+            payload = created
         } else if request.url.absoluteString == root + "/video-h3" && request.method == "GET" {
             if failAt == "poll" { return failure() }
+            let status = pollStatuses[min(pollResponseIndex, pollStatuses.count - 1)]
+            pollResponseIndex += 1
             var completed: [String: Any] = [
                 "id": "video-h3", "task_id": "video-h3",
-                "status": "completed", "model": model,
+                "status": status, "model": model,
             ]
-            switch result {
-            case .metadataURL:
-                completed["metadata"] = ["url": "https://cdn.example/result.mp4"]
-            case .missingURL:
-                break
-            case .legacyContentURL:
-                completed["content"] = ["url": "https://cdn.example/result.mp4"]
+            if status == "completed" {
+                switch result {
+                case .metadataURL:
+                    completed["metadata"] = ["url": "https://cdn.example/result.mp4"]
+                case .missingURL:
+                    break
+                case .legacyContentURL:
+                    completed["content"] = ["url": "https://cdn.example/result.mp4"]
+                }
             }
             payload = completed
-        } else if request.url.path == "/api/chatos/media/uploads" && request.method == "POST" {
-            let body = try JSONSerialization.jsonObject(with: request.body ?? Data()) as? [String: Any]
-            let count = (body?["assets"] as? [Any])?.count ?? 0
-            payload = ["uploads": (0..<count).map { index in
-                [
-                    "uploadUrl": "https://storage.example/upload/\(index)",
-                    "uploadHeaders": ["Host": "storage.example"],
-                    "url": "https://media.example/asset/\(index)",
-                ]
-            }]
-        } else if request.url.host == "storage.example" && request.method == "PUT" {
-            return .init(statusCode: 200, headers: [:], body: Data())
+        } else if request.url.absoluteString == root + "/video-h3/content"
+                    && request.method == "GET" {
+            if failAt == "content" { return failure() }
+            return .init(
+                statusCode: 200,
+                headers: ["content-type": "video/mp4"],
+                body: Data("mp4-data".utf8)
+            )
         } else if request.url.absoluteString == "https://cdn.example/result.mp4" {
             if failAt == "content" { return failure() }
             return .init(statusCode: 200, headers: ["content-type": "video/mp4"], body: Data("mp4-data".utf8))
@@ -581,22 +659,16 @@ private actor MediaGenerationTransport: HTTPTransport {
             body = Data(#"{"id":"image-model","name":"Image","provider":"gpt","model":"gpt-image-1","api_key":"secret","base_url":"https://provider.example/v1","enabled":true}"#.utf8)
             headers = [:]
         } else if request.url.path.hasSuffix("/ai-model-configs/video-model") {
-            body = Data(#"{"id":"video-model","name":"Sora Video","provider":"gpt","model":"sora-2","api_key":"video-secret","base_url":"https://provider.example/v1","enabled":true}"#.utf8)
-            headers = [:]
-        } else if request.url.path == "/api/chatos/media/uploads" {
-            body = Data(#"{"uploads":[{"uploadUrl":"https://storage.example/upload","uploadHeaders":{"Host":"storage.example"},"url":"https://media.example/first-frame.png"}]}"#.utf8)
-            headers = [:]
-        } else if request.url.host == "storage.example" && request.method == "PUT" {
-            body = Data()
+            body = Data(#"{"id":"video-model","name":"MiniMax H3","provider":"gpt","model":"MiniMax-H3","api_key":"video-secret","base_url":"https://provider.example/v1","enabled":true}"#.utf8)
             headers = [:]
         } else if request.url.absoluteString == "https://cdn.example/video-1.mp4" {
             body = Data("mp4-data".utf8)
             headers = ["content-type": "video/mp4"]
         } else if request.url.path.hasSuffix("/videos/video-1") {
-            body = Data(#"{"id":"video-1","status":"completed","progress":100,"model":"sora-2","metadata":{"url":"https://cdn.example/video-1.mp4"}}"#.utf8)
+            body = Data(#"{"id":"video-1","status":"completed","progress":100,"model":"MiniMax-H3","metadata":{"url":"https://cdn.example/video-1.mp4"}}"#.utf8)
             headers = [:]
         } else if request.url.path.hasSuffix("/videos") {
-            body = Data(#"{"id":"video-1","status":"queued","progress":0,"model":"sora-2"}"#.utf8)
+            body = Data(#"{"id":"video-1","status":"queued","progress":0,"model":"MiniMax-H3"}"#.utf8)
             headers = [:]
         } else {
             body = Data(#"{"id":"provider-result-1","model":"provider-image-model","data":[{"id":"provider-asset-1","b64_json":"aW1hZ2U=","revised_prompt":"orange fox in warm light"}]}"#.utf8)

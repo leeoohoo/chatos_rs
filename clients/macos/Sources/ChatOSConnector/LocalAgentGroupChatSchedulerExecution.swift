@@ -11,7 +11,7 @@ extension LocalAgentGroupChatScheduler {
         member: ProjectAgentRoomMember,
         delivery: ProjectAgentDelivery,
         savedRun: LocalAgentGroupChatRun? = nil
-    ) async throws -> RunResult {
+    ) async throws -> DeliveryAttemptReceipt {
         guard room.ownerUserID == ownerUserID,
               room.projectID == projectID,
               room.id == delivery.roomID,

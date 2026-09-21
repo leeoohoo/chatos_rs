@@ -131,6 +131,7 @@ extension MediaStudioView {
         case "uploading": status = appModel.localized("上传素材中", english: "Uploading media")
         case "queued": status = appModel.localized("排队中", english: "Queued")
         case "in_progress": status = appModel.localized("生成中", english: "Generating")
+        case "unknown": status = appModel.localized("等待状态更新", english: "Waiting for status")
         case "downloading": status = appModel.localized("下载中", english: "Downloading")
         case "saving": status = appModel.localized("保存中", english: "Saving")
         case "failed": status = appModel.localized("生成失败", english: "Failed")

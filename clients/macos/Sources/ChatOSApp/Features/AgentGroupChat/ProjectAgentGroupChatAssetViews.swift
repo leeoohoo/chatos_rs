@@ -135,22 +135,20 @@ struct TeamAssetHistorySheet: View {
                     .frame(width: 250)
                     Divider()
                     if let selected {
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 14) {
-                                HStack(alignment: .firstTextBaseline) {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(selected.title).appFont(.headline)
-                                        Text("r\(selected.revision) · \(editorName(selected)) · \(Self.timestamp(selected.createdAtUnixMs))")
-                                            .appFont(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
+                        VStack(alignment: .leading, spacing: 0) {
+                            HStack(alignment: .firstTextBaseline) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(selected.title).appFont(.headline)
+                                    Text("r\(selected.revision) · \(editorName(selected)) · \(Self.timestamp(selected.createdAtUnixMs))")
+                                        .appFont(.caption)
+                                        .foregroundStyle(.secondary)
                                 }
-                                Divider()
-                                MarkdownDocumentView(markdown: selected.markdown)
+                                Spacer()
                             }
                             .padding(20)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            Divider()
+                            MarkdownReaderView(markdown: selected.markdown)
+                                .padding(20)
                         }
                     }
                 }
@@ -240,10 +238,8 @@ struct TeamAssetEditorSheet: View {
                 .padding(16)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 Divider()
-                ScrollView {
-                    MarkdownDocumentView(markdown: markdown)
-                        .padding(18)
-                }
+                MarkdownReaderView(markdown: markdown)
+                    .padding(18)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }

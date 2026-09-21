@@ -144,6 +144,10 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
         } catch {
             throw MediaGenerationClientError.preflightFailed(error.localizedDescription)
         }
+        let profile = VideoGenerationProfile(modelName: runtime.model)
+        guard profile == .miniMaxH3 else {
+            throw MediaGenerationClientError.unsupportedVideoModel(runtime.model)
+        }
         var job: ProviderVideoJob
         if let existingJobID {
             let url = try Self.videoJobEndpoint(
@@ -153,26 +157,16 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
                 url: url, method: "GET", headers: Self.providerHeaders(runtime: runtime)
             ))
         } else {
-            try Self.validateUnifiedVideoRequest(
-                request, profile: .init(modelName: runtime.model)
-            )
-            let unifiedMedia: UnifiedVideoMedia?
-            if request.inputImage != nil || request.lastFrameImage != nil
-                || request.referenceVideo != nil || request.referenceAudio != nil {
-                await progress(.init(status: "uploading"))
-                unifiedMedia = try await uploadUnifiedVideoMedia(request)
-            } else {
-                unifiedMedia = nil
-            }
+            try Self.validateUnifiedVideoRequest(request, profile: profile)
             let createRequest = try Self.makeVideoCreateRequest(
-                runtime: runtime, request: request, unifiedMedia: unifiedMedia
+                runtime: runtime, request: request
             )
             job = try await sendVideoJobRequest(createRequest, isCreation: true)
         }
         await progress(.init(status: job.status, percent: job.progress, jobID: job.id))
 
         var pollCount = 0
-        while job.isPending {
+        while job.shouldPoll {
             try Task.checkCancellation()
             guard pollCount < maximumVideoPollCount else {
                 throw MediaGenerationClientError.videoTimedOut
@@ -195,30 +189,41 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
             await progress(.init(status: job.status, percent: job.progress, jobID: job.id))
         }
 
-        guard job.status == "completed" else {
+        guard !job.isFailed else {
             throw MediaGenerationClientError.videoFailed(job.errorMessage)
         }
+        guard job.isCompleted else { throw MediaGenerationClientError.invalidProviderResponse }
         try Task.checkCancellation()
-        guard let contentURL = job.contentURL,
-              contentURL.scheme?.lowercased() == "https", contentURL.host != nil,
-              contentURL.user == nil, contentURL.password == nil else {
-            throw MediaGenerationClientError.invalidProviderResponse
-        }
-        // Signed CDN URLs authorize themselves; never forward the NewAPI token.
-        let downloadHeaders = ["Accept": "video/mp4"]
-        await progress(.init(status: "downloading"))
-        let contentResponse = try await sendProviderRequest(
-            HTTPRequest(
+        let contentRequest: HTTPRequest
+        if job.hasMetadataContentURL {
+            guard let contentURL = job.contentURL,
+                  contentURL.scheme?.lowercased() == "https", contentURL.host != nil,
+                  contentURL.user == nil, contentURL.password == nil else {
+                throw MediaGenerationClientError.invalidProviderResponse
+            }
+            // Signed CDN URLs authorize themselves; never forward the NewAPI token.
+            contentRequest = HTTPRequest(
                 url: contentURL,
                 method: "GET",
-                headers: downloadHeaders,
+                headers: ["Accept": "video/mp4"],
                 timeoutInterval: 10 * 60
             )
-        )
+        } else {
+            contentRequest = HTTPRequest(
+                url: try Self.videoContentEndpoint(
+                    baseURL: runtime.baseURL ?? "", jobID: job.id
+                ),
+                method: "GET",
+                headers: Self.providerHeaders(runtime: runtime, accept: "video/mp4"),
+                timeoutInterval: 10 * 60
+            )
+        }
+        await progress(.init(status: "downloading"))
+        let contentResponse = try await sendProviderRequest(contentRequest)
         guard (200..<300).contains(contentResponse.statusCode) else {
             throw MediaGenerationClientError.providerRejected(
                 statusCode: contentResponse.statusCode,
-                detail: "下载视频内容（\(contentURL.host ?? "")\(contentURL.path)）：\(Self.providerErrorDetail(contentResponse.body))"
+                detail: "下载视频内容（\(contentRequest.url.host ?? "")\(contentRequest.url.path)）：\(Self.providerErrorDetail(contentResponse.body))"
             )
         }
         guard !contentResponse.body.isEmpty,
@@ -279,182 +284,67 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
         return runtime
     }
 
-    private func uploadUnifiedVideoMedia(
-        _ request: VideoGenerationRequest
-    ) async throws -> UnifiedVideoMedia {
-        var assets: [UnifiedVideoUploadAsset] = []
-        if let image = request.inputImage {
-            assets.append(.init(
-                role: .firstFrame, name: image.name, mimeType: image.mimeType,
-                base64Data: image.base64Data
-            ))
-        }
-        if let image = request.lastFrameImage {
-            assets.append(.init(
-                role: .lastFrame, name: image.name, mimeType: image.mimeType,
-                base64Data: image.base64Data
-            ))
-        }
-        if let video = request.referenceVideo {
-            assets.append(.init(
-                role: .referenceVideo, name: video.name, mimeType: video.mimeType,
-                base64Data: video.base64Data
-            ))
-        }
-        if let audio = request.referenceAudio {
-            assets.append(.init(
-                role: .referenceAudio, name: audio.name, mimeType: audio.mimeType,
-                base64Data: audio.base64Data
-            ))
-        }
-        guard !assets.isEmpty else { return .init() }
-
-        let decoded: [(asset: UnifiedVideoUploadAsset, data: Data)]
-        do {
-            decoded = try assets.map { asset in
-                guard let data = Data(base64Encoded: asset.base64Data), !data.isEmpty else {
-                    throw MediaGenerationClientError.mediaUploadFailed("“\(asset.name)”内容无效。")
-                }
-                return (asset, data)
-            }
-        } catch let error as MediaGenerationClientError {
-            throw error
-        } catch {
-            throw MediaGenerationClientError.mediaUploadFailed(error.localizedDescription)
-        }
-
-        let uploadRequest = UnifiedVideoUploadsRequest(assets: decoded.map {
-            .init(name: $0.asset.name, mimeType: $0.asset.mimeType, size: $0.data.count)
-        })
-        let uploadResponse: UnifiedVideoUploadsResponse
-        do {
-            uploadResponse = try await client.request(
-                "/media/uploads", method: "POST",
-                body: try JSONEncoder().encode(uploadRequest),
-                expectedAuthenticationSessionID: authenticationSessionID
-            )
-        } catch {
-            throw MediaGenerationClientError.mediaUploadFailed(error.localizedDescription)
-        }
-        guard uploadResponse.uploads.count == decoded.count else {
-            throw MediaGenerationClientError.mediaUploadFailed("上传地址数量与素材数量不一致。")
-        }
-
-        var media = UnifiedVideoMedia()
-        for ((asset, data), target) in zip(decoded, uploadResponse.uploads) {
-            try Task.checkCancellation()
-            guard let uploadURL = URL(string: target.uploadURL),
-                  ["https", "http"].contains(uploadURL.scheme?.lowercased() ?? ""),
-                  uploadURL.host != nil else {
-                throw MediaGenerationClientError.mediaUploadFailed("对象存储上传地址无效。")
-            }
-            var headers = (target.uploadHeaders ?? [:]).filter { key, _ in
-                key.caseInsensitiveCompare("Host") != .orderedSame
-                    && key.caseInsensitiveCompare("Content-Length") != .orderedSame
-            }
-            if !headers.keys.contains(where: { $0.caseInsensitiveCompare("Content-Type") == .orderedSame }) {
-                headers["Content-Type"] = asset.mimeType
-            }
-            let response: HTTPResponse
-            do {
-                response = try await sendProviderRequest(.init(
-                    url: uploadURL, method: "PUT", headers: headers, body: data,
-                    timeoutInterval: 10 * 60
-                ))
-            } catch {
-                throw MediaGenerationClientError.mediaUploadFailed(error.localizedDescription)
-            }
-            guard (200..<300).contains(response.statusCode) else {
-                throw MediaGenerationClientError.mediaUploadFailed(
-                    "“\(asset.name)”上传失败（HTTP \(response.statusCode)）。"
-                )
-            }
-            guard let publicURL = await client.resolvePublicURL(target.url),
-                  ["https", "http"].contains(publicURL.scheme?.lowercased() ?? ""),
-                  publicURL.host != nil, publicURL.user == nil, publicURL.password == nil else {
-                throw MediaGenerationClientError.mediaUploadFailed("对象存储没有返回公网读取地址。")
-            }
-            switch asset.role {
-            case .firstFrame: media.firstFrameURL = publicURL
-            case .lastFrame: media.lastFrameURL = publicURL
-            case .referenceVideo: media.referenceVideoURL = publicURL
-            case .referenceAudio: media.referenceAudioURL = publicURL
-            }
-        }
-        return media
-    }
-
     private static func makeVideoCreateRequest(
         runtime: RuntimeModelConfig,
-        request: VideoGenerationRequest,
-        unifiedMedia: UnifiedVideoMedia? = nil
+        request: VideoGenerationRequest
     ) throws -> HTTPRequest {
         let profile = VideoGenerationProfile(modelName: runtime.model)
         let endpoint = try videoCreateEndpoint(baseURL: runtime.baseURL ?? "")
         var headers = providerHeaders(runtime: runtime)
         headers["Content-Type"] = "application/json"
         let payload = try unifiedVideoPayload(
-            runtime: runtime, request: request, profile: profile, media: unifiedMedia
+            runtime: runtime, request: request, profile: profile
         )
         return HTTPRequest(
             url: endpoint,
             method: "POST",
             headers: headers,
             body: try JSONSerialization.data(withJSONObject: payload),
-            timeoutInterval: 120
+            timeoutInterval: 10 * 60
         )
     }
 
     private static func unifiedVideoPayload(
         runtime: RuntimeModelConfig,
         request: VideoGenerationRequest,
-        profile: VideoGenerationProfile,
-        media: UnifiedVideoMedia?
+        profile: VideoGenerationProfile
     ) throws -> [String: Any] {
         try validateUnifiedVideoRequest(request, profile: profile)
-        if request.inputImage != nil, media?.firstFrameURL == nil {
-            throw MediaGenerationClientError.mediaUploadFailed("首帧没有可用的公网地址。")
-        }
-        if request.lastFrameImage != nil, media?.lastFrameURL == nil {
-            throw MediaGenerationClientError.mediaUploadFailed("尾帧没有可用的公网地址。")
-        }
-        if request.referenceVideo != nil, media?.referenceVideoURL == nil {
-            throw MediaGenerationClientError.mediaUploadFailed("参考视频没有可用的公网地址。")
-        }
-        if request.referenceAudio != nil, media?.referenceAudioURL == nil {
-            throw MediaGenerationClientError.mediaUploadFailed("参考音频没有可用的公网地址。")
-        }
-
-        let duration = profile.isSeedance && request.referencePurpose == .edit
-            ? -1 : request.seconds
         var metadata: [String: Any] = [
             "ratio": request.referencePurpose == .reference
                 ? (request.inputImage == nil ? request.ratio : "adaptive") : "adaptive",
         ]
-        if let value = media?.firstFrameURL { metadata["first_frame_image"] = value.absoluteString }
-        if let value = media?.lastFrameURL { metadata["last_frame_image"] = value.absoluteString }
-        if let value = media?.referenceVideoURL { metadata["video_url"] = value.absoluteString }
-        if let value = media?.referenceAudioURL { metadata["audio_url"] = value.absoluteString }
-        if profile.isSeedance {
-            metadata["generate_audio"] = true
-            if request.referenceVideo != nil {
-                metadata["omni_reference_task_type"] = switch request.referencePurpose {
-                case .reference: "reference"
-                case .edit: "edit"
-                case .extend: "extend"
-                }
-            }
-            if profile == .seedance25 { metadata["output_format"] = "mp4" }
+        if let value = request.inputImage {
+            metadata["first_frame_image"] = dataURL(
+                mimeType: value.mimeType, base64Data: value.base64Data
+            )
+        }
+        if let value = request.lastFrameImage {
+            metadata["last_frame_image"] = dataURL(
+                mimeType: value.mimeType, base64Data: value.base64Data
+            )
+        }
+        if let value = request.referenceVideo {
+            metadata["video_url"] = dataURL(
+                mimeType: value.mimeType, base64Data: value.base64Data
+            )
+        }
+        if let value = request.referenceAudio {
+            metadata["audio_url"] = dataURL(
+                mimeType: value.mimeType, base64Data: value.base64Data
+            )
         }
         return [
             "model": runtime.model,
-            "prompt": profile.isSeedance
-                ? seedancePrompt(request.prompt, purpose: request.referencePurpose)
-                : request.prompt.trimmingCharacters(in: .whitespacesAndNewlines),
-            "duration": duration,
+            "prompt": request.prompt.trimmingCharacters(in: .whitespacesAndNewlines),
+            "duration": request.seconds,
             "size": request.size.lowercased(),
             "metadata": metadata,
         ]
+    }
+
+    private static func dataURL(mimeType: String, base64Data: String) -> String {
+        "data:\(mimeType.lowercased());base64,\(base64Data)"
     }
 
     private static func validateUnifiedVideoRequest(
@@ -473,24 +363,19 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
             throw MediaGenerationClientError.missingReferenceVideo
         }
         if let image = request.inputImage {
-            if profile.isMiniMax { try validateMiniMaxImage(image) }
-            else if profile.isSeedance { try validateSeedanceImage(image) }
-            else { try validateGenericVideoImage(image) }
+            try validateMiniMaxImage(image)
         }
         if let image = request.lastFrameImage {
             guard request.inputImage != nil, profile.supportsLastFrame else {
                 throw MediaGenerationClientError.unsupportedLastFrameProtocol
             }
-            if profile.isMiniMax { try validateMiniMaxImage(image) }
-            else if profile.isSeedance { try validateSeedanceImage(image) }
-            else { try validateGenericVideoImage(image) }
+            try validateMiniMaxImage(image)
         }
         if let video = request.referenceVideo {
             guard profile.supportsReferenceVideo else {
                 throw MediaGenerationClientError.unsupportedReferenceVideoProtocol
             }
-            if profile.isMiniMax { try validateMiniMaxReferenceVideo(video) }
-            else { try validateSeedanceReferenceVideo(video) }
+            try validateMiniMaxReferenceVideo(video)
         }
         if let audio = request.referenceAudio {
             guard profile.supportsReferenceVideo else {
@@ -498,55 +383,13 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
             }
             try validateReferenceAudio(audio)
         }
-        if profile.isMiniMax {
-            let prompt = request.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !prompt.isEmpty, prompt.unicodeScalars.count <= 7_000 else {
-                throw MediaGenerationClientError.invalidMiniMaxPrompt
-            }
-            guard request.inputImage != nil
-                    || VideoGenerationProfile.miniMaxRatios.contains(request.ratio) else {
-                throw MediaGenerationClientError.invalidVideoOptions
-            }
+        let prompt = request.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty, prompt.unicodeScalars.count <= 7_000 else {
+            throw MediaGenerationClientError.invalidMiniMaxPrompt
         }
-    }
-
-    private static func seedancePrompt(
-        _ prompt: String, purpose: VideoGenerationReferencePurpose
-    ) -> String {
-        let value = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        switch purpose {
-        case .reference:
-            return value
-        case .edit:
-            return "视频编辑：以@视频1为原视频，严格执行以下修改，未提及的主体、场景与镜头尽量保持不变。\n\(value)"
-        case .extend:
-            return "延长@视频1：从原视频结尾自然继续，保持人物、场景、动作方向、光线与运镜连贯，不要重复原视频已有内容。\n\(value)"
-        }
-    }
-
-    private static func validateSeedanceImage(_ image: ImageGenerationInputImage) throws {
-        let mimeType = image.mimeType.lowercased()
-        guard ["image/png", "image/jpeg", "image/webp"].contains(mimeType),
-              let data = Data(base64Encoded: image.base64Data), !data.isEmpty,
-              data.count <= 30 * 1024 * 1024 else {
-            throw MediaGenerationClientError.invalidInputImage
-        }
-    }
-
-    private static func validateGenericVideoImage(_ image: ImageGenerationInputImage) throws {
-        let mimeType = image.mimeType.lowercased()
-        guard ["image/png", "image/jpeg", "image/webp"].contains(mimeType),
-              let data = Data(base64Encoded: image.base64Data), !data.isEmpty,
-              data.count <= 20 * 1024 * 1024 else {
-            throw MediaGenerationClientError.invalidInputImage
-        }
-    }
-
-    private static func validateSeedanceReferenceVideo(_ video: VideoGenerationInputVideo) throws {
-        guard ["video/mp4", "video/quicktime"].contains(video.mimeType.lowercased()),
-              let data = Data(base64Encoded: video.base64Data), !data.isEmpty,
-              data.count <= 50 * 1024 * 1024 else {
-            throw MediaGenerationClientError.invalidReferenceVideo
+        guard request.inputImage != nil
+                || VideoGenerationProfile.miniMaxRatios.contains(request.ratio) else {
+            throw MediaGenerationClientError.invalidVideoOptions
         }
     }
 
@@ -625,6 +468,15 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
         return url
     }
 
+    private static func videoContentEndpoint(baseURL: String, jobID: String) throws -> URL {
+        guard let url = URL(
+            string: "\(normalizedProviderBaseURL(baseURL))/videos/\(jobID.urlPathEncoded)/content"
+        ) else {
+            throw MediaGenerationClientError.invalidModelConfiguration
+        }
+        return url
+    }
+
     private static func normalizedProviderBaseURL(_ rawValue: String) -> String {
         var value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         while value.hasSuffix("/") { value.removeLast() }
@@ -652,7 +504,7 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
               !id.isEmpty, let rawStatus = root["status"] as? String else {
             throw MediaGenerationClientError.invalidProviderResponse
         }
-        let status = rawStatus.lowercased()
+        let status = rawStatus.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let progress: Double?
         if let value = root["progress"] as? Double {
             progress = value
@@ -661,62 +513,28 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
         } else {
             progress = nil
         }
+        let explicitError = root["error"].flatMap { $0 is NSNull ? nil : $0 }
         let errorMessage: String?
-        if let error = root["error"] as? [String: Any] {
-            errorMessage = error["message"] as? String
+        if let error = explicitError as? [String: Any] {
+            errorMessage = (error["message"] as? String) ?? (error["detail"] as? String)
+        } else if let error = explicitError as? String {
+            let trimmed = error.trimmingCharacters(in: .whitespacesAndNewlines)
+            errorMessage = trimmed.isEmpty ? nil : trimmed
         } else {
             errorMessage = nil
         }
         let metadata = root["metadata"] as? [String: Any]
+        let rawContentURL = metadata?["url"] as? String
         return ProviderVideoJob(
             id: id,
             status: status,
             progress: progress,
             model: root["model"] as? String,
             errorMessage: errorMessage,
-            contentURL: (metadata?["url"] as? String).flatMap(URL.init(string:))
+            hasExplicitError: explicitError != nil,
+            contentURL: rawContentURL.flatMap(URL.init(string:)),
+            hasMetadataContentURL: rawContentURL != nil
         )
     }
 
-}
-
-private struct UnifiedVideoMedia {
-    var firstFrameURL: URL?
-    var lastFrameURL: URL?
-    var referenceVideoURL: URL?
-    var referenceAudioURL: URL?
-}
-
-private struct UnifiedVideoUploadAsset {
-    enum Role { case firstFrame, lastFrame, referenceVideo, referenceAudio }
-
-    var role: Role
-    var name: String
-    var mimeType: String
-    var base64Data: String
-}
-
-private struct UnifiedVideoUploadsRequest: Encodable {
-    var assets: [Asset]
-
-    struct Asset: Encodable {
-        var name: String
-        var mimeType: String
-        var size: Int
-    }
-}
-
-private struct UnifiedVideoUploadsResponse: Decodable, Sendable {
-    var uploads: [Upload]
-
-    struct Upload: Decodable, Sendable {
-        var uploadURL: String
-        var uploadHeaders: [String: String]?
-        var url: String
-
-        enum CodingKeys: String, CodingKey {
-            case url, uploadHeaders
-            case uploadURL = "uploadUrl"
-        }
-    }
 }

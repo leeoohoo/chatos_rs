@@ -75,4 +75,27 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
         XCTAssertTrue(rendered.contains("交付桌面客户端"))
         XCTAssertFalse(rendered.contains("{{room_goal}}"))
     }
+
+    func testLocalProjectPermissionIsAnExplicitNonManagerSkillWithExclusiveToolRoutes() {
+        let rendered = LocalAgentPromptCatalog.render(.permissionLocalProjects)
+        XCTAssertTrue(rendered.contains(#"<skill name="chatos-local-project-team-management""#))
+        XCTAssertTrue(rendered.contains("即使你不是 project_manager"))
+        XCTAssertTrue(rendered.contains("project_catalog"))
+        XCTAssertTrue(rendered.contains("team_propose_existing"))
+        XCTAssertTrue(rendered.contains("team_propose_new_project"))
+        XCTAssertTrue(rendered.contains("team_propose_import_directory"))
+        XCTAssertTrue(rendered.contains("猜测、补全、改写成 /"))
+        XCTAssertTrue(rendered.contains("不创建、移动、复制或建立软链接"))
+    }
+
+    func testCommunicationCycleSeparatesProjectPermissionFromTodoManagerRouting() {
+        let rendered = LocalAgentPromptCatalog.render(
+            .managerCycle,
+            values: ["heartbeat_directive": ""]
+        )
+        XCTAssertTrue(rendered.contains("不能覆盖另行授予的“查看本地项目并创建团队”权限"))
+        XCTAssertTrue(rendered.contains("chat_direct_open"))
+        XCTAssertTrue(rendered.contains("chat_direct_send"))
+        XCTAssertTrue(rendered.contains("Human-Agent 私聊"))
+    }
 }

@@ -5,6 +5,26 @@ import Foundation
 import XCTest
 
 final class NativeAgentPluginToolProviderTests: XCTestCase {
+    func testTodoAuthorizationCatalogUsesExecutorRuntimeToolDefinitions() {
+        let cases: [(LocalAgentTodoBuiltinCapability, [NativeJSONValue])] = [
+            (.projectRead, NativeMCPCodeReadTools.toolDefinitions),
+            (.projectWrite, NativeMCPCodeWriteStore.toolDefinitions),
+            (.terminal, NativeMCPTerminalStore.toolDefinitions),
+        ]
+
+        for (capability, definitions) in cases {
+            let descriptor = LocalAgentTodoAuthorizationCatalog.descriptor(for: capability)
+            XCTAssertEqual(descriptor.capability, capability)
+            XCTAssertEqual(
+                descriptor.toolNames,
+                definitions.compactMap { $0.jsonObject?["name"]?.jsonString }
+            )
+            XCTAssertFalse(descriptor.displayName.isEmpty)
+            XCTAssertFalse(descriptor.detail.isEmpty)
+            XCTAssertFalse(descriptor.toolNames.isEmpty)
+        }
+    }
+
     func testInstalledPluginRunsDirectlyWithoutRelayRequest() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("agent-plugin-provider-\(UUID().uuidString)")
