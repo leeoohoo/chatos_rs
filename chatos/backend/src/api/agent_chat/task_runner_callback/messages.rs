@@ -11,7 +11,7 @@ use crate::core::messages::ensure_message_metadata_object;
 use crate::core::task_runner_callback_display::{
     detect_task_runner_callback_language, sanitize_user_visible_callback_detail,
     summarize_task_runner_callback_detail, task_runner_callback_completion_detail,
-    task_runner_callback_detail_footer, TaskRunnerCallbackLanguage,
+    task_runner_callback_message_content, TaskRunnerCallbackLanguage,
 };
 use crate::models::message::Message;
 use crate::models::session::Session;
@@ -415,11 +415,6 @@ fn user_visible_callback_detail(
                     task_runner_callback_completion_detail(language).to_string(),
                 )
             });
-        let detail = format!(
-            "{}\n{}",
-            summary.trim(),
-            task_runner_callback_detail_footer(language)
-        );
         return Some((
             if language.is_english() {
                 "Result summary"
@@ -427,7 +422,7 @@ fn user_visible_callback_detail(
                 "结果摘要"
             },
             detail_source,
-            detail,
+            summary.trim().to_string(),
         ));
     }
     if payload.event == "task.cancelled" {
@@ -662,55 +657,9 @@ fn build_task_runner_callback_message_id(payload: &TaskRunnerCallbackRequest) ->
 }
 
 fn build_task_runner_callback_message_content(payload: &TaskRunnerCallbackRequest) -> String {
-    let title = payload.task_title.trim();
     let language = task_runner_callback_language(payload);
-    let headline = match (language, payload.event.as_str()) {
-        (TaskRunnerCallbackLanguage::EnUs, "task.run.started") => {
-            format!("Task “{title}” started")
-        }
-        (TaskRunnerCallbackLanguage::EnUs, "task.completed") => {
-            format!("Task “{title}” completed")
-        }
-        (TaskRunnerCallbackLanguage::EnUs, "task.failed") => {
-            format!("Task “{title}” failed")
-        }
-        (TaskRunnerCallbackLanguage::EnUs, "task.blocked") => {
-            format!("Task “{title}” is blocked")
-        }
-        (TaskRunnerCallbackLanguage::EnUs, "task.cancelled") => {
-            format!("Task “{title}” was cancelled")
-        }
-        (TaskRunnerCallbackLanguage::EnUs, _) => {
-            format!("Task “{title}” status updated")
-        }
-        (TaskRunnerCallbackLanguage::ZhCn, "task.run.started") => {
-            format!("任务「{title}」已开始执行")
-        }
-        (TaskRunnerCallbackLanguage::ZhCn, "task.completed") => {
-            format!("任务「{title}」已完成")
-        }
-        (TaskRunnerCallbackLanguage::ZhCn, "task.failed") => {
-            format!("任务「{title}」执行失败")
-        }
-        (TaskRunnerCallbackLanguage::ZhCn, "task.blocked") => {
-            format!("任务「{title}」当前被阻塞")
-        }
-        (TaskRunnerCallbackLanguage::ZhCn, "task.cancelled") => {
-            format!("任务「{title}」已取消")
-        }
-        (TaskRunnerCallbackLanguage::ZhCn, _) => format!("任务「{title}」状态更新"),
-    };
-    match user_visible_callback_detail(payload, language) {
-        Some((label, _, detail)) => {
-            let separator = if language.is_english() { ":" } else { "：" };
-            if detail.is_empty() {
-                headline
-            } else {
-                format!("{headline}\n\n{label}{separator}\n{detail}")
-            }
-        }
-        None => headline,
-    }
+    let detail = user_visible_callback_detail(payload, language).map(|(_, _, detail)| detail);
+    task_runner_callback_message_content(payload.event.as_str(), detail.as_deref(), language)
 }
 
 pub(super) fn publish_task_runner_callback_realtime(

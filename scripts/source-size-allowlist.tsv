@@ -24,6 +24,7 @@ crates/chatos_ai_runtime/src/turn.rs	1076	2026-10-31	3.0 hardening: split turn a
 plugins/browser/crates/browser-cdp-bridge/src/server.rs	1182	2026-10-31	3.0 plugin import: split Browser Bridge server protocol and connection lifecycle
 local_connector_service/backend/src/api/mod.rs	1110	2026-10-31	3.0 hardening: split Local Connector API router, middleware, and shared responses
 chatos/backend/src/api/sessions/history_process.rs	1002	2026-10-31	3.0 hardening: split history compaction, callbacks, repair, and display projection
+scripts/deploy-production.sh	833	2026-10-31	Existing deployment debt: split local validation from remote release orchestration
 crates/chatos_cloud_agent_runtime/src/rabbitmq_driver.rs	995	2026-10-31	3.0 hardening: split cloud Agent RabbitMQ driver lifecycle and delivery handling
 plugins/browser/crates/browser-cdp-direct/src/lib.rs	994	2026-10-31	3.0 plugin import: split direct CDP transport and command families
 plugin_management_service/backend/src/api/plugin_catalog_sync.rs	939	2026-09-30	Phase 1D: split catalog fetch, signature validation, key rotation, and persistence
@@ -46,7 +47,7 @@ local_connector_service/backend/src/api/remote_connection_relay.rs	882	2026-10-3
 chatos/backend/src/api/ask_user_prompts.rs	877	2026-10-31	Existing ChatOS debt: split ask-user request lifecycle and API projections
 local_connector_service/backend/src/api/devices.rs	875	2026-10-31	Existing Local Connector debt: split device enrollment, lease, and query handlers
 plugins/diagram-studio/src/document-store.ts	875	2026-10-31	Existing diagram-studio debt: split document persistence and version operations
-chatos/backend/src/api/mod.rs	851	2026-10-31	Existing ChatOS debt: split API router assembly by domain
+chatos/backend/src/api/mod.rs	852	2026-10-31	Existing ChatOS debt: split API router assembly by domain
 mcp_management_service/backend/src/providers/plugin_components/local_runtime.rs	851	2026-10-31	Existing MCP debt: split local plugin runtime setup and invocation paths
 local_connector_service/backend/src/api/internal_auth.rs	850	2026-10-31	Existing Local Connector debt: split internal token validation and handlers
 memory_engine/backend/src/services/summary/thread_summary/execution.rs	842	2026-10-31	3.0 hardening: split thread summary execution and persistence stages

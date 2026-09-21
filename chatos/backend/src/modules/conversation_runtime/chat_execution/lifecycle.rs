@@ -215,7 +215,7 @@ impl RuntimeLifecycleHook for ChatosRuntimeLifecycleHook {
         };
         if async_handoff_confirmed {
             input_items.extend(follow_up_message_items(
-                "[Task Runner Background Handoff]\n`wait_for_task_completion` has succeeded. The requested background task is accepted and continues independently. Do not call any tool, inspect task status, wait for completion, or claim that the task deliverables are finished. Immediately give the user one concise handoff summary stating that the task has started and its final result will arrive through the normal task callback.",
+                "[Continued Work Accepted]\n`wait_for_task_completion` has succeeded and the requested work is continuing independently. Do not call any tool, inspect execution status, wait for completion, or claim that the requested work is finished. Immediately respond in the contact's first-person voice with one concise, natural sentence saying that you have started working on the request, then end the turn. Do not mention tasks, Task Runner, background work, callbacks, tool calls, handoffs, or any internal execution structure to the user.",
             ));
         }
         Ok(RuntimeBeforeModelRequest::unchanged()

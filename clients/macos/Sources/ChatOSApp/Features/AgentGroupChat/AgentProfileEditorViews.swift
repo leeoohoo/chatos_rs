@@ -1,15 +1,18 @@
 import ChatOSAgentRuntime
 import ChatOSConnector
 import ChatOSCore
+import Foundation
 import SwiftUI
 
 struct AgentProfileEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var model: AppModel
     @ObservedObject var viewModel: AgentGroupChatWorkspaceViewModel
     let target: AgentProfileEditorTarget
     let professions: [LocalAgentProfessionDefinition]
 
     @State private var name: String
+    @State private var avatarData: Data?
     @State private var description: String
     @State private var rolePrompt: String
     @State private var modelConfigID: String
@@ -37,6 +40,7 @@ struct AgentProfileEditorSheet: View {
             profile = value
         }
         _name = State(initialValue: profile?.draft.name ?? "")
+        _avatarData = State(initialValue: profile?.draft.avatarData)
         _description = State(initialValue: profile?.draft.description ?? "")
         _rolePrompt = State(initialValue: profile?.draft.rolePrompt
             ?? LocalAgentPromptCatalog.render(.agentDefaultRole))
@@ -76,6 +80,13 @@ struct AgentProfileEditorSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    editorField("头像") {
+                        AgentAvatarEditor(
+                            avatarData: $avatarData,
+                            agentName: name,
+                            generatedImages: model.mediaStudio.history.flatMap(\.images)
+                        )
+                    }
                     editorField("名称") {
                         TextField("Agent 名称", text: $name)
                             .textFieldStyle(.roundedBorder)
@@ -197,6 +208,7 @@ struct AgentProfileEditorSheet: View {
                         if await viewModel.saveAgent(
                             existing: existing,
                             name: name,
+                            avatarData: avatarData,
                             description: description,
                             rolePrompt: rolePrompt,
                             modelConfigID: modelConfigID,

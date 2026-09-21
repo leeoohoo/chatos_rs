@@ -23,7 +23,6 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
     @Published private(set) var runActionDeliveryIDs: Set<String> = []
     @Published var selectedRoomID: String?
     @Published private(set) var isLoading = false
-    @Published private(set) var isLoadingModels = false
     @Published private(set) var isCreating = false
     @Published private(set) var isSavingAgent = false
     @Published var errorMessage: String?
@@ -130,9 +129,7 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
             modelLoadTask = created
             task = created
         }
-        isLoadingModels = true
         defer {
-            isLoadingModels = false
             modelLoadTask = nil
         }
         do {
@@ -154,6 +151,7 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
     func saveAgent(
         existing: LocalAgentProfile?,
         name: String,
+        avatarData: Data?,
         description: String,
         rolePrompt: String,
         modelConfigID: String,
@@ -187,6 +185,7 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
         )
         let draft = LocalAgentProfileDraft(
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            avatarData: avatarData,
             description: description.trimmingCharacters(in: .whitespacesAndNewlines),
             rolePrompt: rolePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
             modelConfigID: modelConfigID,

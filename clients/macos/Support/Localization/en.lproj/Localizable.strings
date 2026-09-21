@@ -582,3 +582,13 @@
 "Agent 创建并成功同步的 Markdown 会出现在这里。" = "Markdown created and successfully synced by Agents appears here.";
 "预览" = "Preview";
 "关闭错误提示" = "Dismiss Error";
+"团队成员" = "Team Members";
+"点击成员查看运行状态" = "Select a member to view run status";
+"可用" = "Available";
+"选择头像" = "Choose Avatar";
+"从本机选择" = "Choose from Mac";
+"从生成记录选择" = "Choose from Generated Images";
+"使用默认头像" = "Use Default Avatar";
+"暂无图片生成记录，仍可从本机选择。" = "No generated images yet. You can still choose one from your Mac.";
+"从图片生成记录复制一张图片作为头像。" = "Copy an image from generation history to use as the avatar.";
+"正在准备 Agent 设置…" = "Preparing Agent settings…";

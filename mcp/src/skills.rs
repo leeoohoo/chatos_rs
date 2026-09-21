@@ -148,6 +148,8 @@ mod tests {
             .instructions
             .contains("不是等待任务终态的轮询函数"));
         assert!(skills[0].instructions.contains("本轮不得再调用"));
+        assert!(skills[0].instructions.contains("以联系人第一人称自然说明"));
+        assert!(skills[0].instructions.contains("不得向用户提及 Task"));
     }
 
     #[test]

@@ -128,6 +128,7 @@ extension MediaStudioView {
         let status: String
         switch progress.status {
         case "submitting": status = appModel.localized("提交中", english: "Submitting")
+        case "uploading": status = appModel.localized("上传素材中", english: "Uploading media")
         case "queued": status = appModel.localized("排队中", english: "Queued")
         case "in_progress": status = appModel.localized("生成中", english: "Generating")
         case "downloading": status = appModel.localized("下载中", english: "Downloading")
@@ -159,6 +160,7 @@ extension MediaStudioView {
 
                 videoModelSelector
                 videoInputImageSelector
+                videoReferenceAudioSelector
 
                 VStack(alignment: .leading, spacing: 8) {
                     fieldLabel(appModel.localized("提示词", english: "Prompt"))
@@ -359,6 +361,66 @@ extension MediaStudioView {
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
         viewModel.selectVideoInputImage(from: url)
+    }
+
+    var videoReferenceAudioSelector: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            fieldLabel(appModel.localized("参考音频（可选）", english: "Reference Audio (Optional)"))
+            if viewModel.isLoadingVideoReferenceAudio {
+                ProgressView(appModel.localized("正在读取参考音频…", english: "Loading reference audio…"))
+                    .font(.caption)
+                    .controlSize(.small)
+            }
+            if let audio = viewModel.videoReferenceAudio {
+                HStack(spacing: 10) {
+                    Image(systemName: "waveform.circle.fill")
+                        .font(.system(size: 28))
+                        .foregroundStyle(.purple)
+                    Text(audio.name)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .lineLimit(1)
+                    Spacer()
+                    Button { chooseVideoReferenceAudio() } label: {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                    }
+                    .buttonStyle(.borderless)
+                    Button { viewModel.removeVideoReferenceAudio() } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.borderless)
+                }
+                .padding(9)
+                .background(Color.purple.opacity(0.055), in: RoundedRectangle(cornerRadius: 11))
+            } else {
+                Button { chooseVideoReferenceAudio() } label: {
+                    Label(
+                        appModel.localized("添加参考音频", english: "Add reference audio"),
+                        systemImage: "waveform.badge.plus"
+                    )
+                    .font(.system(size: 11.5, weight: .medium))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 11)
+                }
+                .buttonStyle(.plain)
+                .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 11))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 11)
+                        .stroke(Color.primary.opacity(0.11), style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+                }
+            }
+        }
+    }
+
+    func chooseVideoReferenceAudio() {
+        let panel = NSOpenPanel()
+        panel.title = appModel.localized("选择视频参考音频", english: "Choose Video Reference Audio")
+        panel.prompt = appModel.localized("选择", english: "Choose")
+        panel.allowedContentTypes = [.audio]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        viewModel.selectVideoReferenceAudio(from: url)
     }
 
 }

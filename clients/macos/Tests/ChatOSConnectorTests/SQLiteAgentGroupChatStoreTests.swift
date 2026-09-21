@@ -87,6 +87,49 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         )
     }
 
+    func testAgentAvatarPersistsUpdatesAndCanReturnToDefault() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let firstAvatar = Data(repeating: 0xA5, count: 1_024)
+        let created = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "Avatar Agent",
+                avatarData: firstAvatar,
+                rolePrompt: "Use the selected avatar.",
+                modelConfigID: "model-1"
+            )
+        )
+        XCTAssertEqual(created.draft.avatarData, firstAvatar)
+        let listed = try await store.listAgents(ownerUserID: "alice")
+        XCTAssertEqual(listed.first?.draft.avatarData, firstAvatar)
+
+        let secondAvatar = Data(repeating: 0x5A, count: 2_048)
+        let updated = try await store.updateAgentProfile(
+            ownerUserID: "alice",
+            agentID: created.id,
+            draft: .init(
+                name: created.draft.name,
+                avatarData: secondAvatar,
+                rolePrompt: created.draft.rolePrompt,
+                modelConfigID: created.draft.modelConfigID
+            )
+        )
+        XCTAssertEqual(updated.draft.avatarData, secondAvatar)
+
+        let reset = try await store.updateAgentProfile(
+            ownerUserID: "alice",
+            agentID: created.id,
+            draft: .init(
+                name: created.draft.name,
+                rolePrompt: created.draft.rolePrompt,
+                modelConfigID: created.draft.modelConfigID
+            )
+        )
+        XCTAssertNil(reset.draft.avatarData)
+    }
+
     func testListRoomsReturnsOnlyActiveRoomsForOwnerInRecentOrder() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }

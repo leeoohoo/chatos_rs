@@ -446,7 +446,8 @@ mod tests {
             },
         ]);
 
-        assert!(compact[1].content.contains("任务「创建需求」已完成"));
+        assert!(!compact[1].content.contains("任务「创建需求」已完成"));
+        assert!(!compact[1].content.contains("结果摘要"));
         assert!(compact[1].content.contains("草稿"));
         assert!(compact[1].content.contains("实施计划"));
         assert!(!compact[1].content.contains("requirement_id"));
@@ -499,12 +500,10 @@ mod tests {
         assert!(compact[1]
             .content
             .contains("已梳理项目用途、核心流程和主要模块。"));
-        assert!(compact[1]
-            .content
-            .contains("更多实施细节可在任务详情中查看。"));
-        assert!(!compact[1]
-            .content
-            .contains("已完成当前任务并通过任务内验证"));
+        for hidden in "任务「梳理项目用途」已完成|结果摘要|任务详情|我已经处理完了".split('|')
+        {
+            assert!(!compact[1].content.contains(hidden));
+        }
     }
 
     #[test]
@@ -538,7 +537,8 @@ mod tests {
             },
         ]);
 
-        assert_eq!(compact[1].content, "任务暂时无法启动，请稍后重试。");
+        let expected = "我这次没有处理完成。\n\n任务暂时无法启动，请稍后重试。";
+        assert_eq!(compact[1].content, expected);
         assert!(!compact[1].content.contains("checksum"));
         let result_summary = compact[1]
             .metadata

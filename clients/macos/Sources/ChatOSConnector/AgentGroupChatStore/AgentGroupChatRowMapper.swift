@@ -12,6 +12,7 @@ enum AgentGroupChatRowMapper {
             ownerUserID: string(statement, 0),
             draft: .init(
                 name: string(statement, 2),
+                avatarData: optionalData(statement, 18),
                 description: string(statement, 3),
                 rolePrompt: string(statement, 4),
                 modelConfigID: string(statement, 5),
@@ -429,6 +430,12 @@ enum AgentGroupChatRowMapper {
         guard sqlite3_column_type(statement, index) != SQLITE_NULL,
               let value = sqlite3_column_text(statement, index) else { return nil }
         return String(cString: value)
+    }
+
+    private static func optionalData(_ statement: OpaquePointer, _ index: Int32) -> Data? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL,
+              let bytes = sqlite3_column_blob(statement, index) else { return nil }
+        return Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, index)))
     }
 
     private static func optionalInt64(_ statement: OpaquePointer, _ index: Int32) -> Int64? {

@@ -65,6 +65,10 @@ public actor ChatOSAPIClient {
         return components.url
     }
 
+    func resolvePublicURL(_ value: String) -> URL? {
+        ChatOSAttachmentURLResolver.resolve(value, apiBaseURL: configuration.baseURL)
+    }
+
     func request<Response: Decodable & Sendable>(
         _ endpoint: String,
         method: String = "GET",

@@ -335,6 +335,8 @@ mod tests {
         assert!(content.contains("项目绑定本身不是创建 Task 的条件"));
         assert!(content.contains("`wait_for_task_completion` 表示"));
         assert!(content.contains("不得等待任务终态或产物"));
+        assert!(content.contains("以联系人第一人称自然说明"));
+        assert!(content.contains("不得向用户提及 Task"));
         assert!(content.contains("然后结束当前轮"));
 
         let run_prompt = prompts

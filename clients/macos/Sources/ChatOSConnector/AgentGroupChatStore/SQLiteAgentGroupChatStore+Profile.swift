@@ -31,8 +31,8 @@ extension SQLiteAgentGroupChatStore {
                 thinking_level, profession_key, default_plugin_ids_json, default_skill_ids_json,
                 heartbeat_enabled, heartbeat_interval_seconds, heartbeat_prompt,
                 last_heartbeat_at_unix_ms, next_heartbeat_at_unix_ms,
-                status, created_at_unix_ms, updated_at_unix_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+                status, created_at_unix_ms, updated_at_unix_ms, avatar_data
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
             """,
             [
                 .text(ownerUserID), .text(record.id), .text(draft.name),
@@ -45,6 +45,7 @@ extension SQLiteAgentGroupChatStore {
                 .integer(Int64(draft.heartbeatIntervalSeconds)), .text(draft.heartbeatPrompt),
                 nextHeartbeatAtUnixMs.map(Value.integer) ?? .null, .text(record.status.rawValue),
                 .integer(now), .integer(now),
+                .optionalBlob(draft.avatarData),
             ]
         )
         return record
@@ -227,7 +228,7 @@ extension SQLiteAgentGroupChatStore {
                     thinking_level = ?, profession_key = ?, default_plugin_ids_json = ?,
                     default_skill_ids_json = ?, heartbeat_enabled = ?,
                     heartbeat_interval_seconds = ?, heartbeat_prompt = ?,
-                    next_heartbeat_at_unix_ms = ?, updated_at_unix_ms = ?
+                    next_heartbeat_at_unix_ms = ?, avatar_data = ?, updated_at_unix_ms = ?
                 WHERE owner_user_id = ? AND id = ? AND status = 'active'
                 """,
                 [
@@ -237,7 +238,8 @@ extension SQLiteAgentGroupChatStore {
                     .text(try encodeStrings(draft.defaultSkillIDs)),
                     .integer(draft.heartbeatEnabled ? 1 : 0),
                     .integer(Int64(draft.heartbeatIntervalSeconds)), .text(draft.heartbeatPrompt),
-                    nextHeartbeatAtUnixMs.map(Value.integer) ?? .null, .integer(now),
+                    nextHeartbeatAtUnixMs.map(Value.integer) ?? .null,
+                    .optionalBlob(draft.avatarData), .integer(now),
                     .text(ownerUserID), .text(agentID),
                 ]
             )
@@ -277,7 +279,7 @@ extension SQLiteAgentGroupChatStore {
                 UPDATE local_agent_profiles
                 SET name = ?, description = ?, role_prompt = ?, model_config_id = ?,
                     thinking_level = ?, profession_key = ?, default_plugin_ids_json = ?,
-                    default_skill_ids_json = ?, updated_at_unix_ms = ?
+                    default_skill_ids_json = ?, avatar_data = ?, updated_at_unix_ms = ?
                 WHERE owner_user_id = ? AND id = ? AND status = 'active'
                 """,
                 [
@@ -286,7 +288,8 @@ extension SQLiteAgentGroupChatStore {
                     profileDraft.thinkingLevel.map(Value.text) ?? .null,
                     .text(profileDraft.professionKey),
                     .text(try encodeStrings(profileDraft.defaultPluginIDs)),
-                    .text(try encodeStrings(profileDraft.defaultSkillIDs)), .integer(now),
+                    .text(try encodeStrings(profileDraft.defaultSkillIDs)),
+                    .optionalBlob(profileDraft.avatarData), .integer(now),
                     .text(ownerUserID), .text(agentID),
                 ]
             )

@@ -6,9 +6,11 @@ enum AgentGroupChatDatabase {
     enum Value {
         case text(String)
         case integer(Int64)
+        case blob(Data)
         case null
 
         static func optionalText(_ value: String?) -> Self { value.map(Self.text) ?? .null }
+        static func optionalBlob(_ value: Data?) -> Self { value.map(Self.blob) ?? .null }
     }
 
     static func open(at databaseURL: URL) throws -> OpaquePointer? {
@@ -74,6 +76,16 @@ enum AgentGroupChatDatabase {
                 )
             case let .integer(number):
                 result = sqlite3_bind_int64(statement, index, number)
+            case let .blob(data):
+                result = data.withUnsafeBytes { bytes in
+                    sqlite3_bind_blob(
+                        statement,
+                        index,
+                        bytes.baseAddress,
+                        Int32(bytes.count),
+                        unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+                    )
+                }
             case .null:
                 result = sqlite3_bind_null(statement, index)
             }

@@ -587,10 +587,20 @@ struct AgentDirectChatView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Image(systemName: viewModel.isHumanDirect
-                  ? "bubble.left.and.bubble.right.fill" : "person.2.wave.2.fill")
-                .font(.title2)
-                .foregroundStyle(Color.accentColor)
+            if viewModel.isHumanDirect,
+               let agentID = viewModel.conversation?.defaultAgentID,
+               let agent = viewModel.profilesByID[agentID] {
+                AgentAvatarView(
+                    name: agent.draft.name,
+                    data: agent.draft.avatarData,
+                    size: 38,
+                    cornerRadius: 12
+                )
+            } else {
+                Image(systemName: "person.2.wave.2.fill")
+                    .font(.title2)
+                    .foregroundStyle(Color.accentColor)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(viewModel.title).font(.headline)
                 Text(viewModel.isHumanDirect ? "私聊" : "Agent 之间的私聊")
@@ -641,11 +651,20 @@ struct AgentDirectChatView: View {
 
     private func messageRow(_ message: ProjectAgentMessage) -> some View {
         let isHuman = message.senderKind == .human
+        let displayName = viewModel.displayName(for: message)
         return HStack(alignment: .top, spacing: 12) {
             if isHuman { Spacer(minLength: 80) }
+            if !isHuman {
+                AgentAvatarView(
+                    name: displayName,
+                    data: viewModel.profilesByID[message.senderID]?.draft.avatarData,
+                    size: 32,
+                    cornerRadius: 10
+                )
+            }
             VStack(alignment: isHuman ? .trailing : .leading, spacing: 6) {
                 HStack(spacing: 8) {
-                    Text(viewModel.displayName(for: message))
+                    Text(displayName)
                         .font(.caption.weight(.medium))
                     Text(formattedMessageTime(message.createdAtUnixMs))
                         .font(.caption2)
@@ -672,7 +691,7 @@ struct AgentDirectChatView: View {
                         ownerUserID: message.ownerUserID,
                         roomID: message.roomID,
                         messageID: message.id,
-                        creatorName: viewModel.displayName(for: message),
+                        creatorName: displayName,
                         attachments: message.attachmentItems,
                         dataByID: viewModel.attachmentDataByID,
                         service: model.agentGroupChatService
@@ -680,6 +699,9 @@ struct AgentDirectChatView: View {
                 }
             }
             .frame(maxWidth: 900, alignment: isHuman ? .trailing : .leading)
+            if isHuman {
+                AgentAvatarView(name: "你", data: nil, size: 32, cornerRadius: 10)
+            }
             if !isHuman { Spacer(minLength: 80) }
         }
         .frame(maxWidth: .infinity)

@@ -10,7 +10,7 @@ use crate::core::messages::{
 use crate::core::task_runner_callback_display::{
     detect_task_runner_callback_language, sanitize_user_visible_callback_detail,
     summarize_task_runner_callback_detail, task_runner_callback_completion_detail,
-    task_runner_callback_detail_footer,
+    task_runner_callback_message_content,
 };
 use crate::core::tool_call::extract_tool_call_id;
 use crate::models::message::Message;
@@ -537,43 +537,30 @@ pub(super) fn normalize_task_runner_callback_for_display(message: &mut Message) 
         .map(ToOwned::to_owned);
     let sanitized_content =
         sanitize_user_visible_callback_detail(message.content.as_str(), language);
+    let content_detail = sanitized_content
+        .lines()
+        .filter(|line| !callback_line_is_display_wrapper(line.trim()))
+        .collect::<Vec<_>>()
+        .join("\n");
     let completed_detail = if event == "task.completed" {
-        let headline = sanitized_content
-            .lines()
-            .find(|line| !line.trim().is_empty())
-            .unwrap_or_default()
-            .trim();
-        let content_detail = sanitized_content
-            .lines()
-            .skip_while(|line| line.trim() != headline)
-            .skip(1)
-            .filter(|line| {
-                !matches!(
-                    line.trim(),
-                    "Result summary:" | "Result summary：" | "结果摘要:" | "结果摘要："
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
         let summary = stored_detail
             .as_deref()
             .and_then(|detail| summarize_task_runner_callback_detail(detail, language))
             .or_else(|| summarize_task_runner_callback_detail(content_detail.as_str(), language))
             .unwrap_or_else(|| task_runner_callback_completion_detail(language).to_string());
-        let detail = format!(
-            "{}\n{}",
-            summary.trim(),
-            task_runner_callback_detail_footer(language)
-        );
-        let label = if language.is_english() {
-            "Result summary:"
-        } else {
-            "结果摘要："
-        };
-        message.content = format!("{headline}\n\n{label}\n{detail}");
-        Some(detail)
+        message.content =
+            task_runner_callback_message_content(event.as_str(), Some(summary.as_str()), language);
+        Some(summary)
     } else {
-        message.content = sanitized_content;
+        let detail = stored_detail
+            .as_deref()
+            .map(|detail| sanitize_user_visible_callback_detail(detail, language))
+            .filter(|detail| !detail.trim().is_empty())
+            .or_else(|| {
+                (!content_detail.trim().is_empty()).then(|| content_detail.trim().to_string())
+            });
+        message.content =
+            task_runner_callback_message_content(event.as_str(), detail.as_deref(), language);
         None
     };
 
@@ -618,6 +605,54 @@ pub(super) fn normalize_task_runner_callback_for_display(message: &mut Message) 
             *value = sanitize_user_visible_callback_detail(value.as_str(), language);
         }
     }
+}
+
+fn callback_line_is_display_wrapper(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    matches!(
+        value,
+        "Result summary:"
+            | "Result summary："
+            | "结果摘要:"
+            | "结果摘要："
+            | "Error:"
+            | "Error："
+            | "错误信息:"
+            | "错误信息："
+            | "我已经开始处理了。"
+            | "我这次没有处理完成。"
+            | "我暂时还无法继续处理。"
+            | "我已经停下来了。"
+            | "我还在继续处理。"
+    ) || matches!(
+        lower.as_str(),
+        "i've started working on it."
+            | "i couldn't complete this."
+            | "i can't continue yet."
+            | "i've stopped working on it."
+            | "i'm continuing to work on it."
+    ) || (value.starts_with("任务「")
+        && [
+            "」已开始执行",
+            "」已完成",
+            "」执行失败",
+            "」当前被阻塞",
+            "」已取消",
+            "」状态更新",
+        ]
+        .iter()
+        .any(|suffix| value.ends_with(suffix)))
+        || (lower.starts_with("task ")
+            && [
+                " started",
+                " completed",
+                " failed",
+                " is blocked",
+                " was cancelled",
+                " status updated",
+            ]
+            .iter()
+            .any(|suffix| lower.ends_with(suffix)))
 }
 
 pub(super) fn select_final_assistant_index(

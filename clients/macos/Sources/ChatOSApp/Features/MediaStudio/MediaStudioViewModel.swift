@@ -60,6 +60,7 @@ final class MediaStudioViewModel: ObservableObject {
     @Published var videoSeconds = 4
     @Published private(set) var inputImages: [ImageGenerationInputImage] = []
     @Published private(set) var videoInputImage: ImageGenerationInputImage?
+    @Published private(set) var videoReferenceAudio: VideoGenerationInputAudio?
     @Published private(set) var models: [MediaGenerationModel] = []
     @Published private(set) var videoModels: [MediaGenerationModel] = []
     @Published private(set) var history: [HistoryItem] = []
@@ -72,6 +73,7 @@ final class MediaStudioViewModel: ObservableObject {
     @Published private(set) var historyErrorMessage: String?
     @Published private(set) var isLoadingHistory = false
     @Published private(set) var isLoadingVideoInputImage = false
+    @Published private(set) var isLoadingVideoReferenceAudio = false
     @Published private(set) var isLoadingInputImages = false
 
     private let service: any MediaGenerationServicing
@@ -86,6 +88,8 @@ final class MediaStudioViewModel: ObservableObject {
     private var videoOperationID = UUID()
     private var videoInputSelectionID = UUID()
     private var videoInputTask: Task<Void, Never>?
+    private var videoAudioSelectionID = UUID()
+    private var videoAudioTask: Task<Void, Never>?
     private var inputImagesTask: Task<Void, Never>?
     private var inputImagesSelectionID = UUID()
     private let imageTransport: any HTTPTransport
@@ -143,6 +147,7 @@ final class MediaStudioViewModel: ObservableObject {
     var canGenerateVideo: Bool {
         !isGeneratingVideo
             && !isLoadingVideoInputImage
+            && !isLoadingVideoReferenceAudio
             && ownerID != nil && !isLoadingHistory
             && selectedVideoModelID != nil
             && !videoPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -220,7 +225,8 @@ final class MediaStudioViewModel: ObservableObject {
         let submittedPrompt = videoPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let request = VideoGenerationRequest(
             modelConfigID: selectedVideoModelID, prompt: submittedPrompt,
-            size: videoSize, seconds: videoSeconds, inputImage: videoInputImage, ratio: videoRatio
+            size: videoSize, seconds: videoSeconds, inputImage: videoInputImage,
+            referenceAudio: videoReferenceAudio, ratio: videoRatio
         )
         isGeneratingVideo = true
         videoProgress = .init(status: "submitting")
@@ -410,6 +416,38 @@ final class MediaStudioViewModel: ObservableObject {
         videoInputImage = nil
     }
 
+    func selectVideoReferenceAudio(from url: URL) {
+        videoAudioTask?.cancel()
+        videoAudioSelectionID = UUID()
+        let selection = videoAudioSelectionID
+        let session = sessionID
+        errorMessage = nil
+        isLoadingVideoReferenceAudio = true
+        videoAudioTask = Task {
+            do {
+                let audio = try await Task.detached(priority: .userInitiated) {
+                    try Self.loadReferenceAudio(from: url)
+                }.value
+                guard sessionID == session, videoAudioSelectionID == selection else { return }
+                videoReferenceAudio = audio
+            } catch {
+                guard sessionID == session, videoAudioSelectionID == selection else { return }
+                errorMessage = error.localizedDescription
+            }
+            guard sessionID == session, videoAudioSelectionID == selection else { return }
+            isLoadingVideoReferenceAudio = false
+            videoAudioTask = nil
+        }
+    }
+
+    func removeVideoReferenceAudio() {
+        videoAudioSelectionID = UUID()
+        videoAudioTask?.cancel()
+        videoAudioTask = nil
+        isLoadingVideoReferenceAudio = false
+        videoReferenceAudio = nil
+    }
+
     func reportInputImageError(_ error: Error) {
         errorMessage = error.localizedDescription
     }
@@ -437,6 +475,7 @@ final class MediaStudioViewModel: ObservableObject {
         videoPrompt = ""
         selectedVideoModelID = nil
         removeVideoInputImage()
+        removeVideoReferenceAudio()
         models = []
         videoModels = []
         history = []
@@ -494,6 +533,33 @@ final class MediaStudioViewModel: ObservableObject {
         )
     }
 
+    nonisolated private static func loadReferenceAudio(from url: URL) throws -> VideoGenerationInputAudio {
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentTypeKey])
+        let supportedMIMETypes = [
+            "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/vnd.wave",
+            "audio/mp4", "audio/x-m4a", "audio/aac",
+        ]
+        guard values.isRegularFile == true,
+              let mimeType = values.contentType?.preferredMIMEType,
+              supportedMIMETypes.contains(mimeType.lowercased()) else {
+            throw MediaStudioReferenceAudioError.unsupported
+        }
+        if let fileSize = values.fileSize, fileSize > 20 * 1024 * 1024 {
+            throw MediaStudioReferenceAudioError.tooLarge
+        }
+        let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+        guard !data.isEmpty, data.count <= 20 * 1024 * 1024 else {
+            throw MediaStudioReferenceAudioError.tooLarge
+        }
+        return .init(
+            name: url.lastPathComponent, mimeType: mimeType,
+            base64Data: data.base64EncodedString()
+        )
+    }
+
     nonisolated private static func makeInputImage(
         data: Data,
         name: String,
@@ -541,6 +607,20 @@ private enum MediaStudioInputImageError: LocalizedError {
             "参考图不能超过 20 MB。"
         case .tooManyReferences:
             "一次最多选择 8 张参考图。"
+        }
+    }
+}
+
+private enum MediaStudioReferenceAudioError: LocalizedError {
+    case unsupported
+    case tooLarge
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupported:
+            "请选择 MP3、WAV、M4A 或 AAC 音频文件。"
+        case .tooLarge:
+            "参考音频不能超过 20 MB。"
         }
     }
 }

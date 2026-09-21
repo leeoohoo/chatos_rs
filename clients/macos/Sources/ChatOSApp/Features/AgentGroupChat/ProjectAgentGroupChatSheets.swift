@@ -6,9 +6,11 @@ import SwiftUI
 
 struct EditLocalAgentSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var model: AppModel
     @ObservedObject var viewModel: AgentGroupChatViewModel
     let item: AgentGroupChatViewModel.MemberPresentation
     @State private var name: String
+    @State private var avatarData: Data?
     @State private var role: String
     @State private var responsibility: String
     @State private var rolePrompt: String
@@ -25,6 +27,7 @@ struct EditLocalAgentSheet: View {
         self.item = item
         let profile = item.profile
         _name = State(initialValue: profile?.draft.name ?? item.member.agentID)
+        _avatarData = State(initialValue: profile?.draft.avatarData)
         _role = State(initialValue: item.member.draft.role)
         _responsibility = State(initialValue: item.member.draft.responsibility)
         _rolePrompt = State(initialValue: profile?.draft.rolePrompt ?? "")
@@ -39,6 +42,11 @@ struct EditLocalAgentSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("编辑本地 Agent").font(.title2).fontWeight(.semibold)
             Form {
+                AgentAvatarEditor(
+                    avatarData: $avatarData,
+                    agentName: name,
+                    generatedImages: model.mediaStudio.history.flatMap(\.images)
+                )
                 TextField("名称", text: $name)
                 TextField("当前项目角色", text: $role)
                 TextField("当前项目职责", text: $responsibility, axis: .vertical)
@@ -79,6 +87,7 @@ struct EditLocalAgentSheet: View {
                         let saved = await viewModel.updateAgentMembership(
                             agentID: item.member.agentID,
                             name: name,
+                            avatarData: avatarData,
                             role: role,
                             responsibility: responsibility,
                             rolePrompt: rolePrompt,
@@ -320,6 +329,7 @@ struct CreateLocalAgentSheet: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var viewModel: AgentGroupChatViewModel
     @State private var name = ""
+    @State private var avatarData: Data?
     @State private var role = ""
     @State private var responsibility = ""
     @State private var rolePrompt = ""
@@ -332,6 +342,11 @@ struct CreateLocalAgentSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("创建本地 Agent").font(.title2).fontWeight(.semibold)
             Form {
+                AgentAvatarEditor(
+                    avatarData: $avatarData,
+                    agentName: name,
+                    generatedImages: model.mediaStudio.history.flatMap(\.images)
+                )
                 TextField("名称", text: $name)
                 TextField("群聊角色", text: $role)
                 TextField("职责说明", text: $responsibility, axis: .vertical).lineLimit(2...4)
@@ -371,6 +386,7 @@ struct CreateLocalAgentSheet: View {
                     Task {
                         if await viewModel.createAgentAndJoin(
                             name: name,
+                            avatarData: avatarData,
                             role: role,
                             responsibility: responsibility,
                             rolePrompt: rolePrompt,

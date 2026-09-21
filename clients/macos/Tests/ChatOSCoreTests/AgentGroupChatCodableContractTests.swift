@@ -278,6 +278,7 @@ final class AgentGroupChatCodableContractTests: XCTestCase {
             from: Data(#"{"name":"Legacy","rolePrompt":"Keep working","modelConfigID":"model-1"}"#.utf8)
         )
         XCTAssertEqual(legacyDraft.description, "")
+        XCTAssertNil(legacyDraft.avatarData)
         XCTAssertNil(legacyDraft.thinkingLevel)
         XCTAssertEqual(legacyDraft.professionKey, LocalAgentSkillCatalog.legacyProfessionKey)
         XCTAssertEqual(legacyDraft.defaultPluginIDs, [])
@@ -301,5 +302,23 @@ final class AgentGroupChatCodableContractTests: XCTestCase {
             from: Data("{}".utf8)
         )
         XCTAssertEqual(legacyContract, .init())
+    }
+
+    func testAgentAvatarHasBoundedPersistedSize() throws {
+        let allowed = LocalAgentProfileDraft(
+            name: "Avatar Agent",
+            avatarData: Data(repeating: 1, count: 512 * 1_024),
+            rolePrompt: "Work",
+            modelConfigID: "model-1"
+        )
+        XCTAssertNoThrow(try allowed.validate())
+
+        let oversized = LocalAgentProfileDraft(
+            name: "Avatar Agent",
+            avatarData: Data(repeating: 1, count: 512 * 1_024 + 1),
+            rolePrompt: "Work",
+            modelConfigID: "model-1"
+        )
+        XCTAssertThrowsError(try oversized.validate())
     }
 }

@@ -1,8 +1,6 @@
 import ChatOSCore
 import Foundation
 
-enum VideoWireProtocol { case openAICompatible, miniMaxNative, volcengineArk }
-
 struct RuntimeModelConfig: Decodable, Sendable {
     var provider: String?
     var model: String
@@ -16,24 +14,6 @@ struct RuntimeModelConfig: Decodable, Sendable {
         case baseURL = "base_url"
     }
 
-    var videoProtocol: VideoWireProtocol {
-        switch provider?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "gpt", "openai": return .openAICompatible
-        case "minimax": return .miniMaxNative
-        case "volcengine", "ark", "doubao", "seedance", "bytedance", "byteplus":
-            return .volcengineArk
-        default:
-            let host = URL(string: baseURL ?? "")?.host?.lowercased()
-            if ["api.minimax.io", "api.minimaxi.com"].contains(host ?? "") {
-                return .miniMaxNative
-            }
-            if host == "ark.cn-beijing.volces.com"
-                || host?.hasSuffix(".volcengineapi.com") == true {
-                return .volcengineArk
-            }
-            return .openAICompatible
-        }
-    }
 }
 
 struct ProviderImageResponse: Decodable, Sendable {
@@ -74,7 +54,7 @@ struct ProviderVideoJob: Sendable {
     var contentURL: URL?
 
     var isPending: Bool {
-        status == "queued" || status == "in_progress" || status == "processing"
+        status == "queued" || status == "in_progress"
     }
 }
 
@@ -93,9 +73,11 @@ enum MediaGenerationClientError: LocalizedError, MediaGenerationSubmissionFailur
     case invalidMiniMaxImageDimensions
     case unsupportedLastFrameProtocol
     case invalidReferenceVideo
+    case invalidReferenceAudio
     case unsupportedReferenceVideoProtocol
     case mixedFrameAndReferenceVideoInputs
     case missingReferenceVideo
+    case mediaUploadFailed(String)
     case videoEndpointReturnedHTML(String)
 
     var errorDescription: String? {
@@ -122,12 +104,16 @@ enum MediaGenerationClientError: LocalizedError, MediaGenerationSubmissionFailur
             "尾帧约束需要同时提供首帧，且当前视频模型必须支持首尾帧生成。"
         case .invalidReferenceVideo:
             "参考视频必须是有效的 MP4 或 MOV，且文件不能超过 47 MB。"
+        case .invalidReferenceAudio:
+            "参考音频必须是有效的 MP3、WAV、M4A 或 AAC，且文件不能超过 20 MB。"
         case .unsupportedReferenceVideoProtocol:
             "当前视频模型或接口不支持使用上一段视频作为参考。"
         case .mixedFrameAndReferenceVideoInputs:
-            "上一段视频参考不能与首帧或尾帧同时发送，请重新选择视频衔接方式。"
+            "参考视频或参考音频不能与首帧、尾帧同时发送，请重新选择生成方式。"
         case .missingReferenceVideo:
             "视频编辑或延续需要先提供一段原视频。"
+        case let .mediaUploadFailed(detail):
+            "上传视频生成素材失败：\(detail)"
         case let .videoEndpointReturnedHTML(endpoint):
             "视频接口 \(endpoint) 返回了网页而非任务数据，请检查客户端协议与接口路径是否匹配。"
         case .invalidVideoContent:
@@ -144,8 +130,9 @@ enum MediaGenerationClientError: LocalizedError, MediaGenerationSubmissionFailur
         case .preflightFailed, .invalidModelConfiguration, .invalidInputImage,
              .invalidVideoOptions, .invalidMiniMaxPrompt, .invalidMiniMaxImageDimensions,
              .unsupportedLastFrameProtocol, .invalidReferenceVideo,
+             .invalidReferenceAudio,
              .unsupportedReferenceVideoProtocol, .mixedFrameAndReferenceVideoInputs,
-             .missingReferenceVideo:
+             .missingReferenceVideo, .mediaUploadFailed:
             false
         case .invalidProviderResponse, .responseTooLarge, .providerRejected,
              .invalidVideoContent, .videoTimedOut, .videoFailed, .videoEndpointReturnedHTML:

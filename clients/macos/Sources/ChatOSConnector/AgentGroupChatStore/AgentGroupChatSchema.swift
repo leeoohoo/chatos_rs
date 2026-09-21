@@ -21,6 +21,7 @@ enum AgentGroupChatSchema {
             heartbeat_prompt TEXT NOT NULL DEFAULT '',
             last_heartbeat_at_unix_ms INTEGER,
             next_heartbeat_at_unix_ms INTEGER,
+            avatar_data BLOB,
             status TEXT NOT NULL CHECK(status IN ('active', 'archived')),
             created_at_unix_ms INTEGER NOT NULL,
             updated_at_unix_ms INTEGER NOT NULL,

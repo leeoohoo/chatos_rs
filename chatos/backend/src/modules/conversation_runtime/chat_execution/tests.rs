@@ -472,9 +472,10 @@ async fn completed_async_handoff_disables_tools_and_requests_only_a_handoff_summ
     assert!(!directive.tools_enabled);
     assert!(directive.stream_output);
     let guidance = Value::Array(directive.input_items).to_string();
-    assert!(guidance.contains("Task Runner Background Handoff"));
+    assert!(guidance.contains("Continued Work Accepted"));
     assert!(guidance.contains("Do not call any tool"));
-    assert!(guidance.contains("normal task callback"));
+    assert!(guidance.contains("contact's first-person voice"));
+    assert!(guidance.contains("Do not mention tasks"));
 }
 
 #[tokio::test]

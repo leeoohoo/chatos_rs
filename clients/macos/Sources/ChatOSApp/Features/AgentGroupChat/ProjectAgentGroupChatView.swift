@@ -21,6 +21,7 @@ struct ProjectAgentGroupChatView: View {
     @State var showsAgentBuilder = false
     @State private var showsStopAllConfirmation = false
     @State var editingMember: AgentGroupChatViewModel.MemberPresentation?
+    @State var preparingMemberEditorAgentID: String?
     @State var selectedSection: AgentTeamSection = .chat
     @State var selectedRunAgentID: String?
     @State private var editingAsset: LocalAgentTeamAsset?
@@ -70,9 +71,6 @@ struct ProjectAgentGroupChatView: View {
         }
         .sheet(isPresented: $showsAgentBuilder) {
             LocalAgentBuilderSheet(viewModel: viewModel)
-        }
-        .sheet(item: $editingMember) { item in
-            EditLocalAgentSheet(viewModel: viewModel, item: item)
         }
         .sheet(isPresented: $showsAssetEditor) {
             TeamAssetEditorSheet(viewModel: viewModel, asset: editingAsset)
@@ -128,21 +126,13 @@ struct ProjectAgentGroupChatView: View {
             VStack(spacing: 0) {
                 roomHeader
                 Divider()
-                Picker("团队区域", selection: $selectedSection) {
-                    ForEach(AgentTeamSection.allCases) { section in
-                        Text(section.rawValue).tag(section)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                Divider()
                 workspaceContent
             }
             Divider()
             memberSidebar
-                .frame(width: 230)
+                .frame(width: 264)
         }
+        .background(AppPalette.canvas)
     }
 
     @ViewBuilder
@@ -397,21 +387,29 @@ struct ProjectAgentGroupChatView: View {
     }
 
     private var roomHeader: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(viewModel.room?.draft.name ?? "Agent 群聊")
+        HStack(alignment: .center, spacing: 14) {
+            HStack(spacing: 11) {
+                Image(systemName: "person.3.fill")
                     .appFont(.headline)
-                if let goal = viewModel.room?.draft.goal, !goal.isEmpty {
-                    Text(goal).appFont(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .foregroundStyle(AppPalette.ai)
+                    .frame(width: 34, height: 34)
+                    .background(AppPalette.aiSoft, in: RoundedRectangle(cornerRadius: 10))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(viewModel.room?.draft.name ?? "Agent 群聊")
+                        .appFont(.headline.weight(.semibold))
+                    if let goal = viewModel.room?.draft.goal, !goal.isEmpty {
+                        Text(goal)
+                            .appFont(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
             }
+            .layoutPriority(1)
+
             Spacer()
-            Text("本地")
-                .appFont(.caption2)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(.quaternary, in: Capsule())
+
             if viewModel.isRunningAgents {
                 Button {
                     Task { await viewModel.pauseAgents() }
@@ -438,9 +436,31 @@ struct ProjectAgentGroupChatView: View {
                 .buttonStyle(.bordered)
                 .disabled(viewModel.isStoppingAgents)
             }
+
+            Picker("团队区域", selection: $selectedSection) {
+                ForEach(AgentTeamSection.allCases) { section in
+                    Label(section.rawValue, systemImage: section.iconName)
+                        .tag(section)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .frame(width: 360)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .background(AppPalette.surface)
     }
 
+}
+
+private extension AgentTeamSection {
+    var iconName: String {
+        switch self {
+        case .chat: "bubble.left.and.bubble.right"
+        case .tasks: "checklist"
+        case .assets: "folder"
+        case .runs: "waveform.path.ecg"
+        }
+    }
 }

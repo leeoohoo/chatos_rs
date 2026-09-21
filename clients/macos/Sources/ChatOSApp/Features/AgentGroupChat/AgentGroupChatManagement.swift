@@ -197,6 +197,7 @@ extension AgentGroupChatViewModel {
 
     func createAgentAndJoin(
         name: String,
+        avatarData: Data?,
         role: String,
         responsibility: String,
         rolePrompt: String,
@@ -228,6 +229,7 @@ extension AgentGroupChatViewModel {
                 ownerUserID: ownerUserID,
                 draft: .init(
                     name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                    avatarData: avatarData,
                     description: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
                     rolePrompt: rolePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
                     modelConfigID: normalizedModelConfigID,
@@ -298,6 +300,7 @@ extension AgentGroupChatViewModel {
     func updateAgentMembership(
         agentID: String,
         name: String,
+        avatarData: Data?,
         role: String,
         responsibility: String,
         rolePrompt: String,
@@ -330,6 +333,7 @@ extension AgentGroupChatViewModel {
                 agentID: agentID,
                 profileDraft: .init(
                     name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                    avatarData: avatarData,
                     description: responsibility.trimmingCharacters(in: .whitespacesAndNewlines),
                     rolePrompt: rolePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
                     modelConfigID: normalizedModelConfigID,

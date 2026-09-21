@@ -5,12 +5,20 @@ import SwiftUI
 
 extension ProjectAgentGroupChatView {
     var memberSidebar: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("成员").appFont(.headline)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("团队成员").appFont(.headline.weight(.semibold))
+                    Text("点击成员查看运行状态")
+                        .appFont(.caption2)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 Text("\(viewModel.members.count)")
-                    .appFont(.caption).foregroundStyle(.secondary)
+                    .appFont(.caption.weight(.semibold))
+                    .foregroundStyle(AppPalette.ai)
+                    .frame(minWidth: 24, minHeight: 24)
+                    .background(AppPalette.aiSoft, in: Capsule())
             }
             if viewModel.activeMembers.isEmpty {
                 Text("还没有 Agent。创建第一个成员后，它会成为默认 Agent。")
@@ -37,13 +45,20 @@ extension ProjectAgentGroupChatView {
                     .help("查看此 Agent 的运行情况")
 
                     Button {
+                        editingMember = item
+                        preparingMemberEditorAgentID = item.member.agentID
                         Task {
-                            if await viewModel.prepareAgentEditor() {
-                                editingMember = item
+                            let isReady = await viewModel.prepareAgentEditor()
+                            guard editingMember?.member.agentID == item.member.agentID else { return }
+                            if isReady {
+                                preparingMemberEditorAgentID = nil
+                            } else {
+                                editingMember = nil
+                                preparingMemberEditorAgentID = nil
                             }
                         }
                     } label: {
-                        if viewModel.isLoadingModels {
+                        if preparingMemberEditorAgentID == item.member.agentID {
                             ProgressView()
                                 .controlSize(.small)
                                 .frame(width: 24, height: 24)
@@ -54,20 +69,35 @@ extension ProjectAgentGroupChatView {
                     }
                     .buttonStyle(.borderless)
                     .help("编辑 Agent")
-                    .disabled(viewModel.isLoadingModels)
+                    .disabled(preparingMemberEditorAgentID == item.member.agentID)
+                    .popover(
+                        isPresented: memberEditorPresentation(for: item.member.agentID),
+                        attachmentAnchor: .rect(.bounds),
+                        arrowEdge: .trailing
+                    ) {
+                        if preparingMemberEditorAgentID == item.member.agentID {
+                            ProgressView("正在准备 Agent 设置…")
+                                .frame(width: 320, height: 160)
+                        } else {
+                            EditLocalAgentSheet(viewModel: viewModel, item: item)
+                        }
+                    }
                 }
-                .padding(9)
+                .padding(10)
                 .background(
                     selectedRunAgentID == item.member.agentID && selectedSection == .runs
-                        ? Color.accentColor.opacity(0.12)
-                        : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 9)
+                        ? AppPalette.aiSoft
+                        : AppPalette.surface,
+                    in: RoundedRectangle(cornerRadius: 12)
                 )
                 .overlay {
-                    if selectedRunAgentID == item.member.agentID && selectedSection == .runs {
-                        RoundedRectangle(cornerRadius: 9)
-                            .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
-                    }
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(
+                            selectedRunAgentID == item.member.agentID && selectedSection == .runs
+                                ? AppPalette.ai.opacity(0.35)
+                                : AppPalette.border.opacity(0.65),
+                            lineWidth: 1
+                        )
                 }
             }
             Spacer()
@@ -104,8 +134,8 @@ extension ProjectAgentGroupChatView {
             .frame(maxWidth: .infinity)
             .disabled(viewModel.isLoadingModels)
         }
-        .padding(14)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .padding(16)
+        .background(AppPalette.surfaceSubtle)
         .onChange(of: viewModel.activeMembers.map(\.member.agentID)) { _, agentIDs in
             guard let selectedRunAgentID, !agentIDs.contains(selectedRunAgentID) else { return }
             self.selectedRunAgentID = nil
@@ -113,29 +143,57 @@ extension ProjectAgentGroupChatView {
     }
 
     private func memberSummary(_ item: AgentGroupChatViewModel.MemberPresentation) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack {
-                Image(systemName: "person.crop.circle.fill")
-                    .foregroundStyle(.tint)
-                Text(item.profile?.draft.name ?? item.member.agentID)
-                    .appFont(.body).fontWeight(.medium)
-                Spacer()
-                Image(systemName: "waveform.path.ecg")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            Text(item.member.draft.role)
-                .appFont(.caption).foregroundStyle(.secondary)
-            HStack(spacing: 7) {
-                if viewModel.room?.defaultAgentID == item.member.agentID {
-                    Text("默认 Agent")
-                        .appFont(.caption2).foregroundStyle(.tint)
+        HStack(alignment: .top, spacing: 10) {
+            AgentAvatarView(
+                name: item.profile?.draft.name ?? "A",
+                data: item.profile?.draft.avatarData,
+                size: 32,
+                cornerRadius: 10
+            )
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(item.profile?.draft.name ?? item.member.agentID)
+                        .appFont(.body.weight(.medium))
+                    Spacer()
+                    Circle()
+                        .fill(AppPalette.terminalGreen)
+                        .frame(width: 7, height: 7)
+                        .help("可用")
                 }
-                if viewModel.room?.projectManagerAgentID == item.member.agentID {
-                    Text("项目经理")
-                        .appFont(.caption2).foregroundStyle(.green)
+                Text(item.member.draft.role)
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    if viewModel.room?.defaultAgentID == item.member.agentID {
+                        memberBadge("默认", color: AppPalette.ai)
+                    }
+                    if viewModel.room?.projectManagerAgentID == item.member.agentID {
+                        memberBadge("项目经理", color: AppPalette.terminalGreen)
+                    }
                 }
             }
         }
+    }
+
+    private func memberBadge(_ title: String, color: Color) -> some View {
+        Text(title)
+            .appFont(.caption2.weight(.medium))
+            .foregroundStyle(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.09), in: Capsule())
+    }
+
+    private func memberEditorPresentation(for agentID: String) -> Binding<Bool> {
+        Binding(
+            get: { editingMember?.member.agentID == agentID },
+            set: { isPresented in
+                guard !isPresented, editingMember?.member.agentID == agentID else { return }
+                editingMember = nil
+                preparingMemberEditorAgentID = nil
+            }
+        )
     }
 }

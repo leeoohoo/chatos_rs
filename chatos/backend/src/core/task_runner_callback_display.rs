@@ -120,18 +120,51 @@ pub fn task_runner_callback_completion_detail(
     language: TaskRunnerCallbackLanguage,
 ) -> &'static str {
     if language.is_english() {
-        "The requested work is complete and passed its task-level checks."
+        "I've finished working on it."
     } else {
-        "已完成当前任务并通过任务内验证。"
+        "我已经处理完了。"
     }
 }
 
-pub fn task_runner_callback_detail_footer(language: TaskRunnerCallbackLanguage) -> &'static str {
-    if language.is_english() {
-        "More implementation details are available in the task details."
-    } else {
-        "更多实施细节可在任务详情中查看。"
+pub fn task_runner_callback_message_content(
+    event: &str,
+    detail: Option<&str>,
+    language: TaskRunnerCallbackLanguage,
+) -> String {
+    let detail = detail.map(str::trim).filter(|value| !value.is_empty());
+    match (language, event) {
+        (_, "task.completed") => detail
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| task_runner_callback_completion_detail(language).to_string()),
+        (TaskRunnerCallbackLanguage::EnUs, "task.run.started") => {
+            "I've started working on it.".to_string()
+        }
+        (TaskRunnerCallbackLanguage::ZhCn, "task.run.started") => "我已经开始处理了。".to_string(),
+        (TaskRunnerCallbackLanguage::EnUs, "task.failed") => {
+            append_callback_detail("I couldn't complete this.", detail)
+        }
+        (TaskRunnerCallbackLanguage::ZhCn, "task.failed") => {
+            append_callback_detail("我这次没有处理完成。", detail)
+        }
+        (TaskRunnerCallbackLanguage::EnUs, "task.blocked") => {
+            append_callback_detail("I can't continue yet.", detail)
+        }
+        (TaskRunnerCallbackLanguage::ZhCn, "task.blocked") => {
+            append_callback_detail("我暂时还无法继续处理。", detail)
+        }
+        (TaskRunnerCallbackLanguage::EnUs, "task.cancelled") => {
+            "I've stopped working on it.".to_string()
+        }
+        (TaskRunnerCallbackLanguage::ZhCn, "task.cancelled") => "我已经停下来了。".to_string(),
+        (TaskRunnerCallbackLanguage::EnUs, _) => "I'm continuing to work on it.".to_string(),
+        (TaskRunnerCallbackLanguage::ZhCn, _) => "我还在继续处理。".to_string(),
     }
+}
+
+fn append_callback_detail(headline: &str, detail: Option<&str>) -> String {
+    detail
+        .map(|detail| format!("{headline}\n\n{detail}"))
+        .unwrap_or_else(|| headline.to_string())
 }
 
 pub fn summarize_task_runner_callback_detail(

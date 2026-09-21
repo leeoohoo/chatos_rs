@@ -2,19 +2,13 @@ import XCTest
 @testable import ChatOSCore
 
 final class MediaGenerationModelsTests: XCTestCase {
-    func testH3TailFrameCapabilityIsAvailableThroughNativeAndCompatibleContentProtocols() {
+    func testH3TailFrameCapabilityIsAvailableThroughUnifiedNewAPIProtocol() {
         let compatible = MediaGenerationModel(
             id: "new-api-h3", name: "MiniMax H3", provider: "gpt", modelName: "MiniMax-H3",
             enabled: true, taskEnabled: false, hasAPIKey: true
         )
-        let native = MediaGenerationModel(
-            id: "native-h3", name: "MiniMax H3", provider: "minimax", modelName: "MiniMax-H3",
-            enabled: true, taskEnabled: false, hasAPIKey: true
-        )
         XCTAssertTrue(compatible.supportsVideoLastFrame,
-                      "NewAPI /v1/videos accepts MiniMax V2 first_frame and last_frame content roles")
-        XCTAssertTrue(native.supportsVideoLastFrame,
-                      "Native MiniMax V2 accepts the same first_frame and last_frame roles")
+                      "NewAPI /v1/videos accepts first_frame_image and last_frame_image metadata")
     }
 
     func testSeedance25AdvertisesEditExtendAndOfficialDurationRange() {
@@ -33,8 +27,8 @@ final class MediaGenerationModelsTests: XCTestCase {
 
         var compatibleOnly = model
         compatibleOnly.provider = "openai"
-        XCTAssertFalse(compatibleOnly.supportsVideoEditing)
-        XCTAssertFalse(compatibleOnly.supportsVideoExtension)
-        XCTAssertFalse(compatibleOnly.supportsVideoReference)
+        XCTAssertTrue(compatibleOnly.supportsVideoEditing)
+        XCTAssertTrue(compatibleOnly.supportsVideoExtension)
+        XCTAssertTrue(compatibleOnly.supportsVideoReference)
     }
 }

@@ -833,5 +833,13 @@ enum AgentGroupChatMigrations {
                 "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (25)"
             )
         }
+        if !hasColumn("avatar_data", table: "local_agent_profiles") {
+            try execute("ALTER TABLE local_agent_profiles ADD COLUMN avatar_data BLOB")
+        }
+        if !hasMigration(26) {
+            try execute(
+                "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (26)"
+            )
+        }
     }
 }

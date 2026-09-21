@@ -92,7 +92,7 @@ enum AgentProfileRepository {
         ).first
     }
 
-    private static let columns = "owner_user_id, id, name, description, role_prompt, model_config_id, thinking_level, profession_key, default_plugin_ids_json, default_skill_ids_json, heartbeat_enabled, heartbeat_interval_seconds, heartbeat_prompt, last_heartbeat_at_unix_ms, next_heartbeat_at_unix_ms, status, created_at_unix_ms, updated_at_unix_ms"
+    private static let columns = "owner_user_id, id, name, description, role_prompt, model_config_id, thinking_level, profession_key, default_plugin_ids_json, default_skill_ids_json, heartbeat_enabled, heartbeat_interval_seconds, heartbeat_prompt, last_heartbeat_at_unix_ms, next_heartbeat_at_unix_ms, status, created_at_unix_ms, updated_at_unix_ms, avatar_data"
 
     private static func string(_ statement: OpaquePointer, _ index: Int32) -> String {
         guard let value = sqlite3_column_text(statement, index) else { return "" }

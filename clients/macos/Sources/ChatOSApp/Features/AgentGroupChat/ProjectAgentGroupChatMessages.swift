@@ -1,6 +1,7 @@
 import ChatOSAgentRuntime
 import ChatOSConnector
 import ChatOSCore
+import Foundation
 import SwiftUI
 
 extension ProjectAgentGroupChatView {
@@ -22,54 +23,100 @@ extension ProjectAgentGroupChatView {
                 .padding(.top, 70)
             }
         )
+        .background(AppPalette.canvas)
     }
 
     private func messageRow(_ message: ProjectAgentMessage) -> some View {
         let isHuman = message.senderKind == .human
-        return HStack {
-            if isHuman { Spacer(minLength: 80) }
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Text(viewModel.displayName(senderID: message.senderID, kind: message.senderKind))
-                        .appFont(.caption).fontWeight(.semibold)
-                    if message.hopCount > 0 {
-                        Text("第 \(message.hopCount) 跳")
-                            .appFont(.caption2).foregroundStyle(.secondary)
+        let displayName = viewModel.displayName(senderID: message.senderID, kind: message.senderKind)
+        return HStack(alignment: .top, spacing: 10) {
+            if isHuman { Spacer(minLength: 100) }
+            if !isHuman {
+                messageAvatar(
+                    name: displayName,
+                    avatarData: viewModel.profilesByID[message.senderID]?.draft.avatarData,
+                    isHuman: false
+                )
+            }
+
+            VStack(alignment: isHuman ? .trailing : .leading, spacing: 7) {
+                HStack(spacing: 7) {
+                    Text(displayName)
+                        .appFont(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(formattedMessageTime(message.createdAtUnixMs))
+                        .appFont(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                VStack(alignment: .leading, spacing: 9) {
+                    if !message.content.isEmpty {
+                        MarkdownDocumentView(markdown: message.content)
+                    }
+                    if !message.attachmentItems.isEmpty {
+                        AgentMessageAttachmentChips(
+                            ownerUserID: message.ownerUserID,
+                            roomID: message.roomID,
+                            messageID: message.id,
+                            creatorName: displayName,
+                            attachments: message.attachmentItems,
+                            dataByID: viewModel.attachmentDataByID,
+                            service: model.agentGroupChatService
+                        )
+                    }
+                    if !message.mentionedAgentIDs.isEmpty {
+                        Text(message.mentionedAgentIDs.compactMap { id in
+                            guard let name = viewModel.profilesByID[id]?.draft.name else { return nil }
+                            return "@\(name)"
+                        }.joined(separator: "  "))
+                        .appFont(.caption.weight(.medium))
+                        .foregroundStyle(AppPalette.ai)
                     }
                 }
-                if !message.content.isEmpty {
-                    MarkdownDocumentView(markdown: message.content)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(
+                    isHuman ? AppPalette.aiSoft : AppPalette.surface,
+                    in: RoundedRectangle(cornerRadius: 14)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(
+                            isHuman ? AppPalette.ai.opacity(0.20) : AppPalette.border.opacity(0.70),
+                            lineWidth: 1
+                        )
                 }
-                if !message.attachmentItems.isEmpty {
-                    AgentMessageAttachmentChips(
-                        ownerUserID: message.ownerUserID,
-                        roomID: message.roomID,
-                        messageID: message.id,
-                        creatorName: viewModel.displayName(
-                            senderID: message.senderID,
-                            kind: message.senderKind
-                        ),
-                        attachments: message.attachmentItems,
-                        dataByID: viewModel.attachmentDataByID,
-                        service: model.agentGroupChatService
-                    )
-                }
-                if !message.mentionedAgentIDs.isEmpty {
-                    Text(message.mentionedAgentIDs.compactMap { id in
-                        guard let name = viewModel.profilesByID[id]?.draft.name else { return nil }
-                        return "@\(name)"
-                    }.joined(separator: "  "))
-                    .appFont(.caption)
-                    .foregroundStyle(.tint)
-                }
+                .shadow(color: .black.opacity(isHuman ? 0 : 0.025), radius: 5, y: 2)
             }
-            .padding(12)
-            .background(
-                isHuman ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.10),
-                in: RoundedRectangle(cornerRadius: 12)
-            )
-            if !isHuman { Spacer(minLength: 80) }
+            .frame(maxWidth: isHuman ? 720 : 820, alignment: isHuman ? .trailing : .leading)
+
+            if isHuman { messageAvatar(name: displayName, avatarData: nil, isHuman: true) }
+            if !isHuman { Spacer(minLength: 64) }
         }
+        .frame(maxWidth: 980)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func messageAvatar(name: String, avatarData: Data?, isHuman: Bool) -> some View {
+        if isHuman {
+            Text("你")
+                .appFont(.caption.weight(.semibold))
+                .foregroundStyle(AppPalette.ai)
+                .frame(width: 32, height: 32)
+                .background(AppPalette.aiSoft, in: RoundedRectangle(cornerRadius: 10))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(AppPalette.ai.opacity(0.20), lineWidth: 1)
+                }
+        } else {
+            AgentAvatarView(name: name, data: avatarData, size: 32, cornerRadius: 10)
+        }
+    }
+
+    private func formattedMessageTime(_ unixMs: Int64) -> String {
+        Date(timeIntervalSince1970: TimeInterval(unixMs) / 1_000)
+            .formatted(date: .omitted, time: .shortened)
     }
 
     var composer: some View {
@@ -130,7 +177,10 @@ extension ProjectAgentGroupChatView {
                 .help("选择要 @ 的 Agent；不选择时交给默认 Agent")
             }
         }
-        .padding(12)
+        .padding(.horizontal, 18)
+        .padding(.top, 8)
+        .padding(.bottom, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(.bar)
     }
 

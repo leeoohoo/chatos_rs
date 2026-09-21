@@ -37,12 +37,27 @@ struct CreateAttachmentUploadItem {
 }
 
 #[derive(Debug, Deserialize)]
+struct CreateMediaUploadsRequest {
+    assets: Vec<CreateMediaUploadItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateMediaUploadItem {
+    name: Option<String>,
+    #[serde(rename = "mimeType", alias = "mime_type", alias = "mime")]
+    mime_type: Option<String>,
+    size: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
 struct AttachmentObjectQuery {
     token: String,
 }
 
 pub fn router() -> Router {
-    Router::new().route("/api/attachments/uploads", post(create_attachment_uploads))
+    Router::new()
+        .route("/api/attachments/uploads", post(create_attachment_uploads))
+        .route("/api/media/uploads", post(create_media_uploads))
 }
 
 pub fn public_router() -> Router {
@@ -142,6 +157,108 @@ async fn create_attachment_uploads(
             "uploadHeaders": upload.upload_headers,
             "url": upload.view_url,
             "viewUrl": upload.view_url,
+            "expiresInSeconds": upload.expires_in_seconds,
+        }));
+    }
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "bucket": storage.bucket(),
+            "maxUploadBytes": storage.max_upload_bytes(),
+            "uploads": uploads,
+        })),
+    ))
+}
+
+/// Creates public, authenticated upload targets for media that an external model
+/// provider must fetch while processing an asynchronous generation task.
+async fn create_media_uploads(
+    auth: AuthUser,
+    Json(req): Json<CreateMediaUploadsRequest>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    if req.assets.is_empty() {
+        return Err(json_error(
+            StatusCode::BAD_REQUEST,
+            "empty_assets",
+            "assets cannot be empty",
+        ));
+    }
+    if req.assets.len() > 4 {
+        return Err(json_error(
+            StatusCode::BAD_REQUEST,
+            "too_many_assets",
+            "at most 4 media assets can be uploaded at once",
+        ));
+    }
+
+    let storage = object_storage_service().await.map_err(|err| {
+        json_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "object_storage_unavailable",
+            err.as_str(),
+        )
+    })?;
+
+    let mut uploads = Vec::with_capacity(req.assets.len());
+    for item in req.assets {
+        let size = item.size.unwrap_or(0);
+        if size == 0 {
+            return Err(json_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_media_size",
+                "media size must be greater than zero",
+            ));
+        }
+        if size > storage.max_upload_bytes() {
+            return Err(json_error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "media_too_large",
+                format!(
+                    "media exceeds upload limit: {} > {} bytes",
+                    size,
+                    storage.max_upload_bytes()
+                )
+                .as_str(),
+            ));
+        }
+
+        let name = normalize_attachment_name(item.name.as_deref());
+        let mime_type = normalize_mime_type(item.mime_type.as_deref());
+        if !is_video_generation_media_type(mime_type.as_str()) {
+            return Err(json_error(
+                StatusCode::BAD_REQUEST,
+                "unsupported_media_type",
+                "video generation media must be PNG, JPEG, WebP, MP4, MOV, MP3, WAV, M4A, or AAC",
+            ));
+        }
+        let upload = storage
+            .create_presigned_upload(PresignedUploadInput {
+                user_id: auth.user_id.clone(),
+                conversation_id: "media-generation".to_string(),
+                name: name.clone(),
+                mime_type: mime_type.clone(),
+                size,
+            })
+            .await
+            .map_err(|err| {
+                json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "create_media_upload_failed",
+                    err.as_str(),
+                )
+            })?;
+        uploads.push(json!({
+            "id": upload.id,
+            "name": name,
+            "mimeType": mime_type,
+            "size": size,
+            "storageProvider": "minio",
+            "bucket": upload.bucket,
+            "objectKey": upload.object_key,
+            "uploadUrl": upload.upload_url,
+            "uploadHeaders": upload.upload_headers,
+            "url": upload.view_url,
             "expiresInSeconds": upload.expires_in_seconds,
         }));
     }
@@ -268,6 +385,25 @@ fn normalize_mime_type(value: Option<&str>) -> String {
         .collect()
 }
 
+fn is_video_generation_media_type(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "image/png"
+            | "image/jpeg"
+            | "image/webp"
+            | "video/mp4"
+            | "video/quicktime"
+            | "audio/mpeg"
+            | "audio/mp3"
+            | "audio/wav"
+            | "audio/x-wav"
+            | "audio/vnd.wave"
+            | "audio/mp4"
+            | "audio/x-m4a"
+            | "audio/aac"
+    )
+}
+
 fn normalize_attachment_type(value: Option<&str>, mime_type: &str) -> &'static str {
     match value.map(str::trim).filter(|value| !value.is_empty()) {
         Some("image") => "image",
@@ -276,5 +412,40 @@ fn normalize_attachment_type(value: Option<&str>, mime_type: &str) -> &'static s
         _ if mime_type.starts_with("image/") => "image",
         _ if mime_type.starts_with("audio/") => "audio",
         _ => "file",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_video_generation_media_type;
+
+    #[test]
+    fn video_generation_uploads_accept_only_supported_media() {
+        for mime_type in [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "video/mp4",
+            "video/quicktime",
+            "audio/mpeg",
+            "audio/wav",
+            "audio/mp4",
+            "audio/aac",
+        ] {
+            assert!(is_video_generation_media_type(mime_type), "{mime_type}");
+        }
+        for mime_type in [
+            "text/plain",
+            "application/pdf",
+            "image/svg+xml",
+            "video/x-msvideo",
+        ] {
+            assert!(!is_video_generation_media_type(mime_type), "{mime_type}");
+        }
+    }
+
+    #[test]
+    fn video_generation_media_type_is_case_and_whitespace_tolerant() {
+        assert!(is_video_generation_media_type(" Audio/MPEG "));
     }
 }

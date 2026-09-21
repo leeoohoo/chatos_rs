@@ -21,6 +21,7 @@ struct AgentManagementView: View {
     let skillLibrary: LocalAgentSkillLibrary
     let openDirect: (LocalAgentProfile) -> Void
     @State private var editorTarget: AgentProfileEditorTarget?
+    @State private var preparingEditorTargetID: String?
     @State private var showsSkillManager = false
     @State private var skillRevision = 0
     @State private var runToAbandon: AgentGroupChatWorkspaceViewModel.TriggerRunPresentation?
@@ -43,14 +44,16 @@ struct AgentManagementView: View {
                 Button {
                     openEditor(.create)
                 } label: {
-                    if viewModel.isLoadingModels {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("创建 Agent", systemImage: "person.badge.plus")
-                    }
+                    Label("创建 Agent", systemImage: "person.badge.plus")
+                        .opacity(preparingEditorTargetID == AgentProfileEditorTarget.create.id ? 0 : 1)
+                        .overlay {
+                            if preparingEditorTargetID == AgentProfileEditorTarget.create.id {
+                                ProgressView().controlSize(.small)
+                            }
+                        }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(viewModel.isLoadingModels)
+                .disabled(preparingEditorTargetID == AgentProfileEditorTarget.create.id)
             }
             .padding(18)
 
@@ -65,14 +68,19 @@ struct AgentManagementView: View {
                     Button {
                         openEditor(.create)
                     } label: {
-                        if viewModel.isLoadingModels {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Text("创建 Agent")
-                        }
+                        Text("创建 Agent")
+                            .opacity(
+                                preparingEditorTargetID == AgentProfileEditorTarget.create.id
+                                    ? 0 : 1
+                            )
+                            .overlay {
+                                if preparingEditorTargetID == AgentProfileEditorTarget.create.id {
+                                    ProgressView().controlSize(.small)
+                                }
+                            }
                     }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(viewModel.isLoadingModels)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(preparingEditorTargetID == AgentProfileEditorTarget.create.id)
                 }
             } else {
                 VStack(spacing: 0) {
@@ -155,9 +163,12 @@ struct AgentManagementView: View {
         )
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: canManageStaff ? "person.crop.circle.badge.checkmark" : "person.crop.circle")
-                    .font(.title2)
-                    .foregroundStyle(canManageStaff ? Color.accentColor : .secondary)
+                AgentAvatarView(
+                    name: agent.draft.name,
+                    data: agent.draft.avatarData,
+                    size: 42,
+                    cornerRadius: 13
+                )
                 VStack(alignment: .leading, spacing: 3) {
                     Text(agent.draft.name)
                         .font(.headline)
@@ -181,11 +192,21 @@ struct AgentManagementView: View {
                 .controlSize(.small)
                 .fixedSize()
                 Spacer(minLength: 0)
-                Button("编辑") { openEditor(.edit(agent)) }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .fixedSize()
-                    .disabled(viewModel.isLoadingModels)
+                Button {
+                    openEditor(.edit(agent))
+                } label: {
+                    Text("编辑")
+                        .opacity(preparingEditorTargetID == agent.id ? 0 : 1)
+                        .overlay {
+                            if preparingEditorTargetID == agent.id {
+                                ProgressView().controlSize(.small)
+                            }
+                        }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .fixedSize()
+                .disabled(preparingEditorTargetID == agent.id)
             }
             Divider()
             LabeledContent("模型") {
@@ -200,10 +221,6 @@ struct AgentManagementView: View {
             LabeledContent("职业") {
                 Text(professions.first(where: { $0.key == agent.draft.professionKey })?.label
                     ?? agent.draft.professionKey)
-            }
-            .font(.caption)
-            LabeledContent("工具与 Plugin") {
-                Text("按任务自主发现")
             }
             .font(.caption)
             LabeledContent("主动巡检") {
@@ -642,8 +659,12 @@ struct AgentManagementView: View {
     }
 
     private func openEditor(_ target: AgentProfileEditorTarget) {
+        preparingEditorTargetID = target.id
         Task {
-            guard await viewModel.prepareAgentEditor() else { return }
+            let isReady = await viewModel.prepareAgentEditor()
+            guard preparingEditorTargetID == target.id else { return }
+            preparingEditorTargetID = nil
+            guard isReady else { return }
             editorTarget = target
         }
     }

@@ -43,38 +43,25 @@ public struct MediaGenerationModel: Codable, Identifiable, Sendable, Equatable {
         ].contains(where: value.contains)
     }
 
-    /// MiniMax H3/H3 Max accept official V2 `content` roles for first and last frames.
-    /// The same content envelope is supported by our NewAPI `/v1/videos` compatibility layer.
+    /// NewAPI's unified `/v1/videos` contract exposes model capabilities by profile.
     public var supportsVideoLastFrame: Bool {
-        let profile = VideoGenerationProfile(modelName: modelName)
-        return (!profile.isSeedance || usesNativeSeedanceProtocol)
-            ? profile.supportsLastFrame : false
+        VideoGenerationProfile(modelName: modelName).supportsLastFrame
     }
 
     /// MiniMax H3 reference mode can use a completed video as motion/style context.
     /// Frame inputs and reference-video inputs are mutually exclusive upstream.
     public var supportsVideoReference: Bool {
-        let profile = VideoGenerationProfile(modelName: modelName)
-        return (!profile.isSeedance || usesNativeSeedanceProtocol)
-            ? profile.supportsReferenceVideo : false
+        VideoGenerationProfile(modelName: modelName).supportsReferenceVideo
     }
 
     /// True when the provider exposes a source-preserving video edit operation.
     public var supportsVideoEditing: Bool {
-        usesNativeSeedanceProtocol
-            && VideoGenerationProfile(modelName: modelName).supportsVideoEditing
+        VideoGenerationProfile(modelName: modelName).supportsVideoEditing
     }
 
     /// True when the provider can continue forward from a completed source video.
     public var supportsVideoExtension: Bool {
-        usesNativeSeedanceProtocol
-            && VideoGenerationProfile(modelName: modelName).supportsVideoExtension
-    }
-
-    private var usesNativeSeedanceProtocol: Bool {
-        ["volcengine", "ark", "doubao", "seedance", "bytedance", "byteplus"].contains(
-            provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        )
+        VideoGenerationProfile(modelName: modelName).supportsVideoExtension
     }
 }
 
@@ -235,6 +222,7 @@ public struct VideoGenerationRequest: Sendable, Equatable {
     public var inputImage: ImageGenerationInputImage?
     public var lastFrameImage: ImageGenerationInputImage?
     public var referenceVideo: VideoGenerationInputVideo?
+    public var referenceAudio: VideoGenerationInputAudio?
     public var referencePurpose: VideoGenerationReferencePurpose
     public var ratio: String
 
@@ -246,6 +234,7 @@ public struct VideoGenerationRequest: Sendable, Equatable {
         inputImage: ImageGenerationInputImage? = nil,
         lastFrameImage: ImageGenerationInputImage? = nil,
         referenceVideo: VideoGenerationInputVideo? = nil,
+        referenceAudio: VideoGenerationInputAudio? = nil,
         referencePurpose: VideoGenerationReferencePurpose = .reference,
         ratio: String = "16:9"
     ) {
@@ -256,6 +245,7 @@ public struct VideoGenerationRequest: Sendable, Equatable {
         self.inputImage = inputImage
         self.lastFrameImage = lastFrameImage
         self.referenceVideo = referenceVideo
+        self.referenceAudio = referenceAudio
         self.referencePurpose = referencePurpose
         self.ratio = ratio
     }
@@ -282,8 +272,20 @@ public struct VideoGenerationInputVideo: Sendable, Equatable {
     }
 }
 
-/// Shared by request validation and the creation form. Values follow each provider's
-/// official native API rather than treating all video models as OpenAI-compatible.
+public struct VideoGenerationInputAudio: Sendable, Equatable {
+    public var name: String
+    public var mimeType: String
+    public var base64Data: String
+
+    public init(name: String, mimeType: String, base64Data: String) {
+        self.name = name
+        self.mimeType = mimeType
+        self.base64Data = base64Data
+    }
+}
+
+/// Shared by request validation and the creation form. Capabilities remain model-specific,
+/// while transport uses NewAPI's single `/v1/videos` contract for every video model.
 public enum VideoGenerationProfile: Sendable {
     case openAI, miniMaxH3, miniMaxH3Max
     case seedance25, seedance20, seedance20Fast, seedance20Mini

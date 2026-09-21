@@ -55,7 +55,7 @@ struct AgentGroupChatWorkspaceView: View {
     var body: some View {
         HStack(spacing: 0) {
             teamList
-                .frame(width: 260)
+                .frame(width: 248)
             Divider()
             detail
                 .workspaceFill()
@@ -111,12 +111,19 @@ struct AgentGroupChatWorkspaceView: View {
     private var teamList: some View {
         VStack(spacing: 0) {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Agent")
-                        .font(.headline)
-                    Text("私聊与项目团队")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                HStack(spacing: 10) {
+                    Image(systemName: "sparkles")
+                        .appFont(.headline)
+                        .foregroundStyle(AppPalette.ai)
+                        .frame(width: 32, height: 32)
+                        .background(AppPalette.aiSoft, in: RoundedRectangle(cornerRadius: 10))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Agent")
+                            .appFont(.headline.weight(.semibold))
+                        Text("私聊与项目团队")
+                            .appFont(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
                 Button {
@@ -129,6 +136,7 @@ struct AgentGroupChatWorkspaceView: View {
                 .disabled(availableProjects.isEmpty)
             }
             .padding(14)
+            .background(AppPalette.surface)
 
             Divider()
 
@@ -148,6 +156,7 @@ struct AgentGroupChatWorkspaceView: View {
                             }
                         } icon: {
                             Image(systemName: "person.crop.rectangle.stack")
+                                .foregroundStyle(AppPalette.ai)
                         }
                         .padding(.vertical, 4)
                         .tag(AgentGroupChatWorkspaceDestination.agents)
@@ -162,6 +171,7 @@ struct AgentGroupChatWorkspaceView: View {
                             }
                         } icon: {
                             Image(systemName: "icloud.and.arrow.down")
+                                .foregroundStyle(AppPalette.ai)
                         }
                         .padding(.vertical, 4)
                         .tag(AgentGroupChatWorkspaceDestination.remoteArtifacts)
@@ -174,13 +184,18 @@ struct AgentGroupChatWorkspaceView: View {
                                 .foregroundStyle(.secondary)
                         } else {
                             ForEach(viewModel.rooms) { room in
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(room.draft.name)
-                                        .font(.body.weight(.medium))
-                                    Text(projectName(for: room.projectID))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
+                                Label {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(room.draft.name)
+                                            .appFont(.body.weight(.medium))
+                                        Text(projectName(for: room.projectID))
+                                            .appFont(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                } icon: {
+                                    Image(systemName: "person.3.fill")
+                                        .foregroundStyle(AppPalette.ai)
                                 }
                                 .padding(.vertical, 4)
                                 .tag(AgentGroupChatWorkspaceDestination.room(room.id))
@@ -206,9 +221,18 @@ struct AgentGroupChatWorkspaceView: View {
                                             .foregroundStyle(.secondary)
                                     }
                                 } icon: {
-                                    Image(systemName: conversation.conversationKind == .humanAgentDirect
-                                          ? "bubble.left.and.bubble.right"
-                                          : "person.2.wave.2")
+                                    if conversation.conversationKind == .humanAgentDirect,
+                                       let agentID = conversation.defaultAgentID,
+                                       let agent = viewModel.agents.first(where: { $0.id == agentID }) {
+                                        AgentAvatarView(
+                                            name: agent.draft.name,
+                                            data: agent.draft.avatarData,
+                                            size: 22,
+                                            cornerRadius: 7
+                                        )
+                                    } else {
+                                        Image(systemName: "person.2.wave.2")
+                                    }
                                 }
                                 .padding(.vertical, 4)
                                 .tag(AgentGroupChatWorkspaceDestination.direct(conversation.id))
@@ -218,11 +242,11 @@ struct AgentGroupChatWorkspaceView: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
-                .background(Color(nsColor: .windowBackgroundColor))
+                .background(AppPalette.surfaceSubtle)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AppPalette.surfaceSubtle)
     }
 
     @ViewBuilder

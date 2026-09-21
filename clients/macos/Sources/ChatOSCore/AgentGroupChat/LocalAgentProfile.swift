@@ -6,6 +6,7 @@ public enum LocalAgentProfileStatus: String, Codable, Sendable {
 
 public struct LocalAgentProfileDraft: Codable, Sendable, Equatable {
     public let name: String
+    public let avatarData: Data?
     public let description: String
     public let rolePrompt: String
     public let modelConfigID: String
@@ -19,6 +20,7 @@ public struct LocalAgentProfileDraft: Codable, Sendable, Equatable {
 
     public init(
         name: String,
+        avatarData: Data? = nil,
         description: String = "",
         rolePrompt: String,
         modelConfigID: String,
@@ -31,6 +33,7 @@ public struct LocalAgentProfileDraft: Codable, Sendable, Equatable {
         heartbeatPrompt: String = ""
     ) {
         self.name = name
+        self.avatarData = avatarData
         self.description = description
         self.rolePrompt = rolePrompt
         self.modelConfigID = modelConfigID
@@ -45,6 +48,9 @@ public struct LocalAgentProfileDraft: Codable, Sendable, Equatable {
 
     public func validate() throws {
         try AgentGroupChatValidation.text(name, field: "name", maximumLength: 120)
+        guard avatarData == nil || avatarData!.count <= 512 * 1_024 else {
+            throw AgentGroupChatError.invalidField("avatarData")
+        }
         try AgentGroupChatValidation.optionalText(description, field: "description", maximumLength: 2_000)
         try AgentGroupChatValidation.text(rolePrompt, field: "rolePrompt", maximumLength: 32_000)
         try AgentGroupChatValidation.identifier(modelConfigID, field: "modelConfigID")
@@ -67,7 +73,7 @@ public struct LocalAgentProfileDraft: Codable, Sendable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, description, rolePrompt, modelConfigID, thinkingLevel, professionKey
+        case name, avatarData, description, rolePrompt, modelConfigID, thinkingLevel, professionKey
         case defaultPluginIDs, defaultSkillIDs
         case heartbeatEnabled, heartbeatIntervalSeconds, heartbeatPrompt
     }
@@ -76,6 +82,7 @@ public struct LocalAgentProfileDraft: Codable, Sendable, Equatable {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             name: try values.decode(String.self, forKey: .name),
+            avatarData: try values.decodeIfPresent(Data.self, forKey: .avatarData),
             description: try values.decodeIfPresent(String.self, forKey: .description) ?? "",
             rolePrompt: try values.decode(String.self, forKey: .rolePrompt),
             modelConfigID: try values.decode(String.self, forKey: .modelConfigID),
