@@ -87,8 +87,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM debian:bookworm-slim AS runtime-deps
 
-ARG BIN_NAME
-
 RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
     | xargs -0 -r sed -i \
       -e 's|http://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g' \

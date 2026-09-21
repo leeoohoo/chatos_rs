@@ -866,7 +866,7 @@ clean_build_cache() {
 }
 
 clean_build_cache_if_enabled() {
-  if ! env_flag_enabled CHATOS_DOCKER_PRUNE_BUILD_CACHE true; then
+  if ! env_flag_enabled CHATOS_DOCKER_PRUNE_BUILD_CACHE false; then
     return 0
   fi
   clean_build_cache
