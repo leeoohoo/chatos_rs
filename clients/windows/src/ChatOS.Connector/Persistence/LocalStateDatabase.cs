@@ -404,6 +404,8 @@ public sealed partial class LocalStateDatabase
                 priority TEXT NOT NULL,
                 dependency_ids_json TEXT NOT NULL,
                 source_message_id TEXT,
+                execution_contract_json TEXT NOT NULL DEFAULT '{}',
+                execution_plan_json TEXT NOT NULL DEFAULT '{}',
                 status TEXT NOT NULL,
                 result TEXT NOT NULL,
                 sort_order INTEGER NOT NULL,
@@ -650,6 +652,8 @@ public sealed partial class LocalStateDatabase
         await MigrateAgentStaffingProposalsAsync(connection, cancellationToken)
             .ConfigureAwait(false);
         await MigrateAgentInboxAsync(connection, cancellationToken).ConfigureAwait(false);
+        await MigrateAgentTodoExecutionContractsAsync(connection, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private static async Task MigrateRequirementSurveysToProjectScopeAsync(

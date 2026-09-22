@@ -201,6 +201,70 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TodoExecutionContractCapabilitiesAndSourcesAreDurableAndImmutable()
+    {
+        var (manager, worker, room) = await CreateConfiguredTeamAsync();
+        var teamSource = await _store.PostMessageAsync("alice", room.Id,
+            new(AgentMessageSenderKind.Human, null, "实现 Windows 执行合同"));
+        var direct = await _store.OpenHumanAgentDirectAsync("alice", manager.Id);
+        var directSource = await _store.PostMessageAsync("alice", direct.Id,
+            new(AgentMessageSenderKind.Human, null, "验收时检查来源链"));
+        var contract = new AgentTodoExecutionContract(
+            "补齐不可变执行合同",
+            "只修改 Windows Todo 路径",
+            ["持久化合同", "返回来源引用"],
+            ["状态更新后合同保持不变"],
+            ["源码文件不超过 800 行"]);
+        var plan = new AgentTodoExecutionPlan(true,
+            [AgentTodoBuiltinCapability.ProjectWrite,
+             AgentTodoBuiltinCapability.RequirementSurveyWrite]);
+
+        var created = await _store.CreateTodoAsync("alice", new AgentTodoDraft(
+            room.Id, worker.Id, "执行合同", "实现并测试", AgentTodoPriority.High,
+            SourceMessageId: teamSource.Message.Id,
+            ExecutionContract: contract,
+            ExecutionPlan: plan,
+            SourceLinks:
+            [
+                new(direct.Id, directSource.Message.Id),
+            ]));
+
+        Assert.Equal(contract, created.Draft.ExecutionContract);
+        Assert.Contains(AgentTodoBuiltinCapability.RequirementSurveyRead,
+            created.Draft.ExecutionPlan!.Capabilities);
+        Assert.True(created.Draft.ExecutionPlan.SelectedAtUnixMs > 0);
+        Assert.Equal(2, created.Sources.Count);
+        Assert.Contains(created.Sources, value => value.MessageId == teamSource.Message.Id);
+        Assert.Contains(created.Sources, value => value.MessageId == directSource.Message.Id);
+
+        var updated = await _store.UpdateTodoAsync("alice", created.Id, created.Revision,
+            AgentTodoStatus.InProgress, "开始执行");
+        var reloaded = await _store.GetTodoAsync("alice", created.Id);
+        Assert.NotNull(reloaded);
+        Assert.Equal(contract.Objective, updated.Draft.ExecutionContract!.Objective);
+        Assert.Equal(contract.Scope, updated.Draft.ExecutionContract.Scope);
+        Assert.Equal(contract.Outputs, updated.Draft.ExecutionContract.Outputs);
+        Assert.Equal(contract.Criteria, updated.Draft.ExecutionContract.Criteria);
+        Assert.Equal(contract.Limits, updated.Draft.ExecutionContract.Limits);
+        Assert.Equal(updated.Draft.ExecutionContract.Objective,
+            reloaded!.Draft.ExecutionContract!.Objective);
+        Assert.Equal(updated.Draft.ExecutionContract.Outputs,
+            reloaded.Draft.ExecutionContract.Outputs);
+        Assert.Equal(created.Draft.ExecutionPlan!.RequiresExecution,
+            reloaded.Draft.ExecutionPlan!.RequiresExecution);
+        Assert.Equal(created.Draft.ExecutionPlan.Capabilities,
+            reloaded.Draft.ExecutionPlan.Capabilities);
+        Assert.Equal(created.Draft.ExecutionPlan.SelectedAtUnixMs,
+            reloaded.Draft.ExecutionPlan.SelectedAtUnixMs);
+        Assert.True(created.Sources.ToHashSet().SetEquals(reloaded.Sources));
+
+        var invalidSource = await Assert.ThrowsAsync<AgentTeamException>(() =>
+            _store.CreateTodoAsync("alice", new AgentTodoDraft(room.Id, worker.Id, "无效来源",
+                SourceLinks: [new(room.Id, "missing-message")])));
+        Assert.Equal(AgentTeamError.NotFound, invalidSource.Code);
+    }
+
+    [Fact]
     public async Task AssetsKeepRevisionHistoryAndRejectStaleWrites()
     {
         var (manager, _, room) = await CreateConfiguredTeamAsync();

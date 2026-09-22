@@ -82,7 +82,7 @@ internal sealed partial class AgentTeamToolExecutor(
             additionalProperties = false,
         }),
         Tool("todo_list", "读取当前团队共享任务板。", ObjectSchema()),
-        Tool("todo_create", "项目经理创建并分配一个团队 Todo，可声明前置依赖。", new
+        Tool("todo_create", "项目经理用不可变执行合同创建并分配团队 Todo，可声明来源消息和前置依赖。", new
         {
             type = "object",
             properties = new
@@ -90,15 +90,42 @@ internal sealed partial class AgentTeamToolExecutor(
                 assignee_ref = new { type = "string" },
                 title = new { type = "string", maxLength = 500 },
                 detail = new { type = "string", maxLength = 16_000 },
+                objective = new { type = "string", maxLength = 8_000 },
+                scope = new { type = "string", maxLength = 16_000 },
+                expected_outputs = TextArraySchema(64, 4_000),
+                acceptance_criteria = TextArraySchema(64, 4_000),
+                constraints = TextArraySchema(64, 4_000),
                 priority = new { type = "string", @enum = Enum.GetNames<AgentTodoPriority>() },
+                requires_execution = new { type = "boolean" },
+                builtin_capabilities = new
+                {
+                    type = "array",
+                    items = new
+                    {
+                        type = "string",
+                        @enum = new[] { "project_read", "project_write", "terminal",
+                            "requirement_survey_read", "requirement_survey_write" },
+                    },
+                    maxItems = 5,
+                    uniqueItems = true,
+                },
                 dependency_refs = new
                 {
                     type = "array",
                     items = new { type = "string" },
                     maxItems = 100,
                 },
+                source_message_refs = new
+                {
+                    type = "array",
+                    items = new { type = "string" },
+                    minItems = 1,
+                    maxItems = 64,
+                    uniqueItems = true,
+                },
             },
-            required = new[] { "assignee_ref", "title" },
+            required = new[] { "assignee_ref", "title", "objective", "scope",
+                "expected_outputs", "acceptance_criteria", "source_message_refs" },
             additionalProperties = false,
         }),
         Tool("todo_update", "更新 Todo 状态、结果或负责人。非项目经理只能更新分配给自己的 Todo。", new
@@ -482,129 +509,6 @@ internal sealed partial class AgentTeamToolExecutor(
         }), EndsCycle: false, ResponseMessageId: post.Message.Id);
     }
 
-    private async Task<AgentToolExecutionResult> ListTodosAsync(
-        AgentProfile profile,
-        AgentRoom room,
-        AgentRunReferenceVault references,
-        CancellationToken cancellationToken)
-    {
-        var todos = await store.ListTodosAsync(
-            profile.OwnerUserId, room.Id, includeTerminal: true, cancellationToken).ConfigureAwait(false);
-        return new AgentToolExecutionResult(Json(todos.Select(value => TodoResponse(
-            value, references))));
-    }
-
-    private async Task<AgentToolExecutionResult> CreateTodoAsync(
-        AgentProfile profile,
-        AgentRoom room,
-        AgentDelivery delivery,
-        AgentRunReferenceVault references,
-        JsonElement arguments,
-        CancellationToken cancellationToken)
-    {
-        RequireManager(profile, room);
-        var priority = ParseEnum<AgentTodoPriority>(OptionalString(arguments, "priority") ?? "Normal");
-        var assigneeId = references.AgentId(RequiredString(arguments, "assignee_ref"))
-            ?? throw AgentTeamValidation.Invalid("assignee_ref");
-        var dependencies = StringArray(arguments, "dependency_refs", 100).Select(value =>
-            references.Todo(value)?.TodoId ?? (references.AllowsLegacyIds
-                ? value : throw AgentTeamValidation.Invalid("dependency_refs"))).ToArray();
-        var todo = await store.CreateTodoAsync(profile.OwnerUserId, new AgentTodoDraft(
-            room.Id,
-            assigneeId,
-            RequiredString(arguments, "title"),
-            OptionalString(arguments, "detail") ?? string.Empty,
-            priority,
-            dependencies,
-            delivery.MessageId), cancellationToken).ConfigureAwait(false);
-        return new AgentToolExecutionResult(Json(TodoResponse(todo, references)));
-    }
-
-    private async Task<AgentToolExecutionResult> UpdateTodoAsync(
-        AgentProfile profile,
-        AgentRoom room,
-        AgentRunReferenceVault references,
-        JsonElement arguments,
-        CancellationToken cancellationToken)
-    {
-        var todoReference = RequiredString(arguments, "todo_ref");
-        var todoAuthority = references.Todo(todoReference);
-        var todoId = todoAuthority?.TodoId ?? (references.AllowsLegacyIds
-            ? todoReference : throw AgentTeamValidation.Invalid("todo_ref"));
-        if (todoAuthority is not null && todoAuthority.RoomId != room.Id)
-            throw new AgentTeamException(AgentTeamError.PermissionDenied,
-                "Todo reference does not belong to the current team.");
-        var todo = await store.GetTodoAsync(profile.OwnerUserId, todoId, cancellationToken)
-            .ConfigureAwait(false) ?? throw new AgentTeamException(AgentTeamError.NotFound,
-                "Todo was not found.");
-        if (!string.Equals(todo.Draft.TeamRoomId, room.Id, StringComparison.Ordinal))
-        {
-            throw new AgentTeamException(AgentTeamError.PermissionDenied,
-                "Todo does not belong to the current team.");
-        }
-
-        var isManager = string.Equals(room.ProjectManagerAgentId, profile.Id, StringComparison.Ordinal);
-        if (!isManager && !string.Equals(todo.Draft.AgentId, profile.Id, StringComparison.Ordinal))
-        {
-            throw new AgentTeamException(AgentTeamError.PermissionDenied,
-                "Only the project manager or assigned Agent can update this Todo.");
-        }
-
-        var assignedAgentReference = OptionalString(arguments, "assigned_agent_ref");
-        var assignedAgentId = assignedAgentReference is null ? null :
-            references.AgentId(assignedAgentReference) ?? throw AgentTeamValidation.Invalid(
-                "assigned_agent_ref");
-        if (!isManager && assignedAgentId is not null &&
-            !string.Equals(assignedAgentId, profile.Id, StringComparison.Ordinal))
-        {
-            throw new AgentTeamException(AgentTeamError.PermissionDenied,
-                "Only the project manager can reassign a Todo.");
-        }
-
-        var status = ParseEnum<AgentTodoStatus>(RequiredString(arguments, "status"));
-        var updated = await store.UpdateTodoAsync(profile.OwnerUserId, todoId,
-            RequiredLong(arguments, "expected_revision"), status,
-            OptionalString(arguments, "result") ?? string.Empty, assignedAgentId,
-            cancellationToken).ConfigureAwait(false);
-        return new AgentToolExecutionResult(Json(TodoResponse(updated, references)),
-            EndsCycle: updated.IsTerminal);
-    }
-
-    private async Task<AgentToolExecutionResult> AppendProgressAsync(
-        AgentProfile profile,
-        AgentRoom room,
-        AgentRunReferenceVault references,
-        JsonElement arguments,
-        CancellationToken cancellationToken)
-    {
-        var suggestions = OptionalObjectArray(arguments, "asset_update_suggestions", 8)
-            .Select(value => new AgentTeamAssetUpdateSuggestion(
-                ParseEnum<AgentTeamAssetCategory>(RequiredString(value, "category")),
-                RequiredString(value, "title"), RequiredString(value, "markdown"),
-                RequiredString(value, "rationale"))).ToArray();
-        var todoReference = RequiredString(arguments, "todo_ref");
-        var todoAuthority = references.Todo(todoReference);
-        var todoId = todoAuthority?.TodoId ?? (references.AllowsLegacyIds
-            ? todoReference : throw AgentTeamValidation.Invalid("todo_ref"));
-        if (todoAuthority is not null && todoAuthority.RoomId != room.Id)
-            throw new AgentTeamException(AgentTeamError.PermissionDenied,
-                "Todo reference does not belong to the current team.");
-        var progress = await store.AppendTodoProgressAsync(profile.OwnerUserId,
-            todoId, profile.Id,
-            ParseEnum<AgentTodoProgressKind>(RequiredString(arguments, "kind")),
-            OptionalString(arguments, "stage") ?? string.Empty,
-            RequiredString(arguments, "detail"), suggestions, cancellationToken).ConfigureAwait(false);
-        return new AgentToolExecutionResult(Json(new
-        {
-            todo_ref = references.TodoReference(room.Id, todoId, profile.Id),
-            progress.Sequence,
-            progress.Kind,
-            progress.Stage,
-            progress.Detail,
-            progress.CreatedAtUnixMs,
-        }));
-    }
-
     private async Task<AgentToolExecutionResult> ListAssetsAsync(
         AgentProfile profile,
         AgentRoom room,
@@ -679,22 +583,6 @@ internal sealed partial class AgentTeamToolExecutor(
             AssetResponse(asset, references)));
     }
 
-    private static object TodoResponse(AgentTodo value, AgentRunReferenceVault references) => new
-    {
-        todo_ref = references.TodoReference(value.Draft.TeamRoomId, value.Id,
-            value.Draft.AgentId),
-        assignee_ref = references.AgentReference(value.Draft.AgentId),
-        value.Draft.Title,
-        value.Draft.Detail,
-        value.Draft.Priority,
-        dependency_refs = value.Draft.Dependencies.Select(id =>
-            references.TodoReference(value.Draft.TeamRoomId, id, string.Empty)),
-        value.Status,
-        value.Result,
-        value.SortOrder,
-        value.Revision,
-    };
-
     private static object AssetResponse(AgentTeamAsset value,
         AgentRunReferenceVault references) => new
     {
@@ -731,6 +619,13 @@ internal sealed partial class AgentTeamToolExecutor(
         items = new { type = "string", maxLength = 600 },
         maxItems = 8,
         uniqueItems = true,
+    };
+
+    private static object TextArraySchema(int maximumItems, int maximumLength) => new
+    {
+        type = "array",
+        items = new { type = "string", maxLength = maximumLength },
+        maxItems = maximumItems,
     };
 
     private static string Json(object value) => JsonSerializer.Serialize(value, JsonOptions);

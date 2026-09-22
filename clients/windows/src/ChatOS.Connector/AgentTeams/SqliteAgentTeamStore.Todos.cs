@@ -7,13 +7,15 @@ public sealed partial class SqliteAgentTeamStore
 {
     private const string TodoColumns = """
         owner_user_id, id, room_id, agent_id, title, detail, priority,
-        dependency_ids_json, source_message_id, status, result, sort_order, revision,
+        dependency_ids_json, source_message_id, execution_contract_json,
+        execution_plan_json, status, result, sort_order, revision,
         created_at_unix_ms, updated_at_unix_ms
         """;
     private const string QualifiedTodoColumns = """
         todo.owner_user_id, todo.id, todo.room_id, todo.agent_id, todo.title,
         todo.detail, todo.priority, todo.dependency_ids_json, todo.source_message_id,
-        todo.status, todo.result, todo.sort_order, todo.revision,
+        todo.execution_contract_json, todo.execution_plan_json, todo.status, todo.result,
+        todo.sort_order, todo.revision,
         todo.created_at_unix_ms, todo.updated_at_unix_ms
         """;
 
@@ -28,14 +30,15 @@ public sealed partial class SqliteAgentTeamStore
             $"SELECT {TodoColumns} FROM agent_todos WHERE owner_user_id = @p0 AND room_id = @p1" +
             (includeTerminal ? string.Empty : " AND status NOT IN ('Completed', 'Cancelled')") +
             " ORDER BY sort_order, created_at_unix_ms, id", ownerUserId, roomId);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         var output = new List<AgentTodo>();
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
         {
-            output.Add(ReadTodo(reader));
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                output.Add(ReadTodo(reader));
         }
 
-        return output;
+        return await AttachTodoSourcesAsync(connection, null, ownerUserId, output,
+            cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<AgentTodo>> ListProjectTodosAsync(
@@ -55,12 +58,15 @@ public sealed partial class SqliteAgentTeamStore
                 " AND todo.status NOT IN ('Completed', 'Cancelled')") +
             " ORDER BY todo.sort_order, todo.created_at_unix_ms, todo.id",
             ownerUserId, projectId);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken)
-            .ConfigureAwait(false);
         var output = new List<AgentTodo>();
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-            output.Add(ReadTodo(reader));
-        return output;
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken)
+            .ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                output.Add(ReadTodo(reader));
+        }
+        return await AttachTodoSourcesAsync(connection, null, ownerUserId, output,
+            cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<AgentTodo?> GetTodoAsync(
@@ -79,8 +85,24 @@ public sealed partial class SqliteAgentTeamStore
         CancellationToken cancellationToken = default)
     {
         AgentTeamValidation.Identifier(ownerUserId, nameof(ownerUserId));
-        draft.Validate();
         var now = Now();
+        var contract = (draft.ExecutionContract ?? new AgentTodoExecutionContract())
+            .Normalized(draft.Title, draft.Detail);
+        var plan = (draft.ExecutionPlan ?? new AgentTodoExecutionPlan()).Normalized(now);
+        var sources = draft.Sources.ToList();
+        if (draft.SourceMessageId is not null && !sources.Any(value =>
+            value.ConversationId == draft.TeamRoomId && value.MessageId == draft.SourceMessageId))
+        {
+            sources.Insert(0, new AgentTodoSourceDraft(
+                draft.TeamRoomId, draft.SourceMessageId, AgentTodoSourceRelation.Created));
+        }
+        draft = draft with
+        {
+            ExecutionContract = contract,
+            ExecutionPlan = plan,
+            SourceLinks = sources,
+        };
+        draft.Validate();
         var todoId = NewId();
         await using var connection = await database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         using var transaction = connection.BeginTransaction(deferred: false);
@@ -88,10 +110,16 @@ public sealed partial class SqliteAgentTeamStore
             requireActive: true, cancellationToken).ConfigureAwait(false);
         await RequireActiveMemberAsync(connection, transaction, ownerUserId, draft.TeamRoomId,
             draft.AgentId, cancellationToken).ConfigureAwait(false);
+        foreach (var source in draft.Sources)
+        {
+            await RequireMessageAsync(connection, transaction, ownerUserId,
+                source.ConversationId, source.MessageId, cancellationToken).ConfigureAwait(false);
+        }
         foreach (var dependencyId in draft.Dependencies)
         {
             var dependency = await ReadTodoAsync(
-                connection, transaction, ownerUserId, dependencyId, cancellationToken).ConfigureAwait(false)
+                connection, transaction, ownerUserId, dependencyId, cancellationToken,
+                includeSources: false).ConfigureAwait(false)
                 ?? throw NotFound("Todo dependency");
             if (!string.Equals(dependency.Draft.TeamRoomId, draft.TeamRoomId, StringComparison.Ordinal))
             {
@@ -104,18 +132,33 @@ public sealed partial class SqliteAgentTeamStore
         var status = ready ? AgentTodoStatus.Ready : AgentTodoStatus.Pending;
         var sortOrder = await NextTodoOrderAsync(
             connection, transaction, ownerUserId, draft.TeamRoomId, cancellationToken).ConfigureAwait(false);
+        var sourceLinks = draft.Sources.Select(value => new AgentTodoSourceLink(todoId,
+            value.ConversationId, value.MessageId, value.Relation, now)).ToArray();
         var todo = new AgentTodo(todoId, ownerUserId, draft, status, string.Empty,
-            sortOrder, 1, now, now);
+            sortOrder, 1, now, now, sourceLinks);
         todo.Validate();
         using (var command = Command(connection, transaction, $"""
             INSERT INTO agent_todos ({TodoColumns})
             VALUES (@p0, @p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9, @p10,
-                @p11, @p12, @p13, @p14)
+                @p11, @p12, @p13, @p14, @p15, @p16)
             """, ownerUserId, todoId, draft.TeamRoomId, draft.AgentId, draft.Title,
             draft.Detail, draft.Priority.ToString(), Serialize(draft.Dependencies),
-            DbValue(draft.SourceMessageId), status.ToString(), string.Empty, sortOrder, 1, now, now))
+            DbValue(draft.SourceMessageId), Serialize(contract), Serialize(plan), status.ToString(),
+            string.Empty, sortOrder, 1, now, now))
         {
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach (var source in sourceLinks)
+        {
+            using var insertSource = Command(connection, transaction, """
+                INSERT INTO agent_todo_sources (
+                    owner_user_id, todo_id, conversation_id, message_id, relation,
+                    created_at_unix_ms)
+                VALUES (@p0, @p1, @p2, @p3, @p4, @p5)
+                """, ownerUserId, todoId, source.ConversationId, source.MessageId,
+                source.Relation.ToString(), source.CreatedAtUnixMs);
+            await insertSource.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
         if (status == AgentTodoStatus.Ready)
@@ -376,6 +419,12 @@ public sealed partial class SqliteAgentTeamStore
 
     private static AgentTodo ReadTodo(SqliteDataReader reader)
     {
+        var contract = (System.Text.Json.JsonSerializer.Deserialize<AgentTodoExecutionContract>(
+            reader.GetString(9), JsonOptions) ?? new AgentTodoExecutionContract())
+            .Normalized(reader.GetString(4), reader.GetString(5));
+        var plan = (System.Text.Json.JsonSerializer.Deserialize<AgentTodoExecutionPlan>(
+            reader.GetString(10), JsonOptions) ?? new AgentTodoExecutionPlan())
+            .Normalized(reader.GetInt64(15));
         var todo = new AgentTodo(
             reader.GetString(1),
             reader.GetString(0),
@@ -386,13 +435,14 @@ public sealed partial class SqliteAgentTeamStore
                 reader.GetString(5),
                 ParseEnum<AgentTodoPriority>(reader.GetString(6)),
                 DeserializeStrings(reader.GetString(7)),
-                reader.IsDBNull(8) ? null : reader.GetString(8)),
-            ParseEnum<AgentTodoStatus>(reader.GetString(9)),
-            reader.GetString(10),
-            reader.GetInt32(11),
-            reader.GetInt64(12),
-            reader.GetInt64(13),
-            reader.GetInt64(14));
+                reader.IsDBNull(8) ? null : reader.GetString(8),
+                contract, plan),
+            ParseEnum<AgentTodoStatus>(reader.GetString(11)),
+            reader.GetString(12),
+            reader.GetInt32(13),
+            reader.GetInt64(14),
+            reader.GetInt64(15),
+            reader.GetInt64(16));
         todo.Validate();
         return todo;
     }
@@ -402,13 +452,19 @@ public sealed partial class SqliteAgentTeamStore
         SqliteTransaction? transaction,
         string ownerUserId,
         string todoId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool includeSources = true)
     {
         using var command = Command(connection, transaction,
             $"SELECT {TodoColumns} FROM agent_todos WHERE owner_user_id = @p0 AND id = @p1",
             ownerUserId, todoId);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        return await reader.ReadAsync(cancellationToken).ConfigureAwait(false) ? ReadTodo(reader) : null;
+        AgentTodo? todo;
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+            todo = await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
+                ? ReadTodo(reader) : null;
+        if (todo is null || !includeSources) return todo;
+        return (await AttachTodoSourcesAsync(connection, transaction, ownerUserId, [todo],
+            cancellationToken).ConfigureAwait(false))[0];
     }
 
     private static async Task<IReadOnlyList<AgentTodo>> ReadTodosAsync(
@@ -421,14 +477,50 @@ public sealed partial class SqliteAgentTeamStore
         using var command = Command(connection, transaction,
             $"SELECT {TodoColumns} FROM agent_todos WHERE owner_user_id = @p0 AND room_id = @p1 " +
             "ORDER BY sort_order, created_at_unix_ms, id", ownerUserId, roomId);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         var output = new List<AgentTodo>();
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
         {
-            output.Add(ReadTodo(reader));
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                output.Add(ReadTodo(reader));
         }
 
-        return output;
+        return await AttachTodoSourcesAsync(connection, transaction, ownerUserId, output,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<IReadOnlyList<AgentTodo>> AttachTodoSourcesAsync(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        string ownerUserId,
+        IReadOnlyList<AgentTodo> todos,
+        CancellationToken cancellationToken)
+    {
+        if (todos.Count == 0) return todos;
+        var sources = todos.ToDictionary(value => value.Id,
+            _ => new List<AgentTodoSourceLink>(), StringComparer.Ordinal);
+        foreach (var batch in todos.Chunk(400))
+        {
+            var ids = batch.Select(value => value.Id).ToArray();
+            var placeholders = string.Join(", ", Enumerable.Range(1, ids.Length)
+                .Select(index => $"@p{index}"));
+            using var command = Command(connection, transaction, $"""
+                SELECT todo_id, conversation_id, message_id, relation, created_at_unix_ms
+                FROM agent_todo_sources
+                WHERE owner_user_id = @p0 AND todo_id IN ({placeholders})
+                ORDER BY created_at_unix_ms, conversation_id, message_id
+                """, [ownerUserId, .. ids.Cast<object>()]);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken)
+                .ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var todoId = reader.GetString(0);
+                sources[todoId].Add(new AgentTodoSourceLink(todoId, reader.GetString(1),
+                    reader.GetString(2), ParseEnum<AgentTodoSourceRelation>(reader.GetString(3)),
+                    reader.GetInt64(4)));
+            }
+        }
+
+        return todos.Select(value => value with { SourceLinks = sources[value.Id] }).ToArray();
     }
 
     private static async Task<bool> DependenciesCompleteAsync(
@@ -441,7 +533,8 @@ public sealed partial class SqliteAgentTeamStore
         foreach (var id in dependencyIds)
         {
             var dependency = await ReadTodoAsync(
-                connection, transaction, ownerUserId, id, cancellationToken).ConfigureAwait(false);
+                connection, transaction, ownerUserId, id, cancellationToken,
+                includeSources: false).ConfigureAwait(false);
             if (dependency?.Status != AgentTodoStatus.Completed)
             {
                 return false;

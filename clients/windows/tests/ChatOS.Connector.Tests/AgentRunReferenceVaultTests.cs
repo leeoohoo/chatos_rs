@@ -97,6 +97,42 @@ public sealed class AgentRunReferenceVaultTests : IAsyncLifetime
             CancellationToken.None, references);
         Assert.Contains("conversation_", sent.Content, StringComparison.Ordinal);
         Assert.DoesNotContain(worker.Id, sent.Content, StringComparison.Ordinal);
+
+        var workerReference = references.AgentReference(worker.Id);
+        var sourceReference = references.MessageReference(room.Id, posted.Message.Id);
+        var createArguments = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            assignee_ref = workerReference,
+            title = "immutable contract",
+            objective = "implement the contract",
+            scope = "Windows Todo path",
+            expected_outputs = new[] { "tested implementation" },
+            acceptance_criteria = new[] { "contract survives status updates" },
+            builtin_capabilities = new[] { "requirement_survey_write" },
+            source_message_refs = new[] { sourceReference },
+        });
+        var createdTodo = await executor.ExecuteAsync(manager, member, room, delivery,
+            new("todo-create", "todo_create", createArguments), CancellationToken.None, references);
+        Assert.Contains("execution_contract", createdTodo.Content, StringComparison.Ordinal);
+        Assert.Contains("requirement_survey_read", createdTodo.Content, StringComparison.Ordinal);
+        Assert.Contains("message_", createdTodo.Content, StringComparison.Ordinal);
+        Assert.DoesNotContain(posted.Message.Id, createdTodo.Content, StringComparison.Ordinal);
+
+        var rawSourceArguments = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            assignee_ref = workerReference,
+            title = "invalid source",
+            objective = "reject durable IDs",
+            scope = "Windows Todo path",
+            expected_outputs = new[] { "rejection" },
+            acceptance_criteria = new[] { "no durable source accepted" },
+            source_message_refs = new[] { posted.Message.Id },
+        });
+        var rawSourceRejected = await Assert.ThrowsAsync<AgentTeamException>(() =>
+            executor.ExecuteAsync(manager, member, room, delivery,
+                new("todo-create-raw", "todo_create", rawSourceArguments),
+                CancellationToken.None, references));
+        Assert.Equal(AgentTeamError.InvalidField, rawSourceRejected.Code);
     }
 
     private Task<AgentProfile> CreateAgentAsync(string name) =>

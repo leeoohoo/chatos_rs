@@ -25,9 +25,13 @@ public sealed record AgentTodoDraft(
     string Detail = "",
     AgentTodoPriority Priority = AgentTodoPriority.Normal,
     IReadOnlyList<string>? DependencyIds = null,
-    string? SourceMessageId = null)
+    string? SourceMessageId = null,
+    AgentTodoExecutionContract? ExecutionContract = null,
+    AgentTodoExecutionPlan? ExecutionPlan = null,
+    IReadOnlyList<AgentTodoSourceDraft>? SourceLinks = null)
 {
     public IReadOnlyList<string> Dependencies => DependencyIds ?? [];
+    public IReadOnlyList<AgentTodoSourceDraft> Sources => SourceLinks ?? [];
 
     public void Validate()
     {
@@ -40,6 +44,12 @@ public sealed record AgentTodoDraft(
         {
             AgentTeamValidation.Identifier(SourceMessageId, nameof(SourceMessageId));
         }
+
+        if (Sources.Count > 64 || Sources.Distinct().Count() != Sources.Count)
+            throw AgentTeamValidation.Invalid(nameof(SourceLinks));
+        foreach (var source in Sources) source.Validate();
+        ExecutionContract?.Validate();
+        ExecutionPlan?.Validate();
     }
 }
 
@@ -52,9 +62,11 @@ public sealed record AgentTodo(
     int SortOrder,
     long Revision,
     long CreatedAtUnixMs,
-    long UpdatedAtUnixMs)
+    long UpdatedAtUnixMs,
+    IReadOnlyList<AgentTodoSourceLink>? SourceLinks = null)
 {
     public bool IsTerminal => Status is AgentTodoStatus.Completed or AgentTodoStatus.Cancelled;
+    public IReadOnlyList<AgentTodoSourceLink> Sources => SourceLinks ?? [];
 
     public void Validate()
     {

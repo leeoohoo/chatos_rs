@@ -1,0 +1,210 @@
+using System.Text.Json;
+using ChatOS.Core.Domain;
+
+namespace ChatOS.Connector.AgentTeams;
+
+internal sealed partial class AgentTeamToolExecutor
+{
+    private async Task<AgentToolExecutionResult> ListTodosAsync(
+        AgentProfile profile,
+        AgentRoom room,
+        AgentRunReferenceVault references,
+        CancellationToken cancellationToken)
+    {
+        var todos = await store.ListTodosAsync(profile.OwnerUserId, room.Id,
+            includeTerminal: true, cancellationToken).ConfigureAwait(false);
+        return new AgentToolExecutionResult(Json(todos.Select(value => TodoResponse(
+            value, references))));
+    }
+
+    private async Task<AgentToolExecutionResult> CreateTodoAsync(
+        AgentProfile profile,
+        AgentRoom room,
+        AgentDelivery delivery,
+        AgentRunReferenceVault references,
+        JsonElement arguments,
+        CancellationToken cancellationToken)
+    {
+        RequireManager(profile, room);
+        var assigneeId = references.AgentId(RequiredString(arguments, "assignee_ref"))
+            ?? throw AgentTeamValidation.Invalid("assignee_ref");
+        var dependencies = StringArray(arguments, "dependency_refs", 100).Select(value =>
+            references.Todo(value)?.TodoId ?? (references.AllowsLegacyIds
+                ? value : throw AgentTeamValidation.Invalid("dependency_refs"))).ToArray();
+        var sourceReferences = StringArray(arguments, "source_message_refs", 64);
+        if (sourceReferences.Count == 0)
+            throw AgentTeamValidation.Invalid("source_message_refs");
+        var sources = sourceReferences.Select(value =>
+        {
+            var authority = references.Message(value);
+            if (authority is not null)
+                return new AgentTodoSourceDraft(authority.RoomId, authority.MessageId);
+            if (references.AllowsLegacyIds)
+                return new AgentTodoSourceDraft(room.Id, value);
+            throw AgentTeamValidation.Invalid("source_message_refs");
+        }).Distinct().ToArray();
+        if (sources.Length != sourceReferences.Count)
+            throw AgentTeamValidation.Invalid("source_message_refs");
+
+        var capabilities = StringArray(arguments, "builtin_capabilities", 5)
+            .Select(ParseBuiltinCapability).ToArray();
+        var todo = await store.CreateTodoAsync(profile.OwnerUserId, new AgentTodoDraft(
+            room.Id,
+            assigneeId,
+            RequiredString(arguments, "title"),
+            OptionalString(arguments, "detail") ?? string.Empty,
+            ParseEnum<AgentTodoPriority>(OptionalString(arguments, "priority") ?? "Normal"),
+            dependencies,
+            sources.FirstOrDefault(value => value.ConversationId == room.Id)?.MessageId,
+            new AgentTodoExecutionContract(
+                RequiredString(arguments, "objective"),
+                RequiredString(arguments, "scope"),
+                StringArray(arguments, "expected_outputs", 64),
+                StringArray(arguments, "acceptance_criteria", 64),
+                StringArray(arguments, "constraints", 64)),
+            new AgentTodoExecutionPlan(
+                OptionalBoolean(arguments, "requires_execution") ?? true,
+                capabilities.Length == 0 ? [AgentTodoBuiltinCapability.ProjectRead] : capabilities),
+            sources), cancellationToken).ConfigureAwait(false);
+        return new AgentToolExecutionResult(Json(TodoResponse(todo, references)));
+    }
+
+    private async Task<AgentToolExecutionResult> UpdateTodoAsync(
+        AgentProfile profile,
+        AgentRoom room,
+        AgentRunReferenceVault references,
+        JsonElement arguments,
+        CancellationToken cancellationToken)
+    {
+        var todoReference = RequiredString(arguments, "todo_ref");
+        var todoAuthority = references.Todo(todoReference);
+        var todoId = todoAuthority?.TodoId ?? (references.AllowsLegacyIds
+            ? todoReference : throw AgentTeamValidation.Invalid("todo_ref"));
+        if (todoAuthority is not null && todoAuthority.RoomId != room.Id)
+            throw new AgentTeamException(AgentTeamError.PermissionDenied,
+                "Todo reference does not belong to the current team.");
+        var todo = await store.GetTodoAsync(profile.OwnerUserId, todoId, cancellationToken)
+            .ConfigureAwait(false) ?? throw new AgentTeamException(AgentTeamError.NotFound,
+                "Todo was not found.");
+        if (!string.Equals(todo.Draft.TeamRoomId, room.Id, StringComparison.Ordinal))
+            throw new AgentTeamException(AgentTeamError.PermissionDenied,
+                "Todo does not belong to the current team.");
+
+        var isManager = string.Equals(room.ProjectManagerAgentId, profile.Id, StringComparison.Ordinal);
+        if (!isManager && !string.Equals(todo.Draft.AgentId, profile.Id, StringComparison.Ordinal))
+            throw new AgentTeamException(AgentTeamError.PermissionDenied,
+                "Only the project manager or assigned Agent can update this Todo.");
+        var assignedReference = OptionalString(arguments, "assigned_agent_ref");
+        var assignedAgentId = assignedReference is null ? null :
+            references.AgentId(assignedReference) ??
+            throw AgentTeamValidation.Invalid("assigned_agent_ref");
+        if (!isManager && assignedAgentId is not null && assignedAgentId != profile.Id)
+            throw new AgentTeamException(AgentTeamError.PermissionDenied,
+                "Only the project manager can reassign a Todo.");
+
+        var updated = await store.UpdateTodoAsync(profile.OwnerUserId, todoId,
+            RequiredLong(arguments, "expected_revision"),
+            ParseEnum<AgentTodoStatus>(RequiredString(arguments, "status")),
+            OptionalString(arguments, "result") ?? string.Empty, assignedAgentId,
+            cancellationToken).ConfigureAwait(false);
+        return new AgentToolExecutionResult(Json(TodoResponse(updated, references)),
+            EndsCycle: updated.IsTerminal);
+    }
+
+    private async Task<AgentToolExecutionResult> AppendProgressAsync(
+        AgentProfile profile,
+        AgentRoom room,
+        AgentRunReferenceVault references,
+        JsonElement arguments,
+        CancellationToken cancellationToken)
+    {
+        var suggestions = OptionalObjectArray(arguments, "asset_update_suggestions", 8)
+            .Select(value => new AgentTeamAssetUpdateSuggestion(
+                ParseEnum<AgentTeamAssetCategory>(RequiredString(value, "category")),
+                RequiredString(value, "title"), RequiredString(value, "markdown"),
+                RequiredString(value, "rationale"))).ToArray();
+        var todoReference = RequiredString(arguments, "todo_ref");
+        var authority = references.Todo(todoReference);
+        var todoId = authority?.TodoId ?? (references.AllowsLegacyIds
+            ? todoReference : throw AgentTeamValidation.Invalid("todo_ref"));
+        if (authority is not null && authority.RoomId != room.Id)
+            throw new AgentTeamException(AgentTeamError.PermissionDenied,
+                "Todo reference does not belong to the current team.");
+        var progress = await store.AppendTodoProgressAsync(profile.OwnerUserId, todoId,
+            profile.Id, ParseEnum<AgentTodoProgressKind>(RequiredString(arguments, "kind")),
+            OptionalString(arguments, "stage") ?? string.Empty,
+            RequiredString(arguments, "detail"), suggestions, cancellationToken)
+            .ConfigureAwait(false);
+        return new AgentToolExecutionResult(Json(new
+        {
+            todo_ref = references.TodoReference(room.Id, todoId, profile.Id),
+            progress.Sequence,
+            progress.Kind,
+            progress.Stage,
+            progress.Detail,
+            progress.CreatedAtUnixMs,
+        }));
+    }
+
+    private static object TodoResponse(AgentTodo value, AgentRunReferenceVault references) => new
+    {
+        todo_ref = references.TodoReference(value.Draft.TeamRoomId, value.Id,
+            value.Draft.AgentId),
+        assignee_ref = references.AgentReference(value.Draft.AgentId),
+        value.Draft.Title,
+        value.Draft.Detail,
+        value.Draft.Priority,
+        dependency_refs = value.Draft.Dependencies.Select(id =>
+            references.TodoReference(value.Draft.TeamRoomId, id, string.Empty)),
+        source_message_refs = value.Sources.Select(source =>
+            references.MessageReference(source.ConversationId, source.MessageId)),
+        execution_contract = new
+        {
+            objective = value.Draft.ExecutionContract!.Objective,
+            scope = value.Draft.ExecutionContract.Scope,
+            expected_outputs = value.Draft.ExecutionContract.Outputs,
+            acceptance_criteria = value.Draft.ExecutionContract.Criteria,
+            constraints = value.Draft.ExecutionContract.Limits,
+        },
+        execution_plan = new
+        {
+            requires_execution = value.Draft.ExecutionPlan!.RequiresExecution,
+            builtin_capabilities = value.Draft.ExecutionPlan.Capabilities.Select(
+                BuiltinCapabilityName),
+            plugins = value.Draft.ExecutionPlan.SelectedPlugins.Select(plugin => new
+                { display_name = plugin.DisplayName, reason = plugin.Reason }),
+            selection_revision = value.Draft.ExecutionPlan.SelectionRevision,
+            selected_at_unix_ms = value.Draft.ExecutionPlan.SelectedAtUnixMs,
+        },
+        value.Status,
+        value.Result,
+        value.SortOrder,
+        value.Revision,
+    };
+
+    private static AgentTodoBuiltinCapability ParseBuiltinCapability(string value) => value switch
+    {
+        "project_read" => AgentTodoBuiltinCapability.ProjectRead,
+        "project_write" => AgentTodoBuiltinCapability.ProjectWrite,
+        "terminal" => AgentTodoBuiltinCapability.Terminal,
+        "requirement_survey_read" => AgentTodoBuiltinCapability.RequirementSurveyRead,
+        "requirement_survey_write" => AgentTodoBuiltinCapability.RequirementSurveyWrite,
+        _ => throw AgentTeamValidation.Invalid("builtin_capabilities"),
+    };
+
+    private static string BuiltinCapabilityName(AgentTodoBuiltinCapability value) => value switch
+    {
+        AgentTodoBuiltinCapability.ProjectRead => "project_read",
+        AgentTodoBuiltinCapability.ProjectWrite => "project_write",
+        AgentTodoBuiltinCapability.Terminal => "terminal",
+        AgentTodoBuiltinCapability.RequirementSurveyRead => "requirement_survey_read",
+        AgentTodoBuiltinCapability.RequirementSurveyWrite => "requirement_survey_write",
+        _ => throw AgentTeamValidation.Invalid("builtin_capabilities"),
+    };
+
+    private static bool? OptionalBoolean(JsonElement value, string name) =>
+        value.ValueKind == JsonValueKind.Object && value.TryGetProperty(name, out var property) &&
+        property.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? property.GetBoolean()
+            : null;
+}
