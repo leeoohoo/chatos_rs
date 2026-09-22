@@ -77,6 +77,8 @@ internal sealed class AgentTeamScheduler(
             {
             }
 
+            await RecordTodoFailureAsync(delivery, "Agent run was cancelled.")
+                .ConfigureAwait(false);
             RaiseChanged(delivery, "run_cancelled");
             throw;
         }
@@ -262,7 +264,7 @@ internal sealed class AgentTeamScheduler(
 
             规则：
             1. 团队协作使用 team_send，并用 mention_agent_refs 精确唤醒责任人。
-            2. 团队任务以 todo_list 为权威状态；执行者持续记录 todo_progress，完成时用 todo_update。
+            2. 团队任务以 todo_list 为权威状态；执行由程序计算的 todo_schedule_state/todo_start_next 串行调度，不得自行把 Ready 改为 InProgress；执行者持续记录 todo_progress，完成时用 todo_update。
             3. 只有项目经理可维护版本化共享资产：首次创建用 asset_create，已有资产先 asset_list 再用 asset_update 和当前 revision；执行者只能用 todo_progress 的 asset_update_suggestions 提交完整替换建议。
             4. 项目文件和命令只通过提供的 project_* 与 terminal_exec 工具访问，不能编造结果。
             5. 需求调研 Skill Catalog：SKreq-router=requirement-survey(router)，SKreq-create=create，SKreq-read=read-results，SKreq-resolve=resolve，SKreq-review=review-execution。需要调研能力时先用 skill_activate 激活 SKreq-router，再只激活当前目标对应的专业 Skill；需要示例时才用 skill_list_resources/skill_read_resource。创建后立即结束，不能代替 Human 提交。
@@ -387,14 +389,14 @@ internal sealed class AgentTeamScheduler(
 
         var todo = await store.GetTodoAsync(delivery.OwnerUserId, parts[1], cancellationToken)
             .ConfigureAwait(false);
-        if (todo?.Status != AgentTodoStatus.Ready)
-        {
-            return;
-        }
-
-        var updated = await store.UpdateTodoAsync(delivery.OwnerUserId, todo.Id, todo.Revision,
-            AgentTodoStatus.InProgress, todo.Result, null, cancellationToken).ConfigureAwait(false);
-        await store.AppendTodoProgressAsync(delivery.OwnerUserId, updated.Id,
+        if (todo?.Status != AgentTodoStatus.InProgress ||
+            !string.Equals(todo.Draft.AgentId, delivery.TargetAgentId, StringComparison.Ordinal))
+            throw new AgentTeamException(AgentTeamError.Conflict,
+                "Todo delivery no longer owns the scheduled execution slot.");
+        var progress = await store.ListTodoProgressAsync(delivery.OwnerUserId, todo.Id, 50,
+            cancellationToken).ConfigureAwait(false);
+        if (progress.Any(value => value.Kind == AgentTodoProgressKind.Started)) return;
+        await store.AppendTodoProgressAsync(delivery.OwnerUserId, todo.Id,
             delivery.TargetAgentId, AgentTodoProgressKind.Started, "started",
             "Windows Agent executor claimed the ready Todo.", cancellationToken: cancellationToken)
             .ConfigureAwait(false);
@@ -416,6 +418,14 @@ internal sealed class AgentTeamScheduler(
 
         try
         {
+            var todo = await store.GetTodoAsync(delivery.OwnerUserId, parts[1],
+                CancellationToken.None).ConfigureAwait(false);
+            if (todo?.Status == AgentTodoStatus.InProgress)
+            {
+                await store.UpdateTodoAsync(delivery.OwnerUserId, todo.Id, todo.Revision,
+                    AgentTodoStatus.Blocked, detail, null, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
             await store.AppendTodoProgressAsync(delivery.OwnerUserId, parts[1],
                 delivery.TargetAgentId, AgentTodoProgressKind.Failed, "failed", detail,
                 cancellationToken: CancellationToken.None).ConfigureAwait(false);

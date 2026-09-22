@@ -161,7 +161,7 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
         var dependent = await _store.CreateTodoAsync("alice",
             new(room.Id, worker.Id, "实现", DependencyIds: [prerequisite.Id]));
 
-        Assert.Equal(AgentTodoStatus.Ready, prerequisite.Status);
+        Assert.Equal(AgentTodoStatus.InProgress, prerequisite.Status);
         Assert.Equal(AgentTodoStatus.Pending, dependent.Status);
         var conflict = await Assert.ThrowsAsync<AgentTeamException>(() =>
             _store.UpdateTodoAsync("alice", dependent.Id, dependent.Revision,
@@ -170,10 +170,10 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
 
         var completed = await _store.UpdateTodoAsync("alice", prerequisite.Id,
             prerequisite.Revision, AgentTodoStatus.Completed, "设计完成");
-        Assert.Equal(2, completed.Revision);
+        Assert.Equal(3, completed.Revision);
         dependent = Assert.Single(await _store.ListTodosAsync("alice", room.Id),
             value => value.Id == dependent.Id);
-        Assert.Equal(AgentTodoStatus.Ready, dependent.Status);
+        Assert.Equal(AgentTodoStatus.InProgress, dependent.Status);
         Assert.True(dependent.Revision > 1);
         await _store.AppendTodoProgressAsync("alice", dependent.Id, worker.Id,
             AgentTodoProgressKind.Update, "实现中", "完成核心逻辑",
@@ -262,6 +262,63 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
             _store.CreateTodoAsync("alice", new AgentTodoDraft(room.Id, worker.Id, "无效来源",
                 SourceLinks: [new(room.Id, "missing-message")])));
         Assert.Equal(AgentTeamError.NotFound, invalidSource.Code);
+    }
+
+    [Fact]
+    public async Task TodoSchedulerRunsOneTodoPerAgentAndStartsNextByPriority()
+    {
+        var (_, worker, room) = await CreateConfiguredTeamAsync();
+        await CompleteInitialMaintenanceAsync();
+        var first = await _store.CreateTodoAsync("alice",
+            new(room.Id, worker.Id, "first", Priority: AgentTodoPriority.Normal));
+        var firstDelivery = Assert.IsType<AgentDelivery>(
+            await _store.ClaimNextDeliveryAsync("alice"));
+        Assert.Equal(AgentDeliveryTrigger.Todo, firstDelivery.Trigger);
+        var normal = await _store.CreateTodoAsync("alice",
+            new(room.Id, worker.Id, "normal", Priority: AgentTodoPriority.Normal));
+        var urgent = await _store.CreateTodoAsync("alice",
+            new(room.Id, worker.Id, "urgent", Priority: AgentTodoPriority.Urgent));
+
+        Assert.Equal(AgentTodoStatus.InProgress, first.Status);
+        Assert.Equal(AgentTodoStatus.Ready, normal.Status);
+        Assert.Equal(AgentTodoStatus.Ready, urgent.Status);
+        var busy = await _store.GetTodoScheduleStateAsync("alice", worker.Id);
+        Assert.Equal("busy", busy.State);
+        Assert.Equal(first.Id, busy.RunningTodo!.Id);
+        Assert.Equal(urgent.Id, busy.ReadyTodo!.Id);
+        Assert.Null(await _store.StartNextReadyTodoAsync("alice", worker.Id));
+
+        var programOwned = await Assert.ThrowsAsync<AgentTeamException>(() =>
+            _store.UpdateTodoAsync("alice", normal.Id, normal.Revision,
+                AgentTodoStatus.InProgress, string.Empty));
+        Assert.Equal(AgentTeamError.Conflict, programOwned.Code);
+
+        _ = await _store.UpdateTodoAsync("alice", first.Id, first.Revision,
+            AgentTodoStatus.Completed, "done");
+        var waitingForDelivery = await _store.GetTodoScheduleStateAsync("alice", worker.Id);
+        Assert.Equal("ready", waitingForDelivery.State);
+        Assert.Equal(urgent.Id, waitingForDelivery.ReadyTodo!.Id);
+        await _store.CompleteDeliveryAsync("alice", firstDelivery.Id, null);
+        var next = await _store.GetTodoScheduleStateAsync("alice", worker.Id);
+        Assert.Equal(urgent.Id, next.RunningTodo!.Id);
+        Assert.Equal(normal.Id, next.ReadyTodo!.Id);
+        Assert.Null(await _store.StartNextReadyTodoAsync("alice", worker.Id));
+
+        var todoDeliveries = new List<AgentDelivery>();
+        while (await _store.ClaimNextDeliveryAsync("alice") is { } delivery)
+        {
+            if (delivery.Trigger == AgentDeliveryTrigger.Todo) todoDeliveries.Add(delivery);
+            await _store.CompleteDeliveryAsync("alice", delivery.Id, null);
+        }
+        Assert.Equal(2, todoDeliveries.Count);
+        Assert.Contains(urgent.Id, todoDeliveries[0].DeduplicationKey,
+            StringComparison.Ordinal);
+        Assert.Contains(normal.Id, todoDeliveries[1].DeduplicationKey,
+            StringComparison.Ordinal);
+        Assert.Equal(AgentTodoStatus.Blocked,
+            (await _store.GetTodoAsync("alice", urgent.Id))!.Status);
+        Assert.Equal(AgentTodoStatus.Blocked,
+            (await _store.GetTodoAsync("alice", normal.Id))!.Status);
     }
 
     [Fact]

@@ -128,6 +128,8 @@ internal sealed partial class AgentTeamToolExecutor(
                 "expected_outputs", "acceptance_criteria", "source_message_refs" },
             additionalProperties = false,
         }),
+        Tool("todo_schedule_state", "读取当前 Agent 的程序计算调度状态：busy、ready 或 idle。", ObjectSchema()),
+        Tool("todo_start_next", "为当前 Agent 原子启动最高优先级的下一项 Ready Todo；忙碌时不会重复启动。", ObjectSchema()),
         Tool("todo_update", "更新 Todo 状态、结果或负责人。非项目经理只能更新分配给自己的 Todo。", new
         {
             type = "object",
@@ -228,7 +230,8 @@ internal sealed partial class AgentTeamToolExecutor(
         {
             var executorTools = new HashSet<string>(StringComparer.Ordinal)
             {
-                "todo_list", "todo_update", "todo_progress", "asset_list",
+                "todo_list", "todo_schedule_state", "todo_start_next",
+                "todo_update", "todo_progress", "asset_list",
                 "chat_read_attachment", "cycle_complete",
                 "chat_read_unread", "chat_read_all_unread", "chat_mark_read",
                 "skill_activate", "skill_list_resources", "skill_read_resource",
@@ -302,6 +305,10 @@ internal sealed partial class AgentTeamToolExecutor(
                     profile, room, vault, arguments, cancellationToken).ConfigureAwait(false),
                 "todo_list" => await ListTodosAsync(
                     profile, room, vault, cancellationToken).ConfigureAwait(false),
+                "todo_schedule_state" => await TodoScheduleStateAsync(
+                    profile, vault, cancellationToken).ConfigureAwait(false),
+                "todo_start_next" => await StartNextTodoAsync(
+                    profile, vault, cancellationToken).ConfigureAwait(false),
                 "todo_create" => await CreateTodoAsync(
                     profile, room, delivery, vault, arguments, cancellationToken).ConfigureAwait(false),
                 "todo_update" => await UpdateTodoAsync(

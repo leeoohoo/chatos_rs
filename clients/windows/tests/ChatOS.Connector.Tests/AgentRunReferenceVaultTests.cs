@@ -56,6 +56,8 @@ public sealed class AgentRunReferenceVaultTests : IAsyncLifetime
         var delivery = Assert.IsType<AgentDelivery>(await _store.ClaimNextDeliveryAsync("alice"));
         var member = Assert.Single(await _store.ListMembersAsync("alice", room.Id), value =>
             value.AgentId == manager.Id);
+        var workerMember = Assert.Single(await _store.ListMembersAsync("alice", room.Id), value =>
+            value.AgentId == worker.Id);
         var executor = new AgentTeamToolExecutor(_store, null!);
         var references = new AgentRunReferenceVault();
 
@@ -83,6 +85,17 @@ public sealed class AgentRunReferenceVaultTests : IAsyncLifetime
         Assert.DoesNotContain(todo.Id, combined, StringComparison.Ordinal);
         Assert.DoesNotContain(asset.Id, combined, StringComparison.Ordinal);
         Assert.DoesNotContain(posted.Message.Id, combined, StringComparison.Ordinal);
+
+        var schedule = await executor.ExecuteAsync(worker, workerMember, room,
+            delivery with { TargetAgentId = worker.Id },
+            new("schedule", "todo_schedule_state", "{}"), CancellationToken.None, references);
+        Assert.Contains("\"state\":\"busy\"", schedule.Content, StringComparison.Ordinal);
+        Assert.Contains("todo_", schedule.Content, StringComparison.Ordinal);
+        Assert.DoesNotContain(todo.Id, schedule.Content, StringComparison.Ordinal);
+        var startNext = await executor.ExecuteAsync(worker, workerMember, room,
+            delivery with { TargetAgentId = worker.Id },
+            new("start-next", "todo_start_next", "{}"), CancellationToken.None, references);
+        Assert.Contains("executor_busy", startNext.Content, StringComparison.Ordinal);
 
         var rawIdRejected = await Assert.ThrowsAsync<AgentTeamException>(() =>
             executor.ExecuteAsync(manager, member, room, delivery,

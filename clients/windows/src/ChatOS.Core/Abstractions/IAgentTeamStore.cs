@@ -140,6 +140,16 @@ public interface IAgentTeamStore
         string todoId,
         CancellationToken cancellationToken = default);
 
+    Task<AgentTodoScheduleState> GetTodoScheduleStateAsync(
+        string ownerUserId,
+        string agentId,
+        CancellationToken cancellationToken = default);
+
+    Task<AgentDelivery?> StartNextReadyTodoAsync(
+        string ownerUserId,
+        string agentId,
+        CancellationToken cancellationToken = default);
+
     Task<AgentTodo> CreateTodoAsync(
         string ownerUserId,
         AgentTodoDraft draft,

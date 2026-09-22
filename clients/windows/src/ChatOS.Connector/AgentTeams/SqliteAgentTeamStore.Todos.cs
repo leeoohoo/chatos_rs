@@ -161,9 +161,15 @@ public sealed partial class SqliteAgentTeamStore
             await insertSource.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        if (status == AgentTodoStatus.Ready)
+        if (status == AgentTodoStatus.Ready && await StartNextReadyTodoAsync(connection,
+            transaction, ownerUserId, draft.AgentId, now, cancellationToken)
+            .ConfigureAwait(false) is not null)
         {
-            await EnqueueTodoAsync(connection, transaction, todo, cancellationToken).ConfigureAwait(false);
+            todo = todo with
+            {
+                Status = AgentTodoStatus.InProgress,
+                Revision = todo.Revision + 1,
+            };
         }
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -189,7 +195,16 @@ public sealed partial class SqliteAgentTeamStore
             throw Conflict("Todo changed before the update was applied.");
         }
 
+        if (status == AgentTodoStatus.InProgress && current.Status != AgentTodoStatus.InProgress)
+            throw Conflict("Todo execution can only be started by the local scheduler.");
+
         var agentId = assignedAgentId ?? current.Draft.AgentId;
+        if (current.Status == AgentTodoStatus.InProgress &&
+            (status == AgentTodoStatus.Ready || status == AgentTodoStatus.InProgress &&
+             !string.Equals(agentId, current.Draft.AgentId, StringComparison.Ordinal)))
+        {
+            throw Conflict("A running Todo must complete, block, or cancel before rescheduling.");
+        }
         await RequireActiveMemberAsync(connection, transaction, ownerUserId,
             current.Draft.TeamRoomId, agentId, cancellationToken).ConfigureAwait(false);
         if ((status is AgentTodoStatus.Ready or AgentTodoStatus.InProgress) &&
@@ -222,11 +237,6 @@ public sealed partial class SqliteAgentTeamStore
             }
         }
 
-        if (status == AgentTodoStatus.Ready && current.Status != AgentTodoStatus.Ready)
-        {
-            await EnqueueTodoAsync(connection, transaction, next, cancellationToken).ConfigureAwait(false);
-        }
-
         if (status == AgentTodoStatus.Completed)
         {
             await ReleaseDependentTodosAsync(
@@ -249,6 +259,15 @@ public sealed partial class SqliteAgentTeamStore
                 $"Todo 状态更新为 {status}：{next.Draft.Title}\n{result}",
                 $"todo-status:{next.Id}:revision:{next.Revision}", cancellationToken)
                 .ConfigureAwait(false);
+        }
+
+        if (status is AgentTodoStatus.Ready or AgentTodoStatus.Blocked or
+            AgentTodoStatus.Completed or AgentTodoStatus.Cancelled)
+        {
+            await ScheduleReadyAgentsAsync(connection, transaction, ownerUserId, now,
+                cancellationToken).ConfigureAwait(false);
+            next = await ReadTodoAsync(connection, transaction, ownerUserId, todoId,
+                cancellationToken).ConfigureAwait(false) ?? next;
         }
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -558,22 +577,6 @@ public sealed partial class SqliteAgentTeamStore
         return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false));
     }
 
-    private static async Task EnqueueTodoAsync(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        AgentTodo todo,
-        CancellationToken cancellationToken)
-    {
-        var now = Now();
-        var messageId = await InsertSystemMessageAsync(connection, transaction, todo.OwnerUserId,
-            todo.Draft.TeamRoomId, $"Todo：{todo.Draft.Title}\n{todo.Draft.Detail}", now,
-            cancellationToken).ConfigureAwait(false);
-        _ = await InsertDeliveryAsync(connection, transaction, todo.OwnerUserId,
-            todo.Draft.TeamRoomId, messageId, messageId, todo.Draft.AgentId,
-            AgentDeliveryTrigger.Todo, 0, $"todo:{todo.Id}:revision:{todo.Revision}", now,
-            cancellationToken).ConfigureAwait(false);
-    }
-
     private static async Task ReleaseDependentTodosAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -616,10 +619,7 @@ public sealed partial class SqliteAgentTeamStore
                 UPDATE agent_todos SET status = 'Ready', revision = @p0, updated_at_unix_ms = @p1
                 WHERE owner_user_id = @p2 AND id = @p3 AND revision = @p4
                 """, ready.Revision, now, ownerUserId, todo.Id, todo.Revision);
-            if (await update.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) == 1)
-            {
-                await EnqueueTodoAsync(connection, transaction, ready, cancellationToken).ConfigureAwait(false);
-            }
+            _ = await update.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 

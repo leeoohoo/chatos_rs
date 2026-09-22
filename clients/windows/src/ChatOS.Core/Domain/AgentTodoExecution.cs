@@ -161,3 +161,10 @@ public sealed record AgentTodoSourceLink(
     string MessageId,
     AgentTodoSourceRelation Relation,
     long CreatedAtUnixMs);
+
+public sealed record AgentTodoScheduleState(
+    AgentTodo? RunningTodo,
+    AgentTodo? ReadyTodo)
+{
+    public string State => RunningTodo is not null ? "busy" : ReadyTodo is not null ? "ready" : "idle";
+}

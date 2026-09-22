@@ -265,6 +265,14 @@ public sealed partial class SqliteAgentTeamStore
             throw Conflict("Agent delivery changed before it could be finished.");
         }
 
+        if (current.Trigger == AgentDeliveryTrigger.Todo)
+        {
+            await BlockUnfinishedTodoForDeliveryAsync(connection, transaction, current, status,
+                error, now, cancellationToken).ConfigureAwait(false);
+            await ScheduleReadyAgentsAsync(connection, transaction, ownerUserId, now,
+                cancellationToken).ConfigureAwait(false);
+        }
+
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return current with
         {

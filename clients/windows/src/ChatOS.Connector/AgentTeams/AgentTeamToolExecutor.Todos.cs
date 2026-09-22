@@ -69,6 +69,39 @@ internal sealed partial class AgentTeamToolExecutor
         return new AgentToolExecutionResult(Json(TodoResponse(todo, references)));
     }
 
+    private async Task<AgentToolExecutionResult> TodoScheduleStateAsync(
+        AgentProfile profile,
+        AgentRunReferenceVault references,
+        CancellationToken cancellationToken)
+    {
+        var state = await store.GetTodoScheduleStateAsync(profile.OwnerUserId, profile.Id,
+            cancellationToken).ConfigureAwait(false);
+        return new AgentToolExecutionResult(Json(new
+        {
+            state = state.State,
+            running_todo = state.RunningTodo is null ? null :
+                TodoResponse(state.RunningTodo, references),
+            ready_todo = state.ReadyTodo is null ? null : TodoResponse(state.ReadyTodo, references),
+        }));
+    }
+
+    private async Task<AgentToolExecutionResult> StartNextTodoAsync(
+        AgentProfile profile,
+        AgentRunReferenceVault references,
+        CancellationToken cancellationToken)
+    {
+        var delivery = await store.StartNextReadyTodoAsync(profile.OwnerUserId, profile.Id,
+            cancellationToken).ConfigureAwait(false);
+        var state = await store.GetTodoScheduleStateAsync(profile.OwnerUserId, profile.Id,
+            cancellationToken).ConfigureAwait(false);
+        return new AgentToolExecutionResult(Json(new
+        {
+            status = delivery is not null ? "started" : state.RunningTodo is not null
+                ? "executor_busy" : "no_ready_todo",
+            todo = state.RunningTodo is null ? null : TodoResponse(state.RunningTodo, references),
+        }));
+    }
+
     private async Task<AgentToolExecutionResult> UpdateTodoAsync(
         AgentProfile profile,
         AgentRoom room,
