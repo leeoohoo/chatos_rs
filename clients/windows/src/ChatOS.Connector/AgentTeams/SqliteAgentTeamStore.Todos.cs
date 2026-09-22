@@ -19,6 +19,25 @@ public sealed partial class SqliteAgentTeamStore
         todo.created_at_unix_ms, todo.updated_at_unix_ms
         """;
 
+    private static string TodoDisplayOrderSql(string prefix = "") => $"""
+        CASE {prefix}status
+            WHEN 'InProgress' THEN 0
+            WHEN 'Ready' THEN 1
+            WHEN 'Pending' THEN 2
+            WHEN 'Blocked' THEN 3
+            WHEN 'Completed' THEN 4
+            WHEN 'Cancelled' THEN 5
+            ELSE 6
+        END,
+        CASE {prefix}priority
+            WHEN 'Urgent' THEN 3
+            WHEN 'High' THEN 2
+            WHEN 'Normal' THEN 1
+            ELSE 0
+        END DESC,
+        {prefix}sort_order, {prefix}created_at_unix_ms, {prefix}id
+        """;
+
     public async Task<IReadOnlyList<AgentTodo>> ListTodosAsync(
         string ownerUserId,
         string roomId,
@@ -29,7 +48,7 @@ public sealed partial class SqliteAgentTeamStore
         using var command = Command(connection, null,
             $"SELECT {TodoColumns} FROM agent_todos WHERE owner_user_id = @p0 AND room_id = @p1" +
             (includeTerminal ? string.Empty : " AND status NOT IN ('Completed', 'Cancelled')") +
-            " ORDER BY sort_order, created_at_unix_ms, id", ownerUserId, roomId);
+            $" ORDER BY {TodoDisplayOrderSql()}", ownerUserId, roomId);
         var output = new List<AgentTodo>();
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -56,7 +75,7 @@ public sealed partial class SqliteAgentTeamStore
             "WHERE todo.owner_user_id = @p0 AND room.project_id = @p1" +
             (includeTerminal ? string.Empty :
                 " AND todo.status NOT IN ('Completed', 'Cancelled')") +
-            " ORDER BY todo.sort_order, todo.created_at_unix_ms, todo.id",
+            $" ORDER BY {TodoDisplayOrderSql("todo.")}",
             ownerUserId, projectId);
         var output = new List<AgentTodo>();
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken)

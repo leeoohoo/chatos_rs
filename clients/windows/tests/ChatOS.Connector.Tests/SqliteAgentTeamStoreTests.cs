@@ -352,6 +352,52 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task TodoListsKeepActiveWorkAheadOfTerminalHistory()
+    {
+        var (manager, worker, room) = await CreateConfiguredTeamAsync();
+        await CompleteInitialMaintenanceAsync();
+
+        var completed = await _store.CreateTodoAsync("alice",
+            new(room.Id, worker.Id, "completed", Priority: AgentTodoPriority.Urgent));
+        completed = await _store.UpdateTodoAsync("alice", completed.Id, completed.Revision,
+            AgentTodoStatus.Completed, "done");
+        var cancelled = await _store.CreateTodoAsync("alice",
+            new(room.Id, worker.Id, "cancelled", Priority: AgentTodoPriority.Urgent));
+        cancelled = await _store.UpdateTodoAsync("alice", cancelled.Id, cancelled.Revision,
+            AgentTodoStatus.Cancelled, "cancelled");
+        var blocked = await _store.CreateTodoAsync("alice",
+            new(room.Id, worker.Id, "blocked", Priority: AgentTodoPriority.High));
+        blocked = await _store.UpdateTodoAsync("alice", blocked.Id, blocked.Revision,
+            AgentTodoStatus.Blocked, "waiting");
+        var running = await _store.CreateTodoAsync("alice",
+            new(room.Id, manager.Id, "running", Priority: AgentTodoPriority.Low));
+        var ready = await _store.CreateTodoAsync("alice",
+            new(room.Id, manager.Id, "ready", Priority: AgentTodoPriority.Normal));
+        var pending = await _store.CreateTodoAsync("alice",
+            new(room.Id, worker.Id, "pending", Priority: AgentTodoPriority.Urgent,
+                DependencyIds: [blocked.Id]));
+
+        Assert.Equal(AgentTodoStatus.InProgress, running.Status);
+        Assert.Equal(AgentTodoStatus.Ready, ready.Status);
+        Assert.Equal(AgentTodoStatus.Pending, pending.Status);
+        Assert.Equal(AgentTodoStatus.Blocked, blocked.Status);
+        Assert.Equal(AgentTodoStatus.Completed, completed.Status);
+        Assert.Equal(AgentTodoStatus.Cancelled, cancelled.Status);
+        var expected = new[]
+        {
+            running.Id, ready.Id, pending.Id, blocked.Id, completed.Id, cancelled.Id,
+        };
+
+        var teamTodos = await _store.ListTodosAsync("alice", room.Id, includeTerminal: true);
+        Assert.Equal(expected, teamTodos.Select(value => value.Id));
+        var projectTodos = await _store.ListProjectTodosAsync(
+            "alice", room.ProjectId, includeTerminal: true);
+        Assert.Equal(expected, projectTodos.Select(value => value.Id));
+        var activeTodos = await _store.ListTodosAsync("alice", room.Id, includeTerminal: false);
+        Assert.Equal(expected[..4], activeTodos.Select(value => value.Id));
+    }
+
+    [Fact]
     public async Task AssetsKeepRevisionHistoryAndRejectStaleWrites()
     {
         var (manager, _, room) = await CreateConfiguredTeamAsync();
