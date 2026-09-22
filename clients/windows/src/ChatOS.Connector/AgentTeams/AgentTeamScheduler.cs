@@ -135,12 +135,13 @@ internal sealed class AgentTeamScheduler(
             delivery.OwnerUserId, room.Id, includeArchived: false, cancellationToken).ConfigureAwait(false);
         var todoProgress = await TriggerTodoProgressAsync(delivery, cancellationToken)
             .ConfigureAwait(false);
+        var references = new AgentRunReferenceVault();
         await using var pluginSession = pluginTools is null
             ? null
             : await pluginTools.PrepareAsync(profile, member, room, initialRun.Id,
                 cancellationToken).ConfigureAwait(false);
         var input = BuildInput(profile, member, room, delivery, recentMessages, todos, assets,
-            todoProgress, pluginSession?.Instructions);
+            todoProgress, pluginSession?.Instructions, references);
         var definitions = tools.AllDefinitions(profile, room, delivery)
             .Concat(pluginSession?.Definitions ?? []).ToArray();
         var run = initialRun;
@@ -184,7 +185,7 @@ internal sealed class AgentTeamScheduler(
                         ? new AgentToolExecutionResult(await pluginSession.ExecuteAsync(
                             call, cancellationToken).ConfigureAwait(false))
                         : await tools.ExecuteAsync(profile, member, room, delivery, call,
-                            cancellationToken).ConfigureAwait(false);
+                            cancellationToken, references).ConfigureAwait(false);
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
@@ -237,7 +238,8 @@ internal sealed class AgentTeamScheduler(
         IReadOnlyList<AgentTodo> todos,
         IReadOnlyList<AgentTeamAsset> assets,
         IReadOnlyList<AgentTodoProgress> todoProgress,
-        string? pluginInstructions)
+        string? pluginInstructions,
+        AgentRunReferenceVault references)
     {
         var lane = delivery.Trigger == AgentDeliveryTrigger.Todo ? "executor" : "manager";
         var authority = string.Equals(room.ProjectManagerAgentId, profile.Id, StringComparison.Ordinal)
@@ -259,7 +261,7 @@ internal sealed class AgentTeamScheduler(
             {profile.Draft.RolePrompt}
 
             规则：
-            1. 团队协作使用 team_send，并用 mention_agent_ids 精确唤醒责任人。
+            1. 团队协作使用 team_send，并用 mention_agent_refs 精确唤醒责任人。
             2. 团队任务以 todo_list 为权威状态；执行者持续记录 todo_progress，完成时用 todo_update。
             3. 只有项目经理可维护版本化共享资产：首次创建用 asset_create，已有资产先 asset_list 再用 asset_update 和当前 revision；执行者只能用 todo_progress 的 asset_update_suggestions 提交完整替换建议。
             4. 项目文件和命令只通过提供的 project_* 与 terminal_exec 工具访问，不能编造结果。
@@ -267,13 +269,15 @@ internal sealed class AgentTeamScheduler(
             6. 用 chat_read_all_unread 检查账号内其他团队和私聊的新消息；返回即已读，当前会话用 chat_read_unread 后按需 chat_mark_read。
             7. 人员变更只能创建待审批提案，不能声称已经创建 Agent、加入团队或移出成员。
             8. 完成本轮且无需发送消息时调用 cycle_complete；不要发送无意义的在线通知。
+            所有 *_ref 都只在本轮有效，不得猜测或输出真实数据库 ID；引用失效时重新调用相应读取工具。
 
             {pluginInstructions}
             """;
         var context = new StringBuilder()
             .AppendLine($"团队：{room.Draft.Name}")
             .AppendLine($"目标：{room.Draft.Goal}")
-            .AppendLine($"触发：{delivery.Trigger}；消息 ID：{delivery.MessageId}")
+            .AppendLine($"会话引用：{references.ConversationReference(room.Id)}")
+            .AppendLine($"触发：{delivery.Trigger}；消息引用：{references.MessageReference(room.Id, delivery.MessageId)}")
             .AppendLine()
             .AppendLine("最近消息：");
         foreach (var message in messages.TakeLast(80))
@@ -282,12 +286,14 @@ internal sealed class AgentTeamScheduler(
             {
                 AgentMessageSenderKind.Human => "Human",
                 AgentMessageSenderKind.System => "System",
-                _ => message.SenderAgentId ?? "Agent",
+                _ => message.SenderAgentId is null ? "Agent" :
+                    $"Agent({references.AgentReference(message.SenderAgentId)})",
             };
             context.Append('[').Append(sender).Append("] ").AppendLine(message.Content);
             foreach (var attachment in message.Attachments)
             {
-                context.Append("  [附件 ID=").Append(attachment.Id).Append(" name=")
+                context.Append("  [附件 ref=").Append(references.AttachmentReference(
+                        room.Id, attachment.Id)).Append(" name=")
                     .Append(attachment.Name).Append(" mime=").Append(attachment.MimeType)
                     .Append(" bytes=").Append(attachment.ByteCount)
                     .AppendLine("；文本内容可用 chat_read_attachment 按需读取]");
@@ -295,16 +301,38 @@ internal sealed class AgentTeamScheduler(
         }
 
         context.AppendLine().AppendLine("共享 Todo：")
-            .AppendLine(JsonSerializer.Serialize(todos));
+            .AppendLine(JsonSerializer.Serialize(todos.Select(value => new
+            {
+                todo_ref = references.TodoReference(room.Id, value.Id, value.Draft.AgentId),
+                assignee_ref = references.AgentReference(value.Draft.AgentId),
+                value.Draft.Title,
+                value.Draft.Detail,
+                value.Draft.Priority,
+                dependency_refs = value.Draft.Dependencies.Select(id =>
+                    references.TodoReference(room.Id, id, string.Empty)),
+                value.Status,
+                value.Result,
+                value.Revision,
+            })));
         if (todoProgress.Count > 0)
         {
             context.AppendLine().AppendLine("本次触发 Todo 的执行进展与共享资产建议：")
-                .AppendLine(JsonSerializer.Serialize(todoProgress));
+                .AppendLine(JsonSerializer.Serialize(todoProgress.Select(value => new
+                {
+                    todo_ref = references.TodoReference(room.Id, value.TodoId, value.AgentId),
+                    agent_ref = references.AgentReference(value.AgentId),
+                    value.Sequence,
+                    value.Kind,
+                    value.Stage,
+                    value.Detail,
+                    value.AssetUpdateSuggestions,
+                    value.CreatedAtUnixMs,
+                })));
         }
         context.AppendLine().AppendLine("团队资产：")
             .AppendLine(JsonSerializer.Serialize(assets.Select(value => new
             {
-                value.Id,
+                asset_ref = references.AssetReference(room.Id, value.Id, value.Revision),
                 value.Category,
                 value.Title,
                 value.Markdown,

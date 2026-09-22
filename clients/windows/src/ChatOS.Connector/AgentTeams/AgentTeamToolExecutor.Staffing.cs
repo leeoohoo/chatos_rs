@@ -30,12 +30,12 @@ internal sealed partial class AgentTeamToolExecutor
                 type = "object",
                 properties = new
                 {
-                    target_room_id = new { type = "string", maxLength = 512 },
-                    target_agent_id = new { type = "string", maxLength = 512 },
+                    team_ref = new { type = "string", maxLength = 600 },
+                    target_agent_ref = new { type = "string", maxLength = 600 },
                     role = new { type = "string", maxLength = 160 },
                     responsibility = new { type = "string", maxLength = 8_000 },
                 },
-                required = new[] { "target_room_id", "target_agent_id", "role" },
+                required = new[] { "team_ref", "target_agent_ref", "role" },
                 additionalProperties = false,
             }),
         Tool("agent_propose_member_removal",
@@ -44,11 +44,11 @@ internal sealed partial class AgentTeamToolExecutor
                 type = "object",
                 properties = new
                 {
-                    target_agent_id = new { type = "string", maxLength = 512 },
+                    target_agent_ref = new { type = "string", maxLength = 600 },
                     reason = new { type = "string", maxLength = 4_000 },
                     handoff_plan = new { type = "string", maxLength = 8_000 },
                 },
-                required = new[] { "target_agent_id", "reason" },
+                required = new[] { "target_agent_ref", "reason" },
                 additionalProperties = false,
             }),
     ];
@@ -81,17 +81,22 @@ internal sealed partial class AgentTeamToolExecutor
         AgentRoom room,
         AgentDelivery delivery,
         string requestKey,
+        AgentRunReferenceVault references,
         JsonElement arguments,
         CancellationToken cancellationToken)
     {
         RequireStaffingCapability(profile);
+        var targetRoomId = references.RoomId(RequiredString(arguments, "team_ref"))
+            ?? throw AgentTeamValidation.Invalid("team_ref");
+        var targetAgentId = references.AgentId(RequiredString(arguments, "target_agent_ref"))
+            ?? throw AgentTeamValidation.Invalid("target_agent_ref");
         var proposal = await store.CreateStaffingProposalAsync(profile.OwnerUserId, room.Id,
             profile.Id, delivery.Id, requestKey,
             new AgentStaffingProposalDraft(AgentStaffingProposalKind.AddExistingAgent,
                 Role: RequiredString(arguments, "role"),
                 Responsibility: OptionalString(arguments, "responsibility") ?? string.Empty,
-                TargetRoomId: RequiredString(arguments, "target_room_id"),
-                TargetAgentId: RequiredString(arguments, "target_agent_id")),
+                TargetRoomId: targetRoomId,
+                TargetAgentId: targetAgentId),
             cancellationToken).ConfigureAwait(false);
         return ProposalAcknowledgement(proposal);
     }
@@ -101,14 +106,17 @@ internal sealed partial class AgentTeamToolExecutor
         AgentRoom room,
         AgentDelivery delivery,
         string requestKey,
+        AgentRunReferenceVault references,
         JsonElement arguments,
         CancellationToken cancellationToken)
     {
         RequireStaffingCapability(profile);
+        var targetAgentId = references.AgentId(RequiredString(arguments, "target_agent_ref"))
+            ?? throw AgentTeamValidation.Invalid("target_agent_ref");
         var proposal = await store.CreateStaffingProposalAsync(profile.OwnerUserId, room.Id,
             profile.Id, delivery.Id, requestKey,
             new AgentStaffingProposalDraft(AgentStaffingProposalKind.RemoveMember,
-                TargetAgentId: RequiredString(arguments, "target_agent_id"),
+                TargetAgentId: targetAgentId,
                 Reason: RequiredString(arguments, "reason"),
                 HandoffPlan: OptionalString(arguments, "handoff_plan") ?? string.Empty),
             cancellationToken).ConfigureAwait(false);
@@ -118,7 +126,6 @@ internal sealed partial class AgentTeamToolExecutor
     private static AgentToolExecutionResult ProposalAcknowledgement(
         AgentStaffingProposal proposal) => new(Json(new
         {
-            proposal_id = proposal.Id,
             type = proposal.Draft.Kind.ToString(),
             status = proposal.Status.ToString(),
             awaiting_human_approval = proposal.Status == AgentStaffingProposalStatus.Pending,

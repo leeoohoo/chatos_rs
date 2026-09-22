@@ -99,14 +99,15 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
         Assert.Equal("plan", System.Text.Encoding.UTF8.GetString(downloaded!.Data));
         var managerMember = Assert.Single(await _store.ListMembersAsync("alice", room.Id),
             value => value.AgentId == manager.Id);
+        var attachmentReferences = new AgentRunReferenceVault();
         var attachmentResult = await new AgentTeamToolExecutor(_store, null!).ExecuteAsync(
             manager, managerMember, room,
             new AgentDelivery("attachment-run", "alice", room.Id, mentionPost.Message.Id,
                 mentionPost.Message.RootMessageId, manager.Id, AgentDeliveryTrigger.Mention,
                 AgentDeliveryStatus.Running, 1, 0, "attachment-test", null, null, 1, null, 1),
             new AgentToolCall("read", "chat_read_attachment",
-                "{\"attachment_id\":\"attachment-1\",\"limit\":2}"),
-            CancellationToken.None);
+                $$"""{"attachment_ref":"{{attachmentReferences.AttachmentReference(room.Id, attachment.Id)}}","limit":2}"""),
+            CancellationToken.None, attachmentReferences);
         using var attachmentDocument = System.Text.Json.JsonDocument.Parse(
             attachmentResult.Content);
         Assert.Equal("pl", attachmentDocument.RootElement.GetProperty("content").GetString());
@@ -384,11 +385,12 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
                 """), CancellationToken.None);
         var created = Assert.Single(await _store.ListAssetsAsync("alice", room.Id));
         Assert.Equal("策略", created.Title);
+        var assetReferences = new AgentRunReferenceVault();
         _ = await toolExecutor.ExecuteAsync(manager, managerMember, room,
             delivery with { TargetAgentId = manager.Id },
             new AgentToolCall("call-3", "asset_update", $$"""
-                {"asset_id":"{{created.Id}}","expected_revision":1,"category":"CurrentProgress","title":"当前进度","markdown":"已完成"}
-                """), CancellationToken.None);
+                {"asset_ref":"{{assetReferences.AssetReference(room.Id, created.Id, created.Revision)}}","expected_revision":1,"category":"CurrentProgress","title":"当前进度","markdown":"已完成"}
+                """), CancellationToken.None, assetReferences);
         var updated = Assert.Single(await _store.ListAssetsAsync("alice", room.Id));
         Assert.Equal(AgentTeamAssetCategory.CurrentProgress, updated.Category);
         Assert.Equal(2, updated.Revision);

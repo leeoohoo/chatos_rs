@@ -97,8 +97,8 @@ internal sealed partial class AgentTeamToolExecutor
         Tool("requirement_survey_get", "读取一张需求调研的题目、Human 真实答案、备注与解决方案。", new
         {
             type = "object",
-            properties = new { survey_id = new { type = "string" } },
-            required = new[] { "survey_id" },
+            properties = new { survey_ref = new { type = "string" } },
+            required = new[] { "survey_ref" },
             additionalProperties = false,
         }),
         Tool("requirement_survey_project_tasks",
@@ -108,7 +108,7 @@ internal sealed partial class AgentTeamToolExecutor
             type = "object",
             properties = new
             {
-                survey_id = new { type = "string" },
+                survey_ref = new { type = "string" },
                 summary = new { type = "string", maxLength = 4_000 },
                 solution_markdown = new { type = "string", maxLength = 128_000 },
                 execution_steps = new
@@ -133,7 +133,7 @@ internal sealed partial class AgentTeamToolExecutor
                 risks_and_open_questions = new { type = "string", maxLength = 32_000 },
                 related_materials = new { type = "string", maxLength = 32_000 },
             },
-            required = new[] { "survey_id", "summary", "solution_markdown", "execution_steps" },
+            required = new[] { "survey_ref", "summary", "solution_markdown", "execution_steps" },
             additionalProperties = false,
         }),
     ];
@@ -188,6 +188,7 @@ internal sealed partial class AgentTeamToolExecutor
         AgentProfile profile,
         AgentRoom room,
         AgentDelivery delivery,
+        AgentRunReferenceVault references,
         JsonElement arguments,
         CancellationToken cancellationToken)
     {
@@ -212,13 +213,19 @@ internal sealed partial class AgentTeamToolExecutor
             new AgentRequirementSurveyDraft(RequiredString(arguments, "title"),
                 RequiredString(arguments, "purpose"), questions), cancellationToken)
             .ConfigureAwait(false);
-        return new AgentToolExecutionResult(Json(new { project_bound = true, survey }),
+        return new AgentToolExecutionResult(Json(new
+        {
+            project_bound = true,
+            survey_ref = references.SurveyReference(room.ProjectId, survey.Id),
+            survey.Status,
+        }),
             EndsCycle: true);
     }
 
     private async Task<AgentToolExecutionResult> ListRequirementSurveysAsync(
         AgentProfile profile,
         AgentRoom room,
+        AgentRunReferenceVault references,
         JsonElement arguments,
         CancellationToken cancellationToken)
     {
@@ -236,7 +243,7 @@ internal sealed partial class AgentTeamToolExecutor
             project_bound = true,
             surveys = surveys.Select(value => new
             {
-                survey_id = value.Id,
+                survey_ref = references.SurveyReference(room.ProjectId, value.Id),
                 value.Draft.Title,
                 value.Draft.Purpose,
                 value.Status,
@@ -250,20 +257,40 @@ internal sealed partial class AgentTeamToolExecutor
     private async Task<AgentToolExecutionResult> GetRequirementSurveyAsync(
         AgentProfile profile,
         AgentRoom room,
+        AgentRunReferenceVault references,
         JsonElement arguments,
         CancellationToken cancellationToken)
     {
         RequireSurveyCapability(profile, room);
+        var surveyReference = RequiredString(arguments, "survey_ref");
+        var authority = references.Survey(surveyReference);
+        var surveyId = authority?.SurveyId ?? (references.AllowsLegacyIds
+            ? surveyReference : throw AgentTeamValidation.Invalid("survey_ref"));
+        if (authority is not null && authority.ProjectId != room.ProjectId)
+            throw new AgentTeamException(AgentTeamError.PermissionDenied,
+                "Survey reference does not belong to the current project.");
         var survey = await store.GetRequirementSurveyAsync(profile.OwnerUserId, room.ProjectId,
-            RequiredString(arguments, "survey_id"), cancellationToken).ConfigureAwait(false)
+            surveyId, cancellationToken).ConfigureAwait(false)
             ?? throw new AgentTeamException(AgentTeamError.NotFound,
                 "Requirement survey was not found.");
-        return new AgentToolExecutionResult(Json(new { project_bound = true, survey }));
+        return new AgentToolExecutionResult(Json(new
+        {
+            project_bound = true,
+            survey_ref = references.SurveyReference(room.ProjectId, survey.Id),
+            survey.Draft,
+            survey.Status,
+            survey.Submission,
+            survey.Resolution,
+            survey.CreatedAtUnixMs,
+            survey.SubmittedAtUnixMs,
+            survey.ResolvedAtUnixMs,
+        }));
     }
 
     private async Task<AgentToolExecutionResult> ListRequirementSurveyProjectTasksAsync(
         AgentProfile profile,
         AgentRoom room,
+        AgentRunReferenceVault references,
         CancellationToken cancellationToken)
     {
         RequireSurveyCapability(profile, room);
@@ -274,13 +301,14 @@ internal sealed partial class AgentTeamToolExecutor
             project_bound = true,
             teams = todos.GroupBy(value => value.Draft.TeamRoomId).Select(group => new
             {
-                team_room_id = group.Key,
+                team_ref = references.ConversationReference(group.Key),
                 todos = group.Select(value => new
                 {
-                    todo_id = value.Id,
+                    todo_ref = references.TodoReference(group.Key, value.Id,
+                        value.Draft.AgentId),
                     value.Draft.Title,
                     value.Draft.Detail,
-                    assigned_agent_id = value.Draft.AgentId,
+                    assignee_ref = references.AgentReference(value.Draft.AgentId),
                     value.Status,
                     value.Result,
                     value.Revision,
@@ -292,6 +320,7 @@ internal sealed partial class AgentTeamToolExecutor
     private async Task<AgentToolExecutionResult> ResolveRequirementSurveyAsync(
         AgentProfile profile,
         AgentRoom room,
+        AgentRunReferenceVault references,
         JsonElement arguments,
         CancellationToken cancellationToken)
     {
@@ -307,10 +336,22 @@ internal sealed partial class AgentTeamToolExecutor
             RequiredString(arguments, "solution_markdown"), steps,
             OptionalString(arguments, "risks_and_open_questions") ?? string.Empty,
             OptionalString(arguments, "related_materials") ?? string.Empty);
+        var surveyReference = RequiredString(arguments, "survey_ref");
+        var authority = references.Survey(surveyReference);
+        var surveyId = authority?.SurveyId ?? (references.AllowsLegacyIds
+            ? surveyReference : throw AgentTeamValidation.Invalid("survey_ref"));
+        if (authority is not null && authority.ProjectId != room.ProjectId)
+            throw new AgentTeamException(AgentTeamError.PermissionDenied,
+                "Survey reference does not belong to the current project.");
         var survey = await store.ResolveRequirementSurveyAsync(profile.OwnerUserId, room.ProjectId,
-            RequiredString(arguments, "survey_id"), profile.Id, resolution, cancellationToken)
+            surveyId, profile.Id, resolution, cancellationToken)
             .ConfigureAwait(false);
-        return new AgentToolExecutionResult(Json(new { project_bound = true, survey }),
+        return new AgentToolExecutionResult(Json(new
+        {
+            project_bound = true,
+            survey_ref = references.SurveyReference(room.ProjectId, survey.Id),
+            resolved = true,
+        }),
             EndsCycle: true);
     }
 

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.RegularExpressions;
 using ChatOS.Api.Http;
 using ChatOS.Connector.AgentTeams;
 using ChatOS.Connector.Persistence;
@@ -113,12 +114,18 @@ public sealed class AgentTeamSchedulerTests : IAsyncLifetime
         await CompleteInitialMaintenanceAsync();
         var todo = await _store.CreateTodoAsync("alice",
             new(room.Id, profile.Id, "实现功能"));
-        var gateway = CreateGateway(_ => Task.FromResult(Json($$"""
-            {"status":"completed","output":[
-              {"type":"function_call","call_id":"call-complete","name":"todo_update",
-               "arguments":"{\"todo_id\":\"{{todo.Id}}\",\"expected_revision\":2,\"status\":\"Completed\",\"result\":\"完成\"}"}
-            ]}
-            """)));
+        var gateway = CreateGateway(async request =>
+        {
+            var body = await request.Content!.ReadAsStringAsync();
+            var todoReference = Regex.Match(body, "todo_[a-f0-9]{32}").Value;
+            Assert.NotEmpty(todoReference);
+            return Json($$"""
+                {"status":"completed","output":[
+                  {"type":"function_call","call_id":"call-complete","name":"todo_update",
+                   "arguments":"{\"todo_ref\":\"{{todoReference}}\",\"expected_revision\":2,\"status\":\"Completed\",\"result\":\"完成\"}"}
+                ]}
+                """);
+        });
         var scheduler = new AgentTeamScheduler(_store, gateway,
             new AgentTeamToolExecutor(_store, null!));
 
