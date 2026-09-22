@@ -177,24 +177,24 @@
 
 ### 需求调研渐进式 Skill 入口
 
-需求调研用于把影响项目范围、方案、风险、时间或验收的 Human 决策沉淀为当前项目下的结构化记录，并在提交后承载解决方案与执行计划。适用于新需求或重大变更确认、读取 Human 决策、生成正式方案以及核对执行进度；信息已经明确或只是临时沟通时不创建调研。
+需求调研使用与 Plugin Skill 相同的 Catalog → Activation → Resource 渐进加载方式。当前目录只包含短描述，Skill 正文尚未加载：
 
-先选择一个场景：
+- `SKreq-router` = `requirement-survey` [router]：判断何时需要需求调研，并路由到一个专业 Skill；
+- `SKreq-read` = `requirement-survey-read-results` [leaf]：读取 Human 答案、备注、既有方案或历史决定；
+- `SKreq-review` = `requirement-survey-review-execution` [leaf]：将正式计划与项目任务事实核对。
 
-- `create_survey`：关键 Human 决策缺失；
-- `read_results`：读取答案、备注、既有方案或历史决定；
-- `resolve_survey`：Human 已提交，需要生成方案和执行计划；
-- `review_execution`：将正式计划与项目任务状态进行核对。
-
-选择后立即调用 `requirement_survey_skill_get`，只加载当前场景 Skill，再按返回内容中的工具顺序、分支、验证、退出条件和示例执行。只有读取能力时使用 `read_results` 或 `review_execution`；不要一次加载无关场景。项目由程序绑定，不向 Human 询问项目、Team 或 Room ID。
+先调用 `requirement_survey_read_skill_activate(skill_ref="SKreq-router")`，再按 Router 只激活当前目标所需的一个 leaf。leaf 需要具体参数或输出示例时，再调用 `requirement_survey_read_skill_list_resources` 和 `requirement_survey_read_skill_read_resource` 读取它声明的 reference。不要一次加载全部 Skill 或资源。项目由程序绑定，不向 Human 询问项目、Team 或 Room ID。
 
 ## [builtin_requirement_survey_write]
 
 ### 需求调研写入场景
 
-该能力在渐进式入口上增加 `create_survey` 和 `resolve_survey` 两个场景。程序同时提供读取能力；进入任一写入场景前，先调用 `requirement_survey_skill_get` 读取对应 Skill，不从本节猜测具体流程。
+写入能力在同一个 Skill Catalog 中增加两个 leaf：
 
-`create_survey` 的完成点是创建一张可供 Human 填写的 pending 调研；`resolve_survey` 的完成点是把已提交结果转化为正式解决方案和执行计划。它们都不代表后续实施已经完成。
+- `SKreq-create` = `requirement-survey-create` [leaf]：查重后创建一张选择式 pending 调研；
+- `SKreq-resolve` = `requirement-survey-resolve` [leaf]：把 Human 已提交的结果转化为正式解决方案和执行计划。
+
+程序同时提供读取能力。先激活 Router，再激活对应 leaf；不要从本节猜测具体流程。创建 pending 调研和写入 resolution 都不代表后续实施已经完成。
 
 ## [builtin_remote_connection_controller]
 当存在这些工具时，它们是远程 SSH / SFTP 主机的唯一标准入口：

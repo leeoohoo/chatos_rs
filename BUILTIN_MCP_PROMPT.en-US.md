@@ -178,24 +178,24 @@ Do not do this:
 
 ### Progressive requirement-survey skill entry
 
-Requirement surveys preserve Human decisions that affect project scope, solution, risk, timing, or acceptance as structured project records, then carry the resulting solution and execution plan after submission. Use them for new requirements or major-change confirmation, reading Human decisions, producing a formal solution, or reviewing execution progress. Do not create a survey when the relevant facts are already clear or the question is merely transient.
+Requirement surveys use the same Catalog → Activation → Resource progressive-loading model as Plugin Skills. This catalog contains descriptions only; no Skill body is loaded yet:
 
-Choose one scenario first:
+- `SKreq-router` = `requirement-survey` [router]: decide when a survey is needed and route to one specialist Skill;
+- `SKreq-read` = `requirement-survey-read-results` [leaf]: read Human answers, notes, prior resolutions, or historical decisions;
+- `SKreq-review` = `requirement-survey-review-execution` [leaf]: compare the formal plan with project task facts.
 
-- `create_survey`: a material Human decision is missing;
-- `read_results`: read answers, Notes, an existing solution, or a historical decision;
-- `resolve_survey`: the Human submitted and a solution plus execution plan is needed;
-- `review_execution`: compare the formal plan with current project tasks.
-
-Then call `requirement_survey_skill_get` immediately and load only that scenario skill. Follow its tool order, branches, verification, exit conditions, and examples. With read capability alone, use `read_results` or `review_execution`. The program binds the project; do not ask the Human for project, Team, or Room IDs.
+Call `requirement_survey_read_skill_activate(skill_ref="SKreq-router")` first, then activate only the leaf selected by the Router. When a leaf needs exact arguments or output examples, use `requirement_survey_read_skill_list_resources` and `requirement_survey_read_skill_read_resource` for its declared references. Do not load every Skill or resource. The program binds the project; do not ask the Human for project, Team, or Room IDs.
 
 ## [builtin_requirement_survey_write]
 
 ### Requirement-survey write scenarios
 
-This capability adds the `create_survey` and `resolve_survey` scenarios to the progressive entry skill. Read capability is supplied with it. Before either write scenario, call `requirement_survey_skill_get` for that scenario instead of inferring the procedure from this section.
+Write capability adds two leaves to the same Skill Catalog:
 
-`create_survey` ends when a pending survey is ready for Human input. `resolve_survey` ends when submitted answers have been converted into a formal solution and execution plan. Neither means the planned implementation has been completed.
+- `SKreq-create` = `requirement-survey-create` [leaf]: deduplicate and create one choice-based pending survey;
+- `SKreq-resolve` = `requirement-survey-resolve` [leaf]: turn Human-submitted results into a formal solution and execution plan.
+
+Read capability is supplied with it. Activate the Router first and then the selected leaf instead of inferring its procedure from this section. Creating a pending survey or writing a resolution does not mean the planned implementation is complete.
 
 ## [builtin_remote_connection_controller]
 When these tools exist, they are the only standard entry point for remote SSH and SFTP hosts:

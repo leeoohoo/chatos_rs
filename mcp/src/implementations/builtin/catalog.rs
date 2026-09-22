@@ -125,9 +125,19 @@ pub fn builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> 
 fn requirement_survey_read_catalog() -> Vec<Value> {
     vec![
         serde_json::json!({
-            "name": "requirement_survey_skill_get",
-            "description": "Load the detailed skill for exactly one requirement-survey scenario.",
-            "inputSchema": {"type":"object","properties":{"scenario":{"type":"string","enum":["create_survey","read_results","resolve_survey","review_execution"]}},"required":["scenario"],"additionalProperties":false}
+            "name": "skill_activate",
+            "description": "Activate one immutable requirement-survey Skill from the current catalog by skill_ref.",
+            "inputSchema": {"type":"object","properties":{"skill_ref":{"type":"string","minLength":1,"maxLength":80}},"required":["skill_ref"],"additionalProperties":false}
+        }),
+        serde_json::json!({
+            "name": "skill_list_resources",
+            "description": "List immutable resources declared by one requirement-survey Skill.",
+            "inputSchema": {"type":"object","properties":{"skill_ref":{"type":"string","minLength":1,"maxLength":80}},"required":["skill_ref"],"additionalProperties":false}
+        }),
+        serde_json::json!({
+            "name": "skill_read_resource",
+            "description": "Read one immutable text resource declared by a requirement-survey Skill.",
+            "inputSchema": {"type":"object","properties":{"skill_ref":{"type":"string","minLength":1,"maxLength":80},"relative_path":{"type":"string","minLength":1,"maxLength":1000},"offset":{"type":"integer","minimum":0},"max_chars":{"type":"integer","minimum":1,"maximum":64000}},"required":["skill_ref","relative_path"],"additionalProperties":false}
         }),
         serde_json::json!({
             "name": "requirement_survey_list",
@@ -478,5 +488,22 @@ mod tests {
             assert!(!descriptions.contains("/workspace"));
             assert!(descriptions.contains("current project workspace root"));
         }
+    }
+
+    #[test]
+    fn requirement_survey_uses_shared_progressive_skill_tool_contract() {
+        let names = builtin_tool_catalog(BuiltinMcpKind::RequirementSurveyRead)
+            .expect("requirement survey read catalog")
+            .into_iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str).map(str::to_string))
+            .collect::<Vec<_>>();
+        assert!(names.starts_with(&[
+            "skill_activate".to_string(),
+            "skill_list_resources".to_string(),
+            "skill_read_resource".to_string(),
+        ]));
+        assert!(!names
+            .iter()
+            .any(|name| name == "requirement_survey_skill_get"));
     }
 }

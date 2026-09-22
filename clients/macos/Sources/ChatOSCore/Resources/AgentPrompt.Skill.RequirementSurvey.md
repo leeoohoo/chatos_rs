@@ -1,26 +1,9 @@
-# Skill：需求调研场景路由
+# 需求调研 Skill Catalog
 
-需求调研用于把会影响项目范围、方案、风险、时间或验收的 Human 决策，沉淀为当前项目下可追踪的结构化记录；Human 提交后，同一记录继续承载解决方案和执行计划。
+需求调研 Skill 与 Plugin Skill 使用相同的渐进加载方式。下面只有目录描述，尚未加载任何 Skill 正文：
 
-## 什么时候使用
+{{skill_catalog}}
 
-- 新项目或新需求存在关键取舍，未确认就无法可靠规划或实施；
-- 重大变更前需要确认范围、兼容策略、迁移方式、优先级或验收口径；
-- 需要读取 Human 已提交的选择与统一备注，而不是依赖聊天摘要；
-- 需要根据已提交结果生成正式解决方案和执行计划；
-- 需要把既有方案与当前项目任务状态进行核对。
+先用 `skill_activate` 激活 `requirement-survey` Router，再按 Router 对当前目标的判断只激活一个专业 Skill。专业 Skill 要求具体参数或输出示例时，再调用 `skill_list_resources` 和 `skill_read_resource` 读取它声明的 reference；不要一次加载所有 Skill 或所有资源。
 
-如果信息已经明确，或只是不会影响后续工作的临时沟通，不创建调研。项目由程序绑定，不向 Human 询问项目、Team 或 Room ID。
-
-## 先选择一个场景
-
-当前任务可用场景：{{available_scenarios}}
-
-- `create_survey`：关键 Human 决策缺失，需要创建一张选择式调研单；
-- `read_results`：读取某张调研的答案、备注、既有方案或历史决定；
-- `resolve_survey`：Human 已提交，需要形成解决方案和结构化执行计划；
-- `review_execution`：已有方案，需要核对相关项目任务的真实执行状态。
-
-确定场景后，调用 `requirement_survey_skill_get`，参数只传所选 `scenario`。读取返回的场景 Skill，并严格按其中的顺序、分支、验证和退出条件执行。一次只加载当前场景；目标变化时再读取另一个场景 Skill。
-
-如果目标需要 `create_survey` 或 `resolve_survey`，但当前任务没有相应写工具，报告任务能力配置不匹配；不要改用聊天内容伪造调研记录。
+Skill 只指导当前任务如何使用已经提供的工具，不增加工具或权限。项目由程序绑定，不向 Human 询问项目、Team 或 Room ID。

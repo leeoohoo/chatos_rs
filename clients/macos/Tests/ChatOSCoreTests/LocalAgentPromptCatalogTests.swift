@@ -10,7 +10,7 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
             case .managerCycle:
                 ["heartbeat_directive": "巡检"]
             case .requirementSurveySkill:
-                ["available_scenarios": "read_results、review_execution"]
+                ["skill_catalog": "- SKreq-router = requirement-survey [router]"]
             case .heartbeatDirective:
                 ["heartbeat_prompt": "处理未读"]
             case .professionSkill:
@@ -106,30 +106,55 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
         let entry = LocalAgentPromptCatalog.render(
             .requirementSurveySkill,
             values: [
-                "available_scenarios":
-                    "create_survey、read_results、resolve_survey、review_execution",
+                "skill_catalog": LocalAgentProgressiveSkillCatalog.requirementSurveyCatalog(
+                    canWrite: true
+                ).map { "- \($0.skillRef) = \($0.name) [\($0.role)]" }
+                    .joined(separator: "\n"),
             ]
         )
-        let create = LocalAgentPromptCatalog.render(.requirementSurveyCreateSkill)
-        let read = LocalAgentPromptCatalog.render(.requirementSurveyReadResultsSkill)
-        let resolve = LocalAgentPromptCatalog.render(.requirementSurveyResolveSkill)
-        let review = LocalAgentPromptCatalog.render(.requirementSurveyReviewExecutionSkill)
 
-        XCTAssertTrue(entry.contains("需求调研用于"))
-        XCTAssertTrue(entry.contains("什么时候使用"))
-        XCTAssertTrue(entry.contains("requirement_survey_skill_get"))
-        XCTAssertTrue(entry.contains("create_survey"))
+        XCTAssertTrue(entry.contains("Plugin Skill"))
+        XCTAssertTrue(entry.contains("skill_activate"))
+        XCTAssertTrue(entry.contains("skill_read_resource"))
+        XCTAssertTrue(entry.contains("SKreq-router"))
         XCTAssertFalse(entry.contains("requirement_survey_create"))
-        XCTAssertTrue(create.contains("requirement_survey_list"))
-        XCTAssertTrue(create.contains("requirement_survey_create"))
-        XCTAssertTrue(create.contains("request_key"))
-        XCTAssertTrue(read.contains("requirement_survey_get"))
-        XCTAssertTrue(read.contains("Human 已确认"))
-        XCTAssertTrue(resolve.contains("requirement_survey_resolve"))
-        XCTAssertTrue(resolve.contains("execution_steps"))
-        XCTAssertTrue(review.contains("requirement_survey_project_tasks"))
-        XCTAssertTrue(review.contains("未覆盖"))
-        XCTAssertTrue([create, read, resolve, review].allSatisfy { $0.contains("```json") })
-        XCTAssertFalse((entry + create + read + resolve + review).contains("team_ref"))
+        XCTAssertFalse(entry.contains("team_ref"))
+    }
+
+    func testRequirementSurveyUsesPluginStyleRouterLeavesAndResources() throws {
+        let catalog = LocalAgentProgressiveSkillCatalog.requirementSurveyCatalog(canWrite: true)
+        XCTAssertEqual(catalog.count, 5)
+        XCTAssertEqual(catalog.first?.role, "router")
+        let readOnly = LocalAgentProgressiveSkillCatalog.requirementSurveyCatalog(canWrite: false)
+        XCTAssertEqual(
+            readOnly.map(\.skillRef),
+            [
+                LocalAgentProgressiveSkillCatalog.requirementSurveyRouterRef,
+                LocalAgentProgressiveSkillCatalog.requirementSurveyReadResultsRef,
+                LocalAgentProgressiveSkillCatalog.requirementSurveyReviewExecutionRef,
+            ]
+        )
+
+        let router = try LocalAgentProgressiveSkillCatalog.activateRequirementSurveySkill(
+            skillRef: LocalAgentProgressiveSkillCatalog.requirementSurveyRouterRef
+        )
+        XCTAssertTrue(router.instructions.contains("chatos.role: router"))
+        XCTAssertTrue(router.instructions.contains("requirement-survey-create"))
+
+        let create = try LocalAgentProgressiveSkillCatalog.activateRequirementSurveySkill(
+            skillRef: LocalAgentProgressiveSkillCatalog.requirementSurveyCreateRef
+        )
+        XCTAssertEqual(create.skill.role, "leaf")
+        XCTAssertTrue(create.instructions.contains("requirement_survey_create"))
+        XCTAssertEqual(create.resources.map(\.relativePath), ["references/example.md"])
+
+        let example = try LocalAgentProgressiveSkillCatalog.readRequirementSurveyResource(
+            skillRef: LocalAgentProgressiveSkillCatalog.requirementSurveyCreateRef,
+            relativePath: "references/example.md",
+            offset: 0,
+            maximumCharacters: 64_000
+        )
+        XCTAssertTrue(example.content.contains("request_key"))
+        XCTAssertFalse(example.truncated)
     }
 }

@@ -12,7 +12,9 @@ struct NativeMCPRequirementSurveyTools: Sendable {
     let now: @Sendable () -> Int64
 
     static let readToolNames: Set<String> = [
-        "requirement_survey_skill_get",
+        "skill_activate",
+        "skill_list_resources",
+        "skill_read_resource",
         "requirement_survey_list",
         "requirement_survey_get",
         "requirement_survey_project_tasks",
@@ -26,20 +28,34 @@ struct NativeMCPRequirementSurveyTools: Sendable {
     static var readToolDefinitions: [NativeJSONValue] {
         [
             definition(
-                name: "requirement_survey_skill_get",
-                description: "按当前目标读取一份需求调研场景 Skill。先选场景，再按返回的步骤和示例操作；不要一次加载无关场景。",
+                name: "skill_activate",
+                description: "激活当前需求调研 Skill Catalog 中的一个不可变 Skill。使用系统目录给出的 skill_ref；先激活 Router，再按其路由激活一个专业 Skill。",
                 properties: [
-                    "scenario": .object([
-                        "type": .string("string"),
-                        "enum": .array([
-                            .string("create_survey"),
-                            .string("read_results"),
-                            .string("resolve_survey"),
-                            .string("review_execution"),
-                        ]),
+                    "skill_ref": stringSchema(maximum: 80),
+                ],
+                required: ["skill_ref"]
+            ),
+            definition(
+                name: "skill_list_resources",
+                description: "列出一个需求调研 Skill 声明的按需资源。skill_ref 必须来自当前 Skill Catalog。",
+                properties: ["skill_ref": stringSchema(maximum: 80)],
+                required: ["skill_ref"]
+            ),
+            definition(
+                name: "skill_read_resource",
+                description: "按需读取需求调研 Skill 的一个文本资源，例如具体工具参数或结果示例。",
+                properties: [
+                    "skill_ref": stringSchema(maximum: 80),
+                    "relative_path": stringSchema(maximum: 1_000),
+                    "offset": .object([
+                        "type": .string("integer"), "minimum": .number(0),
+                    ]),
+                    "max_chars": .object([
+                        "type": .string("integer"), "minimum": .number(1),
+                        "maximum": .number(64_000),
                     ]),
                 ],
-                required: ["scenario"]
+                required: ["skill_ref", "relative_path"]
             ),
             definition(
                 name: "requirement_survey_list",
@@ -156,30 +172,51 @@ struct NativeMCPRequirementSurveyTools: Sendable {
 
     func call(name: String, arguments: [String: NativeJSONValue]) async throws -> NativeJSONValue {
         switch name {
-        case "requirement_survey_skill_get":
-            let scenario = try requiredString(arguments, "scenario")
-            let template: LocalAgentPromptTemplate
-            let skillName: String
-            switch scenario {
-            case "create_survey":
-                template = .requirementSurveyCreateSkill
-                skillName = "创建需求调研"
-            case "read_results":
-                template = .requirementSurveyReadResultsSkill
-                skillName = "读取调研结果"
-            case "resolve_survey":
-                template = .requirementSurveyResolveSkill
-                skillName = "生成解决方案与执行计划"
-            case "review_execution":
-                template = .requirementSurveyReviewExecutionSkill
-                skillName = "核对方案执行进度"
-            default:
-                throw ToolError.invalid("scenario 不是可用的需求调研场景")
-            }
+        case "skill_activate":
+            let activation = try LocalAgentProgressiveSkillCatalog
+                .activateRequirementSurveySkill(
+                    skillRef: requiredString(arguments, "skill_ref")
+                )
             return .object([
-                "scenario": .string(scenario),
-                "skill_name": .string(skillName),
-                "instructions": .string(LocalAgentPromptCatalog.render(template)),
+                "activated": .bool(true),
+                "skill_ref": .string(activation.skill.skillRef),
+                "name": .string(activation.skill.name),
+                "role": .string(activation.skill.role),
+                "instructions": .string(activation.instructions),
+                "instructions_sha256": .string(activation.instructionsSHA256),
+                "resources": .array(activation.resources.map(resource)),
+            ])
+
+        case "skill_list_resources":
+            let skillRef = try requiredString(arguments, "skill_ref")
+            return .object([
+                "skill_ref": .string(skillRef),
+                "resources": .array(try LocalAgentProgressiveSkillCatalog
+                    .requirementSurveyResources(skillRef: skillRef).map(resource)),
+            ])
+
+        case "skill_read_resource":
+            let skillRef = try requiredString(arguments, "skill_ref")
+            let relativePath = try ProgressiveSkillFileLoader.normalizedRelativePath(
+                requiredString(arguments, "relative_path")
+            )
+            let page = try LocalAgentProgressiveSkillCatalog.readRequirementSurveyResource(
+                skillRef: skillRef,
+                relativePath: relativePath,
+                offset: Int(arguments["offset"]?.jsonNumber ?? 0),
+                maximumCharacters: Int(arguments["max_chars"]?.jsonNumber ?? 32_000)
+            )
+            let descriptor = try LocalAgentProgressiveSkillCatalog
+                .requirementSurveyResources(skillRef: skillRef)
+                .first(where: { $0.relativePath == relativePath })
+            return .object([
+                "skill_ref": .string(skillRef),
+                "relative_path": .string(relativePath),
+                "sha256": descriptor.map { .string($0.sha256) } ?? .null,
+                "content": .string(page.content),
+                "offset": .number(Double(page.offset)),
+                "next_offset": page.nextOffset.map { .number(Double($0)) } ?? .null,
+                "truncated": .bool(page.truncated),
             ])
 
         case "requirement_survey_list":
@@ -317,6 +354,17 @@ struct NativeMCPRequirementSurveyTools: Sendable {
             "created_at_unix_ms": .number(Double(survey.createdAtUnixMs)),
             "submitted_at_unix_ms": numberOrNull(survey.submittedAtUnixMs),
             "resolved_at_unix_ms": numberOrNull(survey.resolvedAtUnixMs),
+        ])
+    }
+
+    private func resource(
+        _ value: LocalAgentProgressiveSkillCatalog.Resource
+    ) -> NativeJSONValue {
+        .object([
+            "relative_path": .string(value.relativePath),
+            "kind": .string(value.kind),
+            "size_bytes": .number(Double(value.sizeBytes)),
+            "sha256": .string(value.sha256),
         ])
     }
 

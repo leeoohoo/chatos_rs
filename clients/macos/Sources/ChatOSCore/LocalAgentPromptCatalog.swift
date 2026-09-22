@@ -16,10 +16,6 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
     case permissionStaffManagement = "AgentPrompt.Permission.StaffManagement"
     case permissionLocalProjects = "AgentPrompt.Permission.LocalProjects"
     case requirementSurveySkill = "AgentPrompt.Skill.RequirementSurvey"
-    case requirementSurveyCreateSkill = "AgentPrompt.Skill.RequirementSurvey.Create"
-    case requirementSurveyReadResultsSkill = "AgentPrompt.Skill.RequirementSurvey.ReadResults"
-    case requirementSurveyResolveSkill = "AgentPrompt.Skill.RequirementSurvey.Resolve"
-    case requirementSurveyReviewExecutionSkill = "AgentPrompt.Skill.RequirementSurvey.ReviewExecution"
     case managerCycle = "AgentPrompt.Cycle.Manager"
     case heartbeatDefault = "AgentPrompt.Cycle.HeartbeatDefault"
     case heartbeatDirective = "AgentPrompt.Cycle.HeartbeatDirective"
@@ -47,7 +43,7 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
         case .managerCycle:
             ["heartbeat_directive"]
         case .requirementSurveySkill:
-            ["available_scenarios"]
+            ["skill_catalog"]
         case .heartbeatDirective:
             ["heartbeat_prompt"]
         case .professionSkill:
@@ -75,8 +71,6 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
              .conversationRoleAgentAgentDirect, .conversationHumanAgentDirect,
              .conversationAgentAgentDirect, .roomGoalUnset,
              .permissionStaffManagement, .permissionLocalProjects,
-             .requirementSurveyCreateSkill, .requirementSurveyReadResultsSkill,
-             .requirementSurveyResolveSkill, .requirementSurveyReviewExecutionSkill,
              .heartbeatDefault,
              .executorCycle, .todoStatusCycle, .capabilityDiscoverySkill,
              .actionHeartbeat, .actionTodo,

@@ -45,12 +45,14 @@ extension LocalAgentGroupChatScheduler {
         let requirementSurveySkill: String
         if builtinCapabilities.contains(.requirementSurveyRead)
             || builtinCapabilities.contains(.requirementSurveyWrite) {
-            let availableScenarios = builtinCapabilities.contains(.requirementSurveyWrite)
-                ? "create_survey、read_results、resolve_survey、review_execution"
-                : "read_results、review_execution"
+            let availableSkills = LocalAgentProgressiveSkillCatalog.requirementSurveyCatalog(
+                canWrite: builtinCapabilities.contains(.requirementSurveyWrite)
+            ).map { skill in
+                "- \(skill.skillRef) = \(skill.name) [\(skill.role)]: \(skill.description)"
+            }.joined(separator: "\n")
             requirementSurveySkill = LocalAgentPromptCatalog.render(
                 .requirementSurveySkill,
-                values: ["available_scenarios": availableScenarios]
+                values: ["skill_catalog": availableSkills]
             )
         } else {
             requirementSurveySkill = ""

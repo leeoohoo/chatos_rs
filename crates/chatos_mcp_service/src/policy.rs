@@ -228,7 +228,9 @@ pub fn classify_builtin_tool(name: &str) -> Option<BuiltinToolAccess> {
             Some(BuiltinToolAccess::Terminal)
         }
         "approval_decision" => Some(BuiltinToolAccess::LocalCommandApproval),
-        "requirement_survey_skill_get"
+        "skill_activate"
+        | "skill_list_resources"
+        | "skill_read_resource"
         | "requirement_survey_list"
         | "requirement_survey_get"
         | "requirement_survey_project_tasks" => Some(BuiltinToolAccess::RequirementSurveyRead),
@@ -312,7 +314,7 @@ mod tests {
             Some(BuiltinToolAccess::LocalCommandApproval)
         );
         assert_eq!(
-            classify_builtin_tool("requirement_survey_skill_get"),
+            classify_builtin_tool("skill_activate"),
             Some(BuiltinToolAccess::RequirementSurveyRead)
         );
         assert_eq!(classify_builtin_tool("local_fs_read"), None);

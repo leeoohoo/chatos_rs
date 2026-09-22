@@ -5,7 +5,7 @@ import Foundation
 import XCTest
 
 final class NativeAgentPluginToolProviderTests: XCTestCase {
-    func testRequirementSurveyScenarioSkillLoadsOnDemand() async throws {
+    func testRequirementSurveyUsesSharedProgressiveSkillTools() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("requirement-survey-skill-\(UUID().uuidString)")
         let databaseURL = root.appendingPathComponent("chat.db")
@@ -21,15 +21,40 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         )
 
         let result = try await tools.call(
-            name: "requirement_survey_skill_get",
-            arguments: ["scenario": .string("resolve_survey")]
+            name: "skill_activate",
+            arguments: [
+                "skill_ref": .string(
+                    LocalAgentProgressiveSkillCatalog.requirementSurveyResolveRef
+                ),
+            ]
         )
         let object = try XCTUnwrap(result.jsonObject)
-        XCTAssertEqual(object["scenario"]?.jsonString, "resolve_survey")
+        XCTAssertEqual(object["name"]?.jsonString, "requirement-survey-resolve")
+        XCTAssertEqual(object["instructions_sha256"]?.jsonString?.count, 64)
         XCTAssertTrue(object["instructions"]?.jsonString?.contains(
             "requirement_survey_resolve"
         ) == true)
-        XCTAssertTrue(object["instructions"]?.jsonString?.contains("```json") == true)
+        XCTAssertEqual(
+            object["resources"]?.jsonArray?.first?.jsonObject?["relative_path"]?.jsonString,
+            "references/example.md"
+        )
+        XCTAssertEqual(
+            object["resources"]?.jsonArray?.first?.jsonObject?["sha256"]?.jsonString?.count,
+            64
+        )
+
+        let resource = try await tools.call(
+            name: "skill_read_resource",
+            arguments: [
+                "skill_ref": .string(
+                    LocalAgentProgressiveSkillCatalog.requirementSurveyResolveRef
+                ),
+                "relative_path": .string("references/example.md"),
+            ]
+        )
+        XCTAssertTrue(resource.jsonObject?["content"]?.jsonString?.contains(
+            "execution_steps"
+        ) == true)
     }
 
     func testTodoAuthorizationCatalogUsesExecutorRuntimeToolDefinitions() {
