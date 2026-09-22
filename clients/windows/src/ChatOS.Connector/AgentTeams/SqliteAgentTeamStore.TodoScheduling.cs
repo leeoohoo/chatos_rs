@@ -127,13 +127,87 @@ public sealed partial class SqliteAgentTeamStore
                 throw Conflict("Todo changed before it could be started.");
         }
 
+        return await PrepareTodoDeliveryAsync(connection, transaction, ownerUserId, agentId,
+            todo, now, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<AgentDelivery> PrepareTodoDeliveryAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string ownerUserId,
+        string agentId,
+        AgentTodo todo,
+        long now,
+        CancellationToken cancellationToken)
+    {
+        var deduplicationKey = $"todo:{todo.Id}";
+        AgentDelivery? existing;
+        using (var select = Command(connection, transaction,
+            $"SELECT {DeliveryColumns} FROM agent_deliveries " +
+            "WHERE owner_user_id = @p0 AND trigger_kind = 'Todo' " +
+            "AND (deduplication_key = @p1 OR deduplication_key LIKE @p2) " +
+            "ORDER BY CASE WHEN deduplication_key = @p1 THEN 0 ELSE 1 END, " +
+            "created_at_unix_ms DESC, id DESC LIMIT 1",
+            ownerUserId, deduplicationKey, $"{deduplicationKey}:revision:%"))
+        await using (var reader = await select.ExecuteReaderAsync(cancellationToken)
+            .ConfigureAwait(false))
+        {
+            existing = await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
+                ? ReadDelivery(reader)
+                : null;
+        }
+
+        var content = $"Todo：{todo.Draft.Title}\n{todo.Draft.Detail}";
+        if (existing is not null)
+        {
+            if (existing.Status != AgentDeliveryStatus.Failed ||
+                existing.Trigger != AgentDeliveryTrigger.Todo ||
+                !string.Equals(existing.TargetAgentId, agentId, StringComparison.Ordinal) ||
+                !string.Equals(existing.RoomId, todo.Draft.TeamRoomId, StringComparison.Ordinal))
+            {
+                throw Conflict("Only the failed delivery owned by this Todo can be retried.");
+            }
+
+            using (var updateMessage = Command(connection, transaction, """
+                UPDATE agent_messages SET content = @p0
+                WHERE owner_user_id = @p1 AND room_id = @p2 AND id = @p3
+                """, content, ownerUserId, todo.Draft.TeamRoomId, existing.MessageId))
+            {
+                if (await updateMessage.ExecuteNonQueryAsync(cancellationToken)
+                    .ConfigureAwait(false) != 1)
+                    throw Conflict("Todo delivery trigger message is unavailable.");
+            }
+
+            using (var reactivate = Command(connection, transaction, """
+                UPDATE agent_deliveries
+                SET deduplication_key = @p0, status = 'Pending', response_message_id = NULL,
+                    last_error = NULL, claimed_at_unix_ms = NULL,
+                    completed_at_unix_ms = NULL
+                WHERE owner_user_id = @p1 AND id = @p2 AND status = 'Failed'
+                """, deduplicationKey, ownerUserId, existing.Id))
+            {
+                if (await reactivate.ExecuteNonQueryAsync(cancellationToken)
+                    .ConfigureAwait(false) != 1)
+                    throw Conflict("Failed Todo delivery changed before it could be retried.");
+            }
+
+            return existing with
+            {
+                Status = AgentDeliveryStatus.Pending,
+                DeduplicationKey = deduplicationKey,
+                ResponseMessageId = null,
+                LastError = null,
+                ClaimedAtUnixMs = null,
+                CompletedAtUnixMs = null,
+            };
+        }
+
         var messageId = await InsertSystemMessageAsync(connection, transaction, ownerUserId,
-            todo.Draft.TeamRoomId, $"Todo：{todo.Draft.Title}\n{todo.Draft.Detail}", now,
-            cancellationToken).ConfigureAwait(false);
+            todo.Draft.TeamRoomId, content, now, cancellationToken).ConfigureAwait(false);
         return await InsertDeliveryAsync(connection, transaction, ownerUserId,
             todo.Draft.TeamRoomId, messageId, messageId, agentId, AgentDeliveryTrigger.Todo, 0,
-            $"todo:{todo.Id}:revision:{nextRevision}", now, cancellationToken)
-            .ConfigureAwait(false) ?? throw Conflict("Todo delivery already exists.");
+            deduplicationKey, now, cancellationToken).ConfigureAwait(false)
+            ?? throw Conflict("Todo delivery already exists.");
     }
 
     private static async Task<AgentTodo?> ReadScheduledTodoAsync(

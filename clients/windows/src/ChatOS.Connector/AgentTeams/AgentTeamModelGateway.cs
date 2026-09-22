@@ -74,16 +74,35 @@ internal sealed class AgentTeamModelGateway(
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromMinutes(3));
-        using var response = await httpClientFactory.CreateClient(HttpClientName)
-            .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token)
-            .ConfigureAwait(false);
-        var payload = await ReadBoundedAsync(response.Content, timeout.Token).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            throw ProviderFailure(response.StatusCode, payload);
-        }
+            using var response = await httpClientFactory.CreateClient(HttpClientName)
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token)
+                .ConfigureAwait(false);
+            var payload = await ReadBoundedAsync(response.Content, timeout.Token)
+                .ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw ProviderFailure(response.StatusCode, payload);
+            }
 
-        return Decode(payload);
+            return Decode(payload);
+        }
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new AgentTeamException(AgentTeamError.ModelUnavailable,
+                "The Agent model request timed out.", exception, isTransient: true);
+        }
+        catch (HttpRequestException exception)
+        {
+            throw new AgentTeamException(AgentTeamError.ModelUnavailable,
+                "The Agent model provider connection failed.", exception, isTransient: true);
+        }
+        catch (IOException exception)
+        {
+            throw new AgentTeamException(AgentTeamError.ModelUnavailable,
+                "The Agent model response stream failed.", exception, isTransient: true);
+        }
     }
 
     private static Uri ResponsesEndpoint(AgentModelConfigurationDto config)
@@ -236,8 +255,9 @@ internal sealed class AgentTeamModelGateway(
             }
         }
 
+        var transient = (int)status is 408 or 429 or >= 500;
         return new AgentTeamException(AgentTeamError.ModelUnavailable,
-            $"The Agent model provider {category}.");
+            $"The Agent model provider {category}.", isTransient: transient);
     }
 
     private static string SafeToken(string? value)

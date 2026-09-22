@@ -321,6 +321,11 @@ public interface IAgentTeamStore
         AgentRunSummary run,
         CancellationToken cancellationToken = default);
 
+    Task<AgentRunSummary?> GetRunForDeliveryAsync(
+        string ownerUserId,
+        string deliveryId,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<AgentRunSummary>> ListRunsAsync(
         string ownerUserId,
         string roomId,

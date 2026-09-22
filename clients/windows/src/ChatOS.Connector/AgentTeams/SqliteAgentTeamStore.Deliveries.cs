@@ -227,6 +227,32 @@ public sealed partial class SqliteAgentTeamStore
         return run;
     }
 
+    public async Task<AgentRunSummary?> GetRunForDeliveryAsync(
+        string ownerUserId,
+        string deliveryId,
+        CancellationToken cancellationToken = default)
+    {
+        AgentTeamValidation.Identifier(ownerUserId, nameof(ownerUserId));
+        AgentTeamValidation.Identifier(deliveryId, nameof(deliveryId));
+        await using var connection = await database.OpenConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        using var command = Command(connection, null, """
+            SELECT id, agent_id, room_id, status, model_calls, last_error,
+                created_at_unix_ms, updated_at_unix_ms
+            FROM agent_runs
+            WHERE owner_user_id = @p0 AND delivery_id = @p1
+            LIMIT 1
+            """, ownerUserId, deliveryId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) return null;
+        return new AgentRunSummary(reader.GetString(0), ownerUserId, deliveryId,
+            reader.GetString(1), reader.GetString(2),
+            ParseEnum<AgentRunStatus>(reader.GetString(3)), reader.GetInt32(4),
+            reader.IsDBNull(5) ? null : reader.GetString(5), reader.GetInt64(6),
+            reader.GetInt64(7));
+    }
+
     public async Task<IReadOnlyList<AgentRunSummary>> ListRunsAsync(
         string ownerUserId,
         string roomId,

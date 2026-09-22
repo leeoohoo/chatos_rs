@@ -79,9 +79,11 @@ public enum AgentTeamError
 public sealed class AgentTeamException(
     AgentTeamError code,
     string message,
-    Exception? innerException = null) : Exception(message, innerException)
+    Exception? innerException = null,
+    bool isTransient = false) : Exception(message, innerException)
 {
     public AgentTeamError Code { get; } = code;
+    public bool IsTransient { get; } = isTransient;
 }
 
 public static class AgentTeamValidation

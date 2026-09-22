@@ -72,9 +72,26 @@ internal sealed partial class AgentTeamScheduler(
         CancellationToken cancellationToken)
     {
         var started = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var run = new AgentRunSummary(Guid.NewGuid().ToString("D").ToLowerInvariant(),
-            delivery.OwnerUserId, delivery.Id, delivery.TargetAgentId, delivery.RoomId,
-            AgentRunStatus.Running, 0, null, started, started);
+        var savedRun = await store.GetRunForDeliveryAsync(
+            delivery.OwnerUserId, delivery.Id, cancellationToken).ConfigureAwait(false);
+        if (savedRun is not null &&
+            (!string.Equals(savedRun.AgentId, delivery.TargetAgentId, StringComparison.Ordinal) ||
+             !string.Equals(savedRun.RoomId, delivery.RoomId, StringComparison.Ordinal) ||
+             savedRun.Status == AgentRunStatus.Completed))
+        {
+            throw new AgentTeamException(AgentTeamError.Conflict,
+                "The durable Agent run does not match this delivery retry.");
+        }
+        var run = savedRun is null
+            ? new AgentRunSummary(Guid.NewGuid().ToString("D").ToLowerInvariant(),
+                delivery.OwnerUserId, delivery.Id, delivery.TargetAgentId, delivery.RoomId,
+                AgentRunStatus.Running, 0, null, started, started)
+            : savedRun with
+            {
+                Status = AgentRunStatus.Running,
+                LastError = null,
+                UpdatedAtUnixMs = started,
+            };
         await store.SaveRunAsync(run, cancellationToken).ConfigureAwait(false);
         RaiseChanged(delivery, "run_started");
         try
@@ -84,7 +101,8 @@ internal sealed partial class AgentTeamScheduler(
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            await store.SaveRunAsync(run with
+            var currentRun = await CurrentRunAsync(run).ConfigureAwait(false);
+            await store.SaveRunAsync(currentRun with
             {
                 Status = AgentRunStatus.Cancelled,
                 LastError = "Agent run was cancelled.",
@@ -108,7 +126,8 @@ internal sealed partial class AgentTeamScheduler(
         {
             var detail = SafeError(exception);
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            await store.SaveRunAsync(run with
+            var currentRun = await CurrentRunAsync(run).ConfigureAwait(false);
+            await store.SaveRunAsync(currentRun with
             {
                 Status = AgentRunStatus.Failed,
                 LastError = detail,
@@ -202,16 +221,30 @@ internal sealed partial class AgentTeamScheduler(
         var run = initialRun;
         string? responseMessageId = null;
         var ended = false;
-        for (var modelCall = 1; modelCall <= 16 && !ended; modelCall++)
+        var transientRetries = 0;
+        for (var modelCall = run.ModelCalls + 1; modelCall <= 16 && !ended; modelCall++)
         {
-            var turn = await models.CompleteAsync(profile, input, definitions, cancellationToken)
-                .ConfigureAwait(false);
             run = run with
             {
                 ModelCalls = modelCall,
                 UpdatedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             };
             await store.SaveRunAsync(run, cancellationToken).ConfigureAwait(false);
+            AgentModelTurn turn;
+            try
+            {
+                turn = await models.CompleteAsync(profile, input, definitions, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (AgentTeamException exception) when (
+                exception.IsTransient && transientRetries < 5 && modelCall < 16)
+            {
+                transientRetries++;
+                await Task.Delay(TimeSpan.FromSeconds(1 << (transientRetries - 1)),
+                    cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+            transientRetries = 0;
             input.AddRange(turn.OutputItems.Cast<object>());
 
             if (turn.ToolCalls.Count == 0)
@@ -510,6 +543,10 @@ internal sealed partial class AgentTeamScheduler(
     private void RaiseChanged(AgentDelivery delivery, string kind) => Changed?.Invoke(
         this, new AgentTeamChangedEventArgs(
             delivery.OwnerUserId, null, delivery.RoomId, kind));
+
+    private async Task<AgentRunSummary> CurrentRunAsync(AgentRunSummary fallback) =>
+        await store.GetRunForDeliveryAsync(fallback.OwnerUserId, fallback.DeliveryId,
+            CancellationToken.None).ConfigureAwait(false) ?? fallback;
 
     private static string SafeError(Exception exception)
     {

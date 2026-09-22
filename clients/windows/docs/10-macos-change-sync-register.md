@@ -22,7 +22,11 @@
 | CP-20260831-002 | Raycast 风格全局快速搜索 | WinUI、Windows Search、Shell、全局快捷键 | 待真机验收 | 已实现四类 provider、排序、模式前缀和全局快捷键；验证快捷键冲突与焦点恢复 |
 | CP-20260831-003 | 本地剪贴板历史 | Windows Clipboard、SQLite、WinUI、隐私过滤 | 待真机验收 | 已实现采集、恢复、去重、清理和持久化；验证跨应用恢复与敏感格式过滤 |
 | CP-20260831-004 | 原生屏幕录制 | Windows 原生 Snipping Tool、WinUI | 待真机验收 | 已接入显示器/窗口选择、系统音频与原生停止条，并自动归档 MP4；验证系统版本兼容性与媒体参数 |
-| CP-20260922-001 | Agent 团队与需求调研 | Core、SQLite、Connector、Presentation、WinUI | 待实现 | 项目级调研中心 WinUI、统一渐进调研、附件文本读取、图片/PDF 多模态输入、跨会话 Inbox、run-scoped opaque refs、文档发送 receipt、成员提案原子审批，以及 Todo 不可变执行合同/来源关系/builtin+Plugin 能力快照/原子串行调度/隔离 executor 上下文与工具权限/v18 资产快照/lane 状态写入边界、独立 communication 调度和活跃优先排序已补；继续同步最新 macOS 失败 Todo 恢复行为 |
+| CP-20260922-001 | Agent 团队与需求调研 | Core、SQLite、Connector、Presentation、WinUI | 待真机验收 | 项目级调研中心、统一渐进调研、多模态输入、跨会话 Inbox、run-scoped opaque refs、成员提案、Todo 隔离调度和失败 delivery/run 恢复均已补；验证 Windows 真机模型、Plugin、崩溃恢复和长对话内存占用 |
+
+## 未编号工作区观察
+
+- 2026-09-22 审计到两处未提交、由外部并行修改的 macOS 远程连接代码：SSH 二次验证码从“携码重连”改为保留原认证进程并在同一会话续交，以支持 session-bound MFA。Windows SSH.NET 当前仍携码创建新连接，已在能力矩阵标为 `实现中`；在 macOS 变更提交且来源登记分配 `CP-*` 编号前不伪造同步编号，也不触碰这些外部修改。
 
 ## 详细记录
 
@@ -86,10 +90,11 @@
 - Windows 自动化要求：覆盖账号隔离、默认/@ 路由、4-hop/12-run、Todo 依赖/revision/manager 通知、资产版本与 manager/executor 权限、资产维护去重唤醒、需求调研幂等/提交/解决/专职 Agent 权限、成员提案权限组合/幂等冲突/审批前隔离/原子生效/账号隔离/v15 重启、附件按需正文、心跳、模型错误脱敏、完整模型回复/工具循环和插件 MCP run session。
 - 已关闭的最新差距：Todo communication/executor lane 已拆分状态工具与服务端权限边界；经理通讯通道只能重排/取消，执行通道只能完成、阻塞或记录当前 delivery 所属 Todo，不能通过隐藏工具越权。两条 lane 现按账号分别加锁并用 trigger 定向原子 claim，过期崩溃恢复只扫描当前 lane；独立 2 秒 communication 后台循环和 UI 触发可在长 Todo executor 仍运行时完成新消息回复，且不会把另一 lane 的活跃 delivery 当作遗留任务。图片/PDF 多模态输入已覆盖普通触发消息和 Todo 冻结来源，二进制不经 UTF-8 解码且只暴露 run-scoped opaque ref。团队与项目 Todo 查询已对齐 macOS `c53e0568b` 的活跃优先语义，并显式容纳 Windows 的 Ready 状态：执行中、就绪、等待依赖、阻塞均排在完成和取消历史前，同状态内再按优先级与手工顺序稳定排序。
 - 已关闭的项目调研 UI 差距：新增项目顶层“需求调研”入口和独立 Presentation 状态机，单次项目级查询加载跨团队调研，按待填写、等待方案、已解决排序；查询限制 1–500 条、默认 200 条且由 SQL 优先保留待处理项，避免长期项目产生无界 payload 或 UI 集合；完整展示问卷答案、备注、解决方案、执行步骤、风险与资料，Human 只能填写待处理调研且提交后只读，解决权限状态显式说明；空态、错误态、忙碌态和刷新均已覆盖。自动化验证 project-scoped 提交、阶段排序、只读权限、查询上限和错误恢复，XAML XML 解析与 Automation ID 静态契约通过。
-- 已确认剩余代码差距：对照 macOS `669665a46`，Windows 还需补齐失败 Todo delivery 的安全恢复/重试语义。
+- 已关闭的失败恢复差距：对照 macOS `669665a46`，Windows 会在超时、408、429 或 5xx 时于同一 run 的总调用预算内以 1/2/4/8/16 秒退避最多重试 5 次；显式把失败 Todo 恢复为 Ready 时，事务会复活同一 delivery、清空失败字段并保留 attempt，旧 `todo:{id}:revision:{n}` 键会惰性收敛为稳定 `todo:{id}`。调度器读取该 delivery 的 durable run，复用 run ID 和累计模型调用数，失败请求也先持久化调用计数；不会复制触发消息或越过 16 次总预算。完成/取消路径同时兼容稳定键与旧 revision 键。
+- 当前未发现 CP-20260922-001 范围内仍可由本地代码关闭的差距；未编号的 session-bound SSH MFA 工作区变化另列上方观察，等待来源提交和登记。
 - Windows 真机要求：代码差距关闭后，验证 Agent/团队编辑与提案对话框、团队切换、附件/多模态、项目调研中心、模型工具、真实插件进程、Artifact、命令审批、崩溃恢复和长对话内存占用。
-- 当前状态：`待实现`；当前已完成部分通过 Windows solution 492 项测试，Windows 本轮源码均低于 800 行；全仓源码体积检查仅被未由本批修改的 macOS `TeamRequirementSurveysView.swift` 867 行阻塞，等待失败 Todo 恢复代码差距与 Windows 真机验收。
-- 关闭条件：先关闭上述代码差距并完成自动化；再在 Windows x64/ARM64 编译，x64 完成 UI/模型/终端 smoke 后，两端登记改为 `已同步`。
+- 当前状态：`待真机验收`；Windows solution 495 项测试通过，Windows 本轮源码均低于 800 行；全仓源码体积检查仅被未由本批修改的 macOS `TeamRequirementSurveysView.swift` 867 行阻塞。
+- 关闭条件：在 Windows x64/ARM64 编译，x64 完成 UI/模型/Plugin/终端/崩溃恢复 smoke 后，两端登记改为 `已同步`。
 
 ## 新记录模板
 

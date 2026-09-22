@@ -267,8 +267,8 @@ public sealed partial class SqliteAgentTeamStore
             using var cancel = Command(connection, transaction, """
                 UPDATE agent_deliveries SET status = 'Cancelled', completed_at_unix_ms = @p0
                 WHERE owner_user_id = @p1 AND status = 'Pending'
-                  AND deduplication_key LIKE @p2
-                """, now, ownerUserId, $"todo:{todoId}:%");
+                  AND (deduplication_key = @p2 OR deduplication_key LIKE @p3)
+                """, now, ownerUserId, $"todo:{todoId}", $"todo:{todoId}:revision:%");
             await cancel.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 

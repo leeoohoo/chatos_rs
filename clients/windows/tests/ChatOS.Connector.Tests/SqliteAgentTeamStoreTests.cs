@@ -352,6 +352,34 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task FailedTodoRetryReactivatesItsDeliveryWithoutDuplicatingTheTrigger()
+    {
+        var (_, worker, room) = await CreateConfiguredTeamAsync();
+        await CompleteInitialMaintenanceAsync();
+        var todo = await _store.CreateTodoAsync("alice",
+            new(room.Id, worker.Id, "恢复失败的执行"));
+        var firstClaim = Assert.IsType<AgentDelivery>(
+            await _store.ClaimNextDeliveryAsync("alice", AgentDeliveryLane.Executor));
+
+        await _store.FailDeliveryAsync("alice", firstClaim.Id, "模型请求失败");
+        var blocked = Assert.IsType<AgentTodo>(await _store.GetTodoAsync("alice", todo.Id));
+        Assert.Equal(AgentTodoStatus.Blocked, blocked.Status);
+        var retriedTodo = await _store.UpdateTodoAsync("alice", todo.Id, blocked.Revision,
+            AgentTodoStatus.Ready, "显式重试");
+        Assert.Equal(AgentTodoStatus.InProgress, retriedTodo.Status);
+
+        var secondClaim = Assert.IsType<AgentDelivery>(
+            await _store.ClaimNextDeliveryAsync("alice", AgentDeliveryLane.Executor));
+        Assert.Equal(firstClaim.Id, secondClaim.Id);
+        Assert.Equal(firstClaim.MessageId, secondClaim.MessageId);
+        Assert.Equal("todo:" + todo.Id, secondClaim.DeduplicationKey);
+        Assert.Equal(2, secondClaim.Attempt);
+        Assert.Null(secondClaim.LastError);
+        Assert.Null(secondClaim.CompletedAtUnixMs);
+        Assert.Null(await _store.ClaimNextDeliveryAsync("alice", AgentDeliveryLane.Executor));
+    }
+
+    [Fact]
     public async Task TodoListsKeepActiveWorkAheadOfTerminalHistory()
     {
         var (manager, worker, room) = await CreateConfiguredTeamAsync();

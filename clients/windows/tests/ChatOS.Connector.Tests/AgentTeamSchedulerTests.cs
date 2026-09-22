@@ -90,6 +90,56 @@ public sealed class AgentTeamSchedulerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task FailedTodoRetryResumesTheSameDurableRun()
+    {
+        var profile = await _store.CreateAgentAsync("alice", Profile().Draft);
+        var room = await _store.CreateRoomAsync("alice", "project-1",
+            new("团队", "恢复失败任务"), profile.Id);
+        await CompleteInitialMaintenanceAsync();
+        var todo = await _store.CreateTodoAsync("alice",
+            new(room.Id, profile.Id, "重试任务"));
+        var providerCalls = 0;
+        long retryRevision = 0;
+        var gateway = CreateGateway(async request =>
+        {
+            providerCalls++;
+            if (providerCalls == 1) return Json("not-json");
+            var body = await request.Content!.ReadAsStringAsync();
+            var todoReference = Regex.Match(body, "todo_[a-f0-9]{32}").Value;
+            Assert.NotEmpty(todoReference);
+            return Json($$"""
+                {"status":"completed","output":[
+                  {"type":"function_call","call_id":"complete-retry","name":"todo_complete",
+                   "arguments":"{\"todo_ref\":\"{{todoReference}}\",\"expected_revision\":{{retryRevision}},\"summary\":\"恢复完成\"}"}
+                ]}
+                """);
+        });
+        var scheduler = new AgentTeamScheduler(_store, gateway,
+            new AgentTeamToolExecutor(_store, null!));
+
+        await scheduler.DrainExecutorAsync("alice");
+
+        var failedRun = Assert.Single(await _store.ListRunsAsync("alice", room.Id));
+        Assert.Equal(AgentRunStatus.Failed, failedRun.Status);
+        Assert.Equal(1, failedRun.ModelCalls);
+        var blocked = Assert.IsType<AgentTodo>(await _store.GetTodoAsync("alice", todo.Id));
+        Assert.Equal(AgentTodoStatus.Blocked, blocked.Status);
+        var retried = await _store.UpdateTodoAsync("alice", todo.Id, blocked.Revision,
+            AgentTodoStatus.Ready, "重试");
+        retryRevision = retried.Revision;
+
+        await scheduler.DrainExecutorAsync("alice");
+
+        var completedRun = Assert.Single(await _store.ListRunsAsync("alice", room.Id));
+        Assert.Equal(failedRun.Id, completedRun.Id);
+        Assert.Equal(AgentRunStatus.Completed, completedRun.Status);
+        Assert.Equal(2, completedRun.ModelCalls);
+        Assert.Equal(2, providerCalls);
+        Assert.Equal(AgentTodoStatus.Completed,
+            (await _store.GetTodoAsync("alice", todo.Id))!.Status);
+    }
+
+    [Fact]
     public async Task GatewaySanitizesProviderFailures()
     {
         var gateway = CreateGateway(_ => Task.FromResult(Json(
@@ -103,6 +153,44 @@ public sealed class AgentTeamSchedulerTests : IAsyncLifetime
         Assert.Contains("rejected the configured credential", error.Message, StringComparison.Ordinal);
         Assert.Contains("bad_key", error.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("secret upstream dump", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TransientProviderFailureRetriesWithinTheSameTodoRun()
+    {
+        var profile = await _store.CreateAgentAsync("alice", Profile().Draft);
+        var room = await _store.CreateRoomAsync("alice", "project-1",
+            new("团队", "重试瞬时失败"), profile.Id);
+        await CompleteInitialMaintenanceAsync();
+        var todo = await _store.CreateTodoAsync("alice",
+            new(room.Id, profile.Id, "处理瞬时失败"));
+        var providerCalls = 0;
+        var gateway = CreateGateway(async request =>
+        {
+            providerCalls++;
+            if (providerCalls == 1)
+                return Json("{\"error\":{\"code\":\"temporary\"}}",
+                    HttpStatusCode.ServiceUnavailable);
+            var body = await request.Content!.ReadAsStringAsync();
+            var todoReference = Regex.Match(body, "todo_[a-f0-9]{32}").Value;
+            return Json($$"""
+                {"status":"completed","output":[
+                  {"type":"function_call","call_id":"complete-transient","name":"todo_complete",
+                   "arguments":"{\"todo_ref\":\"{{todoReference}}\",\"expected_revision\":2,\"summary\":\"完成\"}"}
+                ]}
+                """);
+        });
+        var scheduler = new AgentTeamScheduler(_store, gateway,
+            new AgentTeamToolExecutor(_store, null!));
+
+        await scheduler.DrainExecutorAsync("alice");
+
+        var run = Assert.Single(await _store.ListRunsAsync("alice", room.Id));
+        Assert.Equal(AgentRunStatus.Completed, run.Status);
+        Assert.Equal(2, run.ModelCalls);
+        Assert.Equal(2, providerCalls);
+        Assert.Equal(AgentTodoStatus.Completed,
+            (await _store.GetTodoAsync("alice", todo.Id))!.Status);
     }
 
     [Fact]
