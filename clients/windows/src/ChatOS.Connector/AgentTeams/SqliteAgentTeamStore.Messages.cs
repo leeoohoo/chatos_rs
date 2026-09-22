@@ -108,7 +108,8 @@ public sealed partial class SqliteAgentTeamStore
         string ownerUserId,
         string roomId,
         string messageId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool includeAttachmentPayloads = false)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         using var command = Command(connection, null, """
@@ -136,7 +137,8 @@ public sealed partial class SqliteAgentTeamStore
         return row is null
             ? null
             : await MaterializeMessageAsync(
-                connection, null, ownerUserId, roomId, row, cancellationToken).ConfigureAwait(false);
+                connection, null, ownerUserId, roomId, row, includeAttachmentPayloads,
+                cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<AgentMessageAttachment?> GetMessageAttachmentAsync(
@@ -356,6 +358,7 @@ public sealed partial class SqliteAgentTeamStore
         string ownerUserId,
         string roomId,
         MessageRow row,
+        bool includeAttachmentPayloads,
         CancellationToken cancellationToken)
     {
         var mentions = new List<string>();
@@ -372,13 +375,20 @@ public sealed partial class SqliteAgentTeamStore
         }
 
         var attachments = new List<AgentMessageAttachment>();
-        using (var attachmentCommand = Command(connection, transaction, """
-            SELECT a.id, a.name, a.mime_type, a.kind, a.byte_count,
-                COALESCE(p.payload, a.payload)
+        var payloadColumn = includeAttachmentPayloads
+            ? "COALESCE(p.payload, a.payload)"
+            : "zeroblob(0)";
+        var payloadJoin = includeAttachmentPayloads
+            ? """
+              LEFT JOIN agent_message_attachment_payloads p
+                ON p.owner_user_id = a.owner_user_id
+               AND p.message_id = a.message_id AND p.id = a.id
+              """
+            : string.Empty;
+        using (var attachmentCommand = Command(connection, transaction, $"""
+            SELECT a.id, a.name, a.mime_type, a.kind, a.byte_count, {payloadColumn}
             FROM agent_message_attachments a
-            LEFT JOIN agent_message_attachment_payloads p
-              ON p.owner_user_id = a.owner_user_id
-             AND p.message_id = a.message_id AND p.id = a.id
+            {payloadJoin}
             WHERE a.owner_user_id = @p0 AND a.message_id = @p1 ORDER BY a.id
             """, ownerUserId, row.Id))
         await using (var reader = await attachmentCommand.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))

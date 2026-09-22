@@ -94,6 +94,9 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
         var metadata = Assert.Single(await _store.ListMessagesAsync("alice", room.Id),
             value => value.Id == mentionPost.Message.Id);
         Assert.Empty(Assert.Single(metadata.Attachments).Data);
+        var singleMetadata = await _store.GetMessageAsync("alice", room.Id,
+            mentionPost.Message.Id);
+        Assert.Empty(Assert.Single(singleMetadata!.Attachments).Data);
         var downloaded = await _store.GetMessageAttachmentAsync(
             "alice", room.Id, attachment.Id);
         Assert.Equal("plan", System.Text.Encoding.UTF8.GetString(downloaded!.Data));

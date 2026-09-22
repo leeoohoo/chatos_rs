@@ -214,7 +214,8 @@ internal sealed partial class AgentTeamToolExecutor(
     public IReadOnlyList<AgentToolDefinition> AllDefinitions(
         AgentProfile profile,
         AgentRoom room,
-        AgentDelivery delivery)
+        AgentDelivery delivery,
+        AgentTodo? executionTodo = null)
     {
         IEnumerable<AgentToolDefinition> definitions = Definitions.Concat(DocumentDefinitions);
         if (AgentProfilePermissions.CanManageStaff(profile))
@@ -228,20 +229,8 @@ internal sealed partial class AgentTeamToolExecutor(
         var result = definitions.ToArray();
         if (delivery.Trigger == AgentDeliveryTrigger.Todo)
         {
-            var executorTools = new HashSet<string>(StringComparer.Ordinal)
-            {
-                "todo_list", "todo_schedule_state", "todo_start_next",
-                "todo_update", "todo_progress", "asset_list",
-                "chat_read_attachment", "cycle_complete",
-                "chat_read_unread", "chat_read_all_unread", "chat_mark_read",
-                "skill_activate", "skill_list_resources", "skill_read_resource",
-                "requirement_survey_list",
-                "requirement_survey_get", "requirement_survey_project_tasks",
-                "requirement_survey_create", "requirement_survey_resolve",
-            };
-            return result.Where(value => executorTools.Contains(value.Name) ||
-                AgentProjectToolExecutor.Definitions.Any(project => project.Name == value.Name))
-                .ToArray();
+            var executorTools = ExecutorToolNames(executionTodo?.Draft.ExecutionPlan);
+            return result.Where(value => executorTools.Contains(value.Name)).ToArray();
         }
 
         if (!string.Equals(room.ProjectManagerAgentId, profile.Id, StringComparison.Ordinal))
@@ -262,9 +251,16 @@ internal sealed partial class AgentTeamToolExecutor(
         AgentDelivery delivery,
         AgentToolCall call,
         CancellationToken cancellationToken,
-        AgentRunReferenceVault? references = null)
+        AgentRunReferenceVault? references = null,
+        AgentTodo? executionTodo = null)
     {
         var vault = references ?? new AgentRunReferenceVault(allowLegacyIds: true);
+        if (delivery.Trigger == AgentDeliveryTrigger.Todo && executionTodo is not null &&
+            !ExecutorToolNames(executionTodo.Draft.ExecutionPlan).Contains(call.Name))
+        {
+            throw new AgentTeamException(AgentTeamError.PermissionDenied,
+                "Tool is outside this Todo's frozen capability snapshot.");
+        }
         JsonDocument document;
         try
         {
@@ -385,13 +381,11 @@ internal sealed partial class AgentTeamToolExecutor(
         var authority = references.Attachment(attachmentReference);
         var attachmentId = authority?.AttachmentId ?? (references.AllowsLegacyIds
             ? attachmentReference : throw AgentTeamValidation.Invalid("attachment_ref"));
-        if (authority is not null && authority.RoomId != room.Id)
-            throw new AgentTeamException(AgentTeamError.PermissionDenied,
-                "Attachment reference does not belong to the current conversation.");
-        var attachment = await store.GetMessageAttachmentAsync(profile.OwnerUserId, room.Id,
+        var attachmentRoomId = authority?.RoomId ?? room.Id;
+        var attachment = await store.GetMessageAttachmentAsync(profile.OwnerUserId, attachmentRoomId,
             attachmentId, cancellationToken).ConfigureAwait(false)
             ?? throw new AgentTeamException(AgentTeamError.NotFound,
-                "Message attachment was not found in the current conversation.");
+                "Message attachment was not found in an authorized conversation.");
         var mimeType = attachment.MimeType.Split(';', 2)[0].Trim().ToLowerInvariant();
         if (!mimeType.StartsWith("text/", StringComparison.Ordinal) && mimeType is not
             ("application/json" or "application/xml" or "application/javascript" or
@@ -427,7 +421,7 @@ internal sealed partial class AgentTeamToolExecutor(
         var nextOffset = offset + length < text.Length ? offset + length : (int?)null;
         return new AgentToolExecutionResult(Json(new
         {
-            attachment_ref = references.AttachmentReference(room.Id, attachment.Id),
+            attachment_ref = references.AttachmentReference(attachmentRoomId, attachment.Id),
             attachment.Name,
             attachment.MimeType,
             attachment.ByteCount,
@@ -634,6 +628,29 @@ internal sealed partial class AgentTeamToolExecutor(
         items = new { type = "string", maxLength = maximumLength },
         maxItems = maximumItems,
     };
+
+    private static HashSet<string> ExecutorToolNames(AgentTodoExecutionPlan? plan)
+    {
+        var capabilities = plan?.Capabilities ?? [AgentTodoBuiltinCapability.ProjectRead];
+        var result = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "todo_update", "todo_progress", "asset_list", "chat_read_attachment",
+            "cycle_complete", "skill_activate", "skill_list_resources",
+            "skill_read_resource",
+        };
+        if (capabilities.Contains(AgentTodoBuiltinCapability.ProjectRead))
+            result.UnionWith(["project_list", "project_read", "project_search"]);
+        if (capabilities.Contains(AgentTodoBuiltinCapability.ProjectWrite))
+            result.Add("project_write");
+        if (capabilities.Contains(AgentTodoBuiltinCapability.Terminal))
+            result.Add("terminal_exec");
+        if (capabilities.Contains(AgentTodoBuiltinCapability.RequirementSurveyRead))
+            result.UnionWith(["requirement_survey_list", "requirement_survey_get",
+                "requirement_survey_project_tasks"]);
+        if (capabilities.Contains(AgentTodoBuiltinCapability.RequirementSurveyWrite))
+            result.UnionWith(["requirement_survey_create", "requirement_survey_resolve"]);
+        return result;
+    }
 
     private static string Json(object value) => JsonSerializer.Serialize(value, JsonOptions);
 

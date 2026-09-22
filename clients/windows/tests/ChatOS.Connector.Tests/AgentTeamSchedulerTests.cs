@@ -112,11 +112,26 @@ public sealed class AgentTeamSchedulerTests : IAsyncLifetime
         var room = await _store.CreateRoomAsync("alice", "project-1",
             new("团队", "完成工作"), profile.Id);
         await CompleteInitialMaintenanceAsync();
+        var source = await _store.PostMessageAsync("alice", room.Id,
+            new(AgentMessageSenderKind.Agent, profile.Id, "SOURCE_ALLOWED_FOR_EXECUTOR"));
+        _ = await _store.PostMessageAsync("alice", room.Id,
+            new(AgentMessageSenderKind.Agent, profile.Id, "PRIVATE_MANAGER_CHAT_MUST_NOT_LEAK"));
         var todo = await _store.CreateTodoAsync("alice",
-            new(room.Id, profile.Id, "实现功能"));
+            new(room.Id, profile.Id, "实现功能", SourceMessageId: source.Message.Id,
+                ExecutionContract: new AgentTodoExecutionContract(
+                    "EXECUTOR_OBJECTIVE", "isolated scope", ["verified output"],
+                    ["tests pass"])));
         var gateway = CreateGateway(async request =>
         {
             var body = await request.Content!.ReadAsStringAsync();
+            Assert.Contains("EXECUTOR_OBJECTIVE", body, StringComparison.Ordinal);
+            Assert.Contains("SOURCE_ALLOWED_FOR_EXECUTOR", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("PRIVATE_MANAGER_CHAT_MUST_NOT_LEAK", body,
+                StringComparison.Ordinal);
+            Assert.Contains("project_read", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("project_write", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("terminal_exec", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("chat_read_all_unread", body, StringComparison.Ordinal);
             var todoReference = Regex.Match(body, "todo_[a-f0-9]{32}").Value;
             Assert.NotEmpty(todoReference);
             return Json($$"""

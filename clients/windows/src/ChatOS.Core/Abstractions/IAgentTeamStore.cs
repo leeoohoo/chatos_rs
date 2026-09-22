@@ -89,7 +89,8 @@ public interface IAgentTeamStore
         string ownerUserId,
         string roomId,
         string messageId,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        bool includeAttachmentPayloads = false);
 
     Task<AgentMessageAttachment?> GetMessageAttachmentAsync(
         string ownerUserId,

@@ -29,9 +29,10 @@ internal sealed class AgentPluginToolRuntime(
         AgentRoomMember member,
         AgentRoom room,
         string runId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<string>? selectedPluginIds = null)
     {
-        var pluginIds = AllowedPluginIds(profile, member);
+        var pluginIds = AllowedPluginIds(profile, member, selectedPluginIds);
         if (pluginIds.Count == 0) return null;
 
         await runtime.InitializeAsync(cancellationToken).ConfigureAwait(false);
@@ -172,14 +173,21 @@ internal sealed class AgentPluginToolRuntime(
 
     private static IReadOnlyList<string> AllowedPluginIds(
         AgentProfile profile,
-        AgentRoomMember member)
+        AgentRoomMember member,
+        IReadOnlyList<string>? selectedPluginIds = null)
     {
         var allowlist = member.Draft.Plugins.ToHashSet(StringComparer.Ordinal);
-        return profile.Draft.Plugins
+        var allowed = profile.Draft.Plugins
             .Where(value => allowlist.Count == 0 || allowlist.Contains(value))
             .Distinct(StringComparer.Ordinal)
             .Take(20)
             .ToArray();
+        if (selectedPluginIds is null) return allowed;
+        var allowedSet = allowed.ToHashSet(StringComparer.Ordinal);
+        if (selectedPluginIds.Any(value => !allowedSet.Contains(value)))
+            throw new PluginRuntimeException(
+                "Todo Plugin snapshot contains a Plugin no longer allowed for this Agent.");
+        return selectedPluginIds.Distinct(StringComparer.Ordinal).Take(20).ToArray();
     }
 
     private static IReadOnlyList<PublishedTool> ValidTools(IReadOnlyList<JsonElement> tools)

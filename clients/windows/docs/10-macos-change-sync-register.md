@@ -22,7 +22,7 @@
 | CP-20260831-002 | Raycast 风格全局快速搜索 | WinUI、Windows Search、Shell、全局快捷键 | 待真机验收 | 已实现四类 provider、排序、模式前缀和全局快捷键；验证快捷键冲突与焦点恢复 |
 | CP-20260831-003 | 本地剪贴板历史 | Windows Clipboard、SQLite、WinUI、隐私过滤 | 待真机验收 | 已实现采集、恢复、去重、清理和持久化；验证跨应用恢复与敏感格式过滤 |
 | CP-20260831-004 | 原生屏幕录制 | Windows 原生 Snipping Tool、WinUI | 待真机验收 | 已接入显示器/窗口选择、系统音频与原生停止条，并自动归档 MP4；验证系统版本兼容性与媒体参数 |
-| CP-20260922-001 | Agent 团队与需求调研 | Core、SQLite、Connector、Presentation、WinUI | 待实现 | 项目级统一渐进调研、附件文本读取、跨会话 Inbox、run-scoped opaque refs、文档发送 receipt、lane 工具裁剪、成员提案原子审批，以及 Todo 不可变执行合同/来源关系/builtin 能力快照/原子串行调度已补；继续实现 Plugin 选择与独立 executor lane |
+| CP-20260922-001 | Agent 团队与需求调研 | Core、SQLite、Connector、Presentation、WinUI | 待实现 | 项目级统一渐进调研、附件文本读取、跨会话 Inbox、run-scoped opaque refs、文档发送 receipt、成员提案原子审批，以及 Todo 不可变执行合同/来源关系/builtin 能力快照/原子串行调度/隔离 executor 上下文与工具权限已补；继续实现 Plugin 选择和持久化资产快照 |
 
 ## 详细记录
 
@@ -84,7 +84,7 @@
 - Windows 风险：Windows 原先完全没有 Agent 团队领域模型、持久化、调度或 UI；普通任务图不能提供 durable delivery、团队权限、项目边界或 Human 调研闭环。
 - Windows 代码修改：新增账号隔离 SQLite schema、Agent/Room/Message/Todo/Asset/Survey/Delivery/Run 模型与 Store；Responses API 工具循环；默认插件与成员 allowlist 交集驱动的 MCP 真执行，并复用权限/逐次审批、OAuth/Secret 和 Artifact 管线且按 run 清理；项目文件与审批终端；后台心跳/恢复；Presentation 状态机；项目工作区 WinUI；附件元数据与 payload 分表、UTF-8 正文按需读取；账号级跨会话 Inbox、成员范围过滤、排除自身回复、单调已读游标、原子读取/标记、批量元数据查询和 v16 迁移；真实模型 Run 使用独立 opaque reference vault 隔离 Agent/会话/消息/附件/Todo/资产/调研持久 ID，并提供账号级工作区快照；Agent 间私聊；Todo 不可变执行合同、跨会话来源关系、builtin 能力依赖补全和 v17 迁移，并以原子 schedule state/start-next 保证每 Agent 单执行槽及优先级选取；共享资产 create/update 分离、分类对齐和项目经理自动维护唤醒；需求调研改为项目归属并接入统一渐进 Skill 协议、跨团队任务核对和 v14 迁移；成员变更提案使用显式 hire+terminate 权限、v15 持久化和 Human 原子审批，新建/入队/移出均不会由 Agent 直接生效。
 - Windows 自动化要求：覆盖账号隔离、默认/@ 路由、4-hop/12-run、Todo 依赖/revision/manager 通知、资产版本与 manager/executor 权限、资产维护去重唤醒、需求调研幂等/提交/解决/专职 Agent 权限、成员提案权限组合/幂等冲突/审批前隔离/原子生效/账号隔离/v15 重启、附件按需正文、心跳、模型错误脱敏、完整模型回复/工具循环和插件 MCP run session。
-- 已确认剩余代码差距：Todo 的 Plugin 选择快照、独立 executor lane，以及触发图片/PDF 多模态输入和项目级调研中心 UI。
+- 已确认剩余代码差距：Todo 的模型可选 Plugin 快照、持久化资产快照与更严格 lane 状态边界，以及触发图片/PDF 多模态输入和项目级调研中心 UI。
 - Windows 真机要求：代码差距关闭后，验证 Agent/团队编辑与提案对话框、团队切换、附件/多模态、项目调研中心、模型工具、真实插件进程、Artifact、命令审批、崩溃恢复和长对话内存占用。
 - 当前状态：`待实现`；当前已完成部分通过 Windows solution 480 项测试，Windows 本轮源码均低于 800 行；等待剩余代码差距与 Windows 真机验收。
 - 关闭条件：先关闭上述代码差距并完成自动化；再在 Windows x64/ARM64 编译，x64 完成 UI/模型/终端 smoke 后，两端登记改为 `已同步`。

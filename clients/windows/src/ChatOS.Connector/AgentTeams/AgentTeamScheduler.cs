@@ -6,7 +6,7 @@ using ChatOS.Core.Domain;
 
 namespace ChatOS.Connector.AgentTeams;
 
-internal sealed class AgentTeamScheduler(
+internal sealed partial class AgentTeamScheduler(
     IAgentTeamStore store,
     AgentTeamModelGateway models,
     AgentTeamToolExecutor tools,
@@ -128,23 +128,36 @@ internal sealed class AgentTeamScheduler(
             ?? throw new AgentTeamException(AgentTeamError.NotMember,
                 "Target Agent is no longer a team member.");
         await BeginTodoExecutionAsync(delivery, cancellationToken).ConfigureAwait(false);
-        var recentMessages = await store.ListMessagesAsync(
-            delivery.OwnerUserId, room.Id, 120, includeAttachmentPayloads: false,
-            cancellationToken).ConfigureAwait(false);
         var todos = await store.ListTodosAsync(
             delivery.OwnerUserId, room.Id, includeTerminal: true, cancellationToken).ConfigureAwait(false);
+        var executionTodo = delivery.Trigger == AgentDeliveryTrigger.Todo
+            ? TodoForDelivery(delivery, todos)
+            : null;
+        if (delivery.Trigger == AgentDeliveryTrigger.Todo && executionTodo is null)
+            throw new AgentTeamException(AgentTeamError.Conflict,
+                "Todo executor delivery no longer maps to an immutable work contract.");
+        var recentMessages = executionTodo is null
+            ? await store.ListMessagesAsync(delivery.OwnerUserId, room.Id, 120,
+                includeAttachmentPayloads: false, cancellationToken).ConfigureAwait(false)
+            : [];
+        var sourceMessages = executionTodo is null
+            ? []
+            : await LoadTodoSourceMessagesAsync(store, executionTodo, cancellationToken)
+                .ConfigureAwait(false);
         var assets = await store.ListAssetsAsync(
             delivery.OwnerUserId, room.Id, includeArchived: false, cancellationToken).ConfigureAwait(false);
         var todoProgress = await TriggerTodoProgressAsync(delivery, cancellationToken)
             .ConfigureAwait(false);
         var references = new AgentRunReferenceVault();
-        await using var pluginSession = pluginTools is null
+        var selectedPluginIds = executionTodo?.Draft.ExecutionPlan!.SelectedPlugins
+            .Select(value => value.PluginId).ToArray();
+        await using var pluginSession = pluginTools is null || selectedPluginIds is { Length: 0 }
             ? null
             : await pluginTools.PrepareAsync(profile, member, room, initialRun.Id,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken, selectedPluginIds).ConfigureAwait(false);
         var input = BuildInput(profile, member, room, delivery, recentMessages, todos, assets,
-            todoProgress, pluginSession?.Instructions, references);
-        var definitions = tools.AllDefinitions(profile, room, delivery)
+            todoProgress, executionTodo, sourceMessages, pluginSession?.Instructions, references);
+        var definitions = tools.AllDefinitions(profile, room, delivery, executionTodo)
             .Concat(pluginSession?.Definitions ?? []).ToArray();
         var run = initialRun;
         string? responseMessageId = null;
@@ -187,7 +200,7 @@ internal sealed class AgentTeamScheduler(
                         ? new AgentToolExecutionResult(await pluginSession.ExecuteAsync(
                             call, cancellationToken).ConfigureAwait(false))
                         : await tools.ExecuteAsync(profile, member, room, delivery, call,
-                            cancellationToken, references).ConfigureAwait(false);
+                            cancellationToken, references, executionTodo).ConfigureAwait(false);
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
@@ -240,9 +253,18 @@ internal sealed class AgentTeamScheduler(
         IReadOnlyList<AgentTodo> todos,
         IReadOnlyList<AgentTeamAsset> assets,
         IReadOnlyList<AgentTodoProgress> todoProgress,
+        AgentTodo? executionTodo,
+        IReadOnlyList<AgentMessage> sourceMessages,
         string? pluginInstructions,
         AgentRunReferenceVault references)
     {
+        if (delivery.Trigger == AgentDeliveryTrigger.Todo)
+        {
+            return BuildExecutorInput(profile, member, room, delivery,
+                executionTodo ?? throw new AgentTeamException(AgentTeamError.Conflict,
+                    "Todo executor contract is unavailable."),
+                sourceMessages, todos, assets, todoProgress, pluginInstructions, references);
+        }
         var lane = delivery.Trigger == AgentDeliveryTrigger.Todo ? "executor" : "manager";
         var authority = string.Equals(room.ProjectManagerAgentId, profile.Id, StringComparison.Ordinal)
             ? "你是这个团队明确指定的项目经理，可以创建、分配和调整共享 Todo。"
