@@ -171,6 +171,42 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SourceMessageBatchReadIsBoundedOrderedAndPayloadFree()
+    {
+        var (manager, _, room) = await CreateConfiguredTeamAsync();
+        var attachment = new AgentMessageAttachment(
+            "source-attachment", "evidence.pdf", "application/pdf",
+            AgentMessageAttachmentKind.File, 4, [0x25, 0x50, 0x44, 0x46]);
+        var teamSource = await _store.PostMessageAsync("alice", room.Id,
+            new(AgentMessageSenderKind.Human, null, "团队来源", Attachments: [attachment]));
+        var direct = await _store.OpenHumanAgentDirectAsync("alice", manager.Id);
+        var directSource = await _store.PostMessageAsync("alice", direct.Id,
+            new(AgentMessageSenderKind.Human, null, "私聊来源"));
+        AgentTodoSourceLink[] sources =
+        [
+            new("todo-1", direct.Id, directSource.Message.Id,
+                AgentTodoSourceRelation.Created, 1),
+            new("todo-1", room.Id, teamSource.Message.Id,
+                AgentTodoSourceRelation.Created, 2),
+        ];
+
+        var messages = await _store.ListMessagesBySourcesAsync("alice", sources);
+
+        Assert.Equal(sources.Select(value => value.MessageId),
+            messages.Select(value => value.Id));
+        Assert.Equal(new[] { direct.Id, room.Id }, messages.Select(value => value.RoomId));
+        var metadata = Assert.Single(messages[1].Attachments);
+        Assert.Equal(attachment.Id, metadata.Id);
+        Assert.Equal(attachment.ByteCount, metadata.ByteCount);
+        Assert.Empty(metadata.Data);
+        Assert.Empty(await _store.ListMessagesBySourcesAsync("bob", sources));
+        var tooMany = Enumerable.Repeat(sources[0], 65).ToArray();
+        var invalid = await Assert.ThrowsAsync<AgentTeamException>(() =>
+            _store.ListMessagesBySourcesAsync("alice", tooMany));
+        Assert.Equal(AgentTeamError.InvalidField, invalid.Code);
+    }
+
+    [Fact]
     public async Task TodoDependenciesReleaseOnlyAfterCompletionAndUseRevisions()
     {
         var (manager, worker, room) = await CreateConfiguredTeamAsync();

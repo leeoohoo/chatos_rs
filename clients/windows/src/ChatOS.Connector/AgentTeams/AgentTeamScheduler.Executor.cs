@@ -19,17 +19,12 @@ internal sealed partial class AgentTeamScheduler
         AgentTodo todo,
         CancellationToken cancellationToken)
     {
-        var output = new List<AgentMessage>();
-        foreach (var source in todo.Sources.Take(64))
-        {
-            var message = await teamStore.GetMessageAsync(todo.OwnerUserId,
-                source.ConversationId, source.MessageId, cancellationToken,
-                includeAttachmentPayloads: false).ConfigureAwait(false);
-            if (message is null)
-                throw new AgentTeamException(AgentTeamError.NotFound,
-                    "A Todo source message is no longer available.");
-            output.Add(message);
-        }
+        var sources = todo.Sources.Take(64).ToArray();
+        var output = await teamStore.ListMessagesBySourcesAsync(
+            todo.OwnerUserId, sources, cancellationToken).ConfigureAwait(false);
+        if (output.Count != sources.Length)
+            throw new AgentTeamException(AgentTeamError.NotFound,
+                "A Todo source message is no longer available.");
         return output;
     }
 

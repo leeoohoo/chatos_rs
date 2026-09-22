@@ -141,6 +141,116 @@ public sealed partial class SqliteAgentTeamStore
                 cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<IReadOnlyList<AgentMessage>> ListMessagesBySourcesAsync(
+        string ownerUserId,
+        IReadOnlyList<AgentTodoSourceLink> sources,
+        CancellationToken cancellationToken = default)
+    {
+        AgentTeamValidation.Identifier(ownerUserId, nameof(ownerUserId));
+        if (sources.Count > 64) throw AgentTeamValidation.Invalid(nameof(sources));
+        if (sources.Count == 0) return [];
+        foreach (var source in sources)
+        {
+            AgentTeamValidation.Identifier(source.ConversationId, nameof(source.ConversationId));
+            AgentTeamValidation.Identifier(source.MessageId, nameof(source.MessageId));
+        }
+
+        var values = new List<object> { ownerUserId };
+        var requestedRows = new List<string>(sources.Count);
+        for (var index = 0; index < sources.Count; index++)
+        {
+            var parameter = values.Count;
+            requestedRows.Add($"(@p{parameter}, @p{parameter + 1})");
+            values.Add(sources[index].ConversationId);
+            values.Add(sources[index].MessageId);
+        }
+        var requested = string.Join(", ", requestedRows);
+        await using var connection = await database.OpenConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var rows = new Dictionary<(string RoomId, string MessageId), MessageRow>();
+        using (var command = Command(connection, null, $"""
+            WITH requested(room_id, message_id) AS (VALUES {requested})
+            SELECT DISTINCT m.room_id, m.id, m.sender_kind, m.sender_agent_id, m.content,
+                m.reply_to_message_id, m.root_message_id, m.hop_count, m.created_at_unix_ms
+            FROM requested r JOIN agent_messages m
+              ON m.owner_user_id = @p0 AND m.room_id = r.room_id AND m.id = r.message_id
+            """, values.ToArray()))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken)
+            .ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var roomId = reader.GetString(0);
+                var row = new MessageRow(
+                    reader.GetString(1),
+                    ParseEnum<AgentMessageSenderKind>(reader.GetString(2)),
+                    reader.IsDBNull(3) ? null : reader.GetString(3),
+                    reader.GetString(4),
+                    reader.IsDBNull(5) ? null : reader.GetString(5),
+                    reader.GetString(6),
+                    reader.GetInt32(7),
+                    reader.GetInt64(8));
+                rows[(roomId, row.Id)] = row;
+            }
+        }
+
+        var mentions = rows.Keys.ToDictionary(value => value,
+            _ => new List<string>());
+        using (var command = Command(connection, null, $"""
+            WITH requested(room_id, message_id) AS (VALUES {requested})
+            SELECT DISTINCT m.room_id, x.message_id, x.agent_id
+            FROM requested r JOIN agent_messages m
+              ON m.owner_user_id = @p0 AND m.room_id = r.room_id AND m.id = r.message_id
+            JOIN agent_message_mentions x
+              ON x.owner_user_id = m.owner_user_id AND x.message_id = m.id
+            ORDER BY m.room_id, x.message_id, x.agent_id
+            """, values.ToArray()))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken)
+            .ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                mentions[(reader.GetString(0), reader.GetString(1))].Add(reader.GetString(2));
+        }
+
+        var attachments = rows.Keys.ToDictionary(value => value,
+            _ => new List<AgentMessageAttachment>());
+        using (var command = Command(connection, null, $"""
+            WITH requested(room_id, message_id) AS (VALUES {requested})
+            SELECT DISTINCT m.room_id, a.message_id, a.id, a.name, a.mime_type, a.kind,
+                a.byte_count
+            FROM requested r JOIN agent_messages m
+              ON m.owner_user_id = @p0 AND m.room_id = r.room_id AND m.id = r.message_id
+            JOIN agent_message_attachments a
+              ON a.owner_user_id = m.owner_user_id AND a.message_id = m.id
+            ORDER BY m.room_id, a.message_id, a.id
+            """, values.ToArray()))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken)
+            .ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                attachments[(reader.GetString(0), reader.GetString(1))].Add(
+                    new AgentMessageAttachment(reader.GetString(2), reader.GetString(3),
+                        reader.GetString(4),
+                        ParseEnum<AgentMessageAttachmentKind>(reader.GetString(5)),
+                        reader.GetInt64(6), []));
+            }
+        }
+
+        var output = new List<AgentMessage>(sources.Count);
+        foreach (var source in sources)
+        {
+            var key = (source.ConversationId, source.MessageId);
+            if (!rows.TryGetValue(key, out var row)) continue;
+            var message = new AgentMessage(row.Id, ownerUserId, source.ConversationId,
+                row.SenderKind, row.SenderAgentId, row.Content, mentions[key], attachments[key],
+                row.ReplyToMessageId, row.RootMessageId, row.HopCount, row.CreatedAtUnixMs);
+            message.Validate();
+            output.Add(message);
+        }
+        return output;
+    }
+
     public async Task<AgentMessageAttachment?> GetMessageAttachmentAsync(
         string ownerUserId,
         string roomId,

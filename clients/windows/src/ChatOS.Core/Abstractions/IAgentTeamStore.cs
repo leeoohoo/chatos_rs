@@ -92,6 +92,11 @@ public interface IAgentTeamStore
         CancellationToken cancellationToken = default,
         bool includeAttachmentPayloads = false);
 
+    Task<IReadOnlyList<AgentMessage>> ListMessagesBySourcesAsync(
+        string ownerUserId,
+        IReadOnlyList<AgentTodoSourceLink> sources,
+        CancellationToken cancellationToken = default);
+
     Task<AgentMessageAttachment?> GetMessageAttachmentAsync(
         string ownerUserId,
         string roomId,
