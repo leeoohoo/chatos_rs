@@ -116,6 +116,12 @@ public interface IAgentTeamStore
         bool includeTerminal = true,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<AgentTodo>> ListProjectTodosAsync(
+        string ownerUserId,
+        string projectId,
+        bool includeTerminal = true,
+        CancellationToken cancellationToken = default);
+
     Task<AgentTodo?> GetTodoAsync(
         string ownerUserId,
         string todoId,
@@ -199,26 +205,26 @@ public interface IAgentTeamStore
 
     Task<IReadOnlyList<AgentRequirementSurvey>> ListRequirementSurveysAsync(
         string ownerUserId,
-        string teamRoomId,
+        string projectId,
         AgentRequirementSurveyStatus? status = null,
         CancellationToken cancellationToken = default);
 
     Task<AgentRequirementSurvey?> GetRequirementSurveyAsync(
         string ownerUserId,
-        string teamRoomId,
+        string projectId,
         string surveyId,
         CancellationToken cancellationToken = default);
 
     Task<AgentRequirementSurvey> SubmitRequirementSurveyAsync(
         string ownerUserId,
-        string teamRoomId,
+        string projectId,
         string surveyId,
         AgentRequirementSubmission submission,
         CancellationToken cancellationToken = default);
 
     Task<AgentRequirementSurvey> ResolveRequirementSurveyAsync(
         string ownerUserId,
-        string teamRoomId,
+        string projectId,
         string surveyId,
         string resolverAgentId,
         AgentRequirementResolution resolution,

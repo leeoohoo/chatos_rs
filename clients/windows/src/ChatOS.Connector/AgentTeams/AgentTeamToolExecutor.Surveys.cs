@@ -7,6 +7,26 @@ internal sealed partial class AgentTeamToolExecutor
 {
     public static IReadOnlyList<AgentToolDefinition> SurveyDefinitions { get; } =
     [
+        Tool("requirement_survey_skill_get",
+            "按当前目标读取一份需求调研场景 Skill；一次只加载一个相关场景。",
+            new
+            {
+                type = "object",
+                properties = new
+                {
+                    scenario = new
+                    {
+                        type = "string",
+                        @enum = new[]
+                        {
+                            "create_survey", "read_results", "resolve_survey",
+                            "review_execution",
+                        },
+                    },
+                },
+                required = new[] { "scenario" },
+                additionalProperties = false,
+            }),
         Tool("requirement_survey_create",
             "项目经理创建 1–12 题的 Human 单选/多选需求调研。创建后本轮结束并等待 Human。",
             new
@@ -69,6 +89,8 @@ internal sealed partial class AgentTeamToolExecutor
             required = new[] { "survey_id" },
             additionalProperties = false,
         }),
+        Tool("requirement_survey_project_tasks",
+            "读取当前项目全部团队的 Todo 事实，用于核对调研执行计划。", ObjectSchema()),
         Tool("requirement_survey_resolve", "Human 提交后由项目经理形成解决方案、执行步骤、风险和资料。", new
         {
             type = "object",
@@ -104,6 +126,26 @@ internal sealed partial class AgentTeamToolExecutor
         }),
     ];
 
+    private static AgentToolExecutionResult GetRequirementSurveySkill(JsonElement arguments)
+    {
+        var scenario = RequiredString(arguments, "scenario");
+        string instructions;
+        try
+        {
+            instructions = AgentRequirementSurveySkillCatalog.Get(scenario);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            throw AgentTeamValidation.Invalid("scenario");
+        }
+        return new AgentToolExecutionResult(Json(new
+        {
+            scenario,
+            skill_name = scenario.Replace('_', '-'),
+            instructions,
+        }));
+    }
+
     private async Task<AgentToolExecutionResult> CreateRequirementSurveyAsync(
         AgentProfile profile,
         AgentRoom room,
@@ -132,7 +174,8 @@ internal sealed partial class AgentTeamToolExecutor
             new AgentRequirementSurveyDraft(RequiredString(arguments, "title"),
                 RequiredString(arguments, "purpose"), questions), cancellationToken)
             .ConfigureAwait(false);
-        return new AgentToolExecutionResult(Json(survey), EndsCycle: true);
+        return new AgentToolExecutionResult(Json(new { project_bound = true, survey }),
+            EndsCycle: true);
     }
 
     private async Task<AgentToolExecutionResult> ListRequirementSurveysAsync(
@@ -148,18 +191,22 @@ internal sealed partial class AgentTeamToolExecutor
             : Enum.TryParse<AgentRequirementSurveyStatus>(statusText, true, out var parsed)
                 ? parsed
                 : throw AgentTeamValidation.Invalid("status");
-        var surveys = await store.ListRequirementSurveysAsync(profile.OwnerUserId, room.Id,
+        var surveys = await store.ListRequirementSurveysAsync(profile.OwnerUserId, room.ProjectId,
             status, cancellationToken).ConfigureAwait(false);
-        return new AgentToolExecutionResult(Json(surveys.Select(value => new
+        return new AgentToolExecutionResult(Json(new
         {
-            survey_id = value.Id,
-            value.Draft.Title,
-            value.Draft.Purpose,
-            value.Status,
-            value.CreatedAtUnixMs,
-            value.SubmittedAtUnixMs,
-            resolved = value.Resolution is not null,
-        })));
+            project_bound = true,
+            surveys = surveys.Select(value => new
+            {
+                survey_id = value.Id,
+                value.Draft.Title,
+                value.Draft.Purpose,
+                value.Status,
+                value.CreatedAtUnixMs,
+                value.SubmittedAtUnixMs,
+                resolved = value.Resolution is not null,
+            }),
+        }));
     }
 
     private async Task<AgentToolExecutionResult> GetRequirementSurveyAsync(
@@ -169,11 +216,39 @@ internal sealed partial class AgentTeamToolExecutor
         CancellationToken cancellationToken)
     {
         RequireSurveyCapability(profile, room);
-        var survey = await store.GetRequirementSurveyAsync(profile.OwnerUserId, room.Id,
+        var survey = await store.GetRequirementSurveyAsync(profile.OwnerUserId, room.ProjectId,
             RequiredString(arguments, "survey_id"), cancellationToken).ConfigureAwait(false)
             ?? throw new AgentTeamException(AgentTeamError.NotFound,
                 "Requirement survey was not found.");
-        return new AgentToolExecutionResult(Json(survey));
+        return new AgentToolExecutionResult(Json(new { project_bound = true, survey }));
+    }
+
+    private async Task<AgentToolExecutionResult> ListRequirementSurveyProjectTasksAsync(
+        AgentProfile profile,
+        AgentRoom room,
+        CancellationToken cancellationToken)
+    {
+        RequireSurveyCapability(profile, room);
+        var todos = await store.ListProjectTodosAsync(profile.OwnerUserId, room.ProjectId,
+            includeTerminal: true, cancellationToken).ConfigureAwait(false);
+        return new AgentToolExecutionResult(Json(new
+        {
+            project_bound = true,
+            teams = todos.GroupBy(value => value.Draft.TeamRoomId).Select(group => new
+            {
+                team_room_id = group.Key,
+                todos = group.Select(value => new
+                {
+                    todo_id = value.Id,
+                    value.Draft.Title,
+                    value.Draft.Detail,
+                    assigned_agent_id = value.Draft.AgentId,
+                    value.Status,
+                    value.Result,
+                    value.Revision,
+                }),
+            }),
+        }));
     }
 
     private async Task<AgentToolExecutionResult> ResolveRequirementSurveyAsync(
@@ -194,10 +269,11 @@ internal sealed partial class AgentTeamToolExecutor
             RequiredString(arguments, "solution_markdown"), steps,
             OptionalString(arguments, "risks_and_open_questions") ?? string.Empty,
             OptionalString(arguments, "related_materials") ?? string.Empty);
-        var survey = await store.ResolveRequirementSurveyAsync(profile.OwnerUserId, room.Id,
+        var survey = await store.ResolveRequirementSurveyAsync(profile.OwnerUserId, room.ProjectId,
             RequiredString(arguments, "survey_id"), profile.Id, resolution, cancellationToken)
             .ConfigureAwait(false);
-        return new AgentToolExecutionResult(Json(survey), EndsCycle: true);
+        return new AgentToolExecutionResult(Json(new { project_bound = true, survey }),
+            EndsCycle: true);
     }
 
     private static IReadOnlyList<JsonElement> ObjectArray(
@@ -236,16 +312,18 @@ internal sealed partial class AgentTeamToolExecutor
 
     private static void RequireSurveyCapability(AgentProfile profile, AgentRoom room)
     {
-        var authorized = room.Kind == AgentConversationKind.ProjectTeam &&
-            (string.Equals(room.ProjectManagerAgentId, profile.Id, StringComparison.Ordinal) ||
-             string.Equals(profile.Draft.ProfessionKey, "project_manager",
-                 StringComparison.Ordinal) ||
-             profile.Draft.Skills.Contains("requirement.survey.manage",
-                 StringComparer.Ordinal));
-        if (!authorized)
+        if (!CanManageSurveys(profile, room))
         {
             throw new AgentTeamException(AgentTeamError.PermissionDenied,
                 "The Agent is not allowed to manage requirement surveys for this team.");
         }
     }
+
+    private static bool CanManageSurveys(AgentProfile profile, AgentRoom room) =>
+        room.Kind == AgentConversationKind.ProjectTeam &&
+            (string.Equals(room.ProjectManagerAgentId, profile.Id, StringComparison.Ordinal) ||
+             string.Equals(profile.Draft.ProfessionKey, "project_manager",
+                 StringComparison.Ordinal) ||
+             profile.Draft.Skills.Contains("requirement.survey.manage",
+                 StringComparer.Ordinal));
 }

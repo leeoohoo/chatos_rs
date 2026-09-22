@@ -105,7 +105,7 @@ public sealed record AgentRequirementResolution(
 public sealed record AgentRequirementSurvey(
     string Id,
     string OwnerUserId,
-    string TeamRoomId,
+    string ProjectId,
     string CreatorAgentId,
     string SourceDeliveryId,
     string RequestKey,
@@ -121,7 +121,7 @@ public sealed record AgentRequirementSurvey(
     {
         AgentTeamValidation.Identifier(Id, nameof(Id));
         AgentTeamValidation.Identifier(OwnerUserId, nameof(OwnerUserId));
-        AgentTeamValidation.Identifier(TeamRoomId, nameof(TeamRoomId));
+        AgentTeamValidation.Identifier(ProjectId, nameof(ProjectId));
         AgentTeamValidation.Identifier(CreatorAgentId, nameof(CreatorAgentId));
         AgentTeamValidation.Identifier(SourceDeliveryId, nameof(SourceDeliveryId));
         AgentTeamValidation.Identifier(RequestKey, nameof(RequestKey));

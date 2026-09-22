@@ -76,7 +76,7 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
     [Fact]
     public async Task MessagesPersistAttachmentsAndRouteToMentionOrDefaultAgent()
     {
-        var (_, worker, room) = await CreateConfiguredTeamAsync();
+        var (manager, worker, room) = await CreateConfiguredTeamAsync();
         var defaultPost = await _store.PostMessageAsync("alice", room.Id,
             new(AgentMessageSenderKind.Human, null, "开始工作"));
         var attachment = new AgentMessageAttachment("attachment-1", "plan.md", "text/markdown",
@@ -97,6 +97,20 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
         var downloaded = await _store.GetMessageAttachmentAsync(
             "alice", room.Id, attachment.Id);
         Assert.Equal("plan", System.Text.Encoding.UTF8.GetString(downloaded!.Data));
+        var managerMember = Assert.Single(await _store.ListMembersAsync("alice", room.Id),
+            value => value.AgentId == manager.Id);
+        var attachmentResult = await new AgentTeamToolExecutor(_store, null!).ExecuteAsync(
+            manager, managerMember, room,
+            new AgentDelivery("attachment-run", "alice", room.Id, mentionPost.Message.Id,
+                mentionPost.Message.RootMessageId, manager.Id, AgentDeliveryTrigger.Mention,
+                AgentDeliveryStatus.Running, 1, 0, "attachment-test", null, null, 1, null, 1),
+            new AgentToolCall("read", "chat_read_attachment",
+                "{\"attachment_id\":\"attachment-1\",\"limit\":2}"),
+            CancellationToken.None);
+        using var attachmentDocument = System.Text.Json.JsonDocument.Parse(
+            attachmentResult.Content);
+        Assert.Equal("pl", attachmentDocument.RootElement.GetProperty("content").GetString());
+        Assert.Equal(2, attachmentDocument.RootElement.GetProperty("next_offset").GetInt32());
 
         var owners = await _store.ListOwnersWithPendingDeliveriesAsync();
         Assert.Equal("alice", Assert.Single(owners));
@@ -264,12 +278,13 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
             manager.Id, delivery.Id, "scope-v1", draft);
         Assert.Equal(survey.Id, idempotent.Id);
         Assert.Equal(AgentRequirementSurveyStatus.Pending, survey.Status);
+        Assert.Equal(room.ProjectId, survey.ProjectId);
 
         var invalid = await Assert.ThrowsAsync<AgentTeamException>(() =>
-            _store.SubmitRequirementSurveyAsync("alice", room.Id, survey.Id,
+            _store.SubmitRequirementSurveyAsync("alice", room.ProjectId, survey.Id,
                 new AgentRequirementSubmission([], "")));
         Assert.Equal(AgentTeamError.InvalidField, invalid.Code);
-        var submitted = await _store.SubmitRequirementSurveyAsync("alice", room.Id, survey.Id,
+        var submitted = await _store.SubmitRequirementSurveyAsync("alice", room.ProjectId, survey.Id,
             new AgentRequirementSubmission(
             [
                 new("scope", ["windows", "macos"]),
@@ -284,12 +299,12 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
         [
             new("implement", "实现", "完成 Windows 与 macOS 功能对齐", "开发", "安装包", "自动化通过"),
         ], "Windows 真机待验收", "测试报告");
-        var resolved = await _store.ResolveRequirementSurveyAsync("alice", room.Id,
+        var resolved = await _store.ResolveRequirementSurveyAsync("alice", room.ProjectId,
             survey.Id, manager.Id, resolution);
         Assert.Equal(resolution, resolved.Resolution);
         Assert.NotNull(resolved.ResolvedAtUnixMs);
         var persisted = Assert.Single(await _store.ListRequirementSurveysAsync(
-            "alice", room.Id, AgentRequirementSurveyStatus.Submitted));
+            "alice", room.ProjectId, AgentRequirementSurveyStatus.Submitted));
         Assert.Equal(resolved.Id, persisted.Id);
         Assert.Equal("双平台对齐后发布", persisted.Resolution?.Summary);
     }
@@ -315,6 +330,9 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
             await _store.ClaimNextDeliveryAsync("alice"));
         Assert.Equal(specialist.Id, delivery.TargetAgentId);
         var executor = new AgentTeamToolExecutor(_store, null!);
+        var available = executor.AllDefinitions(specialist, room, delivery);
+        Assert.Contains(available, value => value.Name == "requirement_survey_skill_get");
+        Assert.DoesNotContain(available, value => value.Name == "todo_create");
 
         var result = await executor.ExecuteAsync(specialist, member, room, delivery,
             new AgentToolCall("survey", "requirement_survey_create", """
@@ -322,8 +340,15 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
                 """), CancellationToken.None);
 
         Assert.True(result.EndsCycle);
+        var skill = await executor.ExecuteAsync(specialist, member, room, delivery,
+            new AgentToolCall("skill", "requirement_survey_skill_get",
+                "{\"scenario\":\"create_survey\"}"), CancellationToken.None);
+        using var skillDocument = System.Text.Json.JsonDocument.Parse(skill.Content);
+        Assert.Contains("requirement_survey_list",
+            skillDocument.RootElement.GetProperty("instructions").GetString(),
+            StringComparison.Ordinal);
         var survey = Assert.Single(await _store.ListRequirementSurveysAsync(
-            "alice", room.Id, AgentRequirementSurveyStatus.Pending));
+            "alice", room.ProjectId, AgentRequirementSurveyStatus.Pending));
         Assert.Equal(specialist.Id, survey.CreatorAgentId);
     }
 

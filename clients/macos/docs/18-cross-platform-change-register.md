@@ -125,11 +125,11 @@ Windows 状态只允许使用：
 - 来源：macOS Agent 团队、需求调研与 Todo 资产建议能力对齐。
 - 类型：功能更新、本机持久协作运行时。
 - 预期行为：Windows 与 macOS 都提供 Agent 配置、项目团队/私聊、消息与附件、Todo/依赖/进展、共享资产、模型工具循环、项目文件与审批终端，以及 Human 结构化需求调研闭环。
-- 修复范围：Windows 新增账号隔离 SQLite Store、durable delivery/run/heartbeat、Responses API、项目工具、Presentation 和 WinUI，并同步需求调研与执行者资产更新建议权限模型、专职调研 Agent 权限、共享资产 create/update 语义和自动维护唤醒；附件正文迁移到独立 payload 表；Agent 默认插件与成员 allowlist 交集现在会启动已安装且启用的 MCP，复用权限/逐次审批、OAuth/Secret 与 Artifact 管线，并在 run 结束时清理会话。
+- 修复范围：Windows 已新增账号隔离 SQLite Store、durable delivery/run/heartbeat、Responses API、项目工具、Presentation 和 WinUI；需求调研已改为项目归属并加入渐进场景 Skill、跨团队任务核对及 v14 迁移；附件正文分表且支持 UTF-8 按需读取；Agent 插件复用权限/审批、OAuth/Secret 与 Artifact 管线并按 run 清理。
 - macOS 状态：代码持续开发中；本登记描述当前工作区能力，提交前仍需以 macOS 测试结果为准。
-- Windows 是否需要代码修改：已完成代码与自动化，仍需 Windows 真机验收。
-- Windows 必做项：x64/ARM64 编译；验证 WinUI 团队切换、附件、调研表单、模型工具、真实插件进程/Artifact、终端审批与崩溃恢复；确认长对话不会预载附件正文。
-- Windows 状态：`待真机验收`；Windows solution 463 项测试通过，生产源码均不超过 800 行。
+- Windows 是否需要代码修改：需要；早期登记高估了对齐程度。
+- Windows 必做项：继续补账号级 Inbox/已读、run-scoped opaque reference、文档草稿/发送 receipt、成员变更提案审批、Todo 执行合同/来源/任务级能力与完整调度、独立 executor lane、图片/PDF 多模态和项目级调研中心；之后完成 x64/ARM64 编译及 WinUI/插件/终端真机验收。
+- Windows 状态：`待实现`；当前已完成部分的 Windows solution 464 项测试通过。
 
 ## 新记录模板
 

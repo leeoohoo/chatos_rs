@@ -141,7 +141,7 @@ internal sealed class AgentTeamScheduler(
                 cancellationToken).ConfigureAwait(false);
         var input = BuildInput(profile, member, room, delivery, recentMessages, todos, assets,
             todoProgress, pluginSession?.Instructions);
-        var definitions = tools.AllDefinitions(room)
+        var definitions = tools.AllDefinitions(profile, room, delivery)
             .Concat(pluginSession?.Definitions ?? []).ToArray();
         var run = initialRun;
         string? responseMessageId = null;
@@ -259,7 +259,7 @@ internal sealed class AgentTeamScheduler(
             2. 团队任务以 todo_list 为权威状态；执行者持续记录 todo_progress，完成时用 todo_update。
             3. 只有项目经理可维护版本化共享资产：首次创建用 asset_create，已有资产先 asset_list 再用 asset_update 和当前 revision；执行者只能用 todo_progress 的 asset_update_suggestions 提交完整替换建议。
             4. 项目文件和命令只通过提供的 project_* 与 terminal_exec 工具访问，不能编造结果。
-            5. 信息不足或需要 Human 决策时，项目经理或获授 requirement.survey.manage 的团队成员用 requirement_survey_create 发起结构化调研并立即结束本轮；收到 RequirementSurvey 唤醒后用 list/get 读取真实答案再 resolve。
+            5. 信息不足或需要 Human 决策时，项目经理或获授 requirement.survey.manage 的团队成员先根据目标调用 requirement_survey_skill_get，只加载 create_survey、read_results、resolve_survey 或 review_execution 中当前相关的场景 Skill，再严格按 Skill 使用项目级调研工具；创建后立即结束本轮，不能代替 Human 提交。
             6. 完成本轮且无需发送消息时调用 cycle_complete；不要发送无意义的在线通知。
 
             {pluginInstructions}
@@ -281,8 +281,10 @@ internal sealed class AgentTeamScheduler(
             context.Append('[').Append(sender).Append("] ").AppendLine(message.Content);
             foreach (var attachment in message.Attachments)
             {
-                context.Append("  [附件 ").Append(attachment.Name).Append(' ')
-                    .Append(attachment.MimeType).AppendLine("]");
+                context.Append("  [附件 ID=").Append(attachment.Id).Append(" name=")
+                    .Append(attachment.Name).Append(" mime=").Append(attachment.MimeType)
+                    .Append(" bytes=").Append(attachment.ByteCount)
+                    .AppendLine("；文本内容可用 chat_read_attachment 按需读取]");
             }
         }
 

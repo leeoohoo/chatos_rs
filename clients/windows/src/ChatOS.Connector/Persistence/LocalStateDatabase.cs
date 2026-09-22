@@ -477,7 +477,7 @@ public sealed class LocalStateDatabase
             CREATE TABLE IF NOT EXISTS agent_requirement_surveys (
                 owner_user_id TEXT NOT NULL,
                 id TEXT NOT NULL,
-                team_room_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
                 creator_agent_id TEXT NOT NULL,
                 source_delivery_id TEXT NOT NULL,
                 request_key TEXT NOT NULL,
@@ -489,12 +489,8 @@ public sealed class LocalStateDatabase
                 submitted_at_unix_ms INTEGER,
                 resolved_at_unix_ms INTEGER,
                 PRIMARY KEY(owner_user_id, id),
-                UNIQUE(owner_user_id, team_room_id, creator_agent_id, source_delivery_id, request_key)
+                UNIQUE(owner_user_id, project_id, creator_agent_id, source_delivery_id, request_key)
             );
-
-            CREATE INDEX IF NOT EXISTS ix_agent_requirement_surveys_room
-                ON agent_requirement_surveys(
-                    owner_user_id, team_room_id, status, created_at_unix_ms DESC);
 
             CREATE TABLE IF NOT EXISTS agent_deliveries (
                 owner_user_id TEXT NOT NULL,
@@ -648,6 +644,88 @@ public sealed class LocalStateDatabase
             VALUES (13, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
             """;
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        await MigrateRequirementSurveysToProjectScopeAsync(connection, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static async Task MigrateRequirementSurveysToProjectScopeAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var hasProjectColumn = false;
+        using (var columns = connection.CreateCommand())
+        {
+            columns.CommandText = "PRAGMA table_info(agent_requirement_surveys)";
+            await using var reader = await columns.ExecuteReaderAsync(cancellationToken)
+                .ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (string.Equals(reader.GetString(1), "project_id", StringComparison.Ordinal))
+                {
+                    hasProjectColumn = true;
+                    break;
+                }
+            }
+        }
+
+        if (!hasProjectColumn)
+        {
+            using var transaction = connection.BeginTransaction();
+            using var migration = connection.CreateCommand();
+            migration.Transaction = transaction;
+            migration.CommandText = """
+                CREATE TABLE agent_requirement_surveys_v14 (
+                    owner_user_id TEXT NOT NULL,
+                    id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    creator_agent_id TEXT NOT NULL,
+                    source_delivery_id TEXT NOT NULL,
+                    request_key TEXT NOT NULL,
+                    draft_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    submission_json TEXT,
+                    resolution_json TEXT,
+                    created_at_unix_ms INTEGER NOT NULL,
+                    submitted_at_unix_ms INTEGER,
+                    resolved_at_unix_ms INTEGER,
+                    PRIMARY KEY(owner_user_id, id),
+                    UNIQUE(owner_user_id, project_id, creator_agent_id,
+                        source_delivery_id, request_key)
+                );
+
+                INSERT INTO agent_requirement_surveys_v14 (
+                    owner_user_id, id, project_id, creator_agent_id, source_delivery_id,
+                    request_key, draft_json, status, submission_json, resolution_json,
+                    created_at_unix_ms, submitted_at_unix_ms, resolved_at_unix_ms)
+                SELECT survey.owner_user_id, survey.id,
+                       COALESCE(room.project_id, survey.team_room_id),
+                       survey.creator_agent_id, survey.source_delivery_id,
+                       survey.request_key, survey.draft_json, survey.status,
+                       survey.submission_json, survey.resolution_json,
+                       survey.created_at_unix_ms, survey.submitted_at_unix_ms,
+                       survey.resolved_at_unix_ms
+                FROM agent_requirement_surveys survey
+                LEFT JOIN agent_rooms room
+                  ON room.owner_user_id = survey.owner_user_id
+                 AND room.id = survey.team_room_id;
+
+                DROP TABLE agent_requirement_surveys;
+                ALTER TABLE agent_requirement_surveys_v14
+                    RENAME TO agent_requirement_surveys;
+                """;
+            await migration.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        using var finalize = connection.CreateCommand();
+        finalize.CommandText = """
+            CREATE INDEX IF NOT EXISTS ix_agent_requirement_surveys_project
+                ON agent_requirement_surveys(
+                    owner_user_id, project_id, status, created_at_unix_ms DESC);
+            INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+            VALUES (14, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+            """;
+        await finalize.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     internal async Task<SqliteConnection> OpenConnectionAsync(

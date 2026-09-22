@@ -170,7 +170,8 @@ internal sealed class AgentTeamCoordinator : IAgentTeamService
         var assetsTask = _store.ListAssetsAsync(ownerUserId, roomId,
             includeArchived: false, cancellationToken);
         var surveysTask = room.Kind == AgentConversationKind.ProjectTeam
-            ? _store.ListRequirementSurveysAsync(ownerUserId, roomId, null, cancellationToken)
+            ? _store.ListRequirementSurveysAsync(ownerUserId, room.ProjectId, null,
+                cancellationToken)
             : Task.FromResult<IReadOnlyList<AgentRequirementSurvey>>([]);
         var runsTask = _store.ListRunsAsync(ownerUserId, roomId, 100, cancellationToken);
         await Task.WhenAll(membersTask, profilesTask, messagesTask, todosTask, assetsTask,
@@ -320,9 +321,9 @@ internal sealed class AgentTeamCoordinator : IAgentTeamService
         AgentRequirementSubmission submission,
         CancellationToken cancellationToken = default)
     {
-        var survey = await _store.SubmitRequirementSurveyAsync(ownerUserId, roomId,
-            surveyId, submission, cancellationToken).ConfigureAwait(false);
         var room = await RequireRoomAsync(ownerUserId, roomId, cancellationToken).ConfigureAwait(false);
+        var survey = await _store.SubmitRequirementSurveyAsync(ownerUserId, room.ProjectId,
+            surveyId, submission, cancellationToken).ConfigureAwait(false);
         Raise(ownerUserId, room.ProjectId, roomId, "requirement_survey_submitted");
         QueueDrain(ownerUserId);
         return survey;

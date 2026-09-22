@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
@@ -43,6 +44,19 @@ internal sealed partial class AgentTeamToolExecutor(
                 content = new { type = "string", maxLength = 64_000 },
             },
             required = new[] { "target_agent_id", "content" },
+            additionalProperties = false,
+        }),
+        Tool("chat_read_attachment",
+            "按当前会话附件 ID 分段读取 UTF-8 文本附件；二进制附件不会作为文本返回。", new
+        {
+            type = "object",
+            properties = new
+            {
+                attachment_id = new { type = "string" },
+                offset = new { type = "integer", minimum = 0 },
+                limit = new { type = "integer", minimum = 1, maximum = 12_000 },
+            },
+            required = new[] { "attachment_id" },
             additionalProperties = false,
         }),
         Tool("todo_list", "读取当前团队共享任务板。", ObjectSchema()),
@@ -146,11 +160,44 @@ internal sealed partial class AgentTeamToolExecutor(
         }),
     ];
 
-    public IReadOnlyList<AgentToolDefinition> AllDefinitions(AgentRoom room) =>
-        room.Kind == AgentConversationKind.ProjectTeam
-            ? Definitions.Concat(SurveyDefinitions)
-                .Concat(AgentProjectToolExecutor.Definitions).ToArray()
-            : Definitions;
+    public IReadOnlyList<AgentToolDefinition> AllDefinitions(
+        AgentProfile profile,
+        AgentRoom room,
+        AgentDelivery delivery)
+    {
+        IEnumerable<AgentToolDefinition> definitions = Definitions;
+        if (room.Kind == AgentConversationKind.ProjectTeam)
+        {
+            if (CanManageSurveys(profile, room)) definitions = definitions.Concat(SurveyDefinitions);
+            definitions = definitions.Concat(AgentProjectToolExecutor.Definitions);
+        }
+
+        var result = definitions.ToArray();
+        if (delivery.Trigger == AgentDeliveryTrigger.Todo)
+        {
+            var executorTools = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "todo_list", "todo_update", "todo_progress", "asset_list",
+                "chat_read_attachment", "cycle_complete",
+                "requirement_survey_skill_get", "requirement_survey_list",
+                "requirement_survey_get", "requirement_survey_project_tasks",
+                "requirement_survey_create", "requirement_survey_resolve",
+            };
+            return result.Where(value => executorTools.Contains(value.Name) ||
+                AgentProjectToolExecutor.Definitions.Any(project => project.Name == value.Name))
+                .ToArray();
+        }
+
+        if (!string.Equals(room.ProjectManagerAgentId, profile.Id, StringComparison.Ordinal))
+        {
+            var managerOnly = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "todo_create", "asset_create", "asset_update",
+            };
+            result = result.Where(value => !managerOnly.Contains(value.Name)).ToArray();
+        }
+        return result;
+    }
 
     public async Task<AgentToolExecutionResult> ExecuteAsync(
         AgentProfile profile,
@@ -182,6 +229,8 @@ internal sealed partial class AgentTeamToolExecutor(
                     profile, room, delivery, arguments, cancellationToken).ConfigureAwait(false),
                 "direct_send" => await SendDirectAsync(
                     profile, arguments, cancellationToken).ConfigureAwait(false),
+                "chat_read_attachment" => await ReadAttachmentAsync(
+                    profile, room, arguments, cancellationToken).ConfigureAwait(false),
                 "todo_list" => await ListTodosAsync(
                     profile, room, cancellationToken).ConfigureAwait(false),
                 "todo_create" => await CreateTodoAsync(
@@ -199,12 +248,16 @@ internal sealed partial class AgentTeamToolExecutor(
                 // Compatibility for a model call already in flight while upgrading from 3.0.4.
                 "asset_upsert" => await UpsertAssetAsync(
                     profile, room, arguments, cancellationToken).ConfigureAwait(false),
+                "requirement_survey_skill_get" => GetRequirementSurveySkill(arguments),
                 "requirement_survey_create" => await CreateRequirementSurveyAsync(
                     profile, room, delivery, arguments, cancellationToken).ConfigureAwait(false),
                 "requirement_survey_list" => await ListRequirementSurveysAsync(
                     profile, room, arguments, cancellationToken).ConfigureAwait(false),
                 "requirement_survey_get" => await GetRequirementSurveyAsync(
                     profile, room, arguments, cancellationToken).ConfigureAwait(false),
+                "requirement_survey_project_tasks" =>
+                    await ListRequirementSurveyProjectTasksAsync(
+                        profile, room, cancellationToken).ConfigureAwait(false),
                 "requirement_survey_resolve" => await ResolveRequirementSurveyAsync(
                     profile, room, arguments, cancellationToken).ConfigureAwait(false),
                 "cycle_complete" => new AgentToolExecutionResult(
@@ -217,6 +270,62 @@ internal sealed partial class AgentTeamToolExecutor(
                     $"Unknown Agent tool: {call.Name}"),
             };
         }
+    }
+
+    private async Task<AgentToolExecutionResult> ReadAttachmentAsync(
+        AgentProfile profile,
+        AgentRoom room,
+        JsonElement arguments,
+        CancellationToken cancellationToken)
+    {
+        var attachment = await store.GetMessageAttachmentAsync(profile.OwnerUserId, room.Id,
+            RequiredString(arguments, "attachment_id"), cancellationToken).ConfigureAwait(false)
+            ?? throw new AgentTeamException(AgentTeamError.NotFound,
+                "Message attachment was not found in the current conversation.");
+        var mimeType = attachment.MimeType.Split(';', 2)[0].Trim().ToLowerInvariant();
+        if (!mimeType.StartsWith("text/", StringComparison.Ordinal) && mimeType is not
+            ("application/json" or "application/xml" or "application/javascript" or
+             "application/yaml" or "application/toml" or "application/sql"))
+        {
+            throw new AgentTeamException(AgentTeamError.InvalidField,
+                "Message attachment is not a supported text format.");
+        }
+        string text;
+        try
+        {
+            text = new UTF8Encoding(false, true).GetString(attachment.Data);
+        }
+        catch (DecoderFallbackException exception)
+        {
+            throw new AgentTeamException(AgentTeamError.InvalidField,
+                "Message attachment is not UTF-8 text.", exception);
+        }
+        var offset = OptionalInt(arguments, "offset") ?? 0;
+        var limit = OptionalInt(arguments, "limit") ?? 12_000;
+        if (offset < 0 || offset > text.Length || limit is < 1 or > 12_000)
+            throw AgentTeamValidation.Invalid("attachment range");
+        if (offset < text.Length && char.IsLowSurrogate(text[offset]))
+            throw AgentTeamValidation.Invalid("attachment offset");
+        var length = Math.Min(limit, text.Length - offset);
+        if (length > 0 && offset + length < text.Length &&
+            char.IsHighSurrogate(text[offset + length - 1]) &&
+            char.IsLowSurrogate(text[offset + length]))
+        {
+            if (length == 1) length++;
+            else length--;
+        }
+        var nextOffset = offset + length < text.Length ? offset + length : (int?)null;
+        return new AgentToolExecutionResult(Json(new
+        {
+            attachment_id = attachment.Id,
+            attachment.Name,
+            attachment.MimeType,
+            attachment.ByteCount,
+            content = text.Substring(offset, length),
+            offset,
+            next_offset = nextOffset,
+            truncated = nextOffset is not null,
+        }));
     }
 
     private async Task<AgentToolExecutionResult> SendAsync(

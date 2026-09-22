@@ -10,6 +10,12 @@ public sealed partial class SqliteAgentTeamStore
         dependency_ids_json, source_message_id, status, result, sort_order, revision,
         created_at_unix_ms, updated_at_unix_ms
         """;
+    private const string QualifiedTodoColumns = """
+        todo.owner_user_id, todo.id, todo.room_id, todo.agent_id, todo.title,
+        todo.detail, todo.priority, todo.dependency_ids_json, todo.source_message_id,
+        todo.status, todo.result, todo.sort_order, todo.revision,
+        todo.created_at_unix_ms, todo.updated_at_unix_ms
+        """;
 
     public async Task<IReadOnlyList<AgentTodo>> ListTodosAsync(
         string ownerUserId,
@@ -29,6 +35,31 @@ public sealed partial class SqliteAgentTeamStore
             output.Add(ReadTodo(reader));
         }
 
+        return output;
+    }
+
+    public async Task<IReadOnlyList<AgentTodo>> ListProjectTodosAsync(
+        string ownerUserId,
+        string projectId,
+        bool includeTerminal = true,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        using var command = Command(connection, null,
+            $"SELECT {QualifiedTodoColumns} " +
+            "FROM agent_todos todo JOIN agent_rooms room " +
+            "ON room.owner_user_id = todo.owner_user_id AND room.id = todo.room_id " +
+            "WHERE todo.owner_user_id = @p0 AND room.project_id = @p1" +
+            (includeTerminal ? string.Empty :
+                " AND todo.status NOT IN ('Completed', 'Cancelled')") +
+            " ORDER BY todo.sort_order, todo.created_at_unix_ms, todo.id",
+            ownerUserId, projectId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var output = new List<AgentTodo>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            output.Add(ReadTodo(reader));
         return output;
     }
 
