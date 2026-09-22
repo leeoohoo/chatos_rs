@@ -46,7 +46,8 @@ internal sealed partial class AgentTeamScheduler
         IReadOnlyList<AgentTodoAssetSnapshot> assetSnapshots,
         IReadOnlyList<AgentTodoProgress> todoProgress,
         string? pluginInstructions,
-        AgentRunReferenceVault references)
+        AgentRunReferenceVault references,
+        IReadOnlyList<AgentMultimodalAttachment> multimodalAttachments)
     {
         var selectedAssets = SelectAssetSnapshots(assetSnapshots);
         var system = $"""
@@ -117,8 +118,10 @@ internal sealed partial class AgentTeamScheduler
                 message.Content,
                 attachments = message.Attachments.Select(attachment => new
                 {
-                    attachment_ref = references.AttachmentReference(message.RoomId, attachment.Id),
-                    attachment.Name,
+                    attachment_ref = references.AttachmentReference(
+                        message.RoomId, message.Id, attachment.Id),
+                    name = AgentTeamMultimodalInput.SafeFileName(
+                        attachment.Name, attachment.MimeType),
                     attachment.MimeType,
                     attachment.ByteCount,
                 }),
@@ -149,7 +152,7 @@ internal sealed partial class AgentTeamScheduler
         return
         [
             new Dictionary<string, object> { ["role"] = "system", ["content"] = system },
-            new Dictionary<string, object> { ["role"] = "user", ["content"] = context.ToString() },
+            AgentTeamMultimodalInput.UserMessage(context.ToString(), multimodalAttachments),
         ];
     }
 

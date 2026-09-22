@@ -146,6 +146,24 @@ public sealed partial class SqliteAgentTeamStore
         string roomId,
         string attachmentId,
         CancellationToken cancellationToken = default)
+        => await GetMessageAttachmentCoreAsync(ownerUserId, roomId, null, attachmentId,
+            cancellationToken).ConfigureAwait(false);
+
+    public async Task<AgentMessageAttachment?> GetMessageAttachmentForMessageAsync(
+        string ownerUserId,
+        string roomId,
+        string messageId,
+        string attachmentId,
+        CancellationToken cancellationToken = default)
+        => await GetMessageAttachmentCoreAsync(ownerUserId, roomId, messageId, attachmentId,
+            cancellationToken).ConfigureAwait(false);
+
+    private async Task<AgentMessageAttachment?> GetMessageAttachmentCoreAsync(
+        string ownerUserId,
+        string roomId,
+        string? messageId,
+        string attachmentId,
+        CancellationToken cancellationToken)
     {
         await using var connection = await database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         using var command = Command(connection, null, """
@@ -157,7 +175,8 @@ public sealed partial class SqliteAgentTeamStore
               ON p.owner_user_id = a.owner_user_id
              AND p.message_id = a.message_id AND p.id = a.id
             WHERE a.owner_user_id = @p0 AND m.room_id = @p1 AND a.id = @p2
-            """, ownerUserId, roomId, attachmentId);
+              AND (@p3 IS NULL OR a.message_id = @p3)
+            """, ownerUserId, roomId, attachmentId, DbValue(messageId));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
             ? new AgentMessageAttachment(reader.GetString(0), reader.GetString(1), reader.GetString(2),

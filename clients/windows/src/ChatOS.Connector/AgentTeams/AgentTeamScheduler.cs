@@ -144,6 +144,11 @@ internal sealed partial class AgentTeamScheduler(
             ? []
             : await LoadTodoSourceMessagesAsync(store, executionTodo, cancellationToken)
                 .ConfigureAwait(false);
+        var triggerMessage = recentMessages.FirstOrDefault(value => value.Id == delivery.MessageId)
+            ?? await store.GetMessageAsync(delivery.OwnerUserId, room.Id, delivery.MessageId,
+                cancellationToken, includeAttachmentPayloads: false).ConfigureAwait(false)
+            ?? throw new AgentTeamException(AgentTeamError.NotFound,
+                "Agent trigger message was not found.");
         var assets = executionTodo is null
             ? await store.ListAssetsAsync(delivery.OwnerUserId, room.Id,
                 includeArchived: false, cancellationToken).ConfigureAwait(false)
@@ -155,6 +160,12 @@ internal sealed partial class AgentTeamScheduler(
         var todoProgress = await TriggerTodoProgressAsync(delivery, cancellationToken)
             .ConfigureAwait(false);
         var references = new AgentRunReferenceVault();
+        var multimodalMessages = sourceMessages.Count == 0
+            ? new[] { triggerMessage }
+            : new[] { triggerMessage }.Concat(sourceMessages);
+        var multimodalAttachments = await AgentTeamMultimodalInput.LoadAsync(
+            store, delivery.OwnerUserId, multimodalMessages, references, cancellationToken)
+            .ConfigureAwait(false);
         var selectedPluginIds = executionTodo?.Draft.ExecutionPlan!.SelectedPlugins
             .Select(value => value.PluginId).ToArray();
         await using var pluginSession = pluginTools is null || selectedPluginIds is { Length: 0 }
@@ -163,7 +174,7 @@ internal sealed partial class AgentTeamScheduler(
                 cancellationToken, selectedPluginIds).ConfigureAwait(false);
         var input = BuildInput(profile, member, room, delivery, recentMessages, todos, assets,
             todoProgress, executionTodo, sourceMessages, assetSnapshots,
-            pluginSession?.Instructions, references);
+            pluginSession?.Instructions, references, multimodalAttachments);
         var definitions = tools.AllDefinitions(profile, room, delivery, executionTodo)
             .Concat(pluginSession?.Definitions ?? []).ToArray();
         var run = initialRun;
@@ -264,14 +275,16 @@ internal sealed partial class AgentTeamScheduler(
         IReadOnlyList<AgentMessage> sourceMessages,
         IReadOnlyList<AgentTodoAssetSnapshot> assetSnapshots,
         string? pluginInstructions,
-        AgentRunReferenceVault references)
+        AgentRunReferenceVault references,
+        IReadOnlyList<AgentMultimodalAttachment> multimodalAttachments)
     {
         if (delivery.Trigger == AgentDeliveryTrigger.Todo)
         {
             return BuildExecutorInput(profile, member, room, delivery,
                 executionTodo ?? throw new AgentTeamException(AgentTeamError.Conflict,
                     "Todo executor contract is unavailable."),
-                sourceMessages, todos, assetSnapshots, todoProgress, pluginInstructions, references);
+                sourceMessages, todos, assetSnapshots, todoProgress, pluginInstructions, references,
+                multimodalAttachments);
         }
         var lane = delivery.Trigger == AgentDeliveryTrigger.Todo ? "executor" : "manager";
         var authority = string.Equals(room.ProjectManagerAgentId, profile.Id, StringComparison.Ordinal)
@@ -325,11 +338,18 @@ internal sealed partial class AgentTeamScheduler(
             context.Append('[').Append(sender).Append("] ").AppendLine(message.Content);
             foreach (var attachment in message.Attachments)
             {
-                context.Append("  [附件 ref=").Append(references.AttachmentReference(
-                        room.Id, attachment.Id)).Append(" name=")
-                    .Append(attachment.Name).Append(" mime=").Append(attachment.MimeType)
+                var reference = references.AttachmentReference(
+                    room.Id, message.Id, attachment.Id);
+                var note = multimodalAttachments.Any(value => value.Reference == reference)
+                    ? "已作为本轮多模态输入提供"
+                    : AgentTeamMultimodalInput.IsTextMimeType(attachment.MimeType)
+                        ? "文本内容可用 chat_read_attachment 按需读取"
+                        : "二进制不可作为 UTF-8 文本读取";
+                context.Append("  [附件 ref=").Append(reference).Append(" name=")
+                    .Append(AgentTeamMultimodalInput.SafeFileName(
+                        attachment.Name, attachment.MimeType)).Append(" mime=").Append(attachment.MimeType)
                     .Append(" bytes=").Append(attachment.ByteCount)
-                    .AppendLine("；文本内容可用 chat_read_attachment 按需读取]");
+                    .Append("；").Append(note).AppendLine("]");
             }
         }
 
@@ -374,7 +394,7 @@ internal sealed partial class AgentTeamScheduler(
         return
         [
             new Dictionary<string, object> { ["role"] = "system", ["content"] = system },
-            new Dictionary<string, object> { ["role"] = "user", ["content"] = context.ToString() },
+            AgentTeamMultimodalInput.UserMessage(context.ToString(), multimodalAttachments),
         ];
     }
 

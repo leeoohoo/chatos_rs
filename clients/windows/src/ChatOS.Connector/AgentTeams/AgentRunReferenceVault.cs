@@ -13,7 +13,7 @@ internal sealed class AgentRunReferenceVault
 
     public bool AllowsLegacyIds { get; }
     internal sealed record MessageAuthority(string RoomId, string MessageId);
-    internal sealed record AttachmentAuthority(string RoomId, string AttachmentId);
+    internal sealed record AttachmentAuthority(string RoomId, string MessageId, string AttachmentId);
     internal sealed record TodoAuthority(string RoomId, string TodoId, string AgentId);
     internal sealed record AssetAuthority(string RoomId, string AssetId, int Revision);
     internal sealed record SurveyAuthority(string ProjectId, string SurveyId);
@@ -42,8 +42,8 @@ internal sealed class AgentRunReferenceVault
     public string ConversationReference(string roomId) => Issue(_rooms, "conversation", roomId);
     public string MessageReference(string roomId, string messageId) =>
         Issue(_messages, "message", new MessageAuthority(roomId, messageId));
-    public string AttachmentReference(string roomId, string attachmentId) =>
-        Issue(_attachments, "attachment", new AttachmentAuthority(roomId, attachmentId));
+    public string AttachmentReference(string roomId, string messageId, string attachmentId) =>
+        Issue(_attachments, "attachment", new AttachmentAuthority(roomId, messageId, attachmentId));
     public string TodoReference(string roomId, string todoId, string agentId) =>
         Issue(_todos, "todo", new TodoAuthority(roomId, todoId, agentId));
     public string AssetReference(string roomId, string assetId, int revision) =>

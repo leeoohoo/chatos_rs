@@ -98,6 +98,13 @@ public interface IAgentTeamStore
         string attachmentId,
         CancellationToken cancellationToken = default);
 
+    Task<AgentMessageAttachment?> GetMessageAttachmentForMessageAsync(
+        string ownerUserId,
+        string roomId,
+        string messageId,
+        string attachmentId,
+        CancellationToken cancellationToken = default);
+
     Task<AgentPostResult> PostMessageAsync(
         string ownerUserId,
         string roomId,

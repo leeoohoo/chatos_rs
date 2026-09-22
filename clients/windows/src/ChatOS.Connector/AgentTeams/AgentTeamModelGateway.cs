@@ -57,7 +57,7 @@ internal sealed class AgentTeamModelGateway(
             ["tool_choice"] = "auto",
             ["store"] = false,
             ["max_output_tokens"] = 16_384,
-            ["prompt_cache_key"] = $"windows-agent-team:{profile.Id}:{profile.Draft.ModelConfigId}",
+            ["prompt_cache_key"] = "windows-agent-team",
         };
         var thinking = profile.Draft.ThinkingLevel?.Trim().ToLowerInvariant();
         if (!string.IsNullOrWhiteSpace(thinking) && thinking != "auto" && thinking != "none")

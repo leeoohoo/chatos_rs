@@ -100,6 +100,21 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
         var downloaded = await _store.GetMessageAttachmentAsync(
             "alice", room.Id, attachment.Id);
         Assert.Equal("plan", System.Text.Encoding.UTF8.GetString(downloaded!.Data));
+        var collidingAttachment = attachment with
+        {
+            Name = "other.md",
+            ByteCount = 5,
+            Data = "other"u8.ToArray(),
+        };
+        var collidingPost = await _store.PostMessageAsync("alice", room.Id,
+            new(AgentMessageSenderKind.Agent, manager.Id, "collision",
+                Attachments: [collidingAttachment]));
+        var exactOriginal = await _store.GetMessageAttachmentForMessageAsync(
+            "alice", room.Id, mentionPost.Message.Id, attachment.Id);
+        var exactCollision = await _store.GetMessageAttachmentForMessageAsync(
+            "alice", room.Id, collidingPost.Message.Id, attachment.Id);
+        Assert.Equal("plan", System.Text.Encoding.UTF8.GetString(exactOriginal!.Data));
+        Assert.Equal("other", System.Text.Encoding.UTF8.GetString(exactCollision!.Data));
         var managerMember = Assert.Single(await _store.ListMembersAsync("alice", room.Id),
             value => value.AgentId == manager.Id);
         var attachmentReferences = new AgentRunReferenceVault();
@@ -109,7 +124,7 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
                 mentionPost.Message.RootMessageId, manager.Id, AgentDeliveryTrigger.Mention,
                 AgentDeliveryStatus.Running, 1, 0, "attachment-test", null, null, 1, null, 1),
             new AgentToolCall("read", "chat_read_attachment",
-                $$"""{"attachment_ref":"{{attachmentReferences.AttachmentReference(room.Id, attachment.Id)}}","limit":2}"""),
+                $$"""{"attachment_ref":"{{attachmentReferences.AttachmentReference(room.Id, mentionPost.Message.Id, attachment.Id)}}","limit":2}"""),
             CancellationToken.None, attachmentReferences);
         using var attachmentDocument = System.Text.Json.JsonDocument.Parse(
             attachmentResult.Content);

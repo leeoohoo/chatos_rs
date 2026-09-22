@@ -83,7 +83,7 @@ internal sealed partial class AgentTeamToolExecutor
             references.MessageReference(message.RoomId, message.ReplyToMessageId),
         attachments = message.Attachments.Select(value => new
         {
-            attachment_ref = references.AttachmentReference(message.RoomId, value.Id),
+            attachment_ref = references.AttachmentReference(message.RoomId, message.Id, value.Id),
             value.Name,
             value.MimeType,
             value.Kind,
