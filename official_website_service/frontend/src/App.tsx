@@ -359,12 +359,12 @@ function App() {
               {heroVideos.map((video, index) => <video key={video.src} className={index === activeVideo ? 'active' : ''} src={video.src} poster={video.poster} autoPlay muted loop playsInline preload={index === 0 ? 'auto' : 'metadata'} />)}
             </div>
             <div className="video-wash" />
-            <div className="capsule-copy"><span className="capsule-kicker"><Sparkles size={14} /> 你好，我是叽咕狸</span><h1>把工具做好，<br />把每件事<br /><span>一起做好。</span></h1><p>从项目、文件、终端到创作与协作，先认真做好每一个工具，再在你需要时稳稳接上。</p><div className="capsule-actions"><a className="j-button primary" href="#register">现在开始 <ArrowRight size={17} /></a><a className="j-button ghost" href="#capability">我们的原则</a></div></div>
+            <div className="capsule-copy"><span className="capsule-kicker"><Sparkles size={14} /> 你好，我是叽咕狸</span><h1>路还很长，<br /><span>我记得我们走到了哪里。</span></h1><p>读懂你的项目，记住一路积累的上下文。无论灵感刚刚出现，还是工作尚未完成，我都会陪你接着往前。</p><div className="capsule-actions"><a className="j-button primary" href="#register">现在开始 <ArrowRight size={17} /></a><a className="j-button ghost" href="#capability">我们的原则</a></div></div>
             <div className="video-counter"><span>{String(activeVideo + 1).padStart(2, '0')}</span><i /> <span>{String(heroVideos.length).padStart(2, '0')}</span></div>
             <PetSprite className="hero-pet" label="抱着枫叶的叽咕狸狐狸形象" /><div className="pet-message">嗨，今天想做点什么？</div>
           </div>
-          <div className="hero-scroll-story"><small>GOOD TOOLS, BETTER WORK</small><h2>先把每一个<br /><span>工具做好。</span><br />再陪你把事情做好。</h2><p>工具负责把过程变简单，把信息放清楚；<br />目标、判断和最后的决定，始终属于你。</p></div>
-          <div className="hero-footerline"><p>为认真做事的人，认真做好工具</p><span>一件件打磨，一步步协助，<br />让每次使用都真正解决问题。</span><a href="#statement">SCROLL <i>↓</i></a></div>
+          <div className="hero-scroll-story"><small>REMEMBER THE WAY, KEEP MOVING</small><h2>记得来时的路，<br /><span>也接得住</span><br />你的下一步。</h2><p>项目的脉络、做过的决定、尚未完成的事，都能自然接续；<br />过程清楚可见，方向始终由你决定。</p></div>
+          <div className="hero-footerline"><p>以岁月打磨，致敬每一份认真。</p><span>一寸寸雕琢，一步步相伴，<br />让每一次开启，都成为默契的解语。</span><a href="#statement">SCROLL <i>↓</i></a></div>
         </div>
       </section>
 

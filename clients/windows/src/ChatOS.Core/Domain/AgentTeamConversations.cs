@@ -111,6 +111,10 @@ public sealed record AgentRoomMember(
     }
 }
 
+public sealed record AgentUnreadConversation(
+    AgentRoom Room,
+    IReadOnlyList<AgentMessage> Messages);
+
 public enum AgentMessageSenderKind
 {
     Human,

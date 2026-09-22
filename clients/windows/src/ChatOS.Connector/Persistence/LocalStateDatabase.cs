@@ -389,6 +389,7 @@ public sealed partial class LocalStateDatabase
                 room_id TEXT NOT NULL,
                 reader_id TEXT NOT NULL,
                 through_message_id TEXT NOT NULL,
+                through_message_created_at_unix_ms INTEGER NOT NULL DEFAULT 0,
                 updated_at_unix_ms INTEGER NOT NULL,
                 PRIMARY KEY(owner_user_id, room_id, reader_id)
             );
@@ -648,6 +649,7 @@ public sealed partial class LocalStateDatabase
             .ConfigureAwait(false);
         await MigrateAgentStaffingProposalsAsync(connection, cancellationToken)
             .ConfigureAwait(false);
+        await MigrateAgentInboxAsync(connection, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task MigrateRequirementSurveysToProjectScopeAsync(

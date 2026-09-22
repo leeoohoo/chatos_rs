@@ -59,6 +59,25 @@ internal sealed partial class AgentTeamToolExecutor(
             required = new[] { "attachment_id" },
             additionalProperties = false,
         }),
+        Tool("chat_read_unread", "读取当前 Agent 在当前会话中的未读消息；读取后用 chat_mark_read 单调推进已读游标。", new
+        {
+            type = "object",
+            properties = new { limit = new { type = "integer", minimum = 1, maximum = 100 } },
+            additionalProperties = false,
+        }),
+        Tool("chat_read_all_unread", "读取当前 Agent 在账号内全部团队和私聊的未读消息，并原子推进各会话已读游标。", new
+        {
+            type = "object",
+            properties = new { limit = new { type = "integer", minimum = 1, maximum = 500 } },
+            additionalProperties = false,
+        }),
+        Tool("chat_mark_read", "把当前 Agent 的当前会话已读游标单调推进到指定消息；旧调用不会回退游标。", new
+        {
+            type = "object",
+            properties = new { through_message_id = new { type = "string", maxLength = 512 } },
+            required = new[] { "through_message_id" },
+            additionalProperties = false,
+        }),
         Tool("todo_list", "读取当前团队共享任务板。", ObjectSchema()),
         Tool("todo_create", "项目经理创建并分配一个团队 Todo，可声明前置依赖。", new
         {
@@ -181,6 +200,7 @@ internal sealed partial class AgentTeamToolExecutor(
             {
                 "todo_list", "todo_update", "todo_progress", "asset_list",
                 "chat_read_attachment", "cycle_complete",
+                "chat_read_unread", "chat_read_all_unread", "chat_mark_read",
                 "skill_activate", "skill_list_resources", "skill_read_resource",
                 "requirement_survey_list",
                 "requirement_survey_get", "requirement_survey_project_tasks",
@@ -233,6 +253,12 @@ internal sealed partial class AgentTeamToolExecutor(
                 "direct_send" => await SendDirectAsync(
                     profile, arguments, cancellationToken).ConfigureAwait(false),
                 "chat_read_attachment" => await ReadAttachmentAsync(
+                    profile, room, arguments, cancellationToken).ConfigureAwait(false),
+                "chat_read_unread" => await ReadUnreadAsync(
+                    profile, room, arguments, cancellationToken).ConfigureAwait(false),
+                "chat_read_all_unread" => await ReadAllUnreadAsync(
+                    profile, arguments, cancellationToken).ConfigureAwait(false),
+                "chat_mark_read" => await MarkReadAsync(
                     profile, room, arguments, cancellationToken).ConfigureAwait(false),
                 "todo_list" => await ListTodosAsync(
                     profile, room, cancellationToken).ConfigureAwait(false),

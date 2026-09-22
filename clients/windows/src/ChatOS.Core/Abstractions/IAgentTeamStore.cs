@@ -110,6 +110,19 @@ public interface IAgentTeamStore
         string throughMessageId,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<AgentMessage>> ListUnreadMessagesAsync(
+        string ownerUserId,
+        string roomId,
+        string agentId,
+        int limit = 50,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<AgentUnreadConversation>> ReadAllUnreadMessagesAndMarkReadAsync(
+        string ownerUserId,
+        string agentId,
+        int limit = 200,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<AgentTodo>> ListTodosAsync(
         string ownerUserId,
         string roomId,

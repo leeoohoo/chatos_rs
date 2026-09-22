@@ -136,7 +136,7 @@ public sealed partial class SqliteAgentTeamStore
         return row is null
             ? null
             : await MaterializeMessageAsync(
-                connection, ownerUserId, roomId, row, cancellationToken).ConfigureAwait(false);
+                connection, null, ownerUserId, roomId, row, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<AgentMessageAttachment?> GetMessageAttachmentAsync(
@@ -284,30 +284,6 @@ public sealed partial class SqliteAgentTeamStore
         return new AgentPostResult(message, deliveries, stopReason);
     }
 
-    public async Task MarkReadAsync(
-        string ownerUserId,
-        string roomId,
-        string readerId,
-        string throughMessageId,
-        CancellationToken cancellationToken = default)
-    {
-        AgentTeamValidation.Identifier(readerId, nameof(readerId));
-        await using var connection = await database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        using var transaction = connection.BeginTransaction(deferred: false);
-        await RequireMessageAsync(connection, transaction, ownerUserId, roomId, throughMessageId,
-            cancellationToken).ConfigureAwait(false);
-        using var command = Command(connection, transaction, """
-            INSERT INTO agent_read_cursors (
-                owner_user_id, room_id, reader_id, through_message_id, updated_at_unix_ms)
-            VALUES (@p0, @p1, @p2, @p3, @p4)
-            ON CONFLICT(owner_user_id, room_id, reader_id) DO UPDATE SET
-                through_message_id = excluded.through_message_id,
-                updated_at_unix_ms = excluded.updated_at_unix_ms
-            """, ownerUserId, roomId, readerId, throughMessageId, Now());
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-    }
-
     private static async Task<IReadOnlyList<(string AgentId, AgentDeliveryTrigger Trigger)>> ResolveTargetsAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -376,13 +352,14 @@ public sealed partial class SqliteAgentTeamStore
 
     private static async Task<AgentMessage> MaterializeMessageAsync(
         SqliteConnection connection,
+        SqliteTransaction? transaction,
         string ownerUserId,
         string roomId,
         MessageRow row,
         CancellationToken cancellationToken)
     {
         var mentions = new List<string>();
-        using (var mentionCommand = Command(connection, null, """
+        using (var mentionCommand = Command(connection, transaction, """
             SELECT agent_id FROM agent_message_mentions
             WHERE owner_user_id = @p0 AND message_id = @p1 ORDER BY agent_id
             """, ownerUserId, row.Id))
@@ -395,7 +372,7 @@ public sealed partial class SqliteAgentTeamStore
         }
 
         var attachments = new List<AgentMessageAttachment>();
-        using (var attachmentCommand = Command(connection, null, """
+        using (var attachmentCommand = Command(connection, transaction, """
             SELECT a.id, a.name, a.mime_type, a.kind, a.byte_count,
                 COALESCE(p.payload, a.payload)
             FROM agent_message_attachments a

@@ -264,8 +264,9 @@ internal sealed class AgentTeamScheduler(
             3. 只有项目经理可维护版本化共享资产：首次创建用 asset_create，已有资产先 asset_list 再用 asset_update 和当前 revision；执行者只能用 todo_progress 的 asset_update_suggestions 提交完整替换建议。
             4. 项目文件和命令只通过提供的 project_* 与 terminal_exec 工具访问，不能编造结果。
             5. 需求调研 Skill Catalog：SKreq-router=requirement-survey(router)，SKreq-create=create，SKreq-read=read-results，SKreq-resolve=resolve，SKreq-review=review-execution。需要调研能力时先用 skill_activate 激活 SKreq-router，再只激活当前目标对应的专业 Skill；需要示例时才用 skill_list_resources/skill_read_resource。创建后立即结束，不能代替 Human 提交。
-            6. 人员变更只能创建待审批提案，不能声称已经创建 Agent、加入团队或移出成员。
-            7. 完成本轮且无需发送消息时调用 cycle_complete；不要发送无意义的在线通知。
+            6. 用 chat_read_all_unread 检查账号内其他团队和私聊的新消息；返回即已读，当前会话用 chat_read_unread 后按需 chat_mark_read。
+            7. 人员变更只能创建待审批提案，不能声称已经创建 Agent、加入团队或移出成员。
+            8. 完成本轮且无需发送消息时调用 cycle_complete；不要发送无意义的在线通知。
 
             {pluginInstructions}
             """;

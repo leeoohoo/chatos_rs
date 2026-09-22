@@ -127,11 +127,11 @@
 .hero-video-reel video { object-fit: cover; opacity: 0; transform: scale(var(--hero-video-scale)); transition: opacity 1.1s ease; will-change: opacity, transform; }
 .hero-video-reel video.active { opacity: 1; }
 .video-wash { z-index: 1; background: linear-gradient(90deg, rgba(14,16,13,.9) 0%, rgba(14,16,13,.58) 38%, rgba(14,16,13,.1) 68%), radial-gradient(circle at 20% 25%, rgba(255,107,26,.42), transparent 35%); opacity: var(--hero-copy-opacity); }
-.capsule-copy { position: absolute; z-index: 3; top: 50%; left: 7%; width: min(39vw, 520px); opacity: var(--hero-copy-opacity); transform: translateY(-50%); pointer-events: auto; will-change: opacity; }
+.capsule-copy { position: absolute; z-index: 3; top: 50%; left: 7%; width: min(58vw, 760px); opacity: var(--hero-copy-opacity); transform: translateY(-50%); pointer-events: auto; will-change: opacity; }
 .capsule-kicker { display: inline-flex; align-items: center; gap: 7px; margin-bottom: 19px; font-size: 11px; font-weight: 800; letter-spacing: .08em; }
-.capsule-copy h1 { margin: 0 0 17px; font-size: clamp(48px, 5vw, 75px); line-height: 1.04; letter-spacing: -.07em; }
+.capsule-copy h1 { margin: 0 0 17px; font-size: clamp(44px, 4.3vw, 66px); line-height: 1.08; letter-spacing: -.07em; }
 .capsule-copy h1 span { color: #ffb26e; }
-.capsule-copy > p { max-width: 440px; margin: 0; color: rgba(255,255,255,.66); font-size: 15px; line-height: 1.8; }
+.capsule-copy > p { max-width: 680px; margin: 0; color: rgba(255,255,255,.66); font-size: 15px; line-height: 1.8; }
 .capsule-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 26px; }
 
 .j-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 47px; padding: 0 20px; font-size: 13px; font-weight: 800; border: 1px solid transparent; border-radius: 999px; cursor: pointer; transition: transform .2s ease, box-shadow .2s ease, background .2s ease; }
@@ -686,8 +686,8 @@
   .jiguli-hero { height: 240vh; min-height: 1500px; padding: 0; }
   .hero-index { display: none; }
   .hero-capsule { min-height: 0; padding: 0; border-radius: var(--hero-radius); }
-  .capsule-copy { top: 43%; left: 8%; width: 75vw; }
-  .capsule-copy h1 { font-size: 43px; }
+  .capsule-copy { top: 43%; left: 8%; width: 84vw; }
+  .capsule-copy h1 { font-size: 33px; }
   .capsule-copy > p { font-size: 13px; }
   .capsule-actions { display: flex; }
   .capsule-actions .j-button.ghost { display: none; }
