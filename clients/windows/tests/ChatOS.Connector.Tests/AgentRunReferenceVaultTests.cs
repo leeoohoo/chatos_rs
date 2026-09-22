@@ -58,7 +58,7 @@ public sealed class AgentRunReferenceVaultTests : IAsyncLifetime
             AgentTeamAssetCategory.Plan, "plan", "content", null);
         var posted = await _store.PostMessageAsync("alice", room.Id,
             new(AgentMessageSenderKind.Human, null, "work", [manager.Id]));
-        var delivery = Assert.IsType<AgentDelivery>(await _store.ClaimNextDeliveryAsync("alice"));
+        var delivery = Assert.Single(posted.Deliveries);
         var member = Assert.Single(await _store.ListMembersAsync("alice", room.Id), value =>
             value.AgentId == manager.Id);
         var workerMember = Assert.Single(await _store.ListMembersAsync("alice", room.Id), value =>

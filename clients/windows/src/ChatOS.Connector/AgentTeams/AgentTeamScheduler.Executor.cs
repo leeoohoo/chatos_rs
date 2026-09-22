@@ -61,7 +61,7 @@ internal sealed partial class AgentTeamScheduler
             你只能执行下方冻结的 Todo 合同。经理聊天历史不会进入本执行通道。
             规则：
             1. 以 execution_contract、source_messages、dependencies、capability_snapshot 和 team_assets 为唯一工作上下文，不得猜测缺失要求。
-            2. 持续用 todo_progress 写入可核验进展；完成时用 todo_update=Completed，受阻时用 todo_update=Blocked 并说明原因。
+            2. 持续用 todo_progress 写入可核验进展；完成时只能用 todo_complete，受阻时只能用 todo_block 并说明原因。
             3. 不得把 Ready 自行改成 InProgress，不得创建或改派其他 Todo。
             4. 只有 capability_snapshot 声明且客户端实际提供的能力才可使用；所有 *_ref 仅在本轮有效。
             5. executor 结束而未完成或明确阻塞任务时，客户端会自动把 Todo 标记为 Blocked。

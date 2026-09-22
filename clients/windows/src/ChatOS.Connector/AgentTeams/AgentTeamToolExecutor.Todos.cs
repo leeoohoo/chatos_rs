@@ -153,6 +153,7 @@ internal sealed partial class AgentTeamToolExecutor
         JsonElement arguments,
         CancellationToken cancellationToken)
     {
+        RequireManager(profile, room);
         var todoReference = RequiredString(arguments, "todo_ref");
         var todoAuthority = references.Todo(todoReference);
         var todoId = todoAuthority?.TodoId ?? (references.AllowsLegacyIds
@@ -167,25 +168,70 @@ internal sealed partial class AgentTeamToolExecutor
             throw new AgentTeamException(AgentTeamError.PermissionDenied,
                 "Todo does not belong to the current team.");
 
-        var isManager = string.Equals(room.ProjectManagerAgentId, profile.Id, StringComparison.Ordinal);
-        if (!isManager && !string.Equals(todo.Draft.AgentId, profile.Id, StringComparison.Ordinal))
-            throw new AgentTeamException(AgentTeamError.PermissionDenied,
-                "Only the project manager or assigned Agent can update this Todo.");
         var assignedReference = OptionalString(arguments, "assigned_agent_ref");
         var assignedAgentId = assignedReference is null ? null :
             references.AgentId(assignedReference) ??
             throw AgentTeamValidation.Invalid("assigned_agent_ref");
-        if (!isManager && assignedAgentId is not null && assignedAgentId != profile.Id)
+        var status = ParseEnum<AgentTodoStatus>(RequiredString(arguments, "status"));
+        if (status is not (AgentTodoStatus.Pending or AgentTodoStatus.Cancelled))
             throw new AgentTeamException(AgentTeamError.PermissionDenied,
-                "Only the project manager can reassign a Todo.");
+                "Communication runs can only requeue or cancel a Todo.");
+        if (status == AgentTodoStatus.Pending &&
+            todo.Status is AgentTodoStatus.InProgress or AgentTodoStatus.Completed or
+                AgentTodoStatus.Cancelled)
+            throw new AgentTeamException(AgentTeamError.Conflict,
+                "Only a pending, ready, or blocked Todo can be requeued.");
 
         var updated = await store.UpdateTodoAsync(profile.OwnerUserId, todoId,
             RequiredLong(arguments, "expected_revision"),
-            ParseEnum<AgentTodoStatus>(RequiredString(arguments, "status")),
+            status,
             OptionalString(arguments, "result") ?? string.Empty, assignedAgentId,
             cancellationToken).ConfigureAwait(false);
         return new AgentToolExecutionResult(Json(TodoResponse(updated, references)),
             EndsCycle: updated.IsTerminal);
+    }
+
+    private async Task<AgentToolExecutionResult> FinishTodoAsync(
+        AgentProfile profile,
+        AgentRoom room,
+        AgentDelivery delivery,
+        AgentRunReferenceVault references,
+        AgentTodo? executionTodo,
+        JsonElement arguments,
+        AgentTodoStatus status,
+        CancellationToken cancellationToken)
+    {
+        if (delivery.Trigger != AgentDeliveryTrigger.Todo || executionTodo is null ||
+            status is not (AgentTodoStatus.Completed or AgentTodoStatus.Blocked))
+            throw new AgentTeamException(AgentTeamError.PermissionDenied,
+                "Todo completion requires the owning executor delivery.");
+        var todoReference = RequiredString(arguments, "todo_ref");
+        var authority = references.Todo(todoReference)
+            ?? throw AgentTeamValidation.Invalid("todo_ref");
+        if (authority.TodoId != executionTodo.Id || authority.RoomId != room.Id ||
+            authority.AgentId != profile.Id || delivery.TargetAgentId != profile.Id)
+            throw new AgentTeamException(AgentTeamError.PermissionDenied,
+                "Todo reference does not belong to this executor delivery.");
+        var current = await store.GetTodoAsync(profile.OwnerUserId, executionTodo.Id,
+            cancellationToken).ConfigureAwait(false) ?? throw new AgentTeamException(
+                AgentTeamError.NotFound, "Todo was not found.");
+        if (current.Status != AgentTodoStatus.InProgress ||
+            current.Draft.AgentId != profile.Id)
+            throw new AgentTeamException(AgentTeamError.Conflict,
+                "Todo execution no longer owns the scheduled slot.");
+
+        var detail = RequiredString(arguments,
+            status == AgentTodoStatus.Completed ? "summary" : "reason");
+        var updated = await store.UpdateTodoAsync(profile.OwnerUserId, current.Id,
+            RequiredLong(arguments, "expected_revision"), status, detail, null,
+            cancellationToken).ConfigureAwait(false);
+        _ = await store.AppendTodoProgressAsync(profile.OwnerUserId, current.Id, profile.Id,
+            status == AgentTodoStatus.Completed ? AgentTodoProgressKind.Completed :
+                AgentTodoProgressKind.Blocked,
+            status == AgentTodoStatus.Completed ? "completed" : "blocked", detail,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        return new AgentToolExecutionResult(Json(TodoResponse(updated, references)),
+            EndsCycle: true);
     }
 
     private async Task<AgentToolExecutionResult> AppendProgressAsync(

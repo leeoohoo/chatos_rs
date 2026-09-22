@@ -142,8 +142,8 @@ public sealed class AgentTeamSchedulerTests : IAsyncLifetime
             Assert.NotEmpty(todoReference);
             return Json($$"""
                 {"status":"completed","output":[
-                  {"type":"function_call","call_id":"call-complete","name":"todo_update",
-                   "arguments":"{\"todo_ref\":\"{{todoReference}}\",\"expected_revision\":2,\"status\":\"Completed\",\"result\":\"完成\"}"}
+                  {"type":"function_call","call_id":"call-complete","name":"todo_complete",
+                   "arguments":"{\"todo_ref\":\"{{todoReference}}\",\"expected_revision\":2,\"summary\":\"完成\"}"}
                 ]}
                 """);
         });
@@ -156,6 +156,86 @@ public sealed class AgentTeamSchedulerTests : IAsyncLifetime
         Assert.Equal(AgentTodoStatus.Completed, completed!.Status);
         Assert.Equal(AgentRunStatus.Completed,
             Assert.Single(await _store.ListRunsAsync("alice", room.Id)).Status);
+    }
+
+    [Fact]
+    public async Task TodoStateToolsAreIsolatedByDeliveryLane()
+    {
+        var manager = await _store.CreateAgentAsync("alice",
+            Profile().Draft with { Name = "Manager" });
+        var worker = await _store.CreateAgentAsync("alice",
+            Profile().Draft with { Name = "Worker" });
+        var room = await _store.CreateRoomAsync("alice", "project-1",
+            new("团队", "完成工作"), manager.Id);
+        await CompleteInitialMaintenanceAsync();
+        var workerMember = await _store.UpsertMemberAsync("alice", room.Id, worker.Id,
+            new("developer", "实现任务"));
+        var managerMember = Assert.Single(await _store.ListMembersAsync("alice", room.Id),
+            value => value.AgentId == manager.Id);
+        var todo = await _store.CreateTodoAsync("alice",
+            new(room.Id, worker.Id, "隔离状态写入"));
+        var executorDelivery = Assert.IsType<AgentDelivery>(
+            await _store.ClaimNextDeliveryAsync("alice"));
+        Assert.Equal(AgentDeliveryTrigger.Todo, executorDelivery.Trigger);
+        todo = Assert.IsType<AgentTodo>(await _store.GetTodoAsync("alice", todo.Id));
+
+        var tools = new AgentTeamToolExecutor(_store, null!);
+        var executorDefinitions = tools.AllDefinitions(worker, room, executorDelivery, todo);
+        Assert.Contains(executorDefinitions, value => value.Name == "todo_complete");
+        Assert.Contains(executorDefinitions, value => value.Name == "todo_block");
+        Assert.Contains(executorDefinitions, value => value.Name == "todo_progress");
+        Assert.DoesNotContain(executorDefinitions, value => value.Name == "todo_update");
+
+        var communication = executorDelivery with
+        {
+            Id = "communication-delivery",
+            TargetAgentId = manager.Id,
+            Trigger = AgentDeliveryTrigger.Mention,
+            DeduplicationKey = "mention:manager",
+        };
+        var managerDefinitions = tools.AllDefinitions(manager, room, communication);
+        Assert.Contains(managerDefinitions, value => value.Name == "todo_update");
+        Assert.DoesNotContain(managerDefinitions, value => value.Name == "todo_complete");
+        Assert.DoesNotContain(managerDefinitions, value => value.Name == "todo_block");
+        Assert.DoesNotContain(managerDefinitions, value => value.Name == "todo_progress");
+        Assert.DoesNotContain(tools.AllDefinitions(worker, room,
+            communication with { TargetAgentId = worker.Id }),
+            value => value.Name == "todo_update");
+
+        var references = new AgentRunReferenceVault();
+        var todoReference = references.TodoReference(room.Id, todo.Id, worker.Id);
+        var deniedUpdate = await Assert.ThrowsAsync<AgentTeamException>(() => tools.ExecuteAsync(
+            worker, workerMember, room, executorDelivery,
+            new AgentToolCall("update", "todo_update", $$"""
+                {"todo_ref":"{{todoReference}}","expected_revision":{{todo.Revision}},"status":"Completed"}
+                """), CancellationToken.None, references, todo));
+        Assert.Equal(AgentTeamError.PermissionDenied, deniedUpdate.Code);
+
+        var workerCommunication = communication with { TargetAgentId = worker.Id };
+        var deniedWorkerUpdate = await Assert.ThrowsAsync<AgentTeamException>(() =>
+            tools.ExecuteAsync(worker, workerMember, room, workerCommunication,
+                new AgentToolCall("manager-update", "todo_update", $$"""
+                    {"todo_ref":"{{todoReference}}","expected_revision":{{todo.Revision}},"status":"Cancelled"}
+                    """), CancellationToken.None, references));
+        Assert.Equal(AgentTeamError.PermissionDenied, deniedWorkerUpdate.Code);
+
+        var deniedCompletion = await Assert.ThrowsAsync<AgentTeamException>(() =>
+            tools.ExecuteAsync(manager, managerMember, room, communication,
+                new AgentToolCall("complete", "todo_complete", $$"""
+                    {"todo_ref":"{{todoReference}}","expected_revision":{{todo.Revision}},"summary":"wrong lane"}
+                    """), CancellationToken.None, references));
+        Assert.Equal(AgentTeamError.PermissionDenied, deniedCompletion.Code);
+
+        var completedResult = await tools.ExecuteAsync(worker, workerMember, room,
+            executorDelivery, new AgentToolCall("complete", "todo_complete", $$"""
+                {"todo_ref":"{{todoReference}}","expected_revision":{{todo.Revision}},"summary":"verified"}
+                """), CancellationToken.None, references, todo);
+        Assert.True(completedResult.EndsCycle);
+        Assert.Equal(AgentTodoStatus.Completed,
+            (await _store.GetTodoAsync("alice", todo.Id))!.Status);
+        Assert.Equal(AgentTodoProgressKind.Completed,
+            Assert.Single(await _store.ListTodoProgressAsync("alice", todo.Id),
+                value => value.Kind == AgentTodoProgressKind.Completed).Kind);
     }
 
     private async Task CompleteInitialMaintenanceAsync()

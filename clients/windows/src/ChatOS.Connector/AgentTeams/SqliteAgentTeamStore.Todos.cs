@@ -261,7 +261,7 @@ public sealed partial class SqliteAgentTeamStore
                 .ConfigureAwait(false);
         }
 
-        if (status is AgentTodoStatus.Ready or AgentTodoStatus.Blocked or
+        if (status is AgentTodoStatus.Pending or AgentTodoStatus.Ready or AgentTodoStatus.Blocked or
             AgentTodoStatus.Completed or AgentTodoStatus.Cancelled)
         {
             await ScheduleReadyAgentsAsync(connection, transaction, ownerUserId, now,

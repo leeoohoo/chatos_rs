@@ -514,8 +514,14 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
 
         var managerMember = Assert.Single(await _store.ListMembersAsync("alice", room.Id),
             value => value.AgentId == manager.Id);
+        var communication = delivery with
+        {
+            TargetAgentId = manager.Id,
+            Trigger = AgentDeliveryTrigger.Mention,
+            DeduplicationKey = "mention:manager",
+        };
         _ = await toolExecutor.ExecuteAsync(manager, managerMember, room,
-            delivery with { TargetAgentId = manager.Id },
+            communication,
             new AgentToolCall("call-2", "asset_create", """
                 {"category":"Decision","title":"策略","markdown":"内容"}
                 """), CancellationToken.None);
@@ -523,7 +529,7 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
         Assert.Equal("策略", created.Title);
         var assetReferences = new AgentRunReferenceVault();
         _ = await toolExecutor.ExecuteAsync(manager, managerMember, room,
-            delivery with { TargetAgentId = manager.Id },
+            communication,
             new AgentToolCall("call-3", "asset_update", $$"""
                 {"asset_ref":"{{assetReferences.AssetReference(room.Id, created.Id, created.Revision)}}","expected_revision":1,"category":"CurrentProgress","title":"当前进度","markdown":"已完成"}
                 """), CancellationToken.None, assetReferences);

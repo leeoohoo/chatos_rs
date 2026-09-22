@@ -149,18 +149,47 @@ internal sealed partial class AgentTeamToolExecutor(
         }),
         Tool("todo_schedule_state", "读取当前 Agent 的程序计算调度状态：busy、ready 或 idle。", ObjectSchema()),
         Tool("todo_start_next", "为当前 Agent 原子启动最高优先级的下一项 Ready Todo；忙碌时不会重复启动。", ObjectSchema()),
-        Tool("todo_update", "更新 Todo 状态、结果或负责人。非项目经理只能更新分配给自己的 Todo。", new
+        Tool("todo_update", "仅供项目经理重新排队、取消或改派 Todo；完成和阻塞由独立执行通道写入。", new
         {
             type = "object",
             properties = new
             {
                 todo_ref = new { type = "string" },
                 expected_revision = new { type = "integer", minimum = 1 },
-                status = new { type = "string", @enum = Enum.GetNames<AgentTodoStatus>() },
+                status = new
+                {
+                    type = "string",
+                    @enum = new[] { nameof(AgentTodoStatus.Pending),
+                        nameof(AgentTodoStatus.Cancelled) },
+                },
                 result = new { type = "string", maxLength = 16_000 },
                 assigned_agent_ref = new { type = "string" },
             },
             required = new[] { "todo_ref", "expected_revision", "status" },
+            additionalProperties = false,
+        }),
+        Tool("todo_complete", "仅供当前 Todo 执行通道提交完成结果。", new
+        {
+            type = "object",
+            properties = new
+            {
+                todo_ref = new { type = "string" },
+                expected_revision = new { type = "integer", minimum = 1 },
+                summary = new { type = "string", maxLength = 16_000 },
+            },
+            required = new[] { "todo_ref", "expected_revision", "summary" },
+            additionalProperties = false,
+        }),
+        Tool("todo_block", "仅供当前 Todo 执行通道提交阻塞原因。", new
+        {
+            type = "object",
+            properties = new
+            {
+                todo_ref = new { type = "string" },
+                expected_revision = new { type = "integer", minimum = 1 },
+                reason = new { type = "string", maxLength = 16_000 },
+            },
+            required = new[] { "todo_ref", "expected_revision", "reason" },
             additionalProperties = false,
         }),
         Tool("todo_progress", "记录分配给自己的 Todo 执行进展。", new
@@ -252,11 +281,13 @@ internal sealed partial class AgentTeamToolExecutor(
             return result.Where(value => executorTools.Contains(value.Name)).ToArray();
         }
 
+        result = result.Where(value => !IsExecutorOnlyTool(value.Name)).ToArray();
+
         if (!string.Equals(room.ProjectManagerAgentId, profile.Id, StringComparison.Ordinal))
         {
             var managerOnly = new HashSet<string>(StringComparer.Ordinal)
             {
-                "todo_create", "asset_create", "asset_update",
+                "todo_create", "todo_update", "asset_create", "asset_update",
             };
             result = result.Where(value => !managerOnly.Contains(value.Name)).ToArray();
         }
@@ -274,11 +305,17 @@ internal sealed partial class AgentTeamToolExecutor(
         AgentTodo? executionTodo = null)
     {
         var vault = references ?? new AgentRunReferenceVault(allowLegacyIds: true);
-        if (delivery.Trigger == AgentDeliveryTrigger.Todo && executionTodo is not null &&
-            !ExecutorToolNames(executionTodo.Draft.ExecutionPlan).Contains(call.Name))
+        if (delivery.Trigger == AgentDeliveryTrigger.Todo &&
+            (executionTodo is null ||
+             !ExecutorToolNames(executionTodo.Draft.ExecutionPlan).Contains(call.Name)))
         {
             throw new AgentTeamException(AgentTeamError.PermissionDenied,
                 "Tool is outside this Todo's frozen capability snapshot.");
+        }
+        if (delivery.Trigger != AgentDeliveryTrigger.Todo && IsExecutorOnlyTool(call.Name))
+        {
+            throw new AgentTeamException(AgentTeamError.PermissionDenied,
+                "Executor state tools require a Todo execution delivery.");
         }
         JsonDocument document;
         try
@@ -331,6 +368,12 @@ internal sealed partial class AgentTeamToolExecutor(
                     .ConfigureAwait(false),
                 "todo_update" => await UpdateTodoAsync(
                     profile, room, vault, arguments, cancellationToken).ConfigureAwait(false),
+                "todo_complete" => await FinishTodoAsync(
+                    profile, room, delivery, vault, executionTodo, arguments,
+                    AgentTodoStatus.Completed, cancellationToken).ConfigureAwait(false),
+                "todo_block" => await FinishTodoAsync(
+                    profile, room, delivery, vault, executionTodo, arguments,
+                    AgentTodoStatus.Blocked, cancellationToken).ConfigureAwait(false),
                 "todo_progress" => await AppendProgressAsync(
                     profile, room, vault, arguments, cancellationToken).ConfigureAwait(false),
                 "asset_list" => await ListAssetsAsync(
@@ -656,7 +699,7 @@ internal sealed partial class AgentTeamToolExecutor(
         var capabilities = plan?.Capabilities ?? [AgentTodoBuiltinCapability.ProjectRead];
         var result = new HashSet<string>(StringComparer.Ordinal)
         {
-            "todo_update", "todo_progress", "chat_read_attachment",
+            "todo_complete", "todo_block", "todo_progress", "chat_read_attachment",
             "cycle_complete", "skill_activate", "skill_list_resources",
             "skill_read_resource",
         };
@@ -673,6 +716,9 @@ internal sealed partial class AgentTeamToolExecutor(
             result.UnionWith(["requirement_survey_create", "requirement_survey_resolve"]);
         return result;
     }
+
+    private static bool IsExecutorOnlyTool(string name) =>
+        name is "todo_complete" or "todo_block" or "todo_progress";
 
     private static string Json(object value) => JsonSerializer.Serialize(value, JsonOptions);
 
