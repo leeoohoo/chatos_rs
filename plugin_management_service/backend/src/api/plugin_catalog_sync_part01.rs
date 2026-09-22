@@ -207,6 +207,3 @@ fn is_public_ipv6(ip: Ipv6Addr) -> bool {
         || (segments[0] & 0xffc0) == 0xfe80
         || (segments[0] == 0x2001 && segments[1] == 0x0db8))
 }
-
-#[cfg(test)]
-mod tests;

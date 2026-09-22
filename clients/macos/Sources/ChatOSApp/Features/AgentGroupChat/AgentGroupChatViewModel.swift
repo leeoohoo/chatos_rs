@@ -89,6 +89,8 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published var teams: [ProjectAgentRoom] = []
     @Published var teamTodos: [LocalAgentTodo] = []
     @Published var teamAssets: [LocalAgentTeamAsset] = []
+    @Published var requirementSurveys: [LocalAgentRequirementSurvey] = []
+    @Published var submittingRequirementSurveyIDs: Set<String> = []
     @Published var teamAssetRevisions: [String: [LocalAgentTeamAssetRevision]] = [:]
     @Published var loadingTeamAssetRevisionIDs: Set<String> = []
     @Published var recentRuns: [LocalAgentGroupChatRun] = []
@@ -290,6 +292,7 @@ final class AgentGroupChatViewModel: ObservableObject {
             pendingMembershipProposals = []
             teamTodos = []
             teamAssets = []
+            requirementSurveys = []
             recentRuns = []
             recentRunDeliveries = [:]
             return
@@ -332,6 +335,11 @@ final class AgentGroupChatViewModel: ObservableObject {
                     ownerUserID: ownerUserID,
                     teamRoomID: room.id,
                     includeArchived: false
+                )
+                let requirementSurveys = try await store.listRequirementSurveys(
+                    ownerUserID: ownerUserID,
+                    projectID: projectID,
+                    status: nil
                 )
                 let unfinishedRuns = try await store.listUnfinishedRuns(
                     ownerUserID: ownerUserID,
@@ -381,6 +389,7 @@ final class AgentGroupChatViewModel: ObservableObject {
                 self.pendingMembershipProposals = pendingMembershipProposals
                 self.teamTodos = teamTodos
                 self.teamAssets = teamAssets
+                self.requirementSurveys = requirementSurveys
                 let activeAssetIDs = Set(teamAssets.map(\.id))
                 teamAssetRevisions = teamAssetRevisions.filter { activeAssetIDs.contains($0.key) }
                 loadingTeamAssetRevisionIDs.formIntersection(activeAssetIDs)

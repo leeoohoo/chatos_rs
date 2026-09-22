@@ -10,6 +10,8 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             (.projectRead, NativeMCPCodeReadTools.toolDefinitions),
             (.projectWrite, NativeMCPCodeWriteStore.toolDefinitions),
             (.terminal, NativeMCPTerminalStore.toolDefinitions),
+            (.requirementSurveyRead, NativeMCPRequirementSurveyTools.readToolDefinitions),
+            (.requirementSurveyWrite, NativeMCPRequirementSurveyTools.writeToolDefinitions),
         ]
 
         for (capability, definitions) in cases {

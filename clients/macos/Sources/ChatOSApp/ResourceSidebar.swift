@@ -87,6 +87,17 @@ struct ResourceSidebar: View {
                     tint: .indigo
                 )
                 .tag(SidebarSelection.agentGroupChat)
+
+                resourceRow(
+                    title: model.localized("需求调研", english: "Requirement Surveys"),
+                    subtitle: model.localized(
+                        "需求确认、方案与执行计划",
+                        english: "Requirements, solutions, and execution plans"
+                    ),
+                    systemImage: "list.clipboard.fill",
+                    tint: .orange
+                )
+                .tag(SidebarSelection.requirementSurveys)
             }
 
             Section {

@@ -414,7 +414,19 @@ extension SQLiteAgentGroupChatStore {
                 throw AgentGroupChatError.conflict
             }
             let summary = todo.status == .completed ? todo.result : todo.blockedReason
-            let content = "Todo 状态已更新：\(todo.title)\n状态：\(todo.status.rawValue)\n\(summary)"
+            let latestProgress = try AgentTodoRepository.listProgress(
+                database,
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                todoID: todoID,
+                limit: 1,
+                preparedStatement: recordPreparedStatement
+            ).last
+            let suggestionCount = latestProgress?.assetUpdateSuggestions.count ?? 0
+            let suggestionNotice = suggestionCount > 0
+                ? "\n共享资产更新建议：\(suggestionCount) 条，请用 todo_read_progress 审核后决定是否落库。"
+                : ""
+            let content = "Todo 状态已更新：\(todo.title)\n状态：\(todo.status.rawValue)\n\(summary)\(suggestionNotice)"
             let eventKey = "status:\(todo.id):\(todo.status.rawValue):\(todo.updatedAtUnixMs)"
             var deliveries: [ProjectAgentDelivery] = []
             for recipientID in recipientIDs {

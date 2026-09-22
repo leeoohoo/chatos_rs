@@ -98,6 +98,7 @@ extension LocalAgentChatToolProvider {
             }
             teamResponses.append(.init(
                 teamReference: await references.teamReference(teamID: room.id),
+                projectReference: await references.projectReference(projectID: room.projectID),
                 name: room.draft.name,
                 goal: room.draft.goal,
                 hasProjectManager: room.projectManagerAgentID != nil,

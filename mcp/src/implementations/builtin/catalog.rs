@@ -62,6 +62,8 @@ pub fn builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> 
             })
             .map(|service| location_neutral_workspace_catalog(service.list_tools()))
         }
+        BuiltinMcpKind::RequirementSurveyRead => Ok(requirement_survey_read_catalog()),
+        BuiltinMcpKind::RequirementSurveyWrite => Ok(requirement_survey_write_catalog()),
         BuiltinMcpKind::TaskManager => Err("TaskManager builtin MCP has been removed".to_string()),
         BuiltinMcpKind::Notepad => NotepadBuiltinService::new(NotepadOptions {
             server_name,
@@ -118,6 +120,76 @@ pub fn builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> 
             .map(|service| service.list_tools())
         }
     }
+}
+
+fn requirement_survey_read_catalog() -> Vec<Value> {
+    vec![
+        serde_json::json!({
+            "name": "requirement_survey_list",
+            "description": "List requirement surveys for the project bound by the task runtime.",
+            "inputSchema": {"type":"object","properties":{"status":{"type":"string","enum":["pending","submitted"]}},"additionalProperties":false}
+        }),
+        serde_json::json!({
+            "name": "requirement_survey_get",
+            "description": "Read a survey including Human answers, notes, resolution, and execution plan.",
+            "inputSchema": {"type":"object","properties":{"survey_id":{"type":"string","minLength":1}},"required":["survey_id"],"additionalProperties":false}
+        }),
+        serde_json::json!({
+            "name": "requirement_survey_project_tasks",
+            "description": "Read project task goals, status, assignees, capabilities, blockers, and results.",
+            "inputSchema": {"type":"object","properties":{},"additionalProperties":false}
+        }),
+    ]
+}
+
+fn requirement_survey_write_catalog() -> Vec<Value> {
+    vec![
+        serde_json::json!({
+            "name": "requirement_survey_create",
+            "description": "Create a project-bound requirement survey after checking existing surveys.",
+            "inputSchema": {
+                "type":"object",
+                "properties":{
+                    "request_key":{"type":"string","minLength":1,"maxLength":512},
+                    "title":{"type":"string","minLength":1,"maxLength":240},
+                    "purpose":{"type":"string","minLength":1,"maxLength":4000},
+                    "questions":{"type":"array","minItems":1,"maxItems":12,"items":{"type":"object","properties":{
+                        "key":{"type":"string","minLength":1,"maxLength":120},
+                        "prompt":{"type":"string","minLength":1,"maxLength":1000},
+                        "kind":{"type":"string","enum":["single_choice","multiple_choice"]},
+                        "required":{"type":"boolean"},
+                        "options":{"type":"array","minItems":2,"maxItems":12,"items":{"type":"object","properties":{"key":{"type":"string","minLength":1,"maxLength":120},"label":{"type":"string","minLength":1,"maxLength":500}},"required":["key","label"],"additionalProperties":false}}
+                    },"required":["key","prompt","kind","options"],"additionalProperties":false}}
+                },
+                "required":["request_key","title","purpose","questions"],
+                "additionalProperties":false
+            }
+        }),
+        serde_json::json!({
+            "name": "requirement_survey_resolve",
+            "description": "Write a resolution and execution plan for a Human-submitted project survey.",
+            "inputSchema": {
+                "type":"object",
+                "properties":{
+                    "survey_id":{"type":"string","minLength":1},
+                    "summary":{"type":"string","minLength":1,"maxLength":4000},
+                    "solution_markdown":{"type":"string","minLength":1,"maxLength":128000},
+                    "execution_steps":{"type":"array","minItems":1,"maxItems":50,"items":{"type":"object","properties":{
+                        "key":{"type":"string","minLength":1,"maxLength":120},
+                        "title":{"type":"string","minLength":1,"maxLength":500},
+                        "detail":{"type":"string","minLength":1,"maxLength":8000},
+                        "owner":{"type":"string","maxLength":500},
+                        "deliverable":{"type":"string","maxLength":4000},
+                        "acceptance_criteria":{"type":"string","maxLength":4000}
+                    },"required":["key","title","detail"],"additionalProperties":false}},
+                    "risks_and_open_questions":{"type":"string","maxLength":32000},
+                    "related_materials":{"type":"string","maxLength":32000}
+                },
+                "required":["survey_id","summary","solution_markdown","execution_steps"],
+                "additionalProperties":false
+            }
+        }),
+    ]
 }
 
 fn location_neutral_workspace_catalog(mut tools: Vec<Value>) -> Vec<Value> {

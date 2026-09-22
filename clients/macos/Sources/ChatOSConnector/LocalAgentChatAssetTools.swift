@@ -158,39 +158,18 @@ extension LocalAgentChatToolProvider {
         ))
     }
 
-    func upsertTeamAsset(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+    func createTeamAsset(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         guard context.lane == .manager else { throw AgentGroupChatError.permissionDenied }
         let arguments = try Self.arguments(call)
-        let assetReference = try Self.optionalString(arguments, key: "asset_ref")
-        let authority: LocalAgentRunReferenceVault.TeamAssetAuthority? = if let assetReference {
-            await references.teamAssetAuthority(reference: assetReference)
-        } else {
-            nil
-        }
-        if assetReference != nil, authority == nil {
+        let teamReference = try Self.requiredString(arguments, key: "team_ref")
+        guard let teamRoomID = await references.teamID(reference: teamReference) else {
             return Self.structuredFailure(
-                code: "invalid_team_asset_ref",
-                field: "asset_ref",
-                message: "团队资产引用无效或已经过期，请重新调用 team_asset_list。",
+                code: "invalid_team_ref",
+                field: "team_ref",
+                message: "团队引用无效或已经过期，请重新调用 agent_workspace_snapshot。",
                 retryable: true,
-                nextTool: Self.teamAssetListToolName
+                nextTool: Self.workspaceSnapshotToolName
             )
-        }
-        let teamRoomID: String
-        if let authority {
-            teamRoomID = authority.teamRoomID
-        } else {
-            let teamReference = try Self.requiredString(arguments, key: "team_ref")
-            guard let resolved = await references.teamID(reference: teamReference) else {
-                return Self.structuredFailure(
-                    code: "invalid_team_ref",
-                    field: "team_ref",
-                    message: "团队引用无效或已经过期，请重新调用 agent_workspace_snapshot。",
-                    retryable: true,
-                    nextTool: Self.workspaceSnapshotToolName
-                )
-            }
-            teamRoomID = resolved
         }
         guard try await isProjectManager(teamRoomID: teamRoomID) else {
             return Self.structuredFailure(
@@ -210,27 +189,68 @@ extension LocalAgentChatToolProvider {
                 retryable: true
             )
         }
-        let expectedRevision = try Self.optionalInteger(arguments, key: "expected_revision").map(Int.init)
-        if let authority, expectedRevision != authority.revision {
-            return Self.structuredFailure(
-                code: "team_asset_revision_required",
-                field: "expected_revision",
-                message: "更新共享资产必须使用 team_asset_list 返回的当前 revision。",
-                retryable: true,
-                nextTool: Self.teamAssetListToolName
-            )
-        }
         let asset = try await store.upsertTeamAsset(
             ownerUserID: context.ownerUserID,
             teamRoomID: teamRoomID,
-            assetID: authority?.assetID,
+            assetID: nil,
             editorAgentID: context.agentID,
             category: category,
             title: try Self.requiredString(arguments, key: "title"),
             markdown: try Self.requiredString(arguments, key: "markdown"),
-            expectedRevision: expectedRevision,
+            expectedRevision: nil,
             nowUnixMs: now()
         )
+        return try await teamAssetOutcome(asset)
+    }
+
+    func updateTeamAsset(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        guard context.lane == .manager else { throw AgentGroupChatError.permissionDenied }
+        let arguments = try Self.arguments(call)
+        let assetReference = try Self.requiredString(arguments, key: "asset_ref")
+        guard let authority = await references.teamAssetAuthority(reference: assetReference) else {
+            return Self.structuredFailure(
+                code: "invalid_team_asset_ref",
+                field: "asset_ref",
+                message: "团队资产引用无效或已经过期，请重新调用 team_asset_list。空目录首次创建必须改用 team_asset_create。",
+                retryable: true,
+                nextTool: Self.teamAssetListToolName
+            )
+        }
+        guard try await isProjectManager(teamRoomID: authority.teamRoomID) else {
+            return Self.structuredFailure(
+                code: "project_manager_required",
+                field: "asset_ref",
+                message: "只有该团队明确指定的项目经理可以维护共享资产。",
+                retryable: false
+            )
+        }
+        guard let category = LocalAgentTeamAssetCategory(
+            rawValue: try Self.requiredString(arguments, key: "category")
+        ) else {
+            return Self.structuredFailure(
+                code: "invalid_team_asset_category",
+                field: "category",
+                message: "共享资产分类无效。",
+                retryable: true
+            )
+        }
+        let asset = try await store.upsertTeamAsset(
+            ownerUserID: context.ownerUserID,
+            teamRoomID: authority.teamRoomID,
+            assetID: authority.assetID,
+            editorAgentID: context.agentID,
+            category: category,
+            title: try Self.requiredString(arguments, key: "title"),
+            markdown: try Self.requiredString(arguments, key: "markdown"),
+            expectedRevision: authority.revision,
+            nowUnixMs: now()
+        )
+        return try await teamAssetOutcome(asset)
+    }
+
+    private func teamAssetOutcome(
+        _ asset: LocalAgentTeamAsset
+    ) async throws -> AgentToolOutcome {
         let reference = await references.teamAssetReference(
             assetID: asset.id,
             teamRoomID: asset.teamRoomID,

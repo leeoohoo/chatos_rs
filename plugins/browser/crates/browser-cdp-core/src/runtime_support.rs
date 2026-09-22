@@ -1,7 +1,7 @@
 use super::*;
 
 impl BrowserSession {
-    fn summary(&self, browser_session_id: &str) -> BrowserSessionSummary {
+    pub(super) fn summary(&self, browser_session_id: &str) -> BrowserSessionSummary {
         BrowserSessionSummary {
             browser_session_id: browser_session_id.to_owned(),
             mode: self.mode,
@@ -12,7 +12,10 @@ impl BrowserSession {
         }
     }
 
-    fn tab_session(&self, tab_id: Option<&str>) -> CoreResult<(String, BackendSessionId)> {
+    pub(super) fn tab_session(
+        &self,
+        tab_id: Option<&str>,
+    ) -> CoreResult<(String, BackendSessionId)> {
         let tab_id = tab_id
             .map(str::to_owned)
             .or_else(|| self.active_tab_id.clone())
@@ -24,13 +27,13 @@ impl BrowserSession {
         Ok((tab_id, tab.backend_session_id.clone()))
     }
 
-    fn invalidate_refs(&mut self) {
+    pub(super) fn invalidate_refs(&mut self) {
         self.ref_generation = self.ref_generation.wrapping_add(1);
         self.element_refs.clear();
     }
 }
 
-async fn evaluate_value(
+pub(super) async fn evaluate_value(
     backend: &dyn BrowserBackend,
     session_id: &BackendSessionId,
     expression: &str,
@@ -59,7 +62,7 @@ async fn evaluate_value(
         .unwrap_or(Value::Null))
 }
 
-fn virtual_cursor_move_script(selector: &str) -> String {
+pub(super) fn virtual_cursor_move_script(selector: &str) -> String {
     format!(
         r##"(async () => {{
   const el = document.querySelector({selector});
@@ -111,7 +114,7 @@ fn virtual_cursor_move_script(selector: &str) -> String {
     )
 }
 
-fn virtual_cursor_restore_script(x: f64, y: f64) -> String {
+pub(super) fn virtual_cursor_restore_script(x: f64, y: f64) -> String {
     format!(
         r##"(() => {{
   const mount = () => {{
@@ -151,7 +154,7 @@ fn virtual_cursor_restore_script(x: f64, y: f64) -> String {
     )
 }
 
-fn virtual_cursor_pulse_script() -> String {
+pub(super) fn virtual_cursor_pulse_script() -> String {
     format!(
         r#"(() => {{
   const host = document.getElementById({cursor_id});
@@ -205,7 +208,7 @@ mod virtual_cursor_tests {
     }
 }
 
-async fn read_title(
+pub(super) async fn read_title(
     backend: &dyn BrowserBackend,
     session_id: &BackendSessionId,
 ) -> CoreResult<String> {
@@ -216,7 +219,7 @@ async fn read_title(
         .ok_or_else(|| CoreError::Backend("document title is not a string".into()))
 }
 
-async fn wait_until_ready(
+pub(super) async fn wait_until_ready(
     backend: &dyn BrowserBackend,
     session_id: &BackendSessionId,
     timeout: Duration,
@@ -236,11 +239,11 @@ async fn wait_until_ready(
     }
 }
 
-fn opaque_id(prefix: &str) -> String {
+pub(super) fn opaque_id(prefix: &str) -> String {
     format!("{prefix}_{}", Uuid::new_v4().simple())
 }
 
-fn ensure_within(root: &Path, path: &Path) -> CoreResult<()> {
+pub(super) fn ensure_within(root: &Path, path: &Path) -> CoreResult<()> {
     if path.starts_with(root) {
         Ok(())
     } else {
@@ -250,7 +253,7 @@ fn ensure_within(root: &Path, path: &Path) -> CoreResult<()> {
     }
 }
 
-fn sanitize_artifact_name(name: &str) -> String {
+pub(super) fn sanitize_artifact_name(name: &str) -> String {
     let sanitized = name
         .chars()
         .map(|character| {
@@ -269,7 +272,7 @@ fn sanitize_artifact_name(name: &str) -> String {
     }
 }
 
-fn mime_type_for_name(name: &str) -> &'static str {
+pub(super) fn mime_type_for_name(name: &str) -> &'static str {
     match Path::new(name)
         .extension()
         .and_then(|extension| extension.to_str())
@@ -290,7 +293,7 @@ fn mime_type_for_name(name: &str) -> &'static str {
     }
 }
 
-fn validate_route_rule(rule: &RouteRule) -> CoreResult<()> {
+pub(super) fn validate_route_rule(rule: &RouteRule) -> CoreResult<()> {
     if rule.url_pattern.is_empty() || rule.url_pattern.len() > 4_096 {
         return Err(CoreError::InvalidRequest(
             "url_pattern must contain between 1 and 4096 characters".into(),
@@ -331,7 +334,7 @@ struct HarEntryState {
     error_text: Option<String>,
 }
 
-fn build_har(batch: EventBatch) -> Value {
+pub(super) fn build_har(batch: EventBatch) -> Value {
     let mut entries: HashMap<String, HarEntryState> = HashMap::new();
     for event in batch.events {
         let Some(request_id) = event.params.get("requestId").and_then(Value::as_str) else {

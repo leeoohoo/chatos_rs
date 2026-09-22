@@ -2674,4 +2674,332 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             sql: "SELECT COUNT(*) FROM pragma_table_info('local_agent_todos') WHERE name = 'execution_contract_json'"
         ), 1)
     }
+
+    func testMigration30ReplacesEmptyTeamOwnedSurveyTableWithProjectOwnedSchema() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        var initialStore: SQLiteAgentGroupChatStore? = try SQLiteAgentGroupChatStore(databaseURL: url)
+        XCTAssertNotNil(initialStore)
+        initialStore = nil
+
+        try executeSQLite(
+            url,
+            sql: """
+            PRAGMA foreign_keys = OFF;
+            BEGIN IMMEDIATE;
+            DROP TABLE local_agent_requirement_surveys;
+            CREATE TABLE local_agent_requirement_surveys (
+                owner_user_id TEXT NOT NULL,
+                id TEXT NOT NULL,
+                team_room_id TEXT NOT NULL,
+                creator_agent_id TEXT NOT NULL,
+                source_delivery_id TEXT NOT NULL,
+                request_key TEXT NOT NULL,
+                draft_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                submission_json TEXT,
+                resolution_json TEXT,
+                created_at_unix_ms INTEGER NOT NULL,
+                submitted_at_unix_ms INTEGER,
+                resolved_at_unix_ms INTEGER,
+                PRIMARY KEY(owner_user_id, id)
+            );
+            CREATE INDEX local_agent_requirement_surveys_team
+                ON local_agent_requirement_surveys(owner_user_id, team_room_id);
+            DELETE FROM local_agent_group_chat_schema_migrations WHERE version = 30;
+            COMMIT;
+            PRAGMA foreign_keys = ON;
+            """
+        )
+
+        let migratedStore = try SQLiteAgentGroupChatStore(databaseURL: url)
+        _ = migratedStore
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM pragma_table_info('local_agent_requirement_surveys') WHERE name = 'project_id'"
+        ), 1)
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM pragma_table_info('local_agent_requirement_surveys') WHERE name = 'team_room_id'"
+        ), 0)
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM local_agent_group_chat_schema_migrations WHERE version = 30"
+        ), 1)
+    }
+
+    func testRequirementSurveyPersistsHumanAnswersWakesOwnerAndStoresResolution() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let manager = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "项目经理",
+                rolePrompt: "维护团队目标和计划。",
+                modelConfigID: "model-1",
+                professionKey: "project_manager"
+            )
+        )
+        let researcher = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "需求调研 Agent",
+                rolePrompt: "按需求调研 Skill 工作。",
+                modelConfigID: "model-1",
+                professionKey: "business_analyst"
+            )
+        )
+        let ordinary = try await makeAgent(store, name: "普通成员")
+        let room = try await store.createManagedRoom(
+            ownerUserID: "alice",
+            projectID: "survey-project",
+            draft: .init(name: "需求调研团队"),
+            projectManagerAgentID: manager.id
+        )
+        for agent in [researcher, ordinary] {
+            _ = try await store.addMember(
+                ownerUserID: "alice",
+                roomID: room.id,
+                agentID: agent.id,
+                draft: .init(role: agent.draft.name)
+            )
+        }
+        let claimedManagerDelivery = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: manager.id,
+            nowUnixMs: 100
+        )
+        let managerDelivery = try XCTUnwrap(claimedManagerDelivery)
+        let draft = LocalAgentRequirementSurveyDraft(
+            title: "重大变更确认",
+            purpose: "确认兼容策略和发布范围，答案将决定迁移方案。",
+            questions: [
+                .init(
+                    id: "compatibility",
+                    prompt: "旧接口需要保留多久？",
+                    kind: .singleChoice,
+                    options: [
+                        .init(id: "one_release", label: "保留一个版本"),
+                        .init(id: "two_releases", label: "保留两个版本"),
+                    ]
+                ),
+                .init(
+                    id: "release_targets",
+                    prompt: "本次包含哪些客户端？",
+                    kind: .multipleChoice,
+                    options: [
+                        .init(id: "macos", label: "macOS"),
+                        .init(id: "windows", label: "Windows"),
+                    ]
+                ),
+            ]
+        )
+        let survey = try await store.createRequirementSurvey(
+            ownerUserID: "alice",
+            projectID: room.projectID,
+            creatorAgentID: manager.id,
+            sourceDeliveryID: managerDelivery.id,
+            requestKey: "major-change-v1",
+            draft: draft,
+            nowUnixMs: 101
+        )
+        XCTAssertEqual(survey.projectID, room.projectID)
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM pragma_table_info('local_agent_requirement_surveys') WHERE name = 'project_id'"
+        ), 1)
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM pragma_table_info('local_agent_requirement_surveys') WHERE name = 'team_room_id'"
+        ), 0)
+        let duplicate = try await store.createRequirementSurvey(
+            ownerUserID: "alice",
+            projectID: room.projectID,
+            creatorAgentID: manager.id,
+            sourceDeliveryID: managerDelivery.id,
+            requestKey: "major-change-v1",
+            draft: draft,
+            nowUnixMs: 102
+        )
+        XCTAssertEqual(survey.id, duplicate.id)
+        let pendingSurveys = try await store.listRequirementSurveys(
+            ownerUserID: "alice",
+            projectID: room.projectID,
+            status: .pending
+        )
+        XCTAssertEqual(pendingSurveys.count, 1)
+
+        let taskRunnerSurvey = try await store.createRequirementSurvey(
+            ownerUserID: "alice",
+            projectID: room.projectID,
+            creatorAgentID: "task-runner",
+            sourceDeliveryID: "task-run-1",
+            requestKey: "task-runner-survey",
+            draft: draft,
+            nowUnixMs: 103
+        )
+        XCTAssertEqual(taskRunnerSurvey.creatorAgentID, "task-runner")
+
+        do {
+            _ = try await store.submitRequirementSurvey(
+                ownerUserID: "alice",
+                projectID: room.projectID,
+                surveyID: survey.id,
+                submission: .init(answers: [], notes: ""),
+                nowUnixMs: 104
+            )
+            XCTFail("Required questions were accepted without answers")
+        } catch {
+            XCTAssertEqual(
+                error as? AgentGroupChatError,
+                .invalidField("requirementSurveyAnswers")
+            )
+        }
+        let submission = LocalAgentRequirementSurveySubmission(
+            answers: [
+                .init(questionID: "compatibility", selectedOptionIDs: ["two_releases"]),
+                .init(questionID: "release_targets", selectedOptionIDs: ["macos", "windows"]),
+            ],
+            notes: "Windows 需要晚一周灰度。"
+        )
+        let submitted = try await store.submitRequirementSurvey(
+            ownerUserID: "alice",
+            projectID: room.projectID,
+            surveyID: survey.id,
+            submission: submission,
+            nowUnixMs: 105
+        )
+        let repeatedSubmission = try await store.submitRequirementSurvey(
+            ownerUserID: "alice",
+            projectID: room.projectID,
+            surveyID: survey.id,
+            submission: submission,
+            nowUnixMs: 106
+        )
+        XCTAssertEqual(submitted, repeatedSubmission)
+        XCTAssertEqual(submitted.submission?.notes, "Windows 需要晚一周灰度。")
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM project_agent_deliveries WHERE deduplication_key = 'requirement-survey-submitted:\(survey.id)'"
+        ), 1)
+
+        let resolution = LocalAgentRequirementSurveyResolution(
+            summary: "旧接口保留两个版本，macOS 与 Windows 分阶段发布。",
+            solutionMarkdown: "## 方案\n先兼容双版本，再逐步切换默认接口。",
+            executionSteps: [
+                .init(
+                    id: "compat-layer",
+                    title: "实现兼容层",
+                    detail: "同时支持新旧接口并记录旧接口调用。",
+                    owner: "后端工程师",
+                    deliverable: "兼容层与调用指标",
+                    acceptanceCriteria: "新旧客户端均通过回归测试"
+                ),
+            ],
+            risksAndOpenQuestions: "Windows 灰度窗口需要单独观察。",
+            relatedMaterials: "项目共享资产：接口兼容规范。"
+        )
+        let resolved = try await store.resolveRequirementSurvey(
+            ownerUserID: "alice",
+            projectID: room.projectID,
+            surveyID: survey.id,
+            resolverAgentID: researcher.id,
+            resolution: resolution,
+            nowUnixMs: 107
+        )
+        XCTAssertEqual(resolved.resolution, resolution)
+        XCTAssertEqual(resolved.resolvedAtUnixMs, 107)
+    }
+
+    func testTodoCompletionProgressPersistsAssetSuggestionsAndStatusCallsThemOut() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let manager = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "项目经理",
+                rolePrompt: "维护任务与资产。",
+                modelConfigID: "model-1",
+                professionKey: "project_manager"
+            )
+        )
+        let worker = try await makeAgent(store, name: "执行者")
+        let room = try await store.createManagedRoom(
+            ownerUserID: "alice",
+            projectID: "suggestion-project",
+            draft: .init(name: "建议团队"),
+            projectManagerAgentID: manager.id
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: worker.id,
+            draft: .init(role: "执行者")
+        )
+        let todo = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            requestKey: "suggestion-todo",
+            draft: .init(
+                title: "完成架构验证",
+                teamRoomID: room.id,
+                creatorAgentID: manager.id
+            ),
+            nowUnixMs: 200
+        )
+        let suggestion = LocalAgentTeamAssetUpdateSuggestion(
+            category: .architecture,
+            title: "架构决策",
+            markdown: "采用事件驱动更新。",
+            rationale: "执行验证已确认该方案通过验收。"
+        )
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            update: .init(status: .inProgress),
+            nowUnixMs: 200
+        )
+        _ = try await store.appendAgentTodoProgress(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            kind: .completed,
+            runID: "run-suggestion",
+            stage: "completed",
+            detail: "验证完成",
+            assetUpdateSuggestions: [suggestion],
+            nowUnixMs: 201
+        )
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            update: .init(status: .completed, result: "验证完成"),
+            nowUnixMs: 202
+        )
+        let progress = try await store.listAgentTodoProgress(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            limit: 10
+        )
+        XCTAssertEqual(progress.last?.assetUpdateSuggestions, [suggestion])
+        let deliveries = try await store.enqueueAgentTodoStatus(
+            ownerUserID: "alice",
+            agentID: worker.id,
+            todoID: todo.id,
+            excludingAgentID: worker.id,
+            nowUnixMs: 203
+        )
+        let managerStatus = try XCTUnwrap(deliveries.first)
+        let message = try await store.message(
+            ownerUserID: "alice",
+            roomID: managerStatus.roomID,
+            messageID: managerStatus.messageID
+        )
+        XCTAssertTrue(try XCTUnwrap(message).content.contains("共享资产更新建议：1 条"))
+    }
 }

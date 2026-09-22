@@ -4,7 +4,7 @@
 use crate::models::{
     normalize_external_mcp_config_ids, TaskMcpConfig, TaskMcpResolutionResponse, TaskRecord,
 };
-use chatos_mcp_runtime::{builtin_kind_by_any, BuiltinMcpKind};
+use chatos_mcp_runtime::{builtin_kind_by_any, complete_builtin_kind_dependencies, BuiltinMcpKind};
 
 use super::mcp_resolution::{
     resolve_task_mcp, selected_builtin_kinds_from_config,
@@ -61,7 +61,14 @@ pub(super) fn sanitize_task_mcp_config(mut config: TaskMcpConfig) -> TaskMcpConf
     config.init_mode = chatos_ai_runtime::TaskMcpInitMode::Full;
     config.builtin_prompt_locale = normalized_optional(Some(config.builtin_prompt_locale))
         .unwrap_or_else(|| chatos_mcp_runtime::BuiltinMcpPromptLocale::DEFAULT_KEY.to_string());
-    config.enabled_builtin_kinds = normalize_builtin_kind_names(config.enabled_builtin_kinds);
+    let normalized = normalize_builtin_kind_names(config.enabled_builtin_kinds)
+        .into_iter()
+        .filter_map(|value| builtin_kind_by_any(&value))
+        .collect::<Vec<_>>();
+    config.enabled_builtin_kinds = complete_builtin_kind_dependencies(normalized)
+        .into_iter()
+        .map(|kind| kind.kind_name().to_string())
+        .collect();
     config.workspace_dir = normalized_optional(config.workspace_dir);
     config.execution_service_id = normalized_optional(config.execution_service_id);
     config.external_mcp_config_ids =

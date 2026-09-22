@@ -11,7 +11,7 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: workspaceSnapshotToolName,
-            description: "读取当前账户在本机已有的全部活跃 Agent、项目团队、成员关系和显式项目经理。私聊中的 relay_bootstrap 只描述当前会话。非项目经理收到需要任务化或分配成员的请求时，先用本工具判断自己是否属于目标团队并取得显式项目经理的 agent_ref：团队成员走 chat_team_send，非团队成员走 chat_direct_open → chat_direct_send。仅返回同一 Run 内有效的临时引用，不暴露真实 ID。",
+            description: "读取当前账户在本机已有的全部活跃 Agent、项目团队、项目临时引用、成员关系和显式项目经理。私聊中的 relay_bootstrap 只描述当前会话。需求调研在私聊中使用这里返回的 project_ref 绑定项目；项目真实 ID 不暴露给模型。非项目经理收到需要任务化或分配成员的请求时，先用本工具判断自己是否属于目标团队并取得显式项目经理的 agent_ref：团队成员走 chat_team_send，非团队成员走 chat_direct_open → chat_direct_send。所有引用仅在同一 Run 内有效。",
             schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8)
         ),
         .init(
@@ -155,7 +155,7 @@ extension LocalAgentChatToolProvider {
         .init(
             name: todoAddToolName,
             description: "仅供项目经理在共享团队任务板创建 Todo。适用于 Human 要求建立任务、找成员执行，以及下载/克隆/查看/运行/分析远程 Git 仓库；仓库 URL 应原样写入 objective、scope 或 detail，需要 git clone 或命令行时在 builtin_capabilities 选择 terminal。此工具不创建 ChatOS 项目或团队，不得因正文出现‘项目’或 Git URL 而改用 team_propose_*。必须明确目标、范围、交付物、验收条件和约束，并选择负责人、前置任务及可信执行能力。team_ref/assignee_ref/plugin_ref 必须来自 todo_execution_options，source_message_refs 必须来自 chat_get_trigger、relay_bootstrap、chat_read_unread、chat_read_all_unread 或 chat_read_messages；真实 ID 由客户端解析和校验。",
-            schema: Data(#"{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":500},"detail":{"type":"string","maxLength":16000},"objective":{"type":"string","minLength":1,"maxLength":8000},"scope":{"type":"string","minLength":1,"maxLength":16000},"expected_outputs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":4000},"minItems":1,"maxItems":64},"acceptance_criteria":{"type":"array","items":{"type":"string","minLength":1,"maxLength":4000},"minItems":1,"maxItems":64},"constraints":{"type":"array","items":{"type":"string","minLength":1,"maxLength":4000},"maxItems":64},"priority":{"type":"integer","minimum":0,"maximum":100,"default":50},"team_ref":{"type":"string","minLength":1,"maxLength":600},"assignee_ref":{"type":"string","minLength":1,"maxLength":600},"depends_on_todo_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":64,"uniqueItems":true},"source_message_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"minItems":1,"maxItems":64,"uniqueItems":true},"requires_execution":{"type":"boolean","default":true},"builtin_capabilities":{"type":"array","items":{"type":"string","enum":["project_read","project_write","terminal"]},"maxItems":3,"uniqueItems":true},"plugin_hints":{"type":"array","items":{"type":"object","properties":{"plugin_ref":{"type":"string","minLength":1,"maxLength":600},"reason":{"type":"string","maxLength":1000}},"required":["plugin_ref"],"additionalProperties":false},"maxItems":32}},"required":["title","objective","scope","expected_outputs","acceptance_criteria","team_ref","assignee_ref","source_message_refs","requires_execution","builtin_capabilities"],"additionalProperties":false}"#.utf8),
+            schema: Data(#"{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":500},"detail":{"type":"string","maxLength":16000},"objective":{"type":"string","minLength":1,"maxLength":8000},"scope":{"type":"string","minLength":1,"maxLength":16000},"expected_outputs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":4000},"minItems":1,"maxItems":64},"acceptance_criteria":{"type":"array","items":{"type":"string","minLength":1,"maxLength":4000},"minItems":1,"maxItems":64},"constraints":{"type":"array","items":{"type":"string","minLength":1,"maxLength":4000},"maxItems":64},"priority":{"type":"integer","minimum":0,"maximum":100,"default":50},"team_ref":{"type":"string","minLength":1,"maxLength":600},"assignee_ref":{"type":"string","minLength":1,"maxLength":600},"depends_on_todo_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":64,"uniqueItems":true},"source_message_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"minItems":1,"maxItems":64,"uniqueItems":true},"requires_execution":{"type":"boolean","default":true},"builtin_capabilities":{"type":"array","description":"任务级基础工具。选择 requirement_survey_write 时客户端会强制同时加入 requirement_survey_read。","items":{"type":"string","enum":["project_read","project_write","terminal","requirement_survey_read","requirement_survey_write"]},"maxItems":5,"uniqueItems":true},"plugin_hints":{"type":"array","items":{"type":"object","properties":{"plugin_ref":{"type":"string","minLength":1,"maxLength":600},"reason":{"type":"string","maxLength":1000}},"required":["plugin_ref"],"additionalProperties":false},"maxItems":32}},"required":["title","objective","scope","expected_outputs","acceptance_criteria","team_ref","assignee_ref","source_message_refs","requires_execution","builtin_capabilities"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
@@ -186,9 +186,15 @@ extension LocalAgentChatToolProvider {
             schema: Data(#"{"type":"object","properties":{"asset_ref":{"type":"string","minLength":1,"maxLength":600}},"required":["asset_ref"],"additionalProperties":false}"#.utf8)
         ),
         .init(
-            name: teamAssetUpsertToolName,
-            description: "仅供团队明确指定的项目经理创建或更新团队共享资产。新建时提供 team_ref；更新时提供 asset_ref 和 expected_revision。Markdown 应维护项目背景、进度、技术栈、架构、规范、决策或参考资料。",
-            schema: Data(#"{"type":"object","properties":{"team_ref":{"type":"string","minLength":1,"maxLength":600},"asset_ref":{"type":"string","minLength":1,"maxLength":600},"category":{"type":"string","enum":["overview","current_progress","tech_stack","architecture","conventions","decision","reference"]},"title":{"type":"string","minLength":1,"maxLength":240},"markdown":{"type":"string","minLength":1,"maxLength":128000},"expected_revision":{"type":"integer","minimum":1}},"required":["category","title","markdown"],"additionalProperties":false}"#.utf8),
+            name: teamAssetCreateToolName,
+            description: "仅供目标团队明确指定的项目经理首次创建一项共享资产。调用前先用 team_asset_list 确认没有同类资产，并用 agent_workspace_snapshot 取得本轮 team_ref。创建时只提供 team_ref、category、title、markdown；绝对不要提供 asset_ref、new、create 或 revision。适用于空资产目录，也适用于新增另一项独立资产。成功后返回当前 Run 的 asset_ref 和 revision。项目概览与当前进度只能依据真实 Human 消息、团队目标、Todo 和已核验结果创建，不得写空模板或臆测。",
+            schema: Data(#"{"type":"object","properties":{"team_ref":{"type":"string","minLength":1,"maxLength":600},"category":{"type":"string","enum":["overview","current_progress","tech_stack","architecture","conventions","decision","reference"]},"title":{"type":"string","minLength":1,"maxLength":240},"markdown":{"type":"string","minLength":1,"maxLength":128000}},"required":["team_ref","category","title","markdown"],"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
+            name: teamAssetUpdateToolName,
+            description: "仅供目标团队明确指定的项目经理更新已有共享资产。必须先调用 team_asset_list 取得当前 Run 的 asset_ref，并用 team_asset_get 读取现有正文后再提交完整合并结果。只提供 asset_ref、category、title、markdown；不要提供 team_ref 或 expected_revision，工具会从 asset_ref 中读取并校验当前 revision。若引用过期，重新 list/get 后再更新。此工具不能用于空目录首次创建；没有可用 asset_ref 时改用 team_asset_create。",
+            schema: Data(#"{"type":"object","properties":{"asset_ref":{"type":"string","minLength":1,"maxLength":600},"category":{"type":"string","enum":["overview","current_progress","tech_stack","architecture","conventions","decision","reference"]},"title":{"type":"string","minLength":1,"maxLength":240},"markdown":{"type":"string","minLength":1,"maxLength":128000}},"required":["asset_ref","category","title","markdown"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(
@@ -210,8 +216,8 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: todoCompleteToolName,
-            description: "仅用于 Todo 执行线程：当前任务负责人保存完成总结，把自己负责的任务置为 completed 并结束执行；不要求负责人是项目经理。客户端同时记录完成事件。",
-            schema: Data(#"{"type":"object","properties":{"summary":{"type":"string","minLength":1,"maxLength":16000}},"required":["summary"],"additionalProperties":false}"#.utf8),
+            description: "仅用于 Todo 执行线程：当前任务负责人保存完成总结，把自己负责的任务置为 completed 并结束执行；不要求负责人是项目经理。发现应长期保留的项目背景、进度、技术栈、架构、规范、决策或参考资料时，通过 asset_update_suggestions 提交完整 Markdown 和事实理由。建议只进入完成事件，由项目经理审核后才能写入团队共享资产；不要为没有持久价值的过程信息提交建议。",
+            schema: Data(#"{"type":"object","properties":{"summary":{"type":"string","minLength":1,"maxLength":16000},"asset_update_suggestions":{"type":"array","maxItems":8,"items":{"type":"object","properties":{"category":{"type":"string","enum":["overview","current_progress","tech_stack","architecture","conventions","decision","reference"]},"title":{"type":"string","minLength":1,"maxLength":240},"markdown":{"type":"string","minLength":1,"maxLength":128000},"rationale":{"type":"string","minLength":1,"maxLength":4000}},"required":["category","title","markdown","rationale"],"additionalProperties":false}}},"required":["summary"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),
         .init(

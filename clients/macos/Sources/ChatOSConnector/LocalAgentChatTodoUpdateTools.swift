@@ -170,6 +170,7 @@ extension LocalAgentChatToolProvider {
                 runID: context.runID,
                 stage: "cancelled",
                 detail: "项目经理已停止该任务。",
+                assetUpdateSuggestions: [],
                 nowUnixMs: timestamp
             )
             _ = try await store.enqueueAgentTodoStatus(

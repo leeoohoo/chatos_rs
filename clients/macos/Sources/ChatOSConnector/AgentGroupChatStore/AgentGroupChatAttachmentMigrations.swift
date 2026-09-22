@@ -34,6 +34,45 @@ extension AgentGroupChatMigrations {
             }
             return sqlite3_step(statement) == SQLITE_ROW
         }
+        func createProjectRequirementSurveyTable(ifNotExists: Bool) throws {
+            let guardClause = ifNotExists ? "IF NOT EXISTS " : ""
+            try execute(
+                """
+                CREATE TABLE \(guardClause)local_agent_requirement_surveys (
+                    owner_user_id TEXT NOT NULL,
+                    id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    creator_agent_id TEXT NOT NULL,
+                    source_delivery_id TEXT NOT NULL,
+                    request_key TEXT NOT NULL,
+                    draft_json TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('pending', 'submitted')),
+                    submission_json TEXT,
+                    resolution_json TEXT,
+                    created_at_unix_ms INTEGER NOT NULL,
+                    submitted_at_unix_ms INTEGER,
+                    resolved_at_unix_ms INTEGER,
+                    PRIMARY KEY(owner_user_id, id),
+                    UNIQUE(
+                        owner_user_id, project_id, creator_agent_id,
+                        source_delivery_id, request_key
+                    ),
+                    FOREIGN KEY(owner_user_id, creator_agent_id)
+                        REFERENCES local_agent_profiles(owner_user_id, id),
+                    FOREIGN KEY(owner_user_id, source_delivery_id)
+                        REFERENCES project_agent_deliveries(owner_user_id, id)
+                )
+                """
+            )
+            try execute(
+                """
+                CREATE INDEX \(guardClause)local_agent_requirement_surveys_project
+                ON local_agent_requirement_surveys(
+                    owner_user_id, project_id, status, created_at_unix_ms, id
+                )
+                """
+            )
+        }
 
         if !hasColumn("sha256", table: "project_agent_message_attachments") {
             try execute("ALTER TABLE project_agent_message_attachments ADD COLUMN sha256 TEXT")
@@ -128,6 +167,168 @@ extension AgentGroupChatMigrations {
         if !hasMigration(26) {
             try execute(
                 "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (26)"
+            )
+        }
+        if !hasColumn("asset_update_suggestions_json", table: "local_agent_todo_events") {
+            try execute(
+                "ALTER TABLE local_agent_todo_events ADD COLUMN asset_update_suggestions_json TEXT NOT NULL DEFAULT '[]'"
+            )
+        }
+        if !hasMigration(27) {
+            let timestamp = "CAST(strftime('%s', 'now') AS INTEGER) * 1000"
+            try execute(
+                """
+                INSERT OR IGNORE INTO project_agent_messages (
+                    owner_user_id, id, room_id, sender_kind, sender_id, content,
+                    reply_to_message_id, source_run_id, causation_id, root_message_id,
+                    hop_count, created_at_unix_ms
+                )
+                SELECT room.owner_user_id,
+                       'asset-maintenance-message-' || replace(room.id, '-', ''),
+                       room.id, 'system', 'system',
+                       '你是“' || room.name || '”的项目经理。请读取 Human 消息、团队目标、成员和 Todo 状态，主动维护真实的团队共享资产。信息充分时建立或更新“项目概览”和“当前进度”；信息不足时创建选择 requirement_survey_write 的 Todo（程序自动加入 requirement_survey_read）完成调研，不要在通讯层直接调用调研工具，也不要写空模板或臆测内容。完成本轮实际处理后再结束通讯周期。',
+                       NULL, NULL, 'team-asset-maintenance:' || room.id || ':v1',
+                       'asset-maintenance-message-' || replace(room.id, '-', ''),
+                       0, \(timestamp)
+                FROM project_agent_rooms room
+                JOIN project_agent_room_members member
+                  ON member.owner_user_id = room.owner_user_id
+                 AND member.room_id = room.id
+                 AND member.agent_id = room.project_manager_agent_id
+                 AND member.status = 'active'
+                WHERE room.status = 'active'
+                  AND room.conversation_kind = 'project_team'
+                  AND room.project_manager_agent_id IS NOT NULL
+                  AND (
+                    NOT EXISTS (
+                        SELECT 1 FROM local_agent_team_assets asset
+                        WHERE asset.owner_user_id = room.owner_user_id
+                          AND asset.team_room_id = room.id
+                          AND asset.status = 'active' AND asset.category = 'overview'
+                    )
+                    OR NOT EXISTS (
+                        SELECT 1 FROM local_agent_team_assets asset
+                        WHERE asset.owner_user_id = room.owner_user_id
+                          AND asset.team_room_id = room.id
+                          AND asset.status = 'active' AND asset.category = 'current_progress'
+                    )
+                  )
+                """
+            )
+            try execute(
+                """
+                INSERT OR IGNORE INTO project_agent_message_mentions (
+                    owner_user_id, message_id, agent_id, position
+                )
+                SELECT room.owner_user_id,
+                       'asset-maintenance-message-' || replace(room.id, '-', ''),
+                       room.project_manager_agent_id, 0
+                FROM project_agent_rooms room
+                JOIN project_agent_messages message
+                  ON message.owner_user_id = room.owner_user_id
+                 AND message.id = 'asset-maintenance-message-' || replace(room.id, '-', '')
+                WHERE room.project_manager_agent_id IS NOT NULL
+                """
+            )
+            try execute(
+                """
+                INSERT OR IGNORE INTO project_agent_deliveries (
+                    owner_user_id, id, room_id, message_id, root_message_id,
+                    target_agent_id, trigger_kind, status, attempt, hop_count,
+                    deduplication_key, response_message_id, last_error,
+                    claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms
+                )
+                SELECT room.owner_user_id,
+                       'asset-maintenance-delivery-' || replace(room.id, '-', ''),
+                       room.id,
+                       'asset-maintenance-message-' || replace(room.id, '-', ''),
+                       'asset-maintenance-message-' || replace(room.id, '-', ''),
+                       room.project_manager_agent_id, 'mention', 'pending', 0, 0,
+                       'team-asset-maintenance:' || room.id || ':v1',
+                       NULL, NULL, NULL, NULL, \(timestamp)
+                FROM project_agent_rooms room
+                JOIN project_agent_messages message
+                  ON message.owner_user_id = room.owner_user_id
+                 AND message.id = 'asset-maintenance-message-' || replace(room.id, '-', '')
+                WHERE room.project_manager_agent_id IS NOT NULL
+                """
+            )
+            try execute(
+                "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (27)"
+            )
+        }
+        if !hasMigration(28) {
+            try createProjectRequirementSurveyTable(ifNotExists: true)
+            try execute(
+                "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (28)"
+            )
+        }
+        if !hasColumn("resolution_json", table: "local_agent_requirement_surveys") {
+            try execute(
+                "ALTER TABLE local_agent_requirement_surveys ADD COLUMN resolution_json TEXT"
+            )
+        }
+        if !hasColumn("resolved_at_unix_ms", table: "local_agent_requirement_surveys") {
+            try execute(
+                "ALTER TABLE local_agent_requirement_surveys ADD COLUMN resolved_at_unix_ms INTEGER"
+            )
+        }
+        if !hasMigration(29) {
+            try execute(
+                "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (29)"
+            )
+        }
+        if !hasMigration(30) {
+            // Requirement surveys are project-owned. There is intentionally no legacy row
+            // conversion: this feature has no production data, so the obsolete team-owned
+            // table is replaced outright instead of preserving the wrong ownership model.
+            try execute("DROP INDEX IF EXISTS local_agent_requirement_surveys_team")
+            try execute("DROP TABLE IF EXISTS local_agent_requirement_surveys")
+            try createProjectRequirementSurveyTable(ifNotExists: false)
+            try execute(
+                "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (30)"
+            )
+        }
+        if !hasMigration(31) {
+            // Requirement Survey capability is task-scoped. Task Runner runs do not have local
+            // Agent profile or delivery rows, so provenance remains text without those FKs.
+            // There was no released survey data; replace the preview table directly.
+            try execute("DROP INDEX IF EXISTS local_agent_requirement_surveys_project")
+            try execute("DROP TABLE IF EXISTS local_agent_requirement_surveys")
+            try execute(
+                """
+                CREATE TABLE local_agent_requirement_surveys (
+                    owner_user_id TEXT NOT NULL,
+                    id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    creator_agent_id TEXT NOT NULL CHECK(length(creator_agent_id) > 0),
+                    source_delivery_id TEXT NOT NULL CHECK(length(source_delivery_id) > 0),
+                    request_key TEXT NOT NULL,
+                    draft_json TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('pending', 'submitted')),
+                    submission_json TEXT,
+                    resolution_json TEXT,
+                    created_at_unix_ms INTEGER NOT NULL,
+                    submitted_at_unix_ms INTEGER,
+                    resolved_at_unix_ms INTEGER,
+                    PRIMARY KEY(owner_user_id, id),
+                    UNIQUE(
+                        owner_user_id, project_id, creator_agent_id,
+                        source_delivery_id, request_key
+                    )
+                )
+                """
+            )
+            try execute(
+                """
+                CREATE INDEX local_agent_requirement_surveys_project
+                ON local_agent_requirement_surveys(
+                    owner_user_id, project_id, status, created_at_unix_ms, id
+                )
+                """
+            )
+            try execute(
+                "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (31)"
             )
         }
     }

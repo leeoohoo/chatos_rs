@@ -16,6 +16,8 @@ public enum LocalAgentTodoBuiltinCapability: String, Codable, Sendable, CaseIter
     case projectRead = "project_read"
     case projectWrite = "project_write"
     case terminal
+    case requirementSurveyRead = "requirement_survey_read"
+    case requirementSurveyWrite = "requirement_survey_write"
 }
 
 /// Program-resolved Plugin selection. `pluginID` is persisted for execution but is never encoded
@@ -63,7 +65,7 @@ public struct LocalAgentTodoExecutionPlan: Codable, Sendable, Equatable {
         selectedAtUnixMs: Int64 = 0
     ) {
         self.requiresExecution = requiresExecution
-        self.builtinCapabilities = builtinCapabilities
+        self.builtinCapabilities = Self.completingDependencies(in: builtinCapabilities)
         self.plugins = plugins
         self.selectionRevision = selectionRevision
         self.selectedAtUnixMs = selectedAtUnixMs
@@ -77,8 +79,14 @@ public struct LocalAgentTodoExecutionPlan: Codable, Sendable, Equatable {
               selectedAtUnixMs >= 0 else {
             throw AgentGroupChatError.invalidField("todoExecutionPlan")
         }
+        guard !builtinCapabilities.contains(.requirementSurveyWrite)
+                || builtinCapabilities.contains(.requirementSurveyRead) else {
+            throw AgentGroupChatError.invalidField("todoRequirementSurveyReadDependency")
+        }
         if !requiresExecution,
-           builtinCapabilities.contains(where: { $0 != .projectRead }) {
+           builtinCapabilities.contains(where: {
+               $0 != .projectRead && $0 != .requirementSurveyRead
+           }) {
             throw AgentGroupChatError.invalidField("todoRequiresExecution")
         }
         try AgentGroupChatValidation.identifier(
@@ -86,6 +94,20 @@ public struct LocalAgentTodoExecutionPlan: Codable, Sendable, Equatable {
             field: "todoCapabilityRevision"
         )
         for plugin in plugins { try plugin.validate() }
+    }
+
+    public static func completingDependencies(
+        in capabilities: [LocalAgentTodoBuiltinCapability]
+    ) -> [LocalAgentTodoBuiltinCapability] {
+        var result: [LocalAgentTodoBuiltinCapability] = []
+        for capability in capabilities {
+            if capability == .requirementSurveyWrite,
+               !result.contains(.requirementSurveyRead) {
+                result.append(.requirementSurveyRead)
+            }
+            if !result.contains(capability) { result.append(capability) }
+        }
+        return result
     }
 }
 
@@ -559,6 +581,46 @@ public enum LocalAgentTodoProgressKind: String, Codable, Sendable, CaseIterable 
     case cancelled
 }
 
+/// A Todo executor can propose durable knowledge without receiving permission to mutate the
+/// team's shared assets. The explicit project manager reviews the full replacement Markdown and
+/// decides whether to apply it with the normal revision-checked team asset tools.
+public struct LocalAgentTeamAssetUpdateSuggestion: Codable, Sendable, Equatable {
+    public let category: LocalAgentTeamAssetCategory
+    public let title: String
+    public let markdown: String
+    public let rationale: String
+
+    public init(
+        category: LocalAgentTeamAssetCategory,
+        title: String,
+        markdown: String,
+        rationale: String
+    ) {
+        self.category = category
+        self.title = title
+        self.markdown = markdown
+        self.rationale = rationale
+    }
+
+    public func validate() throws {
+        try AgentGroupChatValidation.text(
+            title,
+            field: "teamAssetSuggestionTitle",
+            maximumLength: 240
+        )
+        try AgentGroupChatValidation.text(
+            markdown,
+            field: "teamAssetSuggestionMarkdown",
+            maximumLength: 128_000
+        )
+        try AgentGroupChatValidation.text(
+            rationale,
+            field: "teamAssetSuggestionRationale",
+            maximumLength: 4_000
+        )
+    }
+}
+
 public struct LocalAgentTodoProgress: Codable, Sendable, Equatable, Identifiable {
     public let id: String
     public let ownerUserID: String
@@ -569,6 +631,7 @@ public struct LocalAgentTodoProgress: Codable, Sendable, Equatable, Identifiable
     public let runID: String?
     public let stage: String
     public let detail: String
+    public let assetUpdateSuggestions: [LocalAgentTeamAssetUpdateSuggestion]
     public let createdAtUnixMs: Int64
 
     public init(
@@ -581,6 +644,7 @@ public struct LocalAgentTodoProgress: Codable, Sendable, Equatable, Identifiable
         runID: String? = nil,
         stage: String = "",
         detail: String,
+        assetUpdateSuggestions: [LocalAgentTeamAssetUpdateSuggestion] = [],
         createdAtUnixMs: Int64
     ) {
         self.id = id
@@ -592,6 +656,30 @@ public struct LocalAgentTodoProgress: Codable, Sendable, Equatable, Identifiable
         self.runID = runID
         self.stage = stage
         self.detail = detail
+        self.assetUpdateSuggestions = assetUpdateSuggestions
         self.createdAtUnixMs = createdAtUnixMs
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, ownerUserID, agentID, todoID, sequence, kind, runID, stage, detail
+        case assetUpdateSuggestions, createdAtUnixMs
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        ownerUserID = try values.decode(String.self, forKey: .ownerUserID)
+        agentID = try values.decode(String.self, forKey: .agentID)
+        todoID = try values.decode(String.self, forKey: .todoID)
+        sequence = try values.decode(Int64.self, forKey: .sequence)
+        kind = try values.decode(LocalAgentTodoProgressKind.self, forKey: .kind)
+        runID = try values.decodeIfPresent(String.self, forKey: .runID)
+        stage = try values.decode(String.self, forKey: .stage)
+        detail = try values.decode(String.self, forKey: .detail)
+        assetUpdateSuggestions = try values.decodeIfPresent(
+            [LocalAgentTeamAssetUpdateSuggestion].self,
+            forKey: .assetUpdateSuggestions
+        ) ?? []
+        createdAtUnixMs = try values.decode(Int64.self, forKey: .createdAtUnixMs)
     }
 }

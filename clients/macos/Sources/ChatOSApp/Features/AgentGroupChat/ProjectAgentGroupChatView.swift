@@ -6,6 +6,7 @@ import SwiftUI
 enum AgentTeamSection: String, CaseIterable, Identifiable {
     case chat = "聊天"
     case tasks = "任务"
+    case research = "需求调研"
     case assets = "共享资产"
     case runs = "运行"
 
@@ -153,6 +154,19 @@ struct ProjectAgentGroupChatView: View {
             TeamTodoBoardView(
                 todos: viewModel.teamTodos,
                 profilesByID: viewModel.profilesByID
+            )
+        case .research:
+            ProjectRequirementSurveysView(
+                surveys: viewModel.requirementSurveys,
+                submittingSurveyIDs: viewModel.submittingRequirementSurveyIDs,
+                creatorNamesByID: viewModel.profilesByID.mapValues(\.draft.name),
+                onSubmit: { survey, selections, notes in
+                    await viewModel.submitRequirementSurvey(
+                        survey,
+                        selections: selections,
+                        notes: notes
+                    )
+                }
             )
         case .assets:
             TeamAssetsView(
@@ -462,7 +476,7 @@ struct ProjectAgentGroupChatView: View {
             }
             .labelsHidden()
             .pickerStyle(.segmented)
-            .frame(width: 360)
+            .frame(width: 470)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
@@ -476,6 +490,7 @@ private extension AgentTeamSection {
         switch self {
         case .chat: "bubble.left.and.bubble.right"
         case .tasks: "checklist"
+        case .research: "list.clipboard"
         case .assets: "folder"
         case .runs: "waveform.path.ecg"
         }

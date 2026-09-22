@@ -54,6 +54,8 @@ pub enum SystemMcpKey {
     CodeMaintainerRead,
     CodeMaintainerWrite,
     TerminalController,
+    RequirementSurveyRead,
+    RequirementSurveyWrite,
     TaskManager,
     Notepad,
     AgentBuilder,
@@ -68,10 +70,12 @@ pub enum SystemMcpKey {
 }
 
 impl SystemMcpKey {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 15] = [
         Self::CodeMaintainerRead,
         Self::CodeMaintainerWrite,
         Self::TerminalController,
+        Self::RequirementSurveyRead,
+        Self::RequirementSurveyWrite,
         Self::Notepad,
         Self::AgentBuilder,
         Self::AskUser,
@@ -89,6 +93,8 @@ impl SystemMcpKey {
             Self::CodeMaintainerRead => "code_maintainer_read",
             Self::CodeMaintainerWrite => "code_maintainer_write",
             Self::TerminalController => "terminal_controller",
+            Self::RequirementSurveyRead => "requirement_survey_read",
+            Self::RequirementSurveyWrite => "requirement_survey_write",
             Self::TaskManager => "task_manager",
             Self::Notepad => "notepad",
             Self::AgentBuilder => "agent_builder",

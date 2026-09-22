@@ -109,7 +109,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 "todo_list", "todo_execution_options", "todo_add", "todo_update",
                 "todo_reorder", "todo_read_progress", "todo_dependency_options",
                 "todo_schedule_state", "todo_start_next", "agent_cycle_complete",
-                "team_asset_list", "team_asset_get", "team_asset_upsert", "team_asset_archive",
+                "team_asset_list", "team_asset_get", "team_asset_create",
+                "team_asset_update", "team_asset_archive",
             ]
         )
         let descriptions = Dictionary(uniqueKeysWithValues: definitions.map {
@@ -127,6 +128,20 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertTrue(descriptions[LocalAgentChatToolProvider.inboxSendToolName]?.contains(
             "Human-Agent 私聊"
         ) == true)
+        for toolName in [
+            "requirement_survey_create",
+            "requirement_survey_list",
+            "requirement_survey_get",
+            "requirement_survey_resolve",
+        ] {
+            XCTAssertFalse(definitions.contains { $0.name == toolName })
+        }
+        XCTAssertTrue(descriptions[
+            LocalAgentChatToolProvider.teamAssetCreateToolName
+        ]?.contains("绝对不要提供 asset_ref") == true)
+        XCTAssertTrue(descriptions[
+            LocalAgentChatToolProvider.teamAssetUpdateToolName
+        ]?.contains("不能用于空目录首次创建") == true)
         for toolName in [
             LocalAgentChatToolProvider.inboxSendToolName,
             LocalAgentChatToolProvider.sendDirectToolName,
@@ -181,6 +196,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertFalse(workspace.content.contains(first.id))
         XCTAssertFalse(workspace.content.contains(second.id))
         XCTAssertFalse(workspace.content.contains(third.id))
+        XCTAssertFalse(workspace.content.contains(room.projectID))
         let workspaceJSON = try XCTUnwrap(
             try JSONSerialization.jsonObject(with: Data(workspace.content.utf8))
                 as? [String: Any]
@@ -188,6 +204,52 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let workspaceAgents = try XCTUnwrap(workspaceJSON["agents"] as? [[String: Any]])
         let workspaceTeams = try XCTUnwrap(workspaceJSON["teams"] as? [[String: Any]])
         let teamReference = try XCTUnwrap(workspaceTeams.first?["team_ref"] as? String)
+        let createdSurvey = try await provider.execute(.init(
+            id: "create-project-survey",
+            name: "requirement_survey_create",
+            arguments: "{}"
+        ))
+        XCTAssertTrue(createdSurvey.isError)
+        let projectSurveys = try await store.listRequirementSurveys(
+            ownerUserID: "alice",
+            projectID: room.projectID,
+            status: .pending
+        )
+        XCTAssertEqual(projectSurveys.count, 0)
+        let createdAsset = try await provider.execute(.init(
+            id: "create-empty-directory-asset",
+            name: LocalAgentChatToolProvider.teamAssetCreateToolName,
+            arguments: try toolArguments([
+                "team_ref": teamReference,
+                "category": "overview",
+                "title": "项目概览",
+                "markdown": "# 项目概览\n\n来自已核验事实。",
+            ])
+        ))
+        XCTAssertFalse(createdAsset.isError)
+        XCTAssertFalse(createdAsset.content.contains(room.id))
+        let createdAssetJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(createdAsset.content.utf8)) as? [String: Any]
+        )
+        let assetReference = try XCTUnwrap(createdAssetJSON["asset_ref"] as? String)
+        XCTAssertEqual(createdAssetJSON["revision"] as? Int, 1)
+
+        let updatedAsset = try await provider.execute(.init(
+            id: "update-existing-asset",
+            name: LocalAgentChatToolProvider.teamAssetUpdateToolName,
+            arguments: try toolArguments([
+                "asset_ref": assetReference,
+                "category": "overview",
+                "title": "项目概览",
+                "markdown": "# 项目概览\n\n已合并当前进度。",
+            ])
+        ))
+        XCTAssertFalse(updatedAsset.isError)
+        let updatedAssetJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(updatedAsset.content.utf8)) as? [String: Any]
+        )
+        XCTAssertEqual(updatedAssetJSON["revision"] as? Int, 2)
+        XCTAssertEqual(updatedAssetJSON["markdown"] as? String, "# 项目概览\n\n已合并当前进度。")
         let thirdReference = try XCTUnwrap(
             workspaceAgents.first(where: {
                 ($0["is_current_agent"] as? Bool) == false
@@ -810,6 +872,12 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             try JSONSerialization.jsonObject(with: Data(options.content.utf8)) as? [String: Any]
         )
         XCTAssertFalse(options.content.contains("internal-plugin-secret"))
+        XCTAssertEqual(
+            Set(try XCTUnwrap(optionsJSON["builtin_capabilities"] as? [String])),
+            Set(LocalAgentTodoBuiltinCapability.allCases.map(\.rawValue))
+        )
+        XCTAssertTrue(options.content.contains("requirement_survey_read"))
+        XCTAssertTrue(options.content.contains("requirement_survey_write"))
         let teamRef = try XCTUnwrap(
             (optionsJSON["teams"] as? [[String: Any]])?.first(where: {
                 ($0["name"] as? String) == second.draft.name

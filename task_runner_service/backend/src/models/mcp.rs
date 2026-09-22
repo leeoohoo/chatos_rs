@@ -53,6 +53,16 @@ pub fn mcp_builtin_kind_guide(kind: BuiltinMcpKind) -> McpBuiltinKindGuide {
             use_cases: &["运行编译检查", "执行脚本", "查看命令输出", "排查本地环境"],
             capabilities: &["执行 shell 命令", "读取命令输出", "管理长运行命令会话"],
         },
+        BuiltinMcpKind::RequirementSurveyRead => McpBuiltinKindGuide {
+            description: "需求调研只读工具，读取当前项目的调研单、Human 答案与备注、解决方案、执行计划和项目任务状态。项目 ID 由程序透传。",
+            use_cases: &["查重需求调研", "读取 Human 决策", "复用解决方案", "核对项目任务进度"],
+            capabilities: &["列出调研", "读取完整答案与备注", "读取方案与执行计划", "读取项目任务状态"],
+        },
+        BuiltinMcpKind::RequirementSurveyWrite => McpBuiltinKindGuide {
+            description: "需求调研创建与方案写入工具；用于创建选择式调研或为已提交调研写入方案。程序会强制同时加入 RequirementSurveyRead。",
+            use_cases: &["创建需求调研", "重大变更确认", "写入解决方案", "生成结构化执行计划"],
+            capabilities: &["创建调研单", "写入解决方案", "写入执行计划"],
+        },
         BuiltinMcpKind::TaskManager => McpBuiltinKindGuide {
             description: "Task Manager builtin MCP 已移除；该 legacy kind 仅用于兼容旧数据解析，不应出现在可选能力里。",
             use_cases: &[],

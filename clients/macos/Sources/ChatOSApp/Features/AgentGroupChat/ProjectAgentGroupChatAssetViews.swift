@@ -11,6 +11,8 @@ struct TeamAssetsView: View {
     let onHistory: (LocalAgentTeamAsset) -> Void
     let onArchive: (LocalAgentTeamAsset) -> Void
 
+    @State private var expandedAssetIDs: Set<String> = []
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -38,34 +40,80 @@ struct TeamAssetsView: View {
                         .padding(.top, 60)
                     }
                     ForEach(assets) { asset in
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack {
-                                Text(asset.title).appFont(.headline)
-                                Text(asset.category.displayName)
-                                    .appFont(.caption2)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Text("r\(asset.revision)")
-                                    .appFont(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                                Menu {
-                                    Button("编辑") { onEdit(asset) }
-                                    Button("版本历史") { onHistory(asset) }
-                                    Button("归档", role: .destructive) { onArchive(asset) }
-                                } label: {
-                                    Image(systemName: "ellipsis.circle")
-                                }
-                                .menuStyle(.borderlessButton)
-                            }
-                            MarkdownDocumentView(markdown: asset.markdown)
-                        }
-                        .padding(14)
-                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+                        assetCard(asset)
                     }
                 }
                 .padding(18)
             }
         }
+    }
+
+    private func assetCard(_ asset: LocalAgentTeamAsset) -> some View {
+        let isExpanded = expandedAssetIDs.contains(asset.id)
+
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        if isExpanded {
+                            expandedAssetIDs.remove(asset.id)
+                        } else {
+                            expandedAssetIDs.insert(asset.id)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .appFont(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 14)
+
+                        Text(asset.title)
+                            .appFont(.headline)
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+
+                        Text(asset.category.displayName)
+                            .appFont(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(AppPalette.surfaceSubtle, in: Capsule())
+
+                        Spacer(minLength: 12)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Text("r\(asset.revision)")
+                    .appFont(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+
+                Menu {
+                    Button("编辑") { onEdit(asset) }
+                    Button("版本历史") { onHistory(asset) }
+                    Button("归档", role: .destructive) { onArchive(asset) }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+            }
+            .padding(.horizontal, 14)
+            .frame(minHeight: 50)
+
+            if isExpanded {
+                Divider()
+                MarkdownDocumentView(markdown: asset.markdown)
+                    .padding(14)
+            }
+        }
+        .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(AppPalette.border.opacity(0.75), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.025), radius: 3, y: 1)
     }
 }
 

@@ -97,6 +97,16 @@ extension LocalAgentGroupChatScheduler {
                 ) else { throw AgentGroupChatError.storage("message attachment is missing") }
                 triggerAttachments.append(payload)
             }
+            let builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>
+            if delivery.lane == .executor,
+               let todo = try await store.todoForDelivery(
+                ownerUserID: ownerUserID,
+                deliveryID: delivery.id
+               ) {
+                builtinCapabilities = Set(todo.executionPlan.builtinCapabilities)
+            } else {
+                builtinCapabilities = []
+            }
             var initial = AgentRunCheckpoint(
                 scope: scope,
                 messages: Self.initialMessages(
@@ -108,6 +118,7 @@ extension LocalAgentGroupChatScheduler {
                     projectType: projectType,
                     contextLanguage: contextLanguage,
                     communicationSkill: communicationSkill,
+                    builtinCapabilities: builtinCapabilities,
                     triggerMessage: triggerMessage,
                     triggerAttachments: triggerAttachments
                 )
@@ -184,6 +195,7 @@ extension LocalAgentGroupChatScheduler {
                 runID: context.runID,
                 stage: "started",
                 detail: "Todo 执行线程已启动，并完成团队、项目和能力计划绑定。",
+                assetUpdateSuggestions: [],
                 nowUnixMs: now()
             )
         }
@@ -434,6 +446,7 @@ extension LocalAgentGroupChatScheduler {
                 runID: runID,
                 stage: stage,
                 detail: detail,
+                assetUpdateSuggestions: [],
                 nowUnixMs: timestamp
             )
         }

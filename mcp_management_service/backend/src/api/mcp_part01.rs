@@ -202,4 +202,5 @@ fn grant_matches_snapshot(
 }
 
 #[cfg(test)]
+#[path = "mcp/tests.rs"]
 mod tests;

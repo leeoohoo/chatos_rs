@@ -47,6 +47,8 @@ impl LocalConnectorProvider {
                         SystemMcpKey::CodeMaintainerRead
                             | SystemMcpKey::CodeMaintainerWrite
                             | SystemMcpKey::TerminalController
+                            | SystemMcpKey::RequirementSurveyRead
+                            | SystemMcpKey::RequirementSurveyWrite
                             | SystemMcpKey::RemoteConnectionController
                     )
             }

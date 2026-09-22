@@ -191,6 +191,7 @@ extension LocalAgentChatToolProvider {
 
     struct WorkspaceTeamResponse: Encodable {
         let teamReference: String
+        let projectReference: String
         let name: String
         let goal: String
         let hasProjectManager: Bool
@@ -199,6 +200,7 @@ extension LocalAgentChatToolProvider {
 
         enum CodingKeys: String, CodingKey {
             case teamReference = "team_ref"
+            case projectReference = "project_ref"
             case name, goal
             case hasProjectManager = "has_project_manager"
             case projectManager = "project_manager"
@@ -301,6 +303,94 @@ extension LocalAgentChatToolProvider {
             case assetReference = "asset_ref"
             case category, title, markdown, revision
             case updatedAtUnixMs = "updated_at_unix_ms"
+        }
+    }
+
+    struct RequirementSurveySummaryResponse: Encodable {
+        let surveyReference: String
+        let title: String
+        let purpose: String
+        let status: String
+        let createdAtUnixMs: Int64
+        let submittedAtUnixMs: Int64?
+
+        enum CodingKeys: String, CodingKey {
+            case surveyReference = "survey_ref"
+            case title, purpose, status
+            case createdAtUnixMs = "created_at_unix_ms"
+            case submittedAtUnixMs = "submitted_at_unix_ms"
+        }
+    }
+
+    struct RequirementSurveyDetailResponse: Encodable {
+        struct Option: Encodable {
+            let key: String
+            let label: String
+        }
+
+        struct Question: Encodable {
+            let key: String
+            let prompt: String
+            let kind: String
+            let required: Bool
+            let options: [Option]
+            let selectedOptionKeys: [String]
+            let selectedOptionLabels: [String]
+
+            enum CodingKeys: String, CodingKey {
+                case key, prompt, kind, required, options
+                case selectedOptionKeys = "selected_option_keys"
+                case selectedOptionLabels = "selected_option_labels"
+            }
+        }
+
+        struct Resolution: Encodable {
+            struct ExecutionStep: Encodable {
+                let key: String
+                let title: String
+                let detail: String
+                let owner: String
+                let deliverable: String
+                let acceptanceCriteria: String
+
+                enum CodingKeys: String, CodingKey {
+                    case key, title, detail, owner, deliverable
+                    case acceptanceCriteria = "acceptance_criteria"
+                }
+            }
+
+            let summary: String
+            let solutionMarkdown: String
+            let executionSteps: [ExecutionStep]
+            let risksAndOpenQuestions: String
+            let relatedMaterials: String
+
+            enum CodingKeys: String, CodingKey {
+                case summary
+                case solutionMarkdown = "solution_markdown"
+                case executionSteps = "execution_steps"
+                case risksAndOpenQuestions = "risks_and_open_questions"
+                case relatedMaterials = "related_materials"
+            }
+        }
+
+        let surveyReference: String
+        let title: String
+        let purpose: String
+        let status: String
+        let questions: [Question]
+        let notes: String?
+        let resolution: Resolution?
+        let createdAtUnixMs: Int64
+        let submittedAtUnixMs: Int64?
+        let resolvedAtUnixMs: Int64?
+
+        enum CodingKeys: String, CodingKey {
+            case surveyReference = "survey_ref"
+            case title, purpose, status, questions, notes, resolution
+            case createdAtUnixMs = "created_at_unix_ms"
+            case submittedAtUnixMs = "submitted_at_unix_ms"
+            case resolvedAtUnixMs = "resolved_at_unix_ms"
         }
     }
 
@@ -441,6 +531,7 @@ extension LocalAgentChatToolProvider {
         let kind: String
         let stage: String
         let detail: String
+        let assetUpdateSuggestions: [LocalAgentTeamAssetUpdateSuggestion]
         let createdAtUnixMs: Int64
 
         init(progress: LocalAgentTodoProgress) {
@@ -448,11 +539,13 @@ extension LocalAgentChatToolProvider {
             kind = progress.kind.rawValue
             stage = progress.stage
             detail = progress.detail
+            assetUpdateSuggestions = progress.assetUpdateSuggestions
             createdAtUnixMs = progress.createdAtUnixMs
         }
 
         enum CodingKeys: String, CodingKey {
             case sequence, kind, stage, detail
+            case assetUpdateSuggestions = "asset_update_suggestions"
             case createdAtUnixMs = "created_at_unix_ms"
         }
     }

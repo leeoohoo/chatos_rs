@@ -161,12 +161,12 @@ async fn resolve_agent_capabilities_for_owner(
                 if let Some(requirement) = requirement {
                     local_connector_requirements.push(requirement);
                 }
-                if let Some(resolved) = resolved {
+                if let Some(resolved) = *resolved {
                     mcps.push(resolved);
                 }
             }
             RuntimeBindingResolution::Skills(resolved) => skills.extend(resolved),
-            RuntimeBindingResolution::Plugin(resolved) => plugins.push(resolved),
+            RuntimeBindingResolution::Plugin(resolved) => plugins.push(*resolved),
             RuntimeBindingResolution::None => {}
         }
     }
@@ -314,9 +314,9 @@ async fn resolve_agent_capabilities_for_owner(
 }
 
 enum RuntimeBindingResolution {
-    Mcp(Option<ResolvedMcp>, Option<LocalConnectorRequirement>),
+    Mcp(Box<Option<ResolvedMcp>>, Option<LocalConnectorRequirement>),
     Skills(Vec<ResolvedSkill>),
-    Plugin(ResolvedPlugin),
+    Plugin(Box<ResolvedPlugin>),
     None,
 }
 
@@ -377,7 +377,10 @@ async fn resolve_runtime_binding(
                 reason,
                 tool_snapshot,
             });
-            Ok(RuntimeBindingResolution::Mcp(resolved, requirements.pop()))
+            Ok(RuntimeBindingResolution::Mcp(
+                Box::new(resolved),
+                requirements.pop(),
+            ))
         }
         RESOURCE_KIND_SKILL => {
             let Some(resource) = state
@@ -480,7 +483,7 @@ async fn resolve_runtime_binding(
                     .await?;
             Ok(match resolved {
                 Some(plugin) if plugin.available || include_unavailable => {
-                    RuntimeBindingResolution::Plugin(plugin)
+                    RuntimeBindingResolution::Plugin(Box::new(plugin))
                 }
                 _ => RuntimeBindingResolution::None,
             })

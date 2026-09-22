@@ -87,6 +87,7 @@ public enum LocalAgentPermission {
     public static let staffHire = "agent.staff.hire"
     public static let staffTerminate = "agent.staff.terminate"
     public static let localProjectList = "local.project.list"
+    private static let legacyRequirementSurveyManage = "requirement.survey.manage"
 
     /// Profiles created by the first 3.0.3 preview used this role-like capability. Keep it only
     /// as a read-time compatibility marker; the editor normalizes it into explicit permissions.
@@ -113,6 +114,7 @@ public enum LocalAgentPermission {
         values.remove(staffHire)
         values.remove(staffTerminate)
         values.remove(localProjectList)
+        values.remove(legacyRequirementSurveyManage)
         if canManageStaff {
             values.insert(staffHire)
             values.insert(staffTerminate)

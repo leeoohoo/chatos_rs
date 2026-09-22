@@ -86,6 +86,12 @@ extension SQLiteAgentGroupChatStore {
                 agent: manager,
                 nowUnixMs: timestamp
             )
+            try enqueueTeamAssetMaintenanceNotification(
+                ownerUserID: ownerUserID,
+                roomID: room.id,
+                projectManagerAgentID: projectManagerAgentID,
+                nowUnixMs: timestamp
+            )
             return room
         }
     }
@@ -332,6 +338,12 @@ extension SQLiteAgentGroupChatStore {
                   let updated = try readRoom(ownerUserID: ownerUserID, roomID: roomID) else {
                 throw AgentGroupChatError.conflict
             }
+            try enqueueTeamAssetMaintenanceNotification(
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                projectManagerAgentID: agentID,
+                nowUnixMs: now
+            )
             return updated
         }
     }

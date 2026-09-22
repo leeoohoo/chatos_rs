@@ -25,6 +25,8 @@ mod operations;
 #[path = "runtime_support.rs"]
 mod support;
 
+use support::*;
+
 use crate::{BrowserBackend, BrowserBackendFactory};
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
@@ -743,7 +745,6 @@ impl BrowserRuntime {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
-
 }
 
 #[cfg(test)]

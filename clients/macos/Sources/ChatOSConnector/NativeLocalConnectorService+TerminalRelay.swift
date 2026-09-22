@@ -127,16 +127,27 @@ extension NativeLocalConnectorService {
             workspace: workspace
         )
         let risk = NativeApprovalRiskEvaluator.evaluate(command: command, arguments: body.args)
-        let approval = await approvalDecision(
-            requestID: request.requestID,
-            command: command,
-            arguments: body.args,
-            cwd: cwd,
-            projectRoot: projectRoot,
-            source: body.source ?? "terminal-relay",
-            risk: risk,
-            workspaceID: request.workspaceID
-        )
+        let resolveApproval = {
+            await self.approvalDecision(
+                requestID: request.requestID,
+                command: command,
+                arguments: body.args,
+                cwd: cwd,
+                projectRoot: projectRoot,
+                source: body.source ?? "terminal-relay",
+                risk: risk,
+                workspaceID: request.workspaceID
+            )
+        }
+        let approval: NativeApprovalDecision
+        switch state.approvalMode {
+        case .requestApproval:
+            // Keep the user-approval path explicit at the terminal execution boundary.
+            // approvalDecision still honors a user-granted session allowlist first.
+            approval = await resolveApproval()
+        case .autoApproval, .fullControl:
+            approval = await resolveApproval()
+        }
         switch approval {
         case let .deny(reason), let .askUser(reason):
             appendApprovalHistory(

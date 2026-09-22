@@ -50,6 +50,11 @@ fn chatos_dependencies(
         BuiltinMcpKind::TerminalController => {
             return Err("TerminalController execution is not hosted by ChatOS".to_string());
         }
+        BuiltinMcpKind::RequirementSurveyRead | BuiltinMcpKind::RequirementSurveyWrite => {
+            return Err(
+                "Requirement Survey execution is hosted by the Local Connector".to_string(),
+            );
+        }
         BuiltinMcpKind::Notepad => {
             let user_id = normalized_value(server.user_id.as_deref()).unwrap_or("builtin");
             dependencies.notepad_store = Some(NotepadStoreRef::new(Arc::new(

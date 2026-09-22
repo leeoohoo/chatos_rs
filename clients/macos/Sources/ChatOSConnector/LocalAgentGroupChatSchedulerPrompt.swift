@@ -12,6 +12,7 @@ extension LocalAgentGroupChatScheduler {
         projectType: LocalProjectTypeDefinition?,
         contextLanguage: ChatOSLanguage,
         communicationSkill: LocalAgentCommunicationSkillSnapshot,
+        builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>,
         triggerMessage: ProjectAgentMessage,
         triggerAttachments: [ProjectAgentMessageAttachmentPayload]
     ) -> [AgentMessage] {
@@ -41,6 +42,18 @@ extension LocalAgentGroupChatScheduler {
         let projectInstructions = LocalAgentPermission.canAccessLocalProjects(
             profile.draft.defaultSkillIDs
         ) ? LocalAgentPromptCatalog.render(.permissionLocalProjects) : ""
+        var requirementSurveySkills: [String] = []
+        if builtinCapabilities.contains(.requirementSurveyRead) {
+            requirementSurveySkills.append(
+                LocalAgentPromptCatalog.render(.requirementSurveyReadSkill)
+            )
+        }
+        if builtinCapabilities.contains(.requirementSurveyWrite) {
+            requirementSurveySkills.append(
+                LocalAgentPromptCatalog.render(.requirementSurveyWriteSkill)
+            )
+        }
+        let requirementSurveySkill = requirementSurveySkills.joined(separator: "\n\n")
         let heartbeatDirective: String
         if delivery.triggerKind == .heartbeat {
             heartbeatDirective = LocalAgentPromptCatalog.render(
@@ -107,6 +120,7 @@ extension LocalAgentGroupChatScheduler {
                 ),
                 "staffing_instructions": staffingInstructions,
                 "project_instructions": projectInstructions,
+                "requirement_survey_skill": requirementSurveySkill,
                 "manager_instructions": heartbeatInstructions,
                 "executor_instructions": todoInstructions,
                 "todo_status_instructions": todoStatusInstructions,

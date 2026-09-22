@@ -210,6 +210,7 @@ enum AgentGroupChatSchema {
             )),
             stage TEXT NOT NULL,
             detail TEXT NOT NULL,
+            asset_update_suggestions_json TEXT NOT NULL DEFAULT '[]',
             created_at_unix_ms INTEGER NOT NULL,
             PRIMARY KEY(owner_user_id, id),
             UNIQUE(owner_user_id, todo_id, sequence),
@@ -457,6 +458,28 @@ enum AgentGroupChatSchema {
                 REFERENCES local_agent_profiles(owner_user_id, id)
         );
 
+        CREATE TABLE IF NOT EXISTS local_agent_requirement_surveys (
+            owner_user_id TEXT NOT NULL,
+            id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            creator_agent_id TEXT NOT NULL,
+            source_delivery_id TEXT NOT NULL,
+            request_key TEXT NOT NULL,
+            draft_json TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('pending', 'submitted')),
+            submission_json TEXT,
+            resolution_json TEXT,
+            created_at_unix_ms INTEGER NOT NULL,
+            submitted_at_unix_ms INTEGER,
+            resolved_at_unix_ms INTEGER,
+            PRIMARY KEY(owner_user_id, id),
+            UNIQUE(
+                owner_user_id, project_id, creator_agent_id,
+                source_delivery_id, request_key
+            ),
+            CHECK(length(creator_agent_id) > 0),
+            CHECK(length(source_delivery_id) > 0)
+        );
         CREATE TABLE IF NOT EXISTS local_agent_todo_asset_snapshots (
             owner_user_id TEXT NOT NULL,
             todo_id TEXT NOT NULL,

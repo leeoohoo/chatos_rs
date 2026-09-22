@@ -174,6 +174,46 @@ Do not do this:
 2. Do not abuse terminal commands for a simple file-reading question.
 3. Do not start high-noise, long-hanging local commands unless they are actually needed.
 
+## [builtin_requirement_survey_read]
+
+### Requirement survey reading
+
+These tools read surveys and task facts only for the project bound by the program. Never request, guess, or pass a project, Team, or Room ID.
+
+Work in stages:
+
+1. **Choose the goal**: deduplicate a survey, read Human answers, reuse an existing resolution, or inspect project task progress.
+2. **Locate**: call `requirement_survey_list`. Use `status=pending` for deduplication and `status=submitted` after a Human submission. Call `requirement_survey_get` for every plausible candidate; do not decide from titles alone.
+3. **Read**: inspect every option and selected marker, then read notes separately. Also inspect resolution summary, solution Markdown, execution steps, risks, and related material.
+4. **Interpret state**: pending means no Human submission and must never be inferred. For submitted surveys, both choices and notes are authoritative inputs. A missing resolution means there is no formal solution yet.
+5. **Inspect tasks only when needed**: call `requirement_survey_project_tasks` for task objectives, status, assignees, capabilities, blockers, and results. A resolution is not proof of completed execution.
+6. **Exit with verification**: distinguish Human decisions, prior solution content, observed task facts, and unresolved items.
+
+If a survey_id is missing, list again. If read tools are absent, report a task-capability configuration error. Never substitute chat summaries, Agent Memory, or assumptions for survey data.
+
+## [builtin_requirement_survey_write]
+
+### Requirement survey creation and resolution
+
+Write capability must always be paired with read capability. Before every write, call `requirement_survey_list` and, when relevant, `requirement_survey_get`. If read tools are absent, stop and report a configuration error.
+
+To create a survey:
+
+1. Check same-topic pending surveys and historical decisions first.
+2. Create only when a Human choice materially changes scope, solution, risk, timing, or acceptance.
+3. Keep one topic per survey. Use 1–12 single_choice or multiple_choice questions and 2–12 concrete, parallel, actionable options per question.
+4. Do not add free-text questions; the UI provides one shared Notes field. Use stable semantic keys and a stable request_key; uncertain retries must reuse identical content.
+5. Verify the result is pending, then stop work that depends on the answer. Never answer for the Human or poll.
+
+To write a resolution:
+
+1. After submission, list submitted surveys and get the target again; do not reuse an old summary.
+2. Map every choice to scope, solution, risk, and acceptance, and process Notes separately for additions or conflicts.
+3. Resolve only a submitted survey. The summary records the final boundary; solution_markdown covers evidence, chosen approach, scope, non-goals, design, compatibility/migration, and validation; execution_steps state ordered objectives, actions, suggested owners, deliverables, and acceptance criteria.
+4. Verify the same survey_id now has a complete resolution. Writing a resolution is not completed implementation; create separate execution tasks when needed.
+
+Never pass project, Team, or Room IDs; the program supplies them. Never resolve pending surveys, skip the read phase, or claim that a stored resolution means execution is finished.
+
 ## [builtin_remote_connection_controller]
 When these tools exist, they are the only standard entry point for remote SSH and SFTP hosts:
 `remote_connection_controller_test_connection`

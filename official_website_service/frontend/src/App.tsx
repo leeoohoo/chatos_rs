@@ -16,10 +16,8 @@ type RegistrationForm = { email: string; displayName: string; inviteCode: string
 
 const productName = '叽咕狸';
 const heroVideos = [
-  { src: '/showcase/videos/hero-work.mp4', poster: '/showcase/videos/hero-work-poster.webp' },
-  { src: '/showcase/videos/hero-build.mp4', poster: '/showcase/videos/hero-build-poster.webp' },
-  { src: '/showcase/videos/hero-team.mp4', poster: '/showcase/videos/hero-team-poster.webp' },
-  { src: '/showcase/videos/hero-detail.mp4', poster: '/showcase/videos/hero-detail-poster.webp' },
+  { src: '/showcase/videos/hero-clay.mp4', poster: '/showcase/videos/hero-clay-poster.webp' },
+  { src: '/showcase/videos/hero-lines.mp4', poster: '/showcase/videos/hero-lines-poster.webp' },
 ];
 const fallbackManifest: SiteManifest = { product_name: productName, tagline: '把每一个工具做好，陪你把每一件事做好。', app_url: '#download', registration_enabled: true, downloads_enabled: false };
 const initialRegistration: RegistrationForm = { email: '', displayName: '', inviteCode: '', verificationCode: '', password: '', confirmPassword: '' };

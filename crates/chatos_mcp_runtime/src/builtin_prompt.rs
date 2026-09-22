@@ -22,6 +22,8 @@ const SECTION_ASK_USER: &str = "builtin_ask_user";
 const SECTION_CODE_MAINTAINER_READ: &str = "builtin_code_maintainer_read";
 const SECTION_CODE_MAINTAINER_WRITE: &str = "builtin_code_maintainer_write";
 const SECTION_TERMINAL_CONTROLLER: &str = "builtin_terminal_controller";
+const SECTION_REQUIREMENT_SURVEY_READ: &str = "builtin_requirement_survey_read";
+const SECTION_REQUIREMENT_SURVEY_WRITE: &str = "builtin_requirement_survey_write";
 const SECTION_REMOTE_CONNECTION_CONTROLLER: &str = "builtin_remote_connection_controller";
 const SECTION_NOTEPAD: &str = "builtin_notepad";
 const SECTION_AGENT_BUILDER: &str = "builtin_agent_builder";
@@ -34,6 +36,8 @@ const SECTION_ORDER: &[&str] = &[
     SECTION_CODE_MAINTAINER_READ,
     SECTION_CODE_MAINTAINER_WRITE,
     SECTION_TERMINAL_CONTROLLER,
+    SECTION_REQUIREMENT_SURVEY_READ,
+    SECTION_REQUIREMENT_SURVEY_WRITE,
     SECTION_REMOTE_CONNECTION_CONTROLLER,
     SECTION_NOTEPAD,
     SECTION_AGENT_BUILDER,
@@ -146,6 +150,8 @@ fn section_id_for_kind(kind: BuiltinMcpKind) -> Option<&'static str> {
         BuiltinMcpKind::CodeMaintainerRead => Some(SECTION_CODE_MAINTAINER_READ),
         BuiltinMcpKind::CodeMaintainerWrite => Some(SECTION_CODE_MAINTAINER_WRITE),
         BuiltinMcpKind::TerminalController => Some(SECTION_TERMINAL_CONTROLLER),
+        BuiltinMcpKind::RequirementSurveyRead => Some(SECTION_REQUIREMENT_SURVEY_READ),
+        BuiltinMcpKind::RequirementSurveyWrite => Some(SECTION_REQUIREMENT_SURVEY_WRITE),
         BuiltinMcpKind::TaskManager => None,
         BuiltinMcpKind::Notepad => Some(SECTION_NOTEPAD),
         BuiltinMcpKind::AskUser => Some(SECTION_ASK_USER),

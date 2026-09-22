@@ -214,6 +214,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 .appendingPathComponent("AgentGroupChat.sqlite3"),
             agentArtifactService: ChatOSAgentArtifactService(client: apiClient)
         )
+        Task { await localConnectorService.setAgentGroupChatService(agentGroupChatService) }
         let agentSkillLibrary = LocalAgentSkillLibrary(
             fileURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
                 .appendingPathComponent("AgentSkillOverrides.json")

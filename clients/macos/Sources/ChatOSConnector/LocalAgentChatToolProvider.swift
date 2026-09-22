@@ -40,9 +40,9 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     public static let todoBlockToolName = "todo_block"
     public static let teamAssetListToolName = "team_asset_list"
     public static let teamAssetGetToolName = "team_asset_get"
-    public static let teamAssetUpsertToolName = "team_asset_upsert"
+    public static let teamAssetCreateToolName = "team_asset_create"
+    public static let teamAssetUpdateToolName = "team_asset_update"
     public static let teamAssetArchiveToolName = "team_asset_archive"
-
     let store: any AgentGroupChatStore
     let context: LocalAgentChatRunContext
     let professions: [LocalAgentProfessionDefinition]
@@ -132,7 +132,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 Self.todoReorderToolName,
                 Self.todoExecutionOptionsToolName,
                 Self.todoDependencyOptionsToolName,
-                Self.teamAssetUpsertToolName,
+                Self.teamAssetCreateToolName,
+                Self.teamAssetUpdateToolName,
                 Self.teamAssetArchiveToolName,
             ]
             definitions.removeAll { projectManagerOnly.contains($0.name) }
@@ -212,8 +213,10 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             return try await listTeamAssets(call)
         case Self.teamAssetGetToolName:
             return try await getTeamAsset(call)
-        case Self.teamAssetUpsertToolName:
-            return try await upsertTeamAsset(call)
+        case Self.teamAssetCreateToolName:
+            return try await createTeamAsset(call)
+        case Self.teamAssetUpdateToolName:
+            return try await updateTeamAsset(call)
         case Self.teamAssetArchiveToolName:
             return try await archiveTeamAsset(call)
         default:

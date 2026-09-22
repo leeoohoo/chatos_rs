@@ -73,6 +73,12 @@ extension NativeLocalConnectorService {
             if policy.codeRead { tools += NativeMCPCodeReadTools.toolDefinitions }
             if policy.codeWrite { tools += NativeMCPCodeWriteStore.toolDefinitions }
             if policy.terminal { tools += NativeMCPTerminalStore.toolDefinitions }
+            if policy.requirementSurveyRead {
+                tools += NativeMCPRequirementSurveyTools.readToolDefinitions
+            }
+            if policy.requirementSurveyWrite {
+                tools += NativeMCPRequirementSurveyTools.writeToolDefinitions
+            }
             if policy.remoteConnection, remoteConnectionRuntime != nil {
                 tools += NativeMCPRemoteConnectionController.toolDefinitions
             }
@@ -109,6 +115,58 @@ extension NativeLocalConnectorService {
                 status: 200,
                 body: Self.rpcError(id: call.id, code: -32602, message: "tools/call.name 不能为空")
             )
+        }
+        if NativeMCPRequirementSurveyTools.readToolNames.contains(toolName)
+            || NativeMCPRequirementSurveyTools.writeToolNames.contains(toolName) {
+            let isWrite = NativeMCPRequirementSurveyTools.writeToolNames.contains(toolName)
+            guard isWrite ? policy.requirementSurveyWrite : policy.requirementSurveyRead else {
+                return .init(
+                    type: "mcp",
+                    requestID: request.requestID,
+                    status: 200,
+                    body: Self.rpcError(
+                        id: call.id,
+                        code: -32601,
+                        message: "当前任务未授权对应的需求调研 MCP"
+                    )
+                )
+            }
+            guard let projectID = request.header("x-local-connector-project-id"),
+                  !projectID.isEmpty,
+                  let agentGroupChatService else {
+                throw NativeMCPRelayError.invalidProjectContext
+            }
+            let sourceID = request.header("x-mcp-management-run-id")
+                ?? request.header("x-mcp-management-task-id")
+                ?? request.header("x-mcp-management-session-id")
+                ?? request.requestID
+            do {
+                let store = try await agentGroupChatService.store()
+                let result = try await NativeMCPRequirementSurveyTools(
+                    store: store,
+                    ownerUserID: ownerUserID,
+                    projectID: projectID,
+                    creatorAgentID: "task-runner",
+                    sourceDeliveryID: sourceID,
+                    now: { Int64(Date().timeIntervalSince1970 * 1_000) }
+                ).call(name: toolName, arguments: call.arguments)
+                return Self.mcpResultResponse(
+                    requestID: request.requestID,
+                    rpcID: call.id,
+                    result: Self.mcpToolResult(result)
+                )
+            } catch {
+                return .init(
+                    type: "mcp",
+                    requestID: request.requestID,
+                    status: 200,
+                    body: Self.rpcError(
+                        id: call.id,
+                        code: -32603,
+                        message: error.localizedDescription
+                    )
+                )
+            }
         }
         let workspaceRoot = URL(fileURLWithPath: workspace.absoluteRoot)
         let requestCWD = request.header("x-local-connector-cwd")
@@ -505,6 +563,8 @@ private struct NativeMCPBuiltinPolicy {
     var codeWrite = false
     var terminal = false
     var remoteConnection = false
+    var requirementSurveyRead = false
+    var requirementSurveyWrite = false
 
     init(header: String?) {
         for token in (header ?? "").split(whereSeparator: { ",;| ".contains($0) }) {
@@ -516,6 +576,10 @@ private struct NativeMCPBuiltinPolicy {
                 codeWrite = true
             case "terminalcontroller": terminal = true
             case "remoteconnectioncontroller": remoteConnection = true
+            case "requirementsurveyread": requirementSurveyRead = true
+            case "requirementsurveywrite":
+                requirementSurveyRead = true
+                requirementSurveyWrite = true
             default: break
             }
         }
@@ -540,12 +604,13 @@ private extension Dictionary where Key == String, Value == NativeJSONValue {
 }
 
 private enum NativeMCPRelayError: LocalizedError {
-    case invalidRequest, invalidContext, emptyCommand
+    case invalidRequest, invalidContext, invalidProjectContext, emptyCommand
 
     var errorDescription: String? {
         switch self {
         case .invalidRequest: "MCP Relay 请求格式无效"
         case .invalidContext: "MCP Relay 请求与当前设备或工作区不匹配"
+        case .invalidProjectContext: "需求调研工具需要由任务运行环境绑定真实项目"
         case .emptyCommand: "MCP execute_command 缺少命令"
         }
     }

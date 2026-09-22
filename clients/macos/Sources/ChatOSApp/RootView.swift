@@ -72,6 +72,21 @@ struct RootView: View {
                         systemImage: "person.crop.circle.badge.exclamationmark"
                     )
                 }
+            case .requirementSurveys:
+                if let ownerUserID = model.localProjectOwnerUserID {
+                    RequirementSurveyCenterView(
+                        ownerUserID: ownerUserID,
+                        projects: model.projects,
+                        service: model.agentGroupChatService,
+                        scheduler: model.agentGroupChatScheduler
+                    )
+                    .id(ownerUserID)
+                } else {
+                    ContentUnavailableView(
+                        model.localized("请先登录", english: "Sign in required"),
+                        systemImage: "person.crop.circle.badge.exclamationmark"
+                    )
+                }
             case let .pluginApplication(pluginID, componentKey):
                 if let application = model.pluginApplication(
                     pluginID: pluginID,

@@ -147,7 +147,14 @@ final class AgentGroupChatHistoricalMigrationTests: XCTestCase {
                 url,
                 sql: "SELECT CAST(version AS TEXT) FROM local_agent_group_chat_schema_migrations ORDER BY version"
             ),
-            (1...26).map(String.init)
+            (1...31).map(String.init)
+        )
+        XCTAssertEqual(
+            try strings(
+                url,
+                sql: "SELECT name FROM pragma_table_info('local_agent_requirement_surveys') WHERE name IN ('project_id', 'team_room_id') ORDER BY name"
+            ),
+            ["project_id"]
         )
         XCTAssertEqual(
             try strings(

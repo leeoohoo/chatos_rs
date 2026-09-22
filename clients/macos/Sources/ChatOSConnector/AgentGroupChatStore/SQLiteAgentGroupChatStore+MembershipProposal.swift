@@ -244,6 +244,14 @@ extension SQLiteAgentGroupChatStore {
                     ownerUserID: ownerUserID,
                     roomID: targetRoom.id
                   ) else { throw AgentGroupChatError.conflict }
+            if shouldAssignManager {
+                try enqueueTeamAssetMaintenanceNotification(
+                    ownerUserID: ownerUserID,
+                    roomID: targetRoom.id,
+                    projectManagerAgentID: targetAgent.id,
+                    nowUnixMs: nowUnixMs
+                )
+            }
             try enqueueProposalResolutionNotification(
                 ownerUserID: ownerUserID,
                 roomID: sourceRoomID,

@@ -34,6 +34,7 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
                     "capability_discovery_skill": "capability skill",
                     "staffing_instructions": "staffing",
                     "project_instructions": "project",
+                    "requirement_survey_skill": "requirement survey skill",
                     "manager_instructions": "manager",
                     "executor_instructions": "executor",
                     "todo_status_instructions": "todo status",
@@ -97,5 +98,32 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
         XCTAssertTrue(rendered.contains("chat_direct_open"))
         XCTAssertTrue(rendered.contains("chat_direct_send"))
         XCTAssertTrue(rendered.contains("Human-Agent 私聊"))
+    }
+
+    func testRequirementSurveySkillIsProgressiveAndToolDirected() {
+        let read = LocalAgentPromptCatalog.render(.requirementSurveyReadSkill)
+        let write = LocalAgentPromptCatalog.render(.requirementSurveyWriteSkill)
+
+        for toolName in [
+            "requirement_survey_list",
+            "requirement_survey_get",
+            "requirement_survey_project_tasks",
+        ] {
+            XCTAssertTrue(read.contains(toolName), toolName)
+        }
+        for toolName in [
+            "requirement_survey_list",
+            "requirement_survey_get",
+            "requirement_survey_create",
+            "requirement_survey_resolve",
+        ] {
+            XCTAssertTrue(write.contains(toolName), toolName)
+        }
+        XCTAssertTrue(read.contains("程序绑定"))
+        XCTAssertTrue(read.contains("不得推断"))
+        XCTAssertTrue(write.contains("程序必须同时授权"))
+        XCTAssertTrue(write.contains("不得替 Human 作答"))
+        XCTAssertTrue(write.contains("备注"))
+        XCTAssertFalse((read + write).contains("team_ref"))
     }
 }

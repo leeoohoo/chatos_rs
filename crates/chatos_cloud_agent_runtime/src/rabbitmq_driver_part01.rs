@@ -280,4 +280,5 @@ fn confirmed(label: &str, confirmation: Confirmation) -> Result<(), String> {
 }
 
 #[cfg(test)]
+#[path = "rabbitmq_driver/tests.rs"]
 mod tests;

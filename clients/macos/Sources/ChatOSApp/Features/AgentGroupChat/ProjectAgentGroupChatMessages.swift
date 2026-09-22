@@ -51,7 +51,7 @@ extension ProjectAgentGroupChatView {
 
                 VStack(alignment: .leading, spacing: 9) {
                     if !message.content.isEmpty {
-                        MarkdownDocumentView(markdown: message.content)
+                        MarkdownDocumentView(markdown: message.content, widthBehavior: .fitContent)
                     }
                     if !message.attachmentItems.isEmpty {
                         AgentMessageAttachmentChips(
@@ -94,7 +94,7 @@ extension ProjectAgentGroupChatView {
             if !isHuman { Spacer(minLength: 64) }
         }
         .frame(maxWidth: 980)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: isHuman ? .trailing : .leading)
     }
 
     @ViewBuilder

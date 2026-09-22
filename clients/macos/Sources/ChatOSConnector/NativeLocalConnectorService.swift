@@ -48,6 +48,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)?
     let approvalMemoryProviderFactory: NativeApprovalMemoryProviderFactory?
     weak var companionRuntime: (any LocalConnectorCompanionRuntimeProviding)?
+    var agentGroupChatService: NativeAgentGroupChatService?
     let secretStore: NativeConnectorSecretStore
     var state: NativeConnectorPersistentState
     var cachedAccessToken: String?
@@ -134,6 +135,10 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         _ runtime: (any LocalConnectorCompanionRuntimeProviding)?
     ) {
         companionRuntime = runtime
+    }
+
+    public func setAgentGroupChatService(_ service: NativeAgentGroupChatService) {
+        agentGroupChatService = service
     }
 
     public func pairWithCurrentChatOSSession(deviceName: String?) async throws -> LocalConnectorStatus {

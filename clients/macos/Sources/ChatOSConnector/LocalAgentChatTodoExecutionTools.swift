@@ -116,6 +116,7 @@ extension LocalAgentChatToolProvider {
             runID: context.runID,
             stage: try Self.optionalString(arguments, key: "stage") ?? "",
             detail: try Self.requiredString(arguments, key: "detail"),
+            assetUpdateSuggestions: [],
             nowUnixMs: now()
         )
         return try Self.outcome(TodoProgressResponse(progress: progress))
@@ -147,12 +148,14 @@ extension LocalAgentChatToolProvider {
     func completeTodo(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         let arguments = try Self.arguments(call)
         let summary = try Self.requiredString(arguments, key: "summary")
+        let suggestions = try Self.assetUpdateSuggestions(arguments)
         return try await finishExecutionTodo(
             status: .completed,
             progressKind: .completed,
             detail: summary,
             blockedReason: "",
-            result: summary
+            result: summary,
+            assetUpdateSuggestions: suggestions
         )
     }
 
@@ -164,7 +167,8 @@ extension LocalAgentChatToolProvider {
             progressKind: .blocked,
             detail: reason,
             blockedReason: reason,
-            result: ""
+            result: "",
+            assetUpdateSuggestions: []
         )
     }
 
@@ -173,7 +177,8 @@ extension LocalAgentChatToolProvider {
         progressKind: LocalAgentTodoProgressKind,
         detail: String,
         blockedReason: String,
-        result: String
+        result: String,
+        assetUpdateSuggestions: [LocalAgentTeamAssetUpdateSuggestion]
     ) async throws -> AgentToolOutcome {
         guard let todo = try await currentExecutionTodo() else {
             return Self.structuredFailure(
@@ -192,6 +197,7 @@ extension LocalAgentChatToolProvider {
             runID: context.runID,
             stage: status == .completed ? "completed" : "blocked",
             detail: detail,
+            assetUpdateSuggestions: assetUpdateSuggestions,
             nowUnixMs: timestamp
         )
         let updated = try await store.updateAgentTodo(
@@ -225,6 +231,44 @@ extension LocalAgentChatToolProvider {
             )
         }
         return try Self.outcome(try await todoResponse(updated))
+    }
+
+    static func assetUpdateSuggestions(
+        _ arguments: [String: Any]
+    ) throws -> [LocalAgentTeamAssetUpdateSuggestion] {
+        let objects = try optionalObjectArray(arguments, key: "asset_update_suggestions")
+        guard objects.count <= 8 else {
+            throw AgentGroupChatError.invalidField("asset_update_suggestions")
+        }
+        var suggestions: [LocalAgentTeamAssetUpdateSuggestion] = []
+        var identities: Set<String> = []
+        var totalMarkdownBytes = 0
+        for (index, object) in objects.enumerated() {
+            guard let category = LocalAgentTeamAssetCategory(
+                rawValue: try requiredString(object, key: "category")
+            ) else {
+                throw AgentGroupChatError.invalidField(
+                    "asset_update_suggestions[\(index)].category"
+                )
+            }
+            let suggestion = LocalAgentTeamAssetUpdateSuggestion(
+                category: category,
+                title: try requiredString(object, key: "title"),
+                markdown: try requiredString(object, key: "markdown"),
+                rationale: try requiredString(object, key: "rationale")
+            )
+            try suggestion.validate()
+            let identity = "\(category.rawValue)\u{0}\(suggestion.title)"
+            guard identities.insert(identity).inserted else {
+                throw AgentGroupChatError.invalidField("asset_update_suggestions")
+            }
+            totalMarkdownBytes += suggestion.markdown.utf8.count
+            guard totalMarkdownBytes <= 256_000 else {
+                throw AgentGroupChatError.invalidField("asset_update_suggestions")
+            }
+            suggestions.append(suggestion)
+        }
+        return suggestions
     }
 
     func currentExecutionTodo() async throws -> LocalAgentTodo? {

@@ -5,6 +5,73 @@ import Foundation
 import SQLite3
 
 extension SQLiteAgentGroupChatStore {
+    /// Wakes the explicit project manager to create real shared assets from the current team
+    /// state. The program requests the work but never manufactures asset content on the
+    /// manager's behalf.
+    func enqueueTeamAssetMaintenanceNotification(
+        ownerUserID: String,
+        roomID: String,
+        projectManagerAgentID: String,
+        nowUnixMs: Int64
+    ) throws {
+        guard let room = try readRoom(ownerUserID: ownerUserID, roomID: roomID),
+              room.status == .active,
+              room.conversationKind == .projectTeam,
+              room.projectManagerAgentID == projectManagerAgentID,
+              try readMember(
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                agentID: projectManagerAgentID
+              )?.status == .active else { return }
+        let deduplicationKey = "team-asset-maintenance:\(roomID):v1"
+        guard try readDelivery(
+            ownerUserID: ownerUserID,
+            deduplicationKey: deduplicationKey
+        ) == nil else { return }
+
+        let messageID = UUID().uuidString.lowercased()
+        let content = """
+        你已被明确指定为“\(room.draft.name)”的项目经理。请读取 Human 消息、团队目标、成员和 Todo 状态，主动维护真实的团队共享资产。信息充分时建立或更新“项目概览”和“当前进度”；信息不足时创建一个选择 requirement_survey_write 的 Todo（程序会自动加入 requirement_survey_read）来完成需求调研，不要在通讯层直接调用调研工具，也不要写空模板或臆测内容。完成本轮实际处理后再结束通讯周期。
+        """
+        try execute(
+            """
+            INSERT INTO project_agent_messages (
+                owner_user_id, id, room_id, sender_kind, sender_id, content,
+                reply_to_message_id, source_run_id, causation_id, root_message_id,
+                hop_count, created_at_unix_ms
+            ) VALUES (?, ?, ?, 'system', 'system', ?, NULL, NULL, ?, ?, 0, ?)
+            """,
+            [
+                .text(ownerUserID), .text(messageID), .text(roomID), .text(content),
+                .text(deduplicationKey), .text(messageID), .integer(nowUnixMs),
+            ]
+        )
+        try execute(
+            """
+            INSERT INTO project_agent_message_mentions (
+                owner_user_id, message_id, agent_id, position
+            ) VALUES (?, ?, ?, 0)
+            """,
+            [.text(ownerUserID), .text(messageID), .text(projectManagerAgentID)]
+        )
+        let deliveryID = UUID().uuidString.lowercased()
+        try execute(
+            """
+            INSERT INTO project_agent_deliveries (
+                owner_user_id, id, room_id, message_id, root_message_id,
+                target_agent_id, trigger_kind, status, attempt, hop_count,
+                deduplication_key, response_message_id, last_error,
+                claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, 'mention', 'pending', 0, 0, ?, NULL, NULL, NULL, NULL, ?)
+            """,
+            [
+                .text(ownerUserID), .text(deliveryID), .text(roomID), .text(messageID),
+                .text(messageID), .text(projectManagerAgentID), .text(deduplicationKey),
+                .integer(nowUnixMs),
+            ]
+        )
+    }
+
     /// Persists the Human's proposal decision as ordinary unread communication for the Agent
     /// that submitted it. The message and its delivery are written in the same transaction as
     /// the proposal state change, so the Agent cannot miss a successful decision after a crash.

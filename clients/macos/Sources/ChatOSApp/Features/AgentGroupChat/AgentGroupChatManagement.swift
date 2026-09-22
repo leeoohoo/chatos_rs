@@ -149,6 +149,44 @@ extension AgentGroupChatViewModel {
         }
     }
 
+    func submitRequirementSurvey(
+        _ survey: LocalAgentRequirementSurvey,
+        selections: [String: Set<String>],
+        notes: String
+    ) async -> Bool {
+        guard let room, survey.projectID == projectID,
+              submittingRequirementSurveyIDs.insert(survey.id).inserted else { return false }
+        defer { submittingRequirementSurveyIDs.remove(survey.id) }
+        do {
+            let answers = survey.draft.questions.compactMap { question -> LocalAgentRequirementSurveyAnswer? in
+                let selected = selections[question.id] ?? []
+                guard !selected.isEmpty else { return nil }
+                let ordered = question.options.map(\.id).filter(selected.contains)
+                return .init(questionID: question.id, selectedOptionIDs: ordered)
+            }
+            let normalizedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+            let store = try await resolveStore()
+            _ = try await store.submitRequirementSurvey(
+                ownerUserID: ownerUserID,
+                projectID: projectID,
+                surveyID: survey.id,
+                submission: .init(answers: answers, notes: normalizedNotes),
+                nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            )
+            await service.publishChange(.init(
+                ownerUserID: ownerUserID,
+                roomID: room.id,
+                kind: .roomUpdated
+            ))
+            await load()
+            startScheduler()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     func loadTeamAssetRevisions(_ asset: LocalAgentTeamAsset, force: Bool = false) async {
         guard let room,
               asset.teamRoomID == room.id,

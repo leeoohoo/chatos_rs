@@ -15,6 +15,8 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
     case roomGoalUnset = "AgentPrompt.Conversation.RoomGoalUnset"
     case permissionStaffManagement = "AgentPrompt.Permission.StaffManagement"
     case permissionLocalProjects = "AgentPrompt.Permission.LocalProjects"
+    case requirementSurveyReadSkill = "AgentPrompt.Skill.RequirementSurveyRead"
+    case requirementSurveyWriteSkill = "AgentPrompt.Skill.RequirementSurveyWrite"
     case managerCycle = "AgentPrompt.Cycle.Manager"
     case heartbeatDefault = "AgentPrompt.Cycle.HeartbeatDefault"
     case heartbeatDirective = "AgentPrompt.Cycle.HeartbeatDirective"
@@ -53,7 +55,7 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
                 "role_prompt", "conversation_context", "capability_discovery_skill",
                 "staffing_instructions", "project_instructions", "manager_instructions",
                 "executor_instructions", "todo_status_instructions", "profession_skill",
-                "project_skill", "compact_communication_skill",
+                "project_skill", "compact_communication_skill", "requirement_survey_skill",
             ]
         case .deliveryUser:
             ["trigger_kind", "attachment_count", "trigger_payload", "requested_action"]
@@ -67,7 +69,9 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
         case .conversationRoleProjectTeam, .conversationRoleHumanAgentDirect,
              .conversationRoleAgentAgentDirect, .conversationHumanAgentDirect,
              .conversationAgentAgentDirect, .roomGoalUnset,
-             .permissionStaffManagement, .permissionLocalProjects, .heartbeatDefault,
+             .permissionStaffManagement, .permissionLocalProjects,
+             .requirementSurveyReadSkill, .requirementSurveyWriteSkill,
+             .heartbeatDefault,
              .executorCycle, .todoStatusCycle, .capabilityDiscoverySkill,
              .actionHeartbeat, .actionTodo,
              .actionTodoStatus, .actionDefault, .builderSystem, .agentDefaultRole,

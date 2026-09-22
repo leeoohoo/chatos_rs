@@ -325,7 +325,7 @@ impl ConnectorRelay {
         });
     }
 
-    async fn reap_expired_pending(&self) -> usize {
+    pub(super) async fn reap_expired_pending(&self) -> usize {
         let now = Instant::now();
         let expired_request_ids = {
             let inner = self.inner.lock().await;

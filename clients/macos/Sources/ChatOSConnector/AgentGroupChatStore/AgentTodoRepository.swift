@@ -1,4 +1,5 @@
 import ChatOSCore
+import Foundation
 import SQLite3
 
 enum AgentTodoRepository {
@@ -219,7 +220,8 @@ enum AgentTodoRepository {
         let newestFirst: [LocalAgentTodoProgress] = try AgentGroupChatDatabase.query(
             handle,
             """
-            SELECT id, todo_id, sequence, kind, run_id, stage, detail, created_at_unix_ms
+            SELECT id, todo_id, sequence, kind, run_id, stage, detail,
+                   asset_update_suggestions_json, created_at_unix_ms
             FROM local_agent_todo_events
             WHERE owner_user_id = ? AND todo_id = ?
             ORDER BY sequence DESC
@@ -229,6 +231,15 @@ enum AgentTodoRepository {
         ) { statement in
             guard let kind = LocalAgentTodoProgressKind(rawValue: string(statement, 3)) else {
                 throw AgentGroupChatError.storage("invalid Agent Todo progress kind")
+            }
+            let suggestions: [LocalAgentTeamAssetUpdateSuggestion]
+            do {
+                suggestions = try JSONDecoder().decode(
+                    [LocalAgentTeamAssetUpdateSuggestion].self,
+                    from: Data(string(statement, 7).utf8)
+                )
+            } catch {
+                throw AgentGroupChatError.storage("invalid team asset update suggestions")
             }
             return .init(
                 id: string(statement, 0),
@@ -240,7 +251,8 @@ enum AgentTodoRepository {
                 runID: optionalString(statement, 4),
                 stage: string(statement, 5),
                 detail: string(statement, 6),
-                createdAtUnixMs: sqlite3_column_int64(statement, 7)
+                assetUpdateSuggestions: suggestions,
+                createdAtUnixMs: sqlite3_column_int64(statement, 8)
             )
         }
         return Array(newestFirst.reversed())

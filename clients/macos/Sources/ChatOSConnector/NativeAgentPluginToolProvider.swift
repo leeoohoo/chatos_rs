@@ -398,7 +398,7 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             let terms = query.lowercased().split(whereSeparator: { $0.isWhitespace }).map(String.init)
             let matches = options.filter { option in
                 let builtInKeywords = if case .builtIn = option.kind {
-                    " 文件 读写 代码 终端 shell command filesystem"
+                    " 文件 读写 代码 终端 shell command filesystem 需求调研 问卷 Human答案 备注 解决方案 执行计划 项目任务 survey requirement solution plan"
                 } else {
                     ""
                 }

@@ -129,16 +129,21 @@ extension LocalAgentChatToolProvider {
                 retryable: true
             )
         }
+        builtinCapabilities = LocalAgentTodoExecutionPlan.completingDependencies(
+            in: builtinCapabilities
+        )
         let requiresExecution = try Self.optionalBoolean(
             arguments,
             key: "requires_execution"
         ) ?? true
         if !requiresExecution,
-           builtinCapabilities.contains(where: { $0 != .projectRead }) {
+           builtinCapabilities.contains(where: {
+               $0 != .projectRead && $0 != .requirementSurveyRead
+           }) {
             return Self.structuredFailure(
                 code: "execution_required",
                 field: "requires_execution",
-                message: "文件写入或终端能力需要执行环境，请将 requires_execution 设为 true。",
+                message: "写入类能力或终端能力需要执行环境，请将 requires_execution 设为 true。",
                 retryable: true
             )
         }

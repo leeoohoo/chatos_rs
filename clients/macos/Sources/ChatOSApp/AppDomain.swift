@@ -7,6 +7,7 @@ enum SidebarSelection: Hashable {
     case applications
     case mediaStudio
     case agentGroupChat
+    case requirementSurveys
     case pluginApplication(String, String)
     case terminal(String)
     case remote(String)

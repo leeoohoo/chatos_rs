@@ -43,6 +43,14 @@ public enum LocalAgentTodoAuthorizationCatalog {
             definitions = NativeMCPTerminalStore.toolDefinitions
             displayName = "项目终端"
             detail = "在当前任务绑定的项目目录内执行和管理命令进程。"
+        case .requirementSurveyRead:
+            definitions = NativeMCPRequirementSurveyTools.readToolDefinitions
+            displayName = "需求调研读取"
+            detail = "读取当前任务绑定项目的调研、Human 答案、方案、执行计划和项目任务状态。"
+        case .requirementSurveyWrite:
+            definitions = NativeMCPRequirementSurveyTools.writeToolDefinitions
+            displayName = "需求调研创建与方案"
+            detail = "创建调研单或写入正式方案；选择后程序会同时授权需求调研读取。"
         }
         return .init(
             capability: capability,

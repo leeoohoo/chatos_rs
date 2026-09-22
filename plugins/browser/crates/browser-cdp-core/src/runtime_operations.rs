@@ -557,7 +557,10 @@ impl BrowserRuntime {
             .await
     }
 
-    async fn session(&self, browser_session_id: &str) -> CoreResult<Arc<Mutex<BrowserSession>>> {
+    pub(super) async fn session(
+        &self,
+        browser_session_id: &str,
+    ) -> CoreResult<Arc<Mutex<BrowserSession>>> {
         self.sessions
             .read()
             .await
@@ -566,7 +569,7 @@ impl BrowserRuntime {
             .ok_or_else(|| CoreError::NotFound(format!("browser session {browser_session_id}")))
     }
 
-    async fn resolve_ref(
+    pub(super) async fn resolve_ref(
         &self,
         browser_session_id: &str,
         reference: &str,

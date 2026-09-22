@@ -464,19 +464,6 @@ fn capability_runtime_provider(
     }
 }
 
-fn parse_agent_key(value: &str) -> Result<SystemAgentKey, ApiError> {
-    let value = value.trim();
-    let agent_key = parse_system_agent_key(value)
-        .ok_or_else(|| ApiError::bad_request(format!("unknown system Agent key: {value}")))?;
-    let tool_plane = chatos_agent::agent_descriptor(agent_key).tool_plane;
-    if !tool_plane.uses_managed_gateway() {
-        return Err(ApiError::conflict(format!(
-            "system Agent {value} does not use the managed MCP Tool Plane"
-        )));
-    }
-    Ok(agent_key)
-}
-
 fn validate_session_request(request: &CreateRuntimeSessionRequest) -> Result<(), ApiError> {
     for (field, value) in [
         ("tenant_id", request.tenant_id.as_str()),
@@ -640,4 +627,5 @@ fn validate_task_runner_provider_context(
 }
 
 #[cfg(test)]
+#[path = "runtime_sessions/tests.rs"]
 mod tests;

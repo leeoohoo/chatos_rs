@@ -214,6 +214,7 @@ extension SQLiteAgentGroupChatStore {
         runID: String?,
         stage: String,
         detail: String,
+        assetUpdateSuggestions: [LocalAgentTeamAssetUpdateSuggestion],
         nowUnixMs: Int64
     ) throws -> LocalAgentTodoProgress {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
@@ -222,6 +223,21 @@ extension SQLiteAgentGroupChatStore {
         if let runID { try AgentGroupChatValidation.identifier(runID, field: "runID") }
         try AgentGroupChatValidation.optionalText(stage, field: "todoProgressStage", maximumLength: 240)
         try AgentGroupChatValidation.text(detail, field: "todoProgressDetail", maximumLength: 16_000)
+        guard assetUpdateSuggestions.count <= 8 else {
+            throw AgentGroupChatError.invalidField("assetUpdateSuggestions")
+        }
+        try assetUpdateSuggestions.forEach { try $0.validate() }
+        let encodedSuggestions: String
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            encodedSuggestions = String(
+                decoding: try encoder.encode(assetUpdateSuggestions),
+                as: UTF8.self
+            )
+        } catch {
+            throw AgentGroupChatError.invalidField("assetUpdateSuggestions")
+        }
         guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
         return try transaction {
             guard try readTodo(ownerUserID: ownerUserID, agentID: agentID, todoID: todoID) != nil else {
@@ -243,19 +259,20 @@ extension SQLiteAgentGroupChatStore {
                 runID: runID,
                 stage: stage,
                 detail: detail,
+                assetUpdateSuggestions: assetUpdateSuggestions,
                 createdAtUnixMs: nowUnixMs
             )
             try execute(
                 """
                 INSERT INTO local_agent_todo_events (
                     owner_user_id, id, todo_id, sequence, run_id, kind, stage, detail,
-                    created_at_unix_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    asset_update_suggestions_json, created_at_unix_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     .text(ownerUserID), .text(progress.id), .text(todoID), .integer(sequence),
                     runID.map(Value.text) ?? .null, .text(kind.rawValue), .text(stage),
-                    .text(detail), .integer(nowUnixMs),
+                    .text(detail), .text(encodedSuggestions), .integer(nowUnixMs),
                 ]
             )
             return progress

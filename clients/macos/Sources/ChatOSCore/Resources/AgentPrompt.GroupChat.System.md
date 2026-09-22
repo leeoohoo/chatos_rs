@@ -8,6 +8,7 @@
 {{capability_discovery_skill}}
 {{staffing_instructions}}
 {{project_instructions}}
+{{requirement_survey_skill}}
 {{manager_instructions}}
 {{executor_instructions}}
 {{todo_status_instructions}}
