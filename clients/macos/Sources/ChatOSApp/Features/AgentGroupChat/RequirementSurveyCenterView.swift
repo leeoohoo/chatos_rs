@@ -17,6 +17,8 @@ private final class RequirementSurveyCenterViewModel: ObservableObject {
     private var observationTask: Task<Void, Never>?
     private var schedulerTask: Task<Void, Never>?
     private var schedulerNeedsAnotherPass = false
+    private var communicationSchedulerTask: Task<Void, Never>?
+    private var pendingCommunicationRoomIDs: Set<String> = []
 
     init(
         ownerUserID: String,
@@ -31,6 +33,7 @@ private final class RequirementSurveyCenterViewModel: ObservableObject {
     deinit {
         observationTask?.cancel()
         schedulerTask?.cancel()
+        communicationSchedulerTask?.cancel()
     }
 
     var creatorNamesByID: [String: String] {
@@ -111,10 +114,11 @@ private final class RequirementSurveyCenterViewModel: ObservableObject {
                 ),
                 nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
             )
-            if let room = try await store.activeRoom(
+            let room = try await store.activeRoom(
                 ownerUserID: ownerUserID,
                 projectID: survey.projectID
-            ) {
+            )
+            if let room {
                 await service.publishChange(.init(
                     ownerUserID: ownerUserID,
                     roomID: room.id,
@@ -122,6 +126,9 @@ private final class RequirementSurveyCenterViewModel: ObservableObject {
                 ))
             }
             await load(projectIDs: observedProjectIDs)
+            if let room {
+                startCommunicationScheduler(roomID: room.id)
+            }
             startScheduler()
             return true
         } catch {
@@ -149,6 +156,30 @@ private final class RequirementSurveyCenterViewModel: ObservableObject {
                 await load(projectIDs: observedProjectIDs)
             } while schedulerNeedsAnotherPass && !Task.isCancelled
             schedulerTask = nil
+        }
+    }
+
+    private func startCommunicationScheduler(roomID: String) {
+        pendingCommunicationRoomIDs.insert(roomID)
+        guard communicationSchedulerTask == nil else { return }
+        communicationSchedulerTask = Task { [weak self] in
+            guard let self else { return }
+            while !pendingCommunicationRoomIDs.isEmpty, !Task.isCancelled {
+                guard let roomID = pendingCommunicationRoomIDs.sorted().first else { break }
+                pendingCommunicationRoomIDs.remove(roomID)
+                do {
+                    _ = try await scheduler.drainCommunication(
+                        ownerUserID: ownerUserID,
+                        roomID: roomID
+                    )
+                } catch is CancellationError {
+                    break
+                } catch {
+                    errorMessage = "答案已保存，但 Agent 沟通调度失败：\(error.localizedDescription)"
+                }
+                await load(projectIDs: observedProjectIDs)
+            }
+            communicationSchedulerTask = nil
         }
     }
 }

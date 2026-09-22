@@ -47,6 +47,46 @@ extension LocalAgentGroupChatScheduler {
         )
     }
 
+    /// Drains only the communication/manager lane for one conversation. This intentionally does
+    /// not acquire the account-wide executor recovery lease: durable lane constraints prevent a
+    /// duplicate claim, while new Human messages remain responsive during long project Todos.
+    public func drainCommunication(
+        ownerUserID: String,
+        roomID: String,
+        maximumRuns: Int = 32
+    ) async throws -> [DeliveryAttemptReceipt] {
+        guard maximumRuns > 0 else { return [] }
+        let store = try await service.store()
+        guard let room = try await store.room(ownerUserID: ownerUserID, roomID: roomID),
+              room.status == .active else {
+            throw AgentGroupChatError.notFound
+        }
+        return try await drain(
+            store: store,
+            ownerUserID: ownerUserID,
+            room: room,
+            maximumRuns: maximumRuns,
+            lane: .manager
+        )
+    }
+
+    /// Drains manager lanes across every active team and private conversation without waiting for
+    /// executor recovery. The background heartbeat uses this path so communication does not depend
+    /// on which conversation, if any, is currently visible in the UI.
+    public func drainCommunications(
+        ownerUserID: String,
+        maximumRuns: Int = 64
+    ) async throws -> [DeliveryAttemptReceipt] {
+        guard maximumRuns > 0 else { return [] }
+        let store = try await service.store()
+        return try await drainAccountQueue(
+            store: store,
+            ownerUserID: ownerUserID,
+            maximumRuns: maximumRuns,
+            lane: .manager
+        )
+    }
+
     /// Drains all account-owned conversations so a Relay message that opens another private
     /// conversation is delivered without requiring that destination to be visible in the UI.
     public func drainAccount(
@@ -81,6 +121,24 @@ extension LocalAgentGroupChatScheduler {
             ownerUserID: ownerUserID,
             maximumRuns: maximumRuns
         )
+        if results.count < maximumRuns {
+            results.append(contentsOf: try await drainAccountQueue(
+                store: store,
+                ownerUserID: ownerUserID,
+                maximumRuns: maximumRuns - results.count,
+                lane: nil
+            ))
+        }
+        return results
+    }
+
+    func drainAccountQueue(
+        store: SQLiteAgentGroupChatStore,
+        ownerUserID: String,
+        maximumRuns: Int,
+        lane: LocalAgentRunLane?
+    ) async throws -> [DeliveryAttemptReceipt] {
+        var results: [DeliveryAttemptReceipt] = []
         while results.count < maximumRuns, !Task.isCancelled {
             let teams = try await store.listRooms(ownerUserID: ownerUserID, includeArchived: false)
             let directs = try await store.listDirectConversations(
@@ -110,14 +168,26 @@ extension LocalAgentGroupChatScheduler {
             var claimedWork: [ClaimedWork] = []
             claimedWork.reserveCapacity(remainingCapacity)
             for agentID in agentIDs where claimedWork.count < remainingCapacity {
-                // A single Agent owns two independent durable work queues. Claiming twice lets its
-                // manager keep receiving messages while one project-bound executor is working.
-                for _ in 0..<2 where claimedWork.count < remainingCapacity {
-                    guard let delivery = try await store.claimNextDelivery(
-                        ownerUserID: ownerUserID,
-                        agentID: agentID,
-                        nowUnixMs: now()
-                    ) else { break }
+                // A full drain may claim both independent lanes for one Agent. A lane-specific
+                // drain claims once so the same manager or executor lane remains serialized.
+                let claimsPerAgent = lane == nil ? 2 : 1
+                for _ in 0..<claimsPerAgent where claimedWork.count < remainingCapacity {
+                    let delivery: ProjectAgentDelivery?
+                    if let lane {
+                        delivery = try await store.claimNextDelivery(
+                            ownerUserID: ownerUserID,
+                            agentID: agentID,
+                            lane: lane,
+                            nowUnixMs: now()
+                        )
+                    } else {
+                        delivery = try await store.claimNextDelivery(
+                            ownerUserID: ownerUserID,
+                            agentID: agentID,
+                            nowUnixMs: now()
+                        )
+                    }
+                    guard let delivery else { break }
                     let room: ProjectAgentRoom
                     if let known = roomByID[delivery.roomID] {
                         room = known
@@ -162,11 +232,12 @@ extension LocalAgentGroupChatScheduler {
     }
 
     /// Chat surfaces only append/display messages. Recovery belongs to the Agent trigger runtime.
-    /// A durable `running` checkpoint cannot belong to a live run here because this account drain
-    /// holds the process-wide lease; it was left behind by an app exit or an interrupted provider
-    /// request. Resuming is safe even with an in-flight write marker because AgentRuntime converts
-    /// that checkpoint to `needsReview` before any replay. User pauses, limits, and review states
-    /// remain untouched.
+    /// The account lease serializes recovery passes, while the active-delivery registry excludes
+    /// live communication work that intentionally runs beside a long executor task. Any remaining
+    /// durable `running` checkpoint was left behind by an app exit or interrupted provider request.
+    /// Resuming is safe even with an in-flight write marker because AgentRuntime converts that
+    /// checkpoint to `needsReview` before any replay. User pauses, limits, and review states remain
+    /// untouched.
     func recoverInterruptedRuns(
         store: SQLiteAgentGroupChatStore,
         ownerUserID: String,
@@ -186,6 +257,9 @@ extension LocalAgentGroupChatScheduler {
                         ownerUserID: ownerUserID,
                         deliveryID: run.context.deliveryID
                       ), delivery.status == .running else { continue }
+                guard !(await activeDeliveryRegistry.contains(deliveryID: delivery.id)) else {
+                    continue
+                }
                 let result = try await resumeDelivery(
                     ownerUserID: ownerUserID,
                     projectID: run.context.projectID,
@@ -216,7 +290,8 @@ extension LocalAgentGroupChatScheduler {
         store: SQLiteAgentGroupChatStore,
         ownerUserID: String,
         room: ProjectAgentRoom,
-        maximumRuns: Int
+        maximumRuns: Int,
+        lane: LocalAgentRunLane? = nil
     ) async throws -> [DeliveryAttemptReceipt] {
         var results: [DeliveryAttemptReceipt] = []
         while results.count < maximumRuns {
@@ -228,12 +303,24 @@ extension LocalAgentGroupChatScheduler {
             for member in members where claimedWork.count < remainingCapacity {
                 for _ in 0..<2 where claimedWork.count < remainingCapacity {
                     if Task.isCancelled { break }
-                    guard let delivery = try await store.claimNextDelivery(
-                        ownerUserID: ownerUserID,
-                        roomID: room.id,
-                        agentID: member.agentID,
-                        nowUnixMs: now()
-                    ) else { break }
+                    let delivery: ProjectAgentDelivery?
+                    if let lane {
+                        delivery = try await store.claimNextDelivery(
+                            ownerUserID: ownerUserID,
+                            roomID: room.id,
+                            agentID: member.agentID,
+                            lane: lane,
+                            nowUnixMs: now()
+                        )
+                    } else {
+                        delivery = try await store.claimNextDelivery(
+                            ownerUserID: ownerUserID,
+                            roomID: room.id,
+                            agentID: member.agentID,
+                            nowUnixMs: now()
+                        )
+                    }
+                    guard let delivery else { break }
                     claimedWork.append(.init(
                         order: claimedWork.count,
                         room: room,
@@ -274,6 +361,7 @@ extension LocalAgentGroupChatScheduler {
                 )?.id
                 : nil
             let handle = todoID == nil ? nil : LocalAgentExecutorCancellationHandle()
+            await activeDeliveryRegistry.register(deliveryID: work.delivery.id)
             let task: Task<OrderedDeliveryAttemptReceipt, Never> = Task {
                 let receipt: DeliveryAttemptReceipt
                 do {
@@ -304,7 +392,9 @@ extension LocalAgentGroupChatScheduler {
         var round: [OrderedDeliveryAttemptReceipt] = []
         round.reserveCapacity(running.count)
         for entry in running {
-            round.append(await entry.task.value)
+            let completed = await entry.task.value
+            round.append(completed)
+            await activeDeliveryRegistry.unregister(deliveryID: completed.receipt.deliveryID)
             if let todoID = entry.todoID, let handle = entry.handle {
                 await executorTaskRegistry.unregister(todoID: todoID, handle: handle)
             }

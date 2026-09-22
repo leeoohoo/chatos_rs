@@ -814,6 +814,176 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         XCTAssertEqual(maximumConcurrentCalls, 1)
     }
 
+    func testCommunicationLaneRespondsWhileAccountExecutorDrainIsStillRunning() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-communication-fast-lane-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await service.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "双通道 Agent",
+                rolePrompt: "执行任务时也要及时回复 Human。",
+                modelConfigID: "fast-lane-model"
+            )
+        )
+        let room = try await store.createRoom(
+            ownerUserID: "alice",
+            projectID: "fast-lane-project",
+            draft: .init(name: "快速沟通团队")
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id,
+            draft: .init(role: "执行者")
+        )
+        _ = try await store.setDefaultAgent(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id
+        )
+        let todo = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            requestKey: "long-running-fast-lane-todo",
+            draft: .init(title: "长时间任务", teamRoomID: room.id),
+            nowUnixMs: 100
+        )
+        let executorDeliveryValue = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 101
+        )
+        let executorDelivery = try XCTUnwrap(executorDeliveryValue)
+        let probe = CommunicationFastLaneProbe()
+        let settingsSuite = "local-agent-communication-fast-lane-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: CommunicationFastLaneServices(probe: probe),
+            settings: .init(suiteName: settingsSuite),
+            now: { 200 }
+        )
+
+        let executorDrain = Task {
+            try await scheduler.drainAccount(ownerUserID: "alice", maximumRuns: 1)
+        }
+        await probe.waitUntilExecutorStarts()
+
+        let post = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "执行时也请回复我"),
+            limits: .init()
+        )
+        let managerDelivery = try XCTUnwrap(post.deliveries.first)
+        let managerResults = try await scheduler.drainCommunications(
+            ownerUserID: "alice",
+            maximumRuns: 2
+        )
+
+        XCTAssertEqual(managerResults.map(\.deliveryID), [managerDelivery.id])
+        XCTAssertEqual(managerResults.first?.outcome, .completed)
+        let storedManagerDelivery = try await store.delivery(
+            ownerUserID: "alice",
+            deliveryID: managerDelivery.id
+        )
+        XCTAssertEqual(storedManagerDelivery?.status, .completed)
+        let storedExecutorDelivery = try await store.delivery(
+            ownerUserID: "alice",
+            deliveryID: executorDelivery.id
+        )
+        XCTAssertEqual(storedExecutorDelivery?.status, .running)
+        let storedTodo = try await store.agentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id
+        )
+        XCTAssertEqual(storedTodo?.status, .inProgress)
+
+        await probe.releaseExecutor()
+        let executorResults = try await executorDrain.value
+        XCTAssertEqual(executorResults.first?.outcome, .completed)
+    }
+
+    func testRecoveryDoesNotResumeLiveCommunicationFastLane() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-live-communication-recovery-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await service.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "恢复隔离 Agent",
+                rolePrompt: "正常通讯运行不能被恢复器重复执行。",
+                modelConfigID: "fast-lane-model"
+            )
+        )
+        let room = try await store.createRoom(
+            ownerUserID: "alice",
+            projectID: "live-communication-recovery-project",
+            draft: .init(name: "恢复隔离团队")
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id,
+            draft: .init(role: "沟通者")
+        )
+        _ = try await store.setDefaultAgent(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id
+        )
+        _ = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "请及时回复"),
+            limits: .init()
+        )
+        let probe = CommunicationFastLaneProbe(holdsFirstManagerCall: true)
+        let settingsSuite = "local-agent-live-communication-recovery-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: service,
+            services: CommunicationFastLaneServices(probe: probe),
+            settings: .init(suiteName: settingsSuite),
+            now: { 300 }
+        )
+
+        let communicationDrain = Task {
+            try await scheduler.drainCommunication(
+                ownerUserID: "alice",
+                roomID: room.id,
+                maximumRuns: 2
+            )
+        }
+        await probe.waitUntilManagerStarts()
+
+        let recovered = try await scheduler.recoverInterruptedRuns(
+            store: store,
+            ownerUserID: "alice",
+            maximumRuns: 2
+        )
+        XCTAssertTrue(recovered.isEmpty)
+        let callsDuringRecovery = await probe.managerCalls()
+        XCTAssertEqual(callsDuringRecovery, 1)
+
+        await probe.releaseManager()
+        let results = try await communicationDrain.value
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results.first?.outcome, .completed)
+        let finalCalls = await probe.managerCalls()
+        XCTAssertEqual(finalCalls, 2)
+    }
+
     func testCancelledTodoRejectsExecutorToolBeforeSideEffect() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-cancelled-executor-\(UUID().uuidString)")
@@ -1281,6 +1451,130 @@ private struct LaneSchedulerTestServices: AgentServiceProviding {
 
     func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
         SchedulerTestMemory()
+    }
+}
+
+private struct CommunicationFastLaneServices: AgentServiceProviding {
+    let probe: CommunicationFastLaneProbe
+
+    func makeAgentModel(
+        configID: String,
+        policy: AgentRunPolicy
+    ) async throws -> any AgentModelClient {
+        XCTAssertEqual(configID, "fast-lane-model")
+        return CommunicationFastLaneModel(probe: probe)
+    }
+
+    func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
+        SchedulerTestMemory()
+    }
+}
+
+private actor CommunicationFastLaneProbe {
+    private let holdsFirstManagerCall: Bool
+    private var executorStarted = false
+    private var executorReleased = false
+    private var managerStarted = false
+    private var managerReleased = false
+    private var managerCallCount = 0
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+    private var managerStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var managerReleaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    init(holdsFirstManagerCall: Bool = false) {
+        self.holdsFirstManagerCall = holdsFirstManagerCall
+    }
+
+    func markExecutorStarted() {
+        executorStarted = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
+
+    func waitUntilExecutorStarts() async {
+        guard !executorStarted else { return }
+        await withCheckedContinuation { startWaiters.append($0) }
+    }
+
+    func waitUntilExecutorReleased() async {
+        guard !executorReleased else { return }
+        await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+
+    func releaseExecutor() {
+        executorReleased = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
+
+    func beginManagerCall() async {
+        managerCallCount += 1
+        guard holdsFirstManagerCall, managerCallCount == 1 else { return }
+        managerStarted = true
+        let startWaiters = managerStartWaiters
+        managerStartWaiters.removeAll()
+        for waiter in startWaiters { waiter.resume() }
+        guard !managerReleased else { return }
+        await withCheckedContinuation { managerReleaseWaiters.append($0) }
+    }
+
+    func waitUntilManagerStarts() async {
+        guard !managerStarted else { return }
+        await withCheckedContinuation { managerStartWaiters.append($0) }
+    }
+
+    func releaseManager() {
+        managerReleased = true
+        let waiters = managerReleaseWaiters
+        managerReleaseWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
+
+    func managerCalls() -> Int {
+        managerCallCount
+    }
+}
+
+private actor CommunicationFastLaneModel: AgentModelClient {
+    private let probe: CommunicationFastLaneProbe
+    private var managerRequestCount = 0
+
+    init(probe: CommunicationFastLaneProbe) {
+        self.probe = probe
+    }
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        if tools.contains(where: { $0.name == LocalAgentChatToolProvider.todoCompleteToolName }) {
+            await probe.markExecutorStarted()
+            await probe.waitUntilExecutorReleased()
+            return .init(role: .assistant, toolCalls: [.init(
+                id: "complete-long-executor",
+                name: LocalAgentChatToolProvider.todoCompleteToolName,
+                arguments: #"{"summary":"长时间任务完成。"}"#
+            )])
+        }
+
+        managerRequestCount += 1
+        await probe.beginManagerCall()
+        if managerRequestCount == 1 {
+            return .init(role: .assistant, toolCalls: [.init(
+                id: "reply-during-execution",
+                name: LocalAgentChatToolProvider.sendMessageToolName,
+                arguments: #"{"content":"执行任务期间也已及时回复。"}"#
+            )])
+        }
+        return .init(role: .assistant, toolCalls: [.init(
+            id: "complete-fast-manager-cycle",
+            name: LocalAgentChatToolProvider.completeManagerCycleToolName,
+            arguments: "{}"
+        )])
     }
 }
 

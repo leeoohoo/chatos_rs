@@ -51,6 +51,22 @@ extension SQLiteAgentGroupChatStore {
             ownerUserID: ownerUserID,
             roomID: nil,
             agentID: agentID,
+            lane: nil,
+            nowUnixMs: nowUnixMs
+        )
+    }
+
+    public func claimNextDelivery(
+        ownerUserID: String,
+        agentID: String,
+        lane: LocalAgentRunLane,
+        nowUnixMs: Int64
+    ) throws -> ProjectAgentDelivery? {
+        try claimNextDelivery(
+            ownerUserID: ownerUserID,
+            roomID: nil,
+            agentID: agentID,
+            lane: lane,
             nowUnixMs: nowUnixMs
         )
     }
@@ -66,6 +82,24 @@ extension SQLiteAgentGroupChatStore {
             ownerUserID: ownerUserID,
             roomID: Optional(roomID),
             agentID: agentID,
+            lane: nil,
+            nowUnixMs: nowUnixMs
+        )
+    }
+
+    public func claimNextDelivery(
+        ownerUserID: String,
+        roomID: String,
+        agentID: String,
+        lane: LocalAgentRunLane,
+        nowUnixMs: Int64
+    ) throws -> ProjectAgentDelivery? {
+        try AgentGroupChatValidation.identifier(roomID, field: "roomID")
+        return try claimNextDelivery(
+            ownerUserID: ownerUserID,
+            roomID: Optional(roomID),
+            agentID: agentID,
+            lane: lane,
             nowUnixMs: nowUnixMs
         )
     }
@@ -74,6 +108,7 @@ extension SQLiteAgentGroupChatStore {
         ownerUserID: String,
         roomID: String?,
         agentID: String,
+        lane: LocalAgentRunLane?,
         nowUnixMs: Int64
     ) throws -> ProjectAgentDelivery? {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
@@ -85,6 +120,7 @@ extension SQLiteAgentGroupChatStore {
                 ownerUserID: ownerUserID,
                 agentID: agentID,
                 roomID: roomID,
+                lane: lane,
                 preparedStatement: recordPreparedStatement
             ) else { return nil }
             try execute(

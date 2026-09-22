@@ -49,6 +49,8 @@ extension AppModel {
             workspaceAccountGeneration += 1
             agentHeartbeatTask?.cancel()
             agentHeartbeatTask = nil
+            agentCommunicationTask?.cancel()
+            agentCommunicationTask = nil
             agentArtifactSyncTask?.cancel()
             agentArtifactSyncTask = nil
             authenticatedUserID = nil

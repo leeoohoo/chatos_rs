@@ -13,12 +13,32 @@ extension AppModel {
     /// Relay reads its complete unread inbox and its durable TodoList in that single run.
     func restartAgentHeartbeatCoordinator() {
         agentHeartbeatTask?.cancel()
+        agentCommunicationTask?.cancel()
         guard let ownerUserID = authenticatedUserID else {
             agentHeartbeatTask = nil
+            agentCommunicationTask = nil
             return
         }
         let service = agentGroupChatService
         let scheduler = agentGroupChatScheduler
+        agentCommunicationTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    let results = try await scheduler.drainCommunications(
+                        ownerUserID: ownerUserID
+                    )
+                    guard !Task.isCancelled, self?.authenticatedUserID == ownerUserID else {
+                        return
+                    }
+                    try await Task.sleep(for: results.isEmpty ? .seconds(2) : .milliseconds(100))
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    try? await Task.sleep(for: .seconds(5))
+                }
+            }
+        }
         agentHeartbeatTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
@@ -28,7 +48,8 @@ extension AppModel {
                         ownerUserID: ownerUserID,
                         nowUnixMs: now
                     )
-                    // Also drains durable work left pending by an app crash after enqueue.
+                    // Communication has its own coordinator above. This pass recovers and drains
+                    // durable executor work left pending by an app crash after enqueue.
                     _ = try await scheduler.drainAccount(ownerUserID: ownerUserID)
                     guard !Task.isCancelled, self?.authenticatedUserID == ownerUserID else {
                         return

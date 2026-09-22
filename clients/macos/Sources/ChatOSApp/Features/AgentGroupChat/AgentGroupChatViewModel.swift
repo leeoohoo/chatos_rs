@@ -124,6 +124,8 @@ final class AgentGroupChatViewModel: ObservableObject {
     var openedStore: SQLiteAgentGroupChatStore?
     var schedulerTask: Task<Void, Never>?
     var schedulerNeedsAnotherPass = false
+    var communicationSchedulerTask: Task<Void, Never>?
+    var communicationSchedulerNeedsAnotherPass = false
     var changeObservationTask: Task<Void, Never>?
     var supplementaryLoadTask: Task<Void, Never>?
     var modelLoadTask: Task<LocalAgentBuilderResources, Error>?
@@ -147,6 +149,8 @@ final class AgentGroupChatViewModel: ObservableObject {
     }
 
     deinit {
+        schedulerTask?.cancel()
+        communicationSchedulerTask?.cancel()
         changeObservationTask?.cancel()
         supplementaryLoadTask?.cancel()
     }

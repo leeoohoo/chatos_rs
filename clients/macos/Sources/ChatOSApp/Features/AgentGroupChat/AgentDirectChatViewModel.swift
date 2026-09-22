@@ -61,6 +61,8 @@ final class AgentDirectChatViewModel: ObservableObject {
     private var openedStore: SQLiteAgentGroupChatStore?
     private var schedulerTask: Task<Void, Never>?
     private var schedulerNeedsAnotherPass = false
+    private var communicationSchedulerTask: Task<Void, Never>?
+    private var communicationSchedulerNeedsAnotherPass = false
     private var changeObservationTask: Task<Void, Never>?
     private var supplementaryLoadTask: Task<Void, Never>?
     private let messagePageSize = 20
@@ -82,6 +84,8 @@ final class AgentDirectChatViewModel: ObservableObject {
     }
 
     deinit {
+        schedulerTask?.cancel()
+        communicationSchedulerTask?.cancel()
         changeObservationTask?.cancel()
         supplementaryLoadTask?.cancel()
     }
@@ -546,6 +550,7 @@ final class AgentDirectChatViewModel: ObservableObject {
     }
 
     private func startScheduler() {
+        startCommunicationScheduler()
         schedulerNeedsAnotherPass = true
         guard schedulerTask == nil else { return }
         isRunningAgents = true
@@ -567,6 +572,31 @@ final class AgentDirectChatViewModel: ObservableObject {
             } while schedulerNeedsAnotherPass
             isRunningAgents = false
             schedulerTask = nil
+        }
+    }
+
+    private func startCommunicationScheduler() {
+        communicationSchedulerNeedsAnotherPass = true
+        guard communicationSchedulerTask == nil else { return }
+        communicationSchedulerTask = Task { [weak self] in
+            guard let self else { return }
+            repeat {
+                communicationSchedulerNeedsAnotherPass = false
+                do {
+                    let receipts = try await scheduler.drainCommunication(
+                        ownerUserID: ownerUserID,
+                        roomID: conversationID
+                    )
+                    try await reconcileSchedulerResults(receipts)
+                } catch is CancellationError {
+                    break
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
+                await load()
+                NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
+            } while communicationSchedulerNeedsAnotherPass && !Task.isCancelled
+            communicationSchedulerTask = nil
         }
     }
 

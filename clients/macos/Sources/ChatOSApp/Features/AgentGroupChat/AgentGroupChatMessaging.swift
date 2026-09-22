@@ -125,9 +125,13 @@ extension AgentGroupChatViewModel {
         guard isRunningAgents, !isPausingAgents, !isStoppingAgents else { return }
         isPausingAgents = true
         schedulerNeedsAnotherPass = false
+        communicationSchedulerNeedsAnotherPass = false
         let activeTask = schedulerTask
+        let activeCommunicationTask = communicationSchedulerTask
         activeTask?.cancel()
+        activeCommunicationTask?.cancel()
         await activeTask?.value
+        await activeCommunicationTask?.value
         await load()
         isPausingAgents = false
     }
@@ -136,9 +140,13 @@ extension AgentGroupChatViewModel {
         guard !isStoppingAgents else { return }
         isStoppingAgents = true
         schedulerNeedsAnotherPass = false
+        communicationSchedulerNeedsAnotherPass = false
         let activeTask = schedulerTask
+        let activeCommunicationTask = communicationSchedulerTask
         activeTask?.cancel()
+        activeCommunicationTask?.cancel()
         await activeTask?.value
+        await activeCommunicationTask?.value
         do {
             _ = try await scheduler.stopProject(
                 ownerUserID: ownerUserID,
@@ -197,6 +205,9 @@ extension AgentGroupChatViewModel {
     }
 
     func startScheduler() {
+        if let roomID = room?.id {
+            startCommunicationScheduler(roomID: roomID)
+        }
         schedulerNeedsAnotherPass = true
         guard schedulerTask == nil else { return }
         isRunningAgents = true
@@ -220,6 +231,31 @@ extension AgentGroupChatViewModel {
             } while schedulerNeedsAnotherPass
             isRunningAgents = false
             schedulerTask = nil
+        }
+    }
+
+    private func startCommunicationScheduler(roomID: String) {
+        communicationSchedulerNeedsAnotherPass = true
+        guard communicationSchedulerTask == nil else { return }
+        communicationSchedulerTask = Task { [weak self] in
+            guard let self else { return }
+            repeat {
+                communicationSchedulerNeedsAnotherPass = false
+                do {
+                    let results = try await scheduler.drainCommunication(
+                        ownerUserID: ownerUserID,
+                        roomID: roomID
+                    )
+                    try await reconcileSchedulerResults(results, roomID: roomID)
+                } catch is CancellationError {
+                    break
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
+                await load()
+                NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
+            } while communicationSchedulerNeedsAnotherPass && !Task.isCancelled
+            communicationSchedulerTask = nil
         }
     }
 }

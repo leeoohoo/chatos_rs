@@ -138,6 +138,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var isApplyingLanguagePreferences = false
     var languagePreferencesSaveTask: Task<Void, Never>?
     var agentHeartbeatTask: Task<Void, Never>?
+    var agentCommunicationTask: Task<Void, Never>?
     var agentArtifactSyncTask: Task<Void, Never>?
     var mainWindowPresentationHandler: (() -> Void)?
     var settingsWindowPresentationHandler: (() -> Void)?

@@ -44,6 +44,25 @@ actor LocalAgentExecutorTaskRegistry {
     }
 }
 
+/// Distinguishes a live delivery owned by this scheduler from a durable checkpoint left behind by
+/// an interrupted app process. Recovery may run alongside the communication fast lane, so the
+/// database's `running` state alone is not enough to decide whether a checkpoint needs resuming.
+actor LocalAgentActiveDeliveryRegistry {
+    private var deliveryIDs: Set<String> = []
+
+    func register(deliveryID: String) {
+        deliveryIDs.insert(deliveryID)
+    }
+
+    func unregister(deliveryID: String) {
+        deliveryIDs.remove(deliveryID)
+    }
+
+    func contains(deliveryID: String) -> Bool {
+        deliveryIDs.contains(deliveryID)
+    }
+}
+
 /// Serializes account-wide drain passes created by multiple windows and the heartbeat loop. The
 /// durable SQLite queue remains authoritative; this lease only prevents two local consumers from
 /// observing the same Agent work queue as busy and leaving newly queued work stranded between passes.
@@ -176,6 +195,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
     let limits: AgentGroupChatRoutingLimits
     let relayMCP: LocalAgentRelayMCPServer
     let executorTaskRegistry: LocalAgentExecutorTaskRegistry
+    let activeDeliveryRegistry: LocalAgentActiveDeliveryRegistry
     let accountDrainCoordinator: LocalAgentAccountDrainCoordinator
     let additionalToolProviders: AdditionalToolProviderFactory
     let projectTypeKeyProvider: ProjectTypeKeyProvider
@@ -216,6 +236,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         self.limits = limits
         let executorTaskRegistry = LocalAgentExecutorTaskRegistry()
         self.executorTaskRegistry = executorTaskRegistry
+        self.activeDeliveryRegistry = LocalAgentActiveDeliveryRegistry()
         self.accountDrainCoordinator = LocalAgentAccountDrainCoordinator()
         self.relayMCP = LocalAgentRelayMCPServer(
             service: service,

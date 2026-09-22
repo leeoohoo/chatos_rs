@@ -54,6 +54,7 @@ enum AgentDeliveryRepository {
         ownerUserID: String,
         agentID: String,
         roomID: String?,
+        lane: LocalAgentRunLane?,
         preparedStatement: () -> Void
     ) throws -> String? {
         var sql = """
@@ -81,6 +82,14 @@ enum AgentDeliveryRepository {
         if let roomID {
             sql += " AND d.room_id = ?"
             values.append(.text(roomID))
+        }
+        if let lane {
+            switch lane {
+            case .manager:
+                sql += " AND d.trigger_kind != 'todo'"
+            case .executor:
+                sql += " AND d.trigger_kind = 'todo'"
+            }
         }
         sql += " ORDER BY d.created_at_unix_ms, d.id LIMIT 1"
         preparedStatement()
