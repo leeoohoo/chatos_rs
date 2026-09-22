@@ -626,3 +626,10 @@
 "处理进度" = "Resolution Progress";
 "查看完整调研" = "View Full Survey";
 "填写进度" = "Response Progress";
+"返回项目列表" = "Back to Projects";
+"返回需求调研项目列表" = "Return to the requirement survey project list";
+"返回调研列表" = "Back to Surveys";
+"调研内容" = "Survey Content";
+"调研问卷" = "Questionnaire";
+"方案与执行" = "Solution and Execution";
+"提交调研后，解决方案和执行计划会显示在这里" = "The solution and execution plan will appear here after the survey is submitted.";

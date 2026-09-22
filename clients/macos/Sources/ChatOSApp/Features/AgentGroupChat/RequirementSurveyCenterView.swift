@@ -229,6 +229,7 @@ struct RequirementSurveyCenterView: View {
                             surveys: viewModel.surveys(projectID: projectID),
                             submittingSurveyIDs: viewModel.submittingSurveyIDs,
                             creatorNamesByID: viewModel.creatorNamesByID,
+                            showsNavigationBackButton: true,
                             heading: project.title,
                             explanation: "本项目的新需求、重大变更、方案取舍和验收确认。提交答案后，负责 Agent 会在原调研单下形成解决方案、执行计划、风险与相关资料。",
                             onSubmit: { survey, selections, notes in

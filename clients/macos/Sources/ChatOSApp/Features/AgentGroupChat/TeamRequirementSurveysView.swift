@@ -2,10 +2,12 @@ import ChatOSCore
 import SwiftUI
 
 struct ProjectRequirementSurveysView: View {
+    @Environment(\.dismiss) private var dismiss
     let surveys: [LocalAgentRequirementSurvey]
     let submittingSurveyIDs: Set<String>
     let creatorNamesByID: [String: String]
     var projectNamesByID: [String: String] = [:]
+    var showsNavigationBackButton = false
     var heading = "需求调研"
     var explanation = "项目经理可在新需求、重大变更或任何信息不足的节点发起调研。选择答案后，页面末尾可统一补充备注。"
     let onSubmit: (
@@ -13,8 +15,24 @@ struct ProjectRequirementSurveysView: View {
         [String: Set<String>],
         String
     ) async -> Bool
+    @State private var selectedSurveyID: String?
 
     var body: some View {
+        if let selectedSurvey = surveys.first(where: { $0.id == selectedSurveyID }) {
+            RequirementSurveyDetailView(
+                survey: selectedSurvey,
+                creatorName: creatorNamesByID[selectedSurvey.creatorAgentID] ?? "项目经理",
+                projectName: projectNamesByID[selectedSurvey.projectID],
+                isSubmitting: submittingSurveyIDs.contains(selectedSurvey.id),
+                onBack: { selectedSurveyID = nil },
+                onSubmit: onSubmit
+            )
+        } else {
+            surveyList
+        }
+    }
+
+    private var surveyList: some View {
         ZStack {
             LinearGradient(
                 colors: [
@@ -74,6 +92,17 @@ struct ProjectRequirementSurveysView: View {
 
         return VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 16) {
+                if showsNavigationBackButton {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Label("返回项目列表", systemImage: "chevron.left")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("返回需求调研项目列表")
+                }
+
                 ZStack {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .fill(
@@ -187,15 +216,8 @@ struct ProjectRequirementSurveysView: View {
         survey: LocalAgentRequirementSurvey,
         creatorName: String
     ) -> some View {
-        NavigationLink {
-            RequirementSurveyDetailView(
-                survey: survey,
-                creatorName: creatorName,
-                projectName: projectNamesByID[survey.projectID],
-                isSubmitting: submittingSurveyIDs.contains(survey.id),
-                onSubmit: onSubmit
-            )
-            .navigationTitle(survey.draft.title)
+        Button {
+            selectedSurveyID = survey.id
         } label: {
             RequirementSurveyRow(
                 survey: survey,
@@ -332,16 +354,25 @@ private struct RequirementSurveyRow: View {
     }
 }
 
+private enum RequirementSurveyDetailTab: String, CaseIterable, Identifiable {
+    case questionnaire = "调研问卷"
+    case resolution = "方案与执行"
+
+    var id: Self { self }
+}
+
 private struct RequirementSurveyDetailView: View {
     let survey: LocalAgentRequirementSurvey
     let creatorName: String
     let projectName: String?
     let isSubmitting: Bool
+    let onBack: () -> Void
     let onSubmit: (
         LocalAgentRequirementSurvey,
         [String: Set<String>],
         String
     ) async -> Bool
+    @State private var selectedTab: RequirementSurveyDetailTab = .questionnaire
 
     var body: some View {
         ZStack {
@@ -355,20 +386,50 @@ private struct RequirementSurveyDetailView: View {
             )
             .ignoresSafeArea()
 
-            ScrollView {
+            VStack(spacing: 16) {
                 VStack(spacing: 16) {
+                    HStack {
+                        Button(action: onBack) {
+                            Label("返回调研列表", systemImage: "chevron.left")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        Spacer()
+                    }
                     RequirementSurveyStageBar(survey: survey)
+
+                    HStack {
+                        Picker("调研内容", selection: $selectedTab) {
+                            ForEach(RequirementSurveyDetailTab.allCases) { tab in
+                                Text(tab.rawValue).tag(tab)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(maxWidth: 460)
+                        Spacer()
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 24)
+                .frame(maxWidth: 1560)
+                .frame(maxWidth: .infinity)
+
+                ScrollView {
                     RequirementSurveyCard(
                         survey: survey,
                         creatorName: creatorName,
                         projectName: projectName,
                         isSubmitting: isSubmitting,
+                        selectedTab: selectedTab,
                         onSubmit: onSubmit
                     )
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 24)
+                    .frame(maxWidth: 1560)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(24)
-                .frame(maxWidth: 1560)
-                .frame(maxWidth: .infinity)
+                .id(selectedTab)
             }
         }
     }
@@ -449,6 +510,7 @@ private struct RequirementSurveyCard: View {
     let creatorName: String
     let projectName: String?
     let isSubmitting: Bool
+    let selectedTab: RequirementSurveyDetailTab
     let onSubmit: (
         LocalAgentRequirementSurvey,
         [String: Set<String>],
@@ -463,6 +525,7 @@ private struct RequirementSurveyCard: View {
         creatorName: String,
         projectName: String?,
         isSubmitting: Bool,
+        selectedTab: RequirementSurveyDetailTab,
         onSubmit: @escaping (
             LocalAgentRequirementSurvey,
             [String: Set<String>],
@@ -473,6 +536,7 @@ private struct RequirementSurveyCard: View {
         self.creatorName = creatorName
         self.projectName = projectName
         self.isSubmitting = isSubmitting
+        self.selectedTab = selectedTab
         self.onSubmit = onSubmit
         _selections = State(initialValue: Dictionary(
             uniqueKeysWithValues: (survey.submission?.answers ?? []).map {
@@ -522,30 +586,61 @@ private struct RequirementSurveyCard: View {
                     )
             }
 
-            if survey.status == .pending {
-                let answered = survey.draft.questions.filter {
-                    !(selections[$0.id] ?? []).isEmpty
-                }.count
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack {
-                        Text("填写进度")
-                            .appFont(.caption.weight(.semibold))
-                        Spacer()
-                        Text("\(answered) / \(survey.draft.questions.count)")
-                            .appFont(.caption.weight(.semibold))
-                            .monospacedDigit()
-                            .foregroundStyle(AppPalette.ai)
+            if selectedTab == .questionnaire {
+                if survey.status == .pending {
+                    let answered = survey.draft.questions.filter {
+                        !(selections[$0.id] ?? []).isEmpty
+                    }.count
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack {
+                            Text("填写进度")
+                                .appFont(.caption.weight(.semibold))
+                            Spacer()
+                            Text("\(answered) / \(survey.draft.questions.count)")
+                                .appFont(.caption.weight(.semibold))
+                                .monospacedDigit()
+                                .foregroundStyle(AppPalette.ai)
+                        }
+                        ProgressView(
+                            value: Double(answered),
+                            total: Double(max(1, survey.draft.questions.count))
+                        )
+                        .tint(AppPalette.ai)
                     }
-                    ProgressView(
-                        value: Double(answered),
-                        total: Double(max(1, survey.draft.questions.count))
-                    )
-                    .tint(AppPalette.ai)
+                    .padding(12)
+                    .background(AppPalette.ai.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
                 }
-                .padding(12)
-                .background(AppPalette.ai.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-            }
 
+                questionnaireContent
+            } else if let resolution = survey.resolution {
+                resolutionView(resolution)
+            } else if survey.status == .submitted {
+                Label("答案已通知项目经理，正在形成解决方案和执行计划", systemImage: "hourglass")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AppPalette.aiSoft.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
+            } else {
+                Label("提交调研后，解决方案和执行计划会显示在这里", systemImage: "doc.text")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AppPalette.inputSurface, in: RoundedRectangle(cornerRadius: 10))
+            }
+        }
+        .padding(22)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(AppPalette.ai.opacity(0.13), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.04), radius: 12, y: 5)
+    }
+
+    private var questionnaireContent: some View {
+        Group {
             ForEach(Array(survey.draft.questions.enumerated()), id: \.element.id) { index, question in
                 VStack(alignment: .leading, spacing: 9) {
                     HStack(alignment: .top, spacing: 9) {
@@ -590,50 +685,7 @@ private struct RequirementSurveyCard: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 7) {
-                Label("备注", systemImage: "text.alignleft")
-                    .appFont(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppPalette.ai)
-                Text("如果选项没有覆盖完整情况，可在这里统一补充。")
-                    .appFont(.caption)
-                    .foregroundStyle(.secondary)
-                if survey.status == .pending {
-                    TextEditor(text: $notes)
-                        .scrollContentBackground(.hidden)
-                        .appFont(.body)
-                        .frame(minHeight: 90)
-                        .padding(8)
-                        .background(AppPalette.inputSurface, in: RoundedRectangle(cornerRadius: 10))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(AppPalette.border, lineWidth: 1)
-                        }
-                } else {
-                    Text(notes.isEmpty ? "无" : notes)
-                        .appFont(.body)
-                        .foregroundStyle(notes.isEmpty ? .secondary : .primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
-                        .background(AppPalette.inputSurface, in: RoundedRectangle(cornerRadius: 10))
-                }
-            }
-            .padding(14)
-            .background(AppPalette.ai.opacity(0.045), in: RoundedRectangle(cornerRadius: 12))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(AppPalette.ai.opacity(0.13), lineWidth: 1)
-            }
-
-            if let resolution = survey.resolution {
-                resolutionView(resolution)
-            } else if survey.status == .submitted {
-                Label("答案已通知项目经理，正在形成解决方案和执行计划", systemImage: "hourglass")
-                    .appFont(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AppPalette.aiSoft.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
-            }
+            notesContent
 
             if survey.status == .pending {
                 HStack {
@@ -652,13 +704,42 @@ private struct RequirementSurveyCard: View {
                 }
             }
         }
-        .padding(22)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var notesContent: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Label("备注", systemImage: "text.alignleft")
+                .appFont(.subheadline.weight(.semibold))
+                .foregroundStyle(AppPalette.ai)
+            Text("如果选项没有覆盖完整情况，可在这里统一补充。")
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
+            if survey.status == .pending {
+                TextEditor(text: $notes)
+                    .scrollContentBackground(.hidden)
+                    .appFont(.body)
+                    .frame(minHeight: 90)
+                    .padding(8)
+                    .background(AppPalette.inputSurface, in: RoundedRectangle(cornerRadius: 10))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(AppPalette.border, lineWidth: 1)
+                    }
+            } else {
+                Text(notes.isEmpty ? "无" : notes)
+                    .appFont(.body)
+                    .foregroundStyle(notes.isEmpty ? .secondary : .primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(AppPalette.inputSurface, in: RoundedRectangle(cornerRadius: 10))
+            }
+        }
+        .padding(14)
+        .background(AppPalette.ai.opacity(0.045), in: RoundedRectangle(cornerRadius: 12))
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 12)
                 .stroke(AppPalette.ai.opacity(0.13), lineWidth: 1)
         }
-        .shadow(color: .black.opacity(0.04), radius: 12, y: 5)
     }
 
     private var canSubmit: Bool {

@@ -113,6 +113,10 @@ struct RootView: View {
                 )
             }
         }
+        // NavigationStack destinations can otherwise remain cached by NavigationSplitView after
+        // the sidebar selection changes. Key the complete detail subtree to the authoritative
+        // sidebar selection so a pushed survey/project page can never cover another main area.
+        .id(model.selection)
     }
 }
 
