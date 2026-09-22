@@ -330,7 +330,7 @@ enum AgentTodoRepository {
             handle,
             "SELECT \(columns) FROM local_agent_todos WHERE owner_user_id = ? AND agent_id = ?"
                 + (includeTerminal ? "" : " AND status NOT IN ('completed', 'cancelled')")
-                + " ORDER BY priority DESC, sort_order, created_at_unix_ms, id",
+                + todoDisplayOrderSQL,
             [.text(ownerUserID), .text(agentID)],
             row: AgentGroupChatRowMapper.todo
         )
@@ -348,7 +348,7 @@ enum AgentTodoRepository {
             handle,
             "SELECT \(columns) FROM local_agent_todos WHERE owner_user_id = ? AND team_room_id = ?"
                 + (includeTerminal ? "" : " AND status NOT IN ('completed', 'cancelled')")
-                + " ORDER BY priority DESC, sort_order, created_at_unix_ms, id",
+                + todoDisplayOrderSQL,
             [.text(ownerUserID), .text(teamRoomID)],
             row: AgentGroupChatRowMapper.todo
         )
@@ -387,6 +387,17 @@ enum AgentTodoRepository {
     }
 
     private static let columns = "owner_user_id, id, agent_id, team_room_id, source_room_id, source_message_id, title, detail, priority, sort_order, request_key, status, blocked_reason, result, created_at_unix_ms, updated_at_unix_ms, execution_plan_json, execution_contract_json"
+
+    private static let todoDisplayOrderSQL = """
+     ORDER BY CASE status
+         WHEN 'in_progress' THEN 0
+         WHEN 'pending' THEN 1
+         WHEN 'blocked' THEN 2
+         WHEN 'completed' THEN 3
+         WHEN 'cancelled' THEN 4
+         ELSE 5
+     END, priority DESC, sort_order, created_at_unix_ms, id
+    """
 
     private static func string(_ statement: OpaquePointer, _ index: Int32) -> String {
         guard let value = sqlite3_column_text(statement, index) else { return "" }

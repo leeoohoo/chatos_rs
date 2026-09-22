@@ -1906,6 +1906,93 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         XCTAssertTrue(deliveries.first?.deduplicationKey.hasSuffix(urgent.id) == true)
     }
 
+    func testTodoListsSortActiveWorkBeforeTerminalHistory() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let agent = try await makeAgent(store, name: "执行者")
+        let room = try await makeRoom(store, projectID: "todo-order-project")
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id,
+            draft: .init(role: "执行者")
+        )
+
+        func create(_ key: String, priority: Int, now: Int64) async throws -> LocalAgentTodo {
+            try await store.createAgentTodo(
+                ownerUserID: "alice",
+                agentID: agent.id,
+                requestKey: key,
+                draft: .init(title: key, priority: priority, teamRoomID: room.id),
+                nowUnixMs: now
+            )
+        }
+
+        let completed = try await create("completed", priority: 100, now: 100)
+        let pending = try await create("pending", priority: 50, now: 101)
+        let cancelled = try await create("cancelled", priority: 100, now: 102)
+        let blocked = try await create("blocked", priority: 90, now: 103)
+        let running = try await create("running", priority: 10, now: 104)
+
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: completed.id,
+            update: .init(status: .inProgress),
+            nowUnixMs: 110
+        )
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: completed.id,
+            update: .init(status: .completed),
+            nowUnixMs: 111
+        )
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: cancelled.id,
+            update: .init(status: .cancelled),
+            nowUnixMs: 112
+        )
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: blocked.id,
+            update: .init(status: .inProgress),
+            nowUnixMs: 113
+        )
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: blocked.id,
+            update: .init(status: .blocked, blockedReason: "等待输入"),
+            nowUnixMs: 114
+        )
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: running.id,
+            update: .init(status: .inProgress),
+            nowUnixMs: 115
+        )
+
+        let expected = [running.id, pending.id, blocked.id, completed.id, cancelled.id]
+        let teamTodos = try await store.listTeamTodos(
+            ownerUserID: "alice",
+            teamRoomID: room.id,
+            includeTerminal: true
+        )
+        XCTAssertEqual(teamTodos.map(\.id), expected)
+        let agentTodos = try await store.listAgentTodos(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            includeTerminal: true
+        )
+        XCTAssertEqual(agentTodos.map(\.id), expected)
+    }
+
     func testFailedTodoDeliveryIsReactivatedWithoutDuplicateRows() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
