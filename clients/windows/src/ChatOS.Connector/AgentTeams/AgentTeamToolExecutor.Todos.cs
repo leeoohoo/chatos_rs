@@ -5,14 +5,24 @@ namespace ChatOS.Connector.AgentTeams;
 
 internal sealed partial class AgentTeamToolExecutor
 {
+    private static object TodoListSchema() => new
+    {
+        type = "object",
+        properties = new { limit = new { type = "integer", minimum = 1, maximum = 200 } },
+        additionalProperties = false,
+    };
+
     private async Task<AgentToolExecutionResult> ListTodosAsync(
         AgentProfile profile,
         AgentRoom room,
         AgentRunReferenceVault references,
+        JsonElement arguments,
         CancellationToken cancellationToken)
     {
+        var limit = OptionalInt(arguments, "limit") ?? 100;
+        if (limit is < 1 or > 200) throw AgentTeamValidation.Invalid("limit");
         var todos = await store.ListTodosAsync(profile.OwnerUserId, room.Id,
-            includeTerminal: true, cancellationToken).ConfigureAwait(false);
+            includeTerminal: true, limit, cancellationToken).ConfigureAwait(false);
         return new AgentToolExecutionResult(Json(todos.Select(value => TodoResponse(
             value, references))));
     }

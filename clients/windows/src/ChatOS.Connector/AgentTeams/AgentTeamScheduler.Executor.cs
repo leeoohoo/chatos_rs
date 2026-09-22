@@ -7,13 +7,11 @@ namespace ChatOS.Connector.AgentTeams;
 
 internal sealed partial class AgentTeamScheduler
 {
-    private static AgentTodo? TodoForDelivery(
-        AgentDelivery delivery,
-        IReadOnlyList<AgentTodo> todos)
+    private static string? TodoIdForDelivery(AgentDelivery delivery)
     {
         var parts = delivery.DeduplicationKey.Split(':');
         if (parts.Length < 2 || parts[0] != "todo") return null;
-        return todos.FirstOrDefault(value => value.Id == parts[1]);
+        return parts[1];
     }
 
     private static async Task<IReadOnlyList<AgentMessage>> LoadTodoSourceMessagesAsync(

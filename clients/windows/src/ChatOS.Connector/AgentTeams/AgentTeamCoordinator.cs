@@ -166,7 +166,7 @@ internal sealed class AgentTeamCoordinator : IAgentTeamService
         var messagesTask = _store.ListMessagesAsync(ownerUserId, roomId, 250,
             includeAttachmentPayloads: false, cancellationToken);
         var todosTask = _store.ListTodosAsync(ownerUserId, roomId,
-            includeTerminal: true, cancellationToken);
+            includeTerminal: true, limit: 200, cancellationToken);
         var assetsTask = _store.ListAssetsAsync(ownerUserId, roomId,
             includeArchived: false, cancellationToken);
         var surveysTask = room.Kind == AgentConversationKind.ProjectTeam

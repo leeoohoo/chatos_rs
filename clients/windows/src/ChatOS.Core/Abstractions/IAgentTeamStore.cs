@@ -135,12 +135,19 @@ public interface IAgentTeamStore
         string ownerUserId,
         string roomId,
         bool includeTerminal = true,
+        int limit = 200,
         CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<AgentTodo>> ListProjectTodosAsync(
         string ownerUserId,
         string projectId,
         bool includeTerminal = true,
+        int limit = 200,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<AgentTodo>> ListTodosByIdsAsync(
+        string ownerUserId,
+        IReadOnlyList<string> todoIds,
         CancellationToken cancellationToken = default);
 
     Task<AgentTodo?> GetTodoAsync(

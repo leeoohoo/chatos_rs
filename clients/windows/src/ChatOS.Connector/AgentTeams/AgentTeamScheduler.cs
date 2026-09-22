@@ -169,14 +169,23 @@ internal sealed partial class AgentTeamScheduler(
             ?? throw new AgentTeamException(AgentTeamError.NotMember,
                 "Target Agent is no longer a team member.");
         await BeginTodoExecutionAsync(delivery, cancellationToken).ConfigureAwait(false);
-        var todos = await store.ListTodosAsync(
-            delivery.OwnerUserId, room.Id, includeTerminal: true, cancellationToken).ConfigureAwait(false);
-        var executionTodo = delivery.Trigger == AgentDeliveryTrigger.Todo
-            ? TodoForDelivery(delivery, todos)
+        var executionTodoId = delivery.Trigger == AgentDeliveryTrigger.Todo
+            ? TodoIdForDelivery(delivery)
             : null;
-        if (delivery.Trigger == AgentDeliveryTrigger.Todo && executionTodo is null)
+        var executionTodo = executionTodoId is null
+            ? null
+            : await store.GetTodoAsync(delivery.OwnerUserId, executionTodoId, cancellationToken)
+                .ConfigureAwait(false);
+        if (delivery.Trigger == AgentDeliveryTrigger.Todo &&
+            (executionTodo is null || !string.Equals(executionTodo.Draft.TeamRoomId,
+                room.Id, StringComparison.Ordinal)))
             throw new AgentTeamException(AgentTeamError.Conflict,
                 "Todo executor delivery no longer maps to an immutable work contract.");
+        var todos = executionTodo is null
+            ? await store.ListTodosAsync(delivery.OwnerUserId, room.Id,
+                includeTerminal: true, limit: 100, cancellationToken).ConfigureAwait(false)
+            : await store.ListTodosByIdsAsync(delivery.OwnerUserId,
+                executionTodo.Draft.Dependencies, cancellationToken).ConfigureAwait(false);
         var recentMessages = executionTodo is null
             ? await store.ListMessagesAsync(delivery.OwnerUserId, room.Id, 120,
                 includeAttachmentPayloads: false, cancellationToken).ConfigureAwait(false)

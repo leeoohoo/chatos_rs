@@ -42,13 +42,15 @@ public sealed partial class SqliteAgentTeamStore
         string ownerUserId,
         string roomId,
         bool includeTerminal = true,
+        int limit = 200,
         CancellationToken cancellationToken = default)
     {
+        ValidateTodoListLimit(limit);
         await using var connection = await database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         using var command = Command(connection, null,
             $"SELECT {TodoColumns} FROM agent_todos WHERE owner_user_id = @p0 AND room_id = @p1" +
             (includeTerminal ? string.Empty : " AND status NOT IN ('Completed', 'Cancelled')") +
-            $" ORDER BY {TodoDisplayOrderSql()}", ownerUserId, roomId);
+            $" ORDER BY {TodoDisplayOrderSql()} LIMIT @p2", ownerUserId, roomId, limit);
         var output = new List<AgentTodo>();
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -64,8 +66,10 @@ public sealed partial class SqliteAgentTeamStore
         string ownerUserId,
         string projectId,
         bool includeTerminal = true,
+        int limit = 200,
         CancellationToken cancellationToken = default)
     {
+        ValidateTodoListLimit(limit);
         await using var connection = await database.OpenConnectionAsync(cancellationToken)
             .ConfigureAwait(false);
         using var command = Command(connection, null,
@@ -75,8 +79,8 @@ public sealed partial class SqliteAgentTeamStore
             "WHERE todo.owner_user_id = @p0 AND room.project_id = @p1" +
             (includeTerminal ? string.Empty :
                 " AND todo.status NOT IN ('Completed', 'Cancelled')") +
-            $" ORDER BY {TodoDisplayOrderSql("todo.")}",
-            ownerUserId, projectId);
+            $" ORDER BY {TodoDisplayOrderSql("todo.")} LIMIT @p2",
+            ownerUserId, projectId, limit);
         var output = new List<AgentTodo>();
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken)
             .ConfigureAwait(false))
@@ -85,6 +89,38 @@ public sealed partial class SqliteAgentTeamStore
                 output.Add(ReadTodo(reader));
         }
         return await AttachTodoSourcesAsync(connection, null, ownerUserId, output,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<AgentTodo>> ListTodosByIdsAsync(
+        string ownerUserId,
+        IReadOnlyList<string> todoIds,
+        CancellationToken cancellationToken = default)
+    {
+        AgentTeamValidation.Identifiers(todoIds, nameof(todoIds), 100);
+        if (todoIds.Count == 0) return [];
+
+        await using var connection = await database.OpenConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var placeholders = string.Join(", ", Enumerable.Range(1, todoIds.Count)
+            .Select(index => $"@p{index}"));
+        using var command = Command(connection, null,
+            $"SELECT {TodoColumns} FROM agent_todos " +
+            $"WHERE owner_user_id = @p0 AND id IN ({placeholders})",
+            [ownerUserId, .. todoIds.Cast<object>()]);
+        var found = new Dictionary<string, AgentTodo>(StringComparer.Ordinal);
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken)
+            .ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var todo = ReadTodo(reader);
+                found[todo.Id] = todo;
+            }
+        }
+
+        var ordered = todoIds.Where(found.ContainsKey).Select(id => found[id]).ToArray();
+        return await AttachTodoSourcesAsync(connection, null, ownerUserId, ordered,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -323,7 +359,9 @@ public sealed partial class SqliteAgentTeamStore
         }
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return await ListTodosAsync(ownerUserId, roomId, includeTerminal: true, cancellationToken)
+        if (todoIds.Count == 0) return [];
+        return await ListTodosAsync(ownerUserId, roomId, includeTerminal: true,
+                limit: todoIds.Count, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -503,6 +541,14 @@ public sealed partial class SqliteAgentTeamStore
         if (todo is null || !includeSources) return todo;
         return (await AttachTodoSourcesAsync(connection, transaction, ownerUserId, [todo],
             cancellationToken).ConfigureAwait(false))[0];
+    }
+
+    private static void ValidateTodoListLimit(int limit)
+    {
+        if (limit is < 1 or > 1_000)
+        {
+            throw AgentTeamValidation.Invalid(nameof(limit));
+        }
     }
 
     private static async Task<IReadOnlyList<AgentTodo>> ReadTodosAsync(

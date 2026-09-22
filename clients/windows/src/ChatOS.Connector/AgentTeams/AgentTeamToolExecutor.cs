@@ -81,7 +81,7 @@ internal sealed partial class AgentTeamToolExecutor(
             required = new[] { "through_message_ref" },
             additionalProperties = false,
         }),
-        Tool("todo_list", "读取当前团队共享任务板。", ObjectSchema()),
+        Tool("todo_list", "按活跃优先顺序读取当前团队共享任务板。", TodoListSchema()),
         Tool("todo_execution_options", "读取当前 Agent 可用于新 Todo 的 builtin 能力与本轮临时 Plugin 选项。", ObjectSchema()),
         Tool("todo_create", "项目经理用不可变执行合同创建并分配团队 Todo，可声明来源消息和前置依赖。", new
         {
@@ -355,7 +355,7 @@ internal sealed partial class AgentTeamToolExecutor(
                 "chat_mark_read" => await MarkReadAsync(
                     profile, room, vault, arguments, cancellationToken).ConfigureAwait(false),
                 "todo_list" => await ListTodosAsync(
-                    profile, room, vault, cancellationToken).ConfigureAwait(false),
+                    profile, room, vault, arguments, cancellationToken).ConfigureAwait(false),
                 "todo_execution_options" => await TodoExecutionOptionsAsync(
                     profile, member, vault, cancellationToken).ConfigureAwait(false),
                 "todo_schedule_state" => await TodoScheduleStateAsync(

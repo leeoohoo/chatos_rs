@@ -423,6 +423,32 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
         Assert.Equal(expected, projectTodos.Select(value => value.Id));
         var activeTodos = await _store.ListTodosAsync("alice", room.Id, includeTerminal: false);
         Assert.Equal(expected[..4], activeTodos.Select(value => value.Id));
+
+        var boundedTeamTodos = await _store.ListTodosAsync(
+            "alice", room.Id, includeTerminal: true, limit: 4);
+        Assert.Equal(expected[..4], boundedTeamTodos.Select(value => value.Id));
+        var boundedProjectTodos = await _store.ListProjectTodosAsync(
+            "alice", room.ProjectId, includeTerminal: true, limit: 4);
+        Assert.Equal(expected[..4], boundedProjectTodos.Select(value => value.Id));
+
+        var exactTodos = await _store.ListTodosByIdsAsync(
+            "alice", [cancelled.Id, running.Id, completed.Id]);
+        Assert.Equal([cancelled.Id, running.Id, completed.Id],
+            exactTodos.Select(value => value.Id));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1001)]
+    public async Task TodoListsRejectUnboundedLimits(int limit)
+    {
+        var teamError = await Assert.ThrowsAsync<AgentTeamException>(() =>
+            _store.ListTodosAsync("alice", "room-1", limit: limit));
+        Assert.Equal(AgentTeamError.InvalidField, teamError.Code);
+
+        var projectError = await Assert.ThrowsAsync<AgentTeamException>(() =>
+            _store.ListProjectTodosAsync("alice", "project-1", limit: limit));
+        Assert.Equal(AgentTeamError.InvalidField, projectError.Code);
     }
 
     [Fact]

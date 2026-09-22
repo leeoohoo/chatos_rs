@@ -295,7 +295,7 @@ internal sealed partial class AgentTeamToolExecutor
     {
         RequireSurveyCapability(profile, room);
         var todos = await store.ListProjectTodosAsync(profile.OwnerUserId, room.ProjectId,
-            includeTerminal: true, cancellationToken).ConfigureAwait(false);
+            includeTerminal: true, limit: 200, cancellationToken).ConfigureAwait(false);
         return new AgentToolExecutionResult(Json(new
         {
             project_bound = true,
