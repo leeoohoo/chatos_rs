@@ -654,6 +654,8 @@ public sealed partial class LocalStateDatabase
         await MigrateAgentInboxAsync(connection, cancellationToken).ConfigureAwait(false);
         await MigrateAgentTodoExecutionContractsAsync(connection, cancellationToken)
             .ConfigureAwait(false);
+        await MigrateAgentTodoAssetSnapshotsAsync(connection, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private static async Task MigrateRequirementSurveysToProjectScopeAsync(

@@ -656,7 +656,7 @@ internal sealed partial class AgentTeamToolExecutor(
         var capabilities = plan?.Capabilities ?? [AgentTodoBuiltinCapability.ProjectRead];
         var result = new HashSet<string>(StringComparer.Ordinal)
         {
-            "todo_update", "todo_progress", "asset_list", "chat_read_attachment",
+            "todo_update", "todo_progress", "chat_read_attachment",
             "cycle_complete", "skill_activate", "skill_list_resources",
             "skill_read_resource",
         };

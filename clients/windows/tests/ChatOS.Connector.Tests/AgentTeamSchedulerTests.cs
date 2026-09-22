@@ -116,11 +116,15 @@ public sealed class AgentTeamSchedulerTests : IAsyncLifetime
             new(AgentMessageSenderKind.Agent, profile.Id, "SOURCE_ALLOWED_FOR_EXECUTOR"));
         _ = await _store.PostMessageAsync("alice", room.Id,
             new(AgentMessageSenderKind.Agent, profile.Id, "PRIVATE_MANAGER_CHAT_MUST_NOT_LEAK"));
+        var asset = await _store.UpsertAssetAsync("alice", room.Id, null, profile.Id,
+            AgentTeamAssetCategory.Plan, "executor plan", "EXECUTOR_ASSET_V1", null);
         var todo = await _store.CreateTodoAsync("alice",
             new(room.Id, profile.Id, "实现功能", SourceMessageId: source.Message.Id,
                 ExecutionContract: new AgentTodoExecutionContract(
                     "EXECUTOR_OBJECTIVE", "isolated scope", ["verified output"],
                     ["tests pass"])));
+        _ = await _store.UpsertAssetAsync("alice", room.Id, asset.Id, profile.Id,
+            AgentTeamAssetCategory.Plan, "executor plan", "EXECUTOR_ASSET_V2", asset.Revision);
         var gateway = CreateGateway(async request =>
         {
             var body = await request.Content!.ReadAsStringAsync();
@@ -128,6 +132,8 @@ public sealed class AgentTeamSchedulerTests : IAsyncLifetime
             Assert.Contains("SOURCE_ALLOWED_FOR_EXECUTOR", body, StringComparison.Ordinal);
             Assert.DoesNotContain("PRIVATE_MANAGER_CHAT_MUST_NOT_LEAK", body,
                 StringComparison.Ordinal);
+            Assert.Contains("EXECUTOR_ASSET_V1", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("EXECUTOR_ASSET_V2", body, StringComparison.Ordinal);
             Assert.Contains("project_read", body, StringComparison.Ordinal);
             Assert.DoesNotContain("project_write", body, StringComparison.Ordinal);
             Assert.DoesNotContain("terminal_exec", body, StringComparison.Ordinal);

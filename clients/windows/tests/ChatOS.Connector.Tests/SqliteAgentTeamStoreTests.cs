@@ -270,13 +270,21 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
     [Fact]
     public async Task TodoSchedulerRunsOneTodoPerAgentAndStartsNextByPriority()
     {
-        var (_, worker, room) = await CreateConfiguredTeamAsync();
+        var (manager, worker, room) = await CreateConfiguredTeamAsync();
         await CompleteInitialMaintenanceAsync();
+        var asset = await _store.UpsertAssetAsync("alice", room.Id, null, manager.Id,
+            AgentTeamAssetCategory.Plan, "plan", "asset-v1", null);
         var first = await _store.CreateTodoAsync("alice",
             new(room.Id, worker.Id, "first", Priority: AgentTodoPriority.Normal));
         var firstDelivery = Assert.IsType<AgentDelivery>(
             await _store.ClaimNextDeliveryAsync("alice"));
         Assert.Equal(AgentDeliveryTrigger.Todo, firstDelivery.Trigger);
+        _ = await _store.UpsertAssetAsync("alice", room.Id, asset.Id, manager.Id,
+            AgentTeamAssetCategory.Plan, "plan", "asset-v2", asset.Revision);
+        var firstSnapshot = Assert.Single(
+            await _store.ListTodoAssetSnapshotsAsync("alice", first.Id));
+        Assert.Equal("asset-v1", firstSnapshot.Markdown);
+        Assert.Equal(1, firstSnapshot.Revision);
         var normal = await _store.CreateTodoAsync("alice",
             new(room.Id, worker.Id, "normal", Priority: AgentTodoPriority.Normal));
         var urgent = await _store.CreateTodoAsync("alice",
@@ -305,6 +313,10 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
         var next = await _store.GetTodoScheduleStateAsync("alice", worker.Id);
         Assert.Equal(urgent.Id, next.RunningTodo!.Id);
         Assert.Equal(normal.Id, next.ReadyTodo!.Id);
+        var urgentSnapshot = Assert.Single(
+            await _store.ListTodoAssetSnapshotsAsync("alice", urgent.Id));
+        Assert.Equal("asset-v2", urgentSnapshot.Markdown);
+        Assert.Equal(2, urgentSnapshot.Revision);
         Assert.Null(await _store.StartNextReadyTodoAsync("alice", worker.Id));
 
         var todoDeliveries = new List<AgentDelivery>();

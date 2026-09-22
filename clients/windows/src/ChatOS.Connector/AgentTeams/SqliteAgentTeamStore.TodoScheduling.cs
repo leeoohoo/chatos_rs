@@ -41,6 +41,35 @@ public sealed partial class SqliteAgentTeamStore
         return delivery;
     }
 
+    public async Task<IReadOnlyList<AgentTodoAssetSnapshot>> ListTodoAssetSnapshotsAsync(
+        string ownerUserId,
+        string todoId,
+        CancellationToken cancellationToken = default)
+    {
+        AgentTeamValidation.Identifier(ownerUserId, nameof(ownerUserId));
+        AgentTeamValidation.Identifier(todoId, nameof(todoId));
+        await using var connection = await database.OpenConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (await ReadTodoAsync(connection, null, ownerUserId, todoId, cancellationToken,
+            includeSources: false).ConfigureAwait(false) is null)
+            throw NotFound("Todo");
+        using var command = Command(connection, null, """
+            SELECT todo_id, asset_id, team_room_id, category, title, markdown, revision,
+                captured_at_unix_ms
+            FROM agent_todo_asset_snapshots
+            WHERE owner_user_id = @p0 AND todo_id = @p1
+            ORDER BY category, asset_id
+            """, ownerUserId, todoId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var output = new List<AgentTodoAssetSnapshot>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            output.Add(new AgentTodoAssetSnapshot(reader.GetString(0), reader.GetString(1),
+                reader.GetString(2), ParseEnum<AgentTeamAssetCategory>(reader.GetString(3)),
+                reader.GetString(4), reader.GetString(5), reader.GetInt32(6), reader.GetInt64(7)));
+        return output;
+    }
+
     private static async Task<AgentDelivery?> StartNextReadyTodoAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -75,6 +104,17 @@ public sealed partial class SqliteAgentTeamStore
         var todo = await ReadScheduledTodoAsync(connection, transaction, ownerUserId, agentId,
             AgentTodoStatus.Ready, cancellationToken, includeSources: false).ConfigureAwait(false);
         if (todo is null) return null;
+        using (var snapshot = Command(connection, transaction, """
+            INSERT OR IGNORE INTO agent_todo_asset_snapshots (
+                owner_user_id, todo_id, asset_id, team_room_id, category, title,
+                markdown, revision, captured_at_unix_ms)
+            SELECT owner_user_id, @p0, id, room_id, category, title, markdown, revision, @p1
+            FROM agent_team_assets
+            WHERE owner_user_id = @p2 AND room_id = @p3 AND status = 'Active'
+            """, todo.Id, now, ownerUserId, todo.Draft.TeamRoomId))
+        {
+            await snapshot.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
         var nextRevision = todo.Revision + 1;
         using (var update = Command(connection, transaction, """
             UPDATE agent_todos

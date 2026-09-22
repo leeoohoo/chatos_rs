@@ -168,3 +168,13 @@ public sealed record AgentTodoScheduleState(
 {
     public string State => RunningTodo is not null ? "busy" : ReadyTodo is not null ? "ready" : "idle";
 }
+
+public sealed record AgentTodoAssetSnapshot(
+    string TodoId,
+    string AssetId,
+    string TeamRoomId,
+    AgentTeamAssetCategory Category,
+    string Title,
+    string Markdown,
+    int Revision,
+    long CapturedAtUnixMs);

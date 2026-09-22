@@ -151,6 +151,11 @@ public interface IAgentTeamStore
         string agentId,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<AgentTodoAssetSnapshot>> ListTodoAssetSnapshotsAsync(
+        string ownerUserId,
+        string todoId,
+        CancellationToken cancellationToken = default);
+
     Task<AgentTodo> CreateTodoAsync(
         string ownerUserId,
         AgentTodoDraft draft,

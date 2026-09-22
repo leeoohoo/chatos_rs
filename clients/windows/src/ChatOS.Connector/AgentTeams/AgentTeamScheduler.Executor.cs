@@ -43,11 +43,12 @@ internal sealed partial class AgentTeamScheduler
         AgentTodo todo,
         IReadOnlyList<AgentMessage> sourceMessages,
         IReadOnlyList<AgentTodo> todos,
-        IReadOnlyList<AgentTeamAsset> assets,
+        IReadOnlyList<AgentTodoAssetSnapshot> assetSnapshots,
         IReadOnlyList<AgentTodoProgress> todoProgress,
         string? pluginInstructions,
         AgentRunReferenceVault references)
     {
+        var selectedAssets = SelectAssetSnapshots(assetSnapshots);
         var system = $"""
             你是 ChatOS Windows 本机 Agent 团队的隔离 Todo Executor。
             姓名：{profile.Draft.Name}
@@ -133,19 +134,37 @@ internal sealed partial class AgentTeamScheduler
                 value.AssetUpdateSuggestions,
                 value.CreatedAtUnixMs,
             })))
+            .AppendLine($"team_assets_truncated: {selectedAssets.Count != assetSnapshots.Count}")
             .AppendLine("team_assets:")
-            .AppendLine(JsonSerializer.Serialize(assets.Select(value => new
+            .AppendLine(JsonSerializer.Serialize(selectedAssets.Select(value => new
             {
-                asset_ref = references.AssetReference(value.TeamRoomId, value.Id, value.Revision),
+                asset_ref = references.AssetReference(
+                    value.TeamRoomId, value.AssetId, value.Revision),
                 value.Category,
                 value.Title,
                 value.Markdown,
                 value.Revision,
+                value.CapturedAtUnixMs,
             })));
         return
         [
             new Dictionary<string, object> { ["role"] = "system", ["content"] = system },
             new Dictionary<string, object> { ["role"] = "user", ["content"] = context.ToString() },
         ];
+    }
+
+    private static IReadOnlyList<AgentTodoAssetSnapshot> SelectAssetSnapshots(
+        IReadOnlyList<AgentTodoAssetSnapshot> assets)
+    {
+        const int maximumMarkdownCharacters = 512_000;
+        var output = new List<AgentTodoAssetSnapshot>();
+        var characters = 0;
+        foreach (var asset in assets.Take(64))
+        {
+            if (characters + asset.Markdown.Length > maximumMarkdownCharacters) continue;
+            output.Add(asset);
+            characters += asset.Markdown.Length;
+        }
+        return output;
     }
 }
