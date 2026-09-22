@@ -314,6 +314,32 @@ public sealed class AgentTeamSchedulerTests : IAsyncLifetime
                     """), CancellationToken.None, references));
         Assert.Equal(AgentTeamError.PermissionDenied, deniedCompletion.Code);
 
+        var otherTodo = await _store.CreateTodoAsync("alice",
+            new(room.Id, worker.Id, "不得越权写入的任务"));
+        var otherReference = references.TodoReference(room.Id, otherTodo.Id, worker.Id);
+        var deniedOtherProgress = await Assert.ThrowsAsync<AgentTeamException>(() =>
+            tools.ExecuteAsync(worker, workerMember, room, executorDelivery,
+                new AgentToolCall("progress-other", "todo_progress", $$"""
+                    {"todo_ref":"{{otherReference}}","kind":"Update","detail":"wrong todo"}
+                    """), CancellationToken.None, references, todo));
+        Assert.Equal(AgentTeamError.PermissionDenied, deniedOtherProgress.Code);
+        Assert.Empty(await _store.ListTodoProgressAsync("alice", otherTodo.Id));
+
+        var deniedTerminalProgress = await Assert.ThrowsAsync<AgentTeamException>(() =>
+            tools.ExecuteAsync(worker, workerMember, room, executorDelivery,
+                new AgentToolCall("progress-terminal", "todo_progress", $$"""
+                    {"todo_ref":"{{todoReference}}","kind":"Completed","detail":"wrong tool"}
+                    """), CancellationToken.None, references, todo));
+        Assert.Equal(AgentTeamError.PermissionDenied, deniedTerminalProgress.Code);
+
+        var progressResult = await tools.ExecuteAsync(worker, workerMember, room,
+            executorDelivery, new AgentToolCall("progress", "todo_progress", $$"""
+                {"todo_ref":"{{todoReference}}","kind":"Update","stage":"coding","detail":"verified"}
+                """), CancellationToken.None, references, todo);
+        Assert.False(progressResult.EndsCycle);
+        Assert.Contains(await _store.ListTodoProgressAsync("alice", todo.Id),
+            value => value.Kind == AgentTodoProgressKind.Update && value.Detail == "verified");
+
         var completedResult = await tools.ExecuteAsync(worker, workerMember, room,
             executorDelivery, new AgentToolCall("complete", "todo_complete", $$"""
                 {"todo_ref":"{{todoReference}}","expected_revision":{{todo.Revision}},"summary":"verified"}

@@ -211,24 +211,12 @@ internal sealed partial class AgentTeamToolExecutor
         AgentTodoStatus status,
         CancellationToken cancellationToken)
     {
-        if (delivery.Trigger != AgentDeliveryTrigger.Todo || executionTodo is null ||
-            status is not (AgentTodoStatus.Completed or AgentTodoStatus.Blocked))
+        if (status is not (AgentTodoStatus.Completed or AgentTodoStatus.Blocked))
             throw new AgentTeamException(AgentTeamError.PermissionDenied,
                 "Todo completion requires the owning executor delivery.");
         var todoReference = RequiredString(arguments, "todo_ref");
-        var authority = references.Todo(todoReference)
-            ?? throw AgentTeamValidation.Invalid("todo_ref");
-        if (authority.TodoId != executionTodo.Id || authority.RoomId != room.Id ||
-            authority.AgentId != profile.Id || delivery.TargetAgentId != profile.Id)
-            throw new AgentTeamException(AgentTeamError.PermissionDenied,
-                "Todo reference does not belong to this executor delivery.");
-        var current = await store.GetTodoAsync(profile.OwnerUserId, executionTodo.Id,
-            cancellationToken).ConfigureAwait(false) ?? throw new AgentTeamException(
-                AgentTeamError.NotFound, "Todo was not found.");
-        if (current.Status != AgentTodoStatus.InProgress ||
-            current.Draft.AgentId != profile.Id)
-            throw new AgentTeamException(AgentTeamError.Conflict,
-                "Todo execution no longer owns the scheduled slot.");
+        var current = await RequireOwnedExecutionTodoAsync(profile, room, delivery,
+            references, executionTodo, todoReference, cancellationToken).ConfigureAwait(false);
 
         var detail = RequiredString(arguments,
             status == AgentTodoStatus.Completed ? "summary" : "reason");
@@ -247,36 +235,69 @@ internal sealed partial class AgentTeamToolExecutor
     private async Task<AgentToolExecutionResult> AppendProgressAsync(
         AgentProfile profile,
         AgentRoom room,
+        AgentDelivery delivery,
         AgentRunReferenceVault references,
+        AgentTodo? executionTodo,
         JsonElement arguments,
         CancellationToken cancellationToken)
     {
+        var todoReference = RequiredString(arguments, "todo_ref");
+        var current = await RequireOwnedExecutionTodoAsync(profile, room, delivery,
+            references, executionTodo, todoReference, cancellationToken).ConfigureAwait(false);
+        var kind = ParseEnum<AgentTodoProgressKind>(RequiredString(arguments, "kind"));
+        if (kind != AgentTodoProgressKind.Update)
+            throw new AgentTeamException(AgentTeamError.PermissionDenied,
+                "todo_progress can only append non-terminal execution updates.");
         var suggestions = OptionalObjectArray(arguments, "asset_update_suggestions", 8)
             .Select(value => new AgentTeamAssetUpdateSuggestion(
                 ParseEnum<AgentTeamAssetCategory>(RequiredString(value, "category")),
                 RequiredString(value, "title"), RequiredString(value, "markdown"),
                 RequiredString(value, "rationale"))).ToArray();
-        var todoReference = RequiredString(arguments, "todo_ref");
-        var authority = references.Todo(todoReference);
-        var todoId = authority?.TodoId ?? (references.AllowsLegacyIds
-            ? todoReference : throw AgentTeamValidation.Invalid("todo_ref"));
-        if (authority is not null && authority.RoomId != room.Id)
-            throw new AgentTeamException(AgentTeamError.PermissionDenied,
-                "Todo reference does not belong to the current team.");
-        var progress = await store.AppendTodoProgressAsync(profile.OwnerUserId, todoId,
-            profile.Id, ParseEnum<AgentTodoProgressKind>(RequiredString(arguments, "kind")),
+        var progress = await store.AppendTodoProgressAsync(profile.OwnerUserId, current.Id,
+            profile.Id, kind,
             OptionalString(arguments, "stage") ?? string.Empty,
             RequiredString(arguments, "detail"), suggestions, cancellationToken)
             .ConfigureAwait(false);
         return new AgentToolExecutionResult(Json(new
         {
-            todo_ref = references.TodoReference(room.Id, todoId, profile.Id),
+            todo_ref = references.TodoReference(room.Id, current.Id, profile.Id),
             progress.Sequence,
             progress.Kind,
             progress.Stage,
             progress.Detail,
             progress.CreatedAtUnixMs,
         }));
+    }
+
+    private async Task<AgentTodo> RequireOwnedExecutionTodoAsync(
+        AgentProfile profile,
+        AgentRoom room,
+        AgentDelivery delivery,
+        AgentRunReferenceVault references,
+        AgentTodo? executionTodo,
+        string todoReference,
+        CancellationToken cancellationToken)
+    {
+        var deliveryKey = delivery.DeduplicationKey.Split(':');
+        var authority = references.Todo(todoReference)
+            ?? throw AgentTeamValidation.Invalid("todo_ref");
+        if (delivery.Trigger != AgentDeliveryTrigger.Todo ||
+            delivery.Status != AgentDeliveryStatus.Running ||
+            executionTodo is null || deliveryKey.Length < 2 || deliveryKey[0] != "todo" ||
+            deliveryKey[1] != executionTodo.Id || delivery.OwnerUserId != profile.OwnerUserId ||
+            delivery.RoomId != room.Id || delivery.TargetAgentId != profile.Id ||
+            authority.TodoId != executionTodo.Id || authority.RoomId != room.Id ||
+            authority.AgentId != profile.Id)
+            throw new AgentTeamException(AgentTeamError.PermissionDenied,
+                "Todo reference does not belong to this executor delivery.");
+        var current = await store.GetTodoAsync(profile.OwnerUserId, executionTodo.Id,
+            cancellationToken).ConfigureAwait(false) ?? throw new AgentTeamException(
+                AgentTeamError.NotFound, "Todo was not found.");
+        if (current.Status != AgentTodoStatus.InProgress ||
+            current.Draft.TeamRoomId != room.Id || current.Draft.AgentId != profile.Id)
+            throw new AgentTeamException(AgentTeamError.Conflict,
+                "Todo execution no longer owns the scheduled slot.");
+        return current;
     }
 
     private static object TodoResponse(AgentTodo value, AgentRunReferenceVault references) => new

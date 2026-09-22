@@ -197,7 +197,7 @@ internal sealed partial class AgentTeamToolExecutor(
             properties = new
             {
                 todo_ref = new { type = "string" },
-                kind = new { type = "string", @enum = Enum.GetNames<AgentTodoProgressKind>() },
+                kind = new { type = "string", @enum = new[] { nameof(AgentTodoProgressKind.Update) } },
                 stage = new { type = "string", maxLength = 500 },
                 detail = new { type = "string", maxLength = 16_000 },
                 asset_update_suggestions = new
@@ -374,7 +374,8 @@ internal sealed partial class AgentTeamToolExecutor(
                     profile, room, delivery, vault, executionTodo, arguments,
                     AgentTodoStatus.Blocked, cancellationToken).ConfigureAwait(false),
                 "todo_progress" => await AppendProgressAsync(
-                    profile, room, vault, arguments, cancellationToken).ConfigureAwait(false),
+                    profile, room, delivery, vault, executionTodo, arguments,
+                    cancellationToken).ConfigureAwait(false),
                 "asset_list" => await ListAssetsAsync(
                     profile, room, vault, cancellationToken).ConfigureAwait(false),
                 "asset_create" => await CreateAssetAsync(
