@@ -31,7 +31,7 @@ macOS 后续 Bug 修复、功能更新和协议变化先进入 `10-macos-change-
 | 项目 | Plan、Requirement 和执行范围 | Windows 验收 | 需求层级、任务、文档、Execution Plan 查询/创建、精确 identity 确认、放弃和停止已实现 |
 | 项目 | 运行环境、目标和实例 | Windows 验收 | Catalog/State/Environment、目标分析、工具链与环境变量、启动/停止/删除、日志轮询和 WinUI 页面已完成 |
 | Agent 团队 | Agent 配置、团队、成员、项目经理和默认 Agent | Windows 验收 | 本机账号隔离的 Agent Profile、模型/推理/职业/插件/Skill/心跳配置，项目团队、成员职责、项目经理、默认路由和 Human/Agent 私聊已接入；具有双重人员权限的 Agent 可发起新建成员、已有成员入队和移出成员提案，Human 在成员提案页批准/拒绝后由 SQLite v15 事务原子生效，移出保留 Profile，等待 Windows 真机 UI 验收 |
-| Agent 团队 | 团队消息、@ 路由、附件和 Agent 间私聊 | 实现中 | durable message/delivery、精确 @、默认 Agent、4-hop/12-run、附件 payload 分表和 UTF-8 正文按需分段读取已实现；仍缺账号级全会话 Inbox、run-scoped opaque reference、文档草稿/发送 receipt，以及图片/PDF 多模态输入 |
+| Agent 团队 | 团队消息、@ 路由、附件和 Agent 间私聊 | 实现中 | durable message/delivery、精确 @、默认 Agent、4-hop/12-run、附件 payload 分表和 UTF-8 正文按需分段读取已实现；账号级全会话 Inbox 支持成员范围过滤、排除自身回复、单调已读游标、跨会话原子读取/标记和 v16 迁移，批量读取不加载 payload 且消除逐消息 N+1；仍缺 run-scoped opaque reference、文档草稿/发送 receipt，以及图片/PDF 多模态输入 |
 | Agent 团队 | Todo、依赖、进展、调度和共享资产 | 实现中 | Todo revision、依赖释放、排序、进展、manager 状态唤醒、资产建议和通信/执行工具裁剪已实现；仍缺 macOS 的不可变执行合同、来源关系、任务级 builtin/plugin 能力快照、完整 schedule state/start-next 与独立 executor lane 生命周期 |
 | Agent 团队 | 项目级需求调研 | Windows 验收 | 调研已从房间归属迁移为项目归属，v13→v14 无损回填；项目经理或获授 `requirement.survey.manage` 的成员可创建/读取/解决，支持统一 `skill_activate/list_resources/read_resource` 渐进协议、跨团队项目 Todo 核对、Human 填写和 durable 回唤，自动化已覆盖 |
 | Agent 团队 | 模型循环、插件、项目工具和终端 | Windows 验收 | OpenAI Responses 工具循环、16 次预算、供应商错误脱敏、已安装且启用的默认插件 MCP 真执行、成员 allowlist、插件权限规则/逐次审批、OAuth/Secret 注入、Artifact 注册和 run-scoped 清理，以及项目边界文件读写/搜索、现有命令审批、项目根 sandbox、后台心跳和 durable run 均已实现；等待 Windows 真机模型、插件进程与命令审批验收 |
@@ -63,8 +63,8 @@ macOS 后续 Bug 修复、功能更新和协议变化先进入 `10-macos-change-
 | 安全 | 受控域名网络 | 实现中 | Windows SID 由设备私钥签名连接上报并服务端绑定，域名只从托管权限配置推导；后端策略签发、Relay、exec/ConPTY 挂起进程 lease、每进程 SID、Service/broker、WFP 驱动和端到端脚本均已完成；已增加 Hardware Dev Center CAB/微软签名结果导入，严格区分 unsigned、local_test、microsoft_production，正式验收只接受 Microsoft Hardware Compatibility Publisher；仅剩实际 WDK 编译、微软生产签名及不可绕过真机证据 |
 | 发布 | x64 MSIX | Windows 验收 | manifest、品牌资源、隔离的 x64 输出目录、证书签名校验和自动安装/升级/打包启动/UI smoke/卸载证据脚本已接入；待干净 Windows 账号执行 |
 | 发布 | ARM64 MSIX | Windows 验收 | ARM64 构建、隔离的未签名/签名包和同一生命周期验收脚本已接入；需 ARM64 Windows 真机执行 |
-| 质量 | Core/API 自动化测试 | Windows 验收 | 当前 Core 25、API 45、Presentation 47、Connector 333、NetworkGuard 19，共 469 项测试通过；WindowsNative 和显式启用的 NetworkGuard 端到端测试仍需在 Windows 执行真实系统 API |
-| 质量 | Connector 集成测试 | Windows 验收 | 当前 Connector 333 项，新增覆盖 Agent 团队账号隔离、路由限流、附件 payload/正文按需读取、Todo 依赖/进展、资产建议/权限/维护唤醒、项目级需求调研及 v14 迁移、成员提案双权限/幂等/原子审批/v15 持久化、心跳、Responses API、模型工具循环和插件 MCP run session；WindowsNative 还验证系统 API、Credential Manager、WinUI 和原生命令执行 |
+| 质量 | Core/API 自动化测试 | Windows 验收 | 当前 Core 25、API 45、Presentation 47、Connector 337、NetworkGuard 19，共 473 项测试通过；WindowsNative 和显式启用的 NetworkGuard 端到端测试仍需在 Windows 执行真实系统 API |
+| 质量 | Connector 集成测试 | Windows 验收 | 当前 Connector 337 项，新增覆盖 Agent 团队账号隔离、路由限流、附件 payload/正文按需读取、跨会话 Inbox/单调游标/v16 重启、Todo 依赖/进展、资产建议/权限/维护唤醒、项目级需求调研及 v14 迁移、成员提案双权限/幂等/原子审批/v15 持久化、心跳、Responses API、模型工具循环和插件 MCP run session；WindowsNative 还验证系统 API、Credential Manager、WinUI 和原生命令执行 |
 | 质量 | NetworkGuard 自动化测试 | 实现中 | 当前 19 项单元/服务测试通过；端到端验收要求两个指定测试真实出现在 TRX，覆盖 Microsoft 生产签名门禁、同 IP denied SNI、HTTP/TLS、IP literal、DNS/DoH/QUIC/UDP、无 SNI、子进程、服务/驱动重启和 lease residue=0，等待 Windows 专用验收机生成证据 |
 | 质量 | Windows CI | Windows 验收 | Windows 2022 x64/ARM64 restore、串行测试、WindowsNative TRX/JSON、Desktop Release、未签名/签名 MSIX，以及 x64/ARM64 unsigned WDK SYS/CAT/INF/Service 编译与 schema v2 hash 报告上传均已接入；生产驱动签名由 Hardware Dev Center 外部流程完成，统一校验器拒绝 local_test 冒充生产、零测试、缺项、残留或伪通过，等待远端首次运行 |
 | 质量 | UI 自动化与可访问性 | Windows 验收 | 76 个稳定 Automation ID 覆盖登录、Shell、设置、聊天、项目导航、本机终端、全局审批和宠物关键路径；静态测试校验唯一性/必备项/显式 accessible name，smoke 支持匿名登录页和 Secret 驱动的真实登录后 Shell → 设置路径，等待 Windows CI 首次运行 |
