@@ -15,6 +15,8 @@ private final class RequirementSurveyCenterViewModel: ObservableObject {
     let scheduler: LocalAgentGroupChatScheduler
     private var observedProjectIDs: [String] = []
     private var observationTask: Task<Void, Never>?
+    private var schedulerTask: Task<Void, Never>?
+    private var schedulerNeedsAnotherPass = false
 
     init(
         ownerUserID: String,
@@ -26,7 +28,10 @@ private final class RequirementSurveyCenterViewModel: ObservableObject {
         self.scheduler = scheduler
     }
 
-    deinit { observationTask?.cancel() }
+    deinit {
+        observationTask?.cancel()
+        schedulerTask?.cancel()
+    }
 
     var creatorNamesByID: [String: String] {
         Dictionary(uniqueKeysWithValues: agents.map { ($0.id, $0.draft.name) })
@@ -39,6 +44,7 @@ private final class RequirementSurveyCenterViewModel: ObservableObject {
     func activate(projectIDs: [String]) async {
         observedProjectIDs = projectIDs
         await load(projectIDs: projectIDs)
+        startScheduler()
         guard observationTask == nil else { return }
         observationTask = Task { [weak self] in
             guard let self else { return }
@@ -115,12 +121,34 @@ private final class RequirementSurveyCenterViewModel: ObservableObject {
                     kind: .roomUpdated
                 ))
             }
-            _ = try await scheduler.drainAccount(ownerUserID: ownerUserID)
             await load(projectIDs: observedProjectIDs)
+            startScheduler()
             return true
         } catch {
             errorMessage = error.localizedDescription
             return false
+        }
+    }
+
+    private func startScheduler() {
+        schedulerNeedsAnotherPass = true
+        guard schedulerTask == nil else { return }
+        schedulerTask = Task { [weak self] in
+            guard let self else { return }
+            repeat {
+                schedulerNeedsAnotherPass = false
+                do {
+                    _ = try await scheduler.drainAccount(ownerUserID: ownerUserID)
+                } catch is CancellationError {
+                    // Another visible Agent surface may already own the
+                    // account-wide drain lease. Its durable updates are still
+                    // observed by this page.
+                } catch {
+                    errorMessage = "答案已保存，但 Agent 调度失败：\(error.localizedDescription)"
+                }
+                await load(projectIDs: observedProjectIDs)
+            } while schedulerNeedsAnotherPass && !Task.isCancelled
+            schedulerTask = nil
         }
     }
 }
