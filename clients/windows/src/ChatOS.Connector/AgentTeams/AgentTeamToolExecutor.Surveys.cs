@@ -7,26 +7,38 @@ internal sealed partial class AgentTeamToolExecutor
 {
     public static IReadOnlyList<AgentToolDefinition> SurveyDefinitions { get; } =
     [
-        Tool("requirement_survey_skill_get",
-            "按当前目标读取一份需求调研场景 Skill；一次只加载一个相关场景。",
+        Tool("skill_activate",
+            "激活需求调研 Skill Catalog 中的一个不可变 Skill；先激活 Router，再按其路由激活一个专业 Skill。",
             new
             {
                 type = "object",
                 properties = new
                 {
-                    scenario = new
-                    {
-                        type = "string",
-                        @enum = new[]
-                        {
-                            "create_survey", "read_results", "resolve_survey",
-                            "review_execution",
-                        },
-                    },
+                    skill_ref = new { type = "string", maxLength = 80 },
                 },
-                required = new[] { "scenario" },
+                required = new[] { "skill_ref" },
                 additionalProperties = false,
             }),
+        Tool("skill_list_resources", "列出一个需求调研 Skill 声明的按需资源。", new
+        {
+            type = "object",
+            properties = new { skill_ref = new { type = "string", maxLength = 80 } },
+            required = new[] { "skill_ref" },
+            additionalProperties = false,
+        }),
+        Tool("skill_read_resource", "按需分段读取需求调研 Skill 的文本资源。", new
+        {
+            type = "object",
+            properties = new
+            {
+                skill_ref = new { type = "string", maxLength = 80 },
+                relative_path = new { type = "string", maxLength = 1_000 },
+                offset = new { type = "integer", minimum = 0 },
+                max_chars = new { type = "integer", minimum = 1, maximum = 64_000 },
+            },
+            required = new[] { "skill_ref", "relative_path" },
+            additionalProperties = false,
+        }),
         Tool("requirement_survey_create",
             "项目经理创建 1–12 题的 Human 单选/多选需求调研。创建后本轮结束并等待 Human。",
             new
@@ -126,24 +138,50 @@ internal sealed partial class AgentTeamToolExecutor
         }),
     ];
 
-    private static AgentToolExecutionResult GetRequirementSurveySkill(JsonElement arguments)
+    private static AgentToolExecutionResult ActivateSkill(JsonElement arguments)
     {
-        var scenario = RequiredString(arguments, "scenario");
-        string instructions;
         try
         {
-            instructions = AgentRequirementSurveySkillCatalog.Get(scenario);
+            return new AgentToolExecutionResult(Json(
+                AgentRequirementSurveySkillCatalog.Activate(
+                    RequiredString(arguments, "skill_ref"))));
         }
-        catch (ArgumentOutOfRangeException)
+        catch (KeyNotFoundException)
         {
-            throw AgentTeamValidation.Invalid("scenario");
+            throw AgentTeamValidation.Invalid("skill_ref");
         }
-        return new AgentToolExecutionResult(Json(new
+    }
+
+    private static AgentToolExecutionResult ListSkillResources(JsonElement arguments)
+    {
+        try
         {
-            scenario,
-            skill_name = scenario.Replace('_', '-'),
-            instructions,
-        }));
+            return new AgentToolExecutionResult(Json(
+                AgentRequirementSurveySkillCatalog.ListResources(
+                    RequiredString(arguments, "skill_ref"))));
+        }
+        catch (KeyNotFoundException)
+        {
+            throw AgentTeamValidation.Invalid("skill_ref");
+        }
+    }
+
+    private static AgentToolExecutionResult ReadSkillResource(JsonElement arguments)
+    {
+        try
+        {
+            return new AgentToolExecutionResult(Json(
+                AgentRequirementSurveySkillCatalog.ReadResource(
+                    RequiredString(arguments, "skill_ref"),
+                    RequiredString(arguments, "relative_path"),
+                    OptionalInt(arguments, "offset") ?? 0,
+                    OptionalInt(arguments, "max_chars") ?? 32_000)));
+        }
+        catch (Exception exception) when (exception is KeyNotFoundException or ArgumentException)
+        {
+            throw new AgentTeamException(AgentTeamError.InvalidField,
+                "Skill reference, resource path, or range is invalid.", exception);
+        }
     }
 
     private async Task<AgentToolExecutionResult> CreateRequirementSurveyAsync(

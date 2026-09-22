@@ -331,7 +331,7 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
         Assert.Equal(specialist.Id, delivery.TargetAgentId);
         var executor = new AgentTeamToolExecutor(_store, null!);
         var available = executor.AllDefinitions(specialist, room, delivery);
-        Assert.Contains(available, value => value.Name == "requirement_survey_skill_get");
+        Assert.Contains(available, value => value.Name == "skill_activate");
         Assert.DoesNotContain(available, value => value.Name == "todo_create");
 
         var result = await executor.ExecuteAsync(specialist, member, room, delivery,
@@ -341,12 +341,19 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
 
         Assert.True(result.EndsCycle);
         var skill = await executor.ExecuteAsync(specialist, member, room, delivery,
-            new AgentToolCall("skill", "requirement_survey_skill_get",
-                "{\"scenario\":\"create_survey\"}"), CancellationToken.None);
+            new AgentToolCall("skill", "skill_activate",
+                "{\"skill_ref\":\"SKreq-create\"}"), CancellationToken.None);
         using var skillDocument = System.Text.Json.JsonDocument.Parse(skill.Content);
         Assert.Contains("requirement_survey_list",
             skillDocument.RootElement.GetProperty("instructions").GetString(),
             StringComparison.Ordinal);
+        var resource = await executor.ExecuteAsync(specialist, member, room, delivery,
+            new AgentToolCall("resource", "skill_read_resource",
+                "{\"skill_ref\":\"SKreq-create\",\"relative_path\":\"references/example.md\",\"max_chars\":80}"),
+            CancellationToken.None);
+        using var resourceDocument = System.Text.Json.JsonDocument.Parse(resource.Content);
+        Assert.True(resourceDocument.RootElement.GetProperty("truncated").GetBoolean());
+        Assert.Equal(64, resourceDocument.RootElement.GetProperty("sha256").GetString()!.Length);
         var survey = Assert.Single(await _store.ListRequirementSurveysAsync(
             "alice", room.ProjectId, AgentRequirementSurveyStatus.Pending));
         Assert.Equal(specialist.Id, survey.CreatorAgentId);

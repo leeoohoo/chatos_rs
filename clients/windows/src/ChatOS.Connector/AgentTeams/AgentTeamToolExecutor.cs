@@ -179,7 +179,8 @@ internal sealed partial class AgentTeamToolExecutor(
             {
                 "todo_list", "todo_update", "todo_progress", "asset_list",
                 "chat_read_attachment", "cycle_complete",
-                "requirement_survey_skill_get", "requirement_survey_list",
+                "skill_activate", "skill_list_resources", "skill_read_resource",
+                "requirement_survey_list",
                 "requirement_survey_get", "requirement_survey_project_tasks",
                 "requirement_survey_create", "requirement_survey_resolve",
             };
@@ -248,7 +249,22 @@ internal sealed partial class AgentTeamToolExecutor(
                 // Compatibility for a model call already in flight while upgrading from 3.0.4.
                 "asset_upsert" => await UpsertAssetAsync(
                     profile, room, arguments, cancellationToken).ConfigureAwait(false),
-                "requirement_survey_skill_get" => GetRequirementSurveySkill(arguments),
+                "skill_activate" => ActivateSkill(arguments),
+                "skill_list_resources" => ListSkillResources(arguments),
+                "skill_read_resource" => ReadSkillResource(arguments),
+                // Compatibility for an Agent call already in flight during the 3.0.5 upgrade.
+                "requirement_survey_skill_get" => ActivateSkill(
+                    JsonSerializer.SerializeToElement(new
+                    {
+                        skill_ref = RequiredString(arguments, "scenario") switch
+                        {
+                            "create_survey" => "SKreq-create",
+                            "read_results" => "SKreq-read",
+                            "resolve_survey" => "SKreq-resolve",
+                            "review_execution" => "SKreq-review",
+                            _ => throw AgentTeamValidation.Invalid("scenario"),
+                        },
+                    })),
                 "requirement_survey_create" => await CreateRequirementSurveyAsync(
                     profile, room, delivery, arguments, cancellationToken).ConfigureAwait(false),
                 "requirement_survey_list" => await ListRequirementSurveysAsync(

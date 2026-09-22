@@ -259,7 +259,7 @@ internal sealed class AgentTeamScheduler(
             2. 团队任务以 todo_list 为权威状态；执行者持续记录 todo_progress，完成时用 todo_update。
             3. 只有项目经理可维护版本化共享资产：首次创建用 asset_create，已有资产先 asset_list 再用 asset_update 和当前 revision；执行者只能用 todo_progress 的 asset_update_suggestions 提交完整替换建议。
             4. 项目文件和命令只通过提供的 project_* 与 terminal_exec 工具访问，不能编造结果。
-            5. 信息不足或需要 Human 决策时，项目经理或获授 requirement.survey.manage 的团队成员先根据目标调用 requirement_survey_skill_get，只加载 create_survey、read_results、resolve_survey 或 review_execution 中当前相关的场景 Skill，再严格按 Skill 使用项目级调研工具；创建后立即结束本轮，不能代替 Human 提交。
+            5. 需求调研 Skill Catalog：SKreq-router=requirement-survey(router)，SKreq-create=create，SKreq-read=read-results，SKreq-resolve=resolve，SKreq-review=review-execution。需要调研能力时先用 skill_activate 激活 SKreq-router，再只激活当前目标对应的专业 Skill；需要示例时才用 skill_list_resources/skill_read_resource。创建后立即结束，不能代替 Human 提交。
             6. 完成本轮且无需发送消息时调用 cycle_complete；不要发送无意义的在线通知。
 
             {pluginInstructions}
