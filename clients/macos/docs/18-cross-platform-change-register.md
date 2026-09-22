@@ -1,6 +1,6 @@
 # macOS / Windows 跨平台变更登记
 
-更新时间：2026-09-22
+更新时间：2026-09-23
 
 本文是 macOS 端发现或实现的产品行为变更的权威登记。目标是避免 macOS 修复、功能更新或协议调整只停留在 Swift 客户端，导致 Windows 客户端随后出现行为分叉。
 
@@ -126,10 +126,10 @@ Windows 状态只允许使用：
 - 类型：功能更新、本机持久协作运行时。
 - 预期行为：Windows 与 macOS 都提供 Agent 配置、项目团队/私聊、消息与附件、Todo/依赖/进展、共享资产、模型工具循环、项目文件与审批终端，以及 Human 结构化需求调研闭环。
 - 修复范围：Windows 已新增账号隔离 SQLite Store、durable delivery/run/heartbeat、Responses API、项目工具、Presentation 和 WinUI；需求调研已改为项目归属并加入渐进场景 Skill、跨团队任务核对及 v14 迁移；附件正文分表且支持 UTF-8 按需读取；Agent 插件复用权限/审批、OAuth/Secret 与 Artifact 管线并按 run 清理。
-- macOS 状态：代码持续开发中；本登记描述当前工作区能力，提交前仍需以 macOS 测试结果为准。
-- Windows 是否需要代码修改：需要；早期登记高估了对齐程度。
-- Windows 必做项：继续补账号级 Inbox/已读、run-scoped opaque reference、文档草稿/发送 receipt、成员变更提案审批、Todo 执行合同/来源/任务级能力与完整调度、独立 executor lane、图片/PDF 多模态和项目级调研中心；之后完成 x64/ARM64 编译及 WinUI/插件/终端真机验收。
-- Windows 状态：`待实现`；当前已完成部分的 Windows solution 464 项测试通过。
+- macOS 状态：代码与自动化已验证；后续行为变化继续按本登记新增稳定编号。
+- Windows 是否需要代码修改：需要，且本地代码差距已关闭。账号级 Inbox/已读、run-scoped opaque reference、文档草稿/发送 receipt、成员变更提案审批、Todo 执行合同/来源/任务级能力与完整调度、独立 communication/executor lane、图片/PDF 多模态和项目级调研中心均已实现。
+- Windows 必做项：在 Windows x64/ARM64 完成编译，并在 x64 真机验证 Agent/团队编辑与成员提案、团队切换、附件/多模态、项目调研中心、真实模型与插件进程、Artifact、命令审批、崩溃恢复和长对话内存占用。未提交、未编号的 macOS session-bound SSH MFA 工作区变化不并入本条，待其提交并登记后另行同步。
+- Windows 状态：`待真机验收`；Windows solution 497 项测试通过，本地可实现差距已关闭。
 
 ## 新记录模板
 

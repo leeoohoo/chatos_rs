@@ -1,6 +1,6 @@
 # macOS 变更的 Windows 同步登记
 
-更新时间：2026-09-22
+更新时间：2026-09-23
 
 本文是 Windows 客户端针对 macOS 端 Bug 修复、功能更新和协议变化的执行队列。macOS 侧的来源登记位于 `chatos_swift/docs/18-cross-platform-change-register.md`。
 
@@ -93,6 +93,7 @@
 - 已关闭的失败恢复差距：对照 macOS `669665a46`，Windows 会在超时、408、429 或 5xx 时于同一 run 的总调用预算内以 1/2/4/8/16 秒退避最多重试 5 次；显式把失败 Todo 恢复为 Ready 时，事务会复活同一 delivery、清空失败字段并保留 attempt，旧 `todo:{id}:revision:{n}` 键会惰性收敛为稳定 `todo:{id}`。调度器读取该 delivery 的 durable run，复用 run ID 和累计模型调用数，失败请求也先持久化调用计数；不会复制触发消息或越过 16 次总预算。完成/取消路径同时兼容稳定键与旧 revision 键。
 - 已关闭的 Windows 性能差距：团队和项目 Todo 查询在活跃优先排序后于 SQL 层限制结果，默认 200、服务端硬上限 1000；模型 `todo_list` 默认 100 且参数在工具 schema 与执行端共同限制为最多 200，WinUI snapshot 和调研任务核对最多 200，避免长期项目把全部历史、来源关系和大字段无界送入内存或模型上下文。executor 改为按 delivery 精确读取当前 Todo，并用单次 `IN` 查询按合同声明顺序加载最多 100 个依赖，不再为了查一个执行合同扫描整块任务板，也不会因终态历史被截断而丢失冻结依赖结果。
 - 当前未发现 CP-20260922-001 范围内仍可由本地代码关闭的差距；未编号的 session-bound SSH MFA 工作区变化另列上方观察，等待来源提交和登记。
+- 2026-09-23 复核：自上一轮自动化后没有新的 macOS 提交；macOS 权威登记已从过期的“待实现/464 项”收敛为与 Windows 镜像一致的“待真机验收/497 项”。两处 SSH MFA 工作区修改仍属于外部未提交变更，未被触碰或伪造同步编号。
 - Windows 真机要求：代码差距关闭后，验证 Agent/团队编辑与提案对话框、团队切换、附件/多模态、项目调研中心、模型工具、真实插件进程、Artifact、命令审批、崩溃恢复和长对话内存占用。
 - 当前状态：`待真机验收`；Windows solution 497 项测试通过，Windows 本轮源码均低于 800 行；全仓源码体积检查仅被未由本批修改的 macOS `TeamRequirementSurveysView.swift` 867 行阻塞。
 - 关闭条件：在 Windows x64/ARM64 编译，x64 完成 UI/模型/Plugin/终端/崩溃恢复 smoke 后，两端登记改为 `已同步`。
