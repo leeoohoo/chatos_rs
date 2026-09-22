@@ -243,6 +243,7 @@ public interface IAgentTeamStore
         string ownerUserId,
         string projectId,
         AgentRequirementSurveyStatus? status = null,
+        int limit = 200,
         CancellationToken cancellationToken = default);
 
     Task<AgentRequirementSurvey?> GetRequirementSurveyAsync(

@@ -47,6 +47,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         RemoteConnectionsViewModel remoteConnections,
         LocalizationViewModel localization,
         AgentTeamWorkspaceViewModel? agentTeam = null,
+        ProjectRequirementSurveysViewModel? requirementSurveys = null,
         TerminalSessionManager? terminalSessions = null,
         RemoteTerminalSessionManager? remoteTerminalSessions = null)
     {
@@ -61,6 +62,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ProjectGit = projectGit;
         ProjectRun = projectRun;
         AgentTeam = agentTeam;
+        RequirementSurveys = requirementSurveys;
         RemoteConnections = remoteConnections;
         Localization = localization;
         _terminalSessions = terminalSessions;
@@ -79,6 +81,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public ProjectRunViewModel ProjectRun { get; }
 
     public AgentTeamWorkspaceViewModel? AgentTeam { get; }
+
+    public ProjectRequirementSurveysViewModel? RequirementSurveys { get; }
 
     public RemoteConnectionsViewModel RemoteConnections { get; }
 
@@ -618,6 +622,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
                     var owner = RequireAccount(AccountGeneration);
                     if (AgentTeam is not null)
                         await AgentTeam.OpenAsync(owner, project, token);
+                    break;
+                case "requirement-surveys":
+                    var surveyOwner = RequireAccount(AccountGeneration);
+                    if (RequirementSurveys is not null)
+                        await RequirementSurveys.OpenAsync(surveyOwner, project, token);
                     break;
             }
         }

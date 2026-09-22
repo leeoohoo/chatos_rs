@@ -237,7 +237,7 @@ internal sealed partial class AgentTeamToolExecutor
                 ? parsed
                 : throw AgentTeamValidation.Invalid("status");
         var surveys = await store.ListRequirementSurveysAsync(profile.OwnerUserId, room.ProjectId,
-            status, cancellationToken).ConfigureAwait(false);
+            status, cancellationToken: cancellationToken).ConfigureAwait(false);
         return new AgentToolExecutionResult(Json(new
         {
             project_bound = true,

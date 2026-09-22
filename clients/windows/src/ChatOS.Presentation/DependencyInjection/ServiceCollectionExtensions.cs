@@ -31,6 +31,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<RemoteTerminalViewModel>();
         services.AddSingleton<PetOverlayViewModel>();
         services.AddSingleton<AgentTeamWorkspaceViewModel>();
+        services.AddSingleton<ProjectRequirementSurveysViewModel>();
         return services;
     }
 }

@@ -171,7 +171,7 @@ internal sealed class AgentTeamCoordinator : IAgentTeamService
             includeArchived: false, cancellationToken);
         var surveysTask = room.Kind == AgentConversationKind.ProjectTeam
             ? _store.ListRequirementSurveysAsync(ownerUserId, room.ProjectId, null,
-                cancellationToken)
+                cancellationToken: cancellationToken)
             : Task.FromResult<IReadOnlyList<AgentRequirementSurvey>>([]);
         var staffingTask = _store.ListStaffingProposalsAsync(ownerUserId, roomId, null,
             cancellationToken);
@@ -314,6 +314,27 @@ internal sealed class AgentTeamCoordinator : IAgentTeamService
             expectedRevision, cancellationToken).ConfigureAwait(false);
         var room = await RequireRoomAsync(ownerUserId, roomId, cancellationToken).ConfigureAwait(false);
         Raise(ownerUserId, room.ProjectId, roomId, "asset_archived");
+    }
+
+    public Task<IReadOnlyList<AgentRequirementSurvey>> ListProjectRequirementSurveysAsync(
+        string ownerUserId,
+        string projectId,
+        CancellationToken cancellationToken = default) =>
+        _store.ListRequirementSurveysAsync(ownerUserId, projectId, null,
+            cancellationToken: cancellationToken);
+
+    public async Task<AgentRequirementSurvey> SubmitProjectRequirementSurveyAsync(
+        string ownerUserId,
+        string projectId,
+        string surveyId,
+        AgentRequirementSubmission submission,
+        CancellationToken cancellationToken = default)
+    {
+        var survey = await _store.SubmitRequirementSurveyAsync(ownerUserId, projectId,
+            surveyId, submission, cancellationToken).ConfigureAwait(false);
+        Raise(ownerUserId, projectId, null, "requirement_survey_submitted");
+        QueueDrain(ownerUserId);
+        return survey;
     }
 
     public async Task<AgentRequirementSurvey> SubmitRequirementSurveyAsync(

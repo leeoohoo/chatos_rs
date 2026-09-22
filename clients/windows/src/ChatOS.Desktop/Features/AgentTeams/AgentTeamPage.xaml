@@ -229,25 +229,6 @@
                 </Grid>
             </PivotItem>
 
-            <PivotItem Header="需求调研">
-                <ListView ItemsSource="{x:Bind ViewModel.RequirementSurveys}" SelectionMode="None">
-                    <ListView.ItemTemplate>
-                        <DataTemplate x:DataType="domain:AgentRequirementSurvey">
-                            <Grid Padding="12" ColumnSpacing="12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <StackPanel Spacing="5">
-                                    <TextBlock FontWeight="SemiBold" Text="{x:Bind Draft.Title}" />
-                                    <TextBlock Opacity="0.72" Text="{x:Bind Draft.Purpose}" TextWrapping="Wrap" />
-                                    <TextBlock FontSize="11" Opacity="0.6" Text="{x:Bind Status}" />
-                                    <TextBlock Text="{Binding Resolution.Summary}" TextWrapping="Wrap" />
-                                </StackPanel>
-                                <Button Grid.Column="1" Click="OnSurveyClick" Content="查看 / 填写" />
-                            </Grid>
-                        </DataTemplate>
-                    </ListView.ItemTemplate>
-                </ListView>
-            </PivotItem>
-
             <PivotItem Header="成员提案">
                 <ListView ItemsSource="{x:Bind ViewModel.StaffingProposals}" SelectionMode="None">
                     <ListView.ItemTemplate>

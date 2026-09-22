@@ -511,6 +511,17 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
         Assert.Equal(specialist.Id, survey.CreatorAgentId);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(501)]
+    public async Task RequirementSurveyListRejectsUnboundedLimits(int limit)
+    {
+        var exception = await Assert.ThrowsAsync<AgentTeamException>(() =>
+            _store.ListRequirementSurveysAsync("alice", "project-1", limit: limit));
+
+        Assert.Equal(AgentTeamError.InvalidField, exception.Code);
+    }
+
     [Fact]
     public async Task ExecutorSuggestsAssetUpdatesButOnlyManagerCanApplyThem()
     {

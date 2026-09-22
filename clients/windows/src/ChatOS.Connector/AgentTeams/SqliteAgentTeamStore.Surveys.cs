@@ -73,8 +73,10 @@ public sealed partial class SqliteAgentTeamStore
         string ownerUserId,
         string projectId,
         AgentRequirementSurveyStatus? status = null,
+        int limit = 200,
         CancellationToken cancellationToken = default)
     {
+        if (limit is < 1 or > 500) throw AgentTeamValidation.Invalid(nameof(limit));
         await using var connection = await database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         await RequireSurveyProjectAsync(connection, ownerUserId, projectId, cancellationToken)
             .ConfigureAwait(false);
@@ -82,10 +84,12 @@ public sealed partial class SqliteAgentTeamStore
             $"SELECT {SurveyColumns} FROM agent_requirement_surveys " +
             "WHERE owner_user_id = @p0 AND project_id = @p1" +
             (status is null ? string.Empty : " AND status = @p2") +
-            " ORDER BY created_at_unix_ms DESC, id",
+            " ORDER BY CASE WHEN status = 'Pending' THEN 0 " +
+            "WHEN resolution_json IS NULL THEN 1 ELSE 2 END, created_at_unix_ms DESC, id" +
+            (status is null ? " LIMIT @p2" : " LIMIT @p3"),
             status is null
-                ? [ownerUserId, projectId]
-                : [ownerUserId, projectId, status.Value.ToString()]);
+                ? [ownerUserId, projectId, limit]
+                : [ownerUserId, projectId, status.Value.ToString(), limit]);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         var output = new List<AgentRequirementSurvey>();
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
