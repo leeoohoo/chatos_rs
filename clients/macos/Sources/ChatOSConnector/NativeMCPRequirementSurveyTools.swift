@@ -12,6 +12,7 @@ struct NativeMCPRequirementSurveyTools: Sendable {
     let now: @Sendable () -> Int64
 
     static let readToolNames: Set<String> = [
+        "requirement_survey_skill_get",
         "requirement_survey_list",
         "requirement_survey_get",
         "requirement_survey_project_tasks",
@@ -24,6 +25,22 @@ struct NativeMCPRequirementSurveyTools: Sendable {
 
     static var readToolDefinitions: [NativeJSONValue] {
         [
+            definition(
+                name: "requirement_survey_skill_get",
+                description: "按当前目标读取一份需求调研场景 Skill。先选场景，再按返回的步骤和示例操作；不要一次加载无关场景。",
+                properties: [
+                    "scenario": .object([
+                        "type": .string("string"),
+                        "enum": .array([
+                            .string("create_survey"),
+                            .string("read_results"),
+                            .string("resolve_survey"),
+                            .string("review_execution"),
+                        ]),
+                    ]),
+                ],
+                required: ["scenario"]
+            ),
             definition(
                 name: "requirement_survey_list",
                 description: "列出当前任务绑定项目的需求调研摘要。创建前用 pending 去重；处理 Human 提交时用 submitted 定位。项目 ID 由程序透传。",
@@ -139,6 +156,32 @@ struct NativeMCPRequirementSurveyTools: Sendable {
 
     func call(name: String, arguments: [String: NativeJSONValue]) async throws -> NativeJSONValue {
         switch name {
+        case "requirement_survey_skill_get":
+            let scenario = try requiredString(arguments, "scenario")
+            let template: LocalAgentPromptTemplate
+            let skillName: String
+            switch scenario {
+            case "create_survey":
+                template = .requirementSurveyCreateSkill
+                skillName = "创建需求调研"
+            case "read_results":
+                template = .requirementSurveyReadResultsSkill
+                skillName = "读取调研结果"
+            case "resolve_survey":
+                template = .requirementSurveyResolveSkill
+                skillName = "生成解决方案与执行计划"
+            case "review_execution":
+                template = .requirementSurveyReviewExecutionSkill
+                skillName = "核对方案执行进度"
+            default:
+                throw ToolError.invalid("scenario 不是可用的需求调研场景")
+            }
+            return .object([
+                "scenario": .string(scenario),
+                "skill_name": .string(skillName),
+                "instructions": .string(LocalAgentPromptCatalog.render(template)),
+            ])
+
         case "requirement_survey_list":
             let status: LocalAgentRequirementSurveyStatus?
             if let rawStatus = arguments["status"]?.jsonString {

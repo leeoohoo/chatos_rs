@@ -9,6 +9,8 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
                 ["room_goal": "目标"]
             case .managerCycle:
                 ["heartbeat_directive": "巡检"]
+            case .requirementSurveySkill:
+                ["available_scenarios": "read_results、review_execution"]
             case .heartbeatDirective:
                 ["heartbeat_prompt": "处理未读"]
             case .professionSkill:
@@ -101,29 +103,33 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
     }
 
     func testRequirementSurveySkillIsProgressiveAndToolDirected() {
-        let read = LocalAgentPromptCatalog.render(.requirementSurveyReadSkill)
-        let write = LocalAgentPromptCatalog.render(.requirementSurveyWriteSkill)
+        let entry = LocalAgentPromptCatalog.render(
+            .requirementSurveySkill,
+            values: [
+                "available_scenarios":
+                    "create_survey、read_results、resolve_survey、review_execution",
+            ]
+        )
+        let create = LocalAgentPromptCatalog.render(.requirementSurveyCreateSkill)
+        let read = LocalAgentPromptCatalog.render(.requirementSurveyReadResultsSkill)
+        let resolve = LocalAgentPromptCatalog.render(.requirementSurveyResolveSkill)
+        let review = LocalAgentPromptCatalog.render(.requirementSurveyReviewExecutionSkill)
 
-        for toolName in [
-            "requirement_survey_list",
-            "requirement_survey_get",
-            "requirement_survey_project_tasks",
-        ] {
-            XCTAssertTrue(read.contains(toolName), toolName)
-        }
-        for toolName in [
-            "requirement_survey_list",
-            "requirement_survey_get",
-            "requirement_survey_create",
-            "requirement_survey_resolve",
-        ] {
-            XCTAssertTrue(write.contains(toolName), toolName)
-        }
-        XCTAssertTrue(read.contains("程序绑定"))
-        XCTAssertTrue(read.contains("不得推断"))
-        XCTAssertTrue(write.contains("程序必须同时授权"))
-        XCTAssertTrue(write.contains("不得替 Human 作答"))
-        XCTAssertTrue(write.contains("备注"))
-        XCTAssertFalse((read + write).contains("team_ref"))
+        XCTAssertTrue(entry.contains("需求调研用于"))
+        XCTAssertTrue(entry.contains("什么时候使用"))
+        XCTAssertTrue(entry.contains("requirement_survey_skill_get"))
+        XCTAssertTrue(entry.contains("create_survey"))
+        XCTAssertFalse(entry.contains("requirement_survey_create"))
+        XCTAssertTrue(create.contains("requirement_survey_list"))
+        XCTAssertTrue(create.contains("requirement_survey_create"))
+        XCTAssertTrue(create.contains("request_key"))
+        XCTAssertTrue(read.contains("requirement_survey_get"))
+        XCTAssertTrue(read.contains("Human 已确认"))
+        XCTAssertTrue(resolve.contains("requirement_survey_resolve"))
+        XCTAssertTrue(resolve.contains("execution_steps"))
+        XCTAssertTrue(review.contains("requirement_survey_project_tasks"))
+        XCTAssertTrue(review.contains("未覆盖"))
+        XCTAssertTrue([create, read, resolve, review].allSatisfy { $0.contains("```json") })
+        XCTAssertFalse((entry + create + read + resolve + review).contains("team_ref"))
     }
 }

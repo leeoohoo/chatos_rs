@@ -15,8 +15,11 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
     case roomGoalUnset = "AgentPrompt.Conversation.RoomGoalUnset"
     case permissionStaffManagement = "AgentPrompt.Permission.StaffManagement"
     case permissionLocalProjects = "AgentPrompt.Permission.LocalProjects"
-    case requirementSurveyReadSkill = "AgentPrompt.Skill.RequirementSurveyRead"
-    case requirementSurveyWriteSkill = "AgentPrompt.Skill.RequirementSurveyWrite"
+    case requirementSurveySkill = "AgentPrompt.Skill.RequirementSurvey"
+    case requirementSurveyCreateSkill = "AgentPrompt.Skill.RequirementSurvey.Create"
+    case requirementSurveyReadResultsSkill = "AgentPrompt.Skill.RequirementSurvey.ReadResults"
+    case requirementSurveyResolveSkill = "AgentPrompt.Skill.RequirementSurvey.Resolve"
+    case requirementSurveyReviewExecutionSkill = "AgentPrompt.Skill.RequirementSurvey.ReviewExecution"
     case managerCycle = "AgentPrompt.Cycle.Manager"
     case heartbeatDefault = "AgentPrompt.Cycle.HeartbeatDefault"
     case heartbeatDirective = "AgentPrompt.Cycle.HeartbeatDirective"
@@ -43,6 +46,8 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
             ["room_goal"]
         case .managerCycle:
             ["heartbeat_directive"]
+        case .requirementSurveySkill:
+            ["available_scenarios"]
         case .heartbeatDirective:
             ["heartbeat_prompt"]
         case .professionSkill:
@@ -70,7 +75,8 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
              .conversationRoleAgentAgentDirect, .conversationHumanAgentDirect,
              .conversationAgentAgentDirect, .roomGoalUnset,
              .permissionStaffManagement, .permissionLocalProjects,
-             .requirementSurveyReadSkill, .requirementSurveyWriteSkill,
+             .requirementSurveyCreateSkill, .requirementSurveyReadResultsSkill,
+             .requirementSurveyResolveSkill, .requirementSurveyReviewExecutionSkill,
              .heartbeatDefault,
              .executorCycle, .todoStatusCycle, .capabilityDiscoverySkill,
              .actionHeartbeat, .actionTodo,

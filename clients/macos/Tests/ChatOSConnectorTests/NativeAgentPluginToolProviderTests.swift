@@ -5,6 +5,33 @@ import Foundation
 import XCTest
 
 final class NativeAgentPluginToolProviderTests: XCTestCase {
+    func testRequirementSurveyScenarioSkillLoadsOnDemand() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("requirement-survey-skill-\(UUID().uuidString)")
+        let databaseURL = root.appendingPathComponent("chat.db")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: databaseURL)
+        let tools = NativeMCPRequirementSurveyTools(
+            store: store,
+            ownerUserID: "alice",
+            projectID: "project-1",
+            creatorAgentID: "agent-1",
+            sourceDeliveryID: "delivery-1",
+            now: { 1 }
+        )
+
+        let result = try await tools.call(
+            name: "requirement_survey_skill_get",
+            arguments: ["scenario": .string("resolve_survey")]
+        )
+        let object = try XCTUnwrap(result.jsonObject)
+        XCTAssertEqual(object["scenario"]?.jsonString, "resolve_survey")
+        XCTAssertTrue(object["instructions"]?.jsonString?.contains(
+            "requirement_survey_resolve"
+        ) == true)
+        XCTAssertTrue(object["instructions"]?.jsonString?.contains("```json") == true)
+    }
+
     func testTodoAuthorizationCatalogUsesExecutorRuntimeToolDefinitions() {
         let cases: [(LocalAgentTodoBuiltinCapability, [NativeJSONValue])] = [
             (.projectRead, NativeMCPCodeReadTools.toolDefinitions),

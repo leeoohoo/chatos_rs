@@ -42,18 +42,19 @@ extension LocalAgentGroupChatScheduler {
         let projectInstructions = LocalAgentPermission.canAccessLocalProjects(
             profile.draft.defaultSkillIDs
         ) ? LocalAgentPromptCatalog.render(.permissionLocalProjects) : ""
-        var requirementSurveySkills: [String] = []
-        if builtinCapabilities.contains(.requirementSurveyRead) {
-            requirementSurveySkills.append(
-                LocalAgentPromptCatalog.render(.requirementSurveyReadSkill)
+        let requirementSurveySkill: String
+        if builtinCapabilities.contains(.requirementSurveyRead)
+            || builtinCapabilities.contains(.requirementSurveyWrite) {
+            let availableScenarios = builtinCapabilities.contains(.requirementSurveyWrite)
+                ? "create_survey、read_results、resolve_survey、review_execution"
+                : "read_results、review_execution"
+            requirementSurveySkill = LocalAgentPromptCatalog.render(
+                .requirementSurveySkill,
+                values: ["available_scenarios": availableScenarios]
             )
+        } else {
+            requirementSurveySkill = ""
         }
-        if builtinCapabilities.contains(.requirementSurveyWrite) {
-            requirementSurveySkills.append(
-                LocalAgentPromptCatalog.render(.requirementSurveyWriteSkill)
-            )
-        }
-        let requirementSurveySkill = requirementSurveySkills.joined(separator: "\n\n")
         let heartbeatDirective: String
         if delivery.triggerKind == .heartbeat {
             heartbeatDirective = LocalAgentPromptCatalog.render(

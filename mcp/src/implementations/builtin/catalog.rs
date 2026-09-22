@@ -125,6 +125,11 @@ pub fn builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> 
 fn requirement_survey_read_catalog() -> Vec<Value> {
     vec![
         serde_json::json!({
+            "name": "requirement_survey_skill_get",
+            "description": "Load the detailed skill for exactly one requirement-survey scenario.",
+            "inputSchema": {"type":"object","properties":{"scenario":{"type":"string","enum":["create_survey","read_results","resolve_survey","review_execution"]}},"required":["scenario"],"additionalProperties":false}
+        }),
+        serde_json::json!({
             "name": "requirement_survey_list",
             "description": "List requirement surveys for the project bound by the task runtime.",
             "inputSchema": {"type":"object","properties":{"status":{"type":"string","enum":["pending","submitted"]}},"additionalProperties":false}

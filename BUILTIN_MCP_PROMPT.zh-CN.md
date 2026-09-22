@@ -175,43 +175,26 @@
 
 ## [builtin_requirement_survey_read]
 
-### 需求调研读取
+### 需求调研渐进式 Skill 入口
 
-当前任务只能读取由程序绑定项目的需求调研与项目任务，不要索要、猜测或传入项目 ID、Team ID、Room ID。
+需求调研用于把影响项目范围、方案、风险、时间或验收的 Human 决策沉淀为当前项目下的结构化记录，并在提交后承载解决方案与执行计划。适用于新需求或重大变更确认、读取 Human 决策、生成正式方案以及核对执行进度；信息已经明确或只是临时沟通时不创建调研。
 
-按以下阶段执行：
+先选择一个场景：
 
-1. **判断目标**：明确是查重、读取 Human 答案、复用已有方案，还是核对项目任务进度。
-2. **定位**：调用 `requirement_survey_list`。查重用 `status=pending`，处理 Human 提交用 `status=submitted`；对标题或范围可能相关的候选继续调用 `requirement_survey_get`，不能只看摘要。
-3. **读取**：逐题读取选项与 selected 标记，再单独读取 notes；同时检查 resolution 中的 summary、solution_markdown、execution_steps、风险和资料。
-4. **状态判断**：pending 表示 Human 尚未提交，禁止推断；submitted 仍必须同时处理选项和备注；resolution 为空表示尚无正式方案。
-5. **任务核对**：只有需要执行状态时调用 `requirement_survey_project_tasks`，读取任务目标、状态、负责人、能力、阻塞和结果。resolution 存在不等于任务执行完成。
-6. **验证出口**：结论中区分 Human 决策、既有方案、任务事实和仍未确认事项。
+- `create_survey`：关键 Human 决策缺失；
+- `read_results`：读取答案、备注、既有方案或历史决定；
+- `resolve_survey`：Human 已提交，需要生成方案和执行计划；
+- `review_execution`：将正式计划与项目任务状态进行核对。
 
-survey_id 不存在时重新 list。没有读取工具时报告任务能力配置错误。禁止用聊天摘要、Agent Memory 或推测替代调研原始结果。
+选择后立即调用 `requirement_survey_skill_get`，只加载当前场景 Skill，再按返回内容中的工具顺序、分支、验证、退出条件和示例执行。只有读取能力时使用 `read_results` 或 `review_execution`；不要一次加载无关场景。项目由程序绑定，不向 Human 询问项目、Team 或 Room ID。
 
 ## [builtin_requirement_survey_write]
 
-### 需求调研创建与方案写入
+### 需求调研写入场景
 
-写能力必须与读取能力一起出现。每次写入前必须先 `requirement_survey_list`，必要时 `requirement_survey_get`；若没有读取工具，停止并报告配置错误。
+该能力在渐进式入口上增加 `create_survey` 和 `resolve_survey` 两个场景。程序同时提供读取能力；进入任一写入场景前，先调用 `requirement_survey_skill_get` 读取对应 Skill，不从本节猜测具体流程。
 
-创建调研：
-
-1. 先检查同主题 pending 调研和历史决定，避免重复。
-2. 仅在缺失的 Human 选择会改变范围、方案、风险、时间或验收时创建。
-3. 一张单只处理一个主题；题目 1–12 个，只能是 single_choice 或 multiple_choice；每题 2–12 个具体、平行、可执行的选项。
-4. 不创建自由文本题，页面会统一提供“备注”。使用稳定语义 key 和稳定 request_key；超时重试必须复用相同内容。
-5. 创建结果必须为 pending。之后停止依赖答案的承诺或不可逆动作，不得替 Human 作答或轮询。
-
-写入方案：
-
-1. Human 提交后重新 `list(status="submitted")` 和 get，不得复用旧摘要。
-2. 逐题映射选择到范围、方案、风险和验收，单独处理 notes 的补充或冲突。
-3. 只有 status=submitted 才能 resolve。summary 写最终边界；solution_markdown 写依据、采用方案、范围、非目标、关键设计、兼容/迁移和验证；execution_steps 按依赖写清目标、动作、负责人建议、交付物和验收标准。
-4. 写入后验证同一 survey_id 的 resolution 完整。方案写入不等于执行完成；需要实施时另建执行任务。
-
-绝对禁止传项目、Team 或 Room ID；它们由程序透传。禁止对 pending 调研 resolve，禁止跳过读取步骤，禁止把 resolution 宣称为已完成实施。
+`create_survey` 的完成点是创建一张可供 Human 填写的 pending 调研；`resolve_survey` 的完成点是把已提交结果转化为正式解决方案和执行计划。它们都不代表后续实施已经完成。
 
 ## [builtin_remote_connection_controller]
 当存在这些工具时，它们是远程 SSH / SFTP 主机的唯一标准入口：
