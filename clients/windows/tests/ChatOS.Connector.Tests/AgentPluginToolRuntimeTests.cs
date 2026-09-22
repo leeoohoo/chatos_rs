@@ -1,11 +1,29 @@
 using System.Text.Json;
 using ChatOS.Connector.AgentTeams;
 using ChatOS.Connector.Plugins;
+using ChatOS.Core.Domain;
 
 namespace ChatOS.Connector.Tests;
 
 public sealed class AgentPluginToolRuntimeTests
 {
+    [Fact]
+    public void TodoPluginSnapshotMustRemainInsideProfileAndMemberAllowlists()
+    {
+        var profile = new AgentProfile("agent-1", "alice",
+            new("Agent", "desc", "role", "model", DefaultPluginIds: ["alpha", "beta"]),
+            AgentProfileStatus.Active, 1, 1);
+        var member = new AgentRoomMember("alice", "room-1", profile.Id,
+            new("developer", PluginAllowlist: ["beta", "gamma"]),
+            AgentMemberStatus.Active, 1);
+
+        Assert.Equal(["beta"], AgentPluginToolRuntime.AllowedPluginIds(profile, member));
+        Assert.Equal(["beta"], AgentPluginToolRuntime.AllowedPluginIds(
+            profile, member, ["beta"]));
+        Assert.Throws<PluginRuntimeException>(() => AgentPluginToolRuntime.AllowedPluginIds(
+            profile, member, ["alpha"]));
+    }
+
     [Fact]
     public async Task RunSessionRelaysNamespacedToolAndStopsPlugin()
     {

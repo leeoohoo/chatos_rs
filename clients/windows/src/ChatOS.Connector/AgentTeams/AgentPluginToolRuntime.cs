@@ -24,6 +24,26 @@ internal sealed class AgentPluginToolRuntime(
 {
     private const int MaximumTools = 128;
 
+    internal sealed record TodoPluginOption(
+        string PluginId,
+        string DisplayName,
+        string Description);
+
+    public async Task<IReadOnlyList<TodoPluginOption>> ListSelectableTodoPluginsAsync(
+        AgentProfile profile,
+        AgentRoomMember member,
+        CancellationToken cancellationToken)
+    {
+        var allowed = AllowedPluginIds(profile, member).ToHashSet(StringComparer.Ordinal);
+        if (allowed.Count == 0) return [];
+        return (await pluginManagement.ListAsync(cancellationToken).ConfigureAwait(false))
+            .Where(value => value.Installed && value.Enabled && allowed.Contains(value.PluginId))
+            .Select(value => new TodoPluginOption(
+                value.PluginId, value.DisplayName, value.Description))
+            .Take(20)
+            .ToArray();
+    }
+
     public async Task<AgentPluginRunSession?> PrepareAsync(
         AgentProfile profile,
         AgentRoomMember member,
@@ -171,7 +191,7 @@ internal sealed class AgentPluginToolRuntime(
         return new ProjectScope(root, workspace.Id, record.Id, record.Draft.Name);
     }
 
-    private static IReadOnlyList<string> AllowedPluginIds(
+    internal static IReadOnlyList<string> AllowedPluginIds(
         AgentProfile profile,
         AgentRoomMember member,
         IReadOnlyList<string>? selectedPluginIds = null)

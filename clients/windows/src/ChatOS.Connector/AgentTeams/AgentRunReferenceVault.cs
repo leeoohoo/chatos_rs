@@ -17,6 +17,7 @@ internal sealed class AgentRunReferenceVault
     internal sealed record TodoAuthority(string RoomId, string TodoId, string AgentId);
     internal sealed record AssetAuthority(string RoomId, string AssetId, int Revision);
     internal sealed record SurveyAuthority(string ProjectId, string SurveyId);
+    internal sealed record PluginAuthority(string PluginId, string DisplayName);
     internal sealed record DocumentDraft(
         string Reference,
         AgentMessageAttachment Attachment,
@@ -32,6 +33,7 @@ internal sealed class AgentRunReferenceVault
     private readonly Dictionary<string, TodoAuthority> _todos = new(StringComparer.Ordinal);
     private readonly Dictionary<string, AssetAuthority> _assets = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SurveyAuthority> _surveys = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, PluginAuthority> _plugins = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DocumentDraft> _documents = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SendReceipt> _sendReceipts = new(StringComparer.Ordinal);
     private long _documentBytes;
@@ -48,6 +50,8 @@ internal sealed class AgentRunReferenceVault
         Issue(_assets, "asset", new AssetAuthority(roomId, assetId, revision));
     public string SurveyReference(string projectId, string surveyId) =>
         Issue(_surveys, "survey", new SurveyAuthority(projectId, surveyId));
+    public string PluginReference(string pluginId, string displayName) =>
+        Issue(_plugins, "plugin", new PluginAuthority(pluginId, displayName));
 
     public string? AgentId(string reference) => Resolve(_agents, reference);
     public string? RoomId(string reference) => Resolve(_rooms, reference);
@@ -56,6 +60,7 @@ internal sealed class AgentRunReferenceVault
     public TodoAuthority? Todo(string reference) => Resolve(_todos, reference);
     public AssetAuthority? Asset(string reference) => Resolve(_assets, reference);
     public SurveyAuthority? Survey(string reference) => Resolve(_surveys, reference);
+    public PluginAuthority? Plugin(string reference) => Resolve(_plugins, reference);
 
     public DocumentDraft CreateDocument(string name, string title, string markdown)
     {

@@ -19,6 +19,7 @@ internal sealed partial class AgentTeamToolExecutor
 
     private async Task<AgentToolExecutionResult> CreateTodoAsync(
         AgentProfile profile,
+        AgentRoomMember member,
         AgentRoom room,
         AgentDelivery delivery,
         AgentRunReferenceVault references,
@@ -48,6 +49,25 @@ internal sealed partial class AgentTeamToolExecutor
 
         var capabilities = StringArray(arguments, "builtin_capabilities", 5)
             .Select(ParseBuiltinCapability).ToArray();
+        var pluginHints = OptionalObjectArray(arguments, "plugin_hints", 20);
+        var selectablePlugins = pluginHints.Count == 0 ? [] : pluginTools is null
+            ? throw AgentTeamValidation.Invalid("plugin_hints")
+            : await pluginTools.ListSelectableTodoPluginsAsync(profile, member,
+                cancellationToken).ConfigureAwait(false);
+        var selectablePluginIds = selectablePlugins.Select(value => value.PluginId)
+            .ToHashSet(StringComparer.Ordinal);
+        var selectedPlugins = pluginHints.Select(value =>
+        {
+            var authority = references.Plugin(RequiredString(value, "plugin_ref"))
+                ?? throw AgentTeamValidation.Invalid("plugin_hints");
+            if (!selectablePluginIds.Contains(authority.PluginId))
+                throw AgentTeamValidation.Invalid("plugin_hints");
+            return new AgentTodoPluginSelection(authority.PluginId, authority.DisplayName,
+                OptionalString(value, "reason") ?? string.Empty);
+        }).ToArray();
+        if (selectedPlugins.Select(value => value.PluginId).Distinct(StringComparer.Ordinal).Count() !=
+            selectedPlugins.Length)
+            throw AgentTeamValidation.Invalid("plugin_hints");
         var todo = await store.CreateTodoAsync(profile.OwnerUserId, new AgentTodoDraft(
             room.Id,
             assigneeId,
@@ -64,9 +84,33 @@ internal sealed partial class AgentTeamToolExecutor
                 StringArray(arguments, "constraints", 64)),
             new AgentTodoExecutionPlan(
                 OptionalBoolean(arguments, "requires_execution") ?? true,
-                capabilities.Length == 0 ? [AgentTodoBuiltinCapability.ProjectRead] : capabilities),
+                capabilities.Length == 0 ? [AgentTodoBuiltinCapability.ProjectRead] : capabilities,
+                selectedPlugins),
             sources), cancellationToken).ConfigureAwait(false);
         return new AgentToolExecutionResult(Json(TodoResponse(todo, references)));
+    }
+
+    private async Task<AgentToolExecutionResult> TodoExecutionOptionsAsync(
+        AgentProfile profile,
+        AgentRoomMember member,
+        AgentRunReferenceVault references,
+        CancellationToken cancellationToken)
+    {
+        var plugins = pluginTools is null
+            ? []
+            : await pluginTools.ListSelectableTodoPluginsAsync(profile, member, cancellationToken)
+                .ConfigureAwait(false);
+        return new AgentToolExecutionResult(Json(new
+        {
+            builtin_capabilities = new[] { "project_read", "project_write", "terminal",
+                "requirement_survey_read", "requirement_survey_write" },
+            plugins = plugins.Select(value => new
+            {
+                plugin_ref = references.PluginReference(value.PluginId, value.DisplayName),
+                display_name = value.DisplayName,
+                value.Description,
+            }),
+        }));
     }
 
     private async Task<AgentToolExecutionResult> TodoScheduleStateAsync(

@@ -29,12 +29,16 @@ public sealed class AgentRunReferenceVaultTests : IAsyncLifetime
         var first = new AgentRunReferenceVault();
         var second = new AgentRunReferenceVault();
         var reference = first.AgentReference("durable-agent-id");
+        var pluginReference = first.PluginReference("durable-plugin-id", "Example Plugin");
 
         Assert.StartsWith("agent_", reference, StringComparison.Ordinal);
         Assert.Equal(reference, first.AgentReference("durable-agent-id"));
         Assert.Equal("durable-agent-id", first.AgentId(reference));
         Assert.Null(second.AgentId(reference));
         Assert.Null(first.AgentId("durable-agent-id"));
+        Assert.StartsWith("plugin_", pluginReference, StringComparison.Ordinal);
+        Assert.Equal("durable-plugin-id", first.Plugin(pluginReference)!.PluginId);
+        Assert.Null(second.Plugin(pluginReference));
     }
 
     [Fact]
@@ -48,7 +52,8 @@ public sealed class AgentRunReferenceVaultTests : IAsyncLifetime
             new("developer", "implement"));
         await CompleteAllPendingAsync();
         var todo = await _store.CreateTodoAsync("alice",
-            new(room.Id, worker.Id, "task"));
+            new(room.Id, worker.Id, "task", ExecutionPlan: new AgentTodoExecutionPlan(
+                Plugins: [new("plugin.secret-id", "Search Plugin", "needed for research")])));
         var asset = await _store.UpsertAssetAsync("alice", room.Id, null, manager.Id,
             AgentTeamAssetCategory.Plan, "plan", "content", null);
         var posted = await _store.PostMessageAsync("alice", room.Id,
@@ -72,8 +77,11 @@ public sealed class AgentRunReferenceVaultTests : IAsyncLifetime
         var workspace = await executor.ExecuteAsync(manager, member, room, delivery,
             new("workspace", "agent_workspace_snapshot", "{}"),
             CancellationToken.None, references);
+        var executionOptions = await executor.ExecuteAsync(manager, member, room, delivery,
+            new("todo-options", "todo_execution_options", "{}"),
+            CancellationToken.None, references);
         var combined = string.Join('\n', members.Content, todos.Content, assets.Content,
-            inbox.Content, workspace.Content);
+            inbox.Content, workspace.Content, executionOptions.Content);
 
         Assert.Contains("agent_", combined, StringComparison.Ordinal);
         Assert.Contains("todo_", combined, StringComparison.Ordinal);
@@ -85,6 +93,10 @@ public sealed class AgentRunReferenceVaultTests : IAsyncLifetime
         Assert.DoesNotContain(todo.Id, combined, StringComparison.Ordinal);
         Assert.DoesNotContain(asset.Id, combined, StringComparison.Ordinal);
         Assert.DoesNotContain(posted.Message.Id, combined, StringComparison.Ordinal);
+        Assert.DoesNotContain("plugin.secret-id", combined, StringComparison.Ordinal);
+        Assert.Contains("Search Plugin", combined, StringComparison.Ordinal);
+        Assert.Contains("project_write", executionOptions.Content, StringComparison.Ordinal);
+        Assert.Contains("\"plugins\":[]", executionOptions.Content, StringComparison.Ordinal);
 
         var schedule = await executor.ExecuteAsync(worker, workerMember, room,
             delivery with { TargetAgentId = worker.Id },
