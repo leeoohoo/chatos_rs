@@ -194,6 +194,12 @@ public enum AgentDeliveryTrigger
     StaffingProposal,
 }
 
+public enum AgentDeliveryLane
+{
+    Manager,
+    Executor,
+}
+
 public enum AgentDeliveryStatus
 {
     Pending,

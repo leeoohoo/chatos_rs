@@ -7,21 +7,43 @@ internal sealed class AgentTeamBackgroundService(
     IAgentTeamStore store,
     AgentTeamScheduler scheduler) : BackgroundService
 {
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override Task ExecuteAsync(CancellationToken stoppingToken) => Task.WhenAll(
+        RunLoopAsync(TimeSpan.FromSeconds(2), DrainCommunicationsAsync, stoppingToken),
+        RunLoopAsync(TimeSpan.FromSeconds(30), DrainExecutorsAsync, stoppingToken));
+
+    private async Task DrainCommunicationsAsync(CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        var owners = await store.ListOwnersWithPendingDeliveriesAsync(cancellationToken)
+            .ConfigureAwait(false);
+        foreach (var owner in owners)
+        {
+            await scheduler.DrainCommunicationAsync(owner, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task DrainExecutorsAsync(CancellationToken cancellationToken)
+    {
+        await store.EnqueueDueHeartbeatsAsync(
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), cancellationToken).ConfigureAwait(false);
+        var owners = await store.ListOwnersWithPendingDeliveriesAsync(cancellationToken)
+            .ConfigureAwait(false);
+        foreach (var owner in owners)
+        {
+            await scheduler.DrainExecutorAsync(owner, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task RunLoopAsync(
+        TimeSpan interval,
+        Func<CancellationToken, Task> tick,
+        CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(interval);
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await store.EnqueueDueHeartbeatsAsync(
-                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), stoppingToken).ConfigureAwait(false);
-                var owners = await store.ListOwnersWithPendingDeliveriesAsync(stoppingToken)
-                    .ConfigureAwait(false);
-                foreach (var owner in owners)
-                {
-                    await scheduler.DrainAsync(owner, stoppingToken).ConfigureAwait(false);
-                }
+                await tick(stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -32,7 +54,11 @@ internal sealed class AgentTeamBackgroundService(
                 // Queue state remains durable; the next bounded tick retries it.
             }
 
-            if (!await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
+            try
+            {
+                if (!await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false)) break;
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }

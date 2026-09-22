@@ -238,6 +238,71 @@ public sealed class AgentTeamSchedulerTests : IAsyncLifetime
                 value => value.Kind == AgentTodoProgressKind.Completed).Kind);
     }
 
+    [Fact]
+    public async Task ManagerCommunicationCompletesWhileTodoExecutorIsStillRunning()
+    {
+        var manager = await _store.CreateAgentAsync("alice",
+            Profile().Draft with { Name = "Manager" });
+        var room = await _store.CreateRoomAsync("alice", "project-1",
+            new("团队", "保持沟通响应"), manager.Id);
+        await CompleteInitialMaintenanceAsync();
+        _ = await _store.CreateTodoAsync("alice", new(room.Id, manager.Id, "长时间执行"));
+
+        var executorStarted = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseExecutor = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var managerReached = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = CreateGateway(async request =>
+        {
+            var body = await request.Content!.ReadAsStringAsync();
+            if (body.Contains("execution_contract:", StringComparison.Ordinal))
+            {
+                executorStarted.TrySetResult(true);
+                await releaseExecutor.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                var todoReference = Regex.Match(body, "todo_[a-f0-9]{32}").Value;
+                Assert.NotEmpty(todoReference);
+                return Json($$"""
+                    {"status":"completed","output":[
+                      {"type":"function_call","call_id":"complete","name":"todo_complete",
+                       "arguments":"{\"todo_ref\":\"{{todoReference}}\",\"expected_revision\":2,\"summary\":\"done\"}"}
+                    ]}
+                    """);
+            }
+
+            managerReached.TrySetResult(true);
+            return Json("""
+                {"status":"completed","output":[
+                  {"type":"message","content":[{"type":"output_text","text":"经理已响应。"}]}
+                ]}
+                """);
+        });
+        var scheduler = new AgentTeamScheduler(_store, gateway,
+            new AgentTeamToolExecutor(_store, null!));
+
+        var executorDrain = scheduler.DrainAsync("alice");
+        await executorStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        _ = await _store.PostMessageAsync("alice", room.Id,
+            new(AgentMessageSenderKind.Human, null, "执行期间请同步状态"));
+        var communicationDrain = scheduler.DrainAsync("alice");
+
+        await managerReached.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.False(executorDrain.IsCompleted);
+        Assert.False(communicationDrain.IsCompleted);
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            var messages = await _store.ListMessagesAsync("alice", room.Id);
+            if (messages.Any(value => value.Content == "经理已响应。")) break;
+            await Task.Delay(20);
+        }
+        Assert.Contains(await _store.ListMessagesAsync("alice", room.Id),
+            value => value.Content == "经理已响应。");
+
+        releaseExecutor.TrySetResult(true);
+        await Task.WhenAll(executorDrain, communicationDrain).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     private async Task CompleteInitialMaintenanceAsync()
     {
         var delivery = Assert.IsType<AgentDelivery>(

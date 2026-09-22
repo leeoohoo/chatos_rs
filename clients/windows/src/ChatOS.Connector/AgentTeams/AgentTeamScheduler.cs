@@ -12,25 +12,47 @@ internal sealed partial class AgentTeamScheduler(
     AgentTeamToolExecutor tools,
     AgentPluginToolRuntime? pluginTools = null)
 {
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _ownerGates =
-        new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<(string OwnerUserId, AgentDeliveryLane Lane), SemaphoreSlim>
+        _laneGates = new();
 
     public event EventHandler<AgentTeamChangedEventArgs>? Changed;
 
-    public async Task DrainAsync(
+    public Task DrainAsync(
         string ownerUserId,
         CancellationToken cancellationToken = default)
     {
         AgentTeamValidation.Identifier(ownerUserId, nameof(ownerUserId));
-        var gate = _ownerGates.GetOrAdd(ownerUserId, static _ => new SemaphoreSlim(1, 1));
+        return Task.WhenAll(
+            DrainCommunicationAsync(ownerUserId, cancellationToken),
+            DrainExecutorAsync(ownerUserId, cancellationToken));
+    }
+
+    internal Task DrainCommunicationAsync(
+        string ownerUserId,
+        CancellationToken cancellationToken = default) =>
+        DrainLaneAsync(ownerUserId, AgentDeliveryLane.Manager, cancellationToken);
+
+    internal Task DrainExecutorAsync(
+        string ownerUserId,
+        CancellationToken cancellationToken = default) =>
+        DrainLaneAsync(ownerUserId, AgentDeliveryLane.Executor, cancellationToken);
+
+    private async Task DrainLaneAsync(
+        string ownerUserId,
+        AgentDeliveryLane lane,
+        CancellationToken cancellationToken)
+    {
+        AgentTeamValidation.Identifier(ownerUserId, nameof(ownerUserId));
+        var gate = _laneGates.GetOrAdd((ownerUserId, lane),
+            static _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             for (var handled = 0; handled < 100; handled++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var delivery = await store.ClaimNextDeliveryAsync(ownerUserId, cancellationToken)
-                    .ConfigureAwait(false);
+                var delivery = await store.ClaimNextDeliveryAsync(
+                    ownerUserId, lane, cancellationToken).ConfigureAwait(false);
                 if (delivery is null)
                 {
                     break;

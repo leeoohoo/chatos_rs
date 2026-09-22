@@ -32,16 +32,32 @@ public sealed partial class SqliteAgentTeamStore
 
     public async Task<AgentDelivery?> ClaimNextDeliveryAsync(
         string ownerUserId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        await ClaimNextDeliveryAsync(ownerUserId, null, cancellationToken).ConfigureAwait(false);
+
+    public async Task<AgentDelivery?> ClaimNextDeliveryAsync(
+        string ownerUserId,
+        AgentDeliveryLane lane,
+        CancellationToken cancellationToken = default) =>
+        await ClaimNextDeliveryAsync(ownerUserId, (AgentDeliveryLane?)lane, cancellationToken)
+            .ConfigureAwait(false);
+
+    private async Task<AgentDelivery?> ClaimNextDeliveryAsync(
+        string ownerUserId,
+        AgentDeliveryLane? lane,
+        CancellationToken cancellationToken)
     {
+        AgentTeamValidation.Identifier(ownerUserId, nameof(ownerUserId));
         await using var connection = await database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         using var transaction = connection.BeginTransaction(deferred: false);
         var now = Now();
-        using (var recover = Command(connection, transaction, """
+        var lanePredicate = LanePredicate(lane);
+        using (var recover = Command(connection, transaction, $"""
             UPDATE agent_deliveries SET status = 'Pending', claimed_at_unix_ms = NULL,
                 last_error = 'Recovered after an interrupted local Agent run.'
             WHERE owner_user_id = @p0 AND status = 'Running'
               AND claimed_at_unix_ms < @p1
+              AND {lanePredicate}
             """, ownerUserId, now - 10 * 60_000L))
         {
             await recover.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -50,7 +66,7 @@ public sealed partial class SqliteAgentTeamStore
         AgentDelivery? pending;
         using (var select = Command(connection, transaction,
             $"SELECT {DeliveryColumns} FROM agent_deliveries " +
-            "WHERE owner_user_id = @p0 AND status = 'Pending' " +
+            $"WHERE owner_user_id = @p0 AND status = 'Pending' AND {lanePredicate} " +
             "ORDER BY created_at_unix_ms, id LIMIT 1", ownerUserId))
         await using (var reader = await select.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -84,6 +100,14 @@ public sealed partial class SqliteAgentTeamStore
             LastError = null,
         };
     }
+
+    private static string LanePredicate(AgentDeliveryLane? lane) => lane switch
+    {
+        AgentDeliveryLane.Manager => "trigger_kind != 'Todo'",
+        AgentDeliveryLane.Executor => "trigger_kind = 'Todo'",
+        null => "1 = 1",
+        _ => throw AgentTeamValidation.Invalid(nameof(lane)),
+    };
 
     public Task<AgentDelivery> CompleteDeliveryAsync(
         string ownerUserId,

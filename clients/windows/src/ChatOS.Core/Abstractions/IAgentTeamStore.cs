@@ -296,6 +296,11 @@ public interface IAgentTeamStore
         string ownerUserId,
         CancellationToken cancellationToken = default);
 
+    Task<AgentDelivery?> ClaimNextDeliveryAsync(
+        string ownerUserId,
+        AgentDeliveryLane lane,
+        CancellationToken cancellationToken = default);
+
     Task<AgentDelivery> CompleteDeliveryAsync(
         string ownerUserId,
         string deliveryId,
