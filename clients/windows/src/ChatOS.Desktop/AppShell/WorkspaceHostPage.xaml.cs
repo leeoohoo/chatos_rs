@@ -1,6 +1,7 @@
 using ChatOS.Core.Domain;
 using ChatOS.Desktop.Features.Chat;
 using ChatOS.Desktop.Features.Projects;
+using ChatOS.Desktop.Features.AgentTeams;
 using ChatOS.Presentation.Settings;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -13,6 +14,7 @@ public sealed partial class WorkspaceHostPage : UserControl
     private readonly ProjectFilesPage _projectFilesPage;
     private readonly ProjectGitPage _projectGitPage;
     private readonly ProjectRunPage _projectRunPage;
+    private readonly AgentTeamPage _agentTeamPage;
     private string? _projectId;
     public event EventHandler<string>? ProjectTabRequested;
 
@@ -21,12 +23,14 @@ public sealed partial class WorkspaceHostPage : UserControl
         ProjectFilesPage projectFilesPage,
         ProjectGitPage projectGitPage,
         ProjectRunPage projectRunPage,
+        AgentTeamPage agentTeamPage,
         LocalizationViewModel localization)
     {
         _conversationPage = conversationPage;
         _projectFilesPage = projectFilesPage;
         _projectGitPage = projectGitPage;
         _projectRunPage = projectRunPage;
+        _agentTeamPage = agentTeamPage;
         Localization = localization;
         InitializeComponent();
         WorkspaceNavigation.SelectedItem = ChatItem;
@@ -41,6 +45,7 @@ public sealed partial class WorkspaceHostPage : UserControl
         FilesItem.Visibility = isProject ? Visibility.Visible : Visibility.Collapsed;
         GitItem.Visibility = isProject ? Visibility.Visible : Visibility.Collapsed;
         RunItem.Visibility = isProject ? Visibility.Visible : Visibility.Collapsed;
+        AgentTeamItem.Visibility = isProject ? Visibility.Visible : Visibility.Collapsed;
         if (isProject && _projectId != resource!.Id)
         {
             _projectId = resource.Id;
@@ -50,7 +55,7 @@ public sealed partial class WorkspaceHostPage : UserControl
         }
         if (!isProject) _projectId = null;
         if (!isProject || WorkspaceNavigation.SelectedItem is not NavigationViewItem selected ||
-            selected.Tag?.ToString() is not "chat" and not "files" and not "git" and not "run")
+            selected.Tag?.ToString() is not "chat" and not "files" and not "git" and not "run" and not "agent-team")
         {
             WorkspaceNavigation.SelectedItem = ChatItem;
             WorkspacePageContent.Content = _conversationPage;
@@ -78,6 +83,12 @@ public sealed partial class WorkspaceHostPage : UserControl
         if (args.SelectedItemContainer?.Tag?.ToString() == "run")
         {
             WorkspacePageContent.Content = _projectRunPage;
+            return;
+        }
+
+        if (args.SelectedItemContainer?.Tag?.ToString() == "agent-team")
+        {
+            WorkspacePageContent.Content = _agentTeamPage;
             return;
         }
 

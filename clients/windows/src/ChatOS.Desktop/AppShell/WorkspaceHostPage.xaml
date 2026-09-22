@@ -18,6 +18,7 @@
             <NavigationViewItem x:Name="FilesItem" AutomationProperties.AutomationId="ChatOS.Workspace.Files" Content="{x:Bind Localization.Files, Mode=OneWay}" Icon="Folder" Tag="files" />
             <NavigationViewItem x:Name="GitItem" AutomationProperties.AutomationId="ChatOS.Workspace.Git" Content="{x:Bind Localization.Git, Mode=OneWay}" Icon="Code" Tag="git" />
             <NavigationViewItem x:Name="RunItem" AutomationProperties.AutomationId="ChatOS.Workspace.Run" Content="{x:Bind Localization.Run, Mode=OneWay}" Icon="Play" Tag="run" />
+            <NavigationViewItem x:Name="AgentTeamItem" AutomationProperties.AutomationId="ChatOS.Workspace.AgentTeam" Content="Agent 团队" Icon="People" Tag="agent-team" />
         </NavigationView.MenuItems>
         <ContentControl x:Name="WorkspacePageContent" AutomationProperties.AutomationId="ChatOS.Workspace.Content" />
     </NavigationView>

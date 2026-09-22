@@ -1,6 +1,6 @@
 # macOS / Windows 跨平台变更登记
 
-更新时间：2026-08-31
+更新时间：2026-09-22
 
 本文是 macOS 端发现或实现的产品行为变更的权威登记。目标是避免 macOS 修复、功能更新或协议调整只停留在 Swift 客户端，导致 Windows 客户端随后出现行为分叉。
 
@@ -119,6 +119,17 @@ Windows 状态只允许使用：
 - Windows 是否需要代码修改：需要。Windows 应使用 Windows Graphics Capture/Media Foundation 或等价原生链路，不能复用 ScreenCaptureKit。
 - Windows 必做项：实现显示器与窗口选择、系统音频、30fps H.264、悬浮停止条、仅排除录制控制条、结果提示和高 DPI 验收；显示器录制必须包含 ChatOS 主窗口和宠物。
 - Windows 状态：`待真机验收`；已接入 Windows 原生录屏选择、系统音频和停止控制条，并在录制完成后自动归档 MP4 到 `Videos/ChatOS`，状态机自动化通过。
+
+### CP-20260922-001：Agent 团队与需求调研
+
+- 来源：macOS Agent 团队、需求调研与 Todo 资产建议能力对齐。
+- 类型：功能更新、本机持久协作运行时。
+- 预期行为：Windows 与 macOS 都提供 Agent 配置、项目团队/私聊、消息与附件、Todo/依赖/进展、共享资产、模型工具循环、项目文件与审批终端，以及 Human 结构化需求调研闭环。
+- 修复范围：Windows 新增账号隔离 SQLite Store、durable delivery/run/heartbeat、Responses API、项目工具、Presentation 和 WinUI，并同步需求调研与执行者资产更新建议权限模型、专职调研 Agent 权限、共享资产 create/update 语义和自动维护唤醒；附件正文迁移到独立 payload 表；Agent 默认插件与成员 allowlist 交集现在会启动已安装且启用的 MCP，复用权限/逐次审批、OAuth/Secret 与 Artifact 管线，并在 run 结束时清理会话。
+- macOS 状态：代码持续开发中；本登记描述当前工作区能力，提交前仍需以 macOS 测试结果为准。
+- Windows 是否需要代码修改：已完成代码与自动化，仍需 Windows 真机验收。
+- Windows 必做项：x64/ARM64 编译；验证 WinUI 团队切换、附件、调研表单、模型工具、真实插件进程/Artifact、终端审批与崩溃恢复；确认长对话不会预载附件正文。
+- Windows 状态：`待真机验收`；Windows solution 463 项测试通过，生产源码均不超过 800 行。
 
 ## 新记录模板
 

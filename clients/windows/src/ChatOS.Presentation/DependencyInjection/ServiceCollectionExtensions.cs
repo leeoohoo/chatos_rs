@@ -6,6 +6,7 @@ using ChatOS.Presentation.Settings;
 using ChatOS.Presentation.Notepad;
 using ChatOS.Presentation.Remote;
 using ChatOS.Presentation.Pet;
+using ChatOS.Presentation.AgentTeams;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace ChatOS.Presentation.DependencyInjection;
@@ -29,6 +30,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<RemoteSftpViewModel>();
         services.AddSingleton<RemoteTerminalViewModel>();
         services.AddSingleton<PetOverlayViewModel>();
+        services.AddSingleton<AgentTeamWorkspaceViewModel>();
         return services;
     }
 }

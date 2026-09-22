@@ -1,6 +1,6 @@
 # macOS 变更的 Windows 同步登记
 
-更新时间：2026-08-31
+更新时间：2026-09-22
 
 本文是 Windows 客户端针对 macOS 端 Bug 修复、功能更新和协议变化的执行队列。macOS 侧的来源登记位于 `chatos_swift/docs/18-cross-platform-change-register.md`。
 
@@ -22,6 +22,7 @@
 | CP-20260831-002 | Raycast 风格全局快速搜索 | WinUI、Windows Search、Shell、全局快捷键 | 待真机验收 | 已实现四类 provider、排序、模式前缀和全局快捷键；验证快捷键冲突与焦点恢复 |
 | CP-20260831-003 | 本地剪贴板历史 | Windows Clipboard、SQLite、WinUI、隐私过滤 | 待真机验收 | 已实现采集、恢复、去重、清理和持久化；验证跨应用恢复与敏感格式过滤 |
 | CP-20260831-004 | 原生屏幕录制 | Windows 原生 Snipping Tool、WinUI | 待真机验收 | 已接入显示器/窗口选择、系统音频与原生停止条，并自动归档 MP4；验证系统版本兼容性与媒体参数 |
+| CP-20260922-001 | Agent 团队与需求调研 | Core、SQLite、Connector、Presentation、WinUI | 待真机验收 | Windows 代码与自动化闭环已完成；在 Windows 真机验证 XAML、模型、审批终端、附件和长时运行 |
 
 ## 详细记录
 
@@ -76,6 +77,16 @@
 - Windows 真机要求：分别录制窗口、单显示器和系统声音；检查分辨率、方向、音画时长；显示器录制应包含 ChatOS 主窗口和宠物但不包含录制控制条，并验证录制完成提示。
 - 当前状态：`待真机验收`；归档候选状态机自动化已通过，Windows 原生录制与系统音频仍需真机媒体证据。
 - 关闭条件：代码、自动化与 Windows 真机媒体文件证据完成后标记 `已同步`。
+
+### CP-20260922-001：Agent 团队与需求调研
+
+- macOS 状态：Agent 团队包含 Agent 配置、项目团队/私聊、消息与附件、Todo 调度、共享资产、项目工具、模型循环，以及最新的结构化需求调研和执行者资产更新建议。
+- Windows 风险：Windows 原先完全没有 Agent 团队领域模型、持久化、调度或 UI；普通任务图不能提供 durable delivery、团队权限、项目边界或 Human 调研闭环。
+- Windows 代码修改：新增账号隔离 SQLite schema、Agent/Room/Message/Todo/Asset/Survey/Delivery/Run 模型与 Store；Responses API 工具循环；默认插件与成员 allowlist 交集驱动的 MCP 真执行，并复用权限/逐次审批、OAuth/Secret 和 Artifact 管线且按 run 清理；项目文件与审批终端；后台心跳/恢复；Presentation 状态机；项目工作区 WinUI；附件元数据与 payload 分表按需加载；Agent 间私聊；共享资产 create/update 分离、分类对齐和项目经理自动维护唤醒。
+- Windows 自动化要求：覆盖账号隔离、默认/@ 路由、4-hop/12-run、Todo 依赖/revision/manager 通知、资产版本与 manager/executor 权限、资产维护去重唤醒、需求调研幂等/提交/解决/专职 Agent 权限、附件按需正文、心跳、模型错误脱敏、完整模型回复/工具循环和插件 MCP run session。
+- Windows 真机要求：验证 Agent/团队编辑对话框、团队切换、附件选择/另存、需求调研填写、模型工具、真实插件进程、Artifact、命令审批、崩溃恢复和长对话内存占用。
+- 当前状态：`待真机验收`；Windows solution 共 463 项测试通过，生产源码大小门禁通过；macOS 主机无法执行 Windows App SDK 的 `XamlCompiler.exe`。
+- 关闭条件：Windows x64/ARM64 至少各完成一次编译，x64 完成上述 UI/模型/终端 smoke 后，两端登记改为 `已同步`。
 
 ## 新记录模板
 

@@ -204,6 +204,25 @@ internal sealed partial class PluginManifestLoader
             .ToArray();
     }
 
+    internal async Task<IReadOnlyList<string>> ListMcpComponentsAsync(
+        InstalledPluginRecord record,
+        CancellationToken cancellationToken = default)
+    {
+        var installationPath = Path.GetFullPath(record.InstallationPath);
+        VerifyFileHash(record, installationPath, "chatos.plugin.json");
+        var manifest = await ReadJsonAsync<PluginManifest>(
+            Path.Combine(installationPath, "chatos.plugin.json"),
+            MaximumManifestBytes,
+            cancellationToken).ConfigureAwait(false);
+        if (manifest.SchemaVersion != 3 ||
+            !string.Equals(manifest.Version, record.Version, StringComparison.Ordinal))
+        {
+            throw new PluginRuntimeException("Plugin manifest does not match the installed Release.");
+        }
+
+        return manifest.McpServers.Keys.Order(StringComparer.Ordinal).ToArray();
+    }
+
     private static string ApplicationDescription(PluginManifest manifest) =>
         !string.IsNullOrWhiteSpace(manifest.Interface?.ShortDescription)
             ? manifest.Interface.ShortDescription.Trim()

@@ -1,4 +1,5 @@
 using ChatOS.Api.Http;
+using ChatOS.Connector.AgentTeams;
 using ChatOS.Connector.Connection;
 using ChatOS.Connector.Persistence;
 using ChatOS.Connector.Security;
@@ -41,6 +42,15 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IPetFavoriteProjectsStore, SqlitePetFavoriteProjectsStore>();
         services.AddSingleton<PetFavoriteProjectsManager>();
         services.AddSingleton<IConversationCacheStore, SqliteConversationCacheStore>();
+        services.AddSingleton<SqliteAgentTeamStore>();
+        services.AddSingleton<IAgentTeamStore>(provider =>
+            provider.GetRequiredService<SqliteAgentTeamStore>());
+        services.AddSingleton<AgentTeamModelGateway>();
+        services.AddSingleton<AgentProjectToolExecutor>();
+        services.AddSingleton<AgentTeamToolExecutor>();
+        services.AddSingleton<AgentPluginToolRuntime>();
+        services.AddSingleton<AgentTeamScheduler>();
+        services.AddSingleton<IAgentTeamService, AgentTeamCoordinator>();
         services.AddSingleton<PetActivityCoordinator>();
         services.AddSingleton<ConnectorReconnectPolicy>();
         services.AddSingleton<ConnectorConnectionStateMachine>();
@@ -139,6 +149,15 @@ public static class ServiceCollectionExtensions
             AutomaticDecompression = System.Net.DecompressionMethods.None,
             UseCookies = false,
         });
+        services.AddHttpClient(AgentTeamModelGateway.HttpClientName, client =>
+        {
+            client.Timeout = Timeout.InfiniteTimeSpan;
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            AllowAutoRedirect = false,
+            AutomaticDecompression = System.Net.DecompressionMethods.None,
+            UseCookies = false,
+        });
         services.AddSingleton<IConnectorGatewayClient, ConnectorGatewayHttpClient>();
         services.AddSingleton<ConnectorPairingService>();
         services.AddSingleton<ILocalConnectorControlService, LocalConnectorControlService>();
@@ -171,6 +190,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IConnectorControlledNetworkReadinessService,
             ConnectorControlledNetworkReadinessService>();
         services.AddHostedService<ConnectorManagedConfigBackgroundService>();
+        services.AddHostedService<AgentTeamBackgroundService>();
         services.AddHostedService<ConnectorBackgroundService>();
         return services;
     }

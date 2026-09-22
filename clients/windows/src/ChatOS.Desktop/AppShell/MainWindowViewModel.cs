@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ChatOS.Presentation.Chat;
 using ChatOS.Presentation.Projects;
+using ChatOS.Presentation.AgentTeams;
 using ChatOS.Presentation.Settings;
 using ChatOS.Presentation.Remote;
 using ChatOS.Connector.Remote;
@@ -45,6 +46,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ProjectRunViewModel projectRun,
         RemoteConnectionsViewModel remoteConnections,
         LocalizationViewModel localization,
+        AgentTeamWorkspaceViewModel? agentTeam = null,
         TerminalSessionManager? terminalSessions = null,
         RemoteTerminalSessionManager? remoteTerminalSessions = null)
     {
@@ -58,6 +60,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ProjectFiles = projectFiles;
         ProjectGit = projectGit;
         ProjectRun = projectRun;
+        AgentTeam = agentTeam;
         RemoteConnections = remoteConnections;
         Localization = localization;
         _terminalSessions = terminalSessions;
@@ -74,6 +77,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public ProjectGitViewModel ProjectGit { get; }
 
     public ProjectRunViewModel ProjectRun { get; }
+
+    public AgentTeamWorkspaceViewModel? AgentTeam { get; }
 
     public RemoteConnectionsViewModel RemoteConnections { get; }
 
@@ -608,6 +613,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
                     break;
                 case "run":
                     await ProjectRun.OpenAsync(project, token);
+                    break;
+                case "agent-team":
+                    var owner = RequireAccount(AccountGeneration);
+                    if (AgentTeam is not null)
+                        await AgentTeam.OpenAsync(owner, project, token);
                     break;
             }
         }
