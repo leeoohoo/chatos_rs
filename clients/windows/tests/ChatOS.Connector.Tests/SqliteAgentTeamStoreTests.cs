@@ -212,8 +212,11 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
         var (manager, worker, room) = await CreateConfiguredTeamAsync();
         var prerequisite = await _store.CreateTodoAsync("alice",
             new(room.Id, manager.Id, "设计", Priority: AgentTodoPriority.High));
+        var secondPrerequisite = await _store.CreateTodoAsync("alice",
+            new(room.Id, manager.Id, "复核", Priority: AgentTodoPriority.Normal));
         var dependent = await _store.CreateTodoAsync("alice",
-            new(room.Id, worker.Id, "实现", DependencyIds: [prerequisite.Id]));
+            new(room.Id, worker.Id, "实现",
+                DependencyIds: [prerequisite.Id, secondPrerequisite.Id]));
 
         Assert.Equal(AgentTodoStatus.InProgress, prerequisite.Status);
         Assert.Equal(AgentTodoStatus.Pending, dependent.Status);
@@ -225,6 +228,14 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
         var completed = await _store.UpdateTodoAsync("alice", prerequisite.Id,
             prerequisite.Revision, AgentTodoStatus.Completed, "设计完成");
         Assert.Equal(3, completed.Revision);
+        dependent = Assert.Single(await _store.ListTodosAsync("alice", room.Id),
+            value => value.Id == dependent.Id);
+        Assert.Equal(AgentTodoStatus.Pending, dependent.Status);
+
+        secondPrerequisite = (await _store.GetTodoAsync("alice", secondPrerequisite.Id))!;
+        Assert.Equal(AgentTodoStatus.InProgress, secondPrerequisite.Status);
+        _ = await _store.UpdateTodoAsync("alice", secondPrerequisite.Id,
+            secondPrerequisite.Revision, AgentTodoStatus.Completed, "复核完成");
         dependent = Assert.Single(await _store.ListTodosAsync("alice", room.Id),
             value => value.Id == dependent.Id);
         Assert.Equal(AgentTodoStatus.InProgress, dependent.Status);
@@ -252,6 +263,16 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
             _store.UpdateTodoAsync("alice", prerequisite.Id, 1,
                 AgentTodoStatus.Completed, "重复"));
         Assert.Equal(AgentTeamError.Conflict, stale.Code);
+    }
+
+    [Fact]
+    public void TodoDependencyReleaseUsesOneSetBasedUpdate()
+    {
+        var command = SqliteAgentTeamStore.ReleaseDependentTodosCommandText;
+
+        Assert.StartsWith("UPDATE agent_todos", command.TrimStart(), StringComparison.Ordinal);
+        Assert.Equal(2, command.Split("json_each", StringSplitOptions.None).Length - 1);
+        Assert.Contains("NOT EXISTS", command, StringComparison.Ordinal);
     }
 
     [Fact]

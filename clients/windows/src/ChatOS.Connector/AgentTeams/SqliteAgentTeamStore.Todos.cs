@@ -607,27 +607,6 @@ public sealed partial class SqliteAgentTeamStore
         return todos.Select(value => value with { SourceLinks = sources[value.Id] }).ToArray();
     }
 
-    private static async Task<bool> DependenciesCompleteAsync(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        string ownerUserId,
-        IReadOnlyList<string> dependencyIds,
-        CancellationToken cancellationToken)
-    {
-        foreach (var id in dependencyIds)
-        {
-            var dependency = await ReadTodoAsync(
-                connection, transaction, ownerUserId, id, cancellationToken,
-                includeSources: false).ConfigureAwait(false);
-            if (dependency?.Status != AgentTodoStatus.Completed)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
     private static async Task<int> NextTodoOrderAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -640,52 +619,6 @@ public sealed partial class SqliteAgentTeamStore
             WHERE owner_user_id = @p0 AND room_id = @p1
             """, ownerUserId, roomId);
         return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false));
-    }
-
-    private static async Task ReleaseDependentTodosAsync(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        string ownerUserId,
-        string completedTodoId,
-        long now,
-        CancellationToken cancellationToken)
-    {
-        var candidates = new List<AgentTodo>();
-        using (var command = Command(connection, transaction,
-            $"SELECT {TodoColumns} FROM agent_todos WHERE owner_user_id = @p0 AND status = 'Pending'",
-            ownerUserId))
-        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
-        {
-            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-            {
-                var todo = ReadTodo(reader);
-                if (todo.Draft.Dependencies.Contains(completedTodoId, StringComparer.Ordinal))
-                {
-                    candidates.Add(todo);
-                }
-            }
-        }
-
-        foreach (var todo in candidates)
-        {
-            if (!await DependenciesCompleteAsync(connection, transaction, ownerUserId,
-                todo.Draft.Dependencies, cancellationToken).ConfigureAwait(false))
-            {
-                continue;
-            }
-
-            var ready = todo with
-            {
-                Status = AgentTodoStatus.Ready,
-                Revision = todo.Revision + 1,
-                UpdatedAtUnixMs = now,
-            };
-            using var update = Command(connection, transaction, """
-                UPDATE agent_todos SET status = 'Ready', revision = @p0, updated_at_unix_ms = @p1
-                WHERE owner_user_id = @p2 AND id = @p3 AND revision = @p4
-                """, ready.Revision, now, ownerUserId, todo.Id, todo.Revision);
-            _ = await update.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
     }
 
     private static async Task EnqueueManagerTodoStatusAsync(
