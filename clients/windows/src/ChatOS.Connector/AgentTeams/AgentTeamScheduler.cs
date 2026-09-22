@@ -268,7 +268,8 @@ internal sealed class AgentTeamScheduler(
             5. 需求调研 Skill Catalog：SKreq-router=requirement-survey(router)，SKreq-create=create，SKreq-read=read-results，SKreq-resolve=resolve，SKreq-review=review-execution。需要调研能力时先用 skill_activate 激活 SKreq-router，再只激活当前目标对应的专业 Skill；需要示例时才用 skill_list_resources/skill_read_resource。创建后立即结束，不能代替 Human 提交。
             6. 用 chat_read_all_unread 检查账号内其他团队和私聊的新消息；返回即已读，当前会话用 chat_read_unread 后按需 chat_mark_read。
             7. 人员变更只能创建待审批提案，不能声称已经创建 Agent、加入团队或移出成员。
-            8. 完成本轮且无需发送消息时调用 cycle_complete；不要发送无意义的在线通知。
+            8. 长内容先用 chat_create_document 创建一次性 Markdown 草稿，再通过 document_refs 随消息发送；发送工具重试必须保持相同 call 与参数。
+            9. 完成本轮且无需发送消息时调用 cycle_complete；不要发送无意义的在线通知。
             所有 *_ref 都只在本轮有效，不得猜测或输出真实数据库 ID；引用失效时重新调用相应读取工具。
 
             {pluginInstructions}

@@ -32,6 +32,7 @@ internal sealed partial class AgentTeamToolExecutor(
                     items = new { type = "string" },
                     maxItems = 64,
                 },
+                document_refs = DocumentReferenceSchema(),
             },
             required = new[] { "content" },
             additionalProperties = false,
@@ -43,6 +44,7 @@ internal sealed partial class AgentTeamToolExecutor(
             {
                 target_agent_ref = new { type = "string" },
                 content = new { type = "string", maxLength = 64_000 },
+                document_refs = DocumentReferenceSchema(),
             },
             required = new[] { "target_agent_ref", "content" },
             additionalProperties = false,
@@ -185,7 +187,7 @@ internal sealed partial class AgentTeamToolExecutor(
         AgentRoom room,
         AgentDelivery delivery)
     {
-        IEnumerable<AgentToolDefinition> definitions = Definitions;
+        IEnumerable<AgentToolDefinition> definitions = Definitions.Concat(DocumentDefinitions);
         if (AgentProfilePermissions.CanManageStaff(profile))
             definitions = definitions.Concat(StaffingDefinitions);
         if (room.Kind == AgentConversationKind.ProjectTeam)
@@ -247,12 +249,18 @@ internal sealed partial class AgentTeamToolExecutor(
         using (document)
         {
             var arguments = document.RootElement;
-            return call.Name switch
+            var signature = $"{call.Name}\0{call.Arguments}";
+            if (IsDurableSend(call.Name) && vault.ReplayedSend(call.Id, signature) is { } replayed)
+                return replayed;
+            var result = call.Name switch
             {
                 "team_members" => await ListMembersAsync(
                     profile, room, vault, cancellationToken).ConfigureAwait(false),
                 "agent_workspace_snapshot" => await WorkspaceSnapshotAsync(
                     profile, vault, cancellationToken).ConfigureAwait(false),
+                "chat_create_document" => CreateDocument(vault, arguments),
+                "chat_inbox_send" => await SendInboxAsync(
+                    profile, vault, arguments, cancellationToken).ConfigureAwait(false),
                 "team_send" => await SendAsync(
                     profile, room, delivery, vault, arguments, cancellationToken).ConfigureAwait(false),
                 "direct_send" => await SendDirectAsync(
@@ -327,6 +335,8 @@ internal sealed partial class AgentTeamToolExecutor(
                 _ => throw new AgentTeamException(AgentTeamError.InvalidField,
                     $"Unknown Agent tool: {call.Name}"),
             };
+            if (IsDurableSend(call.Name)) vault.RecordSend(call.Id, signature, result);
+            return result;
         }
     }
 
@@ -406,14 +416,17 @@ internal sealed partial class AgentTeamToolExecutor(
             .Select(value => references.AgentId(value) ?? throw AgentTeamValidation.Invalid(
                 "mention_agent_refs"))
             .ToArray();
+        var documentReferences = StringArray(arguments, "document_refs", 8);
+        var documents = references.ReserveDocuments(documentReferences);
         var result = await store.PostMessageAsync(profile.OwnerUserId, room.Id,
             new AgentMessageDraft(
                 AgentMessageSenderKind.Agent,
                 profile.Id,
                 RequiredString(arguments, "content"),
-                mentions,
+                mentions, documents,
                 RootMessageId: delivery.RootMessageId,
-                HopCount: delivery.HopCount + 1), cancellationToken).ConfigureAwait(false);
+            HopCount: delivery.HopCount + 1), cancellationToken).ConfigureAwait(false);
+        references.ConsumeDocuments(documentReferences);
         return new AgentToolExecutionResult(Json(new
         {
             message_ref = references.MessageReference(room.Id, result.Message.Id),
@@ -451,12 +464,15 @@ internal sealed partial class AgentTeamToolExecutor(
     {
         var targetId = references.AgentId(RequiredString(arguments, "target_agent_ref"))
             ?? throw AgentTeamValidation.Invalid("target_agent_ref");
+        var documentReferences = StringArray(arguments, "document_refs", 8);
+        var documents = references.ReserveDocuments(documentReferences);
         var room = await store.OpenAgentDirectAsync(profile.OwnerUserId, profile.Id,
             targetId, cancellationToken).ConfigureAwait(false);
         var post = await store.PostMessageAsync(profile.OwnerUserId, room.Id,
             new AgentMessageDraft(AgentMessageSenderKind.Agent, profile.Id,
-                RequiredString(arguments, "content"), [targetId]), cancellationToken)
+                RequiredString(arguments, "content"), [targetId], documents), cancellationToken)
             .ConfigureAwait(false);
+        references.ConsumeDocuments(documentReferences);
         return new AgentToolExecutionResult(Json(new
         {
             conversation_ref = references.ConversationReference(room.Id),
@@ -707,6 +723,14 @@ internal sealed partial class AgentTeamToolExecutor(
         type = "object",
         properties = new { },
         additionalProperties = false,
+    };
+
+    private static object DocumentReferenceSchema() => new
+    {
+        type = "array",
+        items = new { type = "string", maxLength = 600 },
+        maxItems = 8,
+        uniqueItems = true,
     };
 
     private static string Json(object value) => JsonSerializer.Serialize(value, JsonOptions);
