@@ -309,6 +309,7 @@ public enum AgentRuntimeError: LocalizedError, Sendable {
         }
     }
     public static func isTransient(_ error: Error) -> Bool {
+        if case .timeout = error as? AgentRuntimeError { return true }
         if case .provider(let code) = error as? AgentRuntimeError { return code == 408 || code == 429 || code >= 500 }
         if case .providerDetail(let code, _) = error as? AgentRuntimeError { return code == 408 || code == 429 || code >= 500 }
         guard let error = error as? URLError else { return false }

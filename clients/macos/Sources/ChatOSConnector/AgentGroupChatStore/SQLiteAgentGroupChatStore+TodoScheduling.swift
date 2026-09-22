@@ -37,38 +37,11 @@ extension SQLiteAgentGroupChatStore {
                     agentID: agentID,
                     preparedStatement: recordPreparedStatement
                 ) else { continue }
-                let roomID = todo.teamRoomID
-                let messageID = UUID().uuidString.lowercased()
-                let deliveryID = UUID().uuidString.lowercased()
-                let rootMessageID = messageID
-                try execute(
-                    """
-                    INSERT INTO project_agent_messages (
-                        owner_user_id, id, room_id, sender_kind, sender_id, content,
-                        reply_to_message_id, source_run_id, causation_id, root_message_id,
-                        hop_count, created_at_unix_ms
-                    ) VALUES (?, ?, ?, 'system', 'system', ?, NULL, NULL, 'todo', ?, 0, ?)
-                    """,
-                    [
-                        .text(ownerUserID), .text(messageID), .text(roomID),
-                        .text(todo.detail.isEmpty ? todo.title : "\(todo.title)\n\n\(todo.detail)"),
-                        .text(rootMessageID), .integer(nowUnixMs),
-                    ]
-                )
-                try execute(
-                    """
-                    INSERT INTO project_agent_deliveries (
-                        owner_user_id, id, room_id, message_id, root_message_id,
-                        target_agent_id, trigger_kind, status, attempt, hop_count,
-                        deduplication_key, response_message_id, last_error,
-                        claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?, 'todo', 'pending', 0, 0, ?, NULL, NULL, NULL, NULL, ?)
-                    """,
-                    [
-                        .text(ownerUserID), .text(deliveryID), .text(roomID), .text(messageID),
-                        .text(rootMessageID), .text(agentID), .text("todo:\(todo.id)"),
-                        .integer(nowUnixMs),
-                    ]
+                let delivery = try prepareTodoDelivery(
+                    ownerUserID: ownerUserID,
+                    agentID: agentID,
+                    todo: todo,
+                    nowUnixMs: nowUnixMs
                 )
                 try execute(
                     """
@@ -78,10 +51,9 @@ extension SQLiteAgentGroupChatStore {
                     """,
                     [.integer(nowUnixMs), .text(ownerUserID), .text(agentID), .text(todo.id)]
                 )
-                guard let delivery = try readDelivery(
-                    ownerUserID: ownerUserID,
-                    deliveryID: deliveryID
-                ) else { throw AgentGroupChatError.storage("todo delivery insert failed") }
+                guard sqlite3_changes(database) == 1 else {
+                    throw AgentGroupChatError.conflict
+                }
                 deliveries.append(delivery)
             }
             return deliveries
@@ -149,36 +121,11 @@ extension SQLiteAgentGroupChatStore {
                 preparedStatement: recordPreparedStatement
             ) else { return nil }
 
-            let messageID = UUID().uuidString.lowercased()
-            let deliveryID = UUID().uuidString.lowercased()
-            try execute(
-                """
-                INSERT INTO project_agent_messages (
-                    owner_user_id, id, room_id, sender_kind, sender_id, content,
-                    reply_to_message_id, source_run_id, causation_id, root_message_id,
-                    hop_count, created_at_unix_ms
-                ) VALUES (?, ?, ?, 'system', 'system', ?, NULL, NULL, 'todo', ?, 0, ?)
-                """,
-                [
-                    .text(ownerUserID), .text(messageID), .text(todo.teamRoomID),
-                    .text(todo.detail.isEmpty ? todo.title : "\(todo.title)\n\n\(todo.detail)"),
-                    .text(messageID), .integer(nowUnixMs),
-                ]
-            )
-            try execute(
-                """
-                INSERT INTO project_agent_deliveries (
-                    owner_user_id, id, room_id, message_id, root_message_id,
-                    target_agent_id, trigger_kind, status, attempt, hop_count,
-                    deduplication_key, response_message_id, last_error,
-                    claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, 'todo', 'pending', 0, 0, ?, NULL, NULL, NULL, NULL, ?)
-                """,
-                [
-                    .text(ownerUserID), .text(deliveryID), .text(todo.teamRoomID),
-                    .text(messageID), .text(messageID), .text(agentID),
-                    .text("todo:\(todo.id)"), .integer(nowUnixMs),
-                ]
+            let delivery = try prepareTodoDelivery(
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                todo: todo,
+                nowUnixMs: nowUnixMs
             )
             try execute(
                 """
@@ -204,13 +151,100 @@ extension SQLiteAgentGroupChatStore {
                 """,
                 [.integer(nowUnixMs), .text(ownerUserID), .text(agentID), .text(todo.id)]
             )
-            guard sqlite3_changes(database) == 1,
-                  let delivery = try readDelivery(
-                    ownerUserID: ownerUserID,
-                    deliveryID: deliveryID
-                  ) else { throw AgentGroupChatError.conflict }
+            guard sqlite3_changes(database) == 1 else {
+                throw AgentGroupChatError.conflict
+            }
             return delivery
         }
+    }
+
+    /// A Todo delivery owns one durable executor Run. Retrying a failed Todo must therefore
+    /// reactivate that delivery instead of inserting another row with the same deduplication key
+    /// or silently creating a fresh Run that loses the saved checkpoint.
+    private func prepareTodoDelivery(
+        ownerUserID: String,
+        agentID: String,
+        todo: LocalAgentTodo,
+        nowUnixMs: Int64
+    ) throws -> ProjectAgentDelivery {
+        let deduplicationKey = "todo:\(todo.id)"
+        if let existing = try readDelivery(
+            ownerUserID: ownerUserID,
+            deduplicationKey: deduplicationKey
+        ) {
+            guard existing.triggerKind == .todo,
+                  existing.targetAgentID == agentID,
+                  existing.status == .failed else {
+                throw AgentGroupChatError.conflict
+            }
+            try execute(
+                """
+                UPDATE project_agent_messages
+                SET content = ?
+                WHERE owner_user_id = ? AND id = ?
+                """,
+                [
+                    .text(todo.detail.isEmpty ? todo.title : "\(todo.title)\n\n\(todo.detail)"),
+                    .text(ownerUserID), .text(existing.messageID),
+                ]
+            )
+            try execute(
+                """
+                UPDATE project_agent_deliveries
+                SET status = 'pending', response_message_id = NULL, last_error = NULL,
+                    claimed_at_unix_ms = NULL, completed_at_unix_ms = NULL
+                WHERE owner_user_id = ? AND id = ? AND status = 'failed'
+                """,
+                [.text(ownerUserID), .text(existing.id)]
+            )
+            guard sqlite3_changes(database) == 1,
+                  let reactivated = try readDelivery(
+                    ownerUserID: ownerUserID,
+                    deliveryID: existing.id
+                  ) else {
+                throw AgentGroupChatError.conflict
+            }
+            return reactivated
+        }
+
+        let messageID = UUID().uuidString.lowercased()
+        let deliveryID = UUID().uuidString.lowercased()
+        try execute(
+            """
+            INSERT INTO project_agent_messages (
+                owner_user_id, id, room_id, sender_kind, sender_id, content,
+                reply_to_message_id, source_run_id, causation_id, root_message_id,
+                hop_count, created_at_unix_ms
+            ) VALUES (?, ?, ?, 'system', 'system', ?, NULL, NULL, 'todo', ?, 0, ?)
+            """,
+            [
+                .text(ownerUserID), .text(messageID), .text(todo.teamRoomID),
+                .text(todo.detail.isEmpty ? todo.title : "\(todo.title)\n\n\(todo.detail)"),
+                .text(messageID), .integer(nowUnixMs),
+            ]
+        )
+        try execute(
+            """
+            INSERT INTO project_agent_deliveries (
+                owner_user_id, id, room_id, message_id, root_message_id,
+                target_agent_id, trigger_kind, status, attempt, hop_count,
+                deduplication_key, response_message_id, last_error,
+                claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, 'todo', 'pending', 0, 0, ?, NULL, NULL, NULL, NULL, ?)
+            """,
+            [
+                .text(ownerUserID), .text(deliveryID), .text(todo.teamRoomID),
+                .text(messageID), .text(messageID), .text(agentID),
+                .text(deduplicationKey), .integer(nowUnixMs),
+            ]
+        )
+        guard let delivery = try readDelivery(
+            ownerUserID: ownerUserID,
+            deliveryID: deliveryID
+        ) else {
+            throw AgentGroupChatError.storage("Todo delivery insert failed")
+        }
+        return delivery
     }
 
 

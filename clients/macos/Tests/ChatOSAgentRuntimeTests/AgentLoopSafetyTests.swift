@@ -130,6 +130,33 @@ final class AgentLoopSafetyTests: XCTestCase {
         XCTAssertTrue(retryEvents.last?.detail.contains("16 秒") == true)
     }
 
+    func testRequestTimeoutIsRetriedWithinTheSameRun() async throws {
+        let model = TimeoutThenSuccessModel()
+        let delays = DelayRecorder()
+        var policy = AgentRunPolicy()
+        policy.maximumRequestRetries = 1
+        let result = try await AgentRuntime(
+            retrySleeper: { duration in await delays.append(duration) }
+        ).run(
+            checkpoint: base,
+            scope: base.scope,
+            policy: policy,
+            model: model,
+            tools: runtimeTestTools,
+            execute: { call in
+                XCTAssertEqual(call.name, "finish")
+                return .init("done")
+            }
+        )
+
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(result.modelCalls, 2)
+        let callCount = await model.callCount
+        let recordedDelays = await delays.values
+        XCTAssertEqual(callCount, 2)
+        XCTAssertEqual(recordedDelays, [.seconds(1)])
+    }
+
     func testSettingsPersistAndValidateOverridesAndWindowBudget() throws {
         let name = "AgentSettingsTests.\(UUID())"
         defer { UserDefaults(suiteName: name)?.removePersistentDomain(forName: name) }
@@ -222,6 +249,21 @@ private struct SlowModel: AgentModelClient {
     func complete(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval) async throws -> AgentMessage {
         try await Task.sleep(for: .seconds(2))
         return .init(role: .assistant, content: "late")
+    }
+}
+private actor TimeoutThenSuccessModel: AgentModelClient {
+    var callCount = 0
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        callCount += 1
+        if callCount == 1 { throw AgentRuntimeError.timeout }
+        return .init(
+            role: .assistant,
+            toolCalls: [.init(id: "finish-after-timeout", name: "finish", arguments: "{}")]
+        )
     }
 }
 private actor DelayRecorder {

@@ -204,13 +204,21 @@ extension LocalAgentGroupChatScheduler {
         delivery: ProjectAgentDelivery
     ) async throws -> DeliveryAttemptReceipt {
         do {
+            // A failed Todo delivery can be explicitly reactivated by moving its Todo back to
+            // pending. Delivery and Run are intentionally one-to-one, so the next claim must
+            // resume the durable checkpoint instead of trying to create a second Run.
+            let savedRun = try await store.run(
+                ownerUserID: ownerUserID,
+                deliveryID: delivery.id
+            )
             return try await runClaimedDelivery(
                 store: store,
                 ownerUserID: ownerUserID,
                 projectID: projectID,
                 room: room,
                 member: member,
-                delivery: delivery
+                delivery: delivery,
+                savedRun: savedRun
             )
         } catch {
             let detail = Self.failureDetail(error)

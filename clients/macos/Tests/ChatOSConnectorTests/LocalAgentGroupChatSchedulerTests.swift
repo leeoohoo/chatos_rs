@@ -234,6 +234,124 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         XCTAssertTrue(savedRun?.checkpoint.messages.dropFirst().first?.content.contains("开始实现") == true)
     }
 
+    func testFailedTodoRetryResumesItsDurableRunAndCompletes() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-todo-retry-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let nativeService = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let store = try await nativeService.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "重试执行者",
+                rolePrompt: "完成被分配的任务。",
+                modelConfigID: "todo-retry-model"
+            )
+        )
+        let team = try await store.createRoom(
+            ownerUserID: "alice",
+            projectID: "todo-retry-project",
+            draft: .init(name: "重试测试团队")
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: team.id,
+            agentID: agent.id,
+            draft: .init(role: "执行者")
+        )
+        let todo = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            requestKey: "scheduler-todo-retry",
+            draft: .init(title: "恢复失败的任务", teamRoomID: team.id),
+            nowUnixMs: 100
+        )
+        let firstPendingValue = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 101
+        )
+        let firstPending = try XCTUnwrap(firstPendingValue)
+        let model = TodoRetrySchedulerTestModel()
+        let settingsSuite = "local-agent-todo-retry-tests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: settingsSuite) }
+        let scheduler = LocalAgentGroupChatScheduler(
+            service: nativeService,
+            services: TodoRetrySchedulerTestServices(model: model),
+            settings: .init(suiteName: settingsSuite),
+            now: { 200 }
+        )
+
+        let firstResults = try await scheduler.drainProject(
+            ownerUserID: "alice",
+            projectID: team.projectID,
+            maximumRuns: 1
+        )
+        XCTAssertEqual(firstResults.first?.outcome, .failed)
+        let failedRunValue = try await store.run(
+            ownerUserID: "alice",
+            deliveryID: firstPending.id
+        )
+        let failedRun = try XCTUnwrap(failedRunValue)
+        XCTAssertEqual(failedRun.checkpoint.status, .failed)
+        XCTAssertEqual(failedRun.checkpoint.modelCalls, 1)
+        let failedDelivery = try await store.delivery(
+            ownerUserID: "alice",
+            deliveryID: firstPending.id
+        )
+        XCTAssertEqual(failedDelivery?.status, .failed)
+        let blockedTodo = try await store.agentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id
+        )
+        XCTAssertEqual(blockedTodo?.status, .blocked)
+
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id,
+            update: .init(status: .pending),
+            nowUnixMs: 201
+        )
+        let retriedPendingValue = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 202
+        )
+        let retriedPending = try XCTUnwrap(retriedPendingValue)
+        XCTAssertEqual(retriedPending.id, firstPending.id)
+
+        let secondResults = try await scheduler.drainProject(
+            ownerUserID: "alice",
+            projectID: team.projectID,
+            maximumRuns: 1
+        )
+        XCTAssertEqual(secondResults.first?.outcome, .completed)
+        let completedRunValue = try await store.run(
+            ownerUserID: "alice",
+            deliveryID: firstPending.id
+        )
+        let completedRun = try XCTUnwrap(completedRunValue)
+        XCTAssertEqual(completedRun.id, failedRun.id)
+        XCTAssertEqual(completedRun.checkpoint.status, .completed)
+        XCTAssertEqual(completedRun.checkpoint.modelCalls, 2)
+        let completedDelivery = try await store.delivery(
+            ownerUserID: "alice",
+            deliveryID: firstPending.id
+        )
+        XCTAssertEqual(completedDelivery?.status, .completed)
+        XCTAssertEqual(completedDelivery?.attempt, 2)
+        let completedTodo = try await store.agentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id
+        )
+        XCTAssertEqual(completedTodo?.status, .completed)
+    }
+
     func testDirectResumeKeepsUnknownWriteInNeedsReviewUntilHumanExplicitlyRetriesIt() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-resume-\(UUID().uuidString)")
@@ -980,6 +1098,48 @@ private struct SchedulerTestMemory: AgentMemoryServicing {
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {}
     func compose() async throws -> AgentMemoryContext {
         .init(blocks: [], recentRecords: [])
+    }
+}
+
+private struct TodoRetrySchedulerTestServices: AgentServiceProviding {
+    let model: TodoRetrySchedulerTestModel
+
+    func makeAgentModel(
+        configID: String,
+        policy: AgentRunPolicy
+    ) async throws -> any AgentModelClient {
+        XCTAssertEqual(configID, "todo-retry-model")
+        return model
+    }
+
+    func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
+        SchedulerTestMemory()
+    }
+}
+
+private actor TodoRetrySchedulerTestModel: AgentModelClient {
+    private var requestCount = 0
+
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        requestCount += 1
+        if requestCount == 1 {
+            throw AgentRuntimeError.invalidResponse
+        }
+        XCTAssertTrue(tools.contains {
+            $0.name == LocalAgentChatToolProvider.todoCompleteToolName
+        })
+        return .init(
+            role: .assistant,
+            toolCalls: [.init(
+                id: "complete-retried-todo",
+                name: LocalAgentChatToolProvider.todoCompleteToolName,
+                arguments: #"{"summary":"恢复原 Run 后完成。"}"#
+            )]
+        )
     }
 }
 

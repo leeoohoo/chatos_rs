@@ -1906,6 +1906,92 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         XCTAssertTrue(deliveries.first?.deduplicationKey.hasSuffix(urgent.id) == true)
     }
 
+    func testFailedTodoDeliveryIsReactivatedWithoutDuplicateRows() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let agent = try await makeAgent(store, name: "执行者")
+        let room = try await makeRoom(store, projectID: "todo-retry-project")
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id,
+            draft: .init(role: "执行者")
+        )
+        let todo = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            requestKey: "retry-failed-delivery",
+            draft: .init(title: "处理超时任务", teamRoomID: room.id),
+            nowUnixMs: 100
+        )
+
+        let firstPendingValue = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 101
+        )
+        let firstPending = try XCTUnwrap(firstPendingValue)
+        let firstClaimValue = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 102
+        )
+        let firstClaim = try XCTUnwrap(firstClaimValue)
+        XCTAssertEqual(firstClaim.id, firstPending.id)
+        XCTAssertEqual(firstClaim.attempt, 1)
+        _ = try await store.failDelivery(
+            ownerUserID: "alice",
+            deliveryID: firstClaim.id,
+            error: "模型单次请求超时",
+            nowUnixMs: 103
+        )
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id,
+            update: .init(status: .pending),
+            nowUnixMs: 104
+        )
+
+        let retriedPendingValue = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 105
+        )
+        let retriedPending = try XCTUnwrap(retriedPendingValue)
+        XCTAssertEqual(retriedPending.id, firstPending.id)
+        XCTAssertEqual(retriedPending.status, .pending)
+        XCTAssertEqual(retriedPending.attempt, 1)
+        XCTAssertNil(retriedPending.lastError)
+        XCTAssertNil(retriedPending.claimedAtUnixMs)
+        XCTAssertNil(retriedPending.completedAtUnixMs)
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM project_agent_deliveries WHERE deduplication_key = 'todo:\(todo.id)'"
+        ), 1)
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM project_agent_messages WHERE id = '\(firstPending.messageID)'"
+        ), 1)
+
+        let secondClaimValue = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 106
+        )
+        let secondClaim = try XCTUnwrap(secondClaimValue)
+        XCTAssertEqual(secondClaim.id, firstClaim.id)
+        XCTAssertEqual(secondClaim.attempt, 2)
+        XCTAssertEqual(secondClaim.status, .running)
+        let retriedTodo = try await store.agentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id
+        )
+        XCTAssertEqual(retriedTodo?.status, .inProgress)
+    }
+
     func testTodoEventRecipientsPersistOncePerEventAndRecipient() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
