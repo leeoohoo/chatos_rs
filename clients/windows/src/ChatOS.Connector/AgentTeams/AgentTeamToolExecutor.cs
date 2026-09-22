@@ -166,6 +166,8 @@ internal sealed partial class AgentTeamToolExecutor(
         AgentDelivery delivery)
     {
         IEnumerable<AgentToolDefinition> definitions = Definitions;
+        if (AgentProfilePermissions.CanManageStaff(profile))
+            definitions = definitions.Concat(StaffingDefinitions);
         if (room.Kind == AgentConversationKind.ProjectTeam)
         {
             if (CanManageSurveys(profile, room)) definitions = definitions.Concat(SurveyDefinitions);
@@ -276,6 +278,15 @@ internal sealed partial class AgentTeamToolExecutor(
                         profile, room, cancellationToken).ConfigureAwait(false),
                 "requirement_survey_resolve" => await ResolveRequirementSurveyAsync(
                     profile, room, arguments, cancellationToken).ConfigureAwait(false),
+                "agent_propose_member" => await ProposeMemberAsync(
+                    profile, room, delivery, call.Id, arguments, cancellationToken)
+                    .ConfigureAwait(false),
+                "agent_propose_existing_member" => await ProposeExistingMemberAsync(
+                    profile, room, delivery, call.Id, arguments, cancellationToken)
+                    .ConfigureAwait(false),
+                "agent_propose_member_removal" => await ProposeMemberRemovalAsync(
+                    profile, room, delivery, call.Id, arguments, cancellationToken)
+                    .ConfigureAwait(false),
                 "cycle_complete" => new AgentToolExecutionResult(
                     Json(new { completed = true, summary = OptionalString(arguments, "summary") }), true),
                 _ when AgentProjectToolExecutor.Definitions.Any(value => value.Name == call.Name) =>

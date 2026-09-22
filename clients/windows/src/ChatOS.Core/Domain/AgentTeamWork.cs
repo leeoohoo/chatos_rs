@@ -179,6 +179,7 @@ public enum AgentDeliveryTrigger
     Todo,
     TodoStatus,
     RequirementSurvey,
+    StaffingProposal,
 }
 
 public enum AgentDeliveryStatus
@@ -238,4 +239,5 @@ public sealed record AgentTeamSnapshot(
     IReadOnlyList<AgentTodo> Todos,
     IReadOnlyList<AgentTeamAsset> Assets,
     IReadOnlyList<AgentRequirementSurvey> RequirementSurveys,
+    IReadOnlyList<AgentStaffingProposal> StaffingProposals,
     IReadOnlyList<AgentRunSummary> Runs);

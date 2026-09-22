@@ -230,6 +230,28 @@ public interface IAgentTeamStore
         AgentRequirementResolution resolution,
         CancellationToken cancellationToken = default);
 
+    Task<AgentStaffingProposal> CreateStaffingProposalAsync(
+        string ownerUserId,
+        string sourceRoomId,
+        string proposerAgentId,
+        string sourceDeliveryId,
+        string requestKey,
+        AgentStaffingProposalDraft draft,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<AgentStaffingProposal>> ListStaffingProposalsAsync(
+        string ownerUserId,
+        string sourceRoomId,
+        AgentStaffingProposalStatus? status = null,
+        CancellationToken cancellationToken = default);
+
+    Task<AgentStaffingProposal> ResolveStaffingProposalAsync(
+        string ownerUserId,
+        string sourceRoomId,
+        string proposalId,
+        bool approve,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<string>> ListOwnersWithPendingDeliveriesAsync(
         CancellationToken cancellationToken = default);
 

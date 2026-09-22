@@ -2,7 +2,7 @@ using Microsoft.Data.Sqlite;
 
 namespace ChatOS.Connector.Persistence;
 
-public sealed class LocalStateDatabase
+public sealed partial class LocalStateDatabase
 {
     private readonly string _connectionString;
 
@@ -645,6 +645,8 @@ public sealed class LocalStateDatabase
             """;
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         await MigrateRequirementSurveysToProjectScopeAsync(connection, cancellationToken)
+            .ConfigureAwait(false);
+        await MigrateAgentStaffingProposalsAsync(connection, cancellationToken)
             .ConfigureAwait(false);
     }
 

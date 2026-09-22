@@ -248,6 +248,33 @@
                 </ListView>
             </PivotItem>
 
+            <PivotItem Header="成员提案">
+                <ListView ItemsSource="{x:Bind ViewModel.StaffingProposals}" SelectionMode="None">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="domain:AgentStaffingProposal">
+                            <Grid Padding="12" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="4">
+                                    <TextBlock FontWeight="SemiBold" Text="{x:Bind Draft.Kind}" />
+                                    <TextBlock Text="{x:Bind Draft.Name}" TextWrapping="Wrap" />
+                                    <TextBlock Opacity="0.72" Text="{x:Bind Draft.Role}" TextWrapping="Wrap" />
+                                    <TextBlock Opacity="0.72" Text="{x:Bind Draft.Rationale}" TextWrapping="Wrap" />
+                                    <TextBlock Opacity="0.72" Text="{x:Bind Draft.Reason}" TextWrapping="Wrap" />
+                                    <TextBlock FontSize="11" Opacity="0.6" Text="{x:Bind Status}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                                    <Button Click="OnApproveStaffingProposalClick" Content="批准" />
+                                    <Button Click="OnRejectStaffingProposalClick" Content="拒绝" />
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </PivotItem>
+
             <PivotItem Header="运行">
                 <ListView ItemsSource="{x:Bind ViewModel.Runs}" SelectionMode="None">
                     <ListView.ItemTemplate>

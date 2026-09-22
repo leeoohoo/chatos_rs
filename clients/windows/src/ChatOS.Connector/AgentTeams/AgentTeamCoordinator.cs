@@ -173,15 +173,17 @@ internal sealed class AgentTeamCoordinator : IAgentTeamService
             ? _store.ListRequirementSurveysAsync(ownerUserId, room.ProjectId, null,
                 cancellationToken)
             : Task.FromResult<IReadOnlyList<AgentRequirementSurvey>>([]);
+        var staffingTask = _store.ListStaffingProposalsAsync(ownerUserId, roomId, null,
+            cancellationToken);
         var runsTask = _store.ListRunsAsync(ownerUserId, roomId, 100, cancellationToken);
         await Task.WhenAll(membersTask, profilesTask, messagesTask, todosTask, assetsTask,
-                surveysTask, runsTask)
+                surveysTask, staffingTask, runsTask)
             .ConfigureAwait(false);
         var memberIds = membersTask.Result.Select(value => value.AgentId).ToHashSet(StringComparer.Ordinal);
         return new AgentTeamSnapshot(room, membersTask.Result,
             profilesTask.Result.Where(value => memberIds.Contains(value.Id)).ToArray(),
             messagesTask.Result, todosTask.Result, assetsTask.Result, surveysTask.Result,
-            runsTask.Result);
+            staffingTask.Result, runsTask.Result);
     }
 
     public async Task<AgentPostResult> PostHumanMessageAsync(
@@ -327,6 +329,23 @@ internal sealed class AgentTeamCoordinator : IAgentTeamService
         Raise(ownerUserId, room.ProjectId, roomId, "requirement_survey_submitted");
         QueueDrain(ownerUserId);
         return survey;
+    }
+
+    public async Task<AgentStaffingProposal> ResolveStaffingProposalAsync(
+        string ownerUserId,
+        string roomId,
+        string proposalId,
+        bool approve,
+        CancellationToken cancellationToken = default)
+    {
+        var room = await RequireRoomAsync(ownerUserId, roomId, cancellationToken)
+            .ConfigureAwait(false);
+        var proposal = await _store.ResolveStaffingProposalAsync(ownerUserId, roomId,
+            proposalId, approve, cancellationToken).ConfigureAwait(false);
+        Raise(ownerUserId, room.ProjectId, roomId,
+            approve ? "staffing_proposal_approved" : "staffing_proposal_rejected");
+        QueueDrain(ownerUserId);
+        return proposal;
     }
 
     public Task DrainAsync(string ownerUserId, CancellationToken cancellationToken = default) =>

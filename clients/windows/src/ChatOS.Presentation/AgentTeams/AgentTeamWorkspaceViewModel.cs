@@ -40,6 +40,7 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
     public ObservableCollection<AgentTodoProgress> SelectedTodoProgress { get; } = [];
     public ObservableCollection<AgentTeamAsset> Assets { get; } = [];
     public ObservableCollection<AgentRequirementSurvey> RequirementSurveys { get; } = [];
+    public ObservableCollection<AgentStaffingProposal> StaffingProposals { get; } = [];
     public ObservableCollection<AgentRunSummary> Runs { get; } = [];
     public ObservableCollection<AgentMessageAttachment> PendingAttachments { get; } = [];
 
@@ -239,6 +240,7 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
             Replace(Todos, snapshot.Todos);
             Replace(Assets, snapshot.Assets);
             Replace(RequirementSurveys, snapshot.RequirementSurveys);
+            Replace(StaffingProposals, snapshot.StaffingProposals);
             Replace(Runs, snapshot.Runs);
             _loadedRoomId = snapshot.Room.Id;
             SelectedTodo = Todos.FirstOrDefault(value => value.Id == SelectedTodo?.Id);
@@ -256,6 +258,7 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
         SelectedTodoProgress.Clear();
         Assets.Clear();
         RequirementSurveys.Clear();
+        StaffingProposals.Clear();
         Runs.Clear();
         PendingAttachments.Clear();
         OnPropertyChanged(nameof(HasPendingAttachments));

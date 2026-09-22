@@ -145,5 +145,12 @@ public interface IAgentTeamService
         AgentRequirementSubmission submission,
         CancellationToken cancellationToken = default);
 
+    Task<AgentStaffingProposal> ResolveStaffingProposalAsync(
+        string ownerUserId,
+        string roomId,
+        string proposalId,
+        bool approve,
+        CancellationToken cancellationToken = default);
+
     Task DrainAsync(string ownerUserId, CancellationToken cancellationToken = default);
 }

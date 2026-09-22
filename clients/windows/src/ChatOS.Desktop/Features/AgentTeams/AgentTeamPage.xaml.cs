@@ -312,6 +312,22 @@ public sealed partial class AgentTeamPage : UserControl
         await IgnoreFailureAsync(() => ViewModel.SubmitRequirementSurveyAsync(survey, submission));
     }
 
+    private async void OnApproveStaffingProposalClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: AgentStaffingProposal proposal } &&
+            proposal.Status == AgentStaffingProposalStatus.Pending &&
+            await ConfirmAsync("批准成员提案", $"批准 {proposal.Draft.Kind} 提案？"))
+            await IgnoreFailureAsync(() => ViewModel.ResolveStaffingProposalAsync(proposal, true));
+    }
+
+    private async void OnRejectStaffingProposalClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: AgentStaffingProposal proposal } &&
+            proposal.Status == AgentStaffingProposalStatus.Pending &&
+            await ConfirmAsync("拒绝成员提案", $"拒绝 {proposal.Draft.Kind} 提案？"))
+            await IgnoreFailureAsync(() => ViewModel.ResolveStaffingProposalAsync(proposal, false));
+    }
+
     private async Task ShowAgentDialogAsync(AgentProfile? profile)
     {
         var name = new TextBox { Header = "名称", Text = profile?.Draft.Name ?? string.Empty };
@@ -328,6 +344,11 @@ public sealed partial class AgentTeamPage : UserControl
             IsChecked = profile?.Draft.ProfessionKey == "project_manager" ||
                 profile?.Draft.Skills.Contains("requirement.survey.manage",
                     StringComparer.Ordinal) == true,
+        };
+        var staffManagement = new CheckBox
+        {
+            Content = "允许发起团队成员新增、入队和移出提案",
+            IsChecked = profile is not null && AgentProfilePermissions.CanManageStaff(profile),
         };
         var heartbeat = new CheckBox { Content = "启用心跳", IsChecked = profile?.Draft.HeartbeatEnabled ?? false };
         var heartbeatInterval = new NumberBox
@@ -348,7 +369,8 @@ public sealed partial class AgentTeamPage : UserControl
             new ScrollViewer
             {
                 Content = Form(name, description, prompt, model, thinking, profession, plugins,
-                    skills, requirementSurveys, heartbeat, heartbeatInterval, heartbeatPrompt),
+                    skills, requirementSurveys, staffManagement, heartbeat, heartbeatInterval,
+                    heartbeatPrompt),
                 MaxHeight = 650,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             }, "保存") != ContentDialogResult.Primary ||
@@ -357,9 +379,11 @@ public sealed partial class AgentTeamPage : UserControl
             .Where(value => value != "requirement.survey.manage").ToList();
         if (requirementSurveys.IsChecked == true)
             skillIds.Add("requirement.survey.manage");
+        var normalizedSkillIds = AgentProfilePermissions.NormalizeStaffPermissions(
+            skillIds, staffManagement.IsChecked == true);
         var draft = new AgentProfileDraft(name.Text.Trim(), description.Text.Trim(), prompt.Text.Trim(),
             selectedModel.Id, thinking.SelectedItem?.ToString(), profession.Text.Trim(),
-            SplitIdentifiers(plugins.Text), skillIds,
+            SplitIdentifiers(plugins.Text), normalizedSkillIds,
             heartbeat.IsChecked == true, (int)heartbeatInterval.Value, heartbeatPrompt.Text.Trim());
         await IgnoreFailureAsync(() => ViewModel.SaveAgentAsync(profile?.Id, draft));
     }
