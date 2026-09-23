@@ -99,7 +99,11 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
         _process = native.Process;
         _networkLease = native.NetworkLease;
         _sandboxProfileLease = native.SandboxProfileLease;
-        _outputTask = ReadOutputAsync(_lifetime.Token);
+        _outputTask = Task.Factory.StartNew(
+            () => ReadOutput(_lifetime.Token),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
         _waitTask = WaitForExitAsync();
     }
 
@@ -168,8 +172,9 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await _input.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
-            await _input.FlushAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            _input.Write(bytes);
+            _input.Flush();
         }
         finally
         {
@@ -248,7 +253,7 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
         _writeGate.Dispose();
     }
 
-    private async Task ReadOutputAsync(CancellationToken cancellationToken)
+    private void ReadOutput(CancellationToken cancellationToken)
     {
         var bytes = new byte[16 * 1024];
         var decoder = Encoding.UTF8.GetDecoder();
@@ -257,7 +262,7 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                var read = await _output.ReadAsync(bytes, cancellationToken).ConfigureAwait(false);
+                var read = _output.Read(bytes, 0, bytes.Length);
                 if (read == 0)
                 {
                     break;
@@ -297,6 +302,9 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
+        catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
         catch (Exception exception)
         {
             Publish(new TerminalEvent(
@@ -308,7 +316,11 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
 
     private async Task WaitForExitAsync()
     {
-        var exitCode = await Task.Run(() => NativeConPty.WaitForExit(_process)).ConfigureAwait(false);
+        var exitCode = await Task.Factory.StartNew(
+            () => NativeConPty.WaitForExit(_process),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default).ConfigureAwait(false);
         Interlocked.Exchange(ref _exited, 1);
         await ReleaseNetworkLeaseAsync().ConfigureAwait(false);
         await ReleaseSandboxProfileAsync().ConfigureAwait(false);
@@ -506,15 +518,19 @@ internal sealed record NativeConPtyProcess(
                 AttributeList = attributeList,
             };
             var commandLine = new StringBuilder(CommandLine(executable, arguments));
+            var creationFlags = NativeConPty.ExtendedStartupInfoPresent |
+                NativeConPty.CreateSuspended;
+            if (sandbox is not null)
+            {
+                creationFlags |= NativeConPty.CreateUnicodeEnvironment;
+            }
             NativeConPty.ThrowIfFalse(NativeConPty.CreateProcess(
                 null,
                 commandLine,
                 IntPtr.Zero,
                 IntPtr.Zero,
                 false,
-                NativeConPty.ExtendedStartupInfoPresent |
-                    NativeConPty.CreateUnicodeEnvironment |
-                    NativeConPty.CreateSuspended,
+                creationFlags,
                 sandbox?.EnvironmentBlock ?? IntPtr.Zero,
                 workingDirectory,
                 ref startup,
