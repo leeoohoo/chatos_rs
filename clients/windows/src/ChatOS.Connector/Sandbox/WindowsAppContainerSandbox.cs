@@ -239,7 +239,8 @@ internal static class WindowsAppContainerSandbox
             ?? throw new InvalidOperationException("Unable to start Windows ACL preparation.");
         var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        using var timeout = new CancellationTokenSource(
+            recursive ? TimeSpan.FromMinutes(2) : TimeSpan.FromSeconds(10));
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             timeout.Token);
@@ -455,7 +456,8 @@ internal static class WindowsAppContainerSandbox
             ?? throw new InvalidOperationException("Unable to start Windows ACL cleanup.");
         var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        using var timeout = new CancellationTokenSource(
+            recursive ? TimeSpan.FromMinutes(2) : TimeSpan.FromSeconds(10));
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             timeout.Token);
@@ -497,9 +499,20 @@ internal static class WindowsAppContainerSandbox
 
     private static IEnumerable<string> AncestorDirectories(string path)
     {
-        var parent = Directory.GetParent(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)));
+        var fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        var volumeRoot = Path.TrimEndingDirectorySeparator(Path.GetPathRoot(fullPath) ?? string.Empty);
+        var parent = Directory.GetParent(fullPath);
         while (parent is not null)
         {
+            // Volume roots are normally traversable already and changing their DACL can
+            // require elevation or stall on managed build volumes.
+            if (string.Equals(
+                    Path.TrimEndingDirectorySeparator(parent.FullName),
+                    volumeRoot,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                yield break;
+            }
             yield return parent.FullName;
             parent = parent.Parent;
         }
