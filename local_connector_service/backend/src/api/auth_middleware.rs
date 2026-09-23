@@ -251,6 +251,18 @@ fn companion_request_allowed(method: &Method, path: &str) -> bool {
     ) || matches!((method, segments.as_slice()),
         (&Method::POST, [device_id, "approvals", approval_id, "resolve"])
             if !device_id.is_empty() && !approval_id.is_empty()
+    ) || matches!((method, segments.as_slice()),
+        (&Method::GET, [device_id, "agent-workspace"]) if !device_id.is_empty()
+    ) || matches!((method, segments.as_slice()),
+        (&Method::GET, [device_id, "agent-conversations", conversation_id])
+            if !device_id.is_empty() && !conversation_id.is_empty()
+    ) || matches!((method, segments.as_slice()),
+        (&Method::GET | &Method::POST,
+            [device_id, "agent-conversations", conversation_id, "messages"])
+            if !device_id.is_empty() && !conversation_id.is_empty()
+    ) || matches!((method, segments.as_slice()),
+        (&Method::POST, [device_id, "agents", agent_id, "direct-conversation"])
+            if !device_id.is_empty() && !agent_id.is_empty()
     )
 }
 
@@ -424,6 +436,33 @@ mod tests {
         )
         .is_ok());
         for (method, path) in [
+            (
+                Method::GET,
+                "/api/local-connectors/companion/devices/device-1/agent-workspace",
+            ),
+            (
+                Method::GET,
+                "/api/local-connectors/companion/devices/device-1/agent-conversations/room-1",
+            ),
+            (
+                Method::GET,
+                "/api/local-connectors/companion/devices/device-1/agent-conversations/room-1/messages",
+            ),
+            (
+                Method::POST,
+                "/api/local-connectors/companion/devices/device-1/agent-conversations/room-1/messages",
+            ),
+            (
+                Method::POST,
+                "/api/local-connectors/companion/devices/device-1/agents/agent-1/direct-conversation",
+            ),
+        ] {
+            assert!(
+                enforce_client_scope(&user, &method, path).is_ok(),
+                "path={path}"
+            );
+        }
+        for (method, path) in [
             (Method::GET, "/api/local-connectors/devices"),
             (Method::POST, "/api/local-connectors/devices"),
             (Method::GET, "/api/local-connectors/workspaces"),
@@ -443,6 +482,14 @@ mod tests {
             (
                 Method::POST,
                 "/api/local-connectors/companion/devices/device-1/approvals//resolve",
+            ),
+            (
+                Method::DELETE,
+                "/api/local-connectors/companion/devices/device-1/agent-conversations/room-1/messages",
+            ),
+            (
+                Method::POST,
+                "/api/local-connectors/companion/devices/device-1/agent-workspace",
             ),
         ] {
             assert!(
