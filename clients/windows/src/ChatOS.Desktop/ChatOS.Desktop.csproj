@@ -24,17 +24,4 @@
   <ItemGroup>
     <Content Include="Assets\**\*.png" />
   </ItemGroup>
-  <!--
-    Windows App SDK 1.7 overwrites UseXamlCompilerExecutable while importing
-    its targets. Apply the override immediately before both real compilation
-    passes so non-English Windows installations use the language-independent
-    in-process compiler instead of the broken XamlCompiler.exe host.
-  -->
-  <Target
-      Name="ChatOSUseInProcessXamlCompiler"
-      BeforeTargets="MarkupCompilePass1;MarkupCompilePass2">
-    <PropertyGroup>
-      <UseXamlCompilerExecutable>false</UseXamlCompilerExecutable>
-    </PropertyGroup>
-  </Target>
 </Project>
