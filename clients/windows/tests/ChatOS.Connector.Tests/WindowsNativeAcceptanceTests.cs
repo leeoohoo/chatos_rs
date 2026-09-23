@@ -125,7 +125,7 @@ public sealed class WindowsNativeAcceptanceTests
             nativePolicy,
             CancellationToken.None);
         var capabilities = Marshal.PtrToStructure<SecurityCapabilities>(context.SecurityCapabilities);
-        Assert.Equal(1u, capabilities.CapabilityCount);
+        Assert.Equal(0u, capabilities.CapabilityCount);
 
         var readOnlyScript = System.IO.Path.Combine(workspace.Path, "write-readonly.cmd");
         var readOnlyFile = System.IO.Path.Combine(workspace.Path, "readonly.txt");
@@ -155,7 +155,7 @@ public sealed class WindowsNativeAcceptanceTests
                 workspace.Path),
             new TerminalSize(100, 30),
             inputProbe,
-            ["/d", "/q", "/k"],
+            ["/d", "/q", "/k", "ver > nul"],
             sandbox: null);
         var architecture = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE") ?? "UNKNOWN";
         var expected = $"CHATOS_{architecture}_CONPTY_OK";
