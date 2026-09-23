@@ -247,8 +247,8 @@
                                                         Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                         TextWrapping="Wrap"
                                                         Visibility="{Binding IsSecret, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
-                                                    <desktopPet:BindablePasswordBox
-                                                        BoundPassword="{Binding Value, Mode=TwoWay}"
+                                                    <PasswordBox
+                                                        desktopPet:PasswordBoxBinding.Value="{Binding Value, Mode=TwoWay}"
                                                         PlaceholderText="{Binding Placeholder}"
                                                         Visibility="{Binding IsSecret, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                                 </StackPanel>
