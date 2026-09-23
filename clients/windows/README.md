@@ -50,6 +50,14 @@ $env:CHATOS_API_BASE_URL = "https://example.com/api/chatos"
 
 ## 一键安装到 Windows 本机
 
+拿到完整源码仓库后，在仓库根目录打开 PowerShell 或命令提示符，只需运行：
+
+```powershell
+.\scripts\install-windows-client.cmd
+```
+
+该命令会自动识别 x64/ARM64、安装当前用户缺少的 .NET 8 SDK 与 Inno Setup、运行测试、生成自包含 EXE 安装包、安装到当前电脑并启动 ChatOS。生成的安装包同时保留在 `clients\windows\BundleArtifacts\installer-<架构>`，可以继续分发给其他相同架构的 Windows 电脑。整个流程不需要管理员权限；正式对外发布时仍应对安装包进行代码签名。
+
 将整个目录复制或拉取到 Windows 11 电脑后，直接双击：
 
 ```text

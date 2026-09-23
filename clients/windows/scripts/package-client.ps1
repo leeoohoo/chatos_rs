@@ -10,11 +10,15 @@ param(
     [string]$LocalConnectorCloudBaseUrl = "https://local-connector.jgoool.com",
 
     [ValidatePattern("^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$")]
-    [string]$Version = "3.0.0",
+    [string]$Version = "3.0.5",
 
     [switch]$SkipTests,
 
-    [switch]$SkipToolInstall
+    [switch]$SkipToolInstall,
+
+    [switch]$Install,
+
+    [switch]$NoLaunch
 )
 
 $ErrorActionPreference = "Stop"
@@ -278,6 +282,32 @@ Local Connector: $normalizedConnectorBaseUrl
         throw "EXE installer was not created: $installer"
     }
     Write-Host "EXE installer: $installer"
+
+    if ($Install) {
+        Write-Host "Installing ChatOS for the current Windows user..."
+        $installProcess = Start-Process `
+            -FilePath $installer `
+            -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CURRENTUSER" `
+            -Wait `
+            -PassThru
+        if ($installProcess.ExitCode -ne 0) {
+            throw "ChatOS installer failed with exit code $($installProcess.ExitCode)."
+        }
+
+        $installedRoot = Join-Path $env:LOCALAPPDATA "Programs\ChatOS"
+        $installedExecutable = Join-Path $installedRoot "ChatOS.Desktop.exe"
+        $installedLauncher = Join-Path $installedRoot "Start-ChatOS.cmd"
+        if (-not (Test-Path $installedExecutable -PathType Leaf) -or
+            -not (Test-Path $installedLauncher -PathType Leaf)) {
+            throw "ChatOS installation completed without the expected application files."
+        }
+
+        Write-Host "ChatOS installed to: $installedRoot"
+        if (-not $NoLaunch) {
+            Start-Process -FilePath $installedLauncher -WorkingDirectory $installedRoot
+            Write-Host "ChatOS started."
+        }
+    }
 }
 finally {
     Pop-Location
