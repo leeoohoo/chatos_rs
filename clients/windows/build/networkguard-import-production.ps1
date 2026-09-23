@@ -116,7 +116,8 @@ Copy-Item $signedInf.FullName (Join-Path $driverOutput "ChatOS.NetworkGuard.Driv
 Copy-Item $baseServicePath (Join-Path $serviceOutput "ChatOS.NetworkGuard.Service.exe")
 
 $manifest = @(Get-ChildItem $output -File -Recurse | ForEach-Object { Get-FileEvidence $_ $output })
-$manifest | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $output "manifest.json") -Encoding utf8
+ConvertTo-Json -InputObject @($manifest) -Depth 4 |
+    Set-Content (Join-Path $output "manifest.json") -Encoding utf8
 $report = [ordered]@{
     schema_version = 2
     passed = $true

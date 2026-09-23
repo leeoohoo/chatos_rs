@@ -14,7 +14,8 @@ function Assert-NetworkGuardPackageManifest {
         throw "NetworkGuard package manifest.json was not found."
     }
     try {
-        $manifest = @(Get-Content $manifestPath -Raw | ConvertFrom-Json)
+        $parsedManifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+        $manifest = @($parsedManifest | ForEach-Object { $_ })
     }
     catch {
         throw "NetworkGuard package manifest is not valid JSON."
