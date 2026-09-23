@@ -923,7 +923,7 @@ internal static class WindowsAppContainerSandbox
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool ConvertSidToStringSid(IntPtr sid, out IntPtr stringSid);
 
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [DllImport("KernelBase.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool DeriveCapabilitySidsFromName(
         string capabilityName,
         out IntPtr capabilityGroupSids,
