@@ -58,20 +58,24 @@ internal static class WindowsAppContainerSandbox
             TraceNativePreparation("profile-lease-acquired");
         }
         IntPtr appContainerSid = IntPtr.Zero;
+        var capabilitySids = new List<IntPtr>();
         try
         {
             appContainerSid = CreateOrDeriveProfileSid(profileName);
             var sidText = SidToString(appContainerSid);
             TraceNativePreparation($"profile-sid-ready:{sidText}");
+            var workspaceCapability = WorkspaceCapabilitySid(profileName);
+            capabilitySids.Add(workspaceCapability);
+            var workspaceCapabilityText = SidToString(workspaceCapability);
             await EnsureWorkspaceAclAsync(
                 workspaceRoot,
-                sidText,
+                workspaceCapabilityText,
                 policy.PermissionProfile,
                 cancellationToken).ConfigureAwait(false);
             TraceNativePreparation("workspace-acl-ready");
             await EnsureAncestorTraverseAclsAsync(
                 workspaceRoot,
-                sidText,
+                workspaceCapabilityText,
                 cancellationToken).ConfigureAwait(false);
             TraceNativePreparation("workspace-ancestors-ready");
             var temporaryDirectory = Path.Combine(
@@ -93,20 +97,27 @@ internal static class WindowsAppContainerSandbox
                 await profileLease.RegisterAsync(
                     Path.GetFullPath(workspaceRoot),
                     sidText,
+                    workspaceCapabilityText,
                     temporaryDirectory,
                     cancellationToken).ConfigureAwait(false);
                 TraceNativePreparation("profile-lease-registered");
             }
-            var capabilities = policy.GrantInternetCapabilities
-                ? new[] { CapabilitySid(InternetClientSid), CapabilitySid(PrivateNetworkClientServerSid) }
-                : Array.Empty<IntPtr>();
-            return new WindowsAppContainerLaunchContext(
+            if (policy.GrantInternetCapabilities)
+            {
+                capabilitySids.Add(CapabilitySid(InternetClientSid));
+                capabilitySids.Add(CapabilitySid(PrivateNetworkClientServerSid));
+            }
+            var context = new WindowsAppContainerLaunchContext(
                 appContainerSid,
                 sidText,
-                capabilities,
+                capabilitySids,
                 temporaryDirectory,
                 policy,
                 profileLease);
+            appContainerSid = IntPtr.Zero;
+            capabilitySids.Clear();
+            profileLease = null;
+            return context;
         }
         catch
         {
@@ -114,6 +125,10 @@ internal static class WindowsAppContainerSandbox
             if (appContainerSid != IntPtr.Zero)
             {
                 _ = FreeSid(appContainerSid);
+            }
+            foreach (var capabilitySid in capabilitySids)
+            {
+                if (capabilitySid != IntPtr.Zero) _ = LocalFree(capabilitySid);
             }
             if (profileLease is not null)
             {
@@ -368,6 +383,7 @@ internal static class WindowsAppContainerSandbox
         EphemeralProfileState state,
         string workspaceRoot,
         string sid,
+        string aclSid,
         string temporaryDirectory,
         CancellationToken cancellationToken)
     {
@@ -378,11 +394,13 @@ internal static class WindowsAppContainerSandbox
                 profileName,
                 workspaceRoot,
                 sid,
+                aclSid,
                 temporaryDirectory,
                 DateTimeOffset.UtcNow);
             if (state.Metadata is not null &&
                 (!string.Equals(state.Metadata.WorkspaceRoot, workspaceRoot, StringComparison.OrdinalIgnoreCase) ||
                  !string.Equals(state.Metadata.Sid, sid, StringComparison.Ordinal) ||
+                 !string.Equals(state.Metadata.AclSid, aclSid, StringComparison.Ordinal) ||
                  !string.Equals(
                      state.Metadata.TemporaryDirectory,
                      temporaryDirectory,
@@ -449,16 +467,17 @@ internal static class WindowsAppContainerSandbox
 
         try
         {
-            await RemovePathAclAsync(metadata.WorkspaceRoot, metadata.Sid, CancellationToken.None)
+            var aclSid = metadata.AclSid ?? metadata.Sid;
+            await RemovePathAclAsync(metadata.WorkspaceRoot, aclSid, CancellationToken.None)
                 .ConfigureAwait(false);
             await RemoveAncestorTraverseAclsAsync(
                 metadata.WorkspaceRoot,
-                metadata.Sid,
+                aclSid,
                 CancellationToken.None).ConfigureAwait(false);
             PreparedWorkspaceAcls.TryRemove(
                 WorkspaceAclKey(
                     metadata.WorkspaceRoot,
-                    metadata.Sid,
+                    aclSid,
                     ProfilePermission(metadata.ProfileName)),
                 out _);
             await DeleteDirectoryWithRetriesAsync(metadata.TemporaryDirectory).ConfigureAwait(false);
@@ -786,7 +805,9 @@ internal static class WindowsAppContainerSandbox
         if (!metadata.ProfileName.StartsWith("ChatOS.Sandbox.", StringComparison.Ordinal) ||
             !metadata.ProfileName.Contains(".controlled.v1.", StringComparison.Ordinal) ||
             string.IsNullOrWhiteSpace(metadata.Sid) ||
-            !metadata.Sid.StartsWith("S-1-15-2-", StringComparison.Ordinal))
+            !metadata.Sid.StartsWith("S-1-15-2-", StringComparison.Ordinal) ||
+            (metadata.AclSid is not null &&
+             !metadata.AclSid.StartsWith("S-1-15-3-", StringComparison.Ordinal)))
         {
             return false;
         }
@@ -825,6 +846,41 @@ internal static class WindowsAppContainerSandbox
             throw new Win32Exception(Marshal.GetLastWin32Error());
         }
         return sid;
+    }
+
+    private static IntPtr WorkspaceCapabilitySid(string profileName)
+    {
+        if (!DeriveCapabilitySidsFromName(
+                $"chatos.workspace.{profileName}",
+                out var groupSids,
+                out var groupCount,
+                out var capabilitySids,
+                out var capabilityCount) ||
+            capabilityCount == 0)
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        try
+        {
+            var derived = Marshal.ReadIntPtr(capabilitySids);
+            return CapabilitySid(SidToString(derived));
+        }
+        finally
+        {
+            FreeDerivedSidArray(groupSids, groupCount);
+            FreeDerivedSidArray(capabilitySids, capabilityCount);
+        }
+    }
+
+    private static void FreeDerivedSidArray(IntPtr array, uint count)
+    {
+        if (array == IntPtr.Zero) return;
+        for (var index = 0; index < count; index++)
+        {
+            var sid = Marshal.ReadIntPtr(array, checked((int)(index * (uint)IntPtr.Size)));
+            if (sid != IntPtr.Zero) _ = LocalFree(sid);
+        }
+        _ = LocalFree(array);
     }
 
     private static string SidToString(IntPtr sid)
@@ -867,6 +923,14 @@ internal static class WindowsAppContainerSandbox
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool ConvertSidToStringSid(IntPtr sid, out IntPtr stringSid);
 
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool DeriveCapabilitySidsFromName(
+        string capabilityName,
+        out IntPtr capabilityGroupSids,
+        out uint capabilityGroupSidCount,
+        out IntPtr capabilitySids,
+        out uint capabilitySidCount);
+
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
     private static extern uint GetNamedSecurityInfo(
         string objectName,
@@ -897,6 +961,8 @@ internal static class WindowsAppContainerSandbox
 
     [DllImport("kernel32.dll")]
     private static extern IntPtr LocalFree(IntPtr memory);
+
+    internal static IntPtr FreeLocalMemory(IntPtr memory) => LocalFree(memory);
 
     [DllImport("advapi32.dll")]
     internal static extern IntPtr FreeSid(IntPtr sid);
@@ -953,6 +1019,7 @@ internal static class WindowsAppContainerSandbox
         public Task RegisterAsync(
             string workspaceRoot,
             string sid,
+            string aclSid,
             string temporaryDirectory,
             CancellationToken cancellationToken) =>
             RegisterEphemeralProfileAsync(
@@ -960,6 +1027,7 @@ internal static class WindowsAppContainerSandbox
                 state,
                 workspaceRoot,
                 sid,
+                aclSid,
                 temporaryDirectory,
                 cancellationToken);
 
@@ -976,6 +1044,7 @@ internal static class WindowsAppContainerSandbox
         string ProfileName,
         string WorkspaceRoot,
         string Sid,
+        string? AclSid,
         string TemporaryDirectory,
         DateTimeOffset CreatedAt);
 }

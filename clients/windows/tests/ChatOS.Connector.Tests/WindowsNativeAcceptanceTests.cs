@@ -125,7 +125,7 @@ public sealed class WindowsNativeAcceptanceTests
             nativePolicy,
             CancellationToken.None);
         var capabilities = Marshal.PtrToStructure<SecurityCapabilities>(context.SecurityCapabilities);
-        Assert.Equal(0u, capabilities.CapabilityCount);
+        Assert.Equal(1u, capabilities.CapabilityCount);
 
         var readOnlyScript = System.IO.Path.Combine(workspace.Path, "write-readonly.cmd");
         var readOnlyFile = System.IO.Path.Combine(workspace.Path, "readonly.txt");

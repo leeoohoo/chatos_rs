@@ -10,7 +10,8 @@ namespace ChatOS.Connector.Sandbox;
 
 internal sealed class WindowsAppContainerLaunchContext : IDisposable, IAsyncDisposable
 {
-    private readonly List<IntPtr> _ownedSids;
+    private readonly IntPtr _appContainerSid;
+    private readonly List<IntPtr> _capabilitySids;
     private readonly IntPtr _capabilityArray;
     private IAsyncDisposable? _profileLease;
     private int _disposed;
@@ -23,7 +24,8 @@ internal sealed class WindowsAppContainerLaunchContext : IDisposable, IAsyncDisp
         SandboxExecutionPolicy policy,
         IAsyncDisposable? profileLease = null)
     {
-        _ownedSids = [appContainerSid, .. capabilitySids];
+        _appContainerSid = appContainerSid;
+        _capabilitySids = [.. capabilitySids];
         if (capabilitySids.Count > 0)
         {
             var itemSize = Marshal.SizeOf<SidAndAttributes>();
@@ -77,12 +79,13 @@ internal sealed class WindowsAppContainerLaunchContext : IDisposable, IAsyncDisp
         {
             Marshal.FreeHGlobal(_capabilityArray);
         }
-        foreach (var sid in _ownedSids)
+        if (_appContainerSid != IntPtr.Zero)
         {
-            if (sid != IntPtr.Zero)
-            {
-                _ = WindowsAppContainerSandbox.FreeSid(sid);
-            }
+            _ = WindowsAppContainerSandbox.FreeSid(_appContainerSid);
+        }
+        foreach (var sid in _capabilitySids)
+        {
+            if (sid != IntPtr.Zero) _ = WindowsAppContainerSandbox.FreeLocalMemory(sid);
         }
         var profileLease = Interlocked.Exchange(ref _profileLease, null);
         if (profileLease is not null)
