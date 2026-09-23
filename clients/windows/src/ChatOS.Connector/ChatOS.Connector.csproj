@@ -13,6 +13,5 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="Microsoft.Extensions.Http" />
     <PackageReference Include="SSH.NET" />
-    <PackageReference Include="System.IO.FileSystem.AccessControl" />
   </ItemGroup>
 </Project>

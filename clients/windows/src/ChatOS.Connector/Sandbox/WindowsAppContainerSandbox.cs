@@ -2,9 +2,7 @@ using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Security.AccessControl;
 using System.Security.Cryptography;
-using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 
@@ -291,20 +289,20 @@ internal static class WindowsAppContainerSandbox
         }
     }
 
-    private static Task EnsureAncestorTraverseAclsAsync(
+    private static async Task EnsureAncestorTraverseAclsAsync(
         string path,
         string sid,
         CancellationToken cancellationToken)
     {
         foreach (var ancestor in AncestorDirectories(path))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var directory = new DirectoryInfo(ancestor);
-            var security = directory.GetAccessControl(AccessControlSections.Access);
-            security.SetAccessRule(TraverseRule(sid));
-            directory.SetAccessControl(security);
+            await EnsurePathAclAsync(
+                ancestor,
+                sid,
+                "(X)",
+                cancellationToken,
+                recursive: false).ConfigureAwait(false);
         }
-        return Task.CompletedTask;
     }
 
     private static async Task<EphemeralProfileLease> AcquireEphemeralProfileAsync(
@@ -507,32 +505,20 @@ internal static class WindowsAppContainerSandbox
         }
     }
 
-    private static Task RemoveAncestorTraverseAclsAsync(
+    private static async Task RemoveAncestorTraverseAclsAsync(
         string path,
         string sid,
         CancellationToken cancellationToken)
     {
         foreach (var ancestor in AncestorDirectories(path).Reverse())
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!Directory.Exists(ancestor))
-            {
-                continue;
-            }
-            var directory = new DirectoryInfo(ancestor);
-            var security = directory.GetAccessControl(AccessControlSections.Access);
-            security.RemoveAccessRuleSpecific(TraverseRule(sid));
-            directory.SetAccessControl(security);
+            await RemovePathAclAsync(
+                ancestor,
+                sid,
+                cancellationToken,
+                recursive: false).ConfigureAwait(false);
         }
-        return Task.CompletedTask;
     }
-
-    private static FileSystemAccessRule TraverseRule(string sid) => new(
-        new SecurityIdentifier(sid),
-        FileSystemRights.Traverse,
-        InheritanceFlags.None,
-        PropagationFlags.None,
-        AccessControlType.Allow);
 
     private static IEnumerable<string> AncestorDirectories(string path)
     {
