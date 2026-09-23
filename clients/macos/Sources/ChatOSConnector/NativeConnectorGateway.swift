@@ -88,6 +88,20 @@ struct NativeConnectorGateway: Sendable {
         )
     }
 
+    func agentPromptBundle(token: String) async throws -> GatewayAgentPromptBundleDTO {
+        try await request(
+            "/api/plugin-management/agent-prompts/bundle",
+            token: token
+        )
+    }
+
+    func agentCapability(token: String, agentKey: String) async throws -> GatewayAgentCapabilityDTO {
+        try await request(
+            "/api/plugin-management/agent-capabilities/\(agentKey.urlPathEncoded)",
+            token: token
+        )
+    }
+
     func updateModelConfig(
         token: String,
         id: String,
@@ -224,10 +238,9 @@ struct NativeConnectorGateway: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw NativeConnectorError.invalidResponse("缺少 HTTP 状态")
         }
-        Self.publishAuthenticationExpirationIfNeeded(
-            statusCode: http.statusCode,
-            token: token
-        )
+        if Self.isConnectorAuthenticationRejected(statusCode: http.statusCode, token: token) {
+            throw NativeConnectorError.notPaired
+        }
         guard (200..<300).contains(http.statusCode) else {
             throw NativeConnectorError.server(
                 status: http.statusCode,
@@ -292,10 +305,9 @@ struct NativeConnectorGateway: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw NativeConnectorError.invalidResponse("缺少 HTTP 状态")
         }
-        Self.publishAuthenticationExpirationIfNeeded(
-            statusCode: http.statusCode,
-            token: token
-        )
+        if Self.isConnectorAuthenticationRejected(statusCode: http.statusCode, token: token) {
+            throw NativeConnectorError.notPaired
+        }
         guard (200..<300).contains(http.statusCode) else {
             let payload = try? decoder.decode(GatewayErrorDTO.self, from: data)
             throw NativeConnectorError.server(
@@ -328,10 +340,9 @@ struct NativeConnectorGateway: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw NativeConnectorError.invalidResponse("缺少 HTTP 状态")
         }
-        Self.publishAuthenticationExpirationIfNeeded(
-            statusCode: http.statusCode,
-            token: token
-        )
+        if Self.isConnectorAuthenticationRejected(statusCode: http.statusCode, token: token) {
+            throw NativeConnectorError.notPaired
+        }
         guard (200..<300).contains(http.statusCode) else {
             let payload = try? decoder.decode(GatewayErrorDTO.self, from: data)
             throw NativeConnectorError.server(
@@ -363,18 +374,17 @@ struct NativeConnectorGateway: Sendable {
         return request
     }
 
-    @discardableResult
-    static func publishAuthenticationExpirationIfNeeded(
+    /// Connector credentials are independent from the primary ChatOS login. A rejected
+    /// connector token requests re-pairing and must never expire the primary session.
+    static func isConnectorAuthenticationRejected(
         statusCode: Int,
-        token: String?,
-        notificationCenter: NotificationCenter = .default
+        token: String?
     ) -> Bool {
         guard statusCode == 401,
               let token,
               !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return false
         }
-        notificationCenter.post(name: .chatOSAuthenticationDidExpire, object: nil)
         return true
     }
 }
@@ -502,18 +512,57 @@ struct GatewayModelConfigDTO: Decodable, Sendable {
     }
 }
 
+struct GatewayAgentPromptBundleDTO: Decodable, Sendable {
+    var bundleVersion: Int64
+    var updatedAt: String
+    var prompts: [GatewayAgentPromptDTO]
+
+    enum CodingKeys: String, CodingKey {
+        case prompts
+        case bundleVersion = "bundle_version"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct GatewayAgentPromptDTO: Decodable, Sendable {
+    var agentKey: String
+    var vendor: String
+    var content: String
+    var revision: Int64
+    var checksum: String
+    var publishedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case vendor, content, revision, checksum
+        case agentKey = "agent_key"
+        case publishedAt = "published_at"
+    }
+}
+
+struct GatewayAgentCapabilityDTO: Decodable, Sendable {
+    var agentKey: String
+    var ownerUserID: String
+    var policyRevision: String
+    var agentEnabled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case agentKey = "agent_key"
+        case ownerUserID = "owner_user_id"
+        case policyRevision = "policy_revision"
+        case agentEnabled = "agent_enabled"
+    }
+}
+
 struct GatewayModelSettingsDTO: Decodable, Sendable {
     var modelRequestMaxRetries: Int?
     var memorySummaryModelConfigID: String?
     var memorySummaryThinkingLevel: String?
-    var taskRunnerDefaultModelConfigID: String?
     var commandApprovalModelConfigID: String?
     var commandApprovalThinkingLevel: String?
     enum CodingKeys: String, CodingKey {
         case modelRequestMaxRetries = "model_request_max_retries"
         case memorySummaryModelConfigID = "memory_summary_model_config_id"
         case memorySummaryThinkingLevel = "memory_summary_thinking_level"
-        case taskRunnerDefaultModelConfigID = "task_runner_default_model_config_id"
         case commandApprovalModelConfigID = "command_approval_model_config_id"
         case commandApprovalThinkingLevel = "command_approval_thinking_level"
     }
@@ -623,17 +672,12 @@ private struct GatewayModelSettingsUpdateRequest: Encodable {
         try container.encode(settings.modelRequestMaxRetries ?? 5, forKey: .modelRequestMaxRetries)
         try container.encode(settings.memorySummaryModelConfigID, forKey: .memorySummaryModelConfigID)
         try container.encode(settings.memorySummaryThinkingLevel, forKey: .memorySummaryThinkingLevel)
-        try container.encode(
-            settings.taskRunnerDefaultModelConfigID ?? "",
-            forKey: .taskRunnerDefaultModelConfigID
-        )
     }
 
     enum CodingKeys: String, CodingKey {
         case modelRequestMaxRetries = "model_request_max_retries"
         case memorySummaryModelConfigID = "memory_summary_model_config_id"
         case memorySummaryThinkingLevel = "memory_summary_thinking_level"
-        case taskRunnerDefaultModelConfigID = "task_runner_default_model_config_id"
     }
 }
 

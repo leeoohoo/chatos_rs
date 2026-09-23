@@ -146,7 +146,6 @@ pub struct SystemConfigResponse {
     pub scheduler_poll_interval_ms: u64,
     pub worker_claim_ttl_ms: u64,
     pub worker_concurrency: usize,
-    pub auto_memory_summary: bool,
     pub default_task_execution_max_iterations: usize,
     pub task_execution_max_iterations: usize,
     pub task_runner_review_read_only_iterations: usize,

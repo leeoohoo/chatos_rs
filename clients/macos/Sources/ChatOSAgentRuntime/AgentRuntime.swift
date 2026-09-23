@@ -1,16 +1,26 @@
 import Foundation
 
 public struct AgentRuntime: Sendable {
-    public init() {}
+    public typealias RetrySleeper = @Sendable (Duration) async throws -> Void
+    private let retrySleeper: RetrySleeper
+
+    public init(retrySleeper: @escaping RetrySleeper = { duration in
+        try await Task.sleep(for: duration)
+    }) {
+        self.retrySleeper = retrySleeper
+    }
     public typealias Executor = @Sendable (AgentToolCall) async throws -> AgentToolOutcome
+    public typealias CompletionCheck = @Sendable () async throws -> String?
     public typealias Recorder = @Sendable (AgentRunCheckpoint, AgentRunEvent) async throws -> Void
 
     public func run(
         checkpoint initial: AgentRunCheckpoint, scope: String, policy: AgentRunPolicy,
         model: any AgentModelClient, tools: [AgentToolDefinition],
         execute: @escaping Executor,
+        completionCheck: @escaping CompletionCheck = { nil },
         contextProvider: AgentMemoryContextProvider? = nil,
         shouldPause: @escaping @Sendable () async -> Bool = { false },
+        onModelStreamEvent: @escaping @Sendable (AgentModelStreamEvent) async -> Void = { _ in },
         record: @escaping Recorder = { _, _ in }
     ) async throws -> AgentRunCheckpoint {
         try policy.validate()
@@ -25,6 +35,12 @@ public struct AgentRuntime: Sendable {
         let elapsedBefore = state.elapsedSeconds
         let registry = Dictionary(uniqueKeysWithValues: tools.map { ($0.name, $0) })
         let contextPolicy = policy.context ?? AgentContextPolicy()
+        // Memory Engine is composed once at the start of this run/resume. New
+        // messages are appended locally for the rest of the model/tool loop so
+        // official OpenAI Responses can keep one stable continuation and let
+        // server-side compaction own in-run context management.
+        var activeModelMessages: [AgentMessage]?
+        var activeCheckpointMessageCount = state.messages.count
         let deadline = started.addingTimeInterval(Double(policy.runTimeoutSeconds) - elapsedBefore)
         func snapshot(_ value: AgentRunCheckpoint) -> AgentRunCheckpoint {
             var copy = value; copy.elapsedSeconds = elapsedBefore + Date().timeIntervalSince(started); return copy
@@ -40,17 +56,52 @@ public struct AgentRuntime: Sendable {
             try await emit("needs_review", "上次副作用工具执行结果不明，需要核实原任务，不能自动重放。")
             return snapshot(state)
         }
+        // A paused checkpoint has already consumed its previous no-progress window. Invoking
+        // `run` again is the resume boundary, so grant a fresh progress window while preserving
+        // the elapsed run deadline, model/tool history, receipts, and durable side-effect guards.
+        if state.status == .paused {
+            state.noProgressRounds = 0
+        }
         state.status = .running
         state.stopReason = nil
         try await emit("started", "Agent 运行开始 / 恢复")
         do {
             while true {
                 try Task.checkCancellation()
+                // Flush every newly appended user/assistant/tool message before
+                // handling another tool or taking any normal early-exit path.
+                // This keeps Memory Engine as the complete audit transcript even
+                // though it is composed only once per run/resume boundary.
+                if let contextProvider, let memory = state.memory,
+                   memory.syncedMessageCount < state.messages.count {
+                    let synced = try await contextProvider.prepare(
+                        checkpoint: snapshot(state), tools: tools, policy: contextPolicy,
+                        deadline: deadline, synchronizeOnly: true,
+                        shouldPause: { false }, record: record
+                    )
+                    state = synced.checkpoint
+                    if activeModelMessages != nil {
+                        guard activeCheckpointMessageCount <= state.messages.count else {
+                            throw AgentContextError.invalidHistory
+                        }
+                        activeModelMessages!.append(
+                            contentsOf: state.messages[activeCheckpointMessageCount...]
+                        )
+                        activeCheckpointMessageCount = state.messages.count
+                    }
+                } else if state.memory != nil, contextProvider == nil {
+                    throw AgentContextError.unavailable
+                }
                 if await shouldPause() {
                     state.status = .paused; try await emit("paused", "已保存检查点，后续步骤暂停")
                     return snapshot(state)
                 }
                 guard remainingTime() > 0 else { throw AgentRuntimeError.timeout }
+                if state.completionResult == nil, state.pendingCalls.isEmpty,
+                   let completion = try await completionCheck() {
+                    state.completionResult = completion
+                    try await emit("completion_detected", "业务数据已通过本地完整性校验，无需再次调用模型")
+                }
                 if let completion = state.completionResult {
                     if let contextProvider {
                         let synced = try await contextProvider.prepare(checkpoint: snapshot(state), tools: tools, policy: contextPolicy,
@@ -80,14 +131,15 @@ public struct AgentRuntime: Sendable {
                         state.inFlightCallID = call.id
                         try await emit("tool_started", call.name) // Durable before execution.
                         do {
-                            outcome = try await withTimeout(seconds: remainingTime()) { try await execute(call) }
+                            outcome = try await withAgentTimeout(seconds: remainingTime()) { try await execute(call) }
                         } catch {
+                            if error is CancellationError { throw error }
                             if definition.effect == .billable || definition.effect == .write {
                                 state.status = .needsReview
-                                try await emit("needs_review", "\(call.name)：\(error.localizedDescription)")
+                                state.stopReason = "\(call.name) 执行中断：\(error.localizedDescription)"
+                                try await emit("needs_review", state.stopReason ?? error.localizedDescription)
                                 return snapshot(state)
                             }
-                            if error is CancellationError { throw error }
                             outcome = .failure(error.localizedDescription)
                         }
                     } else { outcome = .failure("工具不可用：\(call.name)。请选择本次提供的工具。") }
@@ -119,18 +171,21 @@ public struct AgentRuntime: Sendable {
                 }
                 var messages: [AgentMessage]
                 if let contextProvider {
-                    let prepared = try await contextProvider.prepare(checkpoint: snapshot(state), tools: tools, policy: contextPolicy,
-                        deadline: deadline, shouldPause: shouldPause, record: record)
-                    state = prepared.checkpoint; messages = prepared.messages
+                    if activeModelMessages == nil {
+                        let prepared = try await contextProvider.prepare(
+                            checkpoint: snapshot(state), tools: tools, policy: contextPolicy,
+                            deadline: deadline, shouldPause: shouldPause, record: record
+                        )
+                        state = prepared.checkpoint
+                        activeModelMessages = prepared.messages
+                        activeCheckpointMessageCount = state.messages.count
+                    }
+                    messages = activeModelMessages!
                 } else {
                     guard state.memory == nil else { throw AgentContextError.unavailable }
                     messages = state.messages
-                    guard try AgentContextBudget.estimate(messages: messages, tools: tools) <= contextPolicy.hardInputLimit else {
-                        throw AgentContextError.budgetExceeded
-                    }
                 }
                 var response: AgentMessage?
-                var recoveredOverflow = false
                 for attempt in 0...policy.maximumRequestRetries {
                     try Task.checkCancellation()
                     if await shouldPause() { throw CancellationError() }
@@ -140,19 +195,21 @@ public struct AgentRuntime: Sendable {
                     let requestMessages = messages
                     let timeout = min(Double(policy.requestTimeoutSeconds), remainingTime())
                     do {
-                        response = try await withTimeout(seconds: timeout) { try await model.complete(messages: requestMessages, tools: tools, timeout: timeout) }
+                        response = try await withAgentTimeout(seconds: timeout) {
+                            try await model.stream(messages: requestMessages, tools: tools, timeout: timeout,
+                                                   onEvent: onModelStreamEvent)
+                        }
                         break
                     } catch {
-                        if case AgentRuntimeError.contextOverflow = error, let contextProvider,
-                           !recoveredOverflow, attempt < policy.maximumRequestRetries, state.modelCalls < policy.maximumModelCalls {
-                            let prepared = try await contextProvider.prepare(checkpoint: snapshot(state), tools: tools, policy: contextPolicy,
-                                forceCompaction: true, deadline: deadline, shouldPause: shouldPause, record: record)
-                            state = prepared.checkpoint; messages = prepared.messages; recoveredOverflow = true
-                            continue
-                        }
                         guard attempt < policy.maximumRequestRetries, AgentRuntimeError.isTransient(error) else { throw error }
-                        try await emit("model_retry", "暂时性模型请求错误，重试计入总调用次数")
-                        try await Task.sleep(for: .milliseconds(min(4_000, 250 * (attempt + 1))))
+                        let retryNumber = attempt + 1
+                        let delaySeconds = Self.retryDelaySeconds(forRetry: retryNumber)
+                        guard remainingTime() > Double(delaySeconds) else { throw AgentRuntimeError.timeout }
+                        try await emit(
+                            "model_retry",
+                            "暂时性模型请求失败；第 \(retryNumber) / \(policy.maximumRequestRetries) 次重试将在 \(delaySeconds) 秒后开始"
+                        )
+                        try await retrySleeper(.seconds(delaySeconds))
                     }
                 }
                 guard let response else { continue }
@@ -160,6 +217,9 @@ public struct AgentRuntime: Sendable {
                       Set(response.toolCalls.map(\.id)).count == response.toolCalls.count,
                       response.toolCalls.allSatisfy({ !$0.id.isEmpty && state.receipts[$0.id] == nil }) else { throw AgentRuntimeError.invalidResponse }
                 state.noProgressRounds += 1
+                var accumulatedUsage = state.usage ?? AgentUsage()
+                accumulatedUsage.add(response.usage)
+                state.usage = accumulatedUsage
                 state.messages.append(response)
                 if response.toolCalls.isEmpty {
                     state.messages.append(.init(role: .user, content: "请根据已保存的业务状态继续调用工具；只有调用结束工具并通过业务校验才能结束。"))
@@ -193,15 +253,97 @@ public struct AgentRuntime: Sendable {
         }
         return call.name + ":" + call.arguments
     }
+
+    static func retryDelaySeconds(forRetry retryNumber: Int) -> Int {
+        guard retryNumber > 0 else { return 1 }
+        return min(16, 1 << min(retryNumber - 1, 4))
+    }
 }
 
-private func withTimeout<T: Sendable>(seconds: Double, operation: @escaping @Sendable () async throws -> T) async throws -> T {
+/// Races an operation against a deadline without waiting for a losing child task to unwind.
+///
+/// A throwing task group cannot provide this guarantee: its scope waits for every child even
+/// after `cancelAll()`. Some provider transports only observe cancellation after their socket
+/// returns, which used to leave an Agent Run durably stuck at `model_request`. The losing task is
+/// still cancelled, but the caller is released immediately so it can persist a terminal state.
+func withAgentTimeout<T: Sendable>(
+    seconds: Double,
+    operation: @escaping @Sendable () async throws -> T
+) async throws -> T {
     guard seconds > 0 else { throw AgentRuntimeError.timeout }
-    return try await withThrowingTaskGroup(of: T.self) { group in
-        group.addTask { try await operation() }
-        group.addTask { try await Task.sleep(for: .seconds(seconds)); throw AgentRuntimeError.timeout }
-        defer { group.cancelAll() }
-        guard let value = try await group.next() else { throw CancellationError() }
-        return value
+    let race = AgentTimeoutRace<T>()
+    return try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { continuation in
+            race.install(continuation)
+            let operationTask = Task {
+                do {
+                    race.resolve(.success(try await operation()))
+                } catch {
+                    race.resolve(.failure(error))
+                }
+            }
+            let timeoutTask = Task {
+                do {
+                    try await Task.sleep(for: .seconds(seconds))
+                    race.resolve(.failure(AgentRuntimeError.timeout))
+                } catch {
+                    // The winner cancels this timer. Its result was already delivered.
+                }
+            }
+            race.installTasks(operationTask, timeoutTask)
+        }
+    } onCancel: {
+        race.resolve(.failure(CancellationError()))
+    }
+}
+
+private final class AgentTimeoutRace<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Error>?
+    private var pendingResult: Result<Value, Error>?
+    private var tasks: [Task<Void, Never>] = []
+    private var isResolved = false
+
+    func install(_ continuation: CheckedContinuation<Value, Error>) {
+        lock.lock()
+        if let pendingResult {
+            self.pendingResult = nil
+            lock.unlock()
+            continuation.resume(with: pendingResult)
+        } else {
+            self.continuation = continuation
+            lock.unlock()
+        }
+    }
+
+    func installTasks(_ tasks: Task<Void, Never>...) {
+        lock.lock()
+        if isResolved {
+            lock.unlock()
+            tasks.forEach { $0.cancel() }
+        } else {
+            self.tasks = tasks
+            lock.unlock()
+        }
+    }
+
+    func resolve(_ result: Result<Value, Error>) {
+        lock.lock()
+        guard !isResolved else {
+            lock.unlock()
+            return
+        }
+        isResolved = true
+        let continuation = continuation
+        self.continuation = nil
+        if continuation == nil {
+            pendingResult = result
+        }
+        let tasks = tasks
+        self.tasks.removeAll()
+        lock.unlock()
+
+        tasks.forEach { $0.cancel() }
+        continuation?.resume(with: result)
     }
 }

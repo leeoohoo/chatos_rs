@@ -61,7 +61,7 @@ pub(super) async fn publish_plugin_release_from_manifest(
         ));
     }
     require_approved_publisher_release_key(
-        &state,
+        state,
         &marketplace,
         &plugin.publisher,
         payload.signature.key_id.as_str(),
@@ -85,7 +85,7 @@ pub(super) async fn publish_plugin_release_from_manifest(
     )?;
     let release_channel = normalize_release_channel(payload.release_channel.as_str())?;
     validate_stable_release_progression(
-        &state,
+        state,
         &plugin,
         manifest.version.as_str(),
         &release_channel,
@@ -183,15 +183,10 @@ pub(super) async fn publish_plugin_release_from_manifest(
         .collect::<Vec<_>>();
     state
         .store
-        .set_plugin_release_publication_ready(release.id.as_str(), false)
-        .await
-        .map_err(ApiError::internal)?;
-    state
-        .store
-        .insert_plugin_release(&release)
+        .insert_plugin_release_pending(&release)
         .await
         .map_err(|err| {
-            if err.contains("E11000") {
+            if crate::store::is_unique_violation(err.as_str()) {
                 ApiError::conflict("Plugin release version is immutable and already exists")
             } else {
                 ApiError::internal(err)

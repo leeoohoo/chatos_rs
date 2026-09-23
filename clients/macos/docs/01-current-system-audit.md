@@ -69,11 +69,11 @@ Rust Core 当前承担的职责包括：
 - MCP stdio/HTTP 运行时、插件 Artifact 与文件授权。
 - OAuth、插件凭据和平台 Keychain/DPAPI 安全存储。
 - 命令风险识别、AI 审批 Agent、人工审批、白名单和 Session Approval。
-- Sandbox/permission layer、租约、本机进程能力与托管要求。
+- 权限策略、任务租约、本机进程能力与托管要求。
 - Accessibility、Screen Recording、Automation、网络和工作区权限检查。
 - 本地 SQLite 状态库和迁移。
 
-Local API 已覆盖状态、认证、工作区、命令历史、运行设置、Agent Prompt、系统权限、Sandbox、终端、模型、插件、OAuth/凭据和审批等路由。Swift 版必须对这些路由和 WebSocket 消息做逐项兼容测试。
+Local API 已覆盖状态、认证、工作区、命令历史、运行设置、Agent Prompt、系统权限、文件与网络访问策略、终端、模型、插件、OAuth/凭据和审批等路由。部分兼容接口路径仍保留历史 `sandbox` 命名，但它不是客户端产品页面或对外卖点。Swift 版必须对这些路由和 WebSocket 消息做逐项兼容测试。
 
 ## 必须保留的安全不变量
 

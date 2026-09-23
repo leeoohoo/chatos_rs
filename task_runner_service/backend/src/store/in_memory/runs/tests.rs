@@ -42,9 +42,7 @@ fn queued_run() -> TaskRunRecord {
         post_process_dead_lettered: false,
         post_process_attempt_count: 0,
         post_process_last_error: None,
-        memory_summary_processed: false,
         chatos_followup_processed: false,
-        summary_job_run_id: None,
         worker_id: None,
         claim_token: None,
         claim_until: None,
@@ -339,14 +337,11 @@ fn successful_run_post_process_outbox_is_monotonic_across_stale_saves() {
     assert!(!merged.post_process_event_pending);
     assert!(merged.post_process_event_enqueued);
 
-    assert!(store.mark_run_memory_summary_processed(saved.id.as_str(), Some("job-1")));
     assert!(store.mark_run_chatos_followup_processed(saved.id.as_str()));
     assert!(store.mark_run_post_process_completed(saved.id.as_str()));
     let merged = store.save_run(saved).expect("preserve completed progress");
     assert!(merged.post_process_completed);
-    assert!(merged.memory_summary_processed);
     assert!(merged.chatos_followup_processed);
-    assert_eq!(merged.summary_job_run_id.as_deref(), Some("job-1"));
     assert!(store.list_pending_run_post_processes(10).is_empty());
 }
 
@@ -498,6 +493,20 @@ fn list_run_events_after_respects_limit() {
 
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].id, "evt-1");
+}
+
+#[test]
+fn list_run_events_page_returns_only_the_requested_slice_and_total() {
+    let store = test_store();
+    store.append_run_event(run_event("evt-3", "2026-08-03T10:00:02Z"));
+    store.append_run_event(run_event("evt-1", "2026-08-03T10:00:00Z"));
+    store.append_run_event(run_event("evt-2", "2026-08-03T10:00:01Z"));
+
+    let (events, total) = store.list_run_events_page("run-1", 1, 1);
+
+    assert_eq!(total, 3);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].id, "evt-2");
 }
 
 #[test]

@@ -7,14 +7,80 @@ public struct AgentToolCall: Codable, Equatable, Sendable {
     public init(id: String, name: String, arguments: String) { self.id = id; self.name = name; self.arguments = arguments }
 }
 
+public struct AgentMessageAttachment: Codable, Equatable, Sendable {
+    public enum Kind: String, Codable, Sendable {
+        case image
+        case file
+        case audio
+    }
+
+    public var name: String
+    public var mimeType: String
+    public var kind: Kind
+    public var localFileURL: URL
+
+    public init(name: String, mimeType: String, kind: Kind, localFileURL: URL) {
+        self.name = name
+        self.mimeType = mimeType
+        self.kind = kind
+        self.localFileURL = localFileURL
+    }
+}
+
 public struct AgentMessage: Codable, Equatable, Sendable {
     public enum Role: String, Codable, Sendable { case system, user, assistant, tool }
     public var role: Role
     public var content: String
     public var toolCalls: [AgentToolCall]
     public var toolCallID: String?
-    public init(role: Role, content: String = "", toolCalls: [AgentToolCall] = [], toolCallID: String? = nil) {
-        self.role = role; self.content = content; self.toolCalls = toolCalls; self.toolCallID = toolCallID
+    /// Exact JSON-encoded Responses `response.output` array. Persisting this
+    /// preserves encrypted reasoning and compaction items across stateless calls.
+    public var responseOutputJSON: Data?
+    public var usage: AgentUsage?
+    /// Local, program-owned input files. Model transports resolve these URLs to data payloads;
+    /// the filesystem path itself is never sent to the model provider.
+    public var attachments: [AgentMessageAttachment]?
+    public init(
+        role: Role,
+        content: String = "",
+        toolCalls: [AgentToolCall] = [],
+        toolCallID: String? = nil,
+        attachments: [AgentMessageAttachment] = []
+    ) {
+        self.role = role; self.content = content; self.toolCalls = toolCalls
+        self.toolCallID = toolCallID; self.responseOutputJSON = nil; self.usage = nil
+        self.attachments = attachments.isEmpty ? nil : attachments
+    }
+    public init(
+        role: Role, content: String, toolCalls: [AgentToolCall],
+        toolCallID: String? = nil, responseOutputJSON: Data?, usage: AgentUsage?,
+        attachments: [AgentMessageAttachment] = []
+    ) {
+        self.role = role; self.content = content; self.toolCalls = toolCalls
+        self.toolCallID = toolCallID; self.responseOutputJSON = responseOutputJSON; self.usage = usage
+        self.attachments = attachments.isEmpty ? nil : attachments
+    }
+
+    public var attachmentItems: [AgentMessageAttachment] { attachments ?? [] }
+}
+
+public struct AgentUsage: Codable, Equatable, Sendable {
+    public var inputTokens: Int
+    public var cachedTokens: Int
+    public var outputTokens: Int
+    public var requests: Int
+
+    public init(inputTokens: Int = 0, cachedTokens: Int = 0, outputTokens: Int = 0, requests: Int = 0) {
+        self.inputTokens = inputTokens; self.cachedTokens = cachedTokens
+        self.outputTokens = outputTokens; self.requests = requests
+    }
+
+    mutating func add(_ usage: AgentUsage?) {
+        guard let usage else { return }
+        inputTokens += usage.inputTokens
+        cachedTokens += usage.cachedTokens
+        outputTokens += usage.outputTokens
+        requests += usage.requests
     }
 }
 
@@ -43,7 +109,7 @@ public struct AgentRunPolicy: Codable, Equatable, Sendable {
     public var maximumModelCalls = 600
     public var requestTimeoutSeconds = 180
     public var runTimeoutSeconds = 7_200
-    public var maximumRequestRetries = 2
+    public var maximumRequestRetries = 5
     public var maximumNoProgressRounds = 8
     public var context: AgentContextPolicy? = nil
     public init() {}
@@ -73,18 +139,62 @@ public struct AgentRuntimePreferences: Codable, Equatable, Sendable {
 public struct AgentSettingsStore: Sendable {
     private let suiteName: String?
     private let key = "chatos.agent-runtime.settings.v1"
+    private let retryDefaultMigrationKey = "chatos.agent-runtime.retry-default.v2"
     public init(suiteName: String? = nil) { self.suiteName = suiteName }
     public func load() throws -> AgentRuntimePreferences {
         let defaults = suiteName.flatMap(UserDefaults.init(suiteName:)) ?? .standard
-        guard let data = defaults.data(forKey: key) else { return .init() }
-        let value = try JSONDecoder().decode(AgentRuntimePreferences.self, from: data)
+        guard let data = defaults.data(forKey: key) else {
+            defaults.set(true, forKey: retryDefaultMigrationKey)
+            return .init()
+        }
+        var value = try JSONDecoder().decode(AgentRuntimePreferences.self, from: data)
+        // Version 1 originally persisted the old default (`2`) even when the user only changed
+        // unrelated context settings. Migrate that legacy default once, while preserving every
+        // non-default retry value the user may have selected explicitly.
+        var migratedLegacyRetryDefault = false
+        if !defaults.bool(forKey: retryDefaultMigrationKey) {
+            if value.global.maximumRequestRetries == 2 {
+                value.global.maximumRequestRetries = 5
+                migratedLegacyRetryDefault = true
+            }
+        }
         try value.validate()
+        if !defaults.bool(forKey: retryDefaultMigrationKey) {
+            if migratedLegacyRetryDefault {
+                defaults.set(try JSONEncoder().encode(value), forKey: key)
+            }
+            defaults.set(true, forKey: retryDefaultMigrationKey)
+        }
         return value
     }
     public func save(_ value: AgentRuntimePreferences) throws {
         try value.validate()
         let defaults = suiteName.flatMap(UserDefaults.init(suiteName:)) ?? .standard
         defaults.set(try JSONEncoder().encode(value), forKey: key)
+    }
+}
+
+/// Program-owned instruction identity persisted alongside the exact prompt text in messages.
+/// Optional checkpoint storage keeps runs created before this field fully decodable.
+public struct AgentInstructionBundleCheckpoint: Codable, Equatable, Sendable {
+    public var name: String
+    public var version: Int
+    public var contentSHA256: String
+    public var language: String
+    public var audience: String
+
+    public init(
+        name: String,
+        version: Int,
+        contentSHA256: String,
+        language: String,
+        audience: String
+    ) {
+        self.name = name
+        self.version = version
+        self.contentSHA256 = contentSHA256
+        self.language = language
+        self.audience = audience
     }
 }
 
@@ -106,7 +216,13 @@ public struct AgentRunCheckpoint: Codable, Equatable, Sendable {
     public var completionResult: String?
     public var stopReason: String?
     public var memory: AgentMemoryCheckpoint?
+    public var usage: AgentUsage?
+    public var instructionBundles: [AgentInstructionBundleCheckpoint]?
     public init(scope: String, messages: [AgentMessage]) { self.scope = scope; self.messages = messages }
+
+    public var instructionBundleItems: [AgentInstructionBundleCheckpoint] {
+        instructionBundles ?? []
+    }
 }
 
 public struct AgentRunEvent: Codable, Identifiable, Equatable, Sendable {
@@ -118,26 +234,84 @@ public struct AgentRunEvent: Codable, Identifiable, Equatable, Sendable {
     public init(kind: String, detail: String, modelCalls: Int) { self.kind = kind; self.detail = detail; self.modelCalls = modelCalls }
 }
 
+/// Transient transport progress. Only the fully validated message returned by `stream` may be
+/// written to a checkpoint or used to execute tools.
+public enum AgentModelStreamEvent: Equatable, Sendable {
+    case responseCreated
+    case textDelta(String)
+    case toolCallDelta(index: Int, id: String?, name: String?, argumentsDelta: String)
+    case completed
+}
+
 public protocol AgentModelClient: Sendable {
+    var usesServerSideCompaction: Bool { get }
     func complete(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval) async throws -> AgentMessage
+    func stream(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval,
+                onEvent: @escaping @Sendable (AgentModelStreamEvent) async -> Void) async throws -> AgentMessage
+}
+
+public extension AgentModelClient {
+    var usesServerSideCompaction: Bool { false }
+
+    func stream(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval,
+                onEvent: @escaping @Sendable (AgentModelStreamEvent) async -> Void) async throws -> AgentMessage {
+        await onEvent(.responseCreated)
+        let message = try await complete(messages: messages, tools: tools, timeout: timeout)
+        if !message.content.isEmpty { await onEvent(.textDelta(message.content)) }
+        for (index, call) in message.toolCalls.enumerated() {
+            await onEvent(.toolCallDelta(index: index, id: call.id, name: call.name,
+                                         argumentsDelta: call.arguments))
+        }
+        await onEvent(.completed)
+        return message
+    }
 }
 
 public enum AgentRuntimeError: LocalizedError, Sendable {
-    case invalidPolicy, invalidResponse, contextTooLarge, contextOverflow, timeout, scopeMismatch
+    case invalidPolicy, invalidResponse, invalidAttachment, contextTooLarge, contextOverflow, timeout, scopeMismatch
+    case modelConfigurationUnavailable
+    case responsesStreamUnexpectedContentType
+    case responsesStreamMissingCompletion
+    case responsesIncomplete(String)
+    case responsesFailed(String)
+    case responsesStreamError(String)
+    case invalidResponsesEnvelope
+    case invalidResponsesFunctionCall
     case provider(Int)
+    case providerDetail(Int, String)
     public var errorDescription: String? {
         switch self {
         case .invalidPolicy: "Agent 运行设置无效，请检查设置中的范围。"
         case .invalidResponse: "模型没有返回有效且完整的工具调用。"
+        case .invalidAttachment: "Agent 消息附件不可读取或超过大小限制。"
         case .contextTooLarge: "Agent 上下文超过安全大小限制，请从已保存的业务检查点开始新一轮运行。"
         case .contextOverflow: "模型报告上下文超出窗口，需要压缩后才能继续。"
         case .timeout: "Agent 已达到设置中的超时时限。"
         case .scopeMismatch: "运行记录不属于当前账户、项目或业务版本。"
+        case .modelConfigurationUnavailable:
+            "Agent 绑定的模型配置已失效、已删除或不可用。请编辑该 Agent 并重新选择模型；客户端不会自动换用其他模型。"
+        case .responsesStreamUnexpectedContentType:
+            "模型端点没有返回 OpenAI Responses 规范的 SSE 数据流，本轮已停止。"
+        case .responsesStreamMissingCompletion:
+            "OpenAI Responses 数据流在 response.completed 之前结束，本轮未执行任何工具。"
+        case .responsesIncomplete(let reason):
+            "OpenAI Responses 明确返回 response.incomplete（原因：\(reason)），本轮未执行任何工具。"
+        case .responsesFailed(let code):
+            "OpenAI Responses 明确返回 response.failed（代码：\(code)），本轮未执行任何工具。"
+        case .responsesStreamError(let code):
+            "OpenAI Responses 数据流返回 error 事件（代码：\(code)），本轮未执行任何工具。"
+        case .invalidResponsesEnvelope:
+            "模型返回的 OpenAI Responses 终态缺少必需字段，本轮已按协议错误停止。"
+        case .invalidResponsesFunctionCall:
+            "模型返回的 function_call 缺少 call_id、name 或 arguments，本轮未执行该工具。"
         case .provider(let code): "模型请求失败（HTTP \(code)）。"
+        case .providerDetail(let code, let detail): "模型请求失败（HTTP \(code)）：\(detail)"
         }
     }
     public static func isTransient(_ error: Error) -> Bool {
+        if case .timeout = error as? AgentRuntimeError { return true }
         if case .provider(let code) = error as? AgentRuntimeError { return code == 408 || code == 429 || code >= 500 }
+        if case .providerDetail(let code, _) = error as? AgentRuntimeError { return code == 408 || code == 429 || code >= 500 }
         guard let error = error as? URLError else { return false }
         return [.timedOut, .networkConnectionLost, .cannotConnectToHost, .notConnectedToInternet].contains(error.code)
     }

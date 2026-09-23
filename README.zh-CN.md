@@ -10,24 +10,23 @@ ChatOS 是一个让 AI 在真实项目环境中持续工作的原生桌面工作
 
 ## 产品界面
 
-![ChatOS 原生桌面客户端视觉预览](./official_website_service/frontend/public/showcase/chatos-main.png)
+官网与公开资料只展示用户实际使用的原生客户端，不再使用 Memory Engine、Task Runner 或内部管理控制台截图代替产品界面。
 
-| 项目管理 | 后台任务执行 |
+| 客户端区域 | 当前能力 |
 | --- | --- |
-| ![ChatOS 项目管理界面](./official_website_service/frontend/public/showcase/project-management.png) | ![ChatOS Task Runner 界面](./official_website_service/frontend/public/showcase/task-runner.png) |
-
-| 长期记忆 | 沙箱与执行隔离 |
-| --- | --- |
-| ![ChatOS Memory Engine 界面](./official_website_service/frontend/public/showcase/memory-engine.png) | ![ChatOS 沙箱管理界面](./official_website_service/frontend/public/showcase/sandbox-manager.png) |
+| 项目工作区 | 项目目录、用户消息、项目设置、Git、终端与运行配置 |
+| AI 创作 | 图片、视频、剧情模式与创作记录 |
+| Agent | Agent 管理、私聊与项目团队协作 |
+| 桌面能力 | 应用、远端连接、桌面宠物、快速搜索、剪贴板、截图与录屏 |
 
 ## 现在的项目是什么
 
 - **原生桌面客户端：** macOS 使用 SwiftUI，Windows 使用 WinUI，两端独立实现。已经退役的 Electron 客户端不再是产品运行时。
-- **云端业务编排：** 对话、任务、需求、智能体、配置、插件元数据和记忆由服务端统一管理。
+- **云端业务编排：** 对话、任务、智能体、配置、插件元数据和记忆由服务端统一管理。
 - **设备侧能力执行：** 每个项目绑定一个明确授权的本机工作区。文件、Git、命令、本地 MCP、插件应用和设备权限通过原生客户端内置的 Local Connector 执行。
 - **可观察的后台任务：** 复杂需求可以进入可恢复的任务生命周期，持续保留进度、日志、工具调用、审批、重试和最终结果。
 - **长期项目上下文：** 会话摘要、项目事实和角色记忆可以跨会话继续使用。
-- **可扩展本机能力：** 插件平台支持 MCP Server、Skill、受管理产物以及沙箱化的本地应用界面。
+- **可扩展本机能力：** 插件平台支持 MCP Server、Skill、受管理产物以及客户端内的本地应用界面。
 
 ChatOS 不会把设备侧操作静默切换到服务端文件系统或另一台机器。绑定的 Local Connector 离线时，相关操作会明确等待或失败。
 
@@ -40,7 +39,7 @@ flowchart LR
     G --> S[云端业务服务]
     S --> T[Task Runner 与 Worker]
     S --> M[Memory Engine]
-    S --> P[Project / Plugin / MCP Management]
+    S --> P[Plugin / MCP Management]
     T --> L[Local Connector Service]
     P --> L
     L --> N[原生 Local Connector]
@@ -51,8 +50,8 @@ flowchart LR
 
 这条边界是当前架构的核心：
 
-- 云端服务是账号与项目业务数据的事实来源。
-- 原生客户端负责本机凭据、工作区授权和设备能力。
+- 云端服务是账号与任务数据的事实来源。
+- 原生客户端是项目的唯一权威，并负责本机凭据、工作区授权和设备能力。
 - Local Connector 主动建立出站连接，只开放用户授权的工作区和能力。
 - Harness 负责仓库、同步、CI 与集成，不是项目文件或命令执行的回退环境。
 
@@ -60,7 +59,7 @@ flowchart LR
 
 ### 对话、计划与任务
 
-ChatOS 同时支持直接对话和结构化项目工作。需求可以逐步整理成计划与带依赖的任务，再进入后台任务生命周期。用户可以检查中间输出、发送补充引导、审批敏感操作、停止执行，并在失败后重试。
+ChatOS 支持直接对话和后台任务。用户可以检查中间输出、发送补充引导、审批敏感操作、停止执行，并在失败后重试。
 
 ### 项目工作区
 
@@ -68,7 +67,7 @@ ChatOS 同时支持直接对话和结构化项目工作。需求可以逐步整�
 
 ### 项目上下文与记忆
 
-每个项目独立保存会话、需求、任务、运行记录和可复用上下文。记忆系统通过会话摘要与分层项目记忆支持长期协作，而不是无限堆积单个聊天记录；模型、Skill 和工具能力由平台配置与本机运行环境共同提供。
+客户端拥有的每个项目按项目身份隔离会话、任务、运行记录和可复用上下文。记忆系统通过会话摘要与分层项目记忆支持长期协作，而不是无限堆积单个聊天记录；模型、Skill 和工具能力由平台配置与本机运行环境共同提供。
 
 ### 原生桌面能力
 
@@ -97,7 +96,6 @@ Windows 客户端使用相同的产品协议与视觉语言，同时拥有独立
 | `clients/windows` | .NET 8 / WinUI 3 原生客户端、Windows Local Connector、Network Guard 与安装器。 |
 | `chatos/backend` | ChatOS 主 API 与对话编排服务。 |
 | `task_runner_service/backend` | 后台任务 API、Worker、Scheduler 与工具运行时。 |
-| `plugins/project-management` | 项目绑定的需求、技术文档、工作项、依赖关系与执行计划。 |
 | `memory_engine/backend` | 会话摘要与分层项目/主题记忆。 |
 | `mcp_management_service/backend` | MCP 能力物化、路由与运行会话。 |
 | `plugin_management_service/backend` | 插件目录、版本、安装包与运行能力元数据。 |
@@ -105,7 +103,7 @@ Windows 客户端使用相同的产品协议与视觉语言，同时拥有独立
 | `user_service/backend` | 账号、认证、模型供应商与用户设置。 |
 | `config_center_service/backend` | 动态服务配置与版本发布。 |
 | `plugins` | 第一方插件及其打包元数据。 |
-| `crates` | Rust 共享协议、SDK、运行时、认证、沙箱与可观测性库。 |
+| `crates` | Rust 共享协议、SDK、运行时、认证、工作区与可观测性库。 |
 | `admin_console` | React 管理控制台。 |
 | `official_website_service` | 官网、注册和客户端版本分发。 |
 | `docker` | Compose 拓扑、部署脚本、网关与可观测性配置。 |

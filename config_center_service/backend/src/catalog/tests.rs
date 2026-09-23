@@ -4,6 +4,33 @@
 use super::*;
 
 #[test]
+fn catalog_exposes_managed_postgres_pool_profiles() {
+    let definitions = builtin_definitions();
+    let max_connections = definitions
+        .iter()
+        .filter(|definition| definition.key.ends_with("postgres.pool.max_connections"))
+        .collect::<Vec<_>>();
+    assert_eq!(max_connections.len(), 8);
+    let task_runner = max_connections
+        .iter()
+        .find(|definition| definition.key == "task_runner.postgres.pool.max_connections")
+        .expect("task runner PostgreSQL pool definition");
+    assert_eq!(task_runner.service_name.as_deref(), Some("task-runner"));
+    assert_eq!(task_runner.default_value, json!(10));
+    assert_eq!(
+        task_runner.env_aliases,
+        vec!["TASK_RUNNER_POSTGRES_POOL_MAX_CONNECTIONS"]
+    );
+
+    let task_replicas = definitions
+        .iter()
+        .find(|definition| definition.key == "task_runner.postgres.process_replicas")
+        .expect("task runner PostgreSQL process replicas");
+    assert_eq!(task_replicas.default_value, json!(3));
+    assert!(task_replicas.env_aliases.is_empty());
+}
+
+#[test]
 fn catalog_does_not_reintroduce_retired_configuration() {
     let definitions = builtin_definitions();
     let retired = RETIRED_CONFIG_KEYS
@@ -14,6 +41,13 @@ fn catalog_does_not_reintroduce_retired_configuration() {
     assert!(definitions
         .iter()
         .all(|definition| !retired.contains(definition.key.as_str())));
+    for retired_mongo_key in [
+        "chatos.runtime.legacy_auth_database_url",
+        "memory_engine.runtime.mongodb_uri",
+        "project_service.runtime.database_url",
+    ] {
+        assert!(retired.contains(retired_mongo_key));
+    }
 }
 
 #[test]
@@ -317,12 +351,6 @@ fn catalog_exposes_task_runner_and_chatos_runtime_routes_via_env_projection() {
             "string",
         ),
         (
-            TASK_RUNNER_MONGODB_DATABASE_CONFIG_KEY,
-            "task-runner",
-            "TASK_RUNNER_MONGODB_DATABASE",
-            "string",
-        ),
-        (
             TASK_RUNNER_WORKSPACE_DIR_CONFIG_KEY,
             "task-runner",
             "TASK_RUNNER_WORKSPACE_DIR",
@@ -363,12 +391,6 @@ fn catalog_exposes_task_runner_and_chatos_runtime_routes_via_env_projection() {
             "task-runner",
             "TASK_RUNNER_SCHEDULER_POLL_MS",
             "duration_ms",
-        ),
-        (
-            TASK_RUNNER_AUTO_MEMORY_SUMMARY_CONFIG_KEY,
-            "task-runner",
-            "TASK_RUNNER_AUTO_MEMORY_SUMMARY",
-            "boolean",
         ),
         (
             TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY,
@@ -628,11 +650,6 @@ fn catalog_exposes_plugin_management_runtime_routes_via_env_projection() {
         (
             PLUGIN_MANAGEMENT_DATABASE_URL_CONFIG_KEY,
             "PLUGIN_MANAGEMENT_SERVICE_DATABASE_URL",
-            "string",
-        ),
-        (
-            PLUGIN_MANAGEMENT_MONGODB_DATABASE_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_SERVICE_MONGODB_DATABASE",
             "string",
         ),
         (
@@ -1428,6 +1445,36 @@ fn catalog_exposes_mcp_runtime_session_cache_limits_without_env_overrides() {
 }
 
 #[test]
+fn catalog_exposes_mcp_runtime_retention_controls() {
+    let definitions = builtin_definitions();
+    for (key, expected_default, expected_alias) in [
+        (
+            MCP_MANAGEMENT_RUNTIME_RETENTION_INTERVAL_SECONDS_CONFIG_KEY,
+            json!(60),
+            "MCP_MANAGEMENT_RUNTIME_RETENTION_INTERVAL_SECONDS",
+        ),
+        (
+            MCP_MANAGEMENT_RUNTIME_RETENTION_BATCH_SIZE_CONFIG_KEY,
+            json!(500),
+            "MCP_MANAGEMENT_RUNTIME_RETENTION_BATCH_SIZE",
+        ),
+    ] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| panic!("missing retention definition for {key}"));
+        assert_eq!(
+            definition.service_name.as_deref(),
+            Some("mcp-management-service")
+        );
+        assert_eq!(definition.value_type, "integer");
+        assert_eq!(definition.default_value, expected_default);
+        assert_eq!(definition.reload_mode, "restart_required");
+        assert_eq!(definition.env_aliases, vec![expected_alias.to_string()]);
+    }
+}
+
+#[test]
 fn catalog_exposes_atomic_mcp_invocation_quotas_without_env_overrides() {
     let definitions = builtin_definitions();
     for (key, expected_type, expected_default) in [
@@ -1544,6 +1591,23 @@ fn catalog_exposes_configuration_center_mcp_management_route() {
     assert_eq!(
         definition.env_aliases,
         vec!["CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL".to_string()]
+    );
+
+    let secret = definitions
+        .iter()
+        .find(|definition| {
+            definition.key == CONFIGURATION_CENTER_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY
+        })
+        .expect("Configuration Center MCP Management secret definition");
+    assert_eq!(secret.service_name.as_deref(), Some("configuration-center"));
+    assert_eq!(secret.sensitivity, "secret");
+    assert_eq!(
+        secret.default_value,
+        json!("change_me_configuration_center_mcp_management_secret")
+    );
+    assert_eq!(
+        secret.env_aliases,
+        vec!["MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET".to_string()]
     );
 }
 
@@ -1683,20 +1747,20 @@ fn catalog_exposes_memory_engine_runtime_routes_via_env_projection() {
             false,
         ),
         (
-            MEMORY_ENGINE_MONGODB_URI_CONFIG_KEY,
-            "MEMORY_ENGINE_MONGODB_URI",
-            "string",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_MONGODB_DATABASE_CONFIG_KEY,
-            "MEMORY_ENGINE_MONGODB_DATABASE",
+            MEMORY_ENGINE_DATABASE_URL_CONFIG_KEY,
+            "MEMORY_ENGINE_DATABASE_URL",
             "string",
             false,
         ),
         (
             MEMORY_ENGINE_USER_SERVICE_BASE_URL_CONFIG_KEY,
             "MEMORY_ENGINE_USER_SERVICE_BASE_URL",
+            "string",
+            false,
+        ),
+        (
+            MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+            "MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL",
             "string",
             false,
         ),
@@ -1983,6 +2047,18 @@ fn catalog_exposes_user_service_runtime_routes_via_env_projection() {
             false,
         ),
         (
+            USER_SERVICE_RETENTION_INTERVAL_SECONDS_CONFIG_KEY,
+            "USER_SERVICE_RETENTION_INTERVAL_SECONDS",
+            "integer",
+            false,
+        ),
+        (
+            USER_SERVICE_RETENTION_BATCH_SIZE_CONFIG_KEY,
+            "USER_SERVICE_RETENTION_BATCH_SIZE",
+            "integer",
+            false,
+        ),
+        (
             USER_SERVICE_REGISTER_CODE_TTL_SECONDS_CONFIG_KEY,
             "USER_SERVICE_REGISTER_CODE_TTL_SECONDS",
             "integer",
@@ -2025,6 +2101,54 @@ fn catalog_exposes_user_service_runtime_routes_via_env_projection() {
             false,
         ),
         (
+            USER_SERVICE_WECHAT_MINI_PROGRAM_APP_ID_CONFIG_KEY,
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_APP_ID",
+            "string",
+            true,
+        ),
+        (
+            USER_SERVICE_WECHAT_MINI_PROGRAM_APP_SECRET_CONFIG_KEY,
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_APP_SECRET",
+            "string",
+            true,
+        ),
+        (
+            USER_SERVICE_WECHAT_MINI_PROGRAM_IDENTITY_HASH_SECRET_CONFIG_KEY,
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_IDENTITY_HASH_SECRET",
+            "string",
+            true,
+        ),
+        (
+            USER_SERVICE_WECHAT_MINI_PROGRAM_API_BASE_URL_CONFIG_KEY,
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_API_BASE_URL",
+            "string",
+            false,
+        ),
+        (
+            USER_SERVICE_WECHAT_MINI_PROGRAM_ENV_VERSION_CONFIG_KEY,
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_ENV_VERSION",
+            "enum",
+            false,
+        ),
+        (
+            USER_SERVICE_WECHAT_MINI_PROGRAM_REQUEST_TIMEOUT_MS_CONFIG_KEY,
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_REQUEST_TIMEOUT_MS",
+            "duration_ms",
+            false,
+        ),
+        (
+            USER_SERVICE_WECHAT_MINI_PROGRAM_BIND_TICKET_TTL_SECONDS_CONFIG_KEY,
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_BIND_TICKET_TTL_SECONDS",
+            "integer",
+            false,
+        ),
+        (
+            USER_SERVICE_WECHAT_MINI_PROGRAM_CLIENT_SESSION_TTL_SECONDS_CONFIG_KEY,
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_CLIENT_SESSION_TTL_SECONDS",
+            "integer",
+            false,
+        ),
+        (
             USER_SERVICE_HARNESS_PROVISIONING_ENABLED_CONFIG_KEY,
             "USER_SERVICE_HARNESS_PROVISIONING_ENABLED",
             "boolean",
@@ -2046,6 +2170,12 @@ fn catalog_exposes_user_service_runtime_routes_via_env_projection() {
             USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME_CONFIG_KEY,
             "USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME",
             "string",
+            false,
+        ),
+        (
+            USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION_CONFIG_KEY,
+            "USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION",
+            "boolean",
             false,
         ),
         (

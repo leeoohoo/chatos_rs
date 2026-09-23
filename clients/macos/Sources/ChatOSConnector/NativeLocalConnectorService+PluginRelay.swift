@@ -341,7 +341,8 @@ extension NativeLocalConnectorService {
                     toolName: toolName,
                     requiredPermissions: requiredPermissions
                 ),
-                approvalScopeKey: "plugin:\(adapterSessionID)"
+                approvalScopeKey: "plugin:\(adapterSessionID)",
+                workspaceID: request.workspaceID
             )
             guard case .approve = approval else {
                 throw NativePluginRuntimeError.permissionDenied("用户未批准这次 Plugin 操作")
@@ -617,7 +618,7 @@ extension NativeLocalConnectorService {
         return String(compact.prefix(240))
     }
 
-    private static func toolPolicy(
+    static func toolPolicy(
         _ tool: NativeJSONValue?,
         componentKey: String,
         toolName: String
@@ -685,7 +686,7 @@ extension NativeLocalConnectorService {
     }
 }
 
-private struct NativePluginToolPolicy {
+struct NativePluginToolPolicy {
     var approvalMode: String
     var riskLevel: String
     var timeoutMilliseconds: Int
@@ -702,7 +703,7 @@ private struct NativePluginToolPolicy {
     }
 }
 
-private struct NativePluginPermissionRule {
+struct NativePluginPermissionRule {
     var argumentPointer: String
     var expectedValue: NativeJSONValue
     var matchWhenMissing: Bool

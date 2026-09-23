@@ -1,5 +1,4 @@
 import ChatOSCore
-import CryptoKit
 import Foundation
 import SQLite3
 
@@ -23,6 +22,7 @@ public actor SQLiteProjectRegistry: ProjectRegistry {
             guard sqlite3_exec(handle, Self.schema, nil, nil, nil) == SQLITE_OK else {
                 throw ProjectRegistryError.storage(String(cString: sqlite3_errmsg(handle)))
             }
+            try Self.migrateSchema(handle)
             database = handle
         } catch {
             sqlite3_close(handle)
@@ -77,10 +77,11 @@ public actor SQLiteProjectRegistry: ProjectRegistry {
             try record.validate()
             try execute("""
                 UPDATE local_project_records SET name = ?, description = ?, workspace_id = ?,
-                relative_root = ?, revision = ?, status = ?, updated_at_unix_ms = ?
+                relative_root = ?, project_type_key = ?, revision = ?, status = ?, updated_at_unix_ms = ?
                 WHERE owner_user_id = ? AND id = ? AND revision = ?
                 """, [
                     .text(draft.name), .text(draft.description), .text(draft.workspaceID), .text(draft.relativeRoot),
+                    .text(draft.projectTypeKey),
                     .integer(record.revision), .text(status.rawValue), .integer(record.updatedAtUnixMs),
                     .text(ownerUserID), .text(id), .integer(expectedRevision),
                 ])
@@ -89,68 +90,25 @@ public actor SQLiteProjectRegistry: ProjectRegistry {
         }
     }
 
-    public func importRecords(
-        ownerUserID: String, sourceID: String, records: [LocalProjectRecord]
-    ) throws -> ProjectRegistryImportResult {
-        try ProjectRegistryValidation.identifier(ownerUserID, field: "ownerUserID")
-        try ProjectRegistryValidation.identifier(sourceID, field: "sourceID")
-        var ids = Set<String>()
-        for record in records {
-            try record.validate()
-            guard record.ownerUserID == ownerUserID else { throw ProjectRegistryError.invalidField("ownerUserID") }
-            guard ids.insert(record.id).inserted else { throw ProjectRegistryError.invalidField("duplicate id") }
-        }
-        let sorted = records.sorted { $0.id < $1.id }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let digest = SHA256.hash(data: try encoder.encode(sorted)).map { String(format: "%02x", $0) }.joined()
-        return try transaction {
-            let receipt = try query("""
-                SELECT content_digest, result_json FROM local_project_imports
-                WHERE owner_user_id = ? AND source_id = ?
-                """, [.text(ownerUserID), .text(sourceID)]) { (Self.string($0, 0), Self.string($0, 1)) }.first
-            if let receipt {
-                guard receipt.0 == digest else { throw ProjectRegistryError.importSourceConflict }
-                return try JSONDecoder().decode(ProjectRegistryImportResult.self, from: Data(receipt.1.utf8))
-            }
-            var inserted: [String] = []
-            var skipped: [String] = []
-            for record in sorted {
-                if try get(ownerUserID: ownerUserID, id: record.id) != nil {
-                    skipped.append(record.id)
-                } else {
-                    try insert(record)
-                    inserted.append(record.id)
-                }
-            }
-            let result = ProjectRegistryImportResult(insertedIDs: inserted, skippedIDs: skipped)
-            let json = String(decoding: try encoder.encode(result), as: UTF8.self)
-            try execute("""
-                INSERT INTO local_project_imports(owner_user_id, source_id, content_digest, result_json)
-                VALUES (?, ?, ?, ?)
-                """, [.text(ownerUserID), .text(sourceID), .text(digest), .text(json)])
-            return result
-        }
-    }
-
     private func insert(_ record: LocalProjectRecord) throws {
-        try execute("INSERT INTO local_project_records (\(Self.columns)) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+        try execute("INSERT INTO local_project_records (\(Self.columns)) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
             .text(record.ownerUserID), .text(record.id), .text(record.draft.name), .text(record.draft.description),
-            .text(record.draft.workspaceID), .text(record.draft.relativeRoot), .integer(record.revision),
+            .text(record.draft.workspaceID), .text(record.draft.relativeRoot), .text(record.draft.projectTypeKey), .integer(record.revision),
             .text(record.status.rawValue), .integer(record.createdAtUnixMs), .integer(record.updatedAtUnixMs),
         ])
     }
 
     private func readRecord(_ statement: OpaquePointer) throws -> LocalProjectRecord {
-        guard let status = LocalProjectStatus(rawValue: Self.string(statement, 7)) else {
+        guard let status = LocalProjectStatus(rawValue: Self.string(statement, 8)) else {
             throw ProjectRegistryError.storage("invalid project status")
         }
         let record = LocalProjectRecord(
             id: Self.string(statement, 1), ownerUserID: Self.string(statement, 0),
             draft: LocalProjectDraft(name: Self.string(statement, 2), description: Self.string(statement, 3),
-                                     workspaceID: Self.string(statement, 4), relativeRoot: Self.string(statement, 5)),
-            revision: sqlite3_column_int64(statement, 6), status: status,
-            createdAtUnixMs: sqlite3_column_int64(statement, 8), updatedAtUnixMs: sqlite3_column_int64(statement, 9)
+                                     workspaceID: Self.string(statement, 4), relativeRoot: Self.string(statement, 5),
+                                     projectTypeKey: Self.string(statement, 6)),
+            revision: sqlite3_column_int64(statement, 7), status: status,
+            createdAtUnixMs: sqlite3_column_int64(statement, 9), updatedAtUnixMs: sqlite3_column_int64(statement, 10)
         )
         try record.validate()
         return record
@@ -208,24 +166,53 @@ public actor SQLiteProjectRegistry: ProjectRegistry {
 
     private static func now() -> Int64 { Int64(Date().timeIntervalSince1970 * 1_000) }
 
-    private static let columns = "owner_user_id, id, name, description, workspace_id, relative_root, revision, status, created_at_unix_ms, updated_at_unix_ms"
+    private static let columns = "owner_user_id, id, name, description, workspace_id, relative_root, project_type_key, revision, status, created_at_unix_ms, updated_at_unix_ms"
     private static let schema = """
         PRAGMA journal_mode = WAL;
         BEGIN IMMEDIATE;
         CREATE TABLE IF NOT EXISTS local_project_records (
             owner_user_id TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL,
             description TEXT NOT NULL, workspace_id TEXT NOT NULL, relative_root TEXT NOT NULL,
+            project_type_key TEXT NOT NULL DEFAULT 'software_development',
             revision INTEGER NOT NULL CHECK(revision > 0),
             status TEXT NOT NULL CHECK(status IN ('active', 'archived', 'removed')),
             created_at_unix_ms INTEGER NOT NULL, updated_at_unix_ms INTEGER NOT NULL,
             PRIMARY KEY(owner_user_id, id)
         );
-        CREATE TABLE IF NOT EXISTS local_project_imports (
-            owner_user_id TEXT NOT NULL, source_id TEXT NOT NULL, content_digest TEXT NOT NULL,
-            result_json TEXT NOT NULL, PRIMARY KEY(owner_user_id, source_id)
-        );
         CREATE TABLE IF NOT EXISTS local_project_schema_migrations (version INTEGER PRIMARY KEY NOT NULL);
         INSERT OR IGNORE INTO local_project_schema_migrations(version) VALUES (1);
         COMMIT;
         """
+
+    private static func migrateSchema(_ handle: OpaquePointer?) throws {
+        guard let handle else { throw ProjectRegistryError.storage("database unavailable") }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(handle, "PRAGMA table_info(local_project_records)", -1, &statement, nil) == SQLITE_OK,
+              let statement else {
+            throw ProjectRegistryError.storage(String(cString: sqlite3_errmsg(handle)))
+        }
+        var hasProjectType = false
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let value = sqlite3_column_text(statement, 1),
+               String(cString: value) == "project_type_key" {
+                hasProjectType = true
+            }
+        }
+        sqlite3_finalize(statement)
+        if !hasProjectType,
+           sqlite3_exec(
+               handle,
+               "ALTER TABLE local_project_records ADD COLUMN project_type_key TEXT NOT NULL DEFAULT 'software_development'",
+               nil, nil, nil
+           ) != SQLITE_OK {
+            throw ProjectRegistryError.storage(String(cString: sqlite3_errmsg(handle)))
+        }
+        guard sqlite3_exec(
+            handle,
+            "INSERT OR IGNORE INTO local_project_schema_migrations(version) VALUES (2)",
+            nil, nil, nil
+        ) == SQLITE_OK else {
+            throw ProjectRegistryError.storage(String(cString: sqlite3_errmsg(handle)))
+        }
+    }
 }

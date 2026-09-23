@@ -26,9 +26,6 @@ public sealed class SqliteProjectRegistryTests : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    private LocalProjectRecord Legacy(string id = "legacy-id", string owner = "alice") =>
-        new(id, owner, _draft, 1, LocalProjectStatus.Active, 1, 2);
-
     [Fact]
     public async Task OfflineCreateSurvivesReopenAndIsAccountScoped()
     {
@@ -67,35 +64,6 @@ public sealed class SqliteProjectRegistryTests : IAsyncLifetime
         Assert.Empty(await _registry.ListAsync("alice"));
         var restored = await _registry.UpdateAsync("alice", project.Id, 2, _draft, LocalProjectStatus.Active);
         Assert.Equal(3, restored.Revision);
-    }
-
-    [Fact]
-    public async Task ImportIsIdempotentAndNeverResurrectsTombstones()
-    {
-        var original = Legacy();
-        var imported = await _registry.ImportAsync("alice", "export-1", [original]);
-        var replay = await _registry.ImportAsync("alice", "export-1", [original]);
-        Assert.Equal(new[] { original.Id }, imported.InsertedIds);
-        Assert.Equal(imported.InsertedIds, replay.InsertedIds);
-        await _registry.UpdateAsync("alice", original.Id, 1, _draft, LocalProjectStatus.Removed);
-        var later = await _registry.ImportAsync("alice", "export-2", [original]);
-        Assert.Equal(new[] { original.Id }, later.SkippedIds);
-        Assert.Empty(await _registry.ListAsync("alice"));
-        Assert.Equal(LocalProjectStatus.Removed, (await _registry.GetAsync("alice", original.Id))!.Status);
-        var error = await Assert.ThrowsAsync<ProjectRegistryException>(() => _registry.UpdateAsync("alice", original.Id, 2, _draft, LocalProjectStatus.Active));
-        Assert.Equal(ProjectRegistryError.Removed, error.Code);
-    }
-
-    [Fact]
-    public async Task ImportRejectsWrongOwnerDuplicatesAndChangedReceipt()
-    {
-        await Assert.ThrowsAsync<ProjectRegistryException>(() => _registry.ImportAsync("alice", "invalid", [Legacy(), Legacy("bad", "bob")]));
-        await Assert.ThrowsAsync<ProjectRegistryException>(() => _registry.ImportAsync("alice", "invalid", [Legacy(), Legacy()]));
-        Assert.Empty(await _registry.ListAsync("alice", includeInactive: true));
-        await _registry.ImportAsync("alice", "export", [Legacy()]);
-        var error = await Assert.ThrowsAsync<ProjectRegistryException>(() => _registry.ImportAsync("alice", "export", [Legacy("another")]));
-        Assert.Equal(ProjectRegistryError.ImportSourceConflict, error.Code);
-        Assert.Null(await _registry.GetAsync("alice", "another"));
     }
 
     [Theory]
@@ -161,25 +129,6 @@ public sealed class SqliteProjectRegistryTests : IAsyncLifetime
         var project = await _registry.CreateAsync("alice", _draft);
         var loader = new ClientOwnedWorkspaceLoader(_registry, new DeletingRelations(_registry, project), "alice");
         Assert.Empty((await loader.RefreshAsync("device")).Snapshot.Projects);
-    }
-
-    [Fact]
-    public async Task ImportRollsBackBothRecordsAndReceiptOnDatabaseFailure()
-    {
-        await using (var connection = await _database.OpenConnectionAsync())
-        {
-            using var command = connection.CreateCommand();
-            command.CommandText = """
-                CREATE TRIGGER fail_import BEFORE INSERT ON local_project_records
-                WHEN NEW.id = 'b' BEGIN SELECT RAISE(ABORT, 'injected failure'); END;
-                """;
-            await command.ExecuteNonQueryAsync();
-        }
-        await Assert.ThrowsAsync<Microsoft.Data.Sqlite.SqliteException>(() => _registry.ImportAsync("alice", "export", [Legacy("a"), Legacy("b")]));
-        Assert.Empty(await _registry.ListAsync("alice", includeInactive: true));
-        // Reusing the same source with a different payload succeeds only if its receipt rolled back.
-        var result = await _registry.ImportAsync("alice", "export", [Legacy("a")]);
-        Assert.Equal(new[] { "a" }, result.InsertedIds);
     }
 
     private sealed class OfflineRelations : IWorkspaceRelationsService

@@ -43,7 +43,7 @@ export function SettingsOverviewTab({
   runtimeDefaultCount,
   onOpenMcpCatalog,
 }: SettingsOverviewTabProps) {
-  const storeModeColor = config?.store_mode === 'mongo' ? 'green' : 'gold';
+  const storeModeColor = config?.store_mode === 'postgres' ? 'green' : 'gold';
 
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>

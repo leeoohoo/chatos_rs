@@ -1,190 +1,745 @@
 import Foundation
+import AppKit
 import SwiftUI
 
-struct MarkdownDocumentView: View {
-    private let blocks: [MarkdownBlock]
-    private let allowsTextSelection: Bool
+struct MarkdownRenderCacheMetrics: Equatable {
+    var blockHits = 0
+    var blockMisses = 0
+    var inlineHits = 0
+    var inlineMisses = 0
+}
 
-    init(markdown: String, allowsTextSelection: Bool = true) {
-        blocks = MarkdownBlockParser.parse(markdown)
-        self.allowsTextSelection = allowsTextSelection
+/// Markdown appears in several frequently refreshed SwiftUI surfaces. Keeping the parsed form
+/// here avoids reparsing every visible message whenever unrelated view state changes.
+final class MarkdownRenderCache: @unchecked Sendable {
+    static let shared = MarkdownRenderCache()
+
+    private final class BlockEntry {
+        let value: [MarkdownBlock]
+
+        init(_ value: [MarkdownBlock]) {
+            self.value = value
+        }
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                MarkdownBlockView(
-                    block: block,
-                    allowsTextSelection: allowsTextSelection
-                )
+    private final class InlineEntry {
+        let value: AttributedString
+
+        init(_ value: AttributedString) {
+            self.value = value
+        }
+    }
+
+    private let blockCache = NSCache<NSString, BlockEntry>()
+    private let inlineCache = NSCache<NSString, InlineEntry>()
+    private let metricsLock = NSLock()
+    private var storedMetrics = MarkdownRenderCacheMetrics()
+
+    init(totalCostLimit: Int = 16 * 1_024 * 1_024, countLimit: Int = 128) {
+        // Split the budget between document structure and rendered inline text. NSCache can
+        // discard either half under memory pressure and never turns chat history into an
+        // unbounded in-memory copy.
+        blockCache.totalCostLimit = totalCostLimit / 2
+        inlineCache.totalCostLimit = totalCostLimit / 2
+        blockCache.countLimit = max(countLimit / 2, 1)
+        inlineCache.countLimit = max(countLimit / 2, 1)
+    }
+
+    func blocks(for source: String) -> [MarkdownBlock] {
+        let key = source as NSString
+        if let cached = blockCache.object(forKey: key) {
+            updateMetrics { $0.blockHits += 1 }
+            return cached.value
+        }
+
+        let parsed = MarkdownBlockParser.parse(source)
+        blockCache.setObject(
+            BlockEntry(parsed),
+            forKey: key,
+            cost: max(source.utf8.count, 1)
+        )
+        updateMetrics { $0.blockMisses += 1 }
+        return parsed
+    }
+
+    func cachedBlocks(for source: String) -> [MarkdownBlock]? {
+        let key = source as NSString
+        guard let cached = blockCache.object(forKey: key) else { return nil }
+        updateMetrics { $0.blockHits += 1 }
+        return cached.value
+    }
+
+    func attributedInline(for source: String) -> AttributedString {
+        let key = source as NSString
+        if let cached = inlineCache.object(forKey: key) {
+            updateMetrics { $0.inlineHits += 1 }
+            return cached.value
+        }
+
+        let rendered = (try? AttributedString(
+            markdown: source,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(source)
+        inlineCache.setObject(
+            InlineEntry(rendered),
+            forKey: key,
+            cost: max(source.utf8.count * 2, 1)
+        )
+        updateMetrics { $0.inlineMisses += 1 }
+        return rendered
+    }
+
+    func prepareInlineAttributes(for blocks: [MarkdownBlock]) {
+        for block in blocks {
+            switch block {
+            case let .heading(_, text), let .paragraph(text), let .quote(text):
+                _ = attributedInline(for: text)
+            case let .list(items):
+                for item in items { _ = attributedInline(for: item.text) }
+            case let .table(headers, rows):
+                for cell in headers { _ = attributedInline(for: cell) }
+                for row in rows {
+                    for cell in row { _ = attributedInline(for: cell) }
+                }
+            case .code, .divider:
+                break
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    func metrics() -> MarkdownRenderCacheMetrics {
+        metricsLock.lock()
+        defer { metricsLock.unlock() }
+        return storedMetrics
+    }
+
+    func removeAll() {
+        blockCache.removeAllObjects()
+        inlineCache.removeAllObjects()
+        metricsLock.lock()
+        storedMetrics = MarkdownRenderCacheMetrics()
+        metricsLock.unlock()
+    }
+
+    private func updateMetrics(_ update: (inout MarkdownRenderCacheMetrics) -> Void) {
+        metricsLock.lock()
+        update(&storedMetrics)
+        metricsLock.unlock()
     }
 }
 
-private struct MarkdownBlockView: View {
-    let block: MarkdownBlock
-    let allowsTextSelection: Bool
+struct MarkdownDocumentView: View {
+    enum WidthBehavior: Equatable {
+        case fill
+        case fitContent
+    }
+
+    private struct LoadedDocument {
+        let source: String
+        let blocks: [MarkdownBlock]
+    }
+
+    private let markdown: String
+    private let allowsTextSelection: Bool
+    private let widthBehavior: WidthBehavior
+    private let viewport: MarkdownViewport
+
+    @State private var loadedDocument: LoadedDocument?
+
+    init(
+        markdown: String,
+        allowsTextSelection: Bool = true,
+        widthBehavior: WidthBehavior = .fill,
+        maximumHeight: CGFloat = MarkdownLayoutPolicy.maximumInlineHeight
+    ) {
+        self.markdown = markdown
+        self.allowsTextSelection = allowsTextSelection
+        self.widthBehavior = widthBehavior
+        viewport = .bounded(maximumHeight: maximumHeight)
+
+        let initialBlocks: [MarkdownBlock]?
+        if let cached = MarkdownRenderCache.shared.cachedBlocks(for: markdown) {
+            initialBlocks = cached
+        } else if MarkdownLayoutPolicy.shouldParseOffMain(markdown) {
+            initialBlocks = nil
+        } else {
+            initialBlocks = MarkdownRenderCache.shared.blocks(for: markdown)
+        }
+        _loadedDocument = State(
+            initialValue: initialBlocks.map { LoadedDocument(source: markdown, blocks: $0) }
+        )
+    }
+
+    private init(
+        markdown: String,
+        allowsTextSelection: Bool = true,
+        widthBehavior: WidthBehavior = .fill,
+        viewport: MarkdownViewport
+    ) {
+        self.markdown = markdown
+        self.allowsTextSelection = allowsTextSelection
+        self.widthBehavior = widthBehavior
+        self.viewport = viewport
+
+        let initialBlocks = MarkdownRenderCache.shared.cachedBlocks(for: markdown)
+        _loadedDocument = State(
+            initialValue: initialBlocks.map { LoadedDocument(source: markdown, blocks: $0) }
+        )
+    }
+
+    var body: some View {
+        Group {
+            if let loadedDocument, loadedDocument.source == markdown {
+                if viewport.fillsAvailableHeight
+                    || MarkdownLayoutPolicy.shouldUseBoundedViewport(markdown) {
+                    MarkdownNativeScrollView(
+                        source: markdown,
+                        blocks: loadedDocument.blocks,
+                        allowsTextSelection: allowsTextSelection,
+                        widthBehavior: widthBehavior,
+                        viewport: viewport
+                    )
+                    .frame(
+                        maxWidth: widthBehavior == .fill ? .infinity : nil,
+                        maxHeight: viewport.fillsAvailableHeight ? .infinity : nil,
+                        alignment: .leading
+                    )
+                } else {
+                    MarkdownNativeTextView(
+                        source: markdown,
+                        blocks: loadedDocument.blocks,
+                        allowsTextSelection: allowsTextSelection,
+                        widthBehavior: widthBehavior
+                    )
+                    .frame(
+                        maxWidth: widthBehavior == .fill ? .infinity : nil,
+                        alignment: .leading
+                    )
+                }
+            } else {
+                markdownLoadingPlaceholder
+            }
+        }
+        .task(id: markdown) {
+            guard loadedDocument?.source != markdown else { return }
+            let source = markdown
+            let parsed = await Task.detached(priority: .userInitiated) {
+                let blocks = MarkdownRenderCache.shared.blocks(for: source)
+                MarkdownRenderCache.shared.prepareInlineAttributes(for: blocks)
+                return blocks
+            }.value
+            guard !Task.isCancelled, source == markdown else { return }
+            loadedDocument = LoadedDocument(source: source, blocks: parsed)
+        }
+    }
 
     @ViewBuilder
+    private var markdownLoadingPlaceholder: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text("正在解析 Markdown…")
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: viewport.fillsAvailableHeight ? nil : 64,
+            maxHeight: viewport.fillsAvailableHeight ? .infinity : nil,
+            alignment: .topLeading
+        )
+    }
+
+    fileprivate static func reader(
+        markdown: String,
+        allowsTextSelection: Bool
+    ) -> Self {
+        Self(
+            markdown: markdown,
+            allowsTextSelection: allowsTextSelection,
+            viewport: .reader
+        )
+    }
+
+    fileprivate static func deferred(
+        markdown: String,
+        allowsTextSelection: Bool,
+        maximumHeight: CGFloat
+    ) -> Self {
+        Self(
+            markdown: markdown,
+            allowsTextSelection: allowsTextSelection,
+            viewport: .bounded(maximumHeight: maximumHeight)
+        )
+    }
+}
+
+struct DeferredMarkdownDocumentView: View {
+    let markdown: String
+    var allowsTextSelection = true
+    var maximumHeight: CGFloat = MarkdownLayoutPolicy.maximumInlineHeight
+
     var body: some View {
+        MarkdownDocumentView.deferred(
+            markdown: markdown,
+            allowsTextSelection: allowsTextSelection,
+            maximumHeight: maximumHeight
+        )
+    }
+}
+
+/// A full-document reader owns its viewport and scrolling in AppKit. SwiftUI receives a stable
+/// rectangle instead of repeatedly measuring the entire document inside a lazy stack.
+struct MarkdownReaderView: View {
+    let markdown: String
+    var allowsTextSelection = true
+
+    var body: some View {
+        MarkdownDocumentView.reader(
+            markdown: markdown,
+            allowsTextSelection: allowsTextSelection
+        )
+    }
+}
+
+enum MarkdownLayoutPolicy {
+    static let maximumInlineHeight: CGFloat = 520
+    static let backgroundParsingByteThreshold = 8 * 1_024
+    static let backgroundParsingLineThreshold = 120
+    static let boundedViewportByteThreshold = 1_500
+    static let boundedViewportLineThreshold = 32
+
+    static func shouldParseOffMain(_ source: String) -> Bool {
+        source.utf8.count >= backgroundParsingByteThreshold
+            || source.lazy.filter(\.isNewline).prefix(backgroundParsingLineThreshold).count
+                >= backgroundParsingLineThreshold
+    }
+
+    static func shouldUseBoundedViewport(_ source: String) -> Bool {
+        source.utf8.count >= boundedViewportByteThreshold
+            || source.lazy.filter(\.isNewline).prefix(boundedViewportLineThreshold).count
+                >= boundedViewportLineThreshold
+    }
+}
+
+enum MarkdownViewport: Equatable {
+    case bounded(maximumHeight: CGFloat)
+    case reader
+
+    var fillsAvailableHeight: Bool { self == .reader }
+}
+
+/// A single AppKit text layout per Markdown document. SwiftUI's selectable `Text` creates a
+/// `SelectionOverlay` for each rendered fragment. On macOS 26, a document containing many
+/// fragments (especially a fenced SVG block) can enter an AttributeGraph invalidation loop.
+/// NSTextView owns selection and wrapping without involving those overlays.
+private struct MarkdownNativeTextView: NSViewRepresentable {
+    let source: String
+    let blocks: [MarkdownBlock]
+    let allowsTextSelection: Bool
+    let widthBehavior: MarkdownDocumentView.WidthBehavior
+
+    func makeNSView(context: Context) -> MarkdownLayoutTextView {
+        MarkdownLayoutTextView()
+    }
+
+    func updateNSView(_ textView: MarkdownLayoutTextView, context: Context) {
+        textView.setDocument(
+            source: source,
+            blocks: blocks,
+            allowsTextSelection: allowsTextSelection
+        )
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView textView: MarkdownLayoutTextView,
+        context: Context
+    ) -> CGSize? {
+        guard let proposedWidth = MarkdownLayoutGeometry.finitePositiveWidth(proposal.width) else {
+            return nil
+        }
+        let width = switch widthBehavior {
+        case .fill: proposedWidth
+        case .fitContent: textView.width(fittingMaxWidth: proposedWidth)
+        }
+        return CGSize(width: width, height: textView.height(fittingWidth: width))
+    }
+}
+
+private struct MarkdownNativeScrollView: NSViewRepresentable {
+    let source: String
+    let blocks: [MarkdownBlock]
+    let allowsTextSelection: Bool
+    let widthBehavior: MarkdownDocumentView.WidthBehavior
+    let viewport: MarkdownViewport
+
+    func makeNSView(context: Context) -> MarkdownScrollContainerView {
+        MarkdownScrollContainerView()
+    }
+
+    func updateNSView(_ scrollView: MarkdownScrollContainerView, context: Context) {
+        scrollView.setDocument(
+            source: source,
+            blocks: blocks,
+            allowsTextSelection: allowsTextSelection
+        )
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView scrollView: MarkdownScrollContainerView,
+        context: Context
+    ) -> CGSize? {
+        guard let proposedWidth = MarkdownLayoutGeometry.finitePositiveWidth(proposal.width) else {
+            return nil
+        }
+        let width = switch widthBehavior {
+        case .fill: proposedWidth
+        case .fitContent: scrollView.textWidth(fittingMaxWidth: proposedWidth)
+        }
+        let contentHeight = scrollView.textHeight(fittingWidth: width)
+        let height = MarkdownLayoutGeometry.resolvedHeight(
+            contentHeight: contentHeight,
+            proposedHeight: proposal.height,
+            viewport: viewport
+        )
+        return CGSize(width: width, height: height)
+    }
+}
+
+enum MarkdownLayoutGeometry {
+    static func finitePositiveWidth(_ width: CGFloat?) -> CGFloat? {
+        guard let width, width.isFinite, width > 0 else { return nil }
+        return width
+    }
+
+    static func widthCacheKey(fittingWidth width: CGFloat) -> UInt64? {
+        guard let width = finitePositiveWidth(width) else { return nil }
+        return Double(max(width, 1)).bitPattern
+    }
+
+    static func resolvedHeight(
+        contentHeight: CGFloat,
+        proposedHeight: CGFloat?,
+        viewport: MarkdownViewport
+    ) -> CGFloat {
+        let safeContentHeight = finitePositiveWidth(contentHeight) ?? 1
+        switch viewport {
+        case let .bounded(maximumHeight):
+            let safeMaximumHeight = finitePositiveWidth(maximumHeight)
+                ?? MarkdownLayoutPolicy.maximumInlineHeight
+            return min(safeContentHeight, safeMaximumHeight)
+        case .reader:
+            return finitePositiveWidth(proposedHeight)
+                ?? min(safeContentHeight, MarkdownLayoutPolicy.maximumInlineHeight)
+        }
+    }
+}
+
+@MainActor
+private final class MarkdownScrollContainerView: NSScrollView {
+    private let markdownTextView = MarkdownLayoutTextView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        drawsBackground = false
+        borderType = .noBorder
+        hasHorizontalScroller = false
+        hasVerticalScroller = true
+        autohidesScrollers = true
+        scrollerStyle = .overlay
+        horizontalScrollElasticity = .none
+        verticalScrollElasticity = .automatic
+        automaticallyAdjustsContentInsets = false
+        contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+        documentView = markdownTextView
+
+        markdownTextView.minSize = .zero
+        markdownTextView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        markdownTextView.isHorizontallyResizable = false
+        markdownTextView.isVerticallyResizable = true
+        markdownTextView.autoresizingMask = [.width]
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        let width = max(contentSize.width, 1)
+        let height = max(markdownTextView.height(fittingWidth: width), contentSize.height)
+        let nextSize = NSSize(width: width, height: height)
+        if abs(markdownTextView.frame.width - nextSize.width) > 0.5
+            || abs(markdownTextView.frame.height - nextSize.height) > 0.5 {
+            markdownTextView.setFrameSize(nextSize)
+        }
+    }
+
+    func setDocument(
+        source: String,
+        blocks: [MarkdownBlock],
+        allowsTextSelection: Bool
+    ) {
+        markdownTextView.setDocument(
+            source: source,
+            blocks: blocks,
+            allowsTextSelection: allowsTextSelection
+        )
+        needsLayout = true
+    }
+
+    func textHeight(fittingWidth width: CGFloat) -> CGFloat {
+        markdownTextView.height(fittingWidth: width)
+    }
+
+    func textWidth(fittingMaxWidth maxWidth: CGFloat) -> CGFloat {
+        markdownTextView.width(fittingMaxWidth: maxWidth)
+    }
+}
+
+@MainActor
+private final class MarkdownLayoutTextView: NSTextView {
+    private var source = ""
+    private var measuredHeights: [UInt64: CGFloat] = [:]
+    private var measuredWidths: [UInt64: CGFloat] = [:]
+
+    init() {
+        let storage = NSTextStorage()
+        let layoutManager = NSLayoutManager()
+        let container = NSTextContainer(
+            containerSize: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        )
+        storage.addLayoutManager(layoutManager)
+        layoutManager.addTextContainer(container)
+        super.init(frame: .zero, textContainer: container)
+
+        drawsBackground = false
+        isEditable = false
+        isSelectable = true
+        isRichText = true
+        importsGraphics = false
+        allowsUndo = false
+        textContainerInset = .zero
+        container.lineFragmentPadding = 0
+        container.widthTracksTextView = true
+        container.heightTracksTextView = false
+        isHorizontallyResizable = false
+        isVerticallyResizable = true
+        autoresizingMask = [.width]
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func setDocument(
+        source nextSource: String,
+        blocks: [MarkdownBlock],
+        allowsTextSelection: Bool
+    ) {
+        isSelectable = allowsTextSelection
+        guard source != nextSource else { return }
+        source = nextSource
+        textStorage?.setAttributedString(MarkdownAttributedRenderer.render(blocks))
+        measuredHeights.removeAll(keepingCapacity: true)
+        measuredWidths.removeAll(keepingCapacity: true)
+        invalidateIntrinsicContentSize()
+    }
+
+    func height(fittingWidth width: CGFloat) -> CGFloat {
+        guard let safeWidth = MarkdownLayoutGeometry.finitePositiveWidth(width),
+              let widthKey = MarkdownLayoutGeometry.widthCacheKey(fittingWidth: safeWidth) else {
+            return 1
+        }
+        if let cached = measuredHeights[widthKey] { return cached }
+        // Measurement must be pure. Mutating NSTextContainer from NSViewRepresentable's
+        // sizeThatFits invalidates the platform view while SwiftUI is placing a lazy stack,
+        // producing an endless size/place cycle for very tall messages.
+        let measured = textStorage?.boundingRect(
+            with: NSSize(width: safeWidth, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).height ?? 1
+        let result = max(ceil(measured), 1)
+        measuredHeights[widthKey] = result
+        return result
+    }
+
+    func width(fittingMaxWidth maxWidth: CGFloat) -> CGFloat {
+        guard let safeMaxWidth = MarkdownLayoutGeometry.finitePositiveWidth(maxWidth),
+              let widthKey = MarkdownLayoutGeometry.widthCacheKey(fittingWidth: safeMaxWidth) else {
+            return 1
+        }
+        if let cached = measuredWidths[widthKey] { return cached }
+        let measured = textStorage?.boundingRect(
+            with: NSSize(width: safeMaxWidth, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).width ?? 1
+        let result = min(max(ceil(measured), 1), safeMaxWidth)
+        measuredWidths[widthKey] = result
+        return result
+    }
+}
+
+@MainActor
+private enum MarkdownAttributedRenderer {
+    private static let inlineIntentKey = NSAttributedString.Key("NSInlinePresentationIntent")
+
+    static func render(_ blocks: [MarkdownBlock]) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        for (index, block) in blocks.enumerated() {
+            if index > 0 { result.append(NSAttributedString(string: "\n\n")) }
+            append(block, to: result)
+        }
+        return result
+    }
+
+    private static func append(_ block: MarkdownBlock, to result: NSMutableAttributedString) {
         switch block {
         case let .heading(level, text):
-            MarkdownInlineText(text: text, allowsTextSelection: allowsTextSelection)
-                .appFont(headingFont(level))
-                .padding(.top, level <= 2 ? 4 : 0)
+            let size: CGFloat = switch level {
+            case 1: 20
+            case 2: 17
+            case 3: 15
+            default: 13
+            }
+            result.append(inline(text, font: .systemFont(ofSize: size, weight: .bold)))
 
         case let .paragraph(text):
-            MarkdownInlineText(text: text, allowsTextSelection: allowsTextSelection)
-                .appFont(.callout)
-                .lineSpacing(4)
+            result.append(inline(text, font: .systemFont(ofSize: 13)))
 
         case let .list(items):
-            VStack(alignment: .leading, spacing: 7) {
-                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(item.marker)
-                            .appFont(.callout.monospacedDigit().weight(.semibold))
-                            .foregroundStyle(AppPalette.ai)
-                            .frame(minWidth: 15, alignment: .trailing)
-                        MarkdownInlineText(
-                            text: item.text,
-                            allowsTextSelection: allowsTextSelection
-                        )
-                            .appFont(.callout)
-                            .lineSpacing(3)
-                    }
-                    .padding(.leading, CGFloat(item.depth) * 18)
-                }
+            for (index, item) in items.enumerated() {
+                if index > 0 { result.append(NSAttributedString(string: "\n")) }
+                let indent = String(repeating: "    ", count: item.depth)
+                result.append(NSAttributedString(
+                    string: "\(indent)\(item.marker) ",
+                    attributes: baseAttributes(font: .systemFont(ofSize: 13, weight: .semibold))
+                ))
+                result.append(inline(item.text, font: .systemFont(ofSize: 13)))
             }
 
         case let .quote(text):
-            HStack(alignment: .top, spacing: 10) {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(AppPalette.ai.opacity(0.55))
-                    .frame(width: 3)
-                MarkdownInlineText(text: text, allowsTextSelection: allowsTextSelection)
-                    .appFont(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineSpacing(3)
-            }
-            .padding(.vertical, 3)
+            result.append(NSAttributedString(
+                string: "▎ ",
+                attributes: baseAttributes(
+                    font: .systemFont(ofSize: 13, weight: .semibold),
+                    color: .secondaryLabelColor
+                )
+            ))
+            result.append(inline(
+                text,
+                font: .systemFont(ofSize: 13),
+                color: .secondaryLabelColor
+            ))
 
         case let .code(language, content):
-            VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    Text(language?.isEmpty == false ? language! : "代码")
-                        .appFont(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .padding(.horizontal, 11)
-                .padding(.vertical, 7)
-                .background(AppPalette.surfaceSubtle)
-
-                ScrollView(.horizontal) {
-                    Text(content)
-                        .appFont(.caption.monospaced())
-                        .lineSpacing(3)
-                        .appTextSelection(allowsTextSelection)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .padding(11)
-                }
-                .background(Color(nsColor: .textBackgroundColor))
+            if let language, !language.isEmpty {
+                result.append(NSAttributedString(
+                    string: language.uppercased() + "\n",
+                    attributes: baseAttributes(
+                        font: .systemFont(ofSize: 10, weight: .semibold),
+                        color: .secondaryLabelColor
+                    )
+                ))
             }
-            .clipShape(RoundedRectangle(cornerRadius: 9))
-            .overlay {
-                RoundedRectangle(cornerRadius: 9)
-                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-            }
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineSpacing = 3
+            paragraph.paragraphSpacingBefore = 6
+            paragraph.paragraphSpacing = 6
+            result.append(NSAttributedString(
+                string: content,
+                attributes: [
+                    .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+                    .foregroundColor: NSColor.labelColor,
+                    .backgroundColor: NSColor.textBackgroundColor.withAlphaComponent(0.65),
+                    .paragraphStyle: paragraph,
+                ]
+            ))
 
         case .divider:
-            Divider().padding(.vertical, 2)
+            result.append(NSAttributedString(
+                string: "────────────────────────",
+                attributes: baseAttributes(font: .systemFont(ofSize: 10), color: .separatorColor)
+            ))
 
         case let .table(headers, rows):
-            MarkdownTableView(
-                headers: headers,
-                rows: rows,
-                allowsTextSelection: allowsTextSelection
-            )
-        }
-    }
-
-    private func headingFont(_ level: Int) -> AppFontSpec {
-        switch level {
-        case 1: .title3.weight(.bold)
-        case 2: .headline.weight(.bold)
-        case 3: .subheadline.weight(.bold)
-        default: .callout.weight(.semibold)
-        }
-    }
-}
-
-private struct MarkdownInlineText: View {
-    let text: String
-    let allowsTextSelection: Bool
-
-    var body: some View {
-        Text(rendered)
-            .appTextSelection(allowsTextSelection)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var rendered: AttributedString {
-        (try? AttributedString(
-            markdown: text,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        )) ?? AttributedString(text)
-    }
-}
-
-private struct MarkdownTableView: View {
-    let headers: [String]
-    let rows: [[String]]
-    let allowsTextSelection: Bool
-
-    var body: some View {
-        ScrollView(.horizontal) {
-            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
-                GridRow {
-                    ForEach(Array(headers.enumerated()), id: \.offset) { _, header in
-                        tableCell(header, isHeader: true)
-                    }
-                }
-                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                    GridRow {
-                        ForEach(0..<headers.count, id: \.self) { column in
-                            tableCell(column < row.count ? row[column] : "", isHeader: false)
-                        }
-                    }
+            let values = [headers] + rows
+            for (index, row) in values.enumerated() {
+                if index > 0 { result.append(NSAttributedString(string: "\n")) }
+                result.append(NSAttributedString(
+                    string: row.joined(separator: "  │  "),
+                    attributes: baseAttributes(
+                        font: .monospacedSystemFont(
+                            ofSize: 12,
+                            weight: index == 0 ? .semibold : .regular
+                        )
+                    )
+                ))
+                if index == 0 {
+                    result.append(NSAttributedString(
+                        string: "\n" + String(repeating: "─", count: max(row.count * 10, 10)),
+                        attributes: baseAttributes(
+                            font: .monospacedSystemFont(ofSize: 12, weight: .regular),
+                            color: .separatorColor
+                        )
+                    ))
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-            }
         }
     }
 
-    private func tableCell(_ text: String, isHeader: Bool) -> some View {
-        MarkdownInlineText(text: text, allowsTextSelection: allowsTextSelection)
-            .appFont(.caption.weight(isHeader ? .semibold : .regular))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(minWidth: 110, alignment: .leading)
-            .background(isHeader ? AppPalette.surfaceSubtle : .clear)
-            .overlay(alignment: .trailing) {
-                Rectangle()
-                    .fill(Color(nsColor: .separatorColor))
-                    .frame(width: 1)
+    private static func inline(
+        _ source: String,
+        font: NSFont,
+        color: NSColor = .labelColor
+    ) -> NSAttributedString {
+        let rendered = NSAttributedString(MarkdownRenderCache.shared.attributedInline(for: source))
+        let result = NSMutableAttributedString(attributedString: rendered)
+        let fullRange = NSRange(location: 0, length: result.length)
+        result.addAttributes(baseAttributes(font: font, color: color), range: fullRange)
+        rendered.enumerateAttribute(inlineIntentKey, in: fullRange) { value, range, _ in
+            guard let rawValue = (value as? NSNumber)?.intValue else { return }
+            var resolvedFont = font
+            if rawValue & 4 != 0 {
+                resolvedFont = .monospacedSystemFont(ofSize: font.pointSize, weight: .regular)
+                result.addAttribute(
+                    .backgroundColor,
+                    value: NSColor.textBackgroundColor.withAlphaComponent(0.65),
+                    range: range
+                )
+            } else {
+                if rawValue & 2 != 0 {
+                    resolvedFont = NSFontManager.shared.convert(resolvedFont, toHaveTrait: .boldFontMask)
+                }
+                if rawValue & 1 != 0 {
+                    resolvedFont = NSFontManager.shared.convert(resolvedFont, toHaveTrait: .italicFontMask)
+                }
             }
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(Color(nsColor: .separatorColor))
-                    .frame(height: 1)
+            result.addAttribute(.font, value: resolvedFont, range: range)
+            if rawValue & 8 != 0 {
+                result.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: range)
             }
+        }
+        return result
+    }
+
+    private static func baseAttributes(
+        font: NSFont,
+        color: NSColor = .labelColor
+    ) -> [NSAttributedString.Key: Any] {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 3
+        return [
+            .font: font,
+            .foregroundColor: color,
+            .paragraphStyle: paragraph,
+        ]
     }
 }
 
@@ -197,277 +752,4 @@ extension View {
             self
         }
     }
-}
-
-private enum MarkdownBlock: Equatable {
-    case heading(level: Int, text: String)
-    case paragraph(String)
-    case list([MarkdownListItem])
-    case quote(String)
-    case code(language: String?, content: String)
-    case divider
-    case table(headers: [String], rows: [[String]])
-}
-
-private struct MarkdownListItem: Equatable {
-    var marker: String
-    var text: String
-    var depth: Int
-}
-
-private enum MarkdownBlockParser {
-    static func parse(_ source: String) -> [MarkdownBlock] {
-        let normalized = source
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-        let lines = expandedMarkdownLines(normalized)
-        var blocks: [MarkdownBlock] = []
-        var paragraph: [String] = []
-        var listItems: [MarkdownListItem] = []
-        var index = 0
-
-        func flushParagraph() {
-            let value = paragraph
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty }
-                .joined(separator: " ")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !value.isEmpty { blocks.append(.paragraph(value)) }
-            paragraph.removeAll(keepingCapacity: true)
-        }
-
-        func flushList() {
-            if !listItems.isEmpty { blocks.append(.list(listItems)) }
-            listItems.removeAll(keepingCapacity: true)
-        }
-
-        func flushTextBlocks() {
-            flushParagraph()
-            flushList()
-        }
-
-        while index < lines.count {
-            let line = lines[index]
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-            if trimmed.isEmpty {
-                flushTextBlocks()
-                index += 1
-                continue
-            }
-
-            if isCodeFence(line) {
-                flushTextBlocks()
-                let language = codeFenceLanguage(line)
-                var codeLines: [String] = []
-                index += 1
-                while index < lines.count, !isCodeFence(lines[index]) {
-                    codeLines.append(lines[index])
-                    index += 1
-                }
-                if index < lines.count { index += 1 }
-                blocks.append(.code(language: language, content: codeLines.joined(separator: "\n")))
-                continue
-            }
-
-            if let heading = heading(line) {
-                flushTextBlocks()
-                blocks.append(.heading(level: heading.level, text: heading.text))
-                index += 1
-                continue
-            }
-
-            if isDivider(trimmed) {
-                flushTextBlocks()
-                blocks.append(.divider)
-                index += 1
-                continue
-            }
-
-            if index + 1 < lines.count,
-               let headers = tableRow(line),
-               isTableSeparator(lines[index + 1], expectedColumns: headers.count) {
-                flushTextBlocks()
-                var rows: [[String]] = []
-                index += 2
-                while index < lines.count,
-                      !lines[index].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      let row = tableRow(lines[index]) {
-                    rows.append(row)
-                    index += 1
-                }
-                blocks.append(.table(headers: headers, rows: rows))
-                continue
-            }
-
-            if trimmed.hasPrefix(">") {
-                flushTextBlocks()
-                var quoteLines: [String] = []
-                while index < lines.count {
-                    let quoteLine = lines[index].trimmingCharacters(in: .whitespaces)
-                    guard quoteLine.hasPrefix(">") else { break }
-                    quoteLines.append(
-                        String(quoteLine.dropFirst()).trimmingCharacters(in: .whitespaces)
-                    )
-                    index += 1
-                }
-                blocks.append(.quote(quoteLines.joined(separator: "\n")))
-                continue
-            }
-
-            if let item = listItem(line) {
-                flushParagraph()
-                listItems.append(item)
-                index += 1
-                continue
-            }
-
-            if !listItems.isEmpty, leadingSpaceCount(line) > 0 {
-                listItems[listItems.count - 1].text += " " + trimmed
-                index += 1
-                continue
-            }
-
-            flushList()
-            paragraph.append(line)
-            index += 1
-        }
-
-        flushTextBlocks()
-        return blocks.isEmpty ? [.paragraph(source)] : blocks
-    }
-
-    private static func isCodeFence(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        return trimmed.hasPrefix("```")
-    }
-
-    private static func codeFenceLanguage(_ line: String) -> String? {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        return String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces).nilIfEmpty
-    }
-
-    private static func heading(_ line: String) -> (level: Int, text: String)? {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        let level = trimmed.prefix(while: { $0 == "#" }).count
-        guard (1...6).contains(level) else { return nil }
-        let remainder = trimmed.dropFirst(level)
-        guard remainder.first?.isWhitespace == true else { return nil }
-        let text = String(remainder).trimmingCharacters(in: .whitespaces)
-        return text.isEmpty ? nil : (level, text)
-    }
-
-    private static func listItem(_ line: String) -> MarkdownListItem? {
-        let spaces = leadingSpaceCount(line)
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        for prefix in ["- ", "* ", "+ "] where trimmed.hasPrefix(prefix) {
-            return MarkdownListItem(
-                marker: "•",
-                text: String(trimmed.dropFirst(prefix.count)),
-                depth: spaces / 2
-            )
-        }
-
-        let digits = trimmed.prefix(while: { $0.isNumber })
-        guard !digits.isEmpty else { return nil }
-        let remainder = trimmed.dropFirst(digits.count)
-        guard remainder.hasPrefix(". ") || remainder.hasPrefix(") ") else { return nil }
-        return MarkdownListItem(
-            marker: "\(digits).",
-            text: String(remainder.dropFirst(2)),
-            depth: spaces / 2
-        )
-    }
-
-    private static func tableRow(_ line: String) -> [String]? {
-        guard line.contains("|") else { return nil }
-        var value = line.trimmingCharacters(in: .whitespaces)
-        if value.hasPrefix("|") { value.removeFirst() }
-        if value.hasSuffix("|") { value.removeLast() }
-        let cells = value.split(separator: "|", omittingEmptySubsequences: false)
-            .map { String($0).trimmingCharacters(in: .whitespaces) }
-        return cells.count >= 2 ? cells : nil
-    }
-
-    private static func isTableSeparator(_ line: String, expectedColumns: Int) -> Bool {
-        guard let cells = tableRow(line), cells.count == expectedColumns else { return false }
-        return cells.allSatisfy { cell in
-            let core = cell.trimmingCharacters(in: CharacterSet(charactersIn: ":"))
-            return core.count >= 3 && core.allSatisfy { $0 == "-" }
-        }
-    }
-
-    private static func isDivider(_ line: String) -> Bool {
-        let compact = line.filter { !$0.isWhitespace }
-        guard compact.count >= 3, let first = compact.first,
-              [Character("-"), Character("*"), Character("_")].contains(first) else { return false }
-        return compact.allSatisfy { $0 == first }
-    }
-
-    private static func leadingSpaceCount(_ line: String) -> Int {
-        line.prefix(while: { $0 == " " || $0 == "\t" }).reduce(0) { count, character in
-            count + (character == "\t" ? 2 : 1)
-        }
-    }
-
-    private static func expandedMarkdownLines(_ source: String) -> [String] {
-        let rawLines = source.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        var result: [String] = []
-        var isInsideCodeFence = false
-
-        for line in rawLines {
-            if isCodeFence(line) {
-                isInsideCodeFence.toggle()
-                result.append(line)
-            } else if isInsideCodeFence {
-                result.append(line)
-            } else {
-                result.append(contentsOf: splitInlineOrderedList(line))
-            }
-        }
-        return result
-    }
-
-    private static func splitInlineOrderedList(_ line: String) -> [String] {
-        let pattern = #"(?<![0-9])([0-9]{1,2})[\)）][ \t]*"#
-        guard let expression = try? NSRegularExpression(pattern: pattern) else { return [line] }
-        let fullRange = NSRange(line.startIndex..<line.endIndex, in: line)
-        let matches = expression.matches(in: line, range: fullRange)
-        guard matches.count >= 2 else { return [line] }
-
-        let numbers = matches.compactMap { match -> Int? in
-            guard let range = Range(match.range(at: 1), in: line) else { return nil }
-            return Int(line[range])
-        }
-        guard numbers.count == matches.count,
-              numbers.first == 1,
-              numbers.enumerated().allSatisfy({ $0.element == $0.offset + 1 }) else {
-            return [line]
-        }
-
-        var parts: [String] = []
-        if let firstRange = Range(matches[0].range, in: line) {
-            let prefix = line[..<firstRange.lowerBound].trimmingCharacters(in: .whitespaces)
-            if !prefix.isEmpty { parts.append(prefix) }
-        }
-
-        for (offset, match) in matches.enumerated() {
-            guard let markerRange = Range(match.range, in: line) else { continue }
-            let contentEnd: String.Index
-            if offset + 1 < matches.count,
-               let nextRange = Range(matches[offset + 1].range, in: line) {
-                contentEnd = nextRange.lowerBound
-            } else {
-                contentEnd = line.endIndex
-            }
-            let content = line[markerRange.upperBound..<contentEnd]
-                .trimmingCharacters(in: .whitespaces)
-            parts.append("\(numbers[offset]). \(content)")
-        }
-        return parts
-    }
-}
-
-private extension String {
-    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

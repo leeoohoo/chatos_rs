@@ -11,6 +11,7 @@ from typing import Iterable
 
 SOURCE_SUFFIXES = {
     ".cjs",
+    ".cs",
     ".js",
     ".jsx",
     ".mjs",
@@ -20,14 +21,19 @@ SOURCE_SUFFIXES = {
     ".sh",
     ".ts",
     ".tsx",
+    ".swift",
+    ".xaml",
 }
 EXCLUDED_DIRECTORY_NAMES = {
     ".cache",
+    ".build",
+    ".build-native",
     ".git",
     ".local",
     ".vite",
     "__pycache__",
     "build",
+    "bin",
     "bundled-tools",
     "coverage",
     "dist",
@@ -35,6 +41,7 @@ EXCLUDED_DIRECTORY_NAMES = {
     "fixtures",
     "generated",
     "node_modules",
+    "obj",
     "target",
     "target-shared",
     "testdata",
@@ -43,10 +50,13 @@ EXCLUDED_DIRECTORY_NAMES = {
 }
 EXCLUDED_ROOTS = {".github"}
 TEST_FILE_PATTERNS = (
-    re.compile(r"(^|[._-])tests?\.(?:c?m?js|jsx|py|rs|ts|tsx)$", re.IGNORECASE),
+    re.compile(r"(^|[._-])tests?\.(?:cs|swift|xaml|c?m?js|jsx|py|rs|ts|tsx)$", re.IGNORECASE),
     re.compile(r"\.(?:spec|test)\.(?:c?m?js|jsx|ts|tsx)$", re.IGNORECASE),
     re.compile(r"^test_.*\.py$", re.IGNORECASE),
     re.compile(r".*_test\.py$", re.IGNORECASE),
+)
+GENERATED_FILE_PATTERNS = (
+    re.compile(r"\.generated\.(?:cs|swift|xaml|c?m?js|jsx|py|rs|ts|tsx)$", re.IGNORECASE),
 )
 DIFF_HUNK_PATTERN = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 EMPTY_GIT_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -69,6 +79,8 @@ def is_production_source(path: str | Path) -> bool:
     if any(part.lower() in EXCLUDED_DIRECTORY_NAMES for part in candidate.parts[:-1]):
         return False
     if any(pattern.search(candidate.name) for pattern in TEST_FILE_PATTERNS):
+        return False
+    if any(pattern.search(candidate.name) for pattern in GENERATED_FILE_PATTERNS):
         return False
     return True
 

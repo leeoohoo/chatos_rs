@@ -469,6 +469,164 @@ async fn rejects_pending_requests_over_per_device_limit() {
 }
 
 #[tokio::test]
+async fn cancelled_dispatch_releases_its_pending_slot() {
+    let relay = ConnectorRelay::default();
+    let (outbound, mut inbound) = mpsc::channel(8);
+    relay
+        .register_session(
+            "device-1".to_string(),
+            "owner-1".to_string(),
+            "session-1".to_string(),
+            outbound,
+        )
+        .await;
+
+    let dispatch = {
+        let relay = relay.clone();
+        tokio::spawn(async move {
+            relay
+                .dispatch(relay_request("cancelled-request"), Duration::from_secs(30))
+                .await
+        })
+    };
+    inbound.recv().await.expect("outbound relay request");
+    assert_eq!(relay.stats().await.pending_relay_requests, 1);
+
+    dispatch.abort();
+    let _ = dispatch.await;
+    for _ in 0..20 {
+        if relay.stats().await.pending_relay_requests == 0 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(relay.stats().await.pending_relay_requests, 0);
+}
+
+#[tokio::test]
+async fn companion_requests_have_a_separate_per_client_session_limit() {
+    let relay = ConnectorRelay::default();
+    let (outbound, mut inbound) = mpsc::channel(16);
+    relay
+        .register_session(
+            "device-1".to_string(),
+            "owner-1".to_string(),
+            "session-1".to_string(),
+            outbound,
+        )
+        .await;
+
+    let mut requests = Vec::new();
+    for index in 0..MAX_PENDING_COMPANION_REQUESTS_PER_CLIENT_SESSION {
+        let relay = relay.clone();
+        requests.push(tokio::spawn(async move {
+            relay
+                .dispatch_companion(
+                    relay_request(format!("companion-{index}").as_str()),
+                    Duration::from_secs(30),
+                    "mobile-session-1",
+                )
+                .await
+        }));
+        inbound.recv().await.expect("companion relay request");
+    }
+
+    let error = relay
+        .dispatch_companion(
+            relay_request("companion-over-limit"),
+            Duration::from_secs(30),
+            "mobile-session-1",
+        )
+        .await
+        .expect_err("fifth request for one mobile session must be rejected");
+    assert!(matches!(
+        error,
+        RelayError::TooManyPendingRequests {
+            limit: MAX_PENDING_COMPANION_REQUESTS_PER_CLIENT_SESSION,
+            ..
+        }
+    ));
+
+    for request in requests {
+        request.abort();
+        let _ = request.await;
+    }
+}
+
+#[tokio::test]
+async fn companion_requests_have_a_separate_per_device_limit() {
+    let relay = ConnectorRelay::default();
+    let (outbound, mut inbound) = mpsc::channel(16);
+    relay
+        .register_session(
+            "device-1".to_string(),
+            "owner-1".to_string(),
+            "session-1".to_string(),
+            outbound,
+        )
+        .await;
+
+    let mut requests = Vec::new();
+    for index in 0..MAX_PENDING_COMPANION_REQUESTS_PER_DEVICE {
+        let relay = relay.clone();
+        requests.push(tokio::spawn(async move {
+            relay
+                .dispatch_companion(
+                    relay_request(format!("device-companion-{index}").as_str()),
+                    Duration::from_secs(30),
+                    format!("mobile-session-{index}").as_str(),
+                )
+                .await
+        }));
+        inbound.recv().await.expect("companion relay request");
+    }
+
+    let error = relay
+        .dispatch_companion(
+            relay_request("device-companion-over-limit"),
+            Duration::from_secs(30),
+            "another-mobile-session",
+        )
+        .await
+        .expect_err("ninth companion request for one device must be rejected");
+    assert!(matches!(
+        error,
+        RelayError::TooManyPendingRequests {
+            limit: MAX_PENDING_COMPANION_REQUESTS_PER_DEVICE,
+            ..
+        }
+    ));
+
+    for request in requests {
+        request.abort();
+        let _ = request.await;
+    }
+}
+
+#[tokio::test]
+async fn pending_reaper_removes_expired_requests() {
+    let relay = ConnectorRelay::default();
+    let receiver = relay
+        .insert_pending_request(
+            "expired-request",
+            RelaySessionIdentity {
+                owner_user_id: "owner-1".to_string(),
+                device_id: "device-1".to_string(),
+                session_id: "session-1".to_string(),
+            },
+            PendingRelayClass::General,
+            Instant::now(),
+        )
+        .await
+        .expect("insert expired request");
+    assert_eq!(relay.stats().await.pending_relay_requests, 1);
+
+    assert_eq!(relay.reap_expired_pending().await, 1);
+    assert_eq!(relay.stats().await.pending_relay_requests, 0);
+    assert!(receiver.await.is_err());
+}
+
+#[tokio::test]
 async fn oversized_terminal_event_is_rewritten_to_terminal_error() {
     let relay = ConnectorRelay::new(
         None,

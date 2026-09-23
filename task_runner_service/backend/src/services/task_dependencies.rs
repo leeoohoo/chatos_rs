@@ -5,8 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::auth::CurrentUser;
 use crate::models::{
-    normalize_project_id, now_rfc3339, TaskDependencyGraph, TaskRecord, TaskStatus,
-    TaskSummaryRecord,
+    normalize_project_id, TaskDependencyGraph, TaskRecord, TaskStatus, TaskSummaryRecord,
 };
 
 use super::batch_ops::normalize_prerequisite_task_ids;
@@ -30,18 +29,22 @@ impl TaskService {
         prerequisite_task_ids: Vec<String>,
         current_user: Option<&CurrentUser>,
     ) -> Result<Option<TaskRecord>, String> {
-        let Some(mut task) = self.store.get_task(id).await? else {
+        let Some(task) = self.store.get_task(id).await? else {
             return Ok(None);
         };
         let prerequisite_task_ids = normalize_prerequisite_task_ids(prerequisite_task_ids);
-        self.validate_task_prerequisites(id, &prerequisite_task_ids, current_user)
-            .await?;
-        self.store
-            .set_task_prerequisites(id, prerequisite_task_ids.clone())
-            .await?;
-        task.prerequisite_task_ids = prerequisite_task_ids;
-        task.updated_at = now_rfc3339();
-        let saved = self.store.save_task(task).await?;
+        self.validate_and_set_task_prerequisites(
+            id,
+            &prerequisite_task_ids,
+            current_user,
+            task.project_id.as_deref(),
+        )
+        .await?;
+        let saved = self
+            .store
+            .get_task(id)
+            .await?
+            .ok_or_else(|| format!("任务不存在: {id}"))?;
         self.hydrate_task_prerequisites(saved).await.map(Some)
     }
 
@@ -116,19 +119,71 @@ impl TaskService {
             .collect())
     }
 
-    pub(super) async fn validate_task_prerequisites(
+    pub(super) async fn validate_and_set_task_prerequisites(
         &self,
         task_id: &str,
         prerequisite_task_ids: &[String],
         current_user: Option<&CurrentUser>,
+        expected_project_id: Option<&str>,
     ) -> Result<(), String> {
-        self.validate_task_prerequisites_for_project(
-            task_id,
-            prerequisite_task_ids,
-            current_user,
-            None,
-        )
-        .await
+        const MAX_GRAPH_UPDATE_ATTEMPTS: usize = 8;
+
+        for _ in 0..MAX_GRAPH_UPDATE_ATTEMPTS {
+            let revision = self.store.dependency_graph_revision().await?;
+            self.validate_task_prerequisites_for_project(
+                task_id,
+                prerequisite_task_ids,
+                current_user,
+                expected_project_id,
+            )
+            .await?;
+            if self
+                .store
+                .set_task_prerequisites_if_revision(
+                    task_id,
+                    prerequisite_task_ids.to_vec(),
+                    revision,
+                )
+                .await?
+                .is_some()
+            {
+                return Ok(());
+            }
+        }
+        Err("前置任务图正在被并发修改，请稍后重试".to_string())
+    }
+
+    pub(super) async fn validate_and_save_task_with_prerequisites(
+        &self,
+        mut task: TaskRecord,
+        prerequisite_task_ids: &[String],
+        current_user: Option<&CurrentUser>,
+    ) -> Result<TaskRecord, String> {
+        const MAX_GRAPH_UPDATE_ATTEMPTS: usize = 8;
+
+        for _ in 0..MAX_GRAPH_UPDATE_ATTEMPTS {
+            let revision = self.store.dependency_graph_revision().await?;
+            self.validate_task_prerequisites_for_project(
+                task.id.as_str(),
+                prerequisite_task_ids,
+                current_user,
+                task.project_id.as_deref(),
+            )
+            .await?;
+            task.prerequisite_task_ids = prerequisite_task_ids.to_vec();
+            if let Some(saved) = self
+                .store
+                .save_task_and_set_prerequisites_if_revision(
+                    task.clone(),
+                    prerequisite_task_ids.to_vec(),
+                    revision,
+                )
+                .await?
+            {
+                return Ok(saved);
+            }
+        }
+        Err("前置任务图正在被并发修改，请稍后重试".to_string())
     }
 
     pub(super) async fn validate_task_prerequisites_for_project(

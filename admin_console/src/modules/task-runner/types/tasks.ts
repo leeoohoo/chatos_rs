@@ -265,6 +265,8 @@ export interface TaskListFilters {
   include_subtasks?: boolean;
   source_run_id?: string;
   task_profile?: TaskProfile;
+  after_updated_at?: string;
+  after_id?: string;
   limit?: number;
   offset?: number;
 }

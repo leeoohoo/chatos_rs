@@ -56,6 +56,18 @@ actor StoryAgentSession {
         return outcome
     }
 
+    /// Completion is a domain invariant, not a model decision. The shared runtime calls this
+    /// between tool batches so a fully valid draft can finish even if the model forgets to call
+    /// the explicit terminal tool.
+    func validatedCompletion() -> String? {
+        do {
+            try StoryAgentTools.validateCompletion(state)
+            return "本阶段规划完成，已通过客户端校验。"
+        } catch {
+            return nil
+        }
+    }
+
     func record(_ checkpoint: AgentRunCheckpoint, event: AgentRunEvent) async throws {
         guard checkpoint.id == state.id, checkpoint.scope == state.checkpoint.scope else { throw StoryAgentError.invalidRun }
         state.checkpoint = checkpoint

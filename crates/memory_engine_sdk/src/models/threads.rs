@@ -66,6 +66,9 @@ pub struct SdkListThreadsRequest {
     pub mapping_version: Option<String>,
     pub thread_label: Option<String>,
     pub status: Option<String>,
+    pub before_updated_at: Option<String>,
+    pub before_created_at: Option<String>,
+    pub before_id: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }

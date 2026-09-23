@@ -248,9 +248,8 @@ impl TaskService {
         );
         task.validate_project_context()?;
         self.ensure_task_thread(&task).await?;
-        let saved = self.store.save_task(task).await?;
-        self.store
-            .set_task_prerequisites(&id, prerequisite_task_ids)
+        let saved = self
+            .validate_and_save_task_with_prerequisites(task, &prerequisite_task_ids, creator)
             .await?;
         let hydrated = self.hydrate_task_prerequisites(saved).await?;
         Ok(hydrated)
@@ -266,7 +265,6 @@ mod tests {
         tests::snapshot, ProjectContextAuthorizer,
     };
     use chatos_mcp_management_sdk::{ClientProjectContextSnapshot, ProjectContextAuthorization};
-    use mongodb::bson;
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 
@@ -293,7 +291,6 @@ mod tests {
             worker_id: "test-worker".to_string(),
             worker_claim_ttl: Duration::from_millis(120_000),
             worker_concurrency: 4,
-            auto_memory_summary: false,
             default_task_execution_max_iterations: 1,
             default_tool_result_model_max_chars: 1000,
             default_tool_results_model_total_max_chars: 2000,
@@ -385,9 +382,6 @@ mod tests {
         assert_eq!(stored.project_context, task.project_context);
         let json = serde_json::to_value(&stored).unwrap();
         let decoded: TaskRecord = serde_json::from_value(json).unwrap();
-        assert_eq!(decoded.project_context, task.project_context);
-        let bson = bson::to_document(&stored).unwrap();
-        let decoded: TaskRecord = bson::from_document(bson).unwrap();
         assert_eq!(decoded.project_context, task.project_context);
     }
 

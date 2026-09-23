@@ -25,10 +25,6 @@ impl SystemAgentDefinition for CommandApprovalAgent {
         "local_connector_client"
     }
 
-    fn context_overflow_trigger(&self) -> &'static str {
-        "local_connector_command_approval_context_overflow"
-    }
-
     fn default_temperature(&self) -> Option<f64> {
         Some(0.0)
     }

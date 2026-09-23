@@ -10,6 +10,7 @@ DEPLOY_SERVER="${CHATOS_DEPLOY_SERVER:-root@8.155.171.124}"
 REMOTE_DEPLOY_ROOT="${CHATOS_DEPLOY_ROOT:-/opt/chatos-deploy}"
 ADMIN_AUTH_BASE_URL="${CHATOS_ADMIN_AUTH_BASE_URL:-https://admin.jgoool.com/api/admin/user-service}"
 PLUGIN_API_BASE_URL="${CHATOS_PLUGIN_API_BASE_URL:-https://admin.jgoool.com/api/admin/plugin-management}"
+PLUGIN_MARKETPLACE_ID="${CHATOS_PLUGIN_MARKETPLACE_ID:-chatos-marketplace}"
 ADMIN_USERNAME="${CHATOS_DEPLOY_ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${CHATOS_DEPLOY_ADMIN_PASSWORD:-}"
 DEPLOY_TMP=""
@@ -42,7 +43,7 @@ usage() {
   cat <<'EOF'
 Usage:
   scripts/deploy-online.sh                    # interactive menu
-  scripts/deploy-online.sh all                # cloud services + all six Plugins
+  scripts/deploy-online.sh all                # cloud services + all maintained Plugins
   scripts/deploy-online.sh cloud              # all cloud services
   scripts/deploy-online.sh cloud-backends     # all backend services
   scripts/deploy-online.sh cloud-frontends    # all frontend services
@@ -54,7 +55,7 @@ Usage:
   scripts/deploy-online.sh plugin document
   scripts/deploy-online.sh plugin diagram-studio
   scripts/deploy-online.sh plugin web-design-studio
-  scripts/deploy-online.sh plugin project-management
+  scripts/deploy-online.sh plugin solution-studio
   scripts/deploy-online.sh plugin browser computer-use
   scripts/deploy-online.sh client mac
   scripts/deploy-online.sh client windows
@@ -71,6 +72,9 @@ Environment:
   CHATOS_DEPLOY_ADMIN_PASSWORD Plugin administrator password; prompts when omitted
   CHATOS_ADMIN_AUTH_BASE_URL    Unified admin User Service gateway prefix
   CHATOS_PLUGIN_API_BASE_URL    Unified admin Plugin Management gateway prefix
+  CHATOS_PLUGIN_MARKETPLACE_ID  Plugin marketplace ID (default: chatos-marketplace)
+  CHATOS_DEPLOY_WECHAT_DEVELOPMENT_LOGIN_ENABLED
+                                Set true/false to update the server-side Mini Program test-login switch
 EOF
 }
 
@@ -175,6 +179,29 @@ plugin_admin_token() {
     | jq -er '.token'
 }
 
+ensure_plugin_marketplace() {
+  local token marketplaces existing
+  token="$(plugin_admin_token)"
+  marketplaces="$(curl --fail-with-body --silent --show-error \
+    -H "authorization: Bearer $token" \
+    "$PLUGIN_API_BASE_URL/admin/plugin-marketplaces")"
+  existing="$(jq -c --arg id "$PLUGIN_MARKETPLACE_ID" '.items[]? | select(.id == $id)' <<< "$marketplaces")"
+  if [[ -n "$existing" ]]; then
+    if [[ "$(jq -r '.enabled and .source_kind == "admin_registry" and .trust_level == "trusted"' <<< "$existing")" != "true" ]]; then
+      echo "[ERROR] Plugin marketplace $PLUGIN_MARKETPLACE_ID exists but is not an enabled trusted admin registry" >&2
+      exit 1
+    fi
+    return
+  fi
+
+  echo "[INFO] creating Plugin marketplace $PLUGIN_MARKETPLACE_ID"
+  curl --fail-with-body --silent --show-error \
+    -H "authorization: Bearer $token" \
+    -H 'content-type: application/json' \
+    --data "$(jq -nc --arg id "$PLUGIN_MARKETPLACE_ID" '{id:$id,name:$id,source_kind:"admin_registry",catalog_url:null,enabled:true,trust_level:"trusted",trusted_signing_keys:[]}')" \
+    "$PLUGIN_API_BASE_URL/admin/plugin-marketplaces" >/dev/null
+}
+
 ensure_deploy_tmp() {
   if [[ -z "$DEPLOY_TMP" ]]; then
     DEPLOY_TMP="$(mktemp -d "${TMPDIR:-/tmp}/chatos-online-deploy.XXXXXX")"
@@ -229,10 +256,10 @@ build_plugin_artifact() {
       artifact_name="$(cd "$ROOT_DIR/plugins/web-design-studio" && npm pack --pack-destination "$DEPLOY_TMP" | tail -n 1)"
       printf '%s\n' "$DEPLOY_TMP/$artifact_name"
       ;;
-    project-management)
-      echo "[INFO] verifying and building Project Management Plugin"
-      npm --prefix "$ROOT_DIR/plugins/project-management" run pack:verify >&2
-      artifact_name="$(cd "$ROOT_DIR/plugins/project-management" && npm pack --pack-destination "$DEPLOY_TMP" | tail -n 1)"
+    solution-studio)
+      echo "[INFO] verifying and building Solution Studio Plugin"
+      npm --prefix "$ROOT_DIR/plugins/solution-studio" run pack:verify >&2
+      artifact_name="$(cd "$ROOT_DIR/plugins/solution-studio" && npm pack --pack-destination "$DEPLOY_TMP" | tail -n 1)"
       printf '%s\n' "$DEPLOY_TMP/$artifact_name"
       ;;
     *)
@@ -244,7 +271,7 @@ build_plugin_artifact() {
 
 plugin_publisher_json() {
   case "$1" in
-    browser|document|diagram-studio|web-design-studio|project-management)
+    browser|document|diagram-studio|web-design-studio|solution-studio)
       jq -nc '{id:"chatos",name:"Chatos",website:"https://github.com/chatos-ai"}'
       ;;
     computer-use)
@@ -317,7 +344,8 @@ publish_plugin() {
         --arg publisher_website "$publisher_website" \
         --arg license_id "$license" \
         --arg license_url "$license_url" \
-        '{artifact_sha256:$artifact_sha256,marketplace_id:"chatos-marketplace",publisher_id:$publisher_id,publisher_name:$publisher_name,publisher_website:$publisher_website,license_id:$license_id,license_url:(if $license_url == "" then null else $license_url end),redistributable:true,visibility:"public",featured:true,release_channel:"stable"}')" \
+        --arg marketplace_id "$PLUGIN_MARKETPLACE_ID" \
+        '{artifact_sha256:$artifact_sha256,marketplace_id:$marketplace_id,publisher_id:$publisher_id,publisher_name:$publisher_name,publisher_website:$publisher_website,license_id:$license_id,license_url:(if $license_url == "" then null else $license_url end),redistributable:true,visibility:"public",featured:true,release_channel:"stable"}')" \
       "$PLUGIN_API_BASE_URL/admin/plugin-package/publish" >/dev/null
     catalog_response="$(curl --fail-with-body --silent --show-error \
       -H "authorization: Bearer $token" \
@@ -341,7 +369,7 @@ deploy_plugins() {
   local plugins=("$@")
   local plugin
   if [[ ${#plugins[@]} -eq 0 ]]; then
-    echo "[ERROR] expected Plugin: all, browser, computer-use, document, diagram-studio, web-design-studio, or project-management" >&2
+    echo "[ERROR] expected Plugin: all, browser, computer-use, document, diagram-studio, web-design-studio, or solution-studio" >&2
     exit 2
   fi
   if [[ "${plugins[0]}" == "all" ]]; then
@@ -349,11 +377,11 @@ deploy_plugins() {
       echo "[ERROR] Plugin 'all' cannot be combined with individual Plugins" >&2
       exit 2
     fi
-    plugins=(browser computer-use document diagram-studio web-design-studio project-management)
+    plugins=(browser computer-use document diagram-studio web-design-studio solution-studio)
   fi
   for plugin in "${plugins[@]}"; do
     case "$plugin" in
-      browser|computer-use|document|diagram-studio|web-design-studio|project-management) ;;
+      browser|computer-use|document|diagram-studio|web-design-studio|solution-studio) ;;
       *)
         echo "[ERROR] unknown Plugin: $plugin" >&2
         exit 2
@@ -361,6 +389,7 @@ deploy_plugins() {
     esac
   done
   ensure_plugin_admin_password
+  ensure_plugin_marketplace
   for plugin in "${plugins[@]}"; do
     publish_plugin "$plugin"
   done
@@ -398,7 +427,7 @@ Plugins:
   document
   diagram-studio
   web-design-studio
-  project-management
+  solution-studio
 Clients:
   mac
   windows
@@ -408,7 +437,7 @@ EOF
 interactive_menu() {
   cat <<'EOF'
 ChatOS online deployment
-  1) Deploy everything online (cloud + six Plugins)
+  1) Deploy everything online (cloud + all maintained Plugins)
   2) Deploy all cloud services
   3) Deploy all backend services
   4) Deploy selected cloud service(s)
@@ -419,7 +448,7 @@ ChatOS online deployment
  9) Deploy Document Tools
  10) Deploy Diagram Studio
  11) Deploy Web Design Studio
- 12) Deploy Project Management
+ 12) Deploy Solution Studio
  13) Show deployment status
  14) Follow deployment logs
 EOF
@@ -441,7 +470,7 @@ EOF
     9) set -- plugin document ;;
     10) set -- plugin diagram-studio ;;
     11) set -- plugin web-design-studio ;;
-    12) set -- plugin project-management ;;
+    12) set -- plugin solution-studio ;;
     13) set -- status ;;
     14)
       read -r -p "Service name (empty for all): " service

@@ -11,23 +11,22 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         let entries = records(scope)
         try await service.sync(entries, reconciling: false)
         let composed = try await service.compose()
-        XCTAssertEqual(composed.recentRecordIDs, entries.map(\.id))
-        let started = try await service.startSummary(reason: "active_context_budget")
-        let status = try await service.summaryStatus(jobID: started.jobID)
-        XCTAssertTrue(status.completed)
+        XCTAssertEqual(composed.recentRecords.map(\.id), entries.map(\.id))
+        XCTAssertEqual(composed.recentRecords.map(\.message), entries.map(\.message))
         let calls = await transport.requests
-        XCTAssertEqual(calls.count, 5)
+        XCTAssertEqual(calls.count, 3)
         XCTAssertEqual(calls.map(\.url.path), [
             "/prefix/api/memory/threads/\(scope.threadID)",
             "/prefix/api/memory/threads/\(scope.threadID)/records/batch-sync",
             "/prefix/api/memory/context/compose",
-            "/prefix/api/memory/threads/\(scope.threadID)/active-summary/run",
-            "/prefix/api/memory/threads/\(scope.threadID)/active-summary/status",
         ])
-        XCTAssertEqual(calls.map(\.method), ["PUT", "PUT", "POST", "POST", "GET"])
+        XCTAssertEqual(calls.map(\.method), ["PUT", "PUT", "POST"])
         XCTAssertTrue(calls.allSatisfy { $0.headers["Authorization"] == "Bearer user-token" })
         XCTAssertFalse(calls.contains { $0.url.path.contains("/api/chatos/") || $0.url.path.contains("/sdk/") || $0.url.path.contains("/api/memory-engine/") })
         XCTAssertFalse(calls.contains { $0.headers.keys.contains { $0.lowercased().hasPrefix("x-memory-") } })
+        let threadBody = try object(calls[0].body)
+        XCTAssertEqual(threadBody["external_thread_id"] as? String, scope.threadID)
+        XCTAssertNotEqual(threadBody["external_thread_id"] as? String, scope.runID.uuidString)
         let body = try object(calls[1].body)
         XCTAssertEqual(body["source_id"] as? String, "chatos")
         XCTAssertEqual(body["tenant_id"] as? String, scope.tenantID)
@@ -36,9 +35,13 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         let firstPayload = try XCTUnwrap(records[0]["structured_payload"] as? [String: Any])
         XCTAssertEqual((firstPayload["tool_calls"] as? [[String: Any]])?.first?["id"] as? String, "call-a")
         XCTAssertEqual((records[1]["structured_payload"] as? [String: Any])?["tool_call_id"] as? String, "call-a")
+        let firstMetadata = try XCTUnwrap(records[0]["metadata"] as? [String: Any])
+        XCTAssertEqual((firstMetadata["responses_output"] as? [[String: Any]])?.first?["type"] as? String, "compaction")
+        XCTAssertEqual((firstMetadata["provider_usage"] as? [String: Any])?["cached_tokens"] as? Int, 7)
         XCTAssertNil(records[0]["summary_status"])
         let policy = try XCTUnwrap(try object(calls[2].body)["policy"] as? [String: Any])
-        XCTAssertEqual(policy["include_subject_memory"] as? Bool, false)
+        XCTAssertEqual(policy["include_subject_memory"] as? Bool, true)
+        XCTAssertEqual(try object(calls[2].body)["subject_id"] as? String, scope.subjectID)
         XCTAssertNil(policy["recent_record_limit"], "Do not silently drop unsummarized records")
         XCTAssertFalse(calls.contains { String(decoding: $0.body ?? Data(), as: UTF8.self).contains("user-token") })
     }
@@ -53,6 +56,66 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertEqual(requests.filter { $0.method == "PUT" }.count, 1)
         XCTAssertEqual(requests.filter { $0.method == "GET" }.count, 2)
         XCTAssertTrue(requests.dropFirst().allSatisfy { $0.url.query?.contains("thread_id=") == true })
+    }
+
+    func testStableManagerThreadCanFlushRecordsCreatedByAnEarlierRun() async throws {
+        let agentID = "manager-agent"
+        let earlier = try AgentMemoryScope(
+            tenantID: "user/a?&b",
+            agentID: agentID,
+            projectID: "project-a",
+            runID: UUID(),
+            runtimeScope: "manager:earlier"
+        )
+        let current = try AgentMemoryScope(
+            tenantID: "user/a?&b",
+            agentID: agentID,
+            projectID: "project-b",
+            runID: UUID(),
+            runtimeScope: "manager:current"
+        )
+        XCTAssertEqual(earlier.threadID, current.threadID)
+        let transport = MemoryTransport(
+            scope: current,
+            refreshToken: false,
+            foreignTenant: false,
+            statusCode: 200,
+            summaryError: nil
+        )
+        let client = ChatOSAPIClient(
+            configuration: .init(baseURL: URL(string: "https://app.example/prefix/api/chatos")!),
+            accessToken: "user-token",
+            transport: transport
+        )
+        let service = try await ChatOSMemoryEngineService(client: client, scope: current)
+
+        try await service.sync(records(earlier), reconciling: false)
+
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertTrue(requests[0].url.path.hasSuffix("/records/batch-sync"))
+    }
+
+    func testRunScopedThreadRejectsRecordsCreatedByAnotherRun() async throws {
+        let (scope, transport, client) = try fixture()
+        let other = try AgentMemoryScope(
+            tenantID: scope.tenantID,
+            profile: "story",
+            projectID: UUID(),
+            runID: UUID(),
+            runtimeScope: scope.runtimeScope
+        )
+        let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
+
+        do {
+            try await service.sync(records(other), reconciling: false)
+            XCTFail("Run-scoped Memory must reject records from another run")
+        } catch AgentContextError.invalidHistory {
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        let requests = await transport.requests
+        XCTAssertTrue(requests.isEmpty)
     }
 
     func testIncompleteOrChangedReconciliationDoesNotWrite() async throws {
@@ -109,15 +172,23 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertEqual(count, 0)
     }
 
-    private func fixture(refreshToken: Bool = false, foreignTenant: Bool = false, statusCode: Int = 200) throws -> (AgentMemoryScope, MemoryTransport, ChatOSAPIClient) {
+    private func fixture(refreshToken: Bool = false, foreignTenant: Bool = false, statusCode: Int = 200,
+                         summaryError: String? = nil) throws -> (AgentMemoryScope, MemoryTransport, ChatOSAPIClient) {
         let scope = try AgentMemoryScope(tenantID: "user/a?&b", profile: "story", projectID: UUID(), runID: UUID(), runtimeScope: "story:v1")
-        let transport = MemoryTransport(scope: scope, refreshToken: refreshToken, foreignTenant: foreignTenant, statusCode: statusCode)
+        let transport = MemoryTransport(scope: scope, refreshToken: refreshToken, foreignTenant: foreignTenant,
+                                        statusCode: statusCode, summaryError: summaryError)
         let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://app.example/prefix/api/chatos")!), accessToken: "user-token", transport: transport)
         return (scope, transport, client)
     }
     private func records(_ scope: AgentMemoryScope) -> [AgentMemoryEntry] {
-        let messages: [AgentMessage] = [.init(role: .assistant, toolCalls: [.init(id: "call-a", name: "work", arguments: "{}")]),
-                                        .init(role: .tool, content: "done", toolCallID: "call-a")]
+        let messages: [AgentMessage] = [
+            .init(
+                role: .assistant, content: "", toolCalls: [.init(id: "call-a", name: "work", arguments: "{}")],
+                responseOutputJSON: Data(#"[{"type":"compaction"}]"#.utf8),
+                usage: .init(inputTokens: 11, cachedTokens: 7, outputTokens: 3, requests: 1)
+            ),
+            .init(role: .tool, content: "done", toolCallID: "call-a"),
+        ]
         return messages.enumerated().map { .init(id: scope.recordID(at: $0.offset), index: $0.offset, message: $0.element,
                                                 createdAt: Date(timeIntervalSince1970: 1_700_000_000 + Double($0.offset) / 1_000)) }
     }
@@ -131,10 +202,13 @@ private actor MemoryTransport: HTTPTransport {
     let refreshToken: Bool
     let foreignTenant: Bool
     let statusCode: Int
+    let summaryError: String?
     var requests: [HTTPRequest] = []
     var stored: [[String: Any]] = []
-    init(scope: AgentMemoryScope, refreshToken: Bool, foreignTenant: Bool, statusCode: Int) {
-        self.scope = scope; self.refreshToken = refreshToken; self.foreignTenant = foreignTenant; self.statusCode = statusCode
+    init(scope: AgentMemoryScope, refreshToken: Bool, foreignTenant: Bool, statusCode: Int,
+         summaryError: String?) {
+        self.scope = scope; self.refreshToken = refreshToken; self.foreignTenant = foreignTenant
+        self.statusCode = statusCode; self.summaryError = summaryError
     }
     func send(_ request: HTTPRequest) throws -> HTTPResponse {
         requests.append(request)
@@ -154,8 +228,10 @@ private actor MemoryTransport: HTTPTransport {
             result = ["thread_id": scope.threadID, "blocks": [], "recent_records": stored,
                       "meta": ["summary_count": 0, "recent_record_count": stored.count]]
         } else if path.contains("/active-summary/") {
-            result = ["thread_id": scope.threadID, "job_run_id": "job/a?b", "running": false,
-                      "completed": true, "failed": false, "compacted": true]
+            result = ["thread_id": scope.threadID, "job_run_id": "job/a?b", "accepted": true, "running": false,
+                      "completed": summaryError == nil, "failed": summaryError != nil,
+                      "generated": summaryError == nil, "compacted": summaryError == nil,
+                      "error_message": summaryError as Any? ?? NSNull()]
         } else if path.contains("/records/") {
             result = ["item": stored.first { $0["id"] as? String == request.url.lastPathComponent } as Any? ?? NSNull()]
         } else {

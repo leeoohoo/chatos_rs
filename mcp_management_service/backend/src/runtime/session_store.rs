@@ -3,7 +3,6 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
@@ -12,10 +11,7 @@ use chatos_mcp_management_sdk::{
     RuntimeSessionRoutesResponse, RuntimeToolDescriptor, RuntimeWorkspaceRouteTarget,
     WorkspaceProviderKind,
 };
-use futures_util::TryStreamExt;
-use mongodb::bson::{doc, spec::BinarySubtype, Binary, DateTime};
-use mongodb::options::{IndexOptions, ReplaceOptions};
-use mongodb::{Client, Collection, IndexModel};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
@@ -31,8 +27,8 @@ mod cache;
 use self::cache::cache_snapshot_with_limits;
 pub use self::cache::RuntimeSessionCacheLimits;
 use self::cache::{
-    cache_snapshot, cache_snapshot_arc, estimate_snapshot_cache_bytes, saturating_u64_to_usize,
-    summarize_snapshot_sizes, RuntimeSessionCache,
+    cache_snapshot, cache_snapshot_arc, estimate_snapshot_cache_bytes, summarize_snapshot_sizes,
+    RuntimeSessionCache,
 };
 const SNAPSHOT_SCHEMA_VERSION: i32 = 12;
 const SNAPSHOT_NONCE_BYTES: usize = 12;
@@ -80,6 +76,7 @@ pub struct RuntimeSessionSnapshot {
     pub agent_key: String,
     pub task_profile: Option<String>,
     pub project_id: Option<String>,
+    pub client_project_context: Option<chatos_mcp_management_sdk::ClientProjectContextSnapshot>,
     pub device_id: Option<String>,
     pub run_id: Option<String>,
     pub execution_group_id: Option<String>,
@@ -173,27 +170,26 @@ pub struct RuntimeSessionStoreStats {
 
 enum RuntimeSessionStoreBackend {
     Memory(RwLock<HashMap<String, Arc<RuntimeSessionSnapshot>>>),
-    Mongo(MongoRuntimeSessionStore),
+    Postgres(PostgresRuntimeSessionStore),
 }
 
-struct MongoRuntimeSessionStore {
-    collection: Collection<StoredRuntimeSessionDocument>,
+struct PostgresRuntimeSessionStore {
+    pool: chatos_postgres::PgPool,
     cipher: SnapshotCipher,
     cache_limits: RuntimeSessionCacheLimits,
     cache: RwLock<RuntimeSessionCache>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 struct StoredRuntimeSessionDocument {
-    #[serde(rename = "_id")]
     session_id: String,
     schema_version: i32,
-    expires_at: DateTime,
+    expires_at: DateTime<Utc>,
     expires_at_unix: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     execution_scope_hash: Option<String>,
-    nonce: Binary,
-    encrypted_snapshot: Binary,
+    nonce: Vec<u8>,
+    encrypted_snapshot: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,6 +206,7 @@ struct PersistedRuntimeSessionSnapshot {
     task_profile: Option<String>,
     #[serde(default)]
     project_id: Option<String>,
+    client_project_context: Option<chatos_mcp_management_sdk::ClientProjectContextSnapshot>,
     device_id: Option<String>,
     run_id: Option<String>,
     #[serde(default)]
@@ -270,33 +267,19 @@ impl RuntimeSessionStore {
         encryption_secret: &str,
         cache_limits: RuntimeSessionCacheLimits,
     ) -> Result<Self, String> {
-        let client = Client::with_uri_str(database_url)
-            .await
-            .map_err(|error| format!("connect MCP Management MongoDB failed: {error}"))?;
-        let database = client.default_database().ok_or_else(|| {
-            "MCP_MANAGEMENT_DATABASE_URL must include a MongoDB database name".to_string()
-        })?;
-        let collection = database
-            .collection::<StoredRuntimeSessionDocument>("mcp_management_runtime_session_snapshots");
-        collection
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! { "expires_at": 1 })
-                    .options(
-                        IndexOptions::builder()
-                            .name("runtime_session_expiry_ttl".to_string())
-                            .expire_after(Some(Duration::from_secs(0)))
-                            .build(),
-                    )
-                    .build(),
-                None,
-            )
-            .await
-            .map_err(|error| format!("initialize Runtime Session TTL index failed: {error}"))?;
+        let pool = crate::postgres::connect(database_url).await?;
+        Self::from_pool(pool, encryption_secret, cache_limits)
+    }
+
+    pub(crate) fn from_pool(
+        pool: chatos_postgres::PgPool,
+        encryption_secret: &str,
+        cache_limits: RuntimeSessionCacheLimits,
+    ) -> Result<Self, String> {
         Ok(Self {
-            backend: Arc::new(RuntimeSessionStoreBackend::Mongo(
-                MongoRuntimeSessionStore {
-                    collection,
+            backend: Arc::new(RuntimeSessionStoreBackend::Postgres(
+                PostgresRuntimeSessionStore {
+                    pool,
                     cipher: SnapshotCipher::new(encryption_secret)?,
                     cache_limits,
                     cache: RwLock::new(RuntimeSessionCache::default()),
@@ -314,19 +297,28 @@ impl RuntimeSessionStore {
                 sessions.insert(snapshot.session_id.clone(), Arc::new(snapshot));
                 Ok(())
             }
-            RuntimeSessionStoreBackend::Mongo(store) => {
+            RuntimeSessionStoreBackend::Postgres(store) => {
                 if snapshot.expires_at_unix <= chrono::Utc::now().timestamp() {
                     return Err("cannot persist an expired Runtime Session Snapshot".to_string());
                 }
                 let document = store.cipher.encrypt(&snapshot)?;
                 let envelope_digest = document.envelope_digest();
-                store
-                    .collection
-                    .replace_one(
-                        doc! { "_id": snapshot.session_id.as_str() },
-                        document,
-                        ReplaceOptions::builder().upsert(true).build(),
-                    )
+                sqlx::query(
+                    "INSERT INTO mcp_management_runtime_session_snapshots \
+                     (session_id,schema_version,expires_at,expires_at_unix,execution_scope_hash,nonce,encrypted_snapshot,updated_at) \
+                     VALUES($1,$2,$3,$4,$5,$6,$7,now()) ON CONFLICT(session_id) DO UPDATE SET \
+                     schema_version=EXCLUDED.schema_version,expires_at=EXCLUDED.expires_at, \
+                     expires_at_unix=EXCLUDED.expires_at_unix,execution_scope_hash=EXCLUDED.execution_scope_hash, \
+                     nonce=EXCLUDED.nonce,encrypted_snapshot=EXCLUDED.encrypted_snapshot,updated_at=now()",
+                )
+                    .bind(&document.session_id)
+                    .bind(document.schema_version)
+                    .bind(document.expires_at)
+                    .bind(document.expires_at_unix)
+                    .bind(&document.execution_scope_hash)
+                    .bind(&document.nonce)
+                    .bind(&document.encrypted_snapshot)
+                    .execute(&store.pool)
                     .await
                     .map_err(|error| format!("persist Runtime Session Snapshot failed: {error}"))?;
                 let mut cache = store.cache.write().await;
@@ -347,27 +339,20 @@ impl RuntimeSessionStore {
                 sessions.retain(|_, value| value.expires_at_unix > now);
                 Ok(sessions.get(session_id).cloned())
             }
-            RuntimeSessionStoreBackend::Mongo(store) => {
-                let document = store
-                    .collection
-                    .find_one(doc! { "_id": session_id }, None)
+            RuntimeSessionStoreBackend::Postgres(store) => {
+                let document = sqlx::query_as::<_, StoredRuntimeSessionDocument>(
+                    "SELECT session_id,schema_version,expires_at,expires_at_unix,execution_scope_hash,nonce,encrypted_snapshot \
+                     FROM mcp_management_runtime_session_snapshots WHERE session_id=$1 AND expires_at_unix>$2",
+                )
+                    .bind(session_id)
+                    .bind(chrono::Utc::now().timestamp())
+                    .fetch_optional(&store.pool)
                     .await
                     .map_err(|error| format!("load Runtime Session Snapshot failed: {error}"))?;
                 let Some(document) = document else {
                     store.cache.write().await.remove(session_id);
                     return Ok(None);
                 };
-                if document.expires_at_unix <= chrono::Utc::now().timestamp() {
-                    store
-                        .collection
-                        .delete_one(doc! { "_id": session_id }, None)
-                        .await
-                        .map_err(|error| {
-                            format!("remove expired Runtime Session Snapshot failed: {error}")
-                        })?;
-                    store.cache.write().await.remove(session_id);
-                    return Ok(None);
-                }
                 let envelope_digest = document.envelope_digest();
                 {
                     let mut cache = store.cache.write().await;
@@ -401,11 +386,14 @@ impl RuntimeSessionStore {
             RuntimeSessionStoreBackend::Memory(sessions) => {
                 Ok(sessions.write().await.remove(session_id))
             }
-            RuntimeSessionStoreBackend::Mongo(store) => {
+            RuntimeSessionStoreBackend::Postgres(store) => {
                 let cached = store.cache.write().await.remove(session_id);
-                let document = store
-                    .collection
-                    .find_one_and_delete(doc! { "_id": session_id }, None)
+                let document = sqlx::query_as::<_, StoredRuntimeSessionDocument>(
+                    "DELETE FROM mcp_management_runtime_session_snapshots WHERE session_id=$1 \
+                     RETURNING session_id,schema_version,expires_at,expires_at_unix,execution_scope_hash,nonce,encrypted_snapshot",
+                )
+                    .bind(session_id)
+                    .fetch_optional(&store.pool)
                     .await
                     .map_err(|error| format!("delete Runtime Session Snapshot failed: {error}"))?;
                 let Some(document) = document else {
@@ -443,23 +431,15 @@ impl RuntimeSessionStore {
                 })
                 .map(|snapshot| snapshot.session_id.clone())
                 .collect::<Vec<_>>(),
-            RuntimeSessionStoreBackend::Mongo(store) => store
-                .collection
-                .find(
-                    doc! {
-                        "execution_scope_hash": execution_scope_hash(owner_user_id, project_id, run_id),
-                        "expires_at_unix": { "$gt": chrono::Utc::now().timestamp() },
-                    },
-                    None,
-                )
-                .await
-                .map_err(|error| format!("find Runtime Sessions for terminal run failed: {error}"))?
-                .map_ok(|document| document.session_id)
-                .try_collect::<Vec<_>>()
-                .await
-                .map_err(|error| {
-                    format!("read Runtime Sessions for terminal run failed: {error}")
-                })?,
+            RuntimeSessionStoreBackend::Postgres(store) => sqlx::query_scalar::<_, String>(
+                "SELECT session_id FROM mcp_management_runtime_session_snapshots \
+                 WHERE execution_scope_hash=$1 AND expires_at_unix>$2 ORDER BY session_id",
+            )
+            .bind(execution_scope_hash(owner_user_id, project_id, run_id))
+            .bind(chrono::Utc::now().timestamp())
+            .fetch_all(&store.pool)
+            .await
+            .map_err(|error| format!("find Runtime Sessions for terminal run failed: {error}"))?,
         };
         let mut removed = Vec::new();
         for session_id in candidates {
@@ -497,13 +477,15 @@ impl RuntimeSessionStore {
                     cache_oversized_rejections_total: 0,
                 })
             }
-            RuntimeSessionStoreBackend::Mongo(store) => {
-                let active_session_count = store
-                    .collection
-                    .count_documents(doc! { "expires_at_unix": { "$gt": now } }, None)
+            RuntimeSessionStoreBackend::Postgres(store) => {
+                let active_session_count = sqlx::query_scalar::<_, i64>(
+                    "SELECT count(*) FROM mcp_management_runtime_session_snapshots WHERE expires_at_unix>$1",
+                )
+                    .bind(now)
+                    .fetch_one(&store.pool)
                     .await
                     .map_err(|error| format!("count active Runtime Sessions failed: {error}"))
-                    .map(saturating_u64_to_usize)?;
+                    .and_then(|value| usize::try_from(value).map_err(|_| "active Runtime Session count exceeds usize".to_string()))?;
                 let mut cache = store.cache.write().await;
                 cache.retain_unexpired(now);
                 let snapshot_sizes = cache
@@ -513,7 +495,7 @@ impl RuntimeSessionStore {
                     .collect::<Vec<_>>();
                 let size_stats = summarize_snapshot_sizes(snapshot_sizes.as_slice());
                 Ok(RuntimeSessionStoreStats {
-                    backend: "mongo",
+                    backend: "postgres",
                     active_session_count,
                     cached_session_count: cache.entries.len(),
                     cached_total_bytes: cache.total_bytes,
@@ -540,8 +522,8 @@ impl StoredRuntimeSessionDocument {
         if let Some(scope_hash) = self.execution_scope_hash.as_deref() {
             hasher.update(scope_hash.as_bytes());
         }
-        hasher.update(self.nonce.bytes.as_slice());
-        hasher.update(self.encrypted_snapshot.bytes.as_slice());
+        hasher.update(self.nonce.as_slice());
+        hasher.update(self.encrypted_snapshot.as_slice());
         hasher.finalize().into()
     }
 }
@@ -590,7 +572,8 @@ impl SnapshotCipher {
         Ok(StoredRuntimeSessionDocument {
             session_id: snapshot.session_id.clone(),
             schema_version: SNAPSHOT_SCHEMA_VERSION,
-            expires_at: DateTime::from_millis(snapshot.expires_at_unix.saturating_mul(1_000)),
+            expires_at: DateTime::<Utc>::from_timestamp(snapshot.expires_at_unix, 0)
+                .ok_or_else(|| "Runtime Session expiry is outside timestamp range".to_string())?,
             expires_at_unix: snapshot.expires_at_unix,
             execution_scope_hash: snapshot.run_id.as_deref().map(|run_id| {
                 execution_scope_hash(
@@ -599,14 +582,8 @@ impl SnapshotCipher {
                     run_id,
                 )
             }),
-            nonce: Binary {
-                subtype: BinarySubtype::Generic,
-                bytes: nonce.to_vec(),
-            },
-            encrypted_snapshot: Binary {
-                subtype: BinarySubtype::Generic,
-                bytes: encrypted_snapshot,
-            },
+            nonce: nonce.to_vec(),
+            encrypted_snapshot,
         })
     }
 
@@ -620,18 +597,18 @@ impl SnapshotCipher {
                 document.schema_version
             ));
         }
-        if document.nonce.bytes.len() != SNAPSHOT_NONCE_BYTES {
+        if document.nonce.len() != SNAPSHOT_NONCE_BYTES {
             return Err("Runtime Session Snapshot nonce has an invalid size".to_string());
         }
         let cipher = Aes256Gcm::new_from_slice(&self.key)
             .map_err(|error| format!("initialize Runtime Session cipher failed: {error}"))?;
-        let nonce_ref = Nonce::try_from(document.nonce.bytes.as_slice())
+        let nonce_ref = Nonce::try_from(document.nonce.as_slice())
             .map_err(|error| format!("initialize Runtime Session nonce failed: {error}"))?;
         let plain = cipher
             .decrypt(
                 &nonce_ref,
                 Payload {
-                    msg: document.encrypted_snapshot.bytes.as_slice(),
+                    msg: document.encrypted_snapshot.as_slice(),
                     aad: document.session_id.as_bytes(),
                 },
             )
@@ -680,6 +657,7 @@ impl TryFrom<&RuntimeSessionSnapshot> for PersistedRuntimeSessionSnapshot {
             agent_key: snapshot.agent_key.clone(),
             task_profile: snapshot.task_profile.clone(),
             project_id: snapshot.project_id.clone(),
+            client_project_context: snapshot.client_project_context.clone(),
             device_id: snapshot.device_id.clone(),
             run_id: snapshot.run_id.clone(),
             execution_group_id: snapshot.execution_group_id.clone(),
@@ -728,6 +706,7 @@ impl PersistedRuntimeSessionSnapshot {
             agent_key: self.agent_key,
             task_profile: self.task_profile,
             project_id: self.project_id,
+            client_project_context: self.client_project_context,
             device_id: self.device_id,
             run_id: self.run_id,
             execution_group_id: self.execution_group_id,

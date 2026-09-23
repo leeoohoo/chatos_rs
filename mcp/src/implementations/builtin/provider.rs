@@ -111,6 +111,10 @@ pub fn build_builtin_tool_service_with_dependencies(
                 )?,
             })?,
         )),
+        BuiltinMcpKind::RequirementSurveyRead | BuiltinMcpKind::RequirementSurveyWrite => Err(
+            "Requirement Survey MCP is hosted by the Local Connector and cannot run embedded"
+                .to_string(),
+        ),
         BuiltinMcpKind::TaskManager => Err("TaskManager builtin MCP has been removed".to_string()),
         BuiltinMcpKind::Notepad => Ok(SharedBuiltinToolService::Notepad(
             NotepadBuiltinService::new(NotepadOptions {

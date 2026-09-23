@@ -27,7 +27,8 @@ use super::history_process::find_user_index_by_turn_id;
 
 mod compact;
 
-pub(super) use compact::{get_session_compact_history, get_session_user_message_turns};
+pub(crate) use compact::get_session_compact_history;
+pub(super) use compact::get_session_user_message_turns;
 
 fn annotate_runtime_activity(conversation_id: &str, value: Value) -> Value {
     let mut value = rewrite_session_keys_to_conversation(value);

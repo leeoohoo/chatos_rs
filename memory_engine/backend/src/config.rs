@@ -10,8 +10,7 @@ use chatos_service_runtime::{env_text, parse_bool_text, validate_production_secr
 pub struct AppConfig {
     pub host: String,
     pub port: u16,
-    pub mongodb_uri: String,
-    pub mongodb_database: String,
+    pub database_url: String,
     pub ai_request_timeout_secs: u64,
     pub api_enabled: bool,
     pub worker_enabled: bool,
@@ -24,6 +23,8 @@ pub struct AppConfig {
     pub rabbitmq_url: String,
     pub rabbitmq_exchange: String,
     pub rabbitmq_reconnect_delay: Duration,
+    pub cloud_agent_outbox_reconcile_interval: Duration,
+    pub cloud_agent_outbox_batch_size: i64,
     pub summary_queue: String,
     pub summary_retry_queue: String,
     pub summary_dead_letter_queue: String,
@@ -51,6 +52,8 @@ pub struct AppConfig {
     pub internal_api_secrets: HashMap<String, String>,
     pub require_signed_internal_requests: bool,
     pub user_service_base_url: String,
+    pub user_service_internal_base_url: String,
+    pub user_service_internal_http: reqwest::Client,
     pub user_service_request_timeout_ms: u64,
 }
 
@@ -58,8 +61,7 @@ impl AppConfig {
     pub fn from_env() -> Result<Self, String> {
         let host = required_text("MEMORY_ENGINE_HOST")?;
         let port = required_u16("MEMORY_ENGINE_PORT")?;
-        let mongodb_uri = required_text("MEMORY_ENGINE_MONGODB_URI")?;
-        let mongodb_database = required_text("MEMORY_ENGINE_MONGODB_DATABASE")?;
+        let database_url = required_text("MEMORY_ENGINE_DATABASE_URL")?;
         let ai_request_timeout_secs = required_u64("MEMORY_ENGINE_AI_TIMEOUT_SECS")?.max(5);
         let api_enabled = required_runtime_bool("MEMORY_ENGINE_API_ENABLED")?;
         let worker_enabled = required_managed_bool("MEMORY_ENGINE_WORKER_ENABLED")?;
@@ -79,6 +81,11 @@ impl AppConfig {
         let rabbitmq_reconnect_delay = Duration::from_millis(
             required_u64("MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS")?.max(100),
         );
+        let cloud_agent_outbox_reconcile_interval = Duration::from_millis(
+            required_u64("MEMORY_ENGINE_CLOUD_AGENT_OUTBOX_RECONCILE_MS")?.max(1_000),
+        );
+        let cloud_agent_outbox_batch_size =
+            required_i64("MEMORY_ENGINE_CLOUD_AGENT_OUTBOX_BATCH_SIZE")?.max(1);
         let summary_queue = required_text("MEMORY_ENGINE_SUMMARY_QUEUE")?;
         let summary_retry_queue = required_text("MEMORY_ENGINE_SUMMARY_RETRY_QUEUE")?;
         let summary_dead_letter_queue = required_text("MEMORY_ENGINE_SUMMARY_DEAD_LETTER_QUEUE")?;
@@ -124,13 +131,26 @@ impl AppConfig {
         let rollup_lock_timeout_secs =
             required_i64("MEMORY_ENGINE_ROLLUP_LOCK_TIMEOUT_SECS")?.max(30);
         let user_service_base_url = required_text("MEMORY_ENGINE_USER_SERVICE_BASE_URL")?;
+        let user_service_internal_base_url =
+            required_text("MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL")?;
+        if !user_service_internal_base_url.starts_with("https://") {
+            return Err(
+                "MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL must use https://".to_string(),
+            );
+        }
         let user_service_request_timeout_ms =
             required_u64("MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
+        let user_service_internal_http = chatos_service_runtime::build_mtls_http_client(
+            chatos_service_runtime::HttpClientTimeouts::new(Duration::from_millis(
+                user_service_request_timeout_ms,
+            )),
+            required_runtime_path("USER_SERVICE_MTLS_CA_CERT_PATH")?.as_path(),
+            required_runtime_path("USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
+        )?;
         let config = Self {
             host,
             port,
-            mongodb_uri,
-            mongodb_database,
+            database_url,
             ai_request_timeout_secs,
             api_enabled,
             worker_enabled,
@@ -143,6 +163,8 @@ impl AppConfig {
             rabbitmq_url,
             rabbitmq_exchange,
             rabbitmq_reconnect_delay,
+            cloud_agent_outbox_reconcile_interval,
+            cloud_agent_outbox_batch_size,
             summary_queue,
             summary_retry_queue,
             summary_dead_letter_queue,
@@ -172,6 +194,8 @@ impl AppConfig {
                 "MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS",
             )?,
             user_service_base_url,
+            user_service_internal_base_url,
+            user_service_internal_http,
             user_service_request_timeout_ms,
         };
 
@@ -236,6 +260,12 @@ fn required_managed_bool(key: &str) -> Result<bool, String> {
 fn required_runtime_bool(key: &str) -> Result<bool, String> {
     let value = env_text(key).ok_or_else(|| format!("{key} is required from runtime env"))?;
     parse_bool_text(value.as_str()).ok_or_else(|| format!("invalid {key}: expected true/false"))
+}
+
+fn required_runtime_path(key: &str) -> Result<std::path::PathBuf, String> {
+    env_text(key)
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| format!("{key} is required from runtime env"))
 }
 
 fn required_text(key: &str) -> Result<String, String> {

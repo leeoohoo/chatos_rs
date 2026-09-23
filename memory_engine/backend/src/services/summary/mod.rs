@@ -4,16 +4,11 @@
 use crate::models::{EngineRecord, EngineSummary};
 
 pub(crate) const DEFAULT_PENDING_RECORD_SCAN_LIMIT: i64 = 5000;
-pub(crate) const MAX_THREAD_SUMMARY_INPUT_TOKENS: i64 = 60_000;
 pub(crate) const MAX_THREAD_SUMMARY_TARGET_TOKENS: i64 = 8_000;
-
-pub(crate) fn effective_thread_summary_token_limit(configured: i64) -> i64 {
-    configured.clamp(128, MAX_THREAD_SUMMARY_INPUT_TOKENS)
-}
 
 pub(crate) fn required_thread_summary_token_limit(configured: Option<i64>) -> Result<i64, String> {
     configured
-        .map(effective_thread_summary_token_limit)
+        .map(|value| value.max(128))
         .ok_or_else(|| "summary job policy token_limit is not configured".to_string())
 }
 
@@ -97,16 +92,13 @@ pub(crate) use thread_summary::{fail_cloud_summary_job, resume_cloud_summary_job
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        effective_thread_summary_token_limit, required_thread_summary_token_limit,
-        MAX_THREAD_SUMMARY_INPUT_TOKENS,
-    };
+    use super::required_thread_summary_token_limit;
 
     #[test]
-    fn legacy_250k_policy_cannot_create_a_250k_message_summary_request() {
+    fn summary_policy_preserves_configured_token_limit() {
         assert_eq!(
-            effective_thread_summary_token_limit(250_000),
-            MAX_THREAD_SUMMARY_INPUT_TOKENS
+            required_thread_summary_token_limit(Some(250_000)),
+            Ok(250_000)
         );
     }
 

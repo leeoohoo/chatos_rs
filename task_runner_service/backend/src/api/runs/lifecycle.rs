@@ -111,7 +111,11 @@ pub(in crate::api) async fn list_run_events(
                 )
                 .await
         }
-        (None, None) => state.run_service.list_run_events(&id).await,
+        (None, None) => state
+            .run_service
+            .list_run_events_page(&id, 0, query.limit.unwrap_or(200).clamp(1, 500))
+            .await
+            .map(|(events, _total)| events),
         _ => Err("after_created_at and after_id must be supplied together".to_string()),
     }
     .map_err(ApiError::bad_request)?;

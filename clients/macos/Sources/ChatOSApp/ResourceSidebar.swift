@@ -30,7 +30,7 @@ struct ResourceSidebar: View {
                     loadingRow(model.localized("正在加载项目…", english: "Loading projects…"))
                 }
                 if !model.isWorkspaceLoading && model.projects.isEmpty {
-                    Text("项目保存在本机。可新建项目，或通过“＋”导入已有项目清单。")
+                    Text("项目保存在本机。Git 由本机管理，聊天可在创建后单独准备。")
                         .appFont(.caption).foregroundStyle(.secondary)
                 }
                 ForEach(model.projects) { project in
@@ -79,6 +79,25 @@ struct ResourceSidebar: View {
                     tint: .purple
                 )
                 .tag(SidebarSelection.mediaStudio)
+
+                resourceRow(
+                    title: "Agent",
+                    subtitle: model.localized("私聊与项目团队", english: "Direct messages and project teams"),
+                    systemImage: "person.3.sequence.fill",
+                    tint: .indigo
+                )
+                .tag(SidebarSelection.agentGroupChat)
+
+                resourceRow(
+                    title: model.localized("需求调研", english: "Requirement Surveys"),
+                    subtitle: model.localized(
+                        "需求确认、方案与执行计划",
+                        english: "Requirements, solutions, and execution plans"
+                    ),
+                    systemImage: "list.clipboard.fill",
+                    tint: .orange
+                )
+                .tag(SidebarSelection.requirementSurveys)
             }
 
             Section {
@@ -186,10 +205,6 @@ struct ResourceSidebar: View {
                     Button(model.localized("新建项目", english: "New Project"), systemImage: "folder.badge.plus") {
                         creationSheet = .project
                     }
-                    Button("导入项目清单…", systemImage: "square.and.arrow.down") {
-                        creationSheet = .projectImport
-                    }
-                    Divider()
                     Button(
                         model.localized("新建远端连接", english: "New Remote Connection"),
                         systemImage: "network.badge.shield.half.filled"
@@ -217,15 +232,12 @@ struct ResourceSidebar: View {
                         connectorStatus: model.localConnectorControl.status,
                         filesystemService: model.projectFilesystemService,
                         creationService: creator,
+                        projectTypes: model.agentSkillLibrary.projectTypes(ownerUserID: owner),
                         onCreated: { project in
                             guard owner == model.localProjectOwnerUserID else { return }
                             model.registerCreatedProject(project)
                         }
                     )
-                }
-            case .projectImport:
-                if let owner = model.localProjectOwnerUserID {
-                    LocalProjectImportSheet(ownerUserID: owner)
                 }
             case let .renameProject(id):
                 RenameLocalProjectSheet(projectID: id)
@@ -339,7 +351,6 @@ private enum SidebarProjectDeletionAlert: Identifiable {
 
 private enum ResourceCreationSheet: Identifiable {
     case project
-    case projectImport
     case renameProject(String)
     case createRemoteConnection
     case editRemoteConnection(String)
@@ -347,7 +358,6 @@ private enum ResourceCreationSheet: Identifiable {
     var id: String {
         switch self {
         case .project: "project"
-        case .projectImport: "project-import"
         case let .renameProject(id): "project-rename-\(id)"
         case .createRemoteConnection: "remote-create"
         case let .editRemoteConnection(id): "remote-edit-\(id)"

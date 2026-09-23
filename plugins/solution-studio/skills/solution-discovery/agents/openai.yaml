@@ -1,0 +1,4 @@
+interface:
+  display_name: "Solution Discovery"
+  short_description: "基于项目证据梳理目标、范围与可验收需求"
+  default_prompt: "Use $solution-discovery to turn this brief and project context into structured requirements."

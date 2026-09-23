@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use mongodb::bson::{doc, Bson};
+use sqlx::types::Json;
 use uuid::Uuid;
 
 use crate::db::Db;
 use crate::models::{now_rfc3339, StoredEngineSource, UpsertSourceRequest};
+use crate::repositories::postgres::{decode, json, timestamp};
 
-use super::common::{
-    normalize_optional_text, source_collection, source_filter, tenant_bson, RETIRED_SOURCE_IDS,
-};
+use super::common::{normalize_optional_text, RETIRED_SOURCE_IDS};
 
 pub fn is_retired_source_id(source_id: &str) -> bool {
     RETIRED_SOURCE_IDS
@@ -17,79 +16,91 @@ pub fn is_retired_source_id(source_id: &str) -> bool {
         .any(|candidate| candidate.eq_ignore_ascii_case(source_id.trim()))
 }
 
-fn is_duplicate_source_id_error(message: &str) -> bool {
-    let normalized = message.to_ascii_lowercase();
-    normalized.contains("duplicate key")
-        && normalized.contains("source_id")
-        && normalized.contains("engine_sources")
-}
-
 pub async fn upsert_source(
     db: &Db,
     source_id: &str,
     req: UpsertSourceRequest,
 ) -> Result<StoredEngineSource, String> {
-    let normalized_source_id = source_id.trim();
-    if normalized_source_id.is_empty() {
+    let source_id = source_id.trim();
+    if source_id.is_empty() {
         return Err("source_id is required".to_string());
     }
-    if is_retired_source_id(normalized_source_id) {
-        return Err(format!("source_id {normalized_source_id} is retired"));
+    if is_retired_source_id(source_id) {
+        return Err(format!("source_id {source_id} is retired"));
     }
 
+    let existing = sqlx::query_as::<_, (Json<serde_json::Value>, Option<String>)>(
+        "SELECT data,secret_key_hash FROM engine_sources WHERE source_id=$1",
+    )
+    .bind(source_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|error| error.to_string())?;
     let now = now_rfc3339();
-    let id = format!("src_{}", Uuid::new_v4());
-    let status = req.status.unwrap_or_else(|| "active".to_string());
-    let sdk_enabled = req.sdk_enabled.unwrap_or(true);
-    let tenant_id = normalize_optional_text(req.tenant_id.clone());
-    let filter = source_filter(tenant_id.as_deref(), normalized_source_id);
-    let update = doc! {
-        "$set": {
-            "tenant_id": tenant_bson(tenant_id.as_deref()),
-            "source_id": normalized_source_id,
-            "source_type": &req.source_type,
-            "name": &req.name,
-            "description": mongodb::bson::to_bson(&req.description).unwrap_or(Bson::Null),
-            "config": mongodb::bson::to_bson(&req.config).unwrap_or(Bson::Null),
-            "status": &status,
-            "sdk_enabled": sdk_enabled,
-            "updated_at": &now,
-        },
-        "$setOnInsert": {
-            "id": id,
-            "secret_key_hint": Bson::Null,
-            "key_last_rotated_at": Bson::Null,
-            "secret_key_hash": Bson::Null,
-            "created_at": &now,
-        }
+    let (id, created_at, secret_key_hint, key_last_rotated_at, secret_key_hash) =
+        if let Some((data, secret_key_hash)) = existing {
+            let source: StoredEngineSource = decode(data)?;
+            (
+                source.id,
+                source.created_at,
+                source.secret_key_hint,
+                source.key_last_rotated_at,
+                secret_key_hash,
+            )
+        } else {
+            (
+                format!("src_{}", Uuid::new_v4()),
+                now.clone(),
+                None,
+                None,
+                None,
+            )
+        };
+    let source = StoredEngineSource {
+        id,
+        tenant_id: normalize_optional_text(req.tenant_id),
+        source_id: source_id.to_string(),
+        source_type: req.source_type,
+        name: req.name,
+        description: req.description,
+        config: req.config,
+        status: req.status.unwrap_or_else(|| "active".to_string()),
+        sdk_enabled: req.sdk_enabled.unwrap_or(true),
+        secret_key_hint,
+        key_last_rotated_at,
+        secret_key_hash: secret_key_hash.clone(),
+        created_at,
+        updated_at: now,
     };
+    let stored = json(&source)?;
+    sqlx::query(
+        "INSERT INTO engine_sources \
+         (id,tenant_id,source_id,source_type,status,sdk_enabled,secret_key_hash,created_at,updated_at,data) \
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) \
+         ON CONFLICT(source_id) DO UPDATE SET tenant_id=EXCLUDED.tenant_id, \
+         source_type=EXCLUDED.source_type,status=EXCLUDED.status,sdk_enabled=EXCLUDED.sdk_enabled, \
+         updated_at=EXCLUDED.updated_at,data=EXCLUDED.data",
+    )
+    .bind(&source.id)
+    .bind(&source.tenant_id)
+    .bind(&source.source_id)
+    .bind(&source.source_type)
+    .bind(&source.status)
+    .bind(source.sdk_enabled)
+    .bind(secret_key_hash)
+    .bind(timestamp(&source.created_at)?)
+    .bind(timestamp(&source.updated_at)?)
+    .bind(stored)
+    .execute(db)
+    .await
+    .map_err(|error| error.to_string())?;
 
-    if let Err(err) = source_collection(db)
-        .update_one(filter.clone(), update.clone())
-        .upsert(true)
-        .await
-    {
-        let message = err.to_string();
-        if !is_duplicate_source_id_error(message.as_str()) {
-            return Err(message);
-        }
-
-        let legacy_filter = doc! { "source_id": normalized_source_id };
-        source_collection(db)
-            .update_one(legacy_filter.clone(), update)
-            .await
-            .map_err(|err| err.to_string())?;
-
-        return source_collection(db)
-            .find_one(legacy_filter)
-            .await
-            .map_err(|err| err.to_string())?
-            .ok_or_else(|| "upserted source not found".to_string());
-    }
-
-    source_collection(db)
-        .find_one(filter)
-        .await
-        .map_err(|err| err.to_string())?
-        .ok_or_else(|| "upserted source not found".to_string())
+    sqlx::query_scalar::<_, Json<serde_json::Value>>(
+        "SELECT data FROM engine_sources WHERE source_id=$1",
+    )
+    .bind(source_id)
+    .fetch_one(db)
+    .await
+    .map_err(|error| error.to_string())
+    .and_then(decode)
 }

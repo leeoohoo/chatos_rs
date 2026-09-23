@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use futures_util::TryStreamExt;
-use mongodb::bson::doc;
+use sqlx::types::Json;
+use sqlx::{Postgres, QueryBuilder};
 
 use crate::db::Db;
 use crate::models::StoredEngineSource;
+use crate::repositories::postgres::decode;
 
-use super::common::{hash_secret, normalize_optional_text_ref, source_collection, tenant_bson};
+use super::common::{hash_secret, normalize_optional_text_ref};
 use super::writes::is_retired_source_id;
 
 pub async fn list_sources(
@@ -19,37 +20,40 @@ pub async fn list_sources(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<StoredEngineSource>, String> {
-    let mut filter = doc! {};
-    if tenant_id.is_some() {
-        filter.insert("tenant_id", tenant_bson(tenant_id));
+    let mut query =
+        QueryBuilder::<Postgres>::new("SELECT data,secret_key_hash FROM engine_sources WHERE TRUE");
+    if let Some(value) = normalize_optional_text_ref(tenant_id) {
+        query.push(" AND tenant_id=").push_bind(value);
     }
     if let Some(value) = normalize_optional_text_ref(source_type) {
-        filter.insert("source_type", value);
+        query.push(" AND source_type=").push_bind(value);
     }
     if let Some(value) = normalize_optional_text_ref(status) {
-        filter.insert("status", value);
+        query.push(" AND status=").push_bind(value);
     }
     if let Some(value) = sdk_enabled {
-        filter.insert("sdk_enabled", value);
+        query.push(" AND sdk_enabled=").push_bind(value);
     }
-
-    let cursor = source_collection(db)
-        .find(filter)
-        .sort(doc! {"updated_at": -1, "created_at": -1})
-        .skip(offset.max(0) as u64)
-        .limit(limit.clamp(1, 10_000))
+    query
+        .push(" ORDER BY updated_at DESC,created_at DESC LIMIT ")
+        .push_bind(limit.clamp(1, 10_000))
+        .push(" OFFSET ")
+        .push_bind(offset.max(0));
+    query
+        .build_query_as::<(Json<serde_json::Value>, Option<String>)>()
+        .fetch_all(db)
         .await
-        .map_err(|err| err.to_string())?;
-
-    cursor.try_collect().await.map_err(|err| err.to_string())
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(decode_source)
+        .collect()
 }
 
 pub async fn count_sources(db: &Db) -> Result<i64, String> {
-    source_collection(db)
-        .count_documents(doc! {})
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM engine_sources")
+        .fetch_one(db)
         .await
-        .map(|count| count as i64)
-        .map_err(|err| err.to_string())
+        .map_err(|error| error.to_string())
 }
 
 pub async fn verify_source_secret(
@@ -57,50 +61,42 @@ pub async fn verify_source_secret(
     source_id: &str,
     secret_key: &str,
 ) -> Result<Option<StoredEngineSource>, String> {
-    let normalized_source_id = source_id.trim();
-    let normalized_secret = secret_key.trim();
-    if normalized_source_id.is_empty() || normalized_secret.is_empty() {
+    let source_id = source_id.trim();
+    let secret_key = secret_key.trim();
+    if source_id.is_empty() || secret_key.is_empty() || is_retired_source_id(source_id) {
         return Ok(None);
     }
-    if is_retired_source_id(normalized_source_id) {
-        return Ok(None);
-    }
-
-    let hashed_secret = hash_secret(normalized_secret);
-    let cursor = source_collection(db)
-        .find(doc! {
-            "source_id": normalized_source_id,
-            "status": "active",
-            "sdk_enabled": true,
-            "secret_key_hash": hashed_secret,
-        })
-        .limit(2)
-        .await
-        .map_err(|err| err.to_string())?;
-    let matches: Vec<StoredEngineSource> =
-        cursor.try_collect().await.map_err(|err| err.to_string())?;
-
-    if matches.len() > 1 {
-        return Err(format!(
-            "source_id {} is not unique across active sdk-enabled tenants",
-            normalized_source_id
-        ));
-    }
-
-    Ok(matches.into_iter().next())
+    sqlx::query_as::<_, (Json<serde_json::Value>, Option<String>)>(
+        "SELECT data,secret_key_hash FROM engine_sources WHERE source_id=$1 AND status='active' \
+         AND sdk_enabled AND secret_key_hash=$2",
+    )
+    .bind(source_id)
+    .bind(hash_secret(secret_key))
+    .fetch_optional(db)
+    .await
+    .map_err(|error| error.to_string())?
+    .map(decode_source)
+    .transpose()
 }
 
 pub async fn is_source_active(db: &Db, source_id: &str) -> Result<bool, String> {
-    let normalized_source_id = source_id.trim();
-    if normalized_source_id.is_empty() || is_retired_source_id(normalized_source_id) {
+    let source_id = source_id.trim();
+    if source_id.is_empty() || is_retired_source_id(source_id) {
         return Ok(false);
     }
-    let source = source_collection(db)
-        .find_one(doc! {
-            "source_id": normalized_source_id,
-            "status": "active",
-        })
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(source.is_some())
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM engine_sources WHERE source_id=$1 AND status='active')",
+    )
+    .bind(source_id)
+    .fetch_one(db)
+    .await
+    .map_err(|error| error.to_string())
+}
+
+fn decode_source(
+    (data, secret_key_hash): (Json<serde_json::Value>, Option<String>),
+) -> Result<StoredEngineSource, String> {
+    let mut source: StoredEngineSource = decode(data)?;
+    source.secret_key_hash = secret_key_hash;
+    Ok(source)
 }

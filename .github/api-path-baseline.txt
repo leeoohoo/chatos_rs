@@ -1,7 +1,7 @@
 # API Path Baseline
 
-main_backend_endpoint_count=267
-total_endpoint_count=267
+main_backend_endpoint_count=215
+total_endpoint_count=215
 
 ## chatos/backend endpoints (method + path)
 DELETE /api/agents/{agent_id}
@@ -20,8 +20,6 @@ DELETE /api/messages/{id}
 DELETE /api/messages/{message_id}/task-runner/runs/{run_id}/plugin-ui/{event_id}/workbench-sessions/{session_id}
 DELETE /api/notepad/folders
 DELETE /api/notepad/notes/{note_id}
-DELETE /api/projects/{id}
-DELETE /api/projects/{id}/contacts/{contact_id}
 DELETE /api/remote-connections/{id}
 DELETE /api/system-contexts/{context_id}
 DELETE /api/task-manager/tasks/{task_id}
@@ -44,6 +42,10 @@ GET /api/ask-user-prompts
 GET /api/attachments/object
 GET /api/auth/agent-accounts
 GET /api/auth/me
+GET /api/companion/conversations/{id}
+GET /api/companion/conversations/{id}/compact-history
+GET /api/companion/conversations/{id}/state
+GET /api/companion/messages/{id}/tasks
 GET /api/contacts
 GET /api/contacts/{contact_id}
 GET /api/contacts/{contact_id}/agent-recalls
@@ -62,18 +64,6 @@ GET /api/conversations/{conversation_id}/turns/latest/runtime-context
 GET /api/conversations/{conversation_id}/turns/{user_message_id}/messages
 GET /api/conversations/{conversation_id}/user-message-turns
 GET /api/conversations/{id}
-GET /api/fs/download
-GET /api/fs/entries
-GET /api/fs/list
-GET /api/fs/read
-GET /api/fs/search
-GET /api/fs/search-content
-GET /api/git/branches
-GET /api/git/client
-GET /api/git/compare
-GET /api/git/diff
-GET /api/git/status
-GET /api/git/summary
 GET /api/local-connectors/devices
 GET /api/local-connectors/fs/list
 GET /api/local-connectors/workspaces
@@ -110,17 +100,6 @@ GET /api/notepad/tags
 GET /api/pet-activities
 GET /api/plugin-artifacts/workbench/{session_id}/{artifact_id}/download
 GET /api/plugin-ui/workbench/{session_id}/{*asset_path}
-GET /api/projects
-GET /api/projects/{id}
-GET /api/projects/{id}/contacts
-GET /api/projects/{id}/contacts/lock
-GET /api/projects/{id}/plan
-GET /api/projects/{id}/requirements/{requirement_id}/documents
-GET /api/projects/{id}/requirements/{requirement_id}/execution-plan
-GET /api/projects/{id}/requirements/{requirement_id}/work-items
-GET /api/projects/{id}/run/catalog
-GET /api/projects/{id}/run/environment
-GET /api/projects/{id}/run/state
 GET /api/realtime/ws
 GET /api/remote-connections
 GET /api/remote-connections/{id}
@@ -181,26 +160,7 @@ POST /api/conversations
 POST /api/conversations/{conversation_id}/messages
 POST /api/conversations/{conversation_id}/review-repair
 POST /api/conversations/{conversation_id}/task-runner/active-message-tasks
-POST /api/fs/delete
-POST /api/fs/discard-git-changes
-POST /api/fs/gitignore
-POST /api/fs/mkdir
-POST /api/fs/move
-POST /api/fs/open
-POST /api/fs/touch
-POST /api/fs/write
-POST /api/git/branch
-POST /api/git/checkout
-POST /api/git/commit
-POST /api/git/discard
-POST /api/git/fetch
-POST /api/git/merge
-POST /api/git/pull
-POST /api/git/push
-POST /api/git/stage
-POST /api/git/unstage
 POST /api/local-connectors/fs/mkdir
-POST /api/local-connectors/projects
 POST /api/local-connectors/terminal/exec
 POST /api/memory-agents
 POST /api/memory/project-agent-links/sync
@@ -222,16 +182,6 @@ POST /api/pet-activities/{activity_id}/acknowledge
 POST /api/pet-activities/{activity_id}/displayed
 POST /api/pet-activities/{activity_id}/handled
 POST /api/pet-activities/{activity_id}/ignore
-POST /api/projects/{id}/contacts
-POST /api/projects/{id}/requirements/{requirement_id}/confirm-execution
-POST /api/projects/{id}/requirements/{requirement_id}/execute
-POST /api/projects/{id}/requirements/{requirement_id}/pause
-POST /api/projects/{id}/requirements/{requirement_id}/rerun
-POST /api/projects/{id}/requirements/{requirement_id}/resume
-POST /api/projects/{id}/requirements/{requirement_id}/stop
-POST /api/projects/{id}/run/analyze
-POST /api/projects/{id}/run/default
-POST /api/projects/{id}/run/execute
 POST /api/remote-connections
 POST /api/remote-connections/test
 POST /api/remote-connections/{id}/disconnect
@@ -265,8 +215,6 @@ PUT /api/memory/v1/sessions/{session_id}/messages/{message_id}/sync
 PUT /api/memory/v1/sessions/{session_id}/sync
 PUT /api/memory/v1/sessions/{session_id}/turn-runtime-snapshots/{turn_id}/sync
 PUT /api/messages/{message_id}/task-runner/runs/{run_id}/plugin-ui/{event_id}/workbench-sessions/{session_id}/artifacts/{artifact_id}
-PUT /api/projects/{id}
-PUT /api/projects/{id}/run/environment
 PUT /api/remote-connections/{id}
 PUT /api/system-contexts/{context_id}
 PUT /api/user-settings

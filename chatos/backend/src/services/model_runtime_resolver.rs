@@ -132,19 +132,21 @@ async fn get_user_service_model_config_by_id(
 ) -> Result<AiModelConfig, String> {
     let base_url = configured_user_service_base_url(cfg)
         .ok_or_else(|| "user_service is not configured".to_string())?;
-    if let Some(access_token) = access_token_scope::get_current_access_token() {
-        let profile = user_service_api_client::get_model_config(
-            base_url.as_str(),
-            access_token.as_str(),
-            model_id,
-            true,
-            cfg.user_service_request_timeout_ms,
-        )
-        .await?;
-        if profile.owner_user_id != user_id {
-            return Err(format!("forbidden model config access: {model_id}"));
+    if !access_token_scope::prefer_internal_memory_service_auth() {
+        if let Some(access_token) = access_token_scope::get_current_access_token() {
+            let profile = user_service_api_client::get_model_config(
+                base_url.as_str(),
+                access_token.as_str(),
+                model_id,
+                true,
+                cfg.user_service_request_timeout_ms,
+            )
+            .await?;
+            if profile.owner_user_id != user_id {
+                return Err(format!("forbidden model config access: {model_id}"));
+            }
+            return Ok(from_user_service_model_config(profile));
         }
-        return Ok(from_user_service_model_config(profile));
     }
 
     let internal_secret = cfg

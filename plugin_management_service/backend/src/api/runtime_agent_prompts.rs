@@ -27,6 +27,11 @@ pub(super) async fn resolve_agent_prompt_internal(
     authorize(&state, &headers, AGENT_PROMPTS_RESOLVE_SCOPE)?;
     let profile =
         chatos_plugin_management_sdk::normalize_agent_prompt_profile(request.profile.as_deref());
+    if !crate::seed::agent_prompt_profiles_for_agent(request.agent_key.as_str())
+        .contains(&profile.as_str())
+    {
+        return Err(ApiError::not_found("agent_prompt_not_configured"));
+    }
     let record = state
         .store
         .get_agent_prompt(request.agent_key.as_str(), profile.as_str(), request.vendor)

@@ -4,6 +4,7 @@
 use std::net::SocketAddr;
 
 use axum::extract::{ConnectInfo, State};
+use axum::http::HeaderMap;
 use axum::{Extension, Json};
 use chrono::Utc;
 use serde_json::json;
@@ -36,6 +37,7 @@ const LOCAL_CONNECTOR_TICKET_TTL_SECONDS: i64 = 60;
 pub async fn login(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(input): Json<LoginRequest>,
 ) -> ApiResult<LoginResponse> {
     let username = normalize_username(input.username.as_str()).map_err(bad_request)?;
@@ -44,13 +46,18 @@ pub async fn login(
     }
 
     let now_unix = Utc::now().timestamp();
-    let source = addr.ip().to_string();
-    if state.login_throttle.is_locked(
-        username.as_str(),
-        Some(source.as_str()),
-        now_unix,
-        &state.config,
-    ) {
+    let source = crate::login_throttle::request_source(&headers, addr);
+    if state
+        .login_throttle
+        .is_locked(
+            username.as_str(),
+            Some(source.as_str()),
+            now_unix,
+            &state.config,
+        )
+        .await
+        .map_err(internal_error)?
+    {
         return Err(unauthorized("invalid username or password"));
     }
 
@@ -60,35 +67,49 @@ pub async fn login(
         .await
         .map_err(internal_error)?
     else {
-        state.login_throttle.record_failure(
-            username.as_str(),
-            Some(source.as_str()),
-            now_unix,
-            &state.config,
-        );
+        state
+            .login_throttle
+            .record_failure(
+                username.as_str(),
+                Some(source.as_str()),
+                now_unix,
+                &state.config,
+            )
+            .await
+            .map_err(internal_error)?;
         return Err(unauthorized("invalid username or password"));
     };
     if !user.enabled {
-        state.login_throttle.record_failure(
-            username.as_str(),
-            Some(source.as_str()),
-            now_unix,
-            &state.config,
-        );
+        state
+            .login_throttle
+            .record_failure(
+                username.as_str(),
+                Some(source.as_str()),
+                now_unix,
+                &state.config,
+            )
+            .await
+            .map_err(internal_error)?;
         return Err(unauthorized("invalid username or password"));
     }
     if !verify_password(input.password.as_str(), user.password_hash.as_str()) {
-        state.login_throttle.record_failure(
-            username.as_str(),
-            Some(source.as_str()),
-            now_unix,
-            &state.config,
-        );
+        state
+            .login_throttle
+            .record_failure(
+                username.as_str(),
+                Some(source.as_str()),
+                now_unix,
+                &state.config,
+            )
+            .await
+            .map_err(internal_error)?;
         return Err(unauthorized("invalid username or password"));
     }
     state
         .login_throttle
-        .record_success(username.as_str(), Some(source.as_str()));
+        .record_success(username.as_str(), Some(source.as_str()))
+        .await
+        .map_err(internal_error)?;
 
     state
         .store
@@ -566,6 +587,15 @@ pub async fn logout(
             principal.jti.as_str(),
             principal.sub.as_str(),
             principal.exp as i64,
+        )
+        .await
+        .map_err(internal_error)?;
+    state
+        .store
+        .revoke_client_session_by_jti(
+            principal.jti.as_str(),
+            principal.sub.as_str(),
+            now_rfc3339().as_str(),
         )
         .await
         .map_err(internal_error)?;

@@ -34,7 +34,7 @@ import { INSPIRA_CATEGORIES, INSPIRA_COMPONENTS, INSPIRA_COMPONENT_SLUGS, INSPIR
 import { DAISYUI_CATEGORIES, DAISYUI_COMPONENTS, DAISYUI_COMPONENT_SLUGS, DAISYUI_VERSION, applyDaisyUiComponentVariant, createDaisyUiComponent, variantsForDaisyUiComponent } from '../dist/daisyui-library.test.mjs';
 import { editableSlotsForUiComponent, growUiContentContainersToFit, isUiContentContainer } from '../dist/library-slots.test.mjs';
 import { UI_LIBRARIES, applyUiLibraryVariant, createComponentFromUiLibrary } from '../dist/ui-libraries.test.mjs';
-import { matchViewportPreset, viewportDimensions, viewportPresetsForDevice, WEB_DESIGN_VIEWPORT_PRESETS } from '../dist/viewport-presets.test.mjs';
+import { matchArtboardSizePreset, matchViewportPreset, viewportDimensions, viewportPresetsForDevice, WEB_DESIGN_ARTBOARD_SIZE_PRESETS, WEB_DESIGN_VIEWPORT_PRESETS } from '../dist/viewport-presets.test.mjs';
 import { exportDocumentHtmlFiles, exportPageHtml } from '../dist/html-exporter.test.mjs';
 import { exportReactComponent } from '../dist/react-exporter.test.mjs';
 import { exportVueComponent } from '../dist/vue-exporter.test.mjs';
@@ -183,7 +183,7 @@ test('nested content canvas grows in both dimensions from visible component boun
 });
 
 test('viewport presets expose real CSS viewport sizes and support rotation', () => {
-  assert.equal(viewportPresetsForDevice('desktop').length, 14);
+  assert.equal(viewportPresetsForDevice('desktop').length, 15);
   assert.equal(viewportPresetsForDevice('tablet').length, 5);
   assert.equal(viewportPresetsForDevice('mobile').length, 5);
   assert.equal(WEB_DESIGN_VIEWPORT_PRESETS.every((preset) => preset.width >= 320 && preset.height >= 320), true);
@@ -194,6 +194,9 @@ test('viewport presets expose real CSS viewport sizes and support rotation', () 
   assert.deepEqual(matchViewportPreset('mobile', 852), { preset: iphone, orientation: 'rotated' });
   assert.equal(matchViewportPreset('mobile', 401), undefined);
 
+  const desktopDesign = WEB_DESIGN_VIEWPORT_PRESETS.find((preset) => preset.id === 'desktop-responsive');
+  assert.deepEqual(viewportDimensions(desktopDesign, 'default'), { width: 1440, height: 900 });
+
   const eightK = WEB_DESIGN_VIEWPORT_PRESETS.find((preset) => preset.id === 'desktop-8k');
   assert.deepEqual(viewportDimensions(eightK, 'default'), { width: 7680, height: 4320 });
   assert.equal(eightK.group, 'large-display');
@@ -203,6 +206,24 @@ test('viewport presets expose real CSS viewport sizes and support rotation', () 
   assertWebDesignDocument(document);
   const resized = applyWebDesignPatch(document, [{ op: 'set_breakpoint', device: 'desktop', width: 3840, height: 1800 }]);
   assert.deepEqual(resized.breakpoints.desktop.preview, document.breakpoints.desktop.preview);
+});
+
+test('artboard size presets are semantic and independent from device categories', () => {
+  assert.deepEqual(
+    WEB_DESIGN_ARTBOARD_SIZE_PRESETS.map(({ label, width, height }) => ({ label, width, height })),
+    [
+      { label: '窄画板 360', width: 360, height: 800 },
+      { label: '窄画板 390', width: 390, height: 844 },
+      { label: '中型画板 768', width: 768, height: 1024 },
+      { label: '紧凑画板 1200', width: 1200, height: 900 },
+      { label: '标准桌面画板 1440', width: 1440, height: 900 },
+      { label: '宽屏画板 1920', width: 1920, height: 1080 },
+      { label: '2K QHD 画板 2560', width: 2560, height: 1440 }
+    ]
+  );
+  assert.equal(WEB_DESIGN_ARTBOARD_SIZE_PRESETS.some((preset) => 'device' in preset), false);
+  assert.equal(matchArtboardSizePreset(1440, 900)?.preset.id, 'artboard-wide-1440');
+  assert.equal(matchArtboardSizePreset(844, 390)?.orientation, 'rotated');
 });
 
 test('responsive constraints reflow nested components without overflowing a narrower viewport', () => {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Solution Design"
+  short_description: "把结构化需求转为可追踪的技术与产品方案"
+  default_prompt: "Use $solution-design to create a traceable design for the current requirements."

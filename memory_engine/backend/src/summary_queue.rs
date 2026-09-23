@@ -25,6 +25,7 @@ use crate::services::summary;
 use crate::state::AppState;
 
 const SUMMARY_QUEUE_TRIGGER: &str = "queue";
+const SUMMARY_DISPATCH_PUBLISH_LEASE_SECS: i64 = 300;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct SummaryRequestedEnvelope {
@@ -134,6 +135,45 @@ pub async fn archive_summary_dead_letter(
             .map_err(|err| err.to_string())?;
     }
     Ok(archived)
+}
+
+pub async fn dead_letter_current_summary_dispatch(
+    state: &AppState,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    error: &str,
+) -> Result<bool, String> {
+    let Some(event) =
+        threads::get_summary_dispatch_state(&state.pool, tenant_id, source_id, thread_id).await?
+    else {
+        return Ok(false);
+    };
+    if event.summary_dispatch_version <= 0
+        || event.summary_dispatch_consumed_version >= event.summary_dispatch_version
+    {
+        return Ok(false);
+    }
+
+    let (_connection, channel) = open_publisher(&state.config).await?;
+    let mut envelope = SummaryRequestedEnvelope::from_outbox(&event);
+    envelope.attempt = state.config.summary_max_delivery_attempts;
+    publish_envelope(
+        &channel,
+        &state.config,
+        state.config.summary_dead_letter_queue.as_str(),
+        &envelope,
+    )
+    .await?;
+    threads::mark_summary_dispatch_dead_lettered(&state.pool, &event, error).await?;
+    warn!(
+        thread_id,
+        version = event.summary_dispatch_version,
+        error,
+        dead_letter_queue = state.config.summary_dead_letter_queue.as_str(),
+        "Memory Engine Cloud Agent summary failure entered the DLQ"
+    );
+    Ok(true)
 }
 
 pub fn start(state: Arc<AppState>) {
@@ -368,14 +408,27 @@ async fn process_summary_event(
         SUMMARY_QUEUE_TRIGGER,
     )
     .await;
-    match run_result {
-        Ok(_) => {}
+    let run_response = match run_result {
+        Ok(response) => response,
         Err(error) if error.contains("summary slot already occupied") => {
             return Err(
                 crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED.to_string(),
             );
         }
         Err(error) => return Err(error),
+    };
+
+    // A no-op means the authoritative record query found nothing to summarize even though the
+    // denormalized thread counters crossed the dispatch threshold. Reconcile those counters before
+    // consuming the event so a stale thread cannot be rearmed and republished forever.
+    if !run_response.generated {
+        threads::refresh_summary_queue_state(
+            &state.pool,
+            envelope.tenant_id.as_str(),
+            envelope.source_id.as_str(),
+            envelope.thread_id.as_str(),
+        )
+        .await?;
     }
     threads::mark_summary_dispatch_consumed(&state.pool, &event).await?;
     let _ = threads::rearm_summary_dispatch_if_eligible(
@@ -626,6 +679,29 @@ async fn run_outbox_reconciler(state: Arc<AppState>) {
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         interval.tick().await;
+        match recover_stale_published_summary_dispatches(&state).await {
+            Ok(count) if count > 0 => info!(
+                recovered_count = count,
+                lease_seconds = SUMMARY_DISPATCH_PUBLISH_LEASE_SECS,
+                "Memory Engine recovered stale published summary dispatches"
+            ),
+            Ok(_) => {}
+            Err(err) => warn!(
+                error = err.as_str(),
+                "Memory Engine failed to recover stale published summary dispatches"
+            ),
+        }
+        match arm_automatic_summary_dispatches(&state).await {
+            Ok(count) if count > 0 => info!(
+                armed_count = count,
+                "Memory Engine armed automatic summary Outbox events"
+            ),
+            Ok(_) => {}
+            Err(err) => warn!(
+                error = err.as_str(),
+                "Memory Engine failed to arm automatic summary Outbox events"
+            ),
+        }
         match publish_pending_outbox_batch(&state).await {
             Ok(count) if count > 0 => info!(
                 published_count = count,
@@ -638,6 +714,69 @@ async fn run_outbox_reconciler(state: Arc<AppState>) {
             ),
         }
     }
+}
+
+async fn recover_stale_published_summary_dispatches(state: &AppState) -> Result<usize, String> {
+    let policy = control_plane::get_effective_job_policy(&state.pool, "summary").await?;
+    if !policy.enabled {
+        return Ok(0);
+    }
+    let token_threshold = summary::required_thread_summary_token_limit(policy.token_limit)?;
+    let stale_before = (chrono::Utc::now()
+        - chrono::Duration::seconds(SUMMARY_DISPATCH_PUBLISH_LEASE_SECS))
+    .to_rfc3339();
+    let candidates = threads::list_stale_published_summary_dispatches(
+        &state.pool,
+        token_threshold,
+        stale_before.as_str(),
+        state.config.summary_outbox_batch_size,
+    )
+    .await?;
+    let mut recovered = 0usize;
+    for candidate in candidates {
+        if threads::rearm_stale_published_summary_dispatch(
+            &state.pool,
+            &candidate,
+            token_threshold,
+            stale_before.as_str(),
+        )
+        .await?
+        .is_some()
+        {
+            recovered += 1;
+        }
+    }
+    Ok(recovered)
+}
+
+async fn arm_automatic_summary_dispatches(state: &AppState) -> Result<usize, String> {
+    let policy = control_plane::get_effective_job_policy(&state.pool, "summary").await?;
+    if !policy.enabled {
+        return Ok(0);
+    }
+    let token_threshold = summary::required_thread_summary_token_limit(policy.token_limit)?;
+    let candidates = threads::list_eligible_summary_dispatches(
+        &state.pool,
+        token_threshold,
+        state.config.summary_outbox_batch_size,
+    )
+    .await?;
+    let mut armed = 0usize;
+    for candidate in candidates {
+        if threads::rearm_summary_dispatch_if_eligible(
+            &state.pool,
+            candidate.tenant_id.as_str(),
+            candidate.source_id.as_str(),
+            candidate.thread_id.as_str(),
+            token_threshold,
+        )
+        .await?
+        .is_some()
+        {
+            armed += 1;
+        }
+    }
+    Ok(armed)
 }
 
 async fn publish_pending_outbox_batch(state: &AppState) -> Result<usize, String> {
@@ -655,123 +794,4 @@ async fn publish_pending_outbox_batch(state: &AppState) -> Result<usize, String>
 }
 
 #[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use super::{
-        summary_consumer_enabled, summary_slot_is_active, wait_until_consumer_enabled,
-        SummaryRequestedEnvelope,
-    };
-    use crate::models::EngineThread;
-    use crate::pressure::{MemoryEnginePressurePolicy, PlatformPressureLevel};
-    use crate::repositories::threads::SummaryDispatchOutbox;
-
-    #[test]
-    fn outbox_event_contains_only_scope_ids_and_version() {
-        let event = SummaryDispatchOutbox {
-            tenant_id: "tenant-1".to_string(),
-            source_id: "source-1".to_string(),
-            thread_id: "thread-1".to_string(),
-            summary_dispatch_version: 7,
-            summary_dispatch_published_version: 6,
-            summary_dispatch_consumed_version: 5,
-        };
-
-        let envelope = SummaryRequestedEnvelope::from_outbox(&event);
-
-        assert_eq!(envelope.thread_id, "thread-1");
-        assert_eq!(envelope.version, 7);
-        assert_eq!(envelope.attempt, 0);
-    }
-
-    fn thread_with_summary_lock(expires_at: Option<&str>) -> EngineThread {
-        EngineThread {
-            id: "thread-1".to_string(),
-            tenant_id: "tenant-1".to_string(),
-            source_id: "source-1".to_string(),
-            subject_id: "subject-1".to_string(),
-            thread_type: "conversation".to_string(),
-            external_thread_id: None,
-            title: None,
-            labels: None,
-            metadata: None,
-            status: "active".to_string(),
-            summary_status: "running".to_string(),
-            summary_job_run_id: Some("job-1".to_string()),
-            summary_locked_at: Some("2026-01-01T00:00:00Z".to_string()),
-            summary_lock_expires_at: expires_at.map(ToOwned::to_owned),
-            pending_record_count: 1,
-            pending_summary_tokens: 1_000,
-            created_at: "2026-01-01T00:00:00Z".to_string(),
-            updated_at: "2026-01-01T00:00:00Z".to_string(),
-            archived_at: None,
-        }
-    }
-
-    #[test]
-    fn queue_defers_only_for_a_live_summary_slot() {
-        let now = "2026-01-01T00:05:00Z";
-        assert!(summary_slot_is_active(
-            &thread_with_summary_lock(Some("2026-01-01T00:10:00Z")),
-            now,
-        ));
-        assert!(!summary_slot_is_active(
-            &thread_with_summary_lock(Some("2026-01-01T00:04:59Z")),
-            now,
-        ));
-        assert!(!summary_slot_is_active(
-            &thread_with_summary_lock(None),
-            now,
-        ));
-    }
-
-    #[test]
-    fn pressure_policy_enables_only_the_target_number_of_consumers() {
-        let policy = MemoryEnginePressurePolicy {
-            level: PlatformPressureLevel::Elevated,
-            active_summary_concurrency: 2,
-            reconcile_paused: false,
-            refresh_interval: Duration::from_secs(5),
-            queue_elevated_messages: 100,
-            queue_critical_messages: 1_000,
-        };
-
-        assert!(summary_consumer_enabled(&policy, 0));
-        assert!(summary_consumer_enabled(&policy, 1));
-        assert!(!summary_consumer_enabled(&policy, 2));
-        assert!(!summary_consumer_enabled(&policy, 3));
-    }
-
-    #[tokio::test]
-    async fn paused_consumer_resumes_from_pressure_change_without_polling() {
-        let elevated = MemoryEnginePressurePolicy {
-            level: PlatformPressureLevel::Elevated,
-            active_summary_concurrency: 1,
-            reconcile_paused: false,
-            refresh_interval: Duration::from_secs(5),
-            queue_elevated_messages: 100,
-            queue_critical_messages: 1_000,
-        };
-        let normal = MemoryEnginePressurePolicy {
-            level: PlatformPressureLevel::Normal,
-            active_summary_concurrency: 4,
-            reconcile_paused: false,
-            refresh_interval: Duration::from_secs(5),
-            queue_elevated_messages: 100,
-            queue_critical_messages: 1_000,
-        };
-        let (sender, mut receiver) = tokio::sync::watch::channel(elevated);
-        let waiter =
-            tokio::spawn(async move { wait_until_consumer_enabled(&mut receiver, 2).await });
-
-        assert!(tokio::time::timeout(Duration::from_millis(20), async {
-            while !waiter.is_finished() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .is_err());
-        sender.send_replace(normal);
-        assert!(waiter.await.expect("consumer waiter task").is_ok());
-    }
-}
+include!("summary_queue_inline_tests.rs");

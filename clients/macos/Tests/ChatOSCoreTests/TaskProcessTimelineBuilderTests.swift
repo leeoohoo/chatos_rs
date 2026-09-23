@@ -17,8 +17,21 @@ final class TaskProcessTimelineBuilderTests: XCTestCase {
         XCTAssertEqual(items[0].title, "开始访问")
         XCTAssertEqual(items[0].detail, "检查窗口是否可读。")
         XCTAssertEqual(items[0].status, "succeeded")
+        XCTAssertEqual(
+            items[0].occurredAtDate,
+            ISO8601DateFormatter().date(from: "2026-08-24T10:00:00Z")
+        )
         XCTAssertEqual(items[1].title, "访问受阻")
         XCTAssertEqual(items[1].status, "blocked")
+    }
+
+    func testParsesFractionalTimestampWithExplicitOffset() {
+        let item = TaskProcessTimelineBuilder.build(
+            processLog: "[2026-09-14T07:30:09.136260+00:00] 开始检查\n准备执行。",
+            taskStatus: "running"
+        ).first
+
+        XCTAssertNotNil(item?.occurredAtDate)
     }
 
     func testReturnsEmptyTimelineWithoutProcessLog() {

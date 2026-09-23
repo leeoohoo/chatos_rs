@@ -3,17 +3,18 @@ import SwiftUI
 
 @MainActor
 final class TerminalWorkspaceViewModel: ObservableObject {
+    @MainActor
     struct Session: Identifiable {
         let id: UUID
-        let title: String
-        let terminal: TerminalViewModel
+        let terminal: NativeLocalTerminalViewModel
+
+        var title: String { terminal.title }
     }
 
     @Published private(set) var sessions: [Session] = []
     @Published var selectedSessionID: UUID?
 
     private let workingDirectory: String
-    private var nextTerminalNumber = 1
 
     init(workingDirectory: String = FileManager.default.currentDirectoryPath) {
         self.workingDirectory = workingDirectory
@@ -26,16 +27,16 @@ final class TerminalWorkspaceViewModel: ObservableObject {
     }
 
     func createTerminal() {
-        let number = nextTerminalNumber
-        nextTerminalNumber += 1
-
         let session = Session(
             id: UUID(),
-            title: sessionTitle(number: number),
-            terminal: TerminalViewModel(workingDirectory: workingDirectory)
+            terminal: NativeLocalTerminalViewModel(workingDirectory: workingDirectory)
         )
         sessions.append(session)
         selectedSessionID = session.id
+    }
+
+    func ensureTerminal() {
+        if sessions.isEmpty { createTerminal() }
     }
 
     func selectTerminal(id: UUID) {
@@ -46,6 +47,7 @@ final class TerminalWorkspaceViewModel: ObservableObject {
     func closeTerminal(id: UUID) {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
         let wasSelected = selectedSessionID == id
+        sessions[index].terminal.close()
         sessions.remove(at: index)
 
         if sessions.isEmpty {
@@ -60,9 +62,10 @@ final class TerminalWorkspaceViewModel: ObservableObject {
         closeTerminal(id: selectedSessionID)
     }
 
-    private func sessionTitle(number: Int) -> String {
-        let directoryName = URL(fileURLWithPath: workingDirectory).lastPathComponent
-        let baseTitle = directoryName.isEmpty ? "终端" : directoryName
-        return number == 1 ? baseTitle : "\(baseTitle) \(number)"
+    func closeAllTerminals() {
+        sessions.forEach { $0.terminal.close() }
+        sessions.removeAll()
+        selectedSessionID = nil
     }
+
 }

@@ -71,7 +71,7 @@ mod tests {
 
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use mongodb::Client;
+    use sqlx::postgres::PgPoolOptions;
     use tower::ServiceExt;
 
     use super::{build_internal_router, build_public_router};
@@ -177,11 +177,11 @@ mod tests {
 
     async fn test_state() -> Arc<AppState> {
         let config = test_config();
-        let client = Client::with_uri_str(config.mongodb_uri.as_str())
-            .await
-            .expect("MongoDB client");
+        let pool = PgPoolOptions::new()
+            .connect_lazy(config.database_url.as_str())
+            .expect("PostgreSQL pool");
         Arc::new(AppState {
-            pool: client.database(config.mongodb_database.as_str()),
+            pool,
             user_service_http: reqwest::Client::new(),
             runtime_stats: Arc::new(MemoryEngineRuntimeStats::default()),
             rabbitmq_queue_inspector: chatos_queue_observability::RabbitMqQueueInspector::new(
@@ -208,8 +208,7 @@ mod tests {
         AppConfig {
             host: "127.0.0.1".to_string(),
             port: 0,
-            mongodb_uri: "mongodb://127.0.0.1:27017/test".to_string(),
-            mongodb_database: "test".to_string(),
+            database_url: "postgresql://127.0.0.1:5432/test".to_string(),
             ai_request_timeout_secs: 5,
             api_enabled: true,
             worker_enabled: false,
@@ -222,6 +221,8 @@ mod tests {
             rabbitmq_url: "amqp://127.0.0.1/%2f".to_string(),
             rabbitmq_exchange: "memory_engine_test".to_string(),
             rabbitmq_reconnect_delay: Duration::from_millis(100),
+            cloud_agent_outbox_reconcile_interval: Duration::from_secs(1),
+            cloud_agent_outbox_batch_size: 10,
             summary_queue: "memory_engine_test.summary".to_string(),
             summary_retry_queue: "memory_engine_test.summary.retry".to_string(),
             summary_dead_letter_queue: "memory_engine_test.summary.dead".to_string(),
@@ -249,6 +250,8 @@ mod tests {
             internal_api_secrets,
             require_signed_internal_requests: true,
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
+            user_service_internal_base_url: "https://127.0.0.1:39192".to_string(),
+            user_service_internal_http: reqwest::Client::new(),
             user_service_request_timeout_ms: 300,
         }
     }

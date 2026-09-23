@@ -2,6 +2,40 @@ import ChatOSAgentRuntime
 import ChatOSCore
 import SwiftUI
 
+struct StoryAdditionalIdeasField: View {
+    @EnvironmentObject private var appModel: AppModel
+    @Binding var text: String
+    let help: String
+    let maximumLength: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(appModel.localized("补充你的想法（选填）", english: "Add Your Ideas (Optional)"))
+                .font(.headline)
+            Text(help).font(.caption).foregroundStyle(.secondary)
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $text)
+                    .font(.body)
+                    .padding(5)
+                    .scrollContentBackground(.hidden)
+                if text.isEmpty {
+                    Text(appModel.localized("写下希望特别呈现或保留的内容…", english: "Add anything you want emphasized or preserved…"))
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .allowsHitTesting(false)
+                }
+            }
+            .frame(height: 100)
+            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.12)))
+            .onChange(of: text) { _, value in
+                if value.count > maximumLength { text = String(value.prefix(maximumLength)) }
+            }
+        }
+    }
+}
+
 struct StoryPlanningConfirmation: Identifiable {
     let id = UUID()
     let stage: StoryAgentRun.Stage
@@ -14,46 +48,123 @@ struct StoryAgentStartView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var viewModel: StoryStudioViewModel
     let confirmation: StoryPlanningConfirmation
-    @State private var policy: AgentRunPolicy?
+    @State private var isReady = false
+    @State private var additionalIdeas = ""
     @State private var error: String?
+
+    private var replacesExistingPlan: Bool {
+        confirmation.stage == .refine && confirmation.targets.contains { id in
+            confirmation.project.segments.contains { $0.id == id && $0.detail != nil }
+        }
+    }
+    private var selectedSegments: [StorySegment] {
+        confirmation.project.segments.filter { confirmation.targets.contains($0.id) }
+    }
+    private var storySummary: String {
+        let values = [confirmation.project.summary, confirmation.project.description,
+                      confirmation.project.source]
+        return values.first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? ""
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text(confirmation.stage == .outline ? appModel.localized("分步分析完整剧情", english: "Plan the Story Step by Step")
                  : appModel.localized("逐段生成镜头提示词", english: "Generate Segment Shot Prompts")).font(.title2.bold())
             Text(confirmation.project.title).font(.headline)
-            Text(appModel.localized("将使用本剧情的文本模型进行多轮工具调用，可能产生文本模型费用。本次只规划文字，不生成图片或视频。", english: "Uses this story's text model for multiple tool-calling rounds and may incur text-model costs. This run plans text only, without generating images or videos."))
             if confirmation.stage == .outline {
-                Text(appModel.localized("包含人物文字画像、场景文字画像、道具描述与多个连续的 15 秒分段。", english: "Includes written character and scene profiles, prop descriptions and consecutive 15-second segments."))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(appModel.localized("剧情概要", english: "Story Summary"))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(storySummary)
+                        .font(.callout)
+                        .lineLimit(6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(12)
+                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
             } else {
-                Text(appModel.localized("仅细化选定的 \(confirmation.targets.count) 个未完成分段。", english: "Refines only the \(confirmation.targets.count) selected unfinished segments."))
+                VStack(alignment: .leading, spacing: 9) {
+                    Text(selectedSegments.count == 1
+                         ? appModel.localized("这个片段的概要", english: "Segment Summary")
+                         : appModel.localized("本次片段概要", english: "Selected Segment Summaries"))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ScrollView {
+                        LazyVStack(spacing: 8) {
+                            ForEach(Array(selectedSegments.enumerated()), id: \.element.id) { index, segment in
+                                HStack(alignment: .top, spacing: 11) {
+                                    Text(String(format: "%02d", index + 1))
+                                        .font(.caption2.bold().monospacedDigit())
+                                        .foregroundStyle(.white)
+                                        .frame(width: 27, height: 27)
+                                        .background(segment.kind == .transition ? Color.purple : Color.blue, in: Circle())
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        HStack(spacing: 7) {
+                                            Text(segment.title).font(.callout.weight(.semibold))
+                                            if segment.kind == .transition {
+                                                Text(appModel.localized("转场", english: "Transition"))
+                                                    .font(.caption2.weight(.semibold))
+                                                    .foregroundStyle(.purple)
+                                            }
+                                            Spacer()
+                                            Text("\(segment.seconds)s")
+                                                .font(.caption.monospacedDigit())
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Text(segment.synopsis)
+                                            .font(.callout)
+                                            .foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                .padding(11)
+                                .background(Color.primary.opacity(0.035),
+                                            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            }
+                        }
+                    }
+                    .frame(maxHeight: selectedSegments.count == 1 ? 150 : 230)
+                }
             }
-            if let policy {
-                Text(appModel.localized("本次调用上限：\(policy.maximumModelCalls) 次（包括重试）", english: "Call limit: \(policy.maximumModelCalls), including retries"))
-                    .font(.callout.monospacedDigit())
-                Text(appModel.localized("可在 设置 → Agent 运行 中调整。", english: "Adjust this in Settings → Agent Runtime.")).font(.caption).foregroundStyle(.secondary)
-            }
-            Divider()
-            Label(appModel.localized("默认使用 Memory Engine 记忆与上下文压缩", english: "Memory Engine Memory and Compaction Are Used by Default"), systemImage: "brain.head.profile")
-                .font(.callout.weight(.medium))
-            Text(appModel.localized("会向当前 ChatOS 服务同步已读剧情片段、人物和场景画像、提示词及工具记录，用于长剧情的上下文压缩与恢复；不会同步图片/视频二进制或模型密钥。摘要使用服务端配置的摘要 Agent，可能额外计费，不包含在上述调用上限内。", english: "Read story excerpts, character and scene profiles, prompts and tool records are synced to the current ChatOS service for long-story compaction and recovery. Image/video binaries and model keys are never synced. The server's summary Agent may incur additional costs outside this call limit."))
-                .font(.caption).foregroundStyle(.secondary)
+
+            StoryAdditionalIdeasField(
+                text: $additionalIdeas,
+                help: confirmation.stage == .outline
+                    ? appModel.localized("例如：重点突出某个人物、调整叙事节奏，或注明不能删减的情节。", english: "For example: emphasize a character, adjust the pacing, or note story beats that must be kept.")
+                    : appModel.localized("例如：指定画面氛围、景别、运镜，或希望特别保留的细节。", english: "For example: specify the mood, framing, camera movement, or details that must be kept."),
+                maximumLength: StoryAgentTools.maximumUserIdeasLength
+            )
             if let error { Text(error).font(.caption).foregroundStyle(.orange) }
             HStack {
                 Spacer()
                 Button(appModel.localized("取消", english: "Cancel")) { dismiss() }
-                Button(appModel.localized("确认并开始规划", english: "Confirm and Start Planning")) {
+                Button(confirmation.stage == .outline
+                       ? appModel.localized("开始整理剧情", english: "Start Planning Story")
+                       : appModel.localized("开始生成镜头计划", english: "Create Shot Plan")) {
                     do {
                         guard let project = viewModel.project, project.id == confirmation.project.id,
                               try StoryAgentRun.digest(project) == StoryAgentRun.digest(confirmation.project) else { throw StoryAgentError.projectChanged }
-                        if confirmation.stage == .outline { viewModel.planOutline() }
-                        else { viewModel.refineSegments(confirmation.targets) }
+                        if confirmation.stage == .outline { viewModel.planOutline(userIdeas: additionalIdeas) }
+                        else if replacesExistingPlan { viewModel.regenerateSegmentPlans(confirmation.targets, userIdeas: additionalIdeas) }
+                        else { viewModel.refineSegments(confirmation.targets, userIdeas: additionalIdeas) }
                         dismiss()
                     } catch { self.error = error.localizedDescription }
-                }.buttonStyle(.borderedProminent).disabled(policy == nil || !viewModel.canCreate)
+                }.buttonStyle(.borderedProminent).disabled(!isReady || !viewModel.canCreate)
             }
         }.padding(24).frame(width: 620)
-        .onAppear { do { policy = try viewModel.effectiveAgentPolicy() } catch { self.error = error.localizedDescription } }
+        .onAppear {
+            guard viewModel.supportsAgentPlanning else {
+                isReady = true
+                return
+            }
+            do {
+                _ = try viewModel.effectiveAgentPolicy()
+                isReady = true
+            } catch {
+                self.error = appModel.localized("暂时无法开始规划，请稍后再试。", english: "Planning can't start right now. Please try again later.")
+            }
+        }
     }
 }
 
@@ -69,17 +180,28 @@ struct StoryAgentRunPanel: View {
                 HStack {
                     Label(appModel.localized("AI 规划运行", english: "AI Planning Run"), systemImage: "arrow.triangle.2.circlepath").font(.headline)
                     Spacer()
-                    Text("\(run.checkpoint.modelCalls) / \(run.policy.maximumModelCalls)").font(.caption.monospacedDigit())
                 }
                 Text(label(run)).font(.caption).foregroundStyle(run.applied ? Color.green : .secondary)
                 if let event = run.events.last { Text(event.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                if viewModel.isBusy, viewModel.activeProjectID == run.projectID,
+                   !viewModel.streamingModelText.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(appModel.localized("模型实时输出", english: "Live Model Output"), systemImage: "waveform")
+                            .font(.caption.weight(.semibold)).foregroundStyle(.purple)
+                        ScrollView {
+                            Text(viewModel.streamingModelText)
+                                .font(.caption.monospaced()).textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }.frame(maxHeight: 110)
+                    }.padding(10).background(Color.purple.opacity(0.06), in: RoundedRectangle(cornerRadius: 9))
+                }
                 Text(appModel.localized("草稿：\(run.draft.resources.count) 个素材 · \(run.draft.segments.count) 段 · \(run.draft.totalSeconds) 秒", english: "Draft: \(run.draft.resources.count) assets · \(run.draft.segments.count) segments · \(run.draft.totalSeconds) seconds"))
                     .font(.caption)
                 if let reason = run.checkpoint.stopReason { Text(reason).font(.caption).foregroundStyle(.orange).lineLimit(3) }
                 HStack {
                     Button(appModel.localized("草稿 / 运行记录", english: "Draft / Run History")) { showsHistory = true }
                     Spacer()
-                    if !run.applied {
+                    if !run.applied && run.abandonedAt == nil {
                         Button(run.checkpoint.status == .completed ? appModel.localized("应用草稿", english: "Apply Draft") : appModel.localized("恢复规划", english: "Resume Planning")) { resumeID = run.id }
                             .disabled(viewModel.isBusy || viewModel.isLoadingAgentRuns)
                     }
@@ -92,7 +214,7 @@ struct StoryAgentRunPanel: View {
                     resumeID = nil
                 }
             } message: {
-                Text(appModel.localized("继续使用 Memory Engine、原文本模型和目标，并采用设置中当前调用预算；已有调用仍计入总数，文本及摘要调用可能继续计费。已保存的步骤不会重复执行，已完成草稿只应用到项目。", english: "Continues with Memory Engine, the original text model and targets, using the current settings budget. Previous calls still count; text and summary calls may incur further costs. Saved steps are not repeated, and a completed draft is only applied to the project."))
+                Text(appModel.localized("将从上次保存的进度继续，已经完成的内容不会重复生成。规划完成后才会应用到项目。", english: "Continues from the last saved progress without regenerating completed work. The result is applied to the project only after planning finishes."))
             }
         } else if viewModel.isLoadingAgentRuns {
             ProgressView().controlSize(.small)
@@ -115,10 +237,9 @@ struct StoryAgentRunPanel: View {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text(run.updatedAt, style: .date).font(.caption)
                                 Text(label(run)).font(.headline)
-                                Text("\(run.checkpoint.modelCalls) / \(run.policy.maximumModelCalls) · \(run.draft.totalSeconds)s").monospacedDigit()
-                                Text(appModel.localized("使用 Memory Engine 记忆与压缩", english: "Uses Memory Engine memory and compaction"))
-                                    .font(.caption).foregroundStyle(.secondary)
-                                if !run.applied && !viewModel.isBusy {
+                                Text(appModel.localized("规划时长：\(run.draft.totalSeconds) 秒", english: "Planned duration: \(run.draft.totalSeconds) seconds"))
+                                    .monospacedDigit()
+                                if !run.applied && run.abandonedAt == nil && !viewModel.isBusy {
                                     Button(appModel.localized("恢复 / 应用这一条记录", english: "Resume / Apply This Run")) { showsHistory = false; resumeID = run.id }
                                 }
                                 DisclosureGroup(appModel.localized("人物文字画像", english: "Written Character Profiles")) {
@@ -140,7 +261,10 @@ struct StoryAgentRunPanel: View {
                                 DisclosureGroup(appModel.localized("分段草稿", english: "Segment Drafts")) {
                                     ForEach(run.draft.segments) { segment in
                                         VStack(alignment: .leading, spacing: 4) {
-                                            Text(segment.title + " · 15s").fontWeight(.medium)
+                                            Text(segment.title + " · " + (segment.kind == .transition
+                                                 ? appModel.localized("转场", english: "Transition")
+                                                 : appModel.localized("剧情", english: "Story"))
+                                                 + " · \(segment.seconds)s").fontWeight(.medium)
                                             Text(segment.synopsis)
                                             if let detail = segment.detail { Text(detail.videoPrompt) }
                                         }.font(.caption).textSelection(.enabled).padding(.vertical, 6)
@@ -163,6 +287,7 @@ struct StoryAgentRunPanel: View {
     }
     private func label(_ run: StoryAgentRun) -> String {
         if run.applied { return appModel.localized("规划完成 · 已应用", english: "Planning Complete · Applied") }
+        if run.abandonedAt != nil { return appModel.localized("中断草稿 · 已放弃", english: "Interrupted Draft · Discarded") }
         if run.checkpoint.status == .completed { return appModel.localized("草稿已完成 · 待应用", english: "Draft Complete · Awaiting Application") }
         if viewModel.isBusy && viewModel.activeProjectID == run.projectID && viewModel.latestAgentRun?.id == run.id {
             return appModel.localized("正在分步规划 · 草稿自动保存", english: "Planning Step by Step · Draft Autosaved")

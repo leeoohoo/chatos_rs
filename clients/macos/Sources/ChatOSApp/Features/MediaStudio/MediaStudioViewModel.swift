@@ -58,8 +58,9 @@ final class MediaStudioViewModel: ObservableObject {
     @Published var videoSize = "1280x720"
     @Published var videoRatio = "16:9"
     @Published var videoSeconds = 4
-    @Published private(set) var inputImage: ImageGenerationInputImage?
+    @Published private(set) var inputImages: [ImageGenerationInputImage] = []
     @Published private(set) var videoInputImage: ImageGenerationInputImage?
+    @Published private(set) var videoReferenceAudio: VideoGenerationInputAudio?
     @Published private(set) var models: [MediaGenerationModel] = []
     @Published private(set) var videoModels: [MediaGenerationModel] = []
     @Published private(set) var history: [HistoryItem] = []
@@ -72,6 +73,8 @@ final class MediaStudioViewModel: ObservableObject {
     @Published private(set) var historyErrorMessage: String?
     @Published private(set) var isLoadingHistory = false
     @Published private(set) var isLoadingVideoInputImage = false
+    @Published private(set) var isLoadingVideoReferenceAudio = false
+    @Published private(set) var isLoadingInputImages = false
 
     private let service: any MediaGenerationServicing
     let stories: StoryStudioViewModel
@@ -85,6 +88,10 @@ final class MediaStudioViewModel: ObservableObject {
     private var videoOperationID = UUID()
     private var videoInputSelectionID = UUID()
     private var videoInputTask: Task<Void, Never>?
+    private var videoAudioSelectionID = UUID()
+    private var videoAudioTask: Task<Void, Never>?
+    private var inputImagesTask: Task<Void, Never>?
+    private var inputImagesSelectionID = UUID()
     private let imageTransport: any HTTPTransport
 
     init(service: any MediaGenerationServicing, historyStore: MediaStudioHistoryStore = MediaStudioHistoryStore(), imageTransport: any HTTPTransport = URLSessionHTTPTransport(), storyPlanner: (any StoryPlanningServicing)? = nil) {
@@ -123,8 +130,10 @@ final class MediaStudioViewModel: ObservableObject {
         return models.first(where: { $0.id == selectedModelID })
     }
 
+    var inputImage: ImageGenerationInputImage? { inputImages.first }
+
     var canGenerate: Bool {
-        !isGenerating
+        !isGenerating && !isLoadingInputImages
             && ownerID != nil && !isLoadingHistory
             && selectedModelID != nil
             && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -138,6 +147,7 @@ final class MediaStudioViewModel: ObservableObject {
     var canGenerateVideo: Bool {
         !isGeneratingVideo
             && !isLoadingVideoInputImage
+            && !isLoadingVideoReferenceAudio
             && ownerID != nil && !isLoadingHistory
             && selectedVideoModelID != nil
             && !videoPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -169,7 +179,8 @@ final class MediaStudioViewModel: ObservableObject {
         let submittedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let request = ImageGenerationRequest(
             modelConfigID: selectedModelID, prompt: submittedPrompt,
-            size: size == "auto" ? nil : size, count: count, inputImage: inputImage
+            size: size == "auto" ? nil : size, count: count,
+            referenceImages: inputImages
         )
         isGenerating = true
         errorMessage = nil
@@ -214,7 +225,8 @@ final class MediaStudioViewModel: ObservableObject {
         let submittedPrompt = videoPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let request = VideoGenerationRequest(
             modelConfigID: selectedVideoModelID, prompt: submittedPrompt,
-            size: videoSize, seconds: videoSeconds, inputImage: videoInputImage, ratio: videoRatio
+            size: videoSize, seconds: videoSeconds, inputImage: videoInputImage,
+            referenceAudio: videoReferenceAudio, ratio: videoRatio
         )
         isGeneratingVideo = true
         videoProgress = .init(status: "submitting")
@@ -262,24 +274,92 @@ final class MediaStudioViewModel: ObservableObject {
     }
 
     func selectInputImage(from url: URL) {
+        addInputImages(from: [url])
+    }
+
+    func addInputImages(from urls: [URL]) {
+        guard ownerID != nil, !urls.isEmpty else { return }
+        guard inputImages.count + urls.count <= 8 else {
+            errorMessage = MediaStudioInputImageError.tooManyReferences.localizedDescription
+            return
+        }
+        inputImagesTask?.cancel()
+        inputImagesSelectionID = UUID()
+        let selection = inputImagesSelectionID
         errorMessage = nil
         let session = sessionID
-        Task {
+        isLoadingInputImages = true
+        inputImagesTask = Task {
             do {
-                let image = try await Task.detached(priority: .userInitiated) {
-                    try Self.loadInputImage(from: url)
+                let images = try await Task.detached(priority: .userInitiated) {
+                    try urls.map { try Self.loadInputImage(from: $0) }
                 }.value
-                guard sessionID == session else { return }
-                inputImage = image
+                guard sessionID == session, inputImagesSelectionID == selection else { return }
+                var merged = inputImages
+                for image in images where !merged.contains(image) { merged.append(image) }
+                guard merged.count <= 8 else { throw MediaStudioInputImageError.tooManyReferences }
+                inputImages = merged
             } catch {
-                guard sessionID == session else { return }
+                guard sessionID == session, inputImagesSelectionID == selection else { return }
                 errorMessage = error.localizedDescription
             }
+            guard sessionID == session, inputImagesSelectionID == selection else { return }
+            isLoadingInputImages = false
+            inputImagesTask = nil
+        }
+    }
+
+    func addGeneratedImagesAsReferences(_ assets: [GeneratedMediaAsset]) {
+        guard ownerID != nil, !assets.isEmpty,
+              assets.allSatisfy({ asset in history.contains { $0.images.contains(asset) } }) else { return }
+        guard inputImages.count + assets.count <= 8 else {
+            errorMessage = MediaStudioInputImageError.tooManyReferences.localizedDescription
+            return
+        }
+        inputImagesTask?.cancel()
+        inputImagesSelectionID = UUID()
+        let selection = inputImagesSelectionID
+        let session = sessionID
+        let transport = imageTransport
+        errorMessage = nil
+        isLoadingInputImages = true
+        inputImagesTask = Task {
+            do {
+                var loaded: [ImageGenerationInputImage] = []
+                for asset in assets {
+                    try Task.checkCancellation()
+                    let data = try await MediaStudioImageLoader.data(for: asset, transport: transport)
+                    let input = try await Task.detached(priority: .userInitiated) {
+                        try Self.makeInputImage(
+                            data: data,
+                            name: "generated-\(asset.id).\(Self.fileExtension(for: asset.mimeType))",
+                            mimeType: asset.mimeType
+                        )
+                    }.value
+                    loaded.append(input)
+                }
+                guard sessionID == session, inputImagesSelectionID == selection else { return }
+                var merged = inputImages
+                for image in loaded where !merged.contains(image) { merged.append(image) }
+                guard merged.count <= 8 else { throw MediaStudioInputImageError.tooManyReferences }
+                inputImages = merged
+            } catch {
+                guard sessionID == session, inputImagesSelectionID == selection else { return }
+                errorMessage = error.localizedDescription
+            }
+            guard sessionID == session, inputImagesSelectionID == selection else { return }
+            isLoadingInputImages = false
+            inputImagesTask = nil
         }
     }
 
     func removeInputImage() {
-        inputImage = nil
+        inputImages = []
+    }
+
+    func removeInputImage(at index: Int) {
+        guard inputImages.indices.contains(index), !isGenerating else { return }
+        inputImages.remove(at: index)
     }
 
     func selectVideoInputImage(from url: URL) {
@@ -298,7 +378,11 @@ final class MediaStudioViewModel: ObservableObject {
         loadVideoInputImage {
             let data = try await MediaStudioImageLoader.data(for: asset, transport: transport)
             return try await Task.detached(priority: .userInitiated) {
-                try Self.makeInputImage(data: data, name: "generated-\(asset.id).png")
+                try Self.makeInputImage(
+                    data: data,
+                    name: "generated-\(asset.id).\(Self.fileExtension(for: asset.mimeType))",
+                    mimeType: asset.mimeType
+                )
             }.value
         }
     }
@@ -332,6 +416,38 @@ final class MediaStudioViewModel: ObservableObject {
         videoInputImage = nil
     }
 
+    func selectVideoReferenceAudio(from url: URL) {
+        videoAudioTask?.cancel()
+        videoAudioSelectionID = UUID()
+        let selection = videoAudioSelectionID
+        let session = sessionID
+        errorMessage = nil
+        isLoadingVideoReferenceAudio = true
+        videoAudioTask = Task {
+            do {
+                let audio = try await Task.detached(priority: .userInitiated) {
+                    try Self.loadReferenceAudio(from: url)
+                }.value
+                guard sessionID == session, videoAudioSelectionID == selection else { return }
+                videoReferenceAudio = audio
+            } catch {
+                guard sessionID == session, videoAudioSelectionID == selection else { return }
+                errorMessage = error.localizedDescription
+            }
+            guard sessionID == session, videoAudioSelectionID == selection else { return }
+            isLoadingVideoReferenceAudio = false
+            videoAudioTask = nil
+        }
+    }
+
+    func removeVideoReferenceAudio() {
+        videoAudioSelectionID = UUID()
+        videoAudioTask?.cancel()
+        videoAudioTask = nil
+        isLoadingVideoReferenceAudio = false
+        videoReferenceAudio = nil
+    }
+
     func reportInputImageError(_ error: Error) {
         errorMessage = error.localizedDescription
     }
@@ -342,6 +458,10 @@ final class MediaStudioViewModel: ObservableObject {
         ownerID = nil
         imageGenerationTask?.cancel()
         imageGenerationTask = nil
+        inputImagesSelectionID = UUID()
+        inputImagesTask?.cancel()
+        inputImagesTask = nil
+        isLoadingInputImages = false
         historyLoadTask?.cancel()
         historyLoadTask = nil
         isLoadingHistory = false
@@ -351,10 +471,11 @@ final class MediaStudioViewModel: ObservableObject {
         hasLoaded = false
         prompt = ""
         selectedModelID = nil
-        inputImage = nil
+        inputImages = []
         videoPrompt = ""
         selectedVideoModelID = nil
         removeVideoInputImage()
+        removeVideoReferenceAudio()
         models = []
         videoModels = []
         history = []
@@ -375,7 +496,10 @@ final class MediaStudioViewModel: ObservableObject {
                 let next = try await service.fetchModels()
                 guard sessionID == session else { return }
                 models = next
-                videoModels = next.filter(\.isLikelyVideoModel)
+                videoModels = next.filter {
+                    $0.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .caseInsensitiveCompare("MiniMax-H3") == .orderedSame
+                }
                 if !next.contains(where: { $0.id == selectedModelID }) {
                     selectedModelID = next.first?.id
                 }
@@ -400,30 +524,72 @@ final class MediaStudioViewModel: ObservableObject {
               values.contentType?.conforms(to: .image) == true else {
             throw MediaStudioInputImageError.notAnImage
         }
-        if let fileSize = values.fileSize, fileSize > 40 * 1024 * 1024 {
+        if let fileSize = values.fileSize, fileSize > 20 * 1024 * 1024 {
             throw MediaStudioInputImageError.tooLarge
         }
 
         let sourceData = try Data(contentsOf: url, options: [.mappedIfSafe])
-        return try makeInputImage(data: sourceData, name: url.deletingPathExtension().lastPathComponent + ".png")
+        return try makeInputImage(
+            data: sourceData,
+            name: url.lastPathComponent,
+            mimeType: values.contentType?.preferredMIMEType
+        )
     }
 
-    nonisolated private static func makeInputImage(data: Data, name: String) throws -> ImageGenerationInputImage {
-        guard let image = NSImage(data: data),
-              let tiff = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff),
-              let pngData = bitmap.representation(using: .png, properties: [:]) else {
+    nonisolated private static func loadReferenceAudio(from url: URL) throws -> VideoGenerationInputAudio {
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentTypeKey])
+        let supportedMIMETypes = [
+            "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/vnd.wave",
+            "audio/mp4", "audio/x-m4a", "audio/aac",
+        ]
+        guard values.isRegularFile == true,
+              let mimeType = values.contentType?.preferredMIMEType,
+              supportedMIMETypes.contains(mimeType.lowercased()) else {
+            throw MediaStudioReferenceAudioError.unsupported
+        }
+        if let fileSize = values.fileSize, fileSize > 20 * 1024 * 1024 {
+            throw MediaStudioReferenceAudioError.tooLarge
+        }
+        let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+        guard !data.isEmpty, data.count <= 20 * 1024 * 1024 else {
+            throw MediaStudioReferenceAudioError.tooLarge
+        }
+        return .init(
+            name: url.lastPathComponent, mimeType: mimeType,
+            base64Data: data.base64EncodedString()
+        )
+    }
+
+    nonisolated private static func makeInputImage(
+        data: Data,
+        name: String,
+        mimeType: String? = nil
+    ) throws -> ImageGenerationInputImage {
+        guard let image = NSImage(data: data), image.isValid else {
             throw MediaStudioInputImageError.cannotDecode
         }
-        guard pngData.count <= 20 * 1024 * 1024 else {
+        guard data.count <= 20 * 1024 * 1024 else {
             throw MediaStudioInputImageError.tooLarge
         }
-
         return ImageGenerationInputImage(
             name: name,
-            mimeType: "image/png",
-            base64Data: pngData.base64EncodedString()
+            mimeType: normalizedImageMIMEType(mimeType),
+            base64Data: data.base64EncodedString()
         )
+    }
+
+    nonisolated private static func normalizedImageMIMEType(_ value: String?) -> String {
+        guard let value, let type = UTType(mimeType: value), type.conforms(to: .image) else {
+            return "image/png"
+        }
+        return type.preferredMIMEType ?? value
+    }
+
+    nonisolated private static func fileExtension(for mimeType: String) -> String {
+        UTType(mimeType: mimeType)?.preferredFilenameExtension ?? "png"
     }
 
 }
@@ -432,6 +598,7 @@ private enum MediaStudioInputImageError: LocalizedError {
     case notAnImage
     case cannotDecode
     case tooLarge
+    case tooManyReferences
 
     var errorDescription: String? {
         switch self {
@@ -441,6 +608,22 @@ private enum MediaStudioInputImageError: LocalizedError {
             "无法读取这张图片，请换一张后重试。"
         case .tooLarge:
             "参考图不能超过 20 MB。"
+        case .tooManyReferences:
+            "一次最多选择 8 张参考图。"
+        }
+    }
+}
+
+private enum MediaStudioReferenceAudioError: LocalizedError {
+    case unsupported
+    case tooLarge
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupported:
+            "请选择 MP3、WAV、M4A 或 AAC 音频文件。"
+        case .tooLarge:
+            "参考音频不能超过 20 MB。"
         }
     }
 }

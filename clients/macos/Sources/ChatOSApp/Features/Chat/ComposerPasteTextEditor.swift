@@ -8,6 +8,13 @@ enum ComposerPasteContent {
     case longText(String)
 }
 
+enum ComposerTextCommand {
+    case moveUp
+    case moveDown
+    case escape
+    case submit
+}
+
 struct ComposerPasteTextEditor: View {
     private enum Layout {
         static let minimumHeight: CGFloat = 34
@@ -18,6 +25,7 @@ struct ComposerPasteTextEditor: View {
     var placeholder: String
     var onSubmit: () -> Void
     var onPasteContent: (ComposerPasteContent) -> Void
+    var onCommand: (ComposerTextCommand) -> Bool = { _ in false }
 
     @Environment(\.interfaceFontScale) private var interfaceFontScale
     @State private var measuredHeight = Layout.minimumHeight
@@ -29,7 +37,8 @@ struct ComposerPasteTextEditor: View {
             placeholder: placeholder,
             fontSize: max(8, 14 * interfaceFontScale),
             onSubmit: onSubmit,
-            onPasteContent: onPasteContent
+            onPasteContent: onPasteContent,
+            onCommand: onCommand
         )
         .frame(
             minHeight: Layout.minimumHeight,
@@ -46,6 +55,7 @@ private struct NativeComposerTextEditor: NSViewRepresentable {
     let fontSize: CGFloat
     let onSubmit: () -> Void
     let onPasteContent: (ComposerPasteContent) -> Void
+    let onCommand: (ComposerTextCommand) -> Bool
 
     private let minimumHeight: CGFloat = 34
     private let maximumHeight: CGFloat = 126
@@ -145,6 +155,7 @@ private struct NativeComposerTextEditor: NSViewRepresentable {
             textView.needsDisplay = true
         }
         textView.onSubmit = onSubmit
+        textView.onCommand = onCommand
         textView.onPaste = { pasteboard in
             guard let content = ComposerPasteboardReader.content(from: pasteboard) else {
                 return false
@@ -216,6 +227,7 @@ private final class ComposerNativeTextView: NSTextView {
     var onSubmit: (() -> Void)?
     var onPaste: ((NSPasteboard) -> Bool)?
     var onLayoutChanged: (() -> Void)?
+    var onCommand: ((ComposerTextCommand) -> Bool)?
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -229,6 +241,17 @@ private final class ComposerNativeTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
+        let command: ComposerTextCommand? = switch event.keyCode {
+        case 126: .moveUp
+        case 125: .moveDown
+        case 53: .escape
+        case 36 where !event.modifierFlags.contains(.shift): .submit
+        case 48 where !event.modifierFlags.contains(.shift): .submit
+        case 76 where !event.modifierFlags.contains(.shift): .submit
+        default: nil
+        }
+        if let command, onCommand?(command) == true { return }
+
         let isReturn = event.keyCode == 36 || event.keyCode == 76
         if isReturn,
            !event.modifierFlags.contains(.shift),

@@ -12,13 +12,11 @@ use chatos_ai_runtime::{
 pub(super) use chatos_service_runtime::env_text as normalized_env;
 use chatos_service_runtime::{validate_production_secret, DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN};
 
-use super::database::normalize_database_url;
 use super::{AppConfig, StoreMode, TaskRunnerRole, DEFAULT_TASK_RUN_EXECUTION_TIMEOUT_MS};
 
 impl AppConfig {
     pub fn from_env() -> Result<Self, String> {
-        let store_mode = StoreMode::from_env(normalized_env("TASK_RUNNER_STORE_MODE").as_deref());
-        let mongodb_database = require_config_center_text("TASK_RUNNER_MONGODB_DATABASE")?;
+        let store_mode = StoreMode::Postgres;
         let workspace_dir = require_config_center_text("TASK_RUNNER_WORKSPACE_DIR")?;
         let host = require_config_center_text("TASK_RUNNER_HOST")?
             .parse::<IpAddr>()
@@ -60,7 +58,6 @@ impl AppConfig {
         let worker_concurrency =
             require_config_center_u64("TASK_RUNNER_WORKER_CONCURRENCY")? as usize;
         let worker_id = normalized_env("TASK_RUNNER_WORKER_ID").unwrap_or_else(default_worker_id);
-        let auto_memory_summary = require_config_center_bool("TASK_RUNNER_AUTO_MEMORY_SUMMARY")?;
         let default_task_execution_max_iterations = DEFAULT_TASK_RUN_MAX_ITERATIONS;
         let default_tool_result_model_max_chars = DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS;
         let default_tool_results_model_total_max_chars = DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS;
@@ -103,11 +100,7 @@ impl AppConfig {
             otlp_export_timeout: Duration::from_millis(otlp_export_timeout_ms),
             role,
             store_mode,
-            database_url: normalize_database_url(
-                store_mode,
-                require_config_center_secret("TASK_RUNNER_DATABASE_URL")?,
-                &mongodb_database,
-            ),
+            database_url: require_config_center_secret("TASK_RUNNER_DATABASE_URL")?,
             memory_engine_base_url: Some(memory_engine_base_url),
             memory_engine_source_id: normalized_env("MEMORY_ENGINE_SOURCE_ID")
                 .or_else(|| normalized_env("TASK_RUNNER_MEMORY_ENGINE_SOURCE_ID"))
@@ -127,7 +120,6 @@ impl AppConfig {
             worker_id,
             worker_claim_ttl: Duration::from_millis(worker_claim_ttl_ms.max(30_000)),
             worker_concurrency,
-            auto_memory_summary,
             default_task_execution_max_iterations,
             default_tool_result_model_max_chars,
             default_tool_results_model_total_max_chars,
@@ -225,17 +217,6 @@ fn require_config_center_f64(key: &str) -> Result<f64, String> {
     value
         .parse::<f64>()
         .map_err(|err| format!("{key} must be a valid number: {err}"))
-}
-
-fn require_config_center_bool(key: &str) -> Result<bool, String> {
-    match require_config_center_text(key)?
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "1" | "true" | "yes" | "on" => Ok(true),
-        "0" | "false" | "no" | "off" => Ok(false),
-        value => Err(format!("{key} must be a valid boolean, got {value}")),
-    }
 }
 
 fn default_worker_id() -> String {

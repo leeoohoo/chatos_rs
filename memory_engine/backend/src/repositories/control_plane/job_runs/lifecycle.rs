@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use mongodb::bson::{doc, Bson};
+use sqlx::types::Json;
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -9,14 +9,12 @@ use crate::db::Db;
 use crate::models::{
     now_rfc3339, CreateEngineJobRunRequest, EngineJobRun, FinishEngineJobRunRequest,
 };
-
-use super::super::common::job_run_collection;
+use crate::repositories::postgres::{decode, json, optional_timestamp, timestamp};
 
 pub async fn create_job_run(
     db: &Db,
     req: CreateEngineJobRunRequest,
 ) -> Result<EngineJobRun, String> {
-    let started_at = now_rfc3339();
     let job_run = EngineJobRun {
         id: Uuid::new_v4().to_string(),
         job_type: req.job_type,
@@ -35,25 +33,30 @@ pub async fn create_job_run(
         error_count: 0,
         metadata: req.metadata,
         error_message: None,
-        started_at,
+        started_at: now_rfc3339(),
         finished_at: None,
     };
-
-    job_run_collection(db)
-        .insert_one(job_run.clone())
-        .await
-        .map_err(|err| err.to_string())?;
-    info!(
-        "[MEMORY-ENGINE-JOB] created job_run_id={} job_type={} trigger_type={} tenant_id={} source_id={} thread_id={} subject_id={} thread_label={}",
-        job_run.id,
-        job_run.job_type,
-        job_run.trigger_type,
-        job_run.tenant_id.as_deref().unwrap_or("-"),
-        job_run.source_id.as_deref().unwrap_or("-"),
-        job_run.thread_id.as_deref().unwrap_or("-"),
-        job_run.subject_id.as_deref().unwrap_or("-"),
-        job_run.thread_label.as_deref().unwrap_or("-")
-    );
+    sqlx::query(
+        "INSERT INTO engine_job_runs \
+         (id,job_type,trigger_type,tenant_id,source_id,thread_id,subject_id,thread_label,status, \
+          started_at,finished_at,data) \
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULL,$11)",
+    )
+    .bind(&job_run.id)
+    .bind(&job_run.job_type)
+    .bind(&job_run.trigger_type)
+    .bind(&job_run.tenant_id)
+    .bind(&job_run.source_id)
+    .bind(&job_run.thread_id)
+    .bind(&job_run.subject_id)
+    .bind(&job_run.thread_label)
+    .bind(&job_run.status)
+    .bind(timestamp(&job_run.started_at)?)
+    .bind(json(&job_run)?)
+    .execute(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    info!(job_run_id = %job_run.id, job_type = %job_run.job_type, "created Memory Engine job run");
     Ok(job_run)
 }
 
@@ -62,71 +65,42 @@ pub async fn finish_job_run(
     id: &str,
     req: FinishEngineJobRunRequest,
 ) -> Result<Option<EngineJobRun>, String> {
-    let FinishEngineJobRunRequest {
-        status,
-        input_count,
-        output_count,
-        processed_count,
-        success_count,
-        error_count,
-        metadata,
-        error_message,
-    } = req;
-    let finished_at = now_rfc3339();
-
-    let update_result = job_run_collection(db)
-        .update_one(
-            doc! {"id": id, "status": "running"},
-            doc! {
-                "$set": {
-                    "status": &status,
-                    "input_count": input_count,
-                    "output_count": output_count,
-                    "processed_count": processed_count,
-                    "success_count": success_count,
-                    "error_count": error_count,
-                    "metadata": mongodb::bson::to_bson(&metadata).unwrap_or(Bson::Null),
-                    "error_message": mongodb::bson::to_bson(&error_message).unwrap_or(Bson::Null),
-                    "finished_at": finished_at,
-                }
-            },
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-
-    let item = job_run_collection(db)
-        .find_one(doc! {"id": id})
-        .await
-        .map_err(|err| err.to_string())?;
-
-    if update_result.matched_count == 0 {
-        warn!(
-            "[MEMORY-ENGINE-JOB] finish-skipped job_run_id={} requested_status={} existing_status={} input_count={} output_count={} processed_count={} success_count={} error_count={} error_message={}",
-            id,
-            status,
-            item.as_ref()
-                .map(|job| job.status.as_str())
-                .unwrap_or("missing"),
-            input_count,
-            output_count,
-            processed_count,
-            success_count,
-            error_count,
-            error_message.as_deref().unwrap_or("-")
-        );
-    } else {
-        info!(
-            "[MEMORY-ENGINE-JOB] finished job_run_id={} status={} input_count={} output_count={} processed_count={} success_count={} error_count={} error_message={}",
-            id,
-            status,
-            input_count,
-            output_count,
-            processed_count,
-            success_count,
-            error_count,
-            error_message.as_deref().unwrap_or("-")
-        );
+    let mut tx = db.begin().await.map_err(|error| error.to_string())?;
+    let data = sqlx::query_scalar::<_, Json<serde_json::Value>>(
+        "SELECT data FROM engine_job_runs WHERE id=$1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    let Some(data) = data else {
+        tx.commit().await.map_err(|error| error.to_string())?;
+        return Ok(None);
+    };
+    let mut job: EngineJobRun = decode(data)?;
+    if job.status != "running" {
+        warn!(job_run_id = id, existing_status = %job.status, "finish skipped for terminal job run");
+        tx.commit().await.map_err(|error| error.to_string())?;
+        return Ok(Some(job));
     }
-
-    Ok(item)
+    job.status = req.status;
+    job.input_count = req.input_count;
+    job.output_count = req.output_count;
+    job.processed_count = req.processed_count;
+    job.success_count = req.success_count;
+    job.error_count = req.error_count;
+    job.metadata = req.metadata;
+    job.error_message = req.error_message;
+    job.finished_at = Some(now_rfc3339());
+    sqlx::query("UPDATE engine_job_runs SET status=$2,finished_at=$3,data=$4 WHERE id=$1")
+        .bind(id)
+        .bind(&job.status)
+        .bind(optional_timestamp(job.finished_at.as_deref())?)
+        .bind(json(&job)?)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
+    tx.commit().await.map_err(|error| error.to_string())?;
+    info!(job_run_id = id, status = %job.status, "finished Memory Engine job run");
+    Ok(Some(job))
 }

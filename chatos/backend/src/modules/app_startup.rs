@@ -41,6 +41,7 @@ pub async fn initialize_runtime(cfg: &Config) -> Result<(), String> {
         true,
         "Cloud Agent consumer and outbox reconciler started",
     );
+    services::agent_artifact_maintenance::spawn_reconciler();
 
     match crate::repositories::user_settings::purge_managed_runtime_settings().await {
         Ok(modified_count) => {
@@ -63,33 +64,23 @@ pub async fn initialize_runtime(cfg: &Config) -> Result<(), String> {
         }
     }
 
-    match services::auth_user_backfill::backfill_legacy_auth_users().await {
-        Ok(report) => {
+    match crate::repositories::session_runtime_settings::purge_removed_task_settings().await {
+        Ok(modified_count) => {
             info!(
-                "Legacy auth-user backfill finished: legacy_count={} created_count={} skipped_existing_count={} skipped_invalid_count={}",
-                report.legacy_count,
-                report.created_count,
-                report.skipped_existing_count,
-                report.skipped_invalid_count
+                "Removed obsolete automatic task setting from sessions: modified_count={modified_count}"
             );
             core::runtime_health::mark_runtime_check_ok(
-                "auth_user_backfill",
+                "session_task_setting_migration",
                 false,
-                format!(
-                    "legacy_count={} created_count={} skipped_existing_count={} skipped_invalid_count={}",
-                    report.legacy_count,
-                    report.created_count,
-                    report.skipped_existing_count,
-                    report.skipped_invalid_count
-                ),
+                format!("modified_count={modified_count}"),
             );
         }
         Err(err) => {
-            warn!("Legacy auth-user backfill failed: {err}");
+            warn!("Failed to clean obsolete automatic task setting: {err}");
             core::runtime_health::mark_runtime_check_warn(
-                "auth_user_backfill",
+                "session_task_setting_migration",
                 false,
-                format!("backfill failed: {err}"),
+                format!("cleanup failed: {err}"),
             );
         }
     }

@@ -21,6 +21,18 @@ struct ScreenshotOverlayWindowTests {
     }
 
     @Test
+    func selectionWindowDoesNotTakeKeyFocusFromCapturedApplication() {
+        let panel = ScreenSelectionWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+
+        #expect(!panel.canBecomeKey)
+    }
+
+    @Test
     func annotationWindowsPreserveTheirLevelOrdering() {
         let backdrop = NSPanel()
         let canvas = NSPanel()

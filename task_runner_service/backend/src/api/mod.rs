@@ -31,7 +31,7 @@ use crate::models::{
     TaskMemoryContextOptions, TaskMemoryContextResponse, TaskMemoryRecordsOptions,
     TaskMemoryRecordsResponse, TaskMemorySummaryResponse, TaskProjectScopeFilter, TaskRecord,
     TaskRunEventRecord, TaskRunRecord, TaskRunStatus, TaskRunnerInternalPromptPreviewResponse,
-    TaskScheduleMode, TaskSourceContext, TaskStatsResponse, TaskStatus, TaskSummaryRecord,
+    TaskSourceContext, TaskStatsResponse, TaskStatus, TaskSummaryRecord,
     UpdateRuntimeSettingsRequest, UpdateTaskRequest, UpdateUserRequest, UserRole,
     UserSummaryRecord,
 };
@@ -284,42 +284,4 @@ async fn ensure_run_access(
         .await?
         .map(|_| ())
         .ok_or_else(|| ApiError::not_found(format!("任务不存在: {}", run.task_id)))
-}
-
-fn task_stats_from_tasks(tasks: &[TaskRecord]) -> TaskStatsResponse {
-    let mut stats = TaskStatsResponse {
-        total: 0,
-        scheduled: 0,
-        follow_up: 0,
-        draft: 0,
-        ready: 0,
-        queued: 0,
-        running: 0,
-        succeeded: 0,
-        failed: 0,
-        blocked: 0,
-        cancelled: 0,
-        archived: 0,
-    };
-    for task in tasks {
-        stats.total += 1;
-        if !matches!(task.schedule.mode, TaskScheduleMode::Manual) {
-            stats.scheduled += 1;
-        }
-        if task.parent_task_id.is_some() {
-            stats.follow_up += 1;
-        }
-        match task.status {
-            TaskStatus::Draft => stats.draft += 1,
-            TaskStatus::Ready => stats.ready += 1,
-            TaskStatus::Queued => stats.queued += 1,
-            TaskStatus::Running => stats.running += 1,
-            TaskStatus::Succeeded => stats.succeeded += 1,
-            TaskStatus::Failed => stats.failed += 1,
-            TaskStatus::Blocked => stats.blocked += 1,
-            TaskStatus::Cancelled => stats.cancelled += 1,
-            TaskStatus::Archived => stats.archived += 1,
-        }
-    }
-    stats
 }

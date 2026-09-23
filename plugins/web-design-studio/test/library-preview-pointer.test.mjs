@@ -37,7 +37,10 @@ test('malformed preview pointer messages are rejected', () => {
 
 test('preview picker keeps clicks local and captures only a real drag', () => {
   const picker = readFileSync('ui-src/library-runtime/preview-picker.ts', 'utf8');
-  const studio = readFileSync('ui-src/studio/WebDesignStudioApp.tsx', 'utf8');
+  const studio = [
+    'ui-src/studio/WebDesignStudioApp.tsx',
+    'ui-src/studio/WebDesignStudioWorkspace.tsx'
+  ].map((path) => readFileSync(path, 'utf8')).join('\n');
   assert.match(picker, /const pickableAtPoint = \(clientX: number, clientY: number\)/);
   assert.match(picker, /return pickableAtPoint\(pointer\.clientX, pointer\.clientY\);/);
   assert.match(picker, /Math\.hypot\(event\.clientX - activePointer\.startClientX, event\.clientY - activePointer\.startClientY\)/);

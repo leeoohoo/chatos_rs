@@ -31,9 +31,17 @@ pub(super) async fn parse_stream_response(
     abort_token: Option<CancellationToken>,
     progress_timeout: Option<Duration>,
 ) -> Result<AiResponse, String> {
+    let provider_http_status = response.status().as_u16();
+    let provider_request_id = response
+        .headers()
+        .get("x-request-id")
+        .or_else(|| response.headers().get("openai-request-id"))
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
     let response_stream = response
         .bytes_stream()
         .map(|chunk| chunk.map_err(super::http::format_reqwest_error));
+    let diagnostic_request_id = provider_request_id.clone();
     parse_stream_chunks(
         response_stream,
         transport,
@@ -42,8 +50,14 @@ pub(super) async fn parse_stream_response(
         thinking_level,
         abort_token,
         progress_timeout,
+        provider_http_status,
+        provider_request_id,
     )
     .await
+    .map_err(|error| {
+        let request_id = diagnostic_request_id.as_deref().unwrap_or("unavailable");
+        format!("{error} [http_status={provider_http_status}, provider_request_id={request_id}]")
+    })
 }
 
 async fn parse_stream_chunks<S, E>(
@@ -54,6 +68,8 @@ async fn parse_stream_chunks<S, E>(
     thinking_level: Option<&str>,
     abort_token: Option<CancellationToken>,
     progress_timeout: Option<Duration>,
+    provider_http_status: u16,
+    provider_request_id: Option<String>,
 ) -> Result<AiResponse, String>
 where
     S: Stream<Item = Result<bytes::Bytes, E>> + Unpin,
@@ -134,6 +150,13 @@ where
         return Err(EMPTY_STREAM_RESPONSE_PARSE_ERROR.to_string());
     }
 
+    if transport == AiTransport::Responses && !state.terminal_event_seen {
+        return Err(format!(
+            "incomplete Responses SSE stream: ended after {} valid event(s) without response.completed, response.incomplete, or response.failed",
+            stream_stats.parsed_event_count
+        ));
+    }
+
     let finalized = match transport {
         AiTransport::Responses => finalize_responses_stream_state(&mut state),
         AiTransport::ChatCompletions => finalize_chat_completions_stream_state(&mut state),
@@ -160,6 +183,14 @@ where
         usage: finalized.usage,
         response_id: finalized.response_id,
         response_output_items: finalized.response_output_items,
+        response_status: finalized.response_status,
+        incomplete_details: finalized.incomplete_details,
+        terminal_event_type: finalized.terminal_event_type,
+        terminal_event_seen: finalized.terminal_event_seen,
+        provider_request_id,
+        provider_http_status: Some(provider_http_status),
+        parsed_stream_event_count: stream_stats.parsed_event_count,
+        malformed_stream_event_count: stream_stats.malformed_event_count,
     })
 }
 
@@ -172,13 +203,16 @@ fn stream_state_is_safely_completed(
         return false;
     }
     match transport {
-        AiTransport::Responses => state.response_obj.as_ref().is_some_and(|response| {
-            response
-                .get("status")
-                .and_then(Value::as_str)
-                .is_some_and(|status| status.eq_ignore_ascii_case("completed"))
-                && response_function_calls_are_complete(response)
-        }),
+        AiTransport::Responses => {
+            state.terminal_event_type.as_deref() == Some("response.completed")
+                && state.response_obj.as_ref().is_some_and(|response| {
+                    response
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|status| status.eq_ignore_ascii_case("completed"))
+                        && response_function_calls_are_complete(response)
+                })
+        }
         AiTransport::ChatCompletions => {
             malformed_event_count == 0
                 && state.finish_reason.as_deref().is_some_and(|reason| {
@@ -301,7 +335,7 @@ fn parsed_stream_response_is_empty(parsed_event_count: usize, state: &StreamStat
 mod tests {
     use bytes::Bytes;
     use futures::stream;
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     use super::{parse_stream_chunks, AiTransport, StreamCallbacks};
 
@@ -328,6 +362,8 @@ mod tests {
             Some("openai"),
             None,
             None,
+            None,
+            200,
             None,
         )
         .await
@@ -366,6 +402,8 @@ mod tests {
             None,
             None,
             None,
+            200,
+            None,
         )
         .await
         .expect_err("incomplete tool arguments must remain a failure");
@@ -387,6 +425,8 @@ mod tests {
             Some("openai"),
             None,
             None,
+            None,
+            200,
             None,
         )
         .await
@@ -416,11 +456,90 @@ mod tests {
             None,
             None,
             None,
+            200,
+            None,
         )
         .await
         .expect("plain JSON response should parse");
 
         assert_eq!(response.content, "plain response");
         assert_eq!(response.finish_reason.as_deref(), Some("completed"));
+    }
+
+    #[tokio::test]
+    async fn responses_incomplete_terminal_event_preserves_reason() {
+        let incomplete = json!({
+            "type": "response.incomplete",
+            "response": {
+                "id": "resp_incomplete",
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "output": []
+            }
+        });
+        let chunks = vec![Ok::<Bytes, String>(Bytes::from(format!(
+            "data: {incomplete}\n\n"
+        )))];
+
+        let response = parse_stream_chunks(
+            stream::iter(chunks),
+            AiTransport::Responses,
+            StreamCallbacks::default(),
+            Some("openai"),
+            None,
+            None,
+            None,
+            200,
+            Some("req_123".to_string()),
+        )
+        .await
+        .expect("incomplete is a parsed provider terminal response");
+
+        assert_eq!(response.response_status.as_deref(), Some("incomplete"));
+        assert_eq!(
+            response
+                .incomplete_details
+                .as_ref()
+                .and_then(|value| value.get("reason"))
+                .and_then(Value::as_str),
+            Some("max_output_tokens")
+        );
+        assert_eq!(
+            response.terminal_event_type.as_deref(),
+            Some("response.incomplete")
+        );
+        assert!(response.terminal_event_seen);
+        assert_eq!(response.provider_request_id.as_deref(), Some("req_123"));
+    }
+
+    #[tokio::test]
+    async fn responses_created_without_terminal_event_is_rejected() {
+        let created = json!({
+            "type": "response.created",
+            "response": {
+                "id": "resp_created_only",
+                "status": "in_progress",
+                "output": []
+            }
+        });
+        let chunks = vec![Ok::<Bytes, String>(Bytes::from(format!(
+            "data: {created}\n\n"
+        )))];
+
+        let error = parse_stream_chunks(
+            stream::iter(chunks),
+            AiTransport::Responses,
+            StreamCallbacks::default(),
+            Some("openai"),
+            None,
+            None,
+            None,
+            200,
+            None,
+        )
+        .await
+        .expect_err("a Responses stream must have a terminal event");
+
+        assert!(error.contains("without response.completed"));
     }
 }

@@ -5,8 +5,8 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
 use axum::http::HeaderValue;
-use mongodb::Client;
 use sha2::Digest;
+use sqlx::postgres::PgPoolOptions;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
@@ -523,10 +523,10 @@ async fn spawn_router(router: Router) -> (String, JoinHandle<()>) {
 }
 
 async fn test_state_with_secret(internal_api_secret: Option<&str>) -> AppState {
-    let client = Client::with_uri_str("mongodb://127.0.0.1:27017")
-        .await
-        .expect("create MongoDB client");
-    let store = AppStore::new(client.database("plugin_management_api_unit_test"));
+    let pool = PgPoolOptions::new()
+        .connect_lazy("postgresql://postgres:postgres@127.0.0.1/plugin_management_api_unit_test")
+        .expect("create lazy PostgreSQL pool");
+    let store = AppStore::new(pool);
     let pressure = PluginManagementPressureState::new(PluginManagementPressurePolicy {
         level: chatos_config_sdk::PlatformPressureLevel::Normal,
         queue_elevated_messages: 100,
@@ -545,8 +545,9 @@ async fn test_state_with_secret(internal_api_secret: Option<&str>) -> AppState {
         config: AppConfig {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,
-            database_url: "mongodb://127.0.0.1:27017".to_string(),
-            mongodb_database: "plugin_management_api_unit_test".to_string(),
+            database_url:
+                "postgresql://postgres:postgres@127.0.0.1/plugin_management_api_unit_test"
+                    .to_string(),
             user_service_base_url: "http://127.0.0.1:39190".to_string(),
             user_service_request_timeout: Duration::from_secs(1),
             task_runner_base_url: "http://127.0.0.1:39090".to_string(),

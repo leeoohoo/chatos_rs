@@ -1,12 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use futures::TryStreamExt;
-use mongodb::bson::{doc, Document};
-use mongodb::options::FindOptions;
-
 use crate::models::agent::Agent;
-use crate::repositories::db::with_db;
+use crate::repositories::db::{db_error, decode_all, decode_optional, json, timestamp, with_db};
 
 pub async fn list_agents_by_user_ids(
     user_ids: &[String],
@@ -17,88 +13,52 @@ pub async fn list_agents_by_user_ids(
     if user_ids.is_empty() {
         return Ok(Vec::new());
     }
-
-    with_db(|db| {
-        let user_ids = user_ids.to_vec();
-        Box::pin(async move {
-            let mut filter = if user_ids.len() == 1 {
-                doc! { "user_id": user_ids[0].clone() }
-            } else {
-                doc! { "user_id": { "$in": user_ids } }
-            };
-            if let Some(value) = enabled {
-                filter.insert("enabled", value);
-            }
-            let options = FindOptions::builder()
-                .sort(doc! { "updated_at": -1, "created_at": -1 })
-                .limit(Some(limit.clamp(1, 500)))
-                .skip(Some(offset.max(0) as u64))
-                .build();
-            let cursor = db
-                .collection::<Agent>("agents")
-                .find(filter, options)
-                .await
-                .map_err(|e| e.to_string())?;
-            cursor
-                .try_collect::<Vec<Agent>>()
-                .await
-                .map_err(|e| e.to_string())
-        })
-    })
-    .await
+    with_db(|pool| Box::pin(async move {
+        decode_all(sqlx::query_scalar("SELECT data FROM agents WHERE user_id=ANY($1) AND ($2::bool IS NULL OR enabled=$2) ORDER BY updated_at DESC,created_at DESC LIMIT $3 OFFSET $4")
+            .bind(user_ids).bind(enabled).bind(limit.clamp(1,500)).bind(offset.max(0)).fetch_all(pool).await.map_err(db_error)?)
+    })).await
 }
 
 pub async fn get_agent_by_id(agent_id: &str) -> Result<Option<Agent>, String> {
-    with_db(|db| {
-        let agent_id = agent_id.to_string();
+    with_db(|pool| {
         Box::pin(async move {
-            db.collection::<Agent>("agents")
-                .find_one(doc! { "id": agent_id }, None)
-                .await
-                .map_err(|e| e.to_string())
+            decode_optional(
+                sqlx::query_scalar("SELECT data FROM agents WHERE id=$1")
+                    .bind(agent_id)
+                    .fetch_optional(pool)
+                    .await
+                    .map_err(db_error)?,
+            )
         })
     })
     .await
 }
 
 pub async fn create_agent(agent: &Agent) -> Result<(), String> {
-    with_db(|db| {
-        let agent = agent.clone();
-        Box::pin(async move {
-            db.collection::<Agent>("agents")
-                .insert_one(agent, None)
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(())
-        })
-    })
-    .await
+    with_db(|pool| Box::pin(async move {
+        sqlx::query("INSERT INTO agents(id,user_id,enabled,created_at,updated_at,data) VALUES($1,$2,$3,$4,$5,$6)")
+            .bind(&agent.id).bind(&agent.user_id).bind(agent.enabled).bind(timestamp(&agent.created_at)?).bind(timestamp(&agent.updated_at)?).bind(json(agent)?)
+            .execute(pool).await.map(|_|()).map_err(db_error)
+    })).await
 }
 
 pub async fn update_agent(agent: &Agent) -> Result<(), String> {
-    with_db(|db| {
-        let agent = agent.clone();
-        Box::pin(async move {
-            db.collection::<Agent>("agents")
-                .replace_one(doc! { "id": &agent.id }, agent, None)
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(())
-        })
-    })
-    .await
+    with_db(|pool| Box::pin(async move {
+        sqlx::query("UPDATE agents SET user_id=$1,enabled=$2,created_at=$3,updated_at=$4,data=$5 WHERE id=$6")
+            .bind(&agent.user_id).bind(agent.enabled).bind(timestamp(&agent.created_at)?).bind(timestamp(&agent.updated_at)?).bind(json(agent)?).bind(&agent.id)
+            .execute(pool).await.map(|_|()).map_err(db_error)
+    })).await
 }
 
 pub async fn delete_agent(agent_id: &str) -> Result<bool, String> {
-    with_db(|db| {
-        let agent_id = agent_id.to_string();
+    with_db(|pool| {
         Box::pin(async move {
-            let result = db
-                .collection::<Document>("agents")
-                .delete_one(doc! { "id": &agent_id }, None)
+            sqlx::query("DELETE FROM agents WHERE id=$1")
+                .bind(agent_id)
+                .execute(pool)
                 .await
-                .map_err(|e| e.to_string())?;
-            Ok(result.deleted_count > 0)
+                .map(|result| result.rows_affected() > 0)
+                .map_err(db_error)
         })
     })
     .await

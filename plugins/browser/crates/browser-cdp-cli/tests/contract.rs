@@ -260,6 +260,7 @@ fn default_existing_chrome_mode_fails_closed_without_an_available_bridge() {
     assert!(child.wait().unwrap().success());
 }
 
+#[allow(clippy::result_large_err)] // Tungstenite fixes the callback error response type.
 fn serve_bridge() -> (String, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();

@@ -85,25 +85,29 @@ pub async fn list_threads(
     Json(req): Json<SdkListThreadsRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     auth.require_tenant(req.tenant_id.as_str())?;
-    let items = threads::list_threads(
-        &state.pool,
-        threads::ListThreadsQuery {
-            tenant_id: Some(req.tenant_id.as_str()),
-            source_id: Some(auth.source_id()),
-            subject_id: req.subject_id.as_deref(),
-            external_thread_id: req.external_thread_id.as_deref(),
-            session_id: req.session_id.as_deref(),
-            contact_id: req.contact_id.as_deref(),
-            project_id: req.project_id.as_deref(),
-            agent_id: req.agent_id.as_deref(),
-            mapping_source: req.mapping_source.as_deref(),
-            mapping_version: req.mapping_version.as_deref(),
-            thread_label: req.thread_label.as_deref(),
-            status: req.status.as_deref(),
-            limit: req.limit.unwrap_or(200),
-            offset: req.offset.unwrap_or(0),
-        },
-    )
+    let values = threads::ListThreadsQuery {
+        tenant_id: Some(req.tenant_id.as_str()),
+        source_id: Some(auth.source_id()),
+        subject_id: req.subject_id.as_deref(),
+        external_thread_id: req.external_thread_id.as_deref(),
+        session_id: req.session_id.as_deref(),
+        contact_id: req.contact_id.as_deref(),
+        project_id: req.project_id.as_deref(),
+        agent_id: req.agent_id.as_deref(),
+        mapping_source: req.mapping_source.as_deref(),
+        mapping_version: req.mapping_version.as_deref(),
+        thread_label: req.thread_label.as_deref(),
+        status: req.status.as_deref(),
+        before_updated_at: req.before_updated_at.as_deref(),
+        before_created_at: req.before_created_at.as_deref(),
+        before_id: req.before_id.as_deref(),
+        limit: req.limit.unwrap_or(200),
+        offset: req.offset.unwrap_or(0),
+    };
+    values
+        .cursor()
+        .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
+    let items = threads::list_threads(&state.pool, values)
     .await
     .map_err(internal_error)?;
     Ok(Json(json!({ "items": items })))

@@ -431,12 +431,34 @@ async fn handle_remote_terminal_socket(
         .get("snapshot")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    let base_sequence = startup_response
+        .body
+        .get("base_sequence")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let sequence = startup_response
+        .body
+        .get("sequence")
+        .and_then(Value::as_u64)
+        .unwrap_or(base_sequence);
+    let truncated = startup_response
+        .body
+        .get("truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     if !snapshot.is_empty()
         && socket
             .send(Message::Text(
-                json!({"type": "snapshot", "data": snapshot})
-                    .to_string()
-                    .into(),
+                json!({
+                    "type": "snapshot",
+                    "data": snapshot,
+                    "base_sequence": base_sequence,
+                    "sequence": sequence,
+                    "truncated": truncated,
+                    "protocol_version": 2,
+                })
+                .to_string()
+                .into(),
             ))
             .await
             .is_err()
@@ -456,9 +478,15 @@ async fn handle_remote_terminal_socket(
         .unwrap_or(false);
     if socket
         .send(Message::Text(
-            json!({"type": "state", "busy": busy, "snapshot_paging": true})
-                .to_string()
-                .into(),
+            json!({
+                "type": "state",
+                "state": "ready",
+                "busy": busy,
+                "snapshot_paging": true,
+                "protocol_version": 2,
+            })
+            .to_string()
+            .into(),
         ))
         .await
         .is_err()
@@ -477,25 +505,99 @@ async fn handle_remote_terminal_socket(
     let refresh_interval = state.config.terminal_subscriber_refresh_interval;
     let subscriber_terminal_id = terminal_session_id.clone();
     let subscriber_id = subscription_id.clone();
+    let event_state = state.clone();
+    let event_owner_user_id = owner_user_id.clone();
+    let event_device_id = device_id.clone();
+    let event_workspace_id = workspace_id.clone();
     let mut event_task = tokio::spawn(async move {
         let mut refresh = tokio::time::interval(refresh_interval);
+        let mut last_sequence = sequence;
+        let mut awaiting_snapshot = false;
+        let mut pending_exit = None;
         loop {
             tokio::select! {
                 event = events.recv() => match event {
                     Ok(event) => {
+                        if awaiting_snapshot && event.message_type == "terminal_exit" {
+                            pending_exit = Some(event);
+                            continue;
+                        }
+                        if event.message_type == "terminal_snapshot" {
+                            last_sequence = event.body
+                                .get("sequence")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(last_sequence);
+                            awaiting_snapshot = false;
+                        } else if event.message_type == "terminal_output" {
+                            let sequence = event.body.get("sequence").and_then(Value::as_u64);
+                            if awaiting_snapshot {
+                                continue;
+                            }
+                            if let Some(sequence) = sequence {
+                                if sequence <= last_sequence {
+                                    continue;
+                                }
+                                if last_sequence > 0 && sequence != last_sequence.saturating_add(1) {
+                                    awaiting_snapshot = true;
+                                    if !send_remote_terminal_control(
+                                        &event_state,
+                                        event_owner_user_id.as_str(),
+                                        event_device_id.as_str(),
+                                        event_workspace_id.as_str(),
+                                        subscriber_terminal_id.as_str(),
+                                        "remote_terminal_snapshot_request",
+                                        json!({ "lines": 500 }),
+                                    ).await {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                                last_sequence = sequence;
+                            }
+                        }
+                        let is_snapshot = event.message_type == "terminal_snapshot";
+                        let is_exit = event.message_type == "terminal_exit";
                         let Some(payload) = terminal_event_to_ws_payload(
                             event.message_type.as_str(),
                             &event.body,
                         ) else {
                             continue;
                         };
-                        if sender.send(Message::Text(payload.to_string().into())).await.is_err()
-                            || event.message_type == "terminal_exit"
-                        {
+                        if sender.send(Message::Text(payload.to_string().into())).await.is_err() {
+                            break;
+                        }
+                        if is_snapshot {
+                            if let Some(exit) = pending_exit.take() {
+                                let Some(payload) = terminal_event_to_ws_payload(
+                                    exit.message_type.as_str(),
+                                    &exit.body,
+                                ) else {
+                                    continue;
+                                };
+                                let _ = sender
+                                    .send(Message::Text(payload.to_string().into()))
+                                    .await;
+                                break;
+                            }
+                        }
+                        if is_exit {
                             break;
                         }
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        awaiting_snapshot = true;
+                        if !send_remote_terminal_control(
+                            &event_state,
+                            event_owner_user_id.as_str(),
+                            event_device_id.as_str(),
+                            event_workspace_id.as_str(),
+                            subscriber_terminal_id.as_str(),
+                            "remote_terminal_snapshot_request",
+                            json!({ "lines": 500 }),
+                        ).await {
+                            break;
+                        }
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 },
                 _ = refresh.tick() => {
@@ -559,197 +661,4 @@ async fn handle_remote_terminal_socket(
     .await;
 }
 
-async fn wait_for_remote_terminal_verification(
-    socket: &mut WebSocket,
-    cols: &mut u16,
-    rows: &mut u16,
-) -> Option<String> {
-    let deadline = tokio::time::sleep(Duration::from_secs(300));
-    tokio::pin!(deadline);
-    loop {
-        let message = tokio::select! {
-            _ = &mut deadline => return None,
-            message = socket.recv() => message,
-        };
-        match message {
-            Some(Ok(Message::Text(text))) => {
-                let Ok(value) = serde_json::from_str::<Value>(text.as_str()) else {
-                    continue;
-                };
-                match value.get("type").and_then(Value::as_str) {
-                    Some("verification") => {
-                        if let Some(code) = value
-                            .get("code")
-                            .and_then(Value::as_str)
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())
-                        {
-                            return Some(code.to_string());
-                        }
-                    }
-                    Some("resize") => {
-                        *cols = value
-                            .get("cols")
-                            .and_then(Value::as_u64)
-                            .unwrap_or(*cols as u64)
-                            .clamp(1, u16::MAX as u64) as u16;
-                        *rows = value
-                            .get("rows")
-                            .and_then(Value::as_u64)
-                            .unwrap_or(*rows as u64)
-                            .clamp(1, u16::MAX as u64) as u16;
-                    }
-                    Some("ping") => {
-                        match socket
-                            .send(Message::Text(json!({"type": "pong"}).to_string().into()))
-                            .await
-                        {
-                            Ok(()) => {}
-                            Err(_) => return None,
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            Some(Ok(Message::Ping(bytes))) => {
-                if socket.send(Message::Pong(bytes)).await.is_err() {
-                    return None;
-                }
-            }
-            Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return None,
-            Some(Ok(_)) => {}
-        }
-    }
-}
-
-async fn handle_remote_terminal_ws_message(
-    state: &AppState,
-    owner_user_id: &str,
-    device_id: &str,
-    workspace_id: &str,
-    terminal_session_id: &str,
-    message: Message,
-) -> bool {
-    match message {
-        Message::Text(text) => {
-            let value = serde_json::from_str::<Value>(text.as_str())
-                .unwrap_or_else(|_| json!({ "type": "input", "data": text.as_str() }));
-            match value.get("type").and_then(Value::as_str) {
-                Some("input") => send_remote_terminal_control(
-                    state,
-                    owner_user_id,
-                    device_id,
-                    workspace_id,
-                    terminal_session_id,
-                    "remote_terminal_input",
-                    json!({ "data": value.get("data").and_then(Value::as_str).unwrap_or_default() }),
-                )
-                .await,
-                Some("resize") => send_remote_terminal_control(
-                    state,
-                    owner_user_id,
-                    device_id,
-                    workspace_id,
-                    terminal_session_id,
-                    "remote_terminal_resize",
-                    json!({
-                        "cols": value.get("cols").and_then(Value::as_u64).unwrap_or(80),
-                        "rows": value.get("rows").and_then(Value::as_u64).unwrap_or(24),
-                    }),
-                )
-                .await,
-                Some("command") => {
-                    let mut command = value
-                        .get("command")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string();
-                    if !command.ends_with('\n') {
-                        command.push('\n');
-                    }
-                    send_remote_terminal_control(
-                        state,
-                        owner_user_id,
-                        device_id,
-                        workspace_id,
-                        terminal_session_id,
-                        "remote_terminal_input",
-                        json!({ "data": command }),
-                    )
-                    .await
-                }
-                Some("verification") | Some("ping") => true,
-                _ => true,
-            }
-        }
-        Message::Binary(bytes) => {
-            let data = String::from_utf8_lossy(&bytes).into_owned();
-            send_remote_terminal_control(
-                state,
-                owner_user_id,
-                device_id,
-                workspace_id,
-                terminal_session_id,
-                "remote_terminal_input",
-                json!({ "data": data }),
-            )
-            .await
-        }
-        Message::Ping(_) | Message::Pong(_) => true,
-        Message::Close(_) => false,
-    }
-}
-
-async fn send_remote_terminal_control(
-    state: &AppState,
-    owner_user_id: &str,
-    device_id: &str,
-    workspace_id: &str,
-    terminal_session_id: &str,
-    message_type: &str,
-    mut body: Value,
-) -> bool {
-    if let Value::Object(ref mut map) = body {
-        map.insert(
-            "terminal_session_id".to_string(),
-            Value::String(terminal_session_id.to_string()),
-        );
-    }
-    send_relay(
-        state,
-        RelayRequest {
-            message_type: message_type.to_string(),
-            request_id: Uuid::new_v4().to_string(),
-            owner_user_id: owner_user_id.to_string(),
-            device_id: device_id.to_string(),
-            workspace_id: workspace_id.to_string(),
-            method: "POST".to_string(),
-            path: format!("/remote-connections/terminal/{message_type}"),
-            headers: BTreeMap::new(),
-            body,
-            platform_signature: None,
-            platform_signature_key_id: None,
-            platform_signature_alg: None,
-            platform_timestamp: None,
-            platform_nonce: None,
-        },
-    )
-    .await
-    .is_ok()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rejects_non_object_connection_payloads() {
-        let request = RemoteConnectionTestRelayRequest {
-            workspace_id: Some("workspace-1".to_string()),
-            connection: Some(json!("not-an-object")),
-            verification_code: None,
-        };
-
-        assert!(!request.connection.is_some_and(|value| value.is_object()));
-    }
-}
+include!("remote_connection_relay_part01.rs");

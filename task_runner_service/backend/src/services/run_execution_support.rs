@@ -21,7 +21,10 @@ impl RunService {
         let client = self.config.memory_client().ok().flatten()?;
         let composer = MemoryContextComposer::from_client(client);
         match composer.compose(scope).await {
-            Ok(response) => serde_json::to_value(response).ok(),
+            Ok(response) => serde_json::to_value(response).ok().map(|mut snapshot| {
+                strip_non_semantic_usage_from_context_snapshot(&mut snapshot);
+                snapshot
+            }),
             Err(err) => {
                 warn!("failed to compose context snapshot: {}", err);
                 None
@@ -98,6 +101,72 @@ impl RunService {
             .with_builtin_prompt_locale(mcp_config.locale())
             .with_builtin_prompt_mode(mcp_config.builtin_prompt_mode);
         runtime_config.with_mcp_init_mode(effective_task_mcp_init_mode(mcp_config))
+    }
+}
+
+fn strip_non_semantic_usage_from_context_snapshot(snapshot: &mut Value) {
+    let Some(records) = snapshot
+        .get_mut("recent_records")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    let mut omitted = 0usize;
+    for record in records {
+        let Some(metadata) = record.get_mut("metadata").and_then(Value::as_object_mut) else {
+            continue;
+        };
+        if metadata.remove("provider_usage").is_some() {
+            omitted = omitted.saturating_add(1);
+        }
+    }
+    if omitted > 0 {
+        let root = snapshot
+            .as_object_mut()
+            .expect("context snapshot root is an object");
+        root.insert(
+            "snapshot_projection".to_string(),
+            serde_json::json!({
+                "provider_usage_records_omitted": omitted,
+                "reason": "non_semantic_unbounded_metadata",
+            }),
+        );
+    }
+}
+
+#[cfg(test)]
+mod context_snapshot_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn context_snapshot_drops_provider_usage_but_keeps_semantic_metadata() {
+        let mut snapshot = json!({
+            "recent_records": [{
+                "content": "tool call",
+                "metadata": {
+                    "tool_calls": [{"id": "call-1"}],
+                    "provider_usage": {
+                        "attribution": [{"detail": "x".repeat(100_000)}]
+                    }
+                }
+            }]
+        });
+
+        strip_non_semantic_usage_from_context_snapshot(&mut snapshot);
+
+        assert!(snapshot["recent_records"][0]["metadata"]
+            .get("provider_usage")
+            .is_none());
+        assert_eq!(
+            snapshot["recent_records"][0]["metadata"]["tool_calls"][0]["id"],
+            "call-1"
+        );
+        assert_eq!(
+            snapshot["snapshot_projection"]["provider_usage_records_omitted"],
+            1
+        );
+        assert!(snapshot.to_string().len() < 1_000);
     }
 }
 

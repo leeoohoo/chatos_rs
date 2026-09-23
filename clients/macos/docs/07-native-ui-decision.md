@@ -22,7 +22,7 @@
 
 只有以下隔离场景可以使用 `WKWebView`：
 
-1. 第三方 Plugin 明确提供的沙箱化 UI。
+1. 第三方 Plugin 明确提供的隔离本地 UI。
 2. 第一阶段暂时无法高质量原生渲染的 Mermaid。
 3. KaTeX/复杂数学公式的隔离渲染。
 4. OAuth 授权页；优先使用 `ASWebAuthenticationSession`，不是常驻 WebView。

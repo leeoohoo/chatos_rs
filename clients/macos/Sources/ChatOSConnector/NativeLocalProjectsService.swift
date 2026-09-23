@@ -1,15 +1,28 @@
 import ChatOSCore
 import Foundation
 
-/// Host entrypoint for local CRUD and explicit migration. Never creates/updates a remote project.
+public struct PreparedLocalProjectImport: Sendable, Equatable {
+    public let draft: LocalProjectDraft
+    public let absolutePath: String
+}
+
+/// Host entrypoint for local CRUD. Never creates or updates a remote project.
 public actor NativeLocalProjectsService {
     private let connector: NativeLocalConnectorService
     private let databaseURL: URL
+    private let managedProjectsRootURL: URL
     private var store: SQLiteProjectRegistry?
 
-    public init(connector: NativeLocalConnectorService, databaseURL: URL) {
+    public init(
+        connector: NativeLocalConnectorService,
+        databaseURL: URL,
+        managedProjectsRootURL: URL? = nil
+    ) {
         self.connector = connector
         self.databaseURL = databaseURL
+        self.managedProjectsRootURL = managedProjectsRootURL
+            ?? databaseURL.deletingLastPathComponent()
+                .appendingPathComponent("Projects", isDirectory: true)
     }
 
     public func registry() throws -> SQLiteProjectRegistry {
@@ -88,54 +101,143 @@ public actor NativeLocalProjectsService {
                                 projectContext: try deviceID.map { try ProjectContextSnapshot(record: record, deviceID: $0) })
     }
 
-    public func preview(ownerUserID: String, projects: [WorkspaceProject]) async -> [LocalProjectImportCandidate] {
-        var candidates: [LocalProjectImportCandidate] = []
-        for project in projects {
-            do {
-                try Task.checkCancellation()
-                let binding = try await connector.resolveLegacyProjectDirectory(ownerUserID: ownerUserID, project: project)
-                let record = LocalProjectRecord(
-                    id: project.id, ownerUserID: ownerUserID,
-                    draft: .init(name: project.name, workspaceID: binding.workspaceID, relativeRoot: binding.relativeRoot),
-                    createdAtUnixMs: 0, updatedAtUnixMs: 0
-                )
-                try record.validate()
-                candidates.append(.init(project: project, record: record, binding: binding, error: nil))
-            } catch {
-                candidates.append(.init(project: project, record: nil, binding: nil, error: error.localizedDescription))
-            }
+    /// Creates a host-owned project directory beneath ChatOS's managed projects folder.
+    /// Agent tools provide only display metadata; neither an absolute path nor a workspace id is
+    /// accepted from the model.
+    public func createInDefaultWorkspace(
+        ownerUserID: String,
+        name: String,
+        description: String = "",
+        projectTypeKey: String = LocalAgentSkillCatalog.legacyProjectTypeKey
+    ) async throws -> WorkspaceProject {
+        try ProjectRegistryValidation.identifier(name, field: "name")
+        let status = try await connector.fetchStatus()
+        guard status.user?.id == ownerUserID,
+              let workspace = Self.mostSpecificWorkspace(
+                containing: managedProjectsRootURL,
+                workspaces: status.workspaces
+              ),
+              let projectsRelativeRoot = Self.relativePath(
+                of: managedProjectsRootURL,
+                inside: workspace
+              ) else {
+            throw NativeConnectorError.workspaceUnavailable
         }
-        return candidates
+        let baseName = Self.safeProjectDirectoryName(name)
+        var directoryName = baseName
+        var suffix = 2
+        while FileManager.default.fileExists(
+            atPath: managedProjectsRootURL
+                .appendingPathComponent(directoryName, isDirectory: true).path
+        ) {
+            directoryName = "\(baseName)-\(suffix)"
+            suffix += 1
+        }
+        let relativeRoot = projectsRelativeRoot == "."
+            ? directoryName
+            : "\(projectsRelativeRoot)/\(directoryName)"
+        _ = try await Task.detached {
+            try NativeWorkspaceFilesystem(workspace: workspace).createDirectory(path: relativeRoot)
+        }.value
+        return try await create(
+            ownerUserID: ownerUserID,
+            draft: .init(
+                name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                description: description.trimmingCharacters(in: .whitespacesAndNewlines),
+                workspaceID: workspace.id,
+                relativeRoot: relativeRoot,
+                projectTypeKey: projectTypeKey
+            )
+        )
     }
 
-    public func importConfirmed(
-        ownerUserID: String, sourceID: String, candidates: [LocalProjectImportCandidate]
-    ) async throws -> ProjectRegistryImportResult {
-        // Import is an explicit data operation, never an authority-mode switch.
-        try Task.checkCancellation()
-        var records: [LocalProjectRecord] = []
-        for candidate in candidates {
-            guard let record = candidate.record, let binding = candidate.binding,
-                  record.ownerUserID == ownerUserID else { throw ProjectRegistryError.invalidField("import selection") }
-            let current = try await connector.resolveLegacyProjectDirectory(ownerUserID: ownerUserID, project: candidate.project)
-            guard current == binding,
-                  record.id == candidate.project.id,
-                  record.draft.workspaceID == current.workspaceID,
-                  record.draft.relativeRoot == current.relativeRoot else {
-                throw ProjectRegistryError.storage("项目目录或工作区已变化，请重新预览后确认。")
-            }
-            records.append(record)
+    /// Resolves an existing directory into host-owned project metadata without moving, copying,
+    /// creating, or linking anything. The selected directory itself cannot be a symbolic link and
+    /// its resolved location must already be covered by a paired workspace.
+    public func prepareExistingDirectoryImport(
+        ownerUserID: String,
+        absolutePath: String,
+        name: String?,
+        description: String = "",
+        projectTypeKey: String = LocalAgentSkillCatalog.legacyProjectTypeKey
+    ) async throws -> PreparedLocalProjectImport {
+        _ = try await connector.localProjectDeviceID(ownerUserID: ownerUserID)
+        let requestedPath = absolutePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard requestedPath.hasPrefix("/"),
+              requestedPath == absolutePath,
+              requestedPath.rangeOfCharacter(from: .controlCharacters) == nil else {
+            throw ProjectRegistryError.invalidField("absolutePath")
         }
-        try Task.checkCancellation()
-        // Records and receipt commit together. There is no legacy authority or activation flag.
-        return try await registry().importRecords(ownerUserID: ownerUserID, sourceID: sourceID, records: records)
+        let requestedURL = URL(
+            fileURLWithPath: requestedPath,
+            isDirectory: true
+        ).standardizedFileURL
+        guard FileManager.default.fileExists(atPath: requestedURL.path) else {
+            throw ProjectRegistryError.notFound
+        }
+        let values = try requestedURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard values.isSymbolicLink != true else {
+            throw ProjectRegistryError.invalidField("absolutePath.symbolicLink")
+        }
+        guard values.isDirectory == true else {
+            throw ProjectRegistryError.invalidField("absolutePath")
+        }
+        let status = try await connector.fetchStatus()
+        guard status.user?.id == ownerUserID,
+              let workspace = Self.mostSpecificWorkspace(
+                containing: requestedURL,
+                workspaces: status.workspaces
+              ),
+              let relativePath = Self.relativePath(of: requestedURL, inside: workspace) else {
+            throw NativeConnectorError.workspaceUnavailable
+        }
+        let projectName = (name ?? requestedURL.lastPathComponent)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let draft = LocalProjectDraft(
+            name: projectName,
+            description: description.trimmingCharacters(in: .whitespacesAndNewlines),
+            workspaceID: workspace.id,
+            relativeRoot: relativePath == "." ? "" : relativePath,
+            projectTypeKey: projectTypeKey
+        )
+        try draft.validate()
+        return .init(draft: draft, absolutePath: requestedURL.path)
+    }
+
+    /// Revalidates a previously prepared import at Human approval time, then registers the same
+    /// existing directory. The filesystem directory itself is never modified.
+    public func createFromExistingDirectory(
+        ownerUserID: String,
+        draft: LocalProjectDraft,
+        absolutePath: String
+    ) async throws -> WorkspaceProject {
+        let prepared = try await prepareExistingDirectoryImport(
+            ownerUserID: ownerUserID,
+            absolutePath: absolutePath,
+            name: draft.name,
+            description: draft.description,
+            projectTypeKey: draft.projectTypeKey
+        )
+        guard prepared.draft == draft, prepared.absolutePath == absolutePath else {
+            throw ProjectRegistryError.revisionConflict
+        }
+        let existing = try await registry().list(ownerUserID: ownerUserID, includeInactive: true)
+        guard !existing.contains(where: {
+            $0.status != .removed
+                && $0.draft.workspaceID == draft.workspaceID
+                && $0.draft.relativeRoot == draft.relativeRoot
+        }) else {
+            throw ProjectRegistryError.revisionConflict
+        }
+        return try await create(ownerUserID: ownerUserID, draft: draft)
     }
 
     public func rename(ownerUserID: String, id: String, name: String, expectedRevision: Int64) async throws {
         guard let old = try await registry().get(ownerUserID: ownerUserID, id: id) else { throw ProjectRegistryError.notFound }
         let draft = LocalProjectDraft(name: name.trimmingCharacters(in: .whitespacesAndNewlines),
                                       description: old.draft.description, workspaceID: old.draft.workspaceID,
-                                      relativeRoot: old.draft.relativeRoot)
+                                      relativeRoot: old.draft.relativeRoot,
+                                      projectTypeKey: old.draft.projectTypeKey)
         _ = try await registry().update(ownerUserID: ownerUserID, id: id, expectedRevision: expectedRevision,
                                        draft: draft, status: old.status)
     }
@@ -170,7 +272,8 @@ public actor NativeLocalProjectsService {
                 name: record.draft.name,
                 description: record.draft.description,
                 workspaceID: resolved.workspace.id,
-                relativeRoot: resolved.relativePath == "." ? "" : resolved.relativePath
+                relativeRoot: resolved.relativePath == "." ? "" : resolved.relativePath,
+                projectTypeKey: record.draft.projectTypeKey
             )
             return try await registry.update(
                 ownerUserID: ownerUserID,
@@ -180,6 +283,49 @@ public actor NativeLocalProjectsService {
                 status: record.status
             )
         }
+    }
+
+    private static func safeProjectDirectoryName(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let forbidden = CharacterSet(charactersIn: "/\\:").union(.controlCharacters)
+        let scalars = trimmed.unicodeScalars.map { forbidden.contains($0) ? "-" : String($0) }
+        let collapsed = scalars.joined()
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: "-")
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".-"))
+        let value = String(collapsed.prefix(80))
+        return value.isEmpty ? "ChatOS-Project" : value
+    }
+
+    private static func mostSpecificWorkspace(
+        containing targetURL: URL,
+        workspaces: [LocalConnectorWorkspace]
+    ) -> LocalConnectorWorkspace? {
+        workspaces
+            .filter { relativePath(of: targetURL, inside: $0) != nil }
+            .max {
+                canonicalPath($0.absoluteRoot).count < canonicalPath($1.absoluteRoot).count
+            }
+    }
+
+    private static func relativePath(
+        of targetURL: URL,
+        inside workspace: LocalConnectorWorkspace
+    ) -> String? {
+        let targetPath = targetURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let rootPath = canonicalPath(workspace.absoluteRoot)
+        if targetPath == rootPath { return "." }
+        let prefix = rootPath == "/" ? "/" : rootPath + "/"
+        guard targetPath.hasPrefix(prefix) else { return nil }
+        let relative = String(targetPath.dropFirst(prefix.count))
+        return relative.isEmpty ? "." : relative
+    }
+
+    private static func canonicalPath(_ path: String) -> String {
+        URL(fileURLWithPath: path, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
     }
 }
 
@@ -199,7 +345,10 @@ public struct AccountLocalProjectCreator: LocalProjectCreating {
 
 extension NativeLocalConnectorService {
     public func localProjectDeviceID(ownerUserID: String) throws -> String? {
-        guard state.user?.id == ownerUserID else { throw ProjectRegistryError.storage("本机工作区不属于当前账户，请重新配对。") }
+        guard pairingMatchesCurrentDeployment,
+              state.user?.id == ownerUserID else {
+            throw ProjectRegistryError.storage("本机工作区不属于当前环境或账户，请重新配对。")
+        }
         if let deviceID = state.deviceID { try ProjectRegistryValidation.routeIdentifier(deviceID, field: "deviceID") }
         return state.deviceID
     }
@@ -218,24 +367,4 @@ extension NativeLocalConnectorService {
                      absolutePath: url.path, workspaceFingerprint: workspace.fingerprint)
     }
 
-    func resolveLegacyProjectDirectory(ownerUserID: String, project: WorkspaceProject) throws -> ProjectDirectoryBinding {
-        _ = try localProjectDeviceID(ownerUserID: ownerUserID)
-        guard let path = project.rootPath, !path.isEmpty else { throw NativeConnectorError.workspaceUnavailable }
-        guard path == path.trimmingCharacters(in: .whitespacesAndNewlines) else {
-            throw ProjectRegistryError.invalidField("legacy project root")
-        }
-        // Foreign-device local:// URIs must fail; never fall back to displayRootPath on this machine.
-        if let components = URLComponents(string: path), components.scheme != nil {
-            guard components.scheme == "local", components.host == "connector",
-                  components.query == nil, components.fragment == nil else {
-                throw ProjectRegistryError.invalidField("legacy project root")
-            }
-        } else if !path.hasPrefix("/") {
-            throw ProjectRegistryError.invalidField("legacy project root")
-        }
-        let resolved = try resolveProjectPath(path)
-        let relative = resolved.relativePath == "." ? "" : resolved.relativePath
-        return try validateLocalProjectDirectory(ownerUserID: ownerUserID,
-            draft: .init(name: project.name, workspaceID: resolved.workspace.id, relativeRoot: relative))
-    }
 }

@@ -4,9 +4,9 @@
 use std::sync::Arc;
 
 use chatos_ai_runtime::{
-    AiRuntime, AiRuntimeResult, McpRuntimeToolExecutor, MemoryContextComposer,
-    MemoryContextOverflowRecovery, MemoryRecordWriter, MemoryScope, ModelRuntimeConfig,
-    RuntimeRecordOptions, RuntimeTurnSpec, SaveRecordInput, ToolExecutor,
+    AiRuntime, AiRuntimeResult, McpRuntimeToolExecutor, MemoryContextComposer, MemoryRecordWriter,
+    MemoryScope, ModelRuntimeConfig, RuntimeRecordOptions, RuntimeTurnSpec, SaveRecordInput,
+    ToolExecutor,
 };
 use serde_json::Value;
 
@@ -178,11 +178,7 @@ impl AgentExecutor {
                 .memory
                 .as_ref()
                 .map(|memory| memory.composer.clone()),
-        )
-        .with_context_overflow_recovery(Some(
-            MemoryContextOverflowRecovery::new()
-                .with_trigger_reason(agent.context_overflow_trigger()),
-        ));
+        );
 
         let spec =
             RuntimeTurnSpec::for_user_text(model_config, request.conversation_id, request.prompt)

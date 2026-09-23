@@ -100,7 +100,6 @@ mod tests {
     use axum::body::{to_bytes, Body};
     use axum::http::{Request, StatusCode};
     use chatos_mcp_management_sdk::McpCatalogResponse;
-    use mongodb::bson::DateTime;
     use tower::ServiceExt;
 
     use super::*;
@@ -177,9 +176,7 @@ mod tests {
                 terminal_error_code: None,
                 terminal_error_message: None,
                 file_modification_outcome: None,
-                expires_at: DateTime::from_millis(
-                    (chrono::Utc::now().timestamp() + 60).saturating_mul(1_000),
-                ),
+                expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
                 expires_at_unix: chrono::Utc::now().timestamp() + 60,
             })
             .await
@@ -236,9 +233,7 @@ mod tests {
                 terminal_error_code: None,
                 terminal_error_message: None,
                 file_modification_outcome: None,
-                expires_at: DateTime::from_millis(
-                    (chrono::Utc::now().timestamp() + 60).saturating_mul(1_000),
-                ),
+                expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
                 expires_at_unix: chrono::Utc::now().timestamp() + 60,
             })
             .await
@@ -309,9 +304,7 @@ mod tests {
                 terminal_error_code: None,
                 terminal_error_message: None,
                 file_modification_outcome: None,
-                expires_at: DateTime::from_millis(
-                    (chrono::Utc::now().timestamp() + 60).saturating_mul(1_000),
-                ),
+                expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
                 expires_at_unix: chrono::Utc::now().timestamp() + 60,
             })
             .await

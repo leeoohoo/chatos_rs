@@ -174,6 +174,17 @@ impl MemoryEngineClient {
                 );
                 append_optional_query(&mut query, "thread_label", req.thread_label.as_deref());
                 append_optional_query(&mut query, "status", req.status.as_deref());
+                append_optional_query(
+                    &mut query,
+                    "before_updated_at",
+                    req.before_updated_at.as_deref(),
+                );
+                append_optional_query(
+                    &mut query,
+                    "before_created_at",
+                    req.before_created_at.as_deref(),
+                );
+                append_optional_query(&mut query, "before_id", req.before_id.as_deref());
                 append_optional_i64_query(&mut query, "limit", req.limit);
                 append_optional_i64_query(&mut query, "offset", req.offset);
                 let suffix = if query.is_empty() {

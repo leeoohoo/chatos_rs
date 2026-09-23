@@ -25,9 +25,8 @@ impl RuntimeInvocationStore {
                     }),
                 ))
             }
-            RuntimeInvocationStoreBackend::Mongo(collection) => {
-                aggregate_runtime_invocation_stats(collection, DateTime::now(), self.quota.limits())
-                    .await
+            RuntimeInvocationStoreBackend::Postgres(pool) => {
+                aggregate_runtime_invocation_stats(pool, self.quota.limits()).await
             }
         }?;
         stats.registration = self.diagnostics.registration_stats();
@@ -126,216 +125,68 @@ impl FileModificationOutcomeStats {
 }
 
 pub(super) async fn aggregate_runtime_invocation_stats(
-    collection: &Collection<RuntimeInvocationRecord>,
-    now: DateTime,
+    pool: &chatos_postgres::PgPool,
     quota_limits: RuntimeInvocationQuotaLimits,
 ) -> Result<RuntimeInvocationStoreStats, String> {
-    let terminal_statuses = vec![
-        RuntimeInvocationStatus::Completed.as_str(),
-        RuntimeInvocationStatus::Failed.as_str(),
-        RuntimeInvocationStatus::Cancelled.as_str(),
-        RuntimeInvocationStatus::UnknownExecutionState.as_str(),
-    ];
-    let active_statuses = active_runtime_invocation_statuses()
-        .iter()
-        .map(|status| status.as_str())
-        .collect::<Vec<_>>();
-    let mut cursor = collection
-        .aggregate(
-            vec![
-                doc! { "$match": { "expires_at": { "$gt": now } } },
-                doc! {
-                    "$group": {
-                        "_id": bson::Bson::Null,
-                        "total_active": {
-                            "$sum": { "$cond": [
-                                { "$in": ["$status", active_statuses] },
-                                1,
-                                0,
-                            ] }
-                        },
-                        "queued": {
-                            "$sum": { "$cond": [
-                                { "$eq": ["$status", RuntimeInvocationStatus::Queued.as_str()] },
-                                1,
-                                0,
-                            ] }
-                        },
-                        "running": {
-                            "$sum": { "$cond": [
-                                { "$eq": ["$status", RuntimeInvocationStatus::Running.as_str()] },
-                                1,
-                                0,
-                            ] }
-                        },
-                        "waiting_for_user": {
-                            "$sum": { "$cond": [
-                                { "$eq": ["$status", RuntimeInvocationStatus::WaitingForUser.as_str()] },
-                                1,
-                                0,
-                            ] }
-                        },
-                        "cancel_requested": {
-                            "$sum": { "$cond": [
-                                { "$eq": ["$status", RuntimeInvocationStatus::CancelRequested.as_str()] },
-                                1,
-                                0,
-                            ] }
-                        },
-                        "terminal": {
-                            "$sum": { "$cond": [
-                                { "$in": ["$status", terminal_statuses] },
-                                1,
-                                0,
-                            ] }
-                        },
-                        "duration_completed_count": {
-                            "$sum": { "$cond": [
-                                { "$eq": [{ "$type": "$completed_at_unix_ms" }, "long"] },
-                                1,
-                                0,
-                            ] }
-                        },
-                        "duration_total_ms": {
-                            "$sum": { "$cond": [
-                                { "$eq": [{ "$type": "$completed_at_unix_ms" }, "long"] },
-                                { "$max": [
-                                    { "$subtract": [
-                                        "$completed_at_unix_ms",
-                                        { "$ifNull": ["$started_at_unix_ms", "$created_at_unix_ms"] },
-                                    ] },
-                                    0,
-                                ] },
-                                0,
-                            ] }
-                        },
-                        "duration_max_ms": {
-                            "$max": { "$cond": [
-                                { "$eq": [{ "$type": "$completed_at_unix_ms" }, "long"] },
-                                { "$max": [
-                                    { "$subtract": [
-                                        "$completed_at_unix_ms",
-                                        { "$ifNull": ["$started_at_unix_ms", "$created_at_unix_ms"] },
-                                    ] },
-                                    0,
-                                ] },
-                                0,
-                            ] }
-                        },
-                        "file_modification_total": {
-                            "$sum": { "$cond": [
-                                { "$in": ["$file_modification_outcome", [
-                                    "changed",
-                                    "already_applied",
-                                    "stale",
-                                    "stale_context",
-                                    "expected_match",
-                                    "validation",
-                                    "infrastructure",
-                                ]] },
-                                1,
-                                0,
-                            ] }
-                        },
-                        "file_modification_changed": {
-                            "$sum": { "$cond": [
-                                { "$eq": ["$file_modification_outcome", "changed"] }, 1, 0
-                            ] }
-                        },
-                        "file_modification_already_applied": {
-                            "$sum": { "$cond": [
-                                { "$eq": ["$file_modification_outcome", "already_applied"] }, 1, 0
-                            ] }
-                        },
-                        "file_modification_stale_context": {
-                            "$sum": { "$cond": [
-                                { "$in": ["$file_modification_outcome", ["stale", "stale_context"]] }, 1, 0
-                            ] }
-                        },
-                        "file_modification_expected_match": {
-                            "$sum": { "$cond": [
-                                { "$eq": ["$file_modification_outcome", "expected_match"] }, 1, 0
-                            ] }
-                        },
-                        "file_modification_validation": {
-                            "$sum": { "$cond": [
-                                { "$eq": ["$file_modification_outcome", "validation"] }, 1, 0
-                            ] }
-                        },
-                        "file_modification_infrastructure": {
-                            "$sum": { "$cond": [
-                                { "$eq": ["$file_modification_outcome", "infrastructure"] }, 1, 0
-                            ] }
-                        },
-                    }
-                },
-            ],
-            None,
-        )
+    let row = sqlx::query_as::<_, (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64)>(
+        "SELECT \
+         COUNT(*) FILTER (WHERE status IN ('queued','running','waiting_for_user','cancel_requested')), \
+         COUNT(*) FILTER (WHERE status='queued'), \
+         COUNT(*) FILTER (WHERE status='running'), \
+         COUNT(*) FILTER (WHERE status='waiting_for_user'), \
+         COUNT(*) FILTER (WHERE status='cancel_requested'), \
+         COUNT(*) FILTER (WHERE status IN ('completed','failed','cancelled','unknown_execution_state')), \
+         COUNT(completed_at_unix_ms), \
+         COALESCE(SUM(GREATEST(completed_at_unix_ms-COALESCE(started_at_unix_ms,created_at_unix_ms),0)) \
+             FILTER (WHERE completed_at_unix_ms IS NOT NULL),0)::BIGINT, \
+         COALESCE(MAX(GREATEST(completed_at_unix_ms-COALESCE(started_at_unix_ms,created_at_unix_ms),0)) \
+             FILTER (WHERE completed_at_unix_ms IS NOT NULL),0)::BIGINT, \
+         COUNT(file_modification_outcome), \
+         COUNT(*) FILTER (WHERE file_modification_outcome='changed'), \
+         COUNT(*) FILTER (WHERE file_modification_outcome='already_applied'), \
+         COUNT(*) FILTER (WHERE file_modification_outcome='stale_context'), \
+         COUNT(*) FILTER (WHERE file_modification_outcome='expected_match'), \
+         COUNT(*) FILTER (WHERE file_modification_outcome='validation'), \
+         COUNT(*) FILTER (WHERE file_modification_outcome='infrastructure') \
+         FROM mcp_management_runtime_invocations WHERE expires_at>now()",
+    )
+        .fetch_one(pool)
         .await
         .map_err(|error| format!("aggregate Runtime Invocation stats failed: {error}"))?;
-    let Some(document) = cursor
-        .try_next()
-        .await
-        .map_err(|error| format!("read Runtime Invocation stats failed: {error}"))?
-    else {
-        return Ok(RuntimeInvocationStoreStats {
-            backend: "mongo",
-            quota_limits,
-            total_active: 0,
-            queued: 0,
-            running: 0,
-            waiting_for_user: 0,
-            cancel_requested: 0,
-            terminal: 0,
-            registration: RuntimeInvocationRegistrationStats::default(),
-            session_closed_reclaimed_total: 0,
-            quota_release_failures_total: 0,
-            store_recoveries_total: 0,
-            duration: RuntimeInvocationDurationStats::default(),
-            file_modifications: FileModificationOutcomeStats::default(),
-        });
-    };
     Ok(RuntimeInvocationStoreStats {
-        backend: "mongo",
+        backend: "postgresql",
         quota_limits,
-        total_active: runtime_stat_count(&document, "total_active"),
-        queued: runtime_stat_count(&document, "queued"),
-        running: runtime_stat_count(&document, "running"),
-        waiting_for_user: runtime_stat_count(&document, "waiting_for_user"),
-        cancel_requested: runtime_stat_count(&document, "cancel_requested"),
-        terminal: runtime_stat_count(&document, "terminal"),
+        total_active: runtime_stat_count(row.0),
+        queued: runtime_stat_count(row.1),
+        running: runtime_stat_count(row.2),
+        waiting_for_user: runtime_stat_count(row.3),
+        cancel_requested: runtime_stat_count(row.4),
+        terminal: runtime_stat_count(row.5),
         registration: RuntimeInvocationRegistrationStats::default(),
         session_closed_reclaimed_total: 0,
         quota_release_failures_total: 0,
         store_recoveries_total: 0,
         duration: RuntimeInvocationDurationStats {
-            completed_count: runtime_stat_count(&document, "duration_completed_count"),
-            total_ms: runtime_stat_u64(&document, "duration_total_ms"),
-            max_ms: runtime_stat_u64(&document, "duration_max_ms"),
+            completed_count: runtime_stat_count(row.6),
+            total_ms: runtime_stat_u64(row.7),
+            max_ms: runtime_stat_u64(row.8),
         },
         file_modifications: FileModificationOutcomeStats {
-            total: runtime_stat_count(&document, "file_modification_total"),
-            changed: runtime_stat_count(&document, "file_modification_changed"),
-            already_applied: runtime_stat_count(&document, "file_modification_already_applied"),
-            stale_context: runtime_stat_count(&document, "file_modification_stale_context"),
-            expected_match: runtime_stat_count(&document, "file_modification_expected_match"),
-            validation: runtime_stat_count(&document, "file_modification_validation"),
-            infrastructure: runtime_stat_count(&document, "file_modification_infrastructure"),
+            total: runtime_stat_count(row.9),
+            changed: runtime_stat_count(row.10),
+            already_applied: runtime_stat_count(row.11),
+            stale_context: runtime_stat_count(row.12),
+            expected_match: runtime_stat_count(row.13),
+            validation: runtime_stat_count(row.14),
+            infrastructure: runtime_stat_count(row.15),
         },
     })
 }
 
-fn runtime_stat_count(document: &mongodb::bson::Document, key: &str) -> usize {
-    let value = match document.get(key) {
-        Some(bson::Bson::Int32(value)) => i64::from(*value),
-        Some(bson::Bson::Int64(value)) => *value,
-        Some(bson::Bson::Double(value)) if value.is_finite() => *value as i64,
-        _ => 0,
-    };
+fn runtime_stat_count(value: i64) -> usize {
     usize::try_from(value.max(0)).unwrap_or(usize::MAX)
 }
 
-fn runtime_stat_u64(document: &mongodb::bson::Document, key: &str) -> u64 {
-    runtime_stat_count(document, key) as u64
+fn runtime_stat_u64(value: i64) -> u64 {
+    u64::try_from(value.max(0)).unwrap_or(u64::MAX)
 }

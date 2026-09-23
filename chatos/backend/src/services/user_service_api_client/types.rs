@@ -41,11 +41,27 @@ pub struct UserServiceVerifiedPrincipal {
     pub principal_type: String,
     pub user_id: Option<String>,
     pub role: Option<String>,
+    #[serde(default)]
+    pub scopes: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UserServiceVerifyResponse {
     pub principal: UserServiceVerifiedPrincipal,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeviceProofVerificationRequest {
+    pub surface: String,
+    pub method: String,
+    pub target: String,
+    pub body_sha512: String,
+    pub client_session_id: String,
+    pub device_id: String,
+    pub timestamp: i64,
+    pub nonce: String,
+    pub signature_algorithm: String,
+    pub signature: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -236,7 +252,6 @@ pub struct UserServiceModelSettingsRecord {
     pub model_request_max_retries: i64,
     pub memory_summary_model_config_id: Option<String>,
     pub memory_summary_thinking_level: Option<String>,
-    pub task_runner_default_model_config_id: Option<String>,
     pub updated_at: String,
     #[serde(default)]
     pub sync_warnings: Vec<String>,
@@ -252,6 +267,4 @@ pub struct UpdateUserServiceModelSettingsRequest {
     pub memory_summary_model_config_id: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_summary_thinking_level: Option<Option<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub task_runner_default_model_config_id: Option<Option<String>>,
 }

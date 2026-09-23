@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -19,9 +19,14 @@ use crate::valkey_coordination::{
     DevicePresence, RelayCorrelation, RelaySessionIdentity, ValkeyCoordinator,
 };
 
+#[path = "relay_distributed.rs"]
+mod distributed;
 mod terminal;
 #[cfg(test)]
 mod tests;
+
+const MAX_PENDING_COMPANION_REQUESTS_PER_DEVICE: usize = 8;
+const MAX_PENDING_COMPANION_REQUESTS_PER_CLIENT_SESSION: usize = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayRequest {
@@ -219,7 +224,38 @@ struct ActiveConnectorSession {
 
 struct PendingRelayRequest {
     source: RelaySessionIdentity,
+    class: PendingRelayClass,
+    expires_at: Instant,
     sender: oneshot::Sender<RelayResponse>,
+}
+
+#[derive(Clone)]
+enum PendingRelayClass {
+    General,
+    Companion { client_session_id: String },
+}
+
+struct PendingRequestCleanupGuard {
+    relay: ConnectorRelay,
+    request_id: String,
+}
+
+impl PendingRequestCleanupGuard {
+    fn new(relay: ConnectorRelay, request_id: String) -> Self {
+        Self { relay, request_id }
+    }
+}
+
+impl Drop for PendingRequestCleanupGuard {
+    fn drop(&mut self) {
+        let relay = self.relay.clone();
+        let request_id = self.request_id.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                relay.cleanup_request(request_id.as_str()).await;
+            });
+        }
+    }
 }
 
 impl ActiveConnectorSession {
@@ -379,6 +415,32 @@ impl ConnectorRelay {
         request: RelayRequest,
         timeout_duration: Duration,
     ) -> Result<RelayResponse, RelayError> {
+        self.dispatch_with_class(request, timeout_duration, PendingRelayClass::General)
+            .await
+    }
+
+    pub async fn dispatch_companion(
+        &self,
+        request: RelayRequest,
+        timeout_duration: Duration,
+        client_session_id: &str,
+    ) -> Result<RelayResponse, RelayError> {
+        self.dispatch_with_class(
+            request,
+            timeout_duration,
+            PendingRelayClass::Companion {
+                client_session_id: client_session_id.to_string(),
+            },
+        )
+        .await
+    }
+
+    async fn dispatch_with_class(
+        &self,
+        request: RelayRequest,
+        timeout_duration: Duration,
+        class: PendingRelayClass,
+    ) -> Result<RelayResponse, RelayError> {
         let request_id = request.request_id.clone();
         let device_id = request.device_id.clone();
         let request = self.sign_request(request)?;
@@ -396,8 +458,14 @@ impl ConnectorRelay {
             .or_else(|| remote_presence.as_ref().map(DevicePresence::relay_identity))
             .ok_or(RelayError::Offline)?;
         let receiver = self
-            .insert_pending_request(request_id.as_str(), source.clone())
+            .insert_pending_request(
+                request_id.as_str(),
+                source.clone(),
+                class,
+                Instant::now() + timeout_duration,
+            )
             .await?;
+        let _pending_cleanup = PendingRequestCleanupGuard::new(self.clone(), request_id.clone());
 
         if let Some(session) = local_session {
             let text = match serde_json::to_string(&request) {
@@ -491,8 +559,14 @@ impl ConnectorRelay {
         let distributed = self.distributed.as_ref().ok_or(RelayError::Offline)?;
         let request_id = request.request_id.clone();
         let receiver = self
-            .insert_pending_request(request_id.as_str(), presence.relay_identity())
+            .insert_pending_request(
+                request_id.as_str(),
+                presence.relay_identity(),
+                PendingRelayClass::General,
+                Instant::now() + distributed.delivery_ack_timeout,
+            )
             .await?;
+        let _pending_cleanup = PendingRequestCleanupGuard::new(self.clone(), request_id.clone());
         let correlation = RelayCorrelation {
             requester_instance_id: distributed.instance_id.clone(),
             source: presence.relay_identity(),
@@ -589,293 +663,6 @@ impl ConnectorRelay {
                 .map_err(RelayError::Signing)?;
         }
         Ok(request)
-    }
-
-    pub(crate) async fn handle_inter_instance_message(
-        &self,
-        message: InterInstanceRelayMessage,
-    ) -> Result<(), String> {
-        match message {
-            InterInstanceRelayMessage::Dispatch {
-                request,
-                requester_instance_id,
-            } => {
-                if let Err(error) = self.send_to_local_session(&request).await {
-                    let distributed = self
-                        .distributed
-                        .as_ref()
-                        .ok_or_else(|| "distributed relay is not configured".to_string())?;
-                    distributed
-                        .coordinator
-                        .publish_instance_message(
-                            requester_instance_id.as_str(),
-                            &InterInstanceRelayMessage::Response {
-                                response: RelayResponse {
-                                    request_id: request.request_id,
-                                    status: 503,
-                                    headers: BTreeMap::new(),
-                                    body: serde_json::json!({ "error": error.message() }),
-                                },
-                            },
-                        )
-                        .await?;
-                }
-                Ok(())
-            }
-            InterInstanceRelayMessage::Send {
-                request,
-                requester_instance_id,
-            } => {
-                let delivery = self.send_to_local_session(&request).await;
-                let (status, body) = match delivery {
-                    Ok(()) => (202, serde_json::json!({ "delivered": true })),
-                    Err(error) => (503, serde_json::json!({ "error": error.message() })),
-                };
-                let distributed = self
-                    .distributed
-                    .as_ref()
-                    .ok_or_else(|| "distributed relay is not configured".to_string())?;
-                distributed
-                    .coordinator
-                    .publish_instance_message(
-                        requester_instance_id.as_str(),
-                        &InterInstanceRelayMessage::Response {
-                            response: RelayResponse {
-                                request_id: request.request_id,
-                                status,
-                                headers: BTreeMap::new(),
-                                body,
-                            },
-                        },
-                    )
-                    .await
-            }
-            InterInstanceRelayMessage::Response { response } => {
-                let request_id = response.request_id.clone();
-                self.complete_response(response).await;
-                if let Some(distributed) = self.distributed.as_ref() {
-                    distributed
-                        .coordinator
-                        .delete_relay_correlation(
-                            request_id.as_str(),
-                            distributed.instance_id.as_str(),
-                        )
-                        .await?;
-                }
-                Ok(())
-            }
-            InterInstanceRelayMessage::TerminalEvent { event } => {
-                self.publish_local_terminal_event(event).await;
-                Ok(())
-            }
-        }
-    }
-
-    async fn complete_response(&self, response: RelayResponse) -> bool {
-        let sender = {
-            let mut inner = self.inner.lock().await;
-            inner
-                .pending
-                .remove(response.request_id.as_str())
-                .map(|pending| pending.sender)
-        };
-        match sender {
-            Some(sender) => sender.send(response).is_ok(),
-            None => false,
-        }
-    }
-
-    pub(super) async fn complete_response_from_source(
-        &self,
-        response: RelayResponse,
-        source: &RelaySessionIdentity,
-    ) -> Result<bool, String> {
-        let sender = {
-            let mut inner = self.inner.lock().await;
-            let Some(pending) = inner.pending.get(response.request_id.as_str()) else {
-                return Ok(false);
-            };
-            if &pending.source != source {
-                return Err(
-                    "Local Connector relay response source does not match the dispatched request"
-                        .to_string(),
-                );
-            }
-            inner
-                .pending
-                .remove(response.request_id.as_str())
-                .map(|pending| pending.sender)
-        };
-        Ok(sender.is_some_and(|sender| sender.send(response).is_ok()))
-    }
-
-    pub(super) async fn route_remote_response(
-        &self,
-        response: RelayResponse,
-        source: &RelaySessionIdentity,
-    ) -> Result<bool, String> {
-        let Some(distributed) = self.distributed.as_ref() else {
-            return Ok(false);
-        };
-        let Some(correlation) = distributed
-            .coordinator
-            .relay_correlation(response.request_id.as_str())
-            .await?
-        else {
-            return Ok(false);
-        };
-        if &correlation.source != source {
-            return Err(
-                "Local Connector relay response source does not match the distributed request"
-                    .to_string(),
-            );
-        }
-        if let Err(error) = distributed
-            .coordinator
-            .publish_instance_message(
-                correlation.requester_instance_id.as_str(),
-                &InterInstanceRelayMessage::Response {
-                    response: response.clone(),
-                },
-            )
-            .await
-        {
-            tracing::warn!(
-                request_id = response.request_id.as_str(),
-                requester_instance_id = correlation.requester_instance_id.as_str(),
-                error = error.as_str(),
-                "route Local Connector relay response to requester instance failed"
-            );
-            let _ = distributed
-                .coordinator
-                .delete_relay_correlation(
-                    response.request_id.as_str(),
-                    correlation.requester_instance_id.as_str(),
-                )
-                .await;
-        }
-        Ok(true)
-    }
-
-    async fn send_to_local_session(&self, request: &RelayRequest) -> Result<(), RelayError> {
-        let Some(session) = self
-            .local_session(request.device_id.as_str(), request.owner_user_id.as_str())
-            .await
-        else {
-            return Err(RelayError::Offline);
-        };
-        let text = serde_json::to_string(request)
-            .map_err(|error| RelayError::RequestEncode(error.to_string()))?;
-        session
-            .outbound
-            .send(text)
-            .await
-            .map_err(|_| RelayError::Offline)
-    }
-
-    async fn local_session(
-        &self,
-        device_id: &str,
-        owner_user_id: &str,
-    ) -> Option<ActiveConnectorSession> {
-        let inner = self.inner.lock().await;
-        inner
-            .sessions
-            .get(device_id)
-            .and_then(|session| (session.owner_user_id == owner_user_id).then(|| session.clone()))
-    }
-
-    async fn remote_presence_for_request(
-        &self,
-        request: &RelayRequest,
-    ) -> Result<DevicePresence, RelayError> {
-        let distributed = self.distributed.as_ref().ok_or(RelayError::Offline)?;
-        let presence = distributed
-            .coordinator
-            .device_presence(request.device_id.as_str())
-            .await
-            .map_err(RelayError::Coordination)?
-            .ok_or(RelayError::Offline)?;
-        if presence.owner_user_id != request.owner_user_id
-            || presence.instance_id == distributed.instance_id
-        {
-            return Err(RelayError::Offline);
-        }
-        Ok(presence)
-    }
-
-    pub(super) async fn relay_session_identity(
-        &self,
-        owner_user_id: &str,
-        device_id: &str,
-    ) -> Result<RelaySessionIdentity, RelayError> {
-        if let Some(session) = self.local_session(device_id, owner_user_id).await {
-            return Ok(session.relay_identity(device_id));
-        }
-        let distributed = self.distributed.as_ref().ok_or(RelayError::Offline)?;
-        let presence = distributed
-            .coordinator
-            .device_presence(device_id)
-            .await
-            .map_err(RelayError::Coordination)?
-            .ok_or(RelayError::Offline)?;
-        if presence.owner_user_id != owner_user_id
-            || presence.instance_id == distributed.instance_id
-        {
-            return Err(RelayError::Offline);
-        }
-        Ok(presence.relay_identity())
-    }
-
-    async fn insert_pending_request(
-        &self,
-        request_id: &str,
-        source: RelaySessionIdentity,
-    ) -> Result<oneshot::Receiver<RelayResponse>, RelayError> {
-        let runtime = self.runtime_config();
-        let mut inner = self.inner.lock().await;
-        if inner.pending.contains_key(request_id) {
-            return Err(RelayError::DuplicateRequestId(request_id.to_string()));
-        }
-        let pending_count = inner
-            .pending
-            .values()
-            .filter(|pending| pending.source.device_id == source.device_id)
-            .count();
-        if pending_count >= runtime.limits.max_pending_requests_per_device {
-            return Err(RelayError::TooManyPendingRequests {
-                device_id: source.device_id.clone(),
-                limit: runtime.limits.max_pending_requests_per_device,
-            });
-        }
-        let (sender, receiver) = oneshot::channel();
-        inner.pending.insert(
-            request_id.to_string(),
-            PendingRelayRequest { source, sender },
-        );
-        Ok(receiver)
-    }
-
-    async fn remove_pending(&self, request_id: &str) {
-        let mut inner = self.inner.lock().await;
-        inner.pending.remove(request_id);
-    }
-
-    async fn cleanup_request(&self, request_id: &str) {
-        self.remove_pending(request_id).await;
-        if let Some(distributed) = self.distributed.as_ref() {
-            let _ = distributed
-                .coordinator
-                .delete_relay_correlation(request_id, distributed.instance_id.as_str())
-                .await;
-        }
-    }
-
-    fn runtime_config(&self) -> RelayRuntimeConfig {
-        self.runtime
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
     }
 }
 

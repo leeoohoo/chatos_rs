@@ -165,6 +165,41 @@ impl RunService {
         self.store.run_execution_stats().await
     }
 
+    pub async fn publish_pending_run_events(&self, limit: usize) -> Result<usize, String> {
+        let claimed = self.store.claim_pending_run_events(limit).await?;
+        let mut published = 0usize;
+        let mut first_error = None;
+        for (event, claim_token) in claimed {
+            match crate::run_event_queue::publish_run_event(&event).await {
+                Ok(()) => {
+                    if self
+                        .store
+                        .complete_run_event_publish(event.id.as_str(), claim_token.as_str())
+                        .await?
+                    {
+                        published += 1;
+                    }
+                }
+                Err(error) => {
+                    self.store
+                        .fail_run_event_publish(
+                            event.id.as_str(),
+                            claim_token.as_str(),
+                            error.as_str(),
+                        )
+                        .await?;
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(published),
+        }
+    }
+
     pub fn runtime_stats(&self) -> &crate::state::TaskRunnerRuntimeStats {
         &self.runtime_stats
     }
@@ -323,6 +358,15 @@ impl RunService {
         self.store.list_run_events(run_id).await
     }
 
+    pub async fn list_run_events_page(
+        &self,
+        run_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(Vec<TaskRunEventRecord>, usize), String> {
+        self.store.list_run_events_page(run_id, offset, limit).await
+    }
+
     pub async fn get_run_event(
         &self,
         run_id: &str,
@@ -362,6 +406,17 @@ impl RunService {
 
     pub(crate) fn cloud_agent_store(&self) -> chatos_cloud_agent_runtime::CloudAgentStateStore {
         self.cloud_agent_store.clone()
+    }
+
+    pub(crate) async fn try_acquire_maintenance_lease(
+        &self,
+        lease_name: &str,
+        owner_id: &str,
+        lease_ttl: std::time::Duration,
+    ) -> Result<bool, String> {
+        self.store
+            .try_acquire_maintenance_lease(lease_name, owner_id, lease_ttl)
+            .await
     }
 
     pub(crate) async fn enqueue_run_cancel_event_if_needed(

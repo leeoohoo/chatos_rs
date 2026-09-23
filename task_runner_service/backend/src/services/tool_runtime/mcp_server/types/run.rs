@@ -21,6 +21,15 @@ pub(in crate::mcp_server) struct RunIdArgs {
 }
 
 #[derive(Debug, Deserialize)]
+pub(in crate::mcp_server) struct ListRunEventsArgs {
+    pub(in crate::mcp_server) run_id: String,
+    #[serde(default)]
+    pub(in crate::mcp_server) limit: Option<usize>,
+    #[serde(default)]
+    pub(in crate::mcp_server) offset: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(in crate::mcp_server) struct StartTaskRunArgs {
     pub(in crate::mcp_server) task_id: String,
     #[serde(default)]

@@ -11,6 +11,9 @@ use std::net::Ipv4Addr;
 
 use chatos_service_runtime::{env_text, parse_bool_text, validate_production_secret};
 
+mod http_timeouts;
+use http_timeouts::local_connector_http_timeouts;
+
 const DEFAULT_RUNTIME_GRANT_SECRET: &str = "change_me_mcp_management_runtime_grant_secret";
 const DEFAULT_RUNTIME_SESSION_ENCRYPTION_SECRET: &str =
     "change_me_mcp_management_runtime_session_encryption_secret";
@@ -286,6 +289,7 @@ pub struct AppConfig {
     pub local_connector_service_base_url: String,
     pub local_connector_http_client: reqwest::Client,
     pub local_connector_internal_api_secret: Option<String>,
+    pub local_connector_request_timeout: Duration,
     pub downstream_request_timeout: Duration,
     pub provider_response_limit_bytes: usize,
     pub public_base_url: String,
@@ -293,6 +297,8 @@ pub struct AppConfig {
     pub runtime_session_database_url: Option<String>,
     pub runtime_session_encryption_secret: String,
     pub runtime_session_ttl: Duration,
+    pub runtime_retention_interval: Duration,
+    pub runtime_retention_batch_size: usize,
     pub async_tool_dispatch_topology: AsyncToolDispatchTopology,
 }
 
@@ -423,6 +429,12 @@ impl AppConfig {
         let runtime_session_ttl = Duration::from_secs(
             required_u64("MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS")?.clamp(5 * 60, 2 * 60 * 60),
         );
+        let runtime_retention_interval = Duration::from_secs(
+            required_u64("MCP_MANAGEMENT_RUNTIME_RETENTION_INTERVAL_SECONDS")?
+                .clamp(10, 24 * 60 * 60),
+        );
+        let runtime_retention_batch_size =
+            required_usize("MCP_MANAGEMENT_RUNTIME_RETENTION_BATCH_SIZE")?.clamp(1, 10_000);
         let task_runner_request_timeout = Duration::from_millis(
             required_u64("MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS")?
                 .clamp(1_000, 2 * 60 * 60 * 1_000),
@@ -463,8 +475,16 @@ impl AppConfig {
                 "MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL",
             )?),
         )?;
+        let local_connector_request_timeout =
+            downstream_request_timeout.max(task_runner_request_timeout);
+        // Approval-gated Local Connector calls can remain silent while the client asks AI or the
+        // user for a decision. A per-request timeout does not extend reqwest's client-level
+        // read timeout, so the transport itself must use the configured tool execution budget.
         let local_connector_http_client = chatos_service_runtime::build_mtls_http_client(
-            chatos_service_runtime::HttpClientTimeouts::new(downstream_request_timeout),
+            local_connector_http_timeouts(
+                downstream_request_timeout,
+                local_connector_request_timeout,
+            ),
             required_path("LOCAL_CONNECTOR_MTLS_CA_CERT_PATH")?.as_path(),
             required_path("LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH")?.as_path(),
         )?;
@@ -505,6 +525,7 @@ impl AppConfig {
             local_connector_service_base_url,
             local_connector_http_client,
             local_connector_internal_api_secret,
+            local_connector_request_timeout,
             downstream_request_timeout,
             provider_response_limit_bytes,
             public_base_url,
@@ -512,6 +533,8 @@ impl AppConfig {
             runtime_session_database_url,
             runtime_session_encryption_secret,
             runtime_session_ttl,
+            runtime_retention_interval,
+            runtime_retention_batch_size,
             async_tool_dispatch_topology,
         })
     }
@@ -572,6 +595,7 @@ impl AppConfig {
             local_connector_service_base_url: "http://127.0.0.1:39230".to_string(),
             local_connector_http_client: reqwest::Client::new(),
             local_connector_internal_api_secret: Some("a-long-local-connector-secret".to_string()),
+            local_connector_request_timeout: Duration::from_secs(2 * 60 * 60),
             downstream_request_timeout: Duration::from_secs(5),
             provider_response_limit_bytes: 2 * 1024 * 1024,
             public_base_url: "http://127.0.0.1:39280".to_string(),
@@ -580,6 +604,8 @@ impl AppConfig {
             runtime_session_encryption_secret: "a-long-runtime-session-encryption-secret"
                 .to_string(),
             runtime_session_ttl: Duration::from_secs(30 * 60),
+            runtime_retention_interval: Duration::from_secs(60),
+            runtime_retention_batch_size: 500,
             async_tool_dispatch_topology: AsyncToolDispatchTopology {
                 mode: AsyncToolDispatchMode::LocalQueue,
                 worker_concurrency: 4,
@@ -725,5 +751,49 @@ mod tests {
         topology.worker_concurrency = 513;
 
         assert!(topology.validate().is_err());
+    }
+
+    #[test]
+    fn local_connector_client_keeps_short_connect_and_long_tool_read_timeouts() {
+        let timeouts =
+            local_connector_http_timeouts(Duration::from_secs(5), Duration::from_secs(2 * 60 * 60));
+
+        assert_eq!(timeouts.connect_timeout(), Duration::from_secs(5));
+        assert_eq!(timeouts.request_timeout(), Duration::from_secs(2 * 60 * 60));
+        assert_eq!(timeouts.read_timeout(), Duration::from_secs(2 * 60 * 60));
+    }
+
+    #[tokio::test]
+    async fn local_connector_client_waits_beyond_control_plane_read_timeout() {
+        async fn delayed_response() -> &'static str {
+            tokio::time::sleep(Duration::from_millis(75)).await;
+            "approved"
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind delayed test server");
+        let address = listener.local_addr().expect("read test server address");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                axum::Router::new().route("/", axum::routing::get(delayed_response)),
+            )
+            .await
+            .expect("serve delayed response");
+        });
+        let client = chatos_service_runtime::build_http_client(local_connector_http_timeouts(
+            Duration::from_millis(20),
+            Duration::from_millis(500),
+        ))
+        .expect("build Local Connector test client");
+
+        let response = client
+            .get(format!("http://{address}/"))
+            .send()
+            .await
+            .expect("tool response must outlive the short control-plane timeout");
+        assert_eq!(response.text().await.unwrap(), "approved");
+        server.abort();
     }
 }

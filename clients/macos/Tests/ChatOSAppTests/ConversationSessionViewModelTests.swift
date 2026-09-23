@@ -16,6 +16,7 @@ final class ConversationSessionViewModelTests: XCTestCase {
             remoteService: remoteService,
             realtimeService: realtimeService
         )
+        viewModel.activate()
 
         try await waitUntil {
             let hasSubscriber = await realtimeService.hasSubscriber(sessionID: "session-1")
@@ -55,6 +56,7 @@ final class ConversationSessionViewModelTests: XCTestCase {
             remoteService: remoteService,
             realtimeService: realtimeService
         )
+        viewModel.activate()
 
         try await waitUntil {
             await remoteService.requestCount() == 1 && !viewModel.isRefreshing
@@ -79,6 +81,7 @@ final class ConversationSessionViewModelTests: XCTestCase {
             remoteService: remoteService,
             realtimeService: realtimeService
         )
+        viewModel.activate()
 
         try await waitUntil {
             let hasSubscriber = await realtimeService.hasSubscriber(sessionID: "session-1")
@@ -118,6 +121,26 @@ final class ConversationSessionViewModelTests: XCTestCase {
 
         XCTAssertEqual(updateCount, 0)
         withExtendedLifetime(cancellable) {}
+    }
+
+    func testDeactivateStopsRealtimeSubscription() async throws {
+        let realtimeService = ConversationRealtimeServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            realtimeService: realtimeService
+        )
+        viewModel.activate()
+        try await waitUntil {
+            await realtimeService.hasSubscriber(sessionID: "session-1")
+        }
+
+        viewModel.deactivate()
+
+        try await waitUntil {
+            await realtimeService.wasTerminated(sessionID: "session-1")
+        }
     }
 
     private static func reconcileSignal(id: String) -> ConversationRealtimeSignal {
@@ -220,6 +243,9 @@ private actor ConversationRealtimeServiceStub: ConversationRealtimeStreaming {
             throwing: Error.self
         )
         continuations[sessionID] = continuation
+        continuation.onTermination = { [weak self] _ in
+            Task { await self?.markTerminated(sessionID: sessionID) }
+        }
         return stream
     }
 
@@ -229,5 +255,16 @@ private actor ConversationRealtimeServiceStub: ConversationRealtimeStreaming {
 
     func yield(_ signal: ConversationRealtimeSignal) {
         continuations[signal.sessionID]?.yield(signal)
+    }
+
+    private var terminatedSessionIDs: Set<String> = []
+
+    func wasTerminated(sessionID: String) -> Bool {
+        terminatedSessionIDs.contains(sessionID)
+    }
+
+    private func markTerminated(sessionID: String) {
+        continuations.removeValue(forKey: sessionID)
+        terminatedSessionIDs.insert(sessionID)
     }
 }

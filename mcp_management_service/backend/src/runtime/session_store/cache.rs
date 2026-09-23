@@ -147,10 +147,6 @@ pub(super) fn summarize_snapshot_sizes(snapshot_sizes: &[usize]) -> SnapshotSize
     }
 }
 
-pub(super) fn saturating_u64_to_usize(value: u64) -> usize {
-    usize::try_from(value).unwrap_or(usize::MAX)
-}
-
 impl RuntimeSessionCache {
     fn allocate_access_tick(&mut self) -> u64 {
         self.next_access_tick = self.next_access_tick.saturating_add(1);

@@ -184,6 +184,13 @@ impl RunService {
                     TaskRunStatus::Queued | TaskRunStatus::Running => TaskStatus::Running,
                 };
                 task_record.result_summary = result_summary;
+                if let Some(outcome) = report.execution_outcome.as_ref() {
+                    task_record.task_tool_state.outcome_items = task_outcome_items(outcome);
+                    task_record.task_tool_state.last_outcome_at = Some(now_rfc3339());
+                    if run.status == TaskRunStatus::Succeeded {
+                        task_record.task_tool_state.completed_at = Some(now_rfc3339());
+                    }
+                }
                 task_record.last_run_id = Some(run.id.clone());
                 task_record.updated_at = now_rfc3339();
                 if let Err(err) = self.store.save_task(task_record).await {
@@ -197,6 +204,54 @@ impl RunService {
         self.enqueue_terminal_side_effects(run).await;
         self.store.clear_cancel_requested(&run.id);
     }
+}
+
+fn task_outcome_items(
+    outcome: &chatos_ai_runtime::TaskExecutionOutcome,
+) -> Vec<TaskToolOutcomeItem> {
+    let mut items = vec![TaskToolOutcomeItem {
+        kind: "summary".to_string(),
+        text: outcome.summary.clone(),
+        importance: Some("primary".to_string()),
+        refs: Vec::new(),
+    }];
+    items.extend(
+        outcome
+            .verification_evidence
+            .iter()
+            .take(12)
+            .map(|evidence| TaskToolOutcomeItem {
+                kind: "verification".to_string(),
+                text: evidence.clone(),
+                importance: Some("supporting".to_string()),
+                refs: Vec::new(),
+            }),
+    );
+    items.extend(
+        outcome
+            .referenced_paths
+            .iter()
+            .take(24)
+            .map(|path| TaskToolOutcomeItem {
+                kind: "artifact".to_string(),
+                text: path.clone(),
+                importance: Some("supporting".to_string()),
+                refs: vec![path.clone()],
+            }),
+    );
+    items.extend(
+        outcome
+            .referenced_endpoints
+            .iter()
+            .take(12)
+            .map(|endpoint| TaskToolOutcomeItem {
+                kind: "link".to_string(),
+                text: endpoint.clone(),
+                importance: Some("supporting".to_string()),
+                refs: vec![endpoint.clone()],
+            }),
+    );
+    items
 }
 
 impl RunService {

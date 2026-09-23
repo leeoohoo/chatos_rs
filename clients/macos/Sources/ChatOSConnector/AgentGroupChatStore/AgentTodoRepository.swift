@@ -1,0 +1,412 @@
+import ChatOSCore
+import Foundation
+import SQLite3
+
+enum AgentTodoRepository {
+    static func pendingAgentIDs(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        limit: Int,
+        preparedStatement: () -> Void
+    ) throws -> [String] {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT DISTINCT t.agent_id
+            FROM local_agent_todos t
+            JOIN local_agent_profiles a
+              ON a.owner_user_id = t.owner_user_id AND a.id = t.agent_id
+            WHERE t.owner_user_id = ? AND t.status = 'pending'
+              AND t.team_room_id IS NOT NULL AND a.status = 'active'
+            ORDER BY t.agent_id
+            LIMIT ?
+            """,
+            [.text(ownerUserID), .integer(Int64(limit))]
+        ) { string($0, 0) }
+    }
+
+    static func running(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        agentID: String,
+        preparedStatement: () -> Void
+    ) throws -> LocalAgentTodo? {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT \(columns) FROM local_agent_todos t
+            WHERE t.owner_user_id = ? AND t.agent_id = ? AND t.status = 'in_progress'
+            ORDER BY t.updated_at_unix_ms, t.id
+            LIMIT 1
+            """,
+            [.text(ownerUserID), .text(agentID)],
+            row: AgentGroupChatRowMapper.todo
+        ).first
+    }
+
+    static func runningCount(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        agentID: String,
+        preparedStatement: () -> Void
+    ) throws -> Int64 {
+        preparedStatement()
+        return try AgentGroupChatDatabase.scalarInt64(
+            handle,
+            """
+            SELECT COUNT(*) FROM local_agent_todos
+            WHERE owner_user_id = ? AND agent_id = ? AND status = 'in_progress'
+            """,
+            [.text(ownerUserID), .text(agentID)]
+        )
+    }
+
+    static func nextReady(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        agentID: String,
+        preparedStatement: () -> Void
+    ) throws -> LocalAgentTodo? {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT \(columns) FROM local_agent_todos t
+            WHERE t.owner_user_id = ? AND t.agent_id = ? AND t.status = 'pending'
+              AND EXISTS (
+                SELECT 1 FROM project_agent_rooms r
+                JOIN project_agent_room_members m
+                  ON m.owner_user_id = r.owner_user_id AND m.room_id = r.id
+                WHERE r.owner_user_id = t.owner_user_id AND r.id = t.team_room_id
+                  AND r.status = 'active' AND m.agent_id = t.agent_id
+                  AND m.status = 'active'
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM local_agent_todo_dependencies dependency
+                JOIN local_agent_todos prerequisite
+                  ON prerequisite.owner_user_id = dependency.owner_user_id
+                 AND prerequisite.id = dependency.prerequisite_todo_id
+                WHERE dependency.owner_user_id = t.owner_user_id
+                  AND dependency.todo_id = t.id
+                  AND prerequisite.status != 'completed'
+              )
+            ORDER BY t.priority DESC, t.sort_order, t.created_at_unix_ms, t.id
+            LIMIT 1
+            """,
+            [.text(ownerUserID), .text(agentID)],
+            row: AgentGroupChatRowMapper.todo
+        ).first
+    }
+
+    static func dependencyCreatesCycle(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        prerequisiteTodoID: String,
+        todoID: String,
+        preparedStatement: () -> Void
+    ) throws -> Bool {
+        preparedStatement()
+        return try AgentGroupChatDatabase.scalarInt64(
+            handle,
+            """
+            WITH RECURSIVE ancestors(id) AS (
+                SELECT prerequisite_todo_id
+                FROM local_agent_todo_dependencies
+                WHERE owner_user_id = ? AND todo_id = ?
+                UNION
+                SELECT dependency.prerequisite_todo_id
+                FROM local_agent_todo_dependencies dependency
+                JOIN ancestors ON dependency.todo_id = ancestors.id
+                WHERE dependency.owner_user_id = ?
+            )
+            SELECT COUNT(*) FROM ancestors WHERE id = ?
+            """,
+            [
+                .text(ownerUserID), .text(prerequisiteTodoID),
+                .text(ownerUserID), .text(todoID),
+            ]
+        ) > 0
+    }
+
+    static func incompleteDependencyCount(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        todoID: String,
+        preparedStatement: () -> Void
+    ) throws -> Int64 {
+        preparedStatement()
+        return try AgentGroupChatDatabase.scalarInt64(
+            handle,
+            """
+            SELECT COUNT(*)
+            FROM local_agent_todo_dependencies dependency
+            JOIN local_agent_todos prerequisite
+              ON prerequisite.owner_user_id = dependency.owner_user_id
+             AND prerequisite.id = dependency.prerequisite_todo_id
+            WHERE dependency.owner_user_id = ? AND dependency.todo_id = ?
+              AND prerequisite.status != 'completed'
+            """,
+            [.text(ownerUserID), .text(todoID)]
+        )
+    }
+
+    static func nextProgressSequence(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        todoID: String,
+        preparedStatement: () -> Void
+    ) throws -> Int64 {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT COALESCE(MAX(sequence), 0) + 1
+            FROM local_agent_todo_events WHERE owner_user_id = ? AND todo_id = ?
+            """,
+            [.text(ownerUserID), .text(todoID)]
+        ) { sqlite3_column_int64($0, 0) }.first ?? 1
+    }
+
+    static func nextSortOrder(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        agentID: String,
+        preparedStatement: () -> Void
+    ) throws -> Int64 {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM local_agent_todos WHERE owner_user_id = ? AND agent_id = ?",
+            [.text(ownerUserID), .text(agentID)]
+        ) { sqlite3_column_int64($0, 0) }.first ?? 0
+    }
+
+    static func pendingDependents(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        prerequisiteTodoID: String,
+        preparedStatement: () -> Void
+    ) throws -> [(agentID: String, todoID: String)] {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT todo.agent_id, todo.id
+            FROM local_agent_todo_dependencies dependency
+            JOIN local_agent_todos todo
+              ON todo.owner_user_id = dependency.owner_user_id AND todo.id = dependency.todo_id
+            WHERE dependency.owner_user_id = ? AND dependency.prerequisite_todo_id = ?
+              AND todo.status = 'pending'
+            ORDER BY todo.priority DESC, todo.sort_order, todo.id
+            """,
+            [.text(ownerUserID), .text(prerequisiteTodoID)]
+        ) { statement in
+            (string(statement, 0), string(statement, 1))
+        }
+    }
+
+    static func listProgress(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        agentID: String,
+        todoID: String,
+        limit: Int,
+        preparedStatement: () -> Void
+    ) throws -> [LocalAgentTodoProgress] {
+        preparedStatement()
+        let newestFirst: [LocalAgentTodoProgress] = try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT id, todo_id, sequence, kind, run_id, stage, detail,
+                   asset_update_suggestions_json, created_at_unix_ms
+            FROM local_agent_todo_events
+            WHERE owner_user_id = ? AND todo_id = ?
+            ORDER BY sequence DESC
+            LIMIT ?
+            """,
+            [.text(ownerUserID), .text(todoID), .integer(Int64(limit))]
+        ) { statement in
+            guard let kind = LocalAgentTodoProgressKind(rawValue: string(statement, 3)) else {
+                throw AgentGroupChatError.storage("invalid Agent Todo progress kind")
+            }
+            let suggestions: [LocalAgentTeamAssetUpdateSuggestion]
+            do {
+                suggestions = try JSONDecoder().decode(
+                    [LocalAgentTeamAssetUpdateSuggestion].self,
+                    from: Data(string(statement, 7).utf8)
+                )
+            } catch {
+                throw AgentGroupChatError.storage("invalid team asset update suggestions")
+            }
+            return .init(
+                id: string(statement, 0),
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                todoID: string(statement, 1),
+                sequence: sqlite3_column_int64(statement, 2),
+                kind: kind,
+                runID: optionalString(statement, 4),
+                stage: string(statement, 5),
+                detail: string(statement, 6),
+                assetUpdateSuggestions: suggestions,
+                createdAtUnixMs: sqlite3_column_int64(statement, 8)
+            )
+        }
+        return Array(newestFirst.reversed())
+    }
+
+    static func listDependencies(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        todoID: String,
+        preparedStatement: () -> Void
+    ) throws -> [LocalAgentTodoDependency] {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT d.todo_id, d.prerequisite_todo_id, prerequisite.agent_id,
+                   d.created_at_unix_ms
+            FROM local_agent_todo_dependencies d
+            JOIN local_agent_todos prerequisite
+              ON prerequisite.owner_user_id = d.owner_user_id
+             AND prerequisite.id = d.prerequisite_todo_id
+            WHERE d.owner_user_id = ? AND d.todo_id = ?
+            ORDER BY d.created_at_unix_ms, d.prerequisite_todo_id
+            """,
+            [.text(ownerUserID), .text(todoID)]
+        ) { statement in
+            .init(
+                todoID: string(statement, 0),
+                prerequisiteTodoID: string(statement, 1),
+                prerequisiteAgentID: string(statement, 2),
+                createdAtUnixMs: sqlite3_column_int64(statement, 3)
+            )
+        }
+    }
+
+    static func listSources(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        todoID: String,
+        preparedStatement: () -> Void
+    ) throws -> [LocalAgentTodoSourceLink] {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT todo_id, conversation_id, message_id, relation, created_at_unix_ms
+            FROM local_agent_todo_sources
+            WHERE owner_user_id = ? AND todo_id = ?
+            ORDER BY created_at_unix_ms, message_id, relation
+            """,
+            [.text(ownerUserID), .text(todoID)]
+        ) { statement in
+            guard let relation = LocalAgentTodoSourceRelation(
+                rawValue: string(statement, 3)
+            ) else { throw AgentGroupChatError.storage("invalid Agent Todo source relation") }
+            return .init(
+                todoID: string(statement, 0),
+                conversationID: string(statement, 1),
+                messageID: string(statement, 2),
+                relation: relation,
+                createdAtUnixMs: sqlite3_column_int64(statement, 4)
+            )
+        }
+    }
+
+    static func listForAgent(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        agentID: String,
+        includeTerminal: Bool,
+        preparedStatement: () -> Void
+    ) throws -> [LocalAgentTodo] {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            "SELECT \(columns) FROM local_agent_todos WHERE owner_user_id = ? AND agent_id = ?"
+                + (includeTerminal ? "" : " AND status NOT IN ('completed', 'cancelled')")
+                + todoDisplayOrderSQL,
+            [.text(ownerUserID), .text(agentID)],
+            row: AgentGroupChatRowMapper.todo
+        )
+    }
+
+    static func listForTeam(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        teamRoomID: String,
+        includeTerminal: Bool,
+        preparedStatement: () -> Void
+    ) throws -> [LocalAgentTodo] {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            "SELECT \(columns) FROM local_agent_todos WHERE owner_user_id = ? AND team_room_id = ?"
+                + (includeTerminal ? "" : " AND status NOT IN ('completed', 'cancelled')")
+                + todoDisplayOrderSQL,
+            [.text(ownerUserID), .text(teamRoomID)],
+            row: AgentGroupChatRowMapper.todo
+        )
+    }
+
+    static func find(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        agentID: String,
+        todoID: String,
+        preparedStatement: () -> Void
+    ) throws -> LocalAgentTodo? {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            "SELECT \(columns) FROM local_agent_todos WHERE owner_user_id = ? AND agent_id = ? AND id = ? LIMIT 1",
+            [.text(ownerUserID), .text(agentID), .text(todoID)],
+            row: AgentGroupChatRowMapper.todo
+        ).first
+    }
+
+    static func find(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        agentID: String,
+        requestKey: String,
+        preparedStatement: () -> Void
+    ) throws -> LocalAgentTodo? {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            "SELECT \(columns) FROM local_agent_todos WHERE owner_user_id = ? AND agent_id = ? AND request_key = ? LIMIT 1",
+            [.text(ownerUserID), .text(agentID), .text(requestKey)],
+            row: AgentGroupChatRowMapper.todo
+        ).first
+    }
+
+    private static let columns = "owner_user_id, id, agent_id, team_room_id, source_room_id, source_message_id, title, detail, priority, sort_order, request_key, status, blocked_reason, result, created_at_unix_ms, updated_at_unix_ms, execution_plan_json, execution_contract_json"
+
+    private static let todoDisplayOrderSQL = """
+     ORDER BY CASE status
+         WHEN 'in_progress' THEN 0
+         WHEN 'pending' THEN 1
+         WHEN 'blocked' THEN 2
+         WHEN 'completed' THEN 3
+         WHEN 'cancelled' THEN 4
+         ELSE 5
+     END, priority DESC, sort_order, created_at_unix_ms, id
+    """
+
+    private static func string(_ statement: OpaquePointer, _ index: Int32) -> String {
+        guard let value = sqlite3_column_text(statement, index) else { return "" }
+        return String(cString: value)
+    }
+
+    private static func optionalString(_ statement: OpaquePointer, _ index: Int32) -> String? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL,
+              let value = sqlite3_column_text(statement, index) else { return nil }
+        return String(cString: value)
+    }
+}

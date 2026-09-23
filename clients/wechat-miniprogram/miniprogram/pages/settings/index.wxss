@@ -1,0 +1,22 @@
+.profile-card { display: flex; padding: 22rpx; align-items: center; }
+.avatar { display: flex; width: 70rpx; height: 70rpx; margin-right: 18rpx; align-items: center; justify-content: center; border-radius: 50%; background: linear-gradient(145deg,#168bff,#0071e3); color: #fff; font-size: 29rpx; font-weight: 650; }
+.profile-copy { min-width: 0; flex: 1; }
+.profile-name { overflow: hidden; font-size: 29rpx; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.profile-username { margin-top: 4rpx; font-size: 21rpx; }
+.wechat-badge { margin-left: 12rpx; padding: 6rpx 11rpx; border-radius: 999rpx; background: #eaf8ee; color: #248a3d; font-size: 19rpx; font-weight: 600; }
+.section-title { margin: 34rpx 6rpx 6rpx; color: #6c6c72; font-size: 22rpx; font-weight: 500; }
+.section-help { margin: 0 6rpx 14rpx; font-size: 21rpx; line-height: 1.45; }
+.session-card { position: relative; display: flex; min-height: 78rpx; padding: 19rpx 17rpx 19rpx 20rpx; align-items: center; }
+.session-card + .session-card::before { position: absolute; top: 0; right: 0; left: 94rpx; height: 1rpx; background: rgba(60,60,67,.12); content: ''; }
+.phone-icon { display: flex; width: 56rpx; height: 56rpx; margin-right: 17rpx; align-items: center; justify-content: center; border-radius: 15rpx; background: #eeeef2; color: #66666b; font-size: 28rpx; font-weight: 600; }
+.session-main { min-width: 0; flex: 1; }
+.session-heading { display: flex; align-items: center; gap: 10rpx; font-size: 25rpx; font-weight: 600; }
+.session-state { padding: 4rpx 9rpx; border-radius: 999rpx; background: #eaf8ee; color: #248a3d; font-size: 17rpx; }
+.session-state.revoked { background: #eeeef2; color: #8e8e93; }
+.session-meta { margin-top: 5rpx; color: #8e8e93; font-size: 19rpx; }
+.revoke-button { min-width: 76rpx; height: 50rpx; margin: 0 0 0 12rpx; padding: 0 14rpx; border-radius: 14rpx; background: #fff0ef; color: #ff3b30; font-size: 21rpx; font-weight: 600; line-height: 50rpx; }
+.logout-button { margin-top: 32rpx; border: 1rpx solid rgba(60,60,67,.08); }
+.privacy-copy { padding: 22rpx 20rpx; color: #8e8e93; font-size: 20rpx; line-height: 1.55; text-align: center; }
+.error-card { margin-bottom: 16rpx; padding: 19rpx; border-radius: 17rpx; background: #fff; font-size: 22rpx; }
+.skeleton { height: 86rpx; background: linear-gradient(90deg,#fff,#f0f0f3,#fff); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }

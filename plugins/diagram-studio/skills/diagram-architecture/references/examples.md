@@ -30,6 +30,20 @@ production_domain ..> task_queue : Publish
 
 Why it works: one system-level viewpoint, real boundaries, a visible request path, aggregated data responsibilities, and no implementation classes.
 
+## Negative: runtime call chain disguised as architecture
+
+Bad: User → React UI → Electron main process → Plugin runtime → Agent → model/MCP/storage, with labels such as “scan and invoke plugins”, “register and invoke chat capability”, “read prompt and runtime state”, and “update conversation status”.
+
+Why it fails: it combines a system-context view, desktop-client internals, and one runtime interaction. The arrows encode execution order, so the canvas reads as a flowchart even when packages and component shapes are used.
+
+Repair as three views:
+
+1. `System context`: User, Client, Product Core, Model Provider, Tool Ecosystem, and State/Data. Use one stable relationship per dependency.
+2. `Desktop client container/component view`: React UI, Electron host, IPC boundary, and Plugin runtime.
+3. `Agent request sequence`: prompt handling, model calls, tool calls, persistence, and result delivery in temporal order.
+
+Do not repair this failure by changing arrow colors or spreading the same chain farther apart. Change the viewpoint and move runtime steps to the matching diagram kind.
+
 ## Negative: ChatOS everything-at-once overview
 
 Bad: one canvas contains Client, ChatOS Backend, model provider, MCP Management, Plugin Management, Task Runner, execution environment, project memory, MongoDB, RabbitMQ, plus separate create/query, callback, persistence, synchronization, publish, and consume relationships.

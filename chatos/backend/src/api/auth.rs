@@ -2,11 +2,12 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use axum::http::{HeaderMap, StatusCode};
-use axum::{routing::get, routing::post, Json, Router};
+use axum::{routing::get, routing::post, Extension, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::warn;
 
+use crate::api::RequestClientScopes;
 use crate::config::Config;
 use crate::core::auth::{access_token_from_headers, AuthUser};
 use crate::core::websocket_ticket::issue_websocket_ticket;
@@ -182,12 +183,20 @@ async fn me(headers: HeaderMap) -> (StatusCode, Json<Value>) {
     }
 }
 
-async fn issue_ws_ticket(auth: AuthUser, headers: HeaderMap) -> (StatusCode, Json<Value>) {
+async fn issue_ws_ticket(
+    auth: AuthUser,
+    scopes: Option<Extension<RequestClientScopes>>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
     let access_token = match access_token_from_headers(&headers) {
         Ok(token) => token,
         Err(err) => return err.into_response(),
     };
-    match issue_websocket_ticket(access_token.as_str(), &auth) {
+    let scopes = scopes
+        .as_ref()
+        .map(|Extension(scopes)| scopes.as_slice())
+        .unwrap_or_default();
+    match issue_websocket_ticket(access_token.as_str(), &auth, scopes) {
         Ok(ticket) => (
             StatusCode::OK,
             Json(json!({

@@ -112,11 +112,11 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
         secret_definition(
             LOCAL_CONNECTOR_DATABASE_URL_CONFIG_KEY,
             "Database URL",
-            "Local Connector Service 连接 MongoDB 使用的连接串",
+            "Local Connector Service PostgreSQL 连接串",
             "Local Connector / Runtime",
             "service",
             Some("local-connector-service"),
-            json!("mongodb://admin:admin@127.0.0.1:27018/local_connector_service?authSource=admin"),
+            json!("postgresql://local_connector_app:change_me@127.0.0.1:5433/local_connector_service"),
             "restart_required",
             &["LOCAL_CONNECTOR_DATABASE_URL"],
             319,

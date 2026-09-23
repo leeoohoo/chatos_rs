@@ -82,7 +82,7 @@ impl CreateTaskArgs {
         let external_mcp_config_ids = self.external_mcp_config_ids.unwrap_or_default();
         let requires_execution = self.requires_execution.or_else(|| {
             (external_mcp_config_ids.is_empty()
-                && only_code_maintainer_read_selected(&enabled_builtin_kinds))
+                && only_read_only_builtin_kinds_selected(&enabled_builtin_kinds))
             .then_some(false)
         });
         let mcp_config = (requires_execution.is_some()
@@ -162,11 +162,12 @@ fn normalize_task_plugin_hints(
         .collect()
 }
 
-fn only_code_maintainer_read_selected(enabled_builtin_kinds: &[String]) -> bool {
+fn only_read_only_builtin_kinds_selected(enabled_builtin_kinds: &[String]) -> bool {
     !enabled_builtin_kinds.is_empty()
-        && enabled_builtin_kinds
-            .iter()
-            .all(|kind| kind.trim().eq_ignore_ascii_case("CodeMaintainerRead"))
+        && enabled_builtin_kinds.iter().all(|kind| {
+            kind.trim().eq_ignore_ascii_case("CodeMaintainerRead")
+                || kind.trim().eq_ignore_ascii_case("RequirementSurveyRead")
+        })
 }
 
 pub(in crate::mcp_server) fn reject_ai_runtime_config(

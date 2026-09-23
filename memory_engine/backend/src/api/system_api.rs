@@ -67,6 +67,10 @@ pub async fn system_stats(
 pub async fn prometheus_metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let stats = rabbitmq_queue_stats(&state).await;
     let mut body = chatos_queue_observability::render_prometheus_metrics("memory-engine", &stats);
+    body.push_str(&chatos_postgres::render_pool_metrics(
+        &state.pool,
+        "memory-engine-api",
+    ));
     let pressure = state.pressure.snapshot();
     body.push_str(
         "# HELP chatos_memory_engine_pressure_level Authoritative platform pressure level applied by Memory Engine.\n\

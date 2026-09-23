@@ -16,3 +16,14 @@ The `harness/` directory is kept as an independent Git checkout and is intention
 - `harness/NOTICE`
 
 Harness's `NOTICE` file also identifies software developed by Harbor, Distribution, and GitLab Container Registry projects, each under the Apache License 2.0.
+
+## SwiftTerm
+
+- Source: https://github.com/migueldeicaza/SwiftTerm
+- Version: 1.20.0
+- Used by: ChatOS macOS native local and remote terminal rendering and PTY transport
+- License: MIT
+
+The complete SwiftTerm license text is preserved at:
+
+- `clients/macos/Support/ThirdParty/SwiftTerm/LICENSE`

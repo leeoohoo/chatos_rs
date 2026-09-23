@@ -217,13 +217,12 @@ fn apply_prompt_cache_policy(
     run_id: &str,
     policy: crate::services::run_service::TaskRunnerPromptCachePolicy,
 ) {
-    if policy.enabled {
-        model_runtime_config.prompt_cache_key = Some(format!("task-runner:{run_id}"));
-        model_runtime_config.include_prompt_cache_retention = policy.retention_enabled;
-    } else {
-        model_runtime_config.prompt_cache_key = None;
-        model_runtime_config.include_prompt_cache_retention = false;
-    }
+    // Every Agent request is an OpenAI Responses request. The stable run key is
+    // part of the protocol contract; the managed switch only controls extended
+    // retention and must never disable prompt-cache routing itself.
+    model_runtime_config.prompt_cache_key = Some(format!("task-runner:{run_id}"));
+    model_runtime_config.include_prompt_cache_retention =
+        policy.enabled && policy.retention_enabled;
 }
 
 #[cfg(test)]
@@ -261,7 +260,7 @@ mod prompt_cache_tests {
     }
 
     #[test]
-    fn managed_policy_can_disable_all_cache_options_without_model_fallback() {
+    fn managed_policy_disables_retention_but_keeps_stable_cache_key() {
         let mut config = runtime_config()
             .with_prompt_cache_key(Some("model-default".to_string()))
             .with_prompt_cache_retention(true);
@@ -275,7 +274,10 @@ mod prompt_cache_tests {
             },
         );
 
-        assert_eq!(config.prompt_cache_key, None);
+        assert_eq!(
+            config.prompt_cache_key.as_deref(),
+            Some("task-runner:run-1")
+        );
         assert!(!config.include_prompt_cache_retention);
     }
 }
@@ -290,7 +292,10 @@ fn build_memory_scope(service: &RunService, task: &TaskRecord, run: &TaskRunReco
         include_recent_records: Some(true),
         include_thread_summary: Some(true),
         include_subject_memory: Some(true),
-        recent_record_limit: None,
+        // A task can run for hundreds of model steps. Replaying every pending
+        // memory record makes each request and its diagnostic state grow
+        // without bound, so keep a fixed recent semantic window.
+        recent_record_limit: Some(64),
         summary_limit: Some(2),
     })
 }
@@ -484,7 +489,6 @@ mod tests {
             worker_id: "test-worker".to_string(),
             worker_claim_ttl: Duration::from_millis(120_000),
             worker_concurrency: 4,
-            auto_memory_summary: false,
             default_task_execution_max_iterations: 1,
             default_tool_result_model_max_chars: 1_000,
             default_tool_results_model_total_max_chars: 1_000,
@@ -595,9 +599,7 @@ mod tests {
             post_process_dead_lettered: false,
             post_process_attempt_count: 0,
             post_process_last_error: None,
-            memory_summary_processed: false,
             chatos_followup_processed: false,
-            summary_job_run_id: None,
             worker_id: None,
             claim_token: None,
             claim_until: None,

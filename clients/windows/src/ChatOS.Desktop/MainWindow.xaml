@@ -115,6 +115,9 @@
                     <Button AutomationProperties.AutomationId="ChatOS.Shell.Artifacts" AutomationProperties.Name="{x:Bind ViewModel.Localization.Artifacts, Mode=OneWay}" Click="OnArtifactsClicked" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind ViewModel.Localization.Artifacts, Mode=OneWay}">
                         <FontIcon Glyph="&#xE8B7;" />
                     </Button>
+                    <Button AutomationProperties.AutomationId="ChatOS.Shell.ClipboardHistory" AutomationProperties.Name="Clipboard history" Click="OnClipboardHistoryClicked" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="剪贴板历史">
+                        <FontIcon Glyph="&#xE8C8;" />
+                    </Button>
                     <Button AutomationProperties.AutomationId="ChatOS.Shell.AccountMenu" AutomationProperties.Name="{x:Bind ViewModel.Localization.AccountAndSettings, Mode=OneWay}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind ViewModel.Localization.AccountAndSettings, Mode=OneWay}">
                         <Button.Flyout>
                             <MenuFlyout>

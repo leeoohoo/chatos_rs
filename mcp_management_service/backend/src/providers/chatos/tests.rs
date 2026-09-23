@@ -251,6 +251,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
             .to_string(),
         task_profile: None,
         project_id: Some("project-1".to_string()),
+        client_project_context: None,
         device_id: None,
         run_id: None,
         execution_group_id: None,

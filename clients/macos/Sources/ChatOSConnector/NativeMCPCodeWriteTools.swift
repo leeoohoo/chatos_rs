@@ -99,6 +99,15 @@ actor NativeMCPCodeWriteStore {
         }
     }
 
+    @discardableResult
+    func discard(runID: String) -> Int {
+        let matching = sessions.values.filter { $0.scope.runID == runID }
+        for session in matching {
+            removeSession(session)
+        }
+        return matching.count
+    }
+
     private func open(
         arguments: [String: NativeJSONValue],
         scope: NativeMCPCodeWriteScope,
@@ -181,9 +190,9 @@ actor NativeMCPCodeWriteStore {
         }
         let changed = session.files.values.filter(\.hasChanges).sorted { $0.path < $1.path }
         try validateCurrentBaselines(changed, root: session.projectRoot)
-        removeSession(session)
 
         guard !changed.isEmpty else {
+            removeSession(session)
             return .object([
                 "outcome": .string("already_applied"),
                 "changed": .bool(false),
@@ -199,8 +208,12 @@ actor NativeMCPCodeWriteStore {
         do {
             try apply(states: changed, root: session.projectRoot)
         } catch {
+            // Keep the in-memory session available while this run is alive so the caller can
+            // inspect, retry, or abort a failed commit instead of losing the staged batch before
+            // the error is reported.
             throw NativeMCPCodeWriteError.commitFailed(error.localizedDescription)
         }
+        removeSession(session)
         return .object([
             "outcome": .string("applied"),
             "changed": .bool(true),

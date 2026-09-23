@@ -71,7 +71,7 @@ fn started_and_terminal_callbacks_share_one_lifecycle_message_id() {
     let terminal_message = build_task_runner_callback_assistant_message("session-1", &terminal);
 
     assert_eq!(started_message.id, terminal_message.id);
-    assert!(started_message.content.contains("Task “Demo task” started"));
+    assert_eq!(started_message.content, "I've started working on it.");
     assert_eq!(
         started_message
             .metadata
@@ -592,9 +592,10 @@ fn failed_callback_assistant_message_keeps_error_detail() {
 
     let message = build_task_runner_callback_assistant_message("session-1", &payload);
 
-    assert!(message.content.contains("Task “Demo task” failed"));
-    assert!(message.content.contains("Error:"));
+    assert!(message.content.contains("I couldn't complete this."));
     assert!(message.content.contains("memory batch sync failed"));
+    assert!(!message.content.contains("Task “Demo task”"));
+    assert!(!message.content.contains("Error:"));
     assert_eq!(
         message
             .metadata
@@ -662,7 +663,7 @@ fn failed_callback_hides_internal_prompt_resolution_details() {
 }
 
 #[test]
-fn chinese_callback_wrapper_follows_task_language() {
+fn chinese_completed_callback_delivers_result_without_task_wrapper() {
     let mut payload = sample_callback_payload();
     payload.task_title = "创建中文回归产物".to_string();
     payload.task_objective = "创建中文需求、技术文档和项目任务。".to_string();
@@ -670,18 +671,20 @@ fn chinese_callback_wrapper_follows_task_language() {
 
     let message = build_task_runner_callback_assistant_message("session-1", &payload);
 
-    assert!(message.content.contains("任务「创建中文回归产物」已完成"));
-    assert!(message.content.contains("结果摘要："));
+    assert_eq!(message.content, "全部中文产物均已创建。");
+    assert!(!message.content.contains("任务「"));
+    assert!(!message.content.contains("结果摘要："));
 }
 
 #[test]
-fn english_callback_wrapper_overrides_chinese_ui_fallback() {
+fn english_completed_callback_delivers_result_without_task_wrapper() {
     let payload = sample_callback_payload();
 
     let message = build_task_runner_callback_assistant_message("session-1", &payload);
 
-    assert!(message.content.contains("Task “Demo task” completed"));
-    assert!(message.content.contains("Result summary:"));
+    assert_eq!(message.content, "done");
+    assert!(!message.content.contains("Task “Demo task”"));
+    assert!(!message.content.contains("Result summary:"));
     assert!(!message.content.contains("结果摘要"));
 }
 
@@ -698,13 +701,12 @@ fn completed_callback_uses_task_objective_when_report_has_no_readable_summary() 
         .cloned()
         .unwrap_or_else(|| json!({}));
 
-    assert!(message.content.contains("Task “Demo task” completed"));
     assert!(message
         .content
         .contains("Complete the requested demo work."));
-    assert!(message
-        .content
-        .contains("More implementation details are available in the task details."));
+    assert!(!message.content.contains("Task “Demo task”"));
+    assert!(!message.content.contains("Result summary:"));
+    assert!(!message.content.contains("task details"));
     assert!(message.content.chars().count() < 400);
     assert_eq!(
         task_runner_async
@@ -732,11 +734,10 @@ fn verbose_chinese_completion_report_becomes_concise_receipt() {
 
     assert!(message
         .content
-        .contains("任务「实现组合筛选与中文活动时间线」已完成"));
-    assert!(message
-        .content
         .contains("已完成相关功能实现与接口联调，并通过相关检查与测试验证。"));
-    assert!(message.content.contains("更多实施细节可在任务详情中查看"));
+    assert!(!message.content.contains("任务「"));
+    assert!(!message.content.contains("结果摘要"));
+    assert!(!message.content.contains("任务详情"));
     assert!(!message.content.contains("src/service.js"));
     assert!(!message.content.contains("/api/dashboard"));
     assert!(!message.content.contains("VALIDATION_ERROR"));
@@ -759,7 +760,9 @@ fn completed_callback_shows_a_short_user_facing_result_in_chat() {
         .contains("已梳理该项目的主要用途、核心业务流程和关键模块。"));
     assert!(message.content.contains("明确了项目面向的用户场景"));
     assert!(message.content.contains("总结了主要功能边界和技术组成"));
-    assert!(message.content.contains("更多实施细节可在任务详情中查看"));
+    assert!(!message.content.contains("任务「"));
+    assert!(!message.content.contains("结果摘要"));
+    assert!(!message.content.contains("任务详情"));
 }
 
 #[test]

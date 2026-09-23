@@ -107,10 +107,12 @@ pub(super) fn run_tool_definitions() -> Vec<Value> {
         ),
         tool_definition(
             "list_run_events",
-            "List stored execution events for one Task Runner run.",
+            "List one bounded page of stored execution events for a Task Runner run.",
             required_object_schema(
                 json!({
-                    "run_id": { "type": "string", "minLength": 1 }
+                    "run_id": { "type": "string", "minLength": 1 },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 40 },
+                    "offset": { "type": "integer", "minimum": 0, "default": 0 }
                 }),
                 &["run_id"],
             ),

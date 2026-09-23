@@ -67,6 +67,10 @@ pub(super) async fn prometheus_metrics(State(state): State<AppState>) -> impl In
     let pressure_level = state.pressure.snapshot().level;
     let mut body =
         chatos_queue_observability::render_prometheus_metrics("plugin-management-service", &stats);
+    body.push_str(&chatos_postgres::render_pool_metrics(
+        state.store.pool(),
+        "plugin-management",
+    ));
     body.push_str(
         "# HELP chatos_plugin_management_scheduled_sync_pressure_paused Whether scheduled Catalog sync is deferred by critical platform pressure.\n\
 # TYPE chatos_plugin_management_scheduled_sync_pressure_paused gauge\n",

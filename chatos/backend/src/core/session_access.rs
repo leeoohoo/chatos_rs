@@ -88,3 +88,31 @@ pub fn map_session_access_error_compat(err: SessionAccessError) -> (StatusCode, 
         ),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::is_owned_session;
+    use crate::core::auth::AuthUser;
+    use crate::models::session::Session;
+
+    #[test]
+    fn ownership_check_rejects_cross_user_conversation_control() {
+        let session = Session::new(
+            "Private conversation".to_string(),
+            None,
+            None,
+            Some("owner-user".to_string()),
+            None,
+        );
+        let owner = AuthUser {
+            user_id: "owner-user".to_string(),
+            role: "user".to_string(),
+        };
+        let other = AuthUser {
+            user_id: "other-user".to_string(),
+            role: "user".to_string(),
+        };
+        assert!(is_owned_session(&session, &owner));
+        assert!(!is_owned_session(&session, &other));
+    }
+}

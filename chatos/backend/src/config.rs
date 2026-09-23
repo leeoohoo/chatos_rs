@@ -52,6 +52,8 @@ pub struct Config {
     pub mcp_management_internal_api_secret: Option<String>,
     pub mcp_result_rabbitmq_url: String,
     pub mcp_result_queue_prefix: String,
+    pub cloud_agent_outbox_reconcile_interval: Duration,
+    pub cloud_agent_outbox_batch_size: i64,
     pub local_connector_service_base_url: String,
     pub local_connector_http_client: reqwest::Client,
     pub local_connector_long_running_http_client: reqwest::Client,
@@ -180,6 +182,11 @@ impl Config {
             require_config_center_value("CHATOS_MCP_RESULT_RABBITMQ_URL")?;
         let mcp_result_queue_prefix =
             require_config_center_value("CHATOS_MCP_RESULT_QUEUE_PREFIX")?;
+        let cloud_agent_outbox_reconcile_interval = Duration::from_millis(
+            require_config_center_i64("CHATOS_CLOUD_AGENT_OUTBOX_RECONCILE_MS")?.max(1_000) as u64,
+        );
+        let cloud_agent_outbox_batch_size =
+            require_config_center_i64("CHATOS_CLOUD_AGENT_OUTBOX_BATCH_SIZE")?.max(1);
         let local_connector_service_base_url =
             require_config_center_value("CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL")?;
         require_https_base_url(
@@ -326,6 +333,8 @@ impl Config {
             mcp_management_internal_api_secret,
             mcp_result_rabbitmq_url,
             mcp_result_queue_prefix,
+            cloud_agent_outbox_reconcile_interval,
+            cloud_agent_outbox_batch_size,
             local_connector_service_base_url,
             local_connector_http_client,
             local_connector_long_running_http_client,

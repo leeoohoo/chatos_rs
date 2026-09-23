@@ -13,8 +13,16 @@ CHATOS_IMAGE_TAG=latest
 DOCKER_SOCKET_PROXY_IMAGE=ghcr.io/tecnativa/docker-socket-proxy:latest
 
 # Infrastructure credentials
-MONGODB_USER=admin
-MONGODB_PASSWORD=admin
+POSTGRES_IMAGE=postgres:18.6-bookworm
+# Production must replace the tag above with:
+# postgres:18.6-bookworm@sha256:<64 lowercase hex characters>
+POSTGRES_ADMIN_USER=chatos_admin
+POSTGRES_ADMIN_PASSWORD=change_me_postgres_admin_password
+POSTGRES_APP_PASSWORD=change_me_postgres_app_password
+POSTGRES_MIGRATION_PASSWORD=change_me_postgres_migration_password
+POSTGRES_SERVER_MAX_CONNECTIONS=200
+EXPECTED_MIGRATED_USER_COUNT=
+EXPECTED_MIGRATED_WECHAT_IDENTITY_COUNT=
 RABBITMQ_DEFAULT_USER=chatos
 RABBITMQ_DEFAULT_PASS=change_me_rabbitmq_password
 RABBITMQ_DEFAULT_VHOST=/
@@ -24,6 +32,10 @@ VALKEY_PASSWORD=change_me_valkey_password
 # Cross-service model runtime lookup. ChatOS Cloud Agent workers use this
 # caller-specific secret together with mTLS; never reuse a user access token.
 CHATOS_USER_SERVICE_INTERNAL_API_SECRET=change_me_chatos_user_service_secret
+
+# Keep the password-based Mini Program simulator entry disabled in normal
+# deployments. Enable it only for a controlled developer-tool test window.
+USER_SERVICE_WECHAT_MINI_PROGRAM_DEVELOPMENT_LOGIN_ENABLED=false
 
 # Configuration Center caller bootstrap secrets. Use distinct random values in
 # production. These authenticate initial snapshot and heartbeat requests only.
@@ -57,6 +69,7 @@ HARNESS_BASE_URL=http://harness:3000
 # Host bindings and commonly overridden ports
 CHATOS_INFRA_BIND_HOST=127.0.0.1
 CHATOS_PUBLIC_BIND_HOST=0.0.0.0
+POSTGRES_PORT=5433
 MAIN_BACKEND_PORT=3997
 HARNESS_PORT=3000
 HARNESS_SSH_PORT=3022
@@ -70,7 +83,7 @@ GRAFANA_PORT=3001
 CHATOS_DOCKER_MODE=prebuilt
 CHATOS_DOCKER_BUILD_PARALLEL_LIMIT=1
 CHATOS_DOCKER_PRUNE_DANGLING_IMAGES=true
-CHATOS_DOCKER_PRUNE_BUILD_CACHE=true
+CHATOS_DOCKER_PRUNE_BUILD_CACHE=false
 CHATOS_DOCKER_BUILD_CACHE_MAX_USED_SPACE=32gb
 CHATOS_DOCKER_BUILD_CACHE_RESERVED_SPACE=8gb
 CHATOS_DOCKER_BUILD_CACHE_TIMEOUT=180s

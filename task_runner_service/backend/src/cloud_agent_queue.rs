@@ -44,8 +44,9 @@ fn cloud_agent_topology(
         retry_queue: TASK_RUNNER_CLOUD_AGENT_RETRY_ROUTING_KEY.to_string(),
         consumer_tag: "task-runner-cloud-agent-runtime".to_string(),
         reconnect_delay: topology.rabbitmq_reconnect_delay,
-        outbox_reconcile_interval: Duration::from_secs(1),
-        outbox_batch_size: 100,
+        outbox_reconcile_interval: topology.event_outbox_reconcile_interval,
+        outbox_batch_size: i64::try_from(topology.event_outbox_batch_size)
+            .map_err(|_| "TASK_RUNNER_EVENT_OUTBOX_BATCH_SIZE is too large".to_string())?,
         prefetch_count: 32,
         consumer_concurrency: consumer_concurrency.max(1),
         conflict_retry_delay: Duration::from_secs(1),
@@ -118,4 +119,21 @@ pub(crate) async fn publish_dependency_resume(
         &intent,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cloud_agent_outbox_uses_managed_event_reconcile_settings() {
+        let mut queue = TaskQueueTopology::inline_defaults();
+        queue.rabbitmq_url = Some("amqp://localhost".to_string());
+        queue.event_outbox_reconcile_interval = Duration::from_secs(17);
+        queue.event_outbox_batch_size = 23;
+
+        let topology = cloud_agent_topology(&queue, 4).expect("cloud topology");
+        assert_eq!(topology.outbox_reconcile_interval, Duration::from_secs(17));
+        assert_eq!(topology.outbox_batch_size, 23);
+    }
 }

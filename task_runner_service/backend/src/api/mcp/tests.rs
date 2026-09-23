@@ -69,6 +69,19 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
         "x-mcp-management-project-id",
         " project-1 ".parse().expect("valid header"),
     );
+    let project_context = crate::services::test_project_snapshot("project-1");
+    let encoded_project_context = urlencoding::encode(
+        serde_json::to_string(&project_context)
+            .expect("serialize project context")
+            .as_str(),
+    )
+    .into_owned();
+    headers.insert(
+        "x-mcp-management-client-project-context",
+        encoded_project_context
+            .parse()
+            .expect("valid project context header"),
+    );
     headers.insert(
         "x-mcp-management-run-id",
         " run-1 ".parse().expect("valid header"),
@@ -102,6 +115,7 @@ fn mcp_management_binding_requires_registered_agent_and_complete_identity() {
     assert_eq!(binding.session_id, "session-1");
     assert_eq!(binding.session_expires_at_unix, 4_102_444_800);
     assert_eq!(binding.project_id.as_deref(), Some("project-1"));
+    assert_eq!(binding.project_context, Some(project_context));
     assert_eq!(binding.run_id.as_deref(), Some("run-1"));
     assert_eq!(binding.task_id.as_deref(), Some("task-1"));
     assert_eq!(
@@ -129,6 +143,7 @@ fn ask_user_timeout_stays_inside_the_immutable_session_lifetime() {
         session_id: "session-1".to_string(),
         session_expires_at_unix: chrono::Utc::now().timestamp() + 30 * 60,
         project_id: Some("project-1".to_string()),
+        project_context: None,
         run_id: Some("run-1".to_string()),
         turn_id: None,
         task_id: Some("task-1".to_string()),
@@ -158,6 +173,7 @@ fn bound_task_creator_uses_chatos_agent_and_keeps_human_owner() {
         session_id: "session-1".to_string(),
         session_expires_at_unix: chrono::Utc::now().timestamp() + 30 * 60,
         project_id: Some("project-1".to_string()),
+        project_context: None,
         run_id: None,
         turn_id: Some("turn-1".to_string()),
         task_id: None,

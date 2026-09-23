@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::JsonSchemaOutputFormat;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AiResponse {
     pub content: String,
     pub reasoning: Option<String>,
@@ -18,6 +18,28 @@ pub struct AiResponse {
     pub provider_error: Option<Value>,
     pub usage: Option<Value>,
     pub response_id: Option<String>,
+    /// Provider response lifecycle state. Responses API values include
+    /// `completed`, `incomplete`, and `failed`.
+    #[serde(default)]
+    pub response_status: Option<String>,
+    /// Structured reason supplied by an incomplete Responses API result.
+    #[serde(default)]
+    pub incomplete_details: Option<Value>,
+    /// Final SSE event observed for this response (`response.completed`,
+    /// `response.incomplete`, or `response.failed`).
+    #[serde(default)]
+    pub terminal_event_type: Option<String>,
+    #[serde(default)]
+    pub terminal_event_seen: bool,
+    /// OpenAI's request correlation header, when supplied by the provider.
+    #[serde(default)]
+    pub provider_request_id: Option<String>,
+    #[serde(default)]
+    pub provider_http_status: Option<u16>,
+    #[serde(default)]
+    pub parsed_stream_event_count: usize,
+    #[serde(default)]
+    pub malformed_stream_event_count: usize,
     /// Exact `response.output` items returned by the Responses API.
     ///
     /// Cloud event-driven callers persist these items verbatim and append
@@ -54,6 +76,9 @@ pub struct AiRequestOptions {
     /// streaming for OpenAI-compatible gateways that truncate SSE bodies.
     pub stream: bool,
     pub output_format: Option<JsonSchemaOutputFormat>,
+    /// Enables Responses server-side compaction at this rendered-token
+    /// threshold. This is only sent to the official OpenAI API.
+    pub responses_compaction_threshold: Option<usize>,
 }
 
 impl Default for AiRequestOptions {
@@ -68,6 +93,7 @@ impl Default for AiRequestOptions {
             force_identity_encoding: false,
             stream: true,
             output_format: None,
+            responses_compaction_threshold: None,
         }
     }
 }

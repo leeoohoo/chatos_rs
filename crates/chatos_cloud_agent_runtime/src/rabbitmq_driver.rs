@@ -32,6 +32,7 @@ const DELIVERY_ATTEMPT_HEADER: &str = "x-chatos-delivery-attempt";
 const DELIVERY_FAILURE_HEADER: &str = "x-chatos-delivery-failure";
 const MAX_DELIVERY_ATTEMPTS: u32 = 8;
 const MAX_OUTBOX_PUBLISH_ATTEMPTS: u32 = 8;
+const OUTBOX_PUBLISH_CLAIM_TTL: Duration = Duration::from_secs(60);
 const MAX_AMQP_SHORT_STRING_BYTES: usize = 255;
 
 #[derive(Debug, Clone)]
@@ -62,10 +63,14 @@ impl CloudAgentRabbitMqTopology {
                 return Err(format!("Cloud Agent RabbitMQ {name} must not be empty"));
             }
         }
-        if self.prefetch_count == 0 || self.consumer_concurrency == 0 || self.outbox_batch_size <= 0
+        if self.prefetch_count == 0
+            || self.consumer_concurrency == 0
+            || self.outbox_batch_size <= 0
+            || self.outbox_reconcile_interval.is_zero()
         {
             return Err(
-                "Cloud Agent RabbitMQ prefetch and outbox batch size must be positive".to_string(),
+                "Cloud Agent RabbitMQ prefetch, outbox interval and batch size must be positive"
+                    .to_string(),
             );
         }
         Ok(())
@@ -213,6 +218,17 @@ where
             );
             return;
         }
+        let jitter_seed = format!(
+            "{}:{}:{}",
+            owner.owner_service(),
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        );
+        tokio::time::sleep(outbox_reconcile_startup_jitter(
+            topology.outbox_reconcile_interval,
+            jitter_seed.as_str(),
+        ))
+        .await;
         let mut interval = tokio::time::interval(topology.outbox_reconcile_interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -548,12 +564,26 @@ where
     O: CloudAgentQueueOwner,
 {
     let store = owner.cloud_agent_store();
-    let pending = store
-        .list_ready_outbox_with_attempts(topology.outbox_batch_size)
+    let claim_token = uuid::Uuid::new_v4().to_string();
+    let claim_until = chrono::Utc::now()
+        + chrono::Duration::from_std(OUTBOX_PUBLISH_CLAIM_TTL)
+            .map_err(|error| format!("invalid Cloud Agent outbox claim TTL: {error}"))?;
+    let mut pending = store
+        .claim_ready_outbox_with_attempts(
+            topology.outbox_batch_size,
+            claim_token.as_str(),
+            claim_until,
+        )
         .await?;
     if pending.is_empty() {
         return Ok(0);
     }
+    pending.sort_by(|left, right| {
+        left.intent
+            .available_at
+            .cmp(&right.intent.available_at)
+            .then_with(|| left.intent.event_id.cmp(&right.intent.event_id))
+    });
     let (connection, channel) = open_publisher(topology).await?;
     let _connection = connection;
     let mut published = 0usize;
@@ -563,7 +593,7 @@ where
         match publish_intent(&channel, topology, &store, &intent).await {
             Ok(()) => {
                 store
-                    .mark_outbox_published(intent.event_id.as_str())
+                    .mark_claimed_outbox_published(intent.event_id.as_str(), claim_token.as_str())
                     .await?;
                 published = published.saturating_add(1);
             }
@@ -573,8 +603,9 @@ where
                     + chrono::Duration::from_std(outbox_publish_retry_delay(next_attempt))
                         .unwrap_or_else(|_| chrono::Duration::minutes(5));
                 match store
-                    .mark_outbox_publish_failed(
+                    .mark_claimed_outbox_publish_failed(
                         intent.event_id.as_str(),
+                        claim_token.as_str(),
                         error.as_str(),
                         next_available_at,
                         MAX_OUTBOX_PUBLISH_ATTEMPTS,
@@ -640,356 +671,4 @@ async fn open_publisher(
     Ok((connection, channel))
 }
 
-async fn ensure_topology(
-    channel: &Channel,
-    topology: &CloudAgentRabbitMqTopology,
-) -> Result<(), String> {
-    channel
-        .exchange_declare(
-            topology.exchange.as_str(),
-            ExchangeKind::Direct,
-            ExchangeDeclareOptions {
-                durable: true,
-                ..ExchangeDeclareOptions::default()
-            },
-            FieldTable::default(),
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-    channel
-        .queue_declare(
-            topology.runtime_queue.as_str(),
-            QueueDeclareOptions {
-                durable: true,
-                ..QueueDeclareOptions::default()
-            },
-            FieldTable::default(),
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-    channel
-        .queue_bind(
-            topology.runtime_queue.as_str(),
-            topology.exchange.as_str(),
-            topology.runtime_queue.as_str(),
-            QueueBindOptions::default(),
-            FieldTable::default(),
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-    let mut retry_arguments = FieldTable::default();
-    retry_arguments.insert(
-        "x-dead-letter-exchange".into(),
-        AMQPValue::LongString(topology.exchange.clone().into()),
-    );
-    retry_arguments.insert(
-        "x-dead-letter-routing-key".into(),
-        AMQPValue::LongString(topology.runtime_queue.clone().into()),
-    );
-    channel
-        .queue_declare(
-            topology.retry_queue.as_str(),
-            QueueDeclareOptions {
-                durable: true,
-                ..QueueDeclareOptions::default()
-            },
-            retry_arguments,
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-    channel
-        .queue_bind(
-            topology.retry_queue.as_str(),
-            topology.exchange.as_str(),
-            topology.retry_queue.as_str(),
-            QueueBindOptions::default(),
-            FieldTable::default(),
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-    let dead_letter_queue = dead_letter_queue_name(topology);
-    channel
-        .queue_declare(
-            dead_letter_queue.as_str(),
-            QueueDeclareOptions {
-                durable: true,
-                ..QueueDeclareOptions::default()
-            },
-            FieldTable::default(),
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-    channel
-        .queue_bind(
-            dead_letter_queue.as_str(),
-            topology.exchange.as_str(),
-            dead_letter_queue.as_str(),
-            QueueBindOptions::default(),
-            FieldTable::default(),
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-fn dead_letter_queue_name(topology: &CloudAgentRabbitMqTopology) -> String {
-    format!("{}.dead", topology.runtime_queue)
-}
-
-async fn defer_delivery(
-    channel: &Channel,
-    topology: &CloudAgentRabbitMqTopology,
-    payload: &[u8],
-    delivery_attempt: u32,
-) -> Result<(), String> {
-    let expiration = cloud_agent_retry_delay(topology.conflict_retry_delay, delivery_attempt)
-        .as_millis()
-        .max(1)
-        .to_string();
-    let confirmation = channel
-        .basic_publish(
-            topology.exchange.as_str(),
-            topology.retry_queue.as_str(),
-            BasicPublishOptions {
-                mandatory: true,
-                ..BasicPublishOptions::default()
-            },
-            payload,
-            BasicProperties::default()
-                .with_content_type("application/json".into())
-                .with_delivery_mode(2)
-                .with_headers(cloud_agent_delivery_headers(delivery_attempt, None))
-                .with_expiration(expiration.into()),
-        )
-        .await
-        .map_err(|error| error.to_string())?
-        .await
-        .map_err(|error| error.to_string())?;
-    confirmed("deferred Cloud Agent event", confirmation)
-}
-
-fn cloud_agent_retry_delay(base: Duration, delivery_attempt: u32) -> Duration {
-    const MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
-    let exponent = delivery_attempt.saturating_sub(2).min(6);
-    base.checked_mul(1_u32 << exponent)
-        .unwrap_or(MAX_RETRY_DELAY)
-        .min(MAX_RETRY_DELAY)
-}
-
-async fn dead_letter_delivery(
-    channel: &Channel,
-    topology: &CloudAgentRabbitMqTopology,
-    payload: &[u8],
-    delivery_attempt: u32,
-    failure: &str,
-) -> Result<(), String> {
-    let queue = dead_letter_queue_name(topology);
-    let confirmation = channel
-        .basic_publish(
-            topology.exchange.as_str(),
-            queue.as_str(),
-            BasicPublishOptions {
-                mandatory: true,
-                ..BasicPublishOptions::default()
-            },
-            payload,
-            BasicProperties::default()
-                .with_content_type("application/json".into())
-                .with_delivery_mode(2)
-                .with_headers(cloud_agent_delivery_headers(
-                    delivery_attempt,
-                    Some(failure),
-                )),
-        )
-        .await
-        .map_err(|error| error.to_string())?
-        .await
-        .map_err(|error| error.to_string())?;
-    confirmed("dead-lettered Cloud Agent event", confirmation)
-}
-
-async fn publish_intent(
-    channel: &Channel,
-    topology: &CloudAgentRabbitMqTopology,
-    store: &CloudAgentStateStore,
-    intent: &CloudAgentOutboxIntent,
-) -> Result<(), String> {
-    let routing_key = match intent.topic.as_str() {
-        "ai_runtime_retry" => topology.retry_queue.as_str(),
-        "mcp_tool_call_command" => intent.routing_key.as_str(),
-        _ => topology.runtime_queue.as_str(),
-    };
-    let payload = if intent.topic == "mcp_tool_call_command" {
-        let run = store
-            .load_run(intent.ordering.agent_run_id.as_str())
-            .await?
-            .ok_or_else(|| "Cloud Agent run is missing while publishing MCP command".to_string())?;
-        let session_ref = run
-            .mcp_runtime_session_ref
-            .as_deref()
-            .ok_or_else(|| "Cloud Agent run has no MCP runtime session".to_string())?;
-        serde_json::to_vec(&materialize_mcp_command(
-            &run,
-            intent,
-            session_ref,
-            topology.runtime_queue.as_str(),
-        )?)
-        .map_err(|error| error.to_string())?
-    } else {
-        serde_json::to_vec(intent).map_err(|error| error.to_string())?
-    };
-    let mut properties = BasicProperties::default()
-        .with_content_type("application/json".into())
-        .with_delivery_mode(2)
-        .with_message_id(bounded_amqp_property_id(intent.event_id.as_str()).into())
-        .with_correlation_id(bounded_amqp_property_id(intent.correlation_id.as_str()).into());
-    if intent.topic == "ai_runtime_retry" {
-        let delay = intent
-            .available_at
-            .signed_duration_since(chrono::Utc::now())
-            .num_milliseconds()
-            .max(1);
-        properties = properties.with_expiration(delay.to_string().into());
-    }
-    let exchange = if intent.topic == "mcp_tool_call_command" {
-        ""
-    } else {
-        topology.exchange.as_str()
-    };
-    let confirmation = channel
-        .basic_publish(
-            exchange,
-            routing_key,
-            BasicPublishOptions {
-                mandatory: true,
-                ..BasicPublishOptions::default()
-            },
-            payload.as_slice(),
-            properties,
-        )
-        .await
-        .map_err(|error| error.to_string())?
-        .await
-        .map_err(|error| error.to_string())?;
-    confirmed(
-        format!("Cloud Agent event for {routing_key}").as_str(),
-        confirmation,
-    )
-}
-
-fn bounded_amqp_property_id(value: &str) -> String {
-    if value.len() <= MAX_AMQP_SHORT_STRING_BYTES {
-        return value.to_string();
-    }
-    let digest = format!("{:x}", Sha256::digest(value.as_bytes()));
-    let suffix = format!("#{digest}");
-    let max_prefix_bytes = MAX_AMQP_SHORT_STRING_BYTES.saturating_sub(suffix.len());
-    let mut prefix_end = max_prefix_bytes.min(value.len());
-    while prefix_end > 0 && !value.is_char_boundary(prefix_end) {
-        prefix_end -= 1;
-    }
-    format!("{}{suffix}", &value[..prefix_end])
-}
-
-fn outbox_publish_retry_delay(publish_attempt: u32) -> Duration {
-    const MAX_RETRY_DELAY: Duration = Duration::from_secs(5 * 60);
-    let exponent = publish_attempt.saturating_sub(1).min(9);
-    Duration::from_secs(1_u64 << exponent).min(MAX_RETRY_DELAY)
-}
-
-fn confirmed(label: &str, confirmation: Confirmation) -> Result<(), String> {
-    match confirmation {
-        Confirmation::Ack(None) => Ok(()),
-        Confirmation::Ack(Some(_)) => Err(format!("RabbitMQ returned unroutable {label}")),
-        Confirmation::Nack(_) => Err(format!("RabbitMQ rejected {label}")),
-        Confirmation::NotRequested => Err(format!(
-            "RabbitMQ confirm mode is required while publishing {label}"
-        )),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn topology_requires_distinct_durable_queue_identities() {
-        let mut topology = CloudAgentRabbitMqTopology {
-            rabbitmq_url: "amqp://localhost".to_string(),
-            exchange: "cloud_agent".to_string(),
-            runtime_queue: "cloud_agent.project.runtime".to_string(),
-            retry_queue: "cloud_agent.project.runtime.retry".to_string(),
-            consumer_tag: "project-cloud-agent".to_string(),
-            reconnect_delay: Duration::from_secs(1),
-            outbox_reconcile_interval: Duration::from_secs(1),
-            outbox_batch_size: 100,
-            prefetch_count: 32,
-            consumer_concurrency: 4,
-            conflict_retry_delay: Duration::from_secs(1),
-        };
-        assert!(topology.validate().is_ok());
-        topology.consumer_concurrency = 0;
-        assert!(topology.validate().is_err());
-    }
-
-    #[test]
-    fn delivery_attempt_defaults_to_one_and_reads_retry_header() {
-        assert_eq!(cloud_agent_delivery_attempt(&BasicProperties::default()), 1);
-        let properties =
-            BasicProperties::default().with_headers(cloud_agent_delivery_headers(4, None));
-        assert_eq!(cloud_agent_delivery_attempt(&properties), 4);
-    }
-
-    #[test]
-    fn deleted_owner_entities_are_consumed_as_stale() {
-        for error in [
-            "Cloud Agent run not found: run-1",
-            "Task Run not found: run-1",
-            "Task not found: task-1",
-            "parent Task Run not found: run-1",
-            "parent Cloud Agent run not found",
-        ] {
-            assert!(cloud_agent_delivery_error_is_stale(error));
-        }
-        assert!(!cloud_agent_delivery_error_is_stale(
-            "Cloud Agent lifecycle arrived before terminal state"
-        ));
-    }
-
-    #[test]
-    fn delivery_failure_header_is_bounded() {
-        assert_eq!(truncate_delivery_failure(&"x".repeat(2_000)).len(), 1_024);
-    }
-
-    #[test]
-    fn amqp_property_ids_are_utf8_safe_stable_and_bounded() {
-        let short = "event-1";
-        assert_eq!(bounded_amqp_property_id(short), short);
-
-        let long = format!("event:{}", "任务".repeat(120));
-        let bounded = bounded_amqp_property_id(long.as_str());
-        assert!(bounded.len() <= MAX_AMQP_SHORT_STRING_BYTES);
-        assert_eq!(bounded, bounded_amqp_property_id(long.as_str()));
-        assert_ne!(
-            bounded,
-            bounded_amqp_property_id(format!("{long}-different").as_str())
-        );
-        assert!(bounded.contains('#'));
-    }
-
-    #[test]
-    fn outbox_publish_retry_delay_is_exponential_and_capped() {
-        assert_eq!(outbox_publish_retry_delay(1), Duration::from_secs(1));
-        assert_eq!(outbox_publish_retry_delay(2), Duration::from_secs(2));
-        assert_eq!(outbox_publish_retry_delay(8), Duration::from_secs(128));
-        assert_eq!(outbox_publish_retry_delay(20), Duration::from_secs(300));
-    }
-
-    #[test]
-    fn processing_error_retry_delay_is_exponential_and_capped() {
-        let base = Duration::from_secs(1);
-        assert_eq!(cloud_agent_retry_delay(base, 2), Duration::from_secs(1));
-        assert_eq!(cloud_agent_retry_delay(base, 3), Duration::from_secs(2));
-        assert_eq!(cloud_agent_retry_delay(base, 8), Duration::from_secs(60));
-    }
-}
+include!("rabbitmq_driver_part01.rs");

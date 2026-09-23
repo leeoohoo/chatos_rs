@@ -43,6 +43,31 @@ test('schema v2 rejects duplicate ids across nested branches', () => {
   assert.throws(() => assertSceneDocument(document), /Duplicate scene id: text-hero-heading/);
 });
 
+test('schema v2 reports actionable errors for incomplete appearances and invisible paint contracts', () => {
+  const missingAppearance = nestedWebsite();
+  delete missingAppearance.pages[0].children[0].children[0].children[0].appearance;
+  assert.throws(
+    () => assertSceneDocument(missingAppearance),
+    /appearance is required and must be an object/
+  );
+
+  const missingPaintVisibility = nestedWebsite();
+  missingPaintVisibility.pages[0].children[0].children[0].appearance.fills = [{ type: 'solid', opacity: 1, color: '#07110e' }];
+  assert.throws(
+    () => assertSceneDocument(missingPaintVisibility),
+    /fills\[0\]\.visible is required and must be a boolean/
+  );
+});
+
+test('schema v2 accepts only unitless typography line-height multipliers', () => {
+  const document = nestedWebsite();
+  const heading = document.pages[0].children[0].children[0].children[0].children[0];
+  heading.appearance.typography.lineHeight = 1.125;
+  assertSceneDocument(document);
+  heading.appearance.typography.lineHeight = 72;
+  assert.throws(() => assertSceneDocument(document), /typography\.lineHeight is invalid/);
+});
+
 test('Group and Section remain organizational containers instead of auto-layout frames', () => {
   const document = nestedWebsite();
   document.pages[0].children[0].children[0].children[0].layout = {

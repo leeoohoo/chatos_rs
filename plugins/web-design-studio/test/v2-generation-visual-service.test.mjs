@@ -117,3 +117,65 @@ test('visual service returns before, after, and Diff PNGs with affected stable n
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('candidate verification renders the future revision itself and returns reviewable images', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-candidate-visual-verification-'));
+  try {
+    const { document, service } = await fixture(root);
+    const before = await service.capturePage(document.documentId, 'page-home', 800);
+    const candidateDocument = structuredClone(document);
+    candidateDocument.revision = document.revision + 1;
+    candidateDocument.pages[0].children[0].frame.height += 140;
+    const verified = await service.verifyCandidate({
+      scope: { projectId: 'project-visual-service', documentId: document.documentId },
+      page: { pageId: 'page-home', name: 'Home', purpose: 'Landing', order: 0, status: 'running', steps: [], createdAt: '2026-09-08T15:00:00.000Z', updatedAt: '2026-09-08T15:00:00.000Z' },
+      step: { stepId: 'visual-step', pageId: 'page-home', title: 'Visual pass', kind: 'visual', required: true, dependsOn: [], target: { nodeIds: ['section-responsive'], viewportWidths: [800] }, status: 'validating', attempts: [], createdAt: '2026-09-08T15:00:00.000Z', updatedAt: '2026-09-08T15:00:00.000Z' },
+      baseDocument: document,
+      candidateDocument,
+      visualInputs: before.artifacts
+    });
+    assert.equal(verified.passed, true);
+    assert.ok(verified.artifacts.some((item) => item.kind === 'page-snapshot' && item.revision === 2));
+    assert.ok(verified.artifacts.some((item) => item.kind === 'visual-diff' && item.revision === 2));
+    assert.ok(verified.artifacts.some((item) => item.kind === 'quality-report' && item.revision === 2));
+    assert.deepEqual(verified.__images.map((item) => item.label), ['candidate-800', 'diff-800']);
+
+    const loaded = await service.loadArtifactImages(document.documentId, verified.artifacts);
+    assert.ok(loaded.some((item) => item.label.startsWith('page-snapshot-800-r2')));
+    assert.ok(loaded.some((item) => item.label.startsWith('visual-diff-800-r2')));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('candidate verification rejects mobile flow content that escapes fixed containers', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-candidate-containment-'));
+  try {
+    const { document, service } = await fixture(root);
+    const before = await service.capturePage(document.documentId, 'page-home', 390);
+    const candidateDocument = structuredClone(document);
+    candidateDocument.revision = document.revision + 1;
+    const frame = candidateDocument.pages[0].children[0].children[0];
+    frame.frame.height = 220;
+    frame.layout.sizingY = 'fixed';
+    const repeated = structuredClone(frame.children[0]);
+    repeated.id = 'group-hero-copy-second';
+    repeated.children[0].id = 'text-hero-heading-second';
+    frame.children.push(repeated);
+
+    const verified = await service.verifyCandidate({
+      scope: { projectId: 'project-visual-service', documentId: document.documentId },
+      page: { pageId: 'page-home', name: 'Home', purpose: 'Landing', order: 0, status: 'running', steps: [], createdAt: '2026-09-08T15:00:00.000Z', updatedAt: '2026-09-08T15:00:00.000Z' },
+      step: { stepId: 'responsive-step', pageId: 'page-home', title: 'Mobile layout', kind: 'responsive', required: true, dependsOn: [], target: { nodeIds: ['frame-desktop'], viewportWidths: [390] }, status: 'validating', attempts: [], createdAt: '2026-09-08T15:00:00.000Z', updatedAt: '2026-09-08T15:00:00.000Z' },
+      baseDocument: document,
+      candidateDocument,
+      visualInputs: before.artifacts
+    });
+
+    assert.equal(verified.passed, false);
+    assert.equal(verified.error.code, 'layout_error');
+    assert.ok(verified.issueIds.some((issueId) => issueId.startsWith('containment:390:frame-desktop:')));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

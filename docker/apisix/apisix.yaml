@@ -173,17 +173,6 @@ routes:
         uri: https://admin.jgoool.com/memory
         ret_code: 302
 
-  - id: legacy-project-admin-redirect
-    priority: 700
-    hosts:
-      - project.jgoool.com
-    uri: /*
-    plugins:
-      request-id: *request_id
-      redirect:
-        uri: https://admin.jgoool.com/projects
-        ret_code: 302
-
   # Plugin artifacts remain public download resources even though the legacy
   # Plugin Management hostname redirects ordinary UI traffic to Admin Console.
   - id: plugin-artifact-download
@@ -464,6 +453,33 @@ routes:
         regex_uri:
           - "^/api/local/?(.*)"
           - "/api/local-connectors/$1"
+    enable_websocket: true
+    upstream:
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 600
+        read: 3600
+      nodes:
+        "local-connector-service-backend:39230": 1
+
+  # Path-based alias for native clients using the shared gateway origin (for example local
+  # development on 127.0.0.1:9080). The connector protocol spans several historical /api/*
+  # namespaces, so the client appends its unchanged protocol path beneath /api/connector.
+  - id: local-connector-client-api
+    priority: 530
+    uri: /api/connector/*
+    plugins:
+      request-id: *request_id
+      uri-blocker: *block_internal_api
+      cors: *api_cors
+      client-control:
+        max_body_size: 134217728
+      limit-req: *api_ip_rate_limit
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/connector/?(.*)"
+          - "/$1"
     enable_websocket: true
     upstream:
       type: roundrobin

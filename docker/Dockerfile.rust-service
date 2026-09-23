@@ -50,6 +50,7 @@ COPY . .
 ARG MANIFEST_PATH=Cargo.toml
 ARG PACKAGE_NAME=
 ARG BIN_NAME
+ARG MIGRATION_BIN_NAME=
 ARG CARGO_BUILD_JOBS=4
 ARG CARGO_TARGET_CACHE_ID=chatos-rust-target-1.94-j4
 ARG CARGO_PROFILE_RELEASE_LTO=false
@@ -63,16 +64,28 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,id=${CARGO_TARGET_CACHE_ID},target=/tmp/chatos-target \
     test -n "$BIN_NAME" \
     && if [ -n "$PACKAGE_NAME" ]; then \
-         cargo build --release --ignore-rust-version --jobs "$CARGO_BUILD_JOBS" --manifest-path "$MANIFEST_PATH" -p "$PACKAGE_NAME" --bin "$BIN_NAME"; \
+         if [ -n "$MIGRATION_BIN_NAME" ]; then \
+           cargo build --release --ignore-rust-version --jobs "$CARGO_BUILD_JOBS" --manifest-path "$MANIFEST_PATH" -p "$PACKAGE_NAME" --bin "$BIN_NAME" --bin "$MIGRATION_BIN_NAME"; \
+         else \
+           cargo build --release --ignore-rust-version --jobs "$CARGO_BUILD_JOBS" --manifest-path "$MANIFEST_PATH" -p "$PACKAGE_NAME" --bin "$BIN_NAME"; \
+         fi; \
        else \
-         cargo build --release --ignore-rust-version --jobs "$CARGO_BUILD_JOBS" --manifest-path "$MANIFEST_PATH" --bin "$BIN_NAME"; \
+         if [ -n "$MIGRATION_BIN_NAME" ]; then \
+           cargo build --release --ignore-rust-version --jobs "$CARGO_BUILD_JOBS" --manifest-path "$MANIFEST_PATH" --bin "$BIN_NAME" --bin "$MIGRATION_BIN_NAME"; \
+         else \
+           cargo build --release --ignore-rust-version --jobs "$CARGO_BUILD_JOBS" --manifest-path "$MANIFEST_PATH" --bin "$BIN_NAME"; \
+         fi; \
        fi \
     && mkdir -p /out \
-    && cp "$CARGO_TARGET_DIR/release/$BIN_NAME" /out/service
+    && cp "$CARGO_TARGET_DIR/release/$BIN_NAME" /out/service \
+    && if [ -n "$MIGRATION_BIN_NAME" ]; then \
+         cp "$CARGO_TARGET_DIR/release/$MIGRATION_BIN_NAME" /out/migrate; \
+       else \
+         printf '%s\n' '#!/bin/sh' 'echo "this image has no database migration binary" >&2' 'exit 64' > /out/migrate \
+         && chmod 755 /out/migrate; \
+       fi
 
 FROM debian:bookworm-slim AS runtime-deps
-
-ARG BIN_NAME
 
 RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
     | xargs -0 -r sed -i \
@@ -94,6 +107,7 @@ RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
 FROM runtime-deps AS runtime-base
 
 COPY --from=builder /out/service /usr/local/bin/chatos-service
+COPY --from=builder /out/migrate /usr/local/bin/chatos-migrate
 COPY docker/entrypoint-rust-service.sh /usr/local/bin/chatos-rust-service-entrypoint
 RUN sed -i 's/\r$//' /usr/local/bin/chatos-rust-service-entrypoint \
     && chmod 755 /usr/local/bin/chatos-rust-service-entrypoint

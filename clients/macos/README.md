@@ -8,7 +8,7 @@ ChatOS 的正式原生 macOS 客户端。主工作区使用 SwiftUI 实现，不
 swift run ChatOSSwift
 ```
 
-通过 `swift run` 启动时，默认使用本机 APISIX 网关 `http://127.0.0.1:9080/api/chatos`；打包后的 App 从 `Info.plist` 读取线上 API 与 Local Connector 地址。两种方式都可分别使用 `CHATOS_API_BASE_URL` 和 `CHATOS_LOCAL_CONNECTOR_CLOUD_BASE_URL` 覆盖。客户端只使用网关协议，不加载或嵌入 Web 前端。
+通过 `swift run` 启动时默认使用 `local`，打包后的 App 默认使用 `production`。API 与 Local Connector 地址统一定义在 `Info.plist` 的 `ChatOSDeploymentProfiles` 中，只能通过单一 `CHATOS_DEPLOYMENT_PROFILE` 选择整套环境，避免两个地址被分别覆盖后形成混合配置。非 production 环境的本机状态与密钥按 profile 隔离。客户端只使用网关协议，不加载或嵌入 Web 前端。
 
 要求 macOS 14+ 与 Swift 6.2+。
 

@@ -3,14 +3,24 @@ import CoreFoundation
 
 /// Supported JSON Schema subset used by first-party tools. Unknown schema keywords fail closed.
 public enum AgentSchemaValidator {
+    /// A tool argument envelope may contain a document whose decoded UTF-8 payload is 2 MiB.
+    /// JSON escaping can expand that payload substantially, so the transport envelope must not
+    /// reuse the product document limit. Field-level schemas and execution checks remain the
+    /// authority for individual values.
+    public static let maximumArgumentBytes = 16 * 1_024 * 1_024
+
     public static func validate(arguments: String, schema: Data) throws {
-        guard let data = arguments.data(using: .utf8), data.count <= 2 * 1024 * 1024,
+        guard let data = arguments.data(using: .utf8), data.count <= maximumArgumentBytes,
               let specification = try JSONSerialization.jsonObject(with: schema) as? [String: Any] else { throw ValidationError.invalid("schema") }
         try check(try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]), schema: specification, path: "$", depth: 0)
     }
     private static func check(_ value: Any, schema: [String: Any], path: String, depth: Int) throws {
         guard depth < 24 else { throw ValidationError.invalid(path) }
-        let supported: Set<String> = ["type", "properties", "required", "additionalProperties", "items", "minItems", "maxItems", "minimum", "maximum", "minLength", "maxLength", "enum", "description"]
+        let supported: Set<String> = [
+            "type", "properties", "required", "additionalProperties", "items",
+            "minItems", "maxItems", "uniqueItems", "minimum", "maximum",
+            "minLength", "maxLength", "enum", "description", "default",
+        ]
         guard Set(schema.keys).isSubset(of: supported) else { throw ValidationError.invalid("unsupported schema") }
         switch schema["type"] as? String {
         case "object":
@@ -24,6 +34,18 @@ public enum AgentSchemaValidator {
         case "array":
             guard let array = value as? [Any], array.count >= (schema["minItems"] as? Int ?? 0),
                   array.count <= (schema["maxItems"] as? Int ?? 10_000), let item = schema["items"] as? [String: Any] else { throw ValidationError.invalid(path) }
+            if schema["uniqueItems"] as? Bool == true {
+                var canonicalItems = Set<Data>()
+                for child in array {
+                    let data = try JSONSerialization.data(
+                        withJSONObject: child,
+                        options: [.fragmentsAllowed, .sortedKeys]
+                    )
+                    guard canonicalItems.insert(data).inserted else {
+                        throw ValidationError.invalid(path)
+                    }
+                }
+            }
             for child in array { try check(child, schema: item, path: path + "[]", depth: depth + 1) }
         case "string":
             guard let string = value as? String, string.count >= (schema["minLength"] as? Int ?? 0),

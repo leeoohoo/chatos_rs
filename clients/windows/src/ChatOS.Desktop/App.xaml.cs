@@ -15,12 +15,17 @@ using ChatOS.Desktop.Features.Remote;
 using ChatOS.Desktop.Features.Pet;
 using ChatOS.Desktop.Features.Plugins;
 using ChatOS.Desktop.Features.Terminal;
+using ChatOS.Desktop.Features.Clipboard;
+using ChatOS.Desktop.Features.QuickSearch;
+using ChatOS.Desktop.Features.AgentTeams;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.System.Power;
 using ChatOS.Connector.Runtime;
+using ChatOS.Connector.Remote;
+using ChatOS.Connector.Terminal;
 
 namespace ChatOS.Desktop;
 
@@ -55,6 +60,8 @@ public partial class App : Application
         builder.Services.AddSingleton<ProjectFilesPage>();
         builder.Services.AddSingleton<ProjectGitPage>();
         builder.Services.AddSingleton<ProjectRunPage>();
+        builder.Services.AddSingleton<AgentTeamPage>();
+        builder.Services.AddSingleton<ProjectRequirementSurveysPage>();
         builder.Services.AddSingleton<SettingsPage>();
         builder.Services.AddSingleton<PluginSettingsViewModel>();
         builder.Services.AddSingleton<ApprovalSettingsViewModel>();
@@ -75,6 +82,19 @@ public partial class App : Application
         builder.Services.AddSingleton<PluginApplicationsPage>();
         builder.Services.AddSingleton<PluginVisualSessionWindow>();
         builder.Services.AddSingleton<PluginVisualSessionController>();
+        builder.Services.AddSingleton<WindowsClipboardHistoryMonitor>();
+        builder.Services.AddSingleton<ClipboardHistoryViewModel>();
+        builder.Services.AddSingleton<ClipboardHistoryWindow>();
+        builder.Services.AddSingleton<IQuickSearchProvider, BuiltInQuickSearchProvider>();
+        builder.Services.AddSingleton<IQuickSearchProvider, ChatOSQuickSearchProvider>();
+        builder.Services.AddSingleton<IQuickSearchProvider, WindowsApplicationSearchProvider>();
+        builder.Services.AddSingleton<IQuickSearchProvider, WindowsFileSearchProvider>();
+        builder.Services.AddSingleton<QuickSearchViewModel>();
+        builder.Services.AddSingleton<WindowsScreenRecordingCoordinator>();
+        builder.Services.AddSingleton<QuickSearchActionRouter>();
+        builder.Services.AddSingleton<QuickSearchWindow>();
+        builder.Services.AddSingleton<WindowsGlobalHotKeyService>();
+        builder.Services.AddSingleton<QuickSearchCoordinator>();
         builder.Services.AddSingleton<WorkspaceHostPage>();
         builder.Services.AddSingleton<MainWindow>();
         _host = builder.Build();
@@ -87,13 +107,40 @@ public partial class App : Application
         await _host.Services.GetRequiredService<PetFavoriteProjectsManager>().InitializeAsync();
         Resources["ChatOSLocalization"] = _host.Services.GetRequiredService<LocalizationViewModel>();
         await _host.StartAsync();
+        await _host.Services.GetRequiredService<WindowsClipboardHistoryMonitor>().StartAsync();
 
         _powerState = _host.Services.GetRequiredService<ConnectorPowerStateCoordinator>();
         PowerManager.SystemSuspendStatusChanged += OnSystemSuspendStatusChanged;
         ApplySystemSuspendStatus();
 
         _window = _host.Services.GetRequiredService<MainWindow>();
+        _window.Closed += OnMainWindowClosed;
         _window.Activate();
+        _host.Services.GetRequiredService<QuickSearchCoordinator>().Initialize((MainWindow)_window);
+    }
+
+    private void OnMainWindowClosed(object sender, WindowEventArgs args)
+    {
+        _host.Services.GetRequiredService<WindowsClipboardHistoryMonitor>().Stop();
+        _host.Services.GetRequiredService<QuickSearchCoordinator>().Dispose();
+        _host.Services.GetRequiredService<WindowsScreenRecordingCoordinator>().Dispose();
+        PowerManager.SystemSuspendStatusChanged -= OnSystemSuspendStatusChanged;
+        try
+        {
+            _host.Services.GetRequiredService<TerminalSessionManager>()
+                .CloseAllAsync(CancellationToken.None).GetAwaiter().GetResult();
+        }
+        catch
+        {
+        }
+        try
+        {
+            _host.Services.GetRequiredService<RemoteTerminalSessionManager>()
+                .CloseAllAsync(CancellationToken.None).GetAwaiter().GetResult();
+        }
+        catch
+        {
+        }
     }
 
     private void OnSystemSuspendStatusChanged(object? sender, object args) => ApplySystemSuspendStatus();

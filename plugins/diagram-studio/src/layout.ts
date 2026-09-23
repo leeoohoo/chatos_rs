@@ -1,6 +1,7 @@
 import ELK from 'elkjs/lib/elk.bundled.js';
 import type { ElkNode } from 'elkjs/lib/elk-api.js';
 import type { DiagramDocument, DiagramEdge, DiagramNode } from './schema.js';
+import type { DiagramQualityProfile } from './quality.js';
 import { layoutMindMap, mindMapNodeSize } from './mindmap.js';
 
 const elk = new ELK();
@@ -22,9 +23,13 @@ function nodeSize(node: DiagramNode): { width: number; height: number } {
 
 export async function layoutDiagram(
   document: DiagramDocument,
-  direction?: 'RIGHT' | 'DOWN'
+  direction?: 'RIGHT' | 'DOWN',
+  qualityProfile?: DiagramQualityProfile
 ): Promise<DiagramDocument> {
   const next = structuredClone(document);
+  const architectureOverview = next.kind === 'architecture'
+    && (qualityProfile === 'architecture-overview'
+      || next.generationProvenance?.qualityProfile === 'architecture-overview');
   if (document.kind === 'mindmap') return layoutMindMap(next);
   if (document.kind === 'sequence') {
     const lifelines = next.nodes
@@ -54,7 +59,7 @@ export async function layoutDiagram(
   if (next.nodes.some((node) => node.data.shape === 'container')) {
     try {
       if (next.kind === 'architecture') {
-        layoutContainerDiagram(next, direction ?? 'RIGHT');
+        layoutContainerDiagram(next, direction ?? 'RIGHT', architectureOverview);
       } else {
         await layoutCompoundDiagram(next, direction ?? 'RIGHT');
       }
@@ -62,7 +67,7 @@ export async function layoutDiagram(
       if (typeof process !== 'undefined' && process.env.DIAGRAM_STUDIO_LAYOUT_DEBUG === '1') {
         console.error('Diagram Studio compound layout failed; using fallback.', error);
       }
-      layoutContainerDiagram(next, direction ?? 'RIGHT');
+      layoutContainerDiagram(next, direction ?? 'RIGHT', architectureOverview);
     }
     refreshGenericEdgeHandles(next);
     return next;
@@ -188,7 +193,11 @@ async function layoutCompoundDiagram(document: DiagramDocument, direction: 'RIGH
   applyNodeLayout(laidOut.children);
 }
 
-function layoutContainerDiagram(document: DiagramDocument, direction: 'RIGHT' | 'DOWN'): void {
+function layoutContainerDiagram(
+  document: DiagramDocument,
+  direction: 'RIGHT' | 'DOWN',
+  architectureOverview = false
+): void {
   const nodeById = new Map(document.nodes.map((node) => [node.id, node]));
   const childrenByParent = new Map<string, DiagramNode[]>();
   for (const node of document.nodes) {
@@ -218,6 +227,33 @@ function layoutContainerDiagram(document: DiagramDocument, direction: 'RIGHT' | 
     if (children.length === 0) {
       container.width = Math.max(container.width ?? 0, 280);
       container.height = Math.max(container.height ?? 0, 150);
+      continue;
+    }
+    if (architectureOverview) {
+      const ordered = [...children].sort((left, right) =>
+        architectureVerticalPriority(left, childrenByParent) - architectureVerticalPriority(right, childrenByParent));
+      const columnCount = ordered.length <= 2 ? 1 : 2;
+      const columnWidths = Array.from({ length: columnCount }, () => 0);
+      const rowHeights = Array.from({ length: Math.ceil(ordered.length / columnCount) }, () => 0);
+      ordered.forEach((child, index) => {
+        const column = index % columnCount;
+        const row = Math.floor(index / columnCount);
+        const size = nodeSize(child);
+        columnWidths[column] = Math.max(columnWidths[column], child.width ?? size.width);
+        rowHeights[row] = Math.max(rowHeights[row], child.height ?? size.height);
+      });
+      const columnOffsets = columnWidths.map((_, index) =>
+        34 + columnWidths.slice(0, index).reduce((sum, width) => sum + width, 0) + index * 76);
+      const rowOffsets = rowHeights.map((_, index) =>
+        70 + rowHeights.slice(0, index).reduce((sum, height) => sum + height, 0) + index * 58);
+      ordered.forEach((child, index) => {
+        child.position = {
+          x: columnOffsets[index % columnCount],
+          y: rowOffsets[Math.floor(index / columnCount)]
+        };
+      });
+      container.width = Math.max(300, 68 + columnWidths.reduce((sum, width) => sum + width, 0) + Math.max(0, columnCount - 1) * 76);
+      container.height = Math.max(170, 104 + rowHeights.reduce((sum, height) => sum + height, 0) + Math.max(0, rowHeights.length - 1) * 58);
       continue;
     }
     const directChild = (nodeId: string): DiagramNode | undefined => {
@@ -308,7 +344,7 @@ function layoutContainerDiagram(document: DiagramDocument, direction: 'RIGHT' | 
   const rows: typeof groupSizes[] = [];
   let currentRow: typeof groupSizes = [];
   let currentPrimarySpan = 0;
-  const maximumPrimarySpan = 2100;
+  const maximumPrimarySpan = architectureOverview ? 1500 : 2100;
   for (const groupSize of groupSizes) {
     const required = groupSize.primary + (currentRow.length > 0 ? 128 : 0);
     if (currentRow.length > 0 && currentPrimarySpan + required > maximumPrimarySpan) {

@@ -12,9 +12,12 @@ final class CreateProjectViewModel: ObservableObject {
     @Published private(set) var showsHiddenDirectories = false
     private(set) var selectedWorkspaceID: String
     @Published var projectName = ""
+    @Published var projectDescription = ""
+    @Published var selectedProjectTypeKey = LocalAgentSkillCatalog.legacyProjectTypeKey
     @Published var errorMessage: String?
 
     let workspaces: [LocalConnectorWorkspace]
+    let projectTypes: [LocalProjectTypeDefinition]
 
     private let filesystemService: any ProjectFilesystemServicing
     private let creationService: any LocalProjectCreating
@@ -24,11 +27,18 @@ final class CreateProjectViewModel: ObservableObject {
     init(
         connectorStatus: LocalConnectorStatus?,
         filesystemService: any ProjectFilesystemServicing,
-        creationService: any LocalProjectCreating
+        creationService: any LocalProjectCreating,
+        projectTypes: [LocalProjectTypeDefinition] = LocalAgentSkillCatalog.projectTypes,
+        suggestedName: String = "",
+        suggestedDescription: String = ""
     ) {
         workspaces = connectorStatus?.workspaces ?? []
         self.filesystemService = filesystemService
         self.creationService = creationService
+        self.projectTypes = projectTypes
+        projectName = suggestedName
+        projectDescription = suggestedDescription
+        userEditedProjectName = !suggestedName.isEmpty
         selectedWorkspaceID = connectorStatus?.defaultWorkspaceID
             ?? connectorStatus?.workspaces.first?.id
             ?? ""
@@ -113,8 +123,13 @@ final class CreateProjectViewModel: ObservableObject {
             errorMessage = "请选择可访问的本机项目目录。"
             return nil
         }
-        let draft = LocalProjectDraft(name: normalizedProjectName, workspaceID: workspace.id,
-                                      relativeRoot: currentRelativePath ?? "")
+        let draft = LocalProjectDraft(
+            name: normalizedProjectName,
+            description: projectDescription.trimmingCharacters(in: .whitespacesAndNewlines),
+            workspaceID: workspace.id,
+            relativeRoot: currentRelativePath ?? "",
+            projectTypeKey: selectedProjectTypeKey
+        )
         isSaving = true
         defer { isSaving = false }
         errorMessage = nil

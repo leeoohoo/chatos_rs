@@ -8,7 +8,7 @@ use reqwest::Client;
 use crate::config::AppConfig;
 use crate::models::EngineModelProfile;
 
-use super::super::protocol::{normalize_base_url, provider_supports_optional_thinking};
+use super::super::protocol::normalize_base_url;
 use super::AiClient;
 
 pub(super) fn build_client_config(
@@ -32,7 +32,7 @@ pub(super) fn build_client_config(
         return Err("User Service runtime model is missing model name".to_string());
     }
     let temperature = profile.temperature.unwrap_or(0.2).clamp(0.0, 2.0);
-    let disable_thinking = provider_supports_optional_thinking(base_url.as_str(), model.as_str());
+    let disable_thinking = false;
 
     Ok(AiClient {
         http,
@@ -41,7 +41,7 @@ pub(super) fn build_client_config(
         model,
         temperature,
         timeout_secs: config.ai_request_timeout_secs,
-        supports_responses: profile.supports_responses,
+        supports_responses: true,
         disable_thinking,
         max_transient_retries: profile.model_request_max_retries,
     })

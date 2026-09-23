@@ -144,5 +144,20 @@ mod tests {
         assert_eq!(skills[0].task_profiles, ["default"]);
         assert!(!skills[0].instructions.contains("规划模式"));
         assert!(skills[0].instructions.contains("wait_for_task_completion"));
+        assert!(skills[0]
+            .instructions
+            .contains("不是等待任务终态的轮询函数"));
+        assert!(skills[0].instructions.contains("本轮不得再调用"));
+        assert!(skills[0].instructions.contains("以联系人第一人称自然说明"));
+        assert!(skills[0].instructions.contains("不得向用户提及 Task"));
+    }
+
+    #[test]
+    fn task_process_guidance_requires_continuous_visible_updates() {
+        let skills = system_mcp_provider_skills(SystemMcpKey::TaskProcessLog);
+        assert_eq!(skills.len(), 1);
+        assert!(skills[0].instructions.contains("过程记录应贯穿任务"));
+        assert!(skills[0].instructions.contains("关键步骤和阶段变化"));
+        assert!(skills[0].instructions.contains("不要为每次工具调用"));
     }
 }

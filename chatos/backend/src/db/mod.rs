@@ -2,8 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 mod factory;
-mod mongodb;
 mod types;
 
-pub use factory::{get_db, init_global};
+pub use factory::{get_db, get_pool, init_global};
 pub use types::Database;

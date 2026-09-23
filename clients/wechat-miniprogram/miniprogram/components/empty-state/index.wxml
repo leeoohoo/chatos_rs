@@ -1,0 +1,5 @@
+<view class="empty">
+  <view class="symbol">◇</view>
+  <view class="title">{{title}}</view>
+  <view class="description" wx:if="{{description}}">{{description}}</view>
+</view>

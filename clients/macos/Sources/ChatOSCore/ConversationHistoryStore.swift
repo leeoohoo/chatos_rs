@@ -8,6 +8,7 @@ public actor ConversationHistoryStore {
         var snapshotRevision: Int64 = 0
         var newestAcceptedLatestGeneration: Int64 = 0
         var newestAcceptedOlderGeneration: Int64 = 0
+        var hasAcceptedLatestPage = false
         var hasLoadedOlderPage = false
         var lastAppliedEventSequence: Int64 = 0
         var appliedEventIDs: Set<String> = []
@@ -38,23 +39,25 @@ public actor ConversationHistoryStore {
         var state = sessions[sessionID] ?? SessionState()
         let acceptsLatestSnapshot = origin == .latest
             && page.requestGeneration >= state.newestAcceptedLatestGeneration
-        let didChange = merge(
+        let mergeResult = merge(
             page.turns,
             sessionID: sessionID,
             replacingChangedEqualRevisions: acceptsLatestSnapshot,
             into: &state
         )
 
-        if didChange,
+        if state.hasAcceptedLatestPage,
            origin == .latest,
-           state.viewportAnchor?.isPinnedToBottom == false {
-            state.unreadNewerCount += 1
+           state.viewportAnchor?.isPinnedToBottom == false,
+           mergeResult.newContentCount > 0 {
+            state.unreadNewerCount += mergeResult.newContentCount
         }
 
         switch origin {
         case .latest:
             if page.requestGeneration >= state.newestAcceptedLatestGeneration {
                 state.newestAcceptedLatestGeneration = page.requestGeneration
+                state.hasAcceptedLatestPage = true
                 if !state.hasLoadedOlderPage {
                     state.olderCursor = page.olderCursor
                     state.hasOlder = page.hasOlder
@@ -83,15 +86,15 @@ public actor ConversationHistoryStore {
 
         state.appliedEventIDs.insert(event.eventID)
         state.lastAppliedEventSequence = max(state.lastAppliedEventSequence, event.eventSequence)
-        let didChange = merge(
+        let mergeResult = merge(
             [event.turn],
             sessionID: sessionID,
             replacingChangedEqualRevisions: false,
             into: &state
         )
 
-        if didChange, userIsReadingOlderContent {
-            state.unreadNewerCount += 1
+        if userIsReadingOlderContent, mergeResult.newContentCount > 0 {
+            state.unreadNewerCount += mergeResult.newContentCount
         }
 
         sessions[sessionID] = state
@@ -132,14 +135,18 @@ public actor ConversationHistoryStore {
         )
     }
 
+    private struct MergeResult {
+        var newContentCount = 0
+    }
+
     @discardableResult
     private func merge(
         _ incomingTurns: [ConversationTurn],
         sessionID: String,
         replacingChangedEqualRevisions: Bool,
         into state: inout SessionState
-    ) -> Bool {
-        var didChange = false
+    ) -> MergeResult {
+        var result = MergeResult()
 
         for incomingTurn in incomingTurns {
             var turn = incomingTurn
@@ -147,7 +154,7 @@ public actor ConversationHistoryStore {
 
             guard let existing = state.turnsByID[turn.id] else {
                 state.turnsByID[turn.id] = turn
-                didChange = true
+                result.newContentCount += 1
                 continue
             }
 
@@ -158,12 +165,27 @@ public actor ConversationHistoryStore {
                 if !existing.isTaskGraphAvailable {
                     turn.isTaskGraphAvailable = false
                 }
+                result.newContentCount += Self.newReplyCount(from: existing, to: turn)
                 state.turnsByID[turn.id] = turn
-                didChange = true
             }
         }
 
-        return didChange
+        return result
+    }
+
+    private static func newReplyCount(
+        from existing: ConversationTurn,
+        to incoming: ConversationTurn
+    ) -> Int {
+        let existingIDs = visibleReplyIDs(for: existing)
+        return visibleReplyIDs(for: incoming).subtracting(existingIDs).count
+    }
+
+    private static func visibleReplyIDs(for turn: ConversationTurn) -> Set<String> {
+        if !turn.assistantReplies.isEmpty {
+            return Set(turn.assistantReplies.map(\.id))
+        }
+        return Set(turn.finalAssistantMessage.map { [$0.id] } ?? [])
     }
 }
 

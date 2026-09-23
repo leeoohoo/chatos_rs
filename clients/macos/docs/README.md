@@ -12,6 +12,7 @@
 - 主应用与 Local Connector 采用一个 macOS App、两个窗口场景：`ChatOS` 主工作区和 `Local Connector` 设备设置；菜单栏常驻展示连接与审批状态。
 - 服务端继续作为 Project、Session、Message、Task、Requirement、Memory、Agent 的事实数据源。
 - 设备文件、Git、终端、插件、凭据、系统权限和审批只在本机执行，不能因为重写而弱化现有安全边界。
+- 唯一移动端为微信小程序，定位为设备监控和云端会话控制端；不包含原生 App、项目、Local Connector 或本地执行能力。
 - 现有 `chatos_rs` 工作区有大量未提交修改，本轮只读取它并在 `chatos_swift/docs` 新增交付物。
 
 ## 文档导航
@@ -34,7 +35,9 @@
 16. [界面本地化架构](./16-interface-localization-architecture.md)
 17. [全局效率工具实施方案](./17-global-productivity-tools-implementation-plan.md)
 18. [macOS / Windows 跨平台变更登记](./18-cross-platform-change-register.md)
-19. [页面设计稿](./design/README.md)
+19. [微信小程序伴随控制端实施方案](./19-wechat-mini-program-companion-implementation-plan.md)
+20. [macOS 客户端性能问题与修复计划](./20-performance-remediation-plan.md)
+21. [页面设计稿](./design/README.md)
 
 ## 设计预览
 

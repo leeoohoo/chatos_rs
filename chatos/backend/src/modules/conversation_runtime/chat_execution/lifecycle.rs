@@ -29,6 +29,10 @@ pub(crate) struct ChatosRuntimeLifecycleHook {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct TaskTurnLifecycleState {
     pub(crate) follow_up_rounds: usize,
+    #[serde(default)]
+    pub(crate) rejected_provider_tool_rounds: usize,
+    #[serde(default)]
+    pub(crate) async_handoff_confirmed: bool,
     pub(crate) mode: Option<TaskTurnFollowUpMode>,
     pub(crate) last_visible_response: Option<AiResponse>,
     pub(crate) review_locale: Option<InternalContextLocale>,
@@ -137,6 +141,50 @@ impl ChatosRuntimeLifecycleHook {
             reason: "task_review_retry".to_string(),
         })
     }
+
+    fn handle_unauthorized_provider_tools(
+        &self,
+        context: RuntimeFinalResponseContext,
+        tool_types: Vec<String>,
+    ) -> Result<RuntimeFinalResponseAction, String> {
+        let mut state = self.task_turn_state()?;
+        if state.rejected_provider_tool_rounds >= 1 {
+            return Err(format!(
+                "模型连续调用了主对话未授权的供应商原生工具：{}。本轮已停止，未将其结果作为交付。",
+                tool_types.join(", ")
+            ));
+        }
+        state.rejected_provider_tool_rounds += 1;
+        drop(state);
+
+        let guidance = format!(
+            "[Tool Boundary Violation]\n上一响应调用了未由当前运行暴露的供应商原生工具（{}）。该调用及其结果已被丢弃，用户看不到，也绝不能作为已生成、已显示或已完成的证据。主对话只能调用当前 tools 列表中的 Task Runner 函数。若当前请求需要设计、生成、读取、修改、运行或验证真实项目，请立即创建当前轮 Task，在 plugin_hints 中选择目录里匹配的最小 Task Plugin（设计请求选择 Web Design Studio），然后调用 wait_for_task_completion；如果目录没有所需插件，准确说明不可用，不得自行调用其他工具或声称已经交付。",
+            tool_types.join(", ")
+        );
+        let sanitized = AiResponse {
+            content: String::new(),
+            reasoning: None,
+            tool_calls: None,
+            finish_reason: context.response.finish_reason.clone(),
+            provider_error: None,
+            usage: context.response.usage.clone(),
+            response_id: context.response.response_id.clone(),
+            response_output_items: Vec::new(),
+            response_status: context.response.response_status.clone(),
+            incomplete_details: context.response.incomplete_details.clone(),
+            terminal_event_type: context.response.terminal_event_type.clone(),
+            terminal_event_seen: context.response.terminal_event_seen,
+            provider_request_id: context.response.provider_request_id.clone(),
+            provider_http_status: context.response.provider_http_status,
+            parsed_stream_event_count: context.response.parsed_stream_event_count,
+            malformed_stream_event_count: context.response.malformed_stream_event_count,
+        };
+        Ok(RuntimeFinalResponseAction::ContinueReplacingResponse {
+            response: Box::new(sanitized),
+            input_items: follow_up_message_items(guidance.as_str()),
+            reason: "unauthorized_provider_tool_recovery".to_string(),
+        })
+    }
 }
 
 #[async_trait]
@@ -145,7 +193,16 @@ impl RuntimeLifecycleHook for ChatosRuntimeLifecycleHook {
         &self,
         _context: RuntimeIterationContext,
     ) -> Result<RuntimeBeforeModelRequest, String> {
-        let input_items =
+        let (review_mode, async_handoff_confirmed) = {
+            let state = self.task_turn_state()?;
+            (
+                matches!(state.mode, Some(TaskTurnFollowUpMode::ReviewExecution)),
+                state.async_handoff_confirmed,
+            )
+        };
+        let mut input_items = if async_handoff_confirmed {
+            Vec::new()
+        } else {
             crate::services::runtime_guidance_input::load_runtime_guidance_input_items(
                 Some(self.session_id.as_str()),
                 Some(self.turn_id.as_str()),
@@ -154,21 +211,37 @@ impl RuntimeLifecycleHook for ChatosRuntimeLifecycleHook {
                 self.supports_images,
                 &self.callbacks,
             )
-            .await;
-        let review_mode = matches!(
-            self.task_turn_state()?.mode,
-            Some(TaskTurnFollowUpMode::ReviewExecution)
-        );
+            .await
+        };
+        if async_handoff_confirmed {
+            input_items.extend(follow_up_message_items(
+                "[Continued Work Accepted]\n`wait_for_task_completion` has succeeded and the requested work is continuing independently. Do not call any tool, inspect execution status, wait for completion, or claim that the requested work is finished. Immediately respond in the contact's first-person voice with one concise, natural sentence saying that you have started working on the request, then end the turn. Do not mention tasks, Task Runner, background work, callbacks, tool calls, handoffs, or any internal execution structure to the user.",
+            ));
+        }
         Ok(RuntimeBeforeModelRequest::unchanged()
             .with_input_items(input_items)
             .with_stream_output(!review_mode)
-            .with_tools_enabled(!review_mode))
+            .with_tools_enabled(!review_mode && !async_handoff_confirmed))
     }
 
     async fn after_final_response(
         &self,
         context: RuntimeFinalResponseContext,
     ) -> Result<RuntimeFinalResponseAction, String> {
+        let unauthorized_provider_tools =
+            unauthorized_provider_tool_types(&context.response.response_output_items);
+        if !unauthorized_provider_tools.is_empty() {
+            return self.handle_unauthorized_provider_tools(context, unauthorized_provider_tools);
+        }
+
+        // `wait_for_task_completion` is the explicit boundary between the foreground
+        // conversation and the independently running Task Runner job. Once its result has
+        // been accepted, never turn an unfinished background task into a same-turn follow-up.
+        if self.task_turn_state()?.async_handoff_confirmed {
+            self.task_turn_state()?.mode = None;
+            return Ok(RuntimeFinalResponseAction::Accept);
+        }
+
         if matches!(
             self.task_turn_state()?.mode,
             Some(TaskTurnFollowUpMode::ReviewExecution)
@@ -228,6 +301,24 @@ impl RuntimeLifecycleHook for ChatosRuntimeLifecycleHook {
     }
 }
 
+fn unauthorized_provider_tool_types(output_items: &[Value]) -> Vec<String> {
+    let mut result = output_items
+        .iter()
+        .filter_map(|item| item.get("type").and_then(Value::as_str))
+        .filter(|item_type| {
+            *item_type != "function_call"
+                && (*item_type == "computer_call"
+                    || *item_type == "custom_tool_call"
+                    || *item_type == "mcp_call"
+                    || item_type.ends_with("_call"))
+        })
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    result.sort();
+    result.dedup();
+    result
+}
+
 pub(crate) fn task_turn_review_metadata(state: &TaskTurnLifecycleState) -> Value {
     let outcome = match state.review_last_outcome {
         Some(TaskTurnReviewOutcome::Pass) => "pass",
@@ -240,6 +331,7 @@ pub(crate) fn task_turn_review_metadata(state: &TaskTurnLifecycleState) -> Value
             "attempted": state.review_attempted,
             "outcome": outcome,
             "rounds": state.follow_up_rounds,
+            "async_handoff_confirmed": state.async_handoff_confirmed,
         }
     })
 }

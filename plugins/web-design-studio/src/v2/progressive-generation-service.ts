@@ -18,6 +18,25 @@ import { SceneDocumentStore } from './scene-store.js';
 import { commitGenerationStep, prepareGenerationStep } from './generation-step-executor.js';
 import type { SceneTransactionOperation } from './scene-transaction.js';
 
+export interface ProgressiveGenerationImage {
+  label: string;
+  data: string;
+  mimeType: 'image/png';
+}
+
+export interface VerifyProgressiveCandidateInput {
+  scope: GenerationScope;
+  page: GenerationPageRun;
+  step: GenerationStep;
+  baseDocument: SceneDocument;
+  candidateDocument: SceneDocument;
+  visualInputs: GenerationArtifact[];
+}
+
+export type VerifiedProgressiveCandidate = SubmittedStepVerification & {
+  __images?: ProgressiveGenerationImage[];
+};
+
 export interface ProgressiveGenerationRepositories {
   plans: GenerationPlanStore;
   scenes: SceneDocumentStore;
@@ -29,6 +48,14 @@ export interface ProgressiveGenerationServiceOptions {
   projectId: string;
   repositories: ProgressiveGenerationRepositories;
   assertDocumentInScope(documentId: string): Promise<{ name: string }>;
+  verifyCandidate(input: VerifyProgressiveCandidateInput): Promise<VerifiedProgressiveCandidate>;
+  captureVisualInputs(input: {
+    documentId: string;
+    pageId: string;
+    revision: number;
+    viewportWidths: number[];
+  }): Promise<GenerationArtifact[]>;
+  loadArtifactImages?(scope: GenerationScope, artifacts: GenerationArtifact[]): Promise<ProgressiveGenerationImage[]>;
 }
 
 export interface SitePlanInput {
@@ -66,12 +93,8 @@ export interface ExecuteProgressiveStepInput {
   documentId: string;
   expectedPlanRevision: number;
   stepId?: string;
-  attemptId?: string;
-  idempotencyKey: string;
-  transactionId: string;
+  requestId?: string;
   operations: SceneTransactionOperation[];
-  visualInputs: GenerationArtifact[];
-  verification: SubmittedStepVerification;
 }
 
 const executableStepStatuses = new Set(['ready', 'retryable', 'rejected', 'stale', 'rolled-back']);
@@ -115,7 +138,7 @@ function assertUniqueArtifacts(artifacts: GenerationArtifact[], label: string): 
   if (new Set(ids).size !== ids.length) throw new Error(`${label} artifact IDs must be unique.`);
 }
 
-function assertVisualInputs(artifacts: GenerationArtifact[], revision: number): void {
+function assertVisualInputs(artifacts: GenerationArtifact[], revision: number, viewportWidths: number[]): void {
   assertUniqueArtifacts(artifacts, 'visualInputs');
   if (artifacts.some((artifact) => artifact.revision !== revision)) {
     throw new Error(`Every visual input must reference the current Scene revision ${revision}.`);
@@ -125,6 +148,14 @@ function assertVisualInputs(artifacts: GenerationArtifact[], revision: number): 
     throw new Error('The current step needs a page snapshot or region crop as visual input.');
   }
   if (!kinds.has('visual-grounding')) throw new Error('The current step needs visual grounding for stable Scene node IDs.');
+  for (const viewportWidth of viewportWidths) {
+    if (!artifacts.some((artifact) => artifact.kind === 'page-snapshot' && artifact.viewportWidth === viewportWidth)) {
+      throw new Error(`The current step needs a full page snapshot at viewport ${viewportWidth}.`);
+    }
+    if (!artifacts.some((artifact) => artifact.kind === 'visual-grounding' && artifact.viewportWidth === viewportWidth)) {
+      throw new Error(`The current step needs visual grounding at viewport ${viewportWidth}.`);
+    }
+  }
 }
 
 function assertPassingVerification(verification: SubmittedStepVerification, candidateRevision: number): void {
@@ -149,7 +180,7 @@ function nextExecutableStep(page: GenerationPageRun): GenerationStep | undefined
 }
 
 function nextAction(plan: GenerationPlan): Record<string, unknown> {
-  if (plan.status === 'paused') return { type: 'resume-plan', tool: 'web_design_resume_plan' };
+  if (plan.status === 'paused') return { type: 'resume-plan', tool: 'web_design_control_plan', action: 'resume' };
   if (plan.status === 'draft') {
     const page = plan.pageRuns.find((candidate) => candidate.status === 'unplanned');
     return page
@@ -157,31 +188,75 @@ function nextAction(plan: GenerationPlan): Record<string, unknown> {
       : { type: 'mark-ready', detail: 'The next page plan mutation will make this plan ready.' };
   }
   if (plan.status === 'ready') {
+    const unplanned = plan.pageRuns.find((candidate) => candidate.status === 'unplanned');
+    if (unplanned) return { type: 'plan-page', tool: 'web_design_plan_page', pageId: unplanned.pageId };
     const page = plan.pageRuns.find((candidate) => candidate.status === 'planned');
     return page
-      ? { type: 'start-page', tool: 'web_design_start_page', pageId: page.pageId }
-      : { type: 'inspect-plan', tool: 'web_design_get_plan' };
+      ? { type: 'start-page', tool: 'web_design_control_plan', action: 'start-page', pageId: page.pageId }
+      : { type: 'inspect-plan', tool: 'web_design_get_active_context' };
   }
   if (plan.status === 'running' && plan.activePageId) {
     const page = plan.pageRuns.find((candidate) => candidate.pageId === plan.activePageId)!;
     const active = page.activeStepId ? page.steps.find((step) => step.stepId === page.activeStepId) : undefined;
     if (active?.status === 'awaiting-review') {
-      return { type: 'review-step', tool: 'web_design_inspect_step', pageId: page.pageId, stepId: active.stepId, attemptId: active.activeAttemptId };
+      return { type: 'review-step', tool: 'web_design_control_plan', pageId: page.pageId, stepId: active.stepId, attemptId: active.activeAttemptId };
     }
     if (active) return { type: 'wait-for-step', pageId: page.pageId, stepId: active.stepId, status: active.status };
     const step = nextExecutableStep(page);
     if (step) {
       return {
         type: step.status === 'ready' ? 'run-step' : 'retry-step',
-        tool: step.status === 'ready' ? 'web_design_run_next_step' : 'web_design_retry_step',
+        tool: 'web_design_execute_step',
         pageId: page.pageId,
-        stepId: step.stepId
+        stepId: step.stepId,
+        target: step.target
       };
     }
     const handoff = page.steps.find((step) => step.kind === 'handoff');
-    if (handoff?.status === 'accepted') return { type: 'complete-page', tool: 'web_design_complete_page', pageId: page.pageId };
+    if (handoff?.status === 'accepted') return { type: 'complete-page-automatically', pageId: page.pageId };
   }
-  return { type: 'inspect-plan', tool: 'web_design_get_plan' };
+  return { type: 'inspect-plan', tool: 'web_design_get_active_context' };
+}
+
+const visibleDesignStepKinds = new Set<GenerationStep['kind']>([
+  'structure', 'section', 'visual', 'responsive', 'polish'
+]);
+
+export function generationDeliveryGate(plan: GenerationPlan): Record<string, unknown> {
+  const requiredNextAction = nextAction(plan);
+  const acceptedVisibleStepCount = plan.pageRuns.reduce((count, page) => count + page.steps.filter((step) => (
+    step.status === 'accepted' && visibleDesignStepKinds.has(step.kind)
+  )).length, 0);
+  const completedArtboardCount = plan.pageRuns.filter((page) => page.status === 'completed').length;
+  const visibleSceneReady = acceptedVisibleStepCount > 0;
+  const projectImplementationAllowed = completedArtboardCount > 0;
+  const taskCompletionAllowed = plan.status === 'completed';
+
+  let code = 'READY';
+  let message = 'Every planned artboard has passed its visual handoff. The requested design scope may now be reported complete.';
+  if (!visibleSceneReady) {
+    code = 'NO_ACCEPTED_VISUAL_STEP';
+    message = 'The design is still visually empty. Continue the returned nextAction until at least one visible Scene Candidate is reviewed and accepted. Do not edit product UI code or report a task outcome yet.';
+  } else if (!projectImplementationAllowed) {
+    code = 'NO_COMPLETED_ARTBOARD';
+    message = 'Visible Scene work exists, but no artboard has passed Design Gate and handoff. Continue the returned nextAction; product UI implementation is not allowed yet.';
+  } else if (!taskCompletionAllowed) {
+    code = 'INCOMPLETE_DESIGN_SCOPE';
+    message = 'At least one artboard is ready for its matching implementation, but the planned design scope is incomplete. Implement only completed artboards and continue the returned nextAction before reporting the whole task complete.';
+  }
+
+  return {
+    status: taskCompletionAllowed ? 'ready' : 'blocked',
+    code,
+    message,
+    visibleSceneReady,
+    projectImplementationAllowed,
+    taskCompletionAllowed,
+    acceptedVisibleStepCount,
+    completedArtboardCount,
+    plannedArtboardCount: plan.pageRuns.length,
+    requiredNextAction
+  };
 }
 
 export function summarizeGenerationPlan(plan: GenerationPlan): Record<string, unknown> {
@@ -218,13 +293,95 @@ export function summarizeGenerationPlan(plan: GenerationPlan): Record<string, un
         activeAttemptId: activeStep.activeAttemptId
       }
     } : {}),
-    nextAction: nextAction(plan)
+    nextAction: nextAction(plan),
+    deliveryGate: generationDeliveryGate(plan)
+  };
+}
+
+function compactArtifactReference(artifact: GenerationArtifact): Record<string, unknown> {
+  return {
+    id: artifact.artifactId,
+    kind: artifact.kind,
+    revision: artifact.revision,
+    ...(artifact.viewportWidth === undefined ? {} : { viewportWidth: artifact.viewportWidth })
+  };
+}
+
+function compactSceneChange(summary: {
+  revision: number;
+  insertedPageIds: string[];
+  removedPageIds: string[];
+  insertedNodeIds: string[];
+  updatedNodeIds: string[];
+  removedNodeIds: string[];
+  movedNodeIds: string[];
+  insertedVariableCollectionIds: string[];
+  updatedVariableCollectionIds: string[];
+  removedVariableCollectionIds: string[];
+  insertedResponsiveRuleIds: string[];
+  removedResponsiveRuleIds: string[];
+  updatedResponsiveRuleIds: string[];
+  renamedPageIds: string[];
+}): Record<string, unknown> {
+  const affectedNodeIds = [...new Set([
+    ...summary.insertedNodeIds,
+    ...summary.updatedNodeIds,
+    ...summary.removedNodeIds,
+    ...summary.movedNodeIds
+  ])];
+  return {
+    revision: summary.revision,
+    counts: {
+      pages: summary.insertedPageIds.length + summary.removedPageIds.length + summary.renamedPageIds.length,
+      insertedNodes: summary.insertedNodeIds.length,
+      updatedNodes: summary.updatedNodeIds.length,
+      removedNodes: summary.removedNodeIds.length,
+      movedNodes: summary.movedNodeIds.length,
+      variables: summary.insertedVariableCollectionIds.length + summary.updatedVariableCollectionIds.length + summary.removedVariableCollectionIds.length,
+      responsiveRules: summary.insertedResponsiveRuleIds.length + summary.updatedResponsiveRuleIds.length + summary.removedResponsiveRuleIds.length
+    },
+    affectedNodeIds: affectedNodeIds.slice(0, 24),
+    ...(affectedNodeIds.length > 24 ? { affectedNodeIdsTruncated: true } : {})
+  };
+}
+
+function summarizeGenerationPlanState(plan: GenerationPlan): Record<string, unknown> {
+  const activePage = plan.activePageId ? plan.pageRuns.find((page) => page.pageId === plan.activePageId) : undefined;
+  const activeStep = activePage?.activeStepId ? activePage.steps.find((step) => step.stepId === activePage.activeStepId) : undefined;
+  return {
+    planId: plan.planId,
+    revision: plan.revision,
+    documentId: plan.scope.documentId,
+    mode: plan.mode,
+    status: plan.status,
+    pages: plan.pageRuns.map((page) => ({
+      pageId: page.pageId,
+      name: page.name,
+      status: page.status,
+      stepCounts: page.steps.reduce<Record<string, number>>((counts, step) => {
+        counts[step.status] = (counts[step.status] ?? 0) + 1;
+        return counts;
+      }, {})
+    })),
+    ...(activePage ? { activePage: { pageId: activePage.pageId, name: activePage.name, status: activePage.status } } : {}),
+    ...(activeStep ? {
+      activeStep: {
+        stepId: activeStep.stepId,
+        title: activeStep.title,
+        kind: activeStep.kind,
+        status: activeStep.status,
+        target: activeStep.target,
+        activeAttemptId: activeStep.activeAttemptId
+      }
+    } : {}),
+    nextAction: nextAction(plan),
+    deliveryGate: generationDeliveryGate(plan)
   };
 }
 
 function rootFrame(pageId: string, width: number): SceneFrameNode {
   const root: SceneFrameNode = {
-    ...createSceneNodeBase('frame', 'Page root', { x: 0, y: 0, width, height: 768 }, 'system'),
+    ...createSceneNodeBase('frame', 'Page root', { x: 0, y: 0, width, height: 1 }, 'system'),
     type: 'frame',
     id: rootNodeId(pageId),
     role: 'page-root',
@@ -236,9 +393,11 @@ function rootFrame(pageId: string, width: number): SceneFrameNode {
       gap: { row: 0, column: 0 },
       alignItems: 'stretch' as const,
       justifyContent: 'start' as const,
-      sizingX: 'fixed' as const,
+      // The page root follows the current artboard viewport. Its frame width is
+      // only an initial/reference size and must never lock the artboard.
+      sizingX: 'fill' as const,
       sizingY: 'hug' as const,
-      minHeight: 768,
+      minHeight: 1,
       position: 'flow' as const,
       clipContent: false
     },
@@ -290,12 +449,41 @@ export class ProgressiveGenerationService {
     if (transition.plan.status === 'draft') {
       transition = await this.options.repositories.plans.apply(scope, transition.plan.revision, { type: 'mark-ready' });
     }
-    return { plan: summarizeGenerationPlan(transition.plan) };
+    const viewportWidth = Math.max(1440, ...input.steps.flatMap((step) => step.target?.viewportWidths ?? []));
+    const started = await this.startPage(input.documentId, transition.plan.revision, input.pageId, viewportWidth);
+    return {
+      status: 'planned-and-started',
+      plan: started.plan,
+      scene: started.scene,
+      plannedPage: { pageId: input.pageId, viewportWidth, stepCount: input.steps.length }
+    };
   }
 
-  async getPlan(documentId: string): Promise<Record<string, unknown>> {
+  async getPlan(documentId: string, detail: 'compact' | 'full' = 'compact'): Promise<Record<string, unknown>> {
     const { scope } = await this.scope(documentId);
-    return { plan: summarizeGenerationPlan(await this.options.repositories.plans.read(scope)) };
+    const plan = await this.options.repositories.plans.read(scope);
+    return { plan: detail === 'full' ? summarizeGenerationPlan(plan) : summarizeGenerationPlanState(plan) };
+  }
+
+  async getActiveContext(documentId: string): Promise<Record<string, unknown>> {
+    const { scope } = await this.scope(documentId);
+    const plan = await this.options.repositories.plans.read(scope);
+    const summary = summarizeGenerationPlanState(plan);
+    const page = plan.activePageId ? plan.pageRuns.find((candidate) => candidate.pageId === plan.activePageId) : undefined;
+    const step = page?.activeStepId ? page.steps.find((candidate) => candidate.stepId === page.activeStepId) : undefined;
+    if (!page || !step || step.status !== 'awaiting-review' || !step.activeAttemptId) return { plan: summary };
+    const candidate = await this.options.repositories.candidates.read(scope, step.activeAttemptId);
+    const images = this.options.loadArtifactImages ? await this.options.loadArtifactImages(scope, candidate.artifacts) : [];
+    return {
+      plan: summary,
+      resumeReview: {
+        page: { pageId: page.pageId, name: page.name },
+        step: { stepId: step.stepId, title: step.title, kind: step.kind, target: step.target },
+        candidate: this.candidateSummary(candidate),
+        instruction: 'Review the replayed Candidate and Diff images, then use web_design_control_plan. Do not request the same images again.'
+      },
+      ...(images.length > 0 ? { __images: images } : {})
+    };
   }
 
   private async ensureScene(plan: GenerationPlan, documentName: string): Promise<SceneDocument> {
@@ -344,13 +532,13 @@ export class ProgressiveGenerationService {
       })).document;
     }
     return {
-      plan: summarizeGenerationPlan(plan),
+      plan: summarizeGenerationPlanState(plan),
       scene: { documentId: scene.documentId, revision: scene.revision, pageId, rootNodeId: rootId, viewportWidth },
       nextAction: nextAction(plan)
     };
   }
 
-  private async execute(input: ExecuteProgressiveStepInput, retry: boolean): Promise<Record<string, unknown>> {
+  async executeStep(input: ExecuteProgressiveStepInput): Promise<Record<string, unknown>> {
     const { scope } = await this.scope(input.documentId);
     const plan = await this.options.repositories.plans.read(scope);
     if (plan.revision !== input.expectedPlanRevision) throw new Error(`Generation plan revision conflict. Current revision is ${plan.revision}.`);
@@ -359,86 +547,85 @@ export class ProgressiveGenerationService {
     if (page.activeStepId) throw new Error(`Generation step ${page.activeStepId} is already active.`);
     const step = input.stepId ? page.steps.find((candidate) => candidate.stepId === input.stepId) : nextExecutableStep(page);
     if (!step) throw new Error('The active page has no executable generation step.');
-    if (retry && step.status === 'ready') throw new Error(`Generation step ${step.stepId} has not failed and does not need retry.`);
-    if (!retry && step.status !== 'ready') throw new Error(`Use web_design_retry_step for ${step.stepId} in ${step.status} state.`);
+    if (!executableStepStatuses.has(step.status)) throw new Error(`Generation step ${step.stepId} cannot execute from ${step.status}.`);
     const scene = await this.options.repositories.scenes.read(scope.documentId);
-    assertVisualInputs(input.visualInputs, scene.revision);
+    const viewportWidths = step.target.viewportWidths.length > 0 ? step.target.viewportWidths : [1440];
+    const visualInputs = await this.options.captureVisualInputs({
+      documentId: scope.documentId,
+      pageId: page.pageId,
+      revision: scene.revision,
+      viewportWidths
+    });
+    assertVisualInputs(visualInputs, scene.revision, viewportWidths);
     const serializedBytes = Buffer.byteLength(JSON.stringify(input.operations), 'utf8');
-    if (!Array.isArray(input.operations) || input.operations.length === 0 || input.operations.length > 64 || serializedBytes > 262_144) {
-      throw new Error('A generation step needs 1–64 focused Scene operations and must stay below 262144 bytes.');
+    if (!Array.isArray(input.operations) || input.operations.length === 0 || input.operations.length > 256 || serializedBytes > 262_144) {
+      throw new Error('A generation step needs 1–256 focused Scene operations and must stay below 262144 bytes. Use insert-simple-tree for a large editable hierarchy.');
     }
-    assertPassingVerification(input.verification, scene.revision + 1);
-    const attemptId = input.attemptId ?? `attempt:${randomUUID()}`;
+    const requestId = requireIdentifier(input.requestId ?? randomUUID(), 'requestId');
+    const attemptId = `attempt:${requestId}`;
+    const idempotencyKey = `execute:${step.stepId}:${requestId}`;
+    const transactionId = `transaction:${step.stepId}:${requestId}`;
+    let verificationImages: ProgressiveGenerationImage[] = [];
     const result = await prepareGenerationStep({
       scope,
       expectedPlanRevision: plan.revision,
       pageId: page.pageId,
       stepId: step.stepId,
       attemptId,
-      idempotencyKey: input.idempotencyKey
+      idempotencyKey
     }, this.options.repositories, {
       generate: () => ({
-        transactionId: input.transactionId,
+        transactionId,
         baseRevision: scene.revision,
         author: 'ai',
         operations: structuredClone(input.operations)
       }),
-      verify: () => ({
-        ...structuredClone(input.verification),
-        artifacts: [...structuredClone(input.visualInputs), ...structuredClone(input.verification.artifacts)]
-      })
+      verify: async ({ page: candidatePage, step: candidateStep, baseDocument, candidateDocument }) => {
+        const verified = await this.options.verifyCandidate({
+          scope: structuredClone(scope),
+          page: structuredClone(candidatePage),
+          step: structuredClone(candidateStep),
+          baseDocument: structuredClone(baseDocument),
+          candidateDocument: structuredClone(candidateDocument),
+          visualInputs: structuredClone(visualInputs)
+        });
+        verificationImages = [...(verified.__images ?? [])];
+        assertPassingVerification(verified, candidateDocument.revision);
+        return {
+          ...structuredClone(verified),
+          artifacts: [...structuredClone(visualInputs), ...structuredClone(verified.artifacts)]
+        };
+      }
     });
     if (result.status !== 'prepared') {
-      return { status: result.status, plan: summarizeGenerationPlan(result.plan), ...(result.status === 'failed' ? { error: result.error } : {}) };
-    }
-    if (result.plan.mode !== 'auto-current-page') {
-      return { status: 'awaiting-review', plan: summarizeGenerationPlan(result.plan), candidate: this.candidateSummary(result.candidate) };
-    }
-    const committed = await commitGenerationStep({
-      scope,
-      expectedPlanRevision: result.plan.revision,
-      pageId: page.pageId,
-      stepId: step.stepId,
-      attemptId
-    }, this.options.repositories);
-    if (committed.status === 'committed') {
       return {
-        status: 'committed',
-        plan: summarizeGenerationPlan(committed.plan),
-        scene: { documentId: committed.document.documentId, revision: committed.document.revision },
-        transaction: committed.summary,
-        recovered: committed.recovered
+        status: result.status,
+        plan: summarizeGenerationPlanState(result.plan),
+        ...(result.status === 'failed' ? { error: result.error } : {}),
+        ...(verificationImages.length > 0 ? { __images: verificationImages } : {})
       };
     }
+    const planSummary = summarizeGenerationPlanState(result.plan);
+    planSummary.nextAction = {
+      type: 'review-returned-candidate',
+      detail: 'Review the Candidate and Diff images in this result, then use web_design_control_plan to accept or reject it.'
+    };
     return {
-      status: committed.status,
-      plan: summarizeGenerationPlan(committed.plan),
-      ...(committed.status === 'requires-protection-review'
-        ? { conflicts: committed.conflicts, candidate: this.candidateSummary(result.candidate) }
-        : { currentSceneRevision: committed.currentSceneRevision })
+      status: 'awaiting-review',
+      plan: planSummary,
+      candidate: this.candidateSummary(result.candidate),
+      nextAction: {
+        type: 'review-candidate-images',
+        tool: 'web_design_control_plan',
+        detail: 'Inspect the returned Candidate screenshots and visual diffs directly, then accept or reject. Rejected and mechanically failed Steps are retried by calling web_design_execute_step with corrected operations.'
+      },
+      ...(verificationImages.length > 0 ? { __images: verificationImages } : {})
     };
   }
 
-  async runNextStep(input: ExecuteProgressiveStepInput): Promise<Record<string, unknown>> {
-    if (input.stepId !== undefined) throw new Error('web_design_run_next_step chooses the next ready step; use retry for a specific failed step.');
-    return this.execute(input, false);
-  }
-
-  async retryStep(input: ExecuteProgressiveStepInput & { stepId: string }): Promise<Record<string, unknown>> {
-    return this.execute(input, true);
-  }
-
-  async repairStep(input: ExecuteProgressiveStepInput & { stepId: string }): Promise<Record<string, unknown>> {
-    const { scope } = await this.scope(input.documentId);
-    const plan = await this.options.repositories.plans.read(scope);
-    const step = plan.pageRuns.flatMap((page) => page.steps).find((candidate) => candidate.stepId === input.stepId);
-    if (!step) throw new Error(`Generation step not found: ${input.stepId}`);
-    const issueIds = step.attempts.at(-1)?.error?.issueIds ?? [];
-    if (issueIds.length === 0) throw new Error(`Generation step ${step.stepId} has no recorded visual issue IDs for targeted repair.`);
-    return this.execute(input, true);
-  }
-
   private candidateSummary(candidate: GenerationCandidateRecord): Record<string, unknown> {
+    const candidateRevision = candidate.baseRevision + 1;
+    const artifacts = candidate.artifacts.filter((artifact) => artifact.revision === candidateRevision);
     return {
       candidateId: candidate.candidateId,
       pageId: candidate.pageId,
@@ -448,7 +635,9 @@ export class ProgressiveGenerationService {
       qualitySummary: candidate.qualitySummary,
       issueIds: candidate.issueIds,
       protectionConflicts: candidate.protectionConflicts,
-      artifacts: candidate.artifacts
+      reviewArtifacts: artifacts
+        .filter((artifact) => ['page-snapshot', 'visual-grounding', 'visual-diff', 'quality-report'].includes(artifact.kind))
+        .map(compactArtifactReference)
     };
   }
 
@@ -467,13 +656,17 @@ export class ProgressiveGenerationService {
     let candidate: GenerationCandidateRecord | undefined;
     try { candidate = await this.options.repositories.candidates.read(scope, selectedAttempt.attemptId); }
     catch (error) { if (!isMissing(error)) throw error; }
+    const images = candidate && this.options.loadArtifactImages
+      ? await this.options.loadArtifactImages(scope, candidate.artifacts)
+      : [];
     return {
-      plan: summarizeGenerationPlan(plan),
+      plan: summarizeGenerationPlanState(plan),
       page: { pageId: page.pageId, name: page.name },
       step: { stepId: step.stepId, title: step.title, kind: step.kind, status: step.status, target: step.target },
       attempt: selectedAttempt,
-      ...(candidate ? { candidate: this.candidateSummary(candidate) } : {}),
-      nextAction: nextAction(plan)
+      ...(candidate ? { candidate: { ...this.candidateSummary(candidate), artifacts: candidate.artifacts } } : {}),
+      nextAction: nextAction(plan),
+      ...(images.length > 0 ? { __images: images } : {})
     };
   }
 
@@ -486,13 +679,36 @@ export class ProgressiveGenerationService {
       scope, expectedPlanRevision, pageId: page.pageId, stepId, attemptId, approveSoftProtectionConflicts
     }, this.options.repositories);
     if (result.status === 'committed') {
+      let committedPlan = result.plan;
+      const acceptedStep = committedPlan.pageRuns.find((candidate) => candidate.pageId === page.pageId)?.steps.find((candidate) => candidate.stepId === stepId);
+      let completedPage = false;
+      if (acceptedStep?.kind === 'handoff') {
+        committedPlan = (await this.options.repositories.plans.apply(scope, committedPlan.revision, {
+          type: 'complete-page', pageId: page.pageId
+        })).plan;
+        completedPage = true;
+      }
       return {
-        status: 'committed', plan: summarizeGenerationPlan(result.plan),
-        scene: { documentId: result.document.documentId, revision: result.document.revision }, transaction: result.summary, recovered: result.recovered
+        status: completedPage ? 'page-completed' : 'committed',
+        plan: summarizeGenerationPlanState(committedPlan),
+        scene: { documentId: result.document.documentId, revision: result.document.revision },
+        change: compactSceneChange(result.summary),
+        affectedRootNodeId: rootNodeId(page.pageId),
+        recovered: result.recovered,
+        ...(completedPage ? {
+          contextCheckpoint: {
+            kind: 'artboard-complete',
+            pageId: page.pageId,
+            planId: committedPlan.planId,
+            planRevision: committedPlan.revision,
+            sceneRevision: result.document.revision,
+            instruction: 'Keep this compact checkpoint and the next required action; completed artboard construction details may be compacted from working context.'
+          }
+        } : {})
       };
     }
     return {
-      status: result.status, plan: summarizeGenerationPlan(result.plan),
+      status: result.status, plan: summarizeGenerationPlanState(result.plan),
       ...(result.status === 'requires-protection-review' ? { conflicts: result.conflicts } : { currentSceneRevision: result.currentSceneRevision })
     };
   }
@@ -506,7 +722,7 @@ export class ProgressiveGenerationService {
       type: 'reject-step', pageId: page.pageId, stepId, attemptId, reason
     });
     await this.options.repositories.candidates.remove(scope, attemptId).catch(() => undefined);
-    return { status: 'rejected', plan: summarizeGenerationPlan(changed.plan) };
+    return { status: 'rejected', plan: summarizeGenerationPlanState(changed.plan) };
   }
 
   async skipStep(documentId: string, expectedPlanRevision: number, stepId: string): Promise<Record<string, unknown>> {
@@ -515,7 +731,7 @@ export class ProgressiveGenerationService {
     const page = plan.pageRuns.find((candidate) => candidate.steps.some((step) => step.stepId === stepId));
     if (!page) throw new Error(`Generation step not found: ${stepId}`);
     const changed = await this.options.repositories.plans.apply(scope, expectedPlanRevision, { type: 'skip-step', pageId: page.pageId, stepId });
-    return { status: 'skipped', plan: summarizeGenerationPlan(changed.plan) };
+    return { status: 'skipped', plan: summarizeGenerationPlanState(changed.plan) };
   }
 
   async rollbackStep(documentId: string, expectedPlanRevision: number, stepId: string): Promise<Record<string, unknown>> {
@@ -544,7 +760,7 @@ export class ProgressiveGenerationService {
     const changed = await this.options.repositories.plans.apply(scope, expectedPlanRevision, { type: 'rollback-step', pageId: page.pageId, stepId });
     return {
       status: 'rolled-back',
-      plan: summarizeGenerationPlan(changed.plan),
+      plan: summarizeGenerationPlanState(changed.plan),
       scene: { documentId: scene.documentId, revision: scene.revision },
       transactionId,
       recovered
@@ -554,18 +770,18 @@ export class ProgressiveGenerationService {
   async completePage(documentId: string, expectedPlanRevision: number, pageId: string): Promise<Record<string, unknown>> {
     const { scope } = await this.scope(documentId);
     const changed = await this.options.repositories.plans.apply(scope, expectedPlanRevision, { type: 'complete-page', pageId });
-    return { status: 'completed', plan: summarizeGenerationPlan(changed.plan), pageId };
+    return { status: 'completed', plan: summarizeGenerationPlanState(changed.plan), pageId };
   }
 
   async pause(documentId: string, expectedPlanRevision: number): Promise<Record<string, unknown>> {
     const { scope } = await this.scope(documentId);
     const result = await this.options.repositories.plans.apply(scope, expectedPlanRevision, { type: 'pause-plan' });
-    return { plan: summarizeGenerationPlan(result.plan) };
+    return { plan: summarizeGenerationPlanState(result.plan) };
   }
 
   async resume(documentId: string, expectedPlanRevision: number): Promise<Record<string, unknown>> {
     const { scope } = await this.scope(documentId);
     const result = await this.options.repositories.plans.apply(scope, expectedPlanRevision, { type: 'resume-plan' });
-    return { plan: summarizeGenerationPlan(result.plan) };
+    return { plan: summarizeGenerationPlanState(result.plan) };
   }
 }

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crate::mcp_executor::McpRuntimeToolExecutor;
 use crate::memory_context::{MemoryContextComposer, MemoryEngineRecordWriter, MemoryRecordScope};
-use crate::runtime::{AiRuntime, MemoryContextOverflowRecovery};
+use crate::runtime::AiRuntime;
 use crate::traits::{MemoryRecordWriter, ToolExecutor};
 use crate::turn::ContextualTurnRunner;
 
@@ -17,7 +17,6 @@ pub struct AiRuntimeBuilder {
     memory_composer: Option<MemoryContextComposer>,
     max_iterations: Option<usize>,
     request_read_timeout: Option<Duration>,
-    context_overflow_recovery: Option<MemoryContextOverflowRecovery>,
 }
 
 impl AiRuntimeBuilder {
@@ -92,14 +91,6 @@ impl AiRuntimeBuilder {
         self
     }
 
-    pub fn with_context_overflow_recovery(
-        mut self,
-        context_overflow_recovery: Option<MemoryContextOverflowRecovery>,
-    ) -> Self {
-        self.context_overflow_recovery = context_overflow_recovery;
-        self
-    }
-
     pub fn build_runtime(self) -> AiRuntime {
         let mut runtime = AiRuntime::new(self.tool_executor).with_record_writer(self.record_writer);
         if let Some(max_iterations) = self.max_iterations {
@@ -113,9 +104,7 @@ impl AiRuntimeBuilder {
 
     pub fn build_contextual_turn_runner(self) -> ContextualTurnRunner {
         let memory_composer = self.memory_composer.clone();
-        let context_overflow_recovery = self.context_overflow_recovery.clone();
         ContextualTurnRunner::new(self.build_runtime(), memory_composer)
-            .with_context_overflow_recovery(context_overflow_recovery)
     }
 }
 

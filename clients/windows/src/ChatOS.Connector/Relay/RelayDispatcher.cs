@@ -120,6 +120,7 @@ public sealed class RelayDispatcher
         "workspace_directory_create_request" => "workspace_directory_create_response",
         "terminal_exec_request" => "terminal_response",
         "terminal_session_create_request" => "terminal_session_create_response",
+        "remote_terminal_session_create_request" => "terminal_session_create_response",
         "plugin_prepare_request" => "plugin_prepare_response",
         "plugin_execute_request" => "plugin_execute_response",
         "plugin_cancel_request" => "plugin_cancel_response",

@@ -2,11 +2,11 @@
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
 SHELL := /bin/bash
+DOCKER_BOOTSTRAP_FILE := $(if $(wildcard docker/bootstrap.conf),docker/bootstrap.conf,docker/bootstrap.conf.example)
 
 .PHONY: help dev docker-up docker-fast docker-dev docker-rebuild docker-restart docker-restart-fast docker-restart-dev docker-build docker-clean-images docker-down docker-reset docker-logs docker-ps docker-config
-.PHONY: local-dev local-dev-stop local-dev-status local-dev-logs
+.PHONY: local-dev local-dev-stop local-dev-status local-dev-logs postgres-up postgres-migrate postgres-verify postgres-down
 .PHONY: build build-rust build-frontends build-macos-client build-windows-client build-browser-plugin build-computer-use-plugin build-document-plugin build-plugins
-.PHONY: build-project-management-plugin test-project-management-plugin
 .PHONY: test smoke smoke-repo smoke-local-project-entry verify verify-fast test-rust-workspaces check-frontends code-size-report hotspot-line-warnings
 .PHONY: test-chat-app-server test-user-service test-task-runner-service test-local-connector-service test-mcp-management-service test-memory-engine
 .PHONY: test-macos-client test-windows-client test-browser-plugin test-computer-use-plugin test-document-plugin test-plugins
@@ -18,6 +18,10 @@ help:
 	@echo "  make local-dev              # start host-side cloud services and administration frontends"
 	@echo "  make local-dev-stop         # stop host-side local dev stack"
 	@echo "  make local-dev-status       # show host-side local dev stack status"
+	@echo "  make postgres-up            # start PostgreSQL and provision service databases"
+	@echo "  make postgres-migrate       # run every service migration job"
+	@echo "  make postgres-verify        # verify all service schema versions"
+	@echo "  make postgres-down          # stop PostgreSQL without deleting its volume"
 	@echo "  make docker-up              # pull/start the prebuilt Docker stack"
 	@echo "  make docker-fast            # start/reconcile existing Docker images without pulling"
 	@echo "  make docker-dev             # build/start Docker images from local source"
@@ -54,6 +58,19 @@ local-dev-status:
 
 local-dev-logs:
 	@bash scripts/local-dev-stack.sh logs $(SERVICE)
+
+postgres-up:
+	@docker compose -f docker/compose.yml -f docker/compose.platform.yml up -d postgres
+	@docker compose -f docker/compose.yml -f docker/compose.platform.yml run --rm postgres-provision
+
+postgres-migrate:
+	@bash scripts/local-dev-stack.sh postgres-migrate
+
+postgres-verify:
+	@bash scripts/postgres-verify.sh
+
+postgres-down:
+	@docker compose -f docker/compose.yml -f docker/compose.platform.yml stop postgres
 
 docker-up:
 	@docker/deploy.sh up
@@ -95,8 +112,8 @@ docker-ps:
 	@docker/deploy.sh ps
 
 docker-config:
-	@docker compose -f docker/compose.yml -f docker/compose.platform.yml config >/dev/null
-	@docker compose -f docker/compose.yml -f docker/compose.platform.yml -f docker/compose.build.yml config >/dev/null
+	@docker compose --env-file $(DOCKER_BOOTSTRAP_FILE) -f docker/compose.yml -f docker/compose.platform.yml config >/dev/null
+	@docker compose --env-file $(DOCKER_BOOTSTRAP_FILE) -f docker/compose.yml -f docker/compose.platform.yml -f docker/compose.build.yml config >/dev/null
 
 build: build-rust build-frontends
 
@@ -128,10 +145,7 @@ build-computer-use-plugin:
 build-document-plugin:
 	@npm --prefix plugins/document run build
 
-build-project-management-plugin:
-	@npm --prefix plugins/project-management run build
-
-build-plugins: build-browser-plugin build-computer-use-plugin build-document-plugin build-project-management-plugin
+build-plugins: build-browser-plugin build-computer-use-plugin build-document-plugin
 
 test: smoke test-chat-app-server test-user-service test-task-runner-service test-local-connector-service test-mcp-management-service test-memory-engine
 
@@ -157,9 +171,10 @@ smoke-repo:
 	@bash -n docker/deploy.sh
 	@bash -n docker/deploy-harness-ci.sh
 	@bash -n scripts/local-dev-stack.sh scripts/local-dev-stack/environment.sh scripts/local-dev-stack/services.sh
-	@docker compose -f docker/compose.yml -f docker/compose.platform.yml -f docker/compose.local-dev.yml config >/dev/null
-	@docker compose -f docker/compose.yml -f docker/compose.platform.yml config >/dev/null
-	@docker compose -f docker/compose.yml -f docker/compose.platform.yml -f docker/compose.build.yml config >/dev/null
+	@bash scripts/check-no-runtime-mongodb.sh
+	@docker compose --env-file $(DOCKER_BOOTSTRAP_FILE) -f docker/compose.yml -f docker/compose.platform.yml -f docker/compose.local-dev.yml config >/dev/null
+	@docker compose --env-file $(DOCKER_BOOTSTRAP_FILE) -f docker/compose.yml -f docker/compose.platform.yml config >/dev/null
+	@docker compose --env-file $(DOCKER_BOOTSTRAP_FILE) -f docker/compose.yml -f docker/compose.platform.yml -f docker/compose.build.yml config >/dev/null
 	@bash scripts/check-large-files.sh --fail
 
 test-chat-app-server:
@@ -200,10 +215,7 @@ test-document-plugin:
 	@npm --prefix plugins/document run vendor:fetch:current
 	@npm --prefix plugins/document test
 
-test-project-management-plugin:
-	@npm --prefix plugins/project-management test
-
-test-plugins: test-browser-plugin test-computer-use-plugin test-document-plugin test-project-management-plugin
+test-plugins: test-browser-plugin test-computer-use-plugin test-document-plugin
 
 code-size-report:
 	@bash scripts/code-size-report.sh

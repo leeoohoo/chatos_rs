@@ -1,227 +1,122 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use futures_util::TryStreamExt;
-use mongodb::bson::{doc, Bson};
-use serde::Deserialize;
-
 use crate::db::Db;
-use crate::models::now_rfc3339;
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+use serde::Deserialize;
+use sqlx::FromRow;
+#[derive(Debug, Clone, Deserialize, FromRow, PartialEq, Eq)]
 pub struct SubjectMemorySourceDispatchOutbox {
     pub id: String,
     pub tenant_id: String,
     pub source_id: String,
     pub thread_id: String,
     pub summary_type: String,
-    #[serde(default)]
     pub subject_memory_source_dispatch_version: i64,
-    #[serde(default)]
     pub subject_memory_source_dispatch_published_version: i64,
-    #[serde(default)]
     pub subject_memory_source_dispatch_consumed_version: i64,
-    #[serde(default)]
     pub subject_memory_source_dispatch_pending: bool,
 }
-
-fn collection(db: &Db) -> mongodb::Collection<SubjectMemorySourceDispatchOutbox> {
-    db.collection("engine_summaries")
-}
-
+const COLS:&str="id,tenant_id,source_id,thread_id,summary_type,subject_memory_source_dispatch_version,subject_memory_source_dispatch_published_version,subject_memory_source_dispatch_consumed_version,subject_memory_source_dispatch_pending";
 pub async fn get_pending_subject_memory_source_dispatch(
     db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    summary_id: &str,
+    t: &str,
+    s: &str,
+    id: &str,
 ) -> Result<Option<SubjectMemorySourceDispatchOutbox>, String> {
-    collection(db)
-        .find_one(doc! {
-            "tenant_id": tenant_id,
-            "source_id": source_id,
-            "id": summary_id,
-            "subject_memory_source_dispatch_pending": true,
-        })
-        .await
-        .map_err(|err| err.to_string())
+    fetch(db,&format!("SELECT {COLS} FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND subject_memory_source_dispatch_pending"),t,s,id).await
 }
-
 pub async fn get_subject_memory_source_dispatch_state(
     db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    summary_id: &str,
+    t: &str,
+    s: &str,
+    id: &str,
 ) -> Result<Option<SubjectMemorySourceDispatchOutbox>, String> {
-    collection(db)
-        .find_one(doc! {
-            "tenant_id": tenant_id,
-            "source_id": source_id,
-            "id": summary_id,
-        })
-        .await
-        .map_err(|err| err.to_string())
+    fetch(
+        db,
+        &format!(
+            "SELECT {COLS} FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND id=$3"
+        ),
+        t,
+        s,
+        id,
+    )
+    .await
 }
-
 pub async fn list_pending_subject_memory_source_dispatches(
     db: &Db,
     limit: i64,
 ) -> Result<Vec<SubjectMemorySourceDispatchOutbox>, String> {
-    collection(db)
-        .find(doc! {"subject_memory_source_dispatch_pending": true})
-        .sort(doc! {"subject_memory_source_dispatch_requested_at": 1, "updated_at": 1})
-        .limit(limit.clamp(1, 10_000))
-        .await
-        .map_err(|err| err.to_string())?
-        .try_collect()
-        .await
-        .map_err(|err| err.to_string())
+    sqlx::query_as(&format!("SELECT {COLS} FROM engine_summaries WHERE subject_memory_source_dispatch_pending ORDER BY subject_memory_source_dispatch_requested_at,updated_at LIMIT $1")).bind(limit.clamp(1,10000)).fetch_all(db).await.map_err(|e|e.to_string())
 }
-
 pub async fn mark_subject_memory_source_dispatch_published(
     db: &Db,
-    event: &SubjectMemorySourceDispatchOutbox,
+    e: &SubjectMemorySourceDispatchOutbox,
 ) -> Result<bool, String> {
-    let now = now_rfc3339();
-    let result = collection(db)
-        .update_one(
-            dispatch_identity_filter(event),
-            vec![doc! {"$set": {
-                "subject_memory_source_dispatch_published_version": {
-                    "$max": [
-                        {"$ifNull": ["$subject_memory_source_dispatch_published_version", 0]},
-                        event.subject_memory_source_dispatch_version,
-                    ]
-                },
-                "subject_memory_source_dispatch_published_at": &now,
-                "subject_memory_source_dispatch_last_error": Bson::Null,
-                "subject_memory_source_dispatch_pending": {
-                    "$gt": [
-                        {"$ifNull": ["$subject_memory_source_dispatch_version", 0]},
-                        event.subject_memory_source_dispatch_version,
-                    ]
-                },
-            }}],
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(result.matched_count > 0)
+    update(db,e,"subject_memory_source_dispatch_published_version=GREATEST(subject_memory_source_dispatch_published_version,$4),subject_memory_source_dispatch_published_at=now(),subject_memory_source_dispatch_last_error=NULL,subject_memory_source_dispatch_pending=(subject_memory_source_dispatch_version>$4)",None).await
 }
-
 pub async fn mark_subject_memory_source_dispatch_consumed(
     db: &Db,
-    event: &SubjectMemorySourceDispatchOutbox,
+    e: &SubjectMemorySourceDispatchOutbox,
 ) -> Result<bool, String> {
-    let now = now_rfc3339();
-    let result = collection(db)
-        .update_one(
-            dispatch_identity_filter(event),
-            vec![doc! {"$set": {
-                "subject_memory_source_dispatch_consumed_version": {
-                    "$max": [
-                        {"$ifNull": ["$subject_memory_source_dispatch_consumed_version", 0]},
-                        event.subject_memory_source_dispatch_version,
-                    ]
-                },
-                "subject_memory_source_dispatch_consumed_at": &now,
-                "subject_memory_source_dispatch_last_error": Bson::Null,
-            }}],
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(result.matched_count > 0)
+    update(db,e,"subject_memory_source_dispatch_consumed_version=GREATEST(subject_memory_source_dispatch_consumed_version,$4),subject_memory_source_dispatch_consumed_at=now(),subject_memory_source_dispatch_last_error=NULL",None).await
 }
-
 pub async fn mark_subject_memory_source_dispatch_failed(
     db: &Db,
-    event: &SubjectMemorySourceDispatchOutbox,
+    e: &SubjectMemorySourceDispatchOutbox,
     error: &str,
 ) -> Result<bool, String> {
-    let now = now_rfc3339();
-    let result = collection(db)
-        .update_one(
-            dispatch_identity_filter(event),
-            doc! {"$set": {
-                "subject_memory_source_dispatch_last_error": error,
-                "subject_memory_source_dispatch_last_failed_at": now,
-            }},
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(result.matched_count > 0)
+    update(db,e,"subject_memory_source_dispatch_last_error=$5,subject_memory_source_dispatch_last_failed_at=now()",Some(error)).await
 }
-
 pub async fn mark_subject_memory_source_dispatch_dead_lettered(
     db: &Db,
-    event: &SubjectMemorySourceDispatchOutbox,
+    e: &SubjectMemorySourceDispatchOutbox,
     error: &str,
 ) -> Result<bool, String> {
-    let now = now_rfc3339();
-    let result = collection(db)
-        .update_one(
-            dispatch_identity_filter(event),
-            vec![doc! {"$set": {
-                "subject_memory_source_dispatch_consumed_version": {
-                    "$max": [
-                        { "$ifNull": ["$subject_memory_source_dispatch_consumed_version", 0] },
-                        event.subject_memory_source_dispatch_version,
-                    ]
-                },
-                "subject_memory_source_dispatch_dead_letter_version": event.subject_memory_source_dispatch_version,
-                "subject_memory_source_dispatch_dead_lettered_at": &now,
-                "subject_memory_source_dispatch_last_error": error,
-            }}],
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(result.matched_count > 0)
+    update(db,e,"subject_memory_source_dispatch_consumed_version=GREATEST(subject_memory_source_dispatch_consumed_version,$4),subject_memory_source_dispatch_dead_letter_version=$4,subject_memory_source_dispatch_dead_lettered_at=now(),subject_memory_source_dispatch_last_error=$5",Some(error)).await
 }
-
 pub async fn replay_dead_lettered_subject_memory_source_dispatch(
     db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    summary_id: &str,
-    dead_letter_version: i64,
+    t: &str,
+    s: &str,
+    id: &str,
+    v: i64,
 ) -> Result<Option<SubjectMemorySourceDispatchOutbox>, String> {
-    let now = now_rfc3339();
-    collection(db)
-        .find_one_and_update(
-            doc! {
-                "tenant_id": tenant_id,
-                "source_id": source_id,
-                "id": summary_id,
-                "status": "done",
-                "subject_memory_source_dispatch_version": dead_letter_version,
-                "subject_memory_source_dispatch_dead_letter_version": dead_letter_version,
-                "subject_memory_source_dispatch_consumed_version": { "$gte": dead_letter_version },
-                "subject_memory_source_dispatch_pending": { "$ne": true },
-            },
-            doc! {
-                "$inc": { "subject_memory_source_dispatch_version": 1 },
-                "$set": {
-                    "subject_memory_source_dispatch_requested_at": &now,
-                    "subject_memory_source_dispatch_last_error": Bson::Null,
-                    "subject_memory_source_dispatch_pending": true,
-                },
-                "$unset": {
-                    "subject_memory_source_dispatch_dead_letter_version": "",
-                    "subject_memory_source_dispatch_dead_lettered_at": "",
-                    "subject_memory_source_dispatch_last_failed_at": "",
-                },
-            },
-        )
-        .return_document(mongodb::options::ReturnDocument::After)
-        .await
-        .map_err(|err| err.to_string())
+    sqlx::query_as(&format!("UPDATE engine_summaries SET subject_memory_source_dispatch_version=subject_memory_source_dispatch_version+1,subject_memory_source_dispatch_requested_at=now(),subject_memory_source_dispatch_last_error=NULL,subject_memory_source_dispatch_pending=true,subject_memory_source_dispatch_dead_letter_version=NULL,subject_memory_source_dispatch_dead_lettered_at=NULL,subject_memory_source_dispatch_last_failed_at=NULL WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND status='done' AND subject_memory_source_dispatch_version=$4 AND subject_memory_source_dispatch_dead_letter_version=$4 AND subject_memory_source_dispatch_consumed_version>=$4 AND NOT subject_memory_source_dispatch_pending RETURNING {COLS}")).bind(t).bind(s).bind(id).bind(v).fetch_optional(db).await.map_err(|e|e.to_string())
 }
-
-fn dispatch_identity_filter(event: &SubjectMemorySourceDispatchOutbox) -> mongodb::bson::Document {
-    doc! {
-        "tenant_id": &event.tenant_id,
-        "source_id": &event.source_id,
-        "id": &event.id,
-        "subject_memory_source_dispatch_version": {
-            "$gte": event.subject_memory_source_dispatch_version
-        },
+async fn fetch(
+    db: &Db,
+    q: &str,
+    t: &str,
+    s: &str,
+    id: &str,
+) -> Result<Option<SubjectMemorySourceDispatchOutbox>, String> {
+    sqlx::query_as(q)
+        .bind(t)
+        .bind(s)
+        .bind(id)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| e.to_string())
+}
+async fn update(
+    db: &Db,
+    e: &SubjectMemorySourceDispatchOutbox,
+    set: &str,
+    error: Option<&str>,
+) -> Result<bool, String> {
+    let q=format!("UPDATE engine_summaries SET {set} WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND subject_memory_source_dispatch_version>=$4");
+    let mut query = sqlx::query(&q)
+        .bind(&e.tenant_id)
+        .bind(&e.source_id)
+        .bind(&e.id)
+        .bind(e.subject_memory_source_dispatch_version);
+    if let Some(v) = error {
+        query = query.bind(v);
     }
+    Ok(query
+        .execute(db)
+        .await
+        .map_err(|e| e.to_string())?
+        .rows_affected()
+        > 0)
 }

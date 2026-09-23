@@ -10,31 +10,19 @@ const sceneV3Tools = [
   'web_design_get_active_context',
   'web_design_plan_site',
   'web_design_plan_page',
-  'web_design_get_plan',
-  'web_design_start_page',
   'web_design_capture_page',
   'web_design_capture_region',
   'web_design_prepare_annotation_task',
-  'web_design_get_visual_grounding',
   'web_design_compare_snapshots',
   'web_design_inspect_at_point',
   'web_design_query_scene',
   'web_design_edit_scene',
-  'web_design_run_next_step',
-  'web_design_retry_step',
-  'web_design_repair_step',
-  'web_design_inspect_step',
-  'web_design_accept_step',
-  'web_design_reject_step',
-  'web_design_skip_step',
-  'web_design_rollback_step',
-  'web_design_complete_page',
-  'web_design_pause_plan',
-  'web_design_resume_plan',
+  'web_design_execute_step',
+  'web_design_control_plan',
   'web_design_list_documents',
   'web_design_create_document',
   'web_design_get_catalog',
-  'web_design_search_components',
+  'web_design_search_catalog',
   'web_design_get_component_contract',
   'web_design_list_requests'
 ];
@@ -74,16 +62,23 @@ test('MCP exposes only the AI-first Scene 3.0.1 surface and preserves host proje
     assert.deepEqual(initialDocuments.structuredContent.documents, []);
 
     const catalog = await client.callTool({ name: 'web_design_get_catalog', arguments: {} });
+    assert.equal(catalog.content.find((item) => item.type === 'text').text.includes('\n'), false);
     assert.deepEqual(catalog.structuredContent.libraries.map((item) => item.id), ['antd', 'chakra', 'shadcn', 'magicui', 'spell', 'inspira', 'daisyui']);
     assert.equal(catalog.structuredContent.libraries.find((item) => item.id === 'antd').componentCount, 72);
     assert.equal(catalog.structuredContent.libraries.find((item) => item.id === 'chakra').componentCount, 113);
 
     const search = await client.callTool({
-      name: 'web_design_search_components',
-      arguments: { libraryId: 'antd', query: 'input', limit: 5 }
+      name: 'web_design_search_catalog',
+      arguments: { kind: 'components', libraryId: 'antd', query: 'input', limit: 5 }
     });
     assert.equal(search.structuredContent.candidates.every((item) => item.libraryId === 'antd'), true);
     assert.equal(search.structuredContent.candidates.some((item) => item.componentId === 'Input'), true);
+
+    const intentSearch = await client.callTool({
+      name: 'web_design_search_catalog',
+      arguments: { kind: 'components', libraryId: 'shadcn', category: '按钮', query: 'primary CTA button', limit: 5 }
+    });
+    assert.equal(intentSearch.structuredContent.candidates[0].componentId, 'Button');
 
     const created = await client.callTool({ name: 'web_design_create_document', arguments: { title: 'AI-first Website' } });
     const documentId = created.structuredContent.document.documentId;

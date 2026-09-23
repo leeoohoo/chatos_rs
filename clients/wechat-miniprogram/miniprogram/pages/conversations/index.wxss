@@ -1,0 +1,46 @@
+.conversation-row {
+  position: relative;
+  display: flex;
+  min-height: 94rpx;
+  padding: 20rpx 17rpx 20rpx 20rpx;
+  align-items: center;
+  transition: background-color .15s ease;
+}
+
+.conversation-row + .conversation-row::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 105rpx;
+  height: 1rpx;
+  background: rgba(60, 60, 67, .12);
+  content: '';
+}
+
+.conversation-row-pressed { background: #ececf1; }
+
+.conversation-icon {
+  display: flex;
+  width: 66rpx;
+  height: 66rpx;
+  margin-right: 19rpx;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 17rpx;
+  background: #e9f3ff;
+  color: #0a84ff;
+  font-size: 27rpx;
+  font-weight: 650;
+}
+
+.contact-icon { background: #fff1df; color: #e77a09; }
+.conversation-main { min-width: 0; flex: 1; }
+.conversation-title { overflow: hidden; font-size: 28rpx; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-meta { margin-top: 5rpx; overflow: hidden; color: #85858b; font-size: 21rpx; text-overflow: ellipsis; white-space: nowrap; }
+.chevron { margin-left: 12rpx; color: #c4c4c8; font-size: 39rpx; font-weight: 300; }
+.opening { margin-left: 12rpx; color: #8e8e93; font-size: 22rpx; letter-spacing: 2rpx; }
+.error-card { margin-bottom: 18rpx; padding: 20rpx; border-radius: 18rpx; background: #fff; font-size: 23rpx; }
+.skeleton { height: 106rpx; background: linear-gradient(90deg,#fff,#f0f0f3,#fff); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
+.loading-more { padding: 22rpx 0 8rpx; text-align: center; font-size: 22rpx; }
+@keyframes shimmer { to { background-position: -200% 0; } }

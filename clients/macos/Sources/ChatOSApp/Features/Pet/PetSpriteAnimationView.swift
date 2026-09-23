@@ -12,37 +12,27 @@ struct PetSpriteAnimationView: View {
     let animationState: PetAnimationState
     let isDragging: Bool
     let dragDirection: PetDragDirection
+    let isAnimationActive: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var animationEpoch = Date()
 
     var body: some View {
         Group {
-            if PetSpriteResource.isAvailable {
-                TimelineView(.animation(
-                    minimumInterval: frameDuration,
-                    paused: reduceMotion
+            if PetSpriteResource.isAvailable, isAnimationActive, !reduceMotion {
+                TimelineView(.periodic(
+                    from: animationEpoch,
+                    by: frameDuration
                 )) { context in
-                    let frameIndex = reduceMotion
-                        ? 0
-                        : currentFrameIndex(at: context.date)
+                    let frameIndex = currentFrameIndex(at: context.date)
                     if let frame = PetSpriteResource.frame(row: row, column: frameIndex) {
-                        Image(decorative: frame, scale: 1)
-                            .resizable()
-                            .interpolation(.high)
-                            .antialiased(true)
-                            .aspectRatio(Atlas.cellWidth / Atlas.cellHeight, contentMode: .fit)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .shadow(color: .white.opacity(0.18), radius: 1)
-                            .shadow(
-                                color: .black.opacity(isDragging ? 0.12 : 0.28),
-                                radius: isDragging ? 2 : 5,
-                                y: isDragging ? 1 : 3
-                            )
+                        spriteFrame(frame)
                     } else {
                         fallbackCharacter
                     }
                 }
+            } else if let frame = PetSpriteResource.frame(row: row, column: 0) {
+                spriteFrame(frame)
             } else {
                 fallbackCharacter
             }
@@ -56,6 +46,21 @@ struct PetSpriteAnimationView: View {
         .onChange(of: dragDirection) { _, _ in
             animationEpoch = Date()
         }
+    }
+
+    private func spriteFrame(_ frame: CGImage) -> some View {
+        Image(decorative: frame, scale: 1)
+            .resizable()
+            .interpolation(.high)
+            .antialiased(true)
+            .aspectRatio(Atlas.cellWidth / Atlas.cellHeight, contentMode: .fit)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .shadow(color: .white.opacity(0.18), radius: 1)
+            .shadow(
+                color: .black.opacity(isDragging ? 0.12 : 0.28),
+                radius: isDragging ? 2 : 5,
+                y: isDragging ? 1 : 3
+            )
     }
 
     private var row: Int {
@@ -89,7 +94,7 @@ struct PetSpriteAnimationView: View {
             return 0.10
         }
         return switch animationState {
-        case .idle: 0.22
+        case .idle: 0.60
         case .succeeded: 0.13
         case .failed: 0.18
         case .waiting: 0.20
@@ -121,8 +126,10 @@ private enum PetSpriteResource {
     private static let rows = 11
     private static let cellWidth = 192
     private static let cellHeight = 208
+    private static let renderedCellWidth = 180
+    private static let renderedCellHeight = 195
 
-    private static let spritesheet: CGImage? = {
+    private static let frames: [CGImage]? = {
         let fileManager = FileManager.default
         let candidates: [URL?] = [
             Bundle.main.resourceURL?
@@ -133,31 +140,57 @@ private enum PetSpriteResource {
                 .appendingPathComponent(".codex/pets/fengtuan/spritesheet.webp"),
         ]
         for case let url? in candidates where fileManager.fileExists(atPath: url.path) {
-            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
-                  image.width == columns * cellWidth,
-                  image.height == rows * cellHeight else {
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, [
+                kCGImageSourceShouldCache: false,
+            ] as CFDictionary),
+                  let atlas = CGImageSourceCreateImageAtIndex(source, 0, [
+                    kCGImageSourceShouldCacheImmediately: true,
+                  ] as CFDictionary),
+                  atlas.width == columns * cellWidth,
+                  atlas.height == rows * cellHeight else {
                 continue
             }
-            if image.bitsPerPixel > 0 {
-                return image
+            var renderedFrames: [CGImage] = []
+            renderedFrames.reserveCapacity(rows * columns)
+            for index in 0..<(rows * columns) {
+                let row = index / columns
+                let column = index % columns
+                guard let cropped = atlas.cropping(to: CGRect(
+                    x: column * cellWidth,
+                    y: row * cellHeight,
+                    width: cellWidth,
+                    height: cellHeight
+                )),
+                    let context = CGContext(
+                        data: nil,
+                        width: renderedCellWidth,
+                        height: renderedCellHeight,
+                        bitsPerComponent: 8,
+                        bytesPerRow: 0,
+                        space: CGColorSpaceCreateDeviceRGB(),
+                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                    ) else {
+                    renderedFrames.removeAll()
+                    break
+                }
+                context.interpolationQuality = .high
+                context.draw(cropped, in: CGRect(
+                    x: 0,
+                    y: 0,
+                    width: renderedCellWidth,
+                    height: renderedCellHeight
+                ))
+                guard let rendered = context.makeImage() else {
+                    renderedFrames.removeAll()
+                    break
+                }
+                renderedFrames.append(rendered)
+            }
+            if renderedFrames.count == rows * columns {
+                return renderedFrames
             }
         }
         return nil
-    }()
-
-    private static let frames: [CGImage]? = {
-        guard let spritesheet else { return nil }
-        return (0..<(rows * columns)).compactMap { index in
-            let row = index / columns
-            let column = index % columns
-            return spritesheet.cropping(to: CGRect(
-                x: column * cellWidth,
-                y: row * cellHeight,
-                width: cellWidth,
-                height: cellHeight
-            ))
-        }
     }()
 
     static var isAvailable: Bool {

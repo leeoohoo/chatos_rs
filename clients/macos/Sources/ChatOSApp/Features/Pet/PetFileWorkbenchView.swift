@@ -1,5 +1,6 @@
 import AppKit
 import ChatOSCore
+import ImageIO
 import SwiftUI
 
 struct PetFileWorkbenchView: View {
@@ -273,8 +274,8 @@ struct PetFileWorkbenchView: View {
             )
             .id(tab.id)
             .clipped()
-        } else if let image = PetFilePreviewResolver.image(for: file) {
-            PetFileImagePreview(image: image, fileName: file.name)
+        } else if PetFilePreviewResolver.isImage(file) {
+            PetFileImagePreviewLoader(file: file)
                 .id(tab.id)
         } else if file.isBinary {
             ContentUnavailableView(
@@ -289,11 +290,8 @@ struct PetFileWorkbenchView: View {
         } else if ["md", "markdown"].contains(
             URL(fileURLWithPath: file.name).pathExtension.lowercased()
         ), tab.targetLine == nil {
-            ScrollView {
-                MarkdownDocumentView(markdown: file.content)
-                    .padding(24)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
+            MarkdownReaderView(markdown: file.content)
+                .padding(24)
         } else {
             CodePreviewView(
                 content: file.content,
@@ -487,6 +485,85 @@ private struct PetFileImagePreview: View {
     }
 }
 
+private struct PetFileImagePreviewLoader: View {
+    @EnvironmentObject private var model: AppModel
+    let file: ProjectFileContent
+    @State private var image: NSImage?
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                PetFileImagePreview(image: image, fileName: file.name)
+            } else if failed {
+                ContentUnavailableView(
+                    model.localized("无法预览图片", english: "Unable to Preview Image"),
+                    systemImage: "photo.badge.exclamationmark",
+                    description: Text(model.localized(
+                        "图片格式无效或当前系统不支持。",
+                        english: "The image is invalid or unsupported by this system."
+                    ))
+                )
+                .workspaceFill()
+            } else {
+                ProgressView(model.localized("正在生成预览…", english: "Generating Preview…"))
+                    .workspaceFill()
+            }
+        }
+        .task(id: PetFileImagePreviewCache.key(for: file)) {
+            failed = false
+            image = await PetFileImagePreviewCache.image(for: file)
+            failed = image == nil
+        }
+    }
+}
+
+@MainActor
+private enum PetFileImagePreviewCache {
+    private static let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 8
+        cache.totalCostLimit = 64 * 1_024 * 1_024
+        return cache
+    }()
+
+    static func key(for file: ProjectFileContent) -> String {
+        let modified = file.modifiedAt?.timeIntervalSince1970 ?? 0
+        return "\(file.path)|\(modified)|\(file.size)"
+    }
+
+    static func image(for file: ProjectFileContent) async -> NSImage? {
+        let cacheKey = key(for: file) as NSString
+        if let cached = cache.object(forKey: cacheKey) {
+            return cached
+        }
+        let data = file.binaryData ?? Data(file.content.utf8)
+        guard !data.isEmpty else { return nil }
+        let cgImage = await Task.detached(priority: .userInitiated) {
+            thumbnail(from: data)
+        }.value
+        guard !Task.isCancelled, let cgImage else { return nil }
+        let image = NSImage(cgImage: cgImage, size: .zero)
+        let cost = cgImage.width * cgImage.height * 4
+        cache.setObject(image, forKey: cacheKey, cost: cost)
+        return image
+    }
+
+    nonisolated private static func thumbnail(from data: Data) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, [
+            kCGImageSourceShouldCache: false,
+        ] as CFDictionary) else {
+            return nil
+        }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 2_048,
+            kCGImageSourceShouldCacheImmediately: true,
+        ] as CFDictionary)
+    }
+}
+
 private struct PetCheckerboardBackground: View {
     private let tileSize: CGFloat = 12
 
@@ -526,13 +603,8 @@ private enum PetFilePreviewResolver {
         imageExtensions.contains(URL(fileURLWithPath: name).pathExtension.lowercased())
     }
 
-    static func image(for file: ProjectFileContent) -> NSImage? {
-        let looksLikeImage = file.contentType?.lowercased().hasPrefix("image/") == true
+    static func isImage(_ file: ProjectFileContent) -> Bool {
+        file.contentType?.lowercased().hasPrefix("image/") == true
             || isImageFileName(file.name)
-        guard looksLikeImage || file.isBinary else { return nil }
-        let data = file.isBinary
-            ? Data(base64Encoded: file.content, options: .ignoreUnknownCharacters)
-            : Data(file.content.utf8)
-        return data.flatMap(NSImage.init(data:))
     }
 }

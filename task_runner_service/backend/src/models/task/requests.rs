@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -170,8 +171,28 @@ pub struct TaskListFilters {
     pub source_user_message_ids: Vec<String>,
     pub source_turn_ids: Vec<String>,
     pub task_profile: Option<String>,
+    pub after_updated_at: Option<String>,
+    pub after_id: Option<String>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
+}
+
+impl TaskListFilters {
+    pub fn cursor(&self) -> Result<Option<(DateTime<Utc>, &str)>, String> {
+        match (self.after_updated_at.as_deref(), self.after_id.as_deref()) {
+            (None, None) => Ok(None),
+            (Some(updated_at), Some(id)) => {
+                let updated_at = DateTime::parse_from_rfc3339(updated_at)
+                    .map_err(|_| "after_updated_at must use RFC3339".to_string())?
+                    .with_timezone(&Utc);
+                if id.is_empty() {
+                    return Err("after_id must be non-empty".to_string());
+                }
+                Ok(Some((updated_at, id)))
+            }
+            _ => Err("after_updated_at and after_id must be provided together".to_string()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

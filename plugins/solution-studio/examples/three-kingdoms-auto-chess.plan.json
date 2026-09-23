@@ -1,0 +1,580 @@
+{
+  "artifactKey": "three-kingdoms-auto-chess-v1",
+  "title": "《三国弈局》自走棋规划",
+  "sourceMode": "greenfield",
+  "projectProfile": {
+    "background": "三国题材拥有高人物辨识度，但同类产品常把人物背景停留在皮肤与数值层。项目希望把人物经历、阵营关系和典型战法直接转化为可理解、可组合的自走棋机制。",
+    "overview": "开发一款桌面 Web 单机自走棋。玩家在 8 方对局中招募三国武将、经营经济、调整站位并组合阵营、职业和人物关系羁绊，通过确定性自动战斗决出最终胜者。首版用于验证核心循环、人物辨识度和数值可平衡性。",
+    "projectType": "新建游戏开发项目",
+    "deliveryForm": "可独立运行的桌面 Web 垂直切片",
+    "targetPlatforms": ["桌面浏览器", "后续可封装 Steam 桌面客户端"]
+  },
+  "requirements": {
+    "status": "review",
+    "revision": 0,
+    "summary": "制作一款以三国人物经历、阵营关系和典型战法为基础的自走棋。首版目标是在桌面 Web 上交付一局可完整游玩的单机垂直切片，用较小内容量验证阵容构筑、自动战斗和三国人物辨识度。",
+    "goals": [
+      "玩家在第一局内理解购买武将、布阵、羁绊和自动战斗的核心循环",
+      "武将能力能让熟悉三国的玩家感受到人物背景与战法的对应关系",
+      "一局在 20 至 30 分钟内产生多次可解释的阵容决策",
+      "建立可扩展到更多武将、赛季主题和联网对战的数据结构"
+    ],
+    "users": [
+      "喜欢自走棋但希望单局节奏更紧凑的策略游戏玩家",
+      "对三国历史或《三国演义》人物有兴趣的轻中度玩家",
+      "希望研究阵容搭配、站位和经济运营的深度玩家"
+    ],
+    "inScope": [
+      "桌面 Web 端，1 名玩家与 7 名机器人同局",
+      "24 名可招募武将，魏、蜀、吴、群四个阵营",
+      "商店刷新、购买、升星、上阵、站位、羁绊、装备和自动战斗",
+      "完整胜负循环、基础机器人策略、战斗结算和局后总结",
+      "历史来源、演义来源和玩法演绎三类人物设定标记",
+      "键鼠操作、基础新手引导和关键状态可读性"
+    ],
+    "outOfScope": [
+      "真人联网匹配、组队和排行榜",
+      "账号、付费、赛季通行证和商业化系统",
+      "移动端适配与触摸交互",
+      "语音、完整剧情战役和大规模过场动画",
+      "超过 24 名武将的正式内容量与正式商业美术"
+    ],
+    "constraints": [
+      "首版需要在普通笔记本浏览器中稳定保持 60 FPS 的主要交互",
+      "战斗模拟必须可复现，便于调试机器人和数值平衡",
+      "人物设定必须标注来源层级，不能把演义桥段直接标为历史事实",
+      "所有规则数据与表现层解耦，便于后续扩充武将"
+    ],
+    "assumptions": [
+      "首版以 TypeScript 和 Web 渲染技术实现",
+      "首版采用 1 名玩家加 7 名机器人验证玩法，不包含联网服务",
+      "棋盘使用 7 列乘 6 行、玩家最多上阵 8 名武将",
+      "首版武将立绘和特效可以使用占位素材，重点验证玩法与信息表达"
+    ],
+    "openQuestions": [
+      "最终优先发布 Web、Steam 还是移动端",
+      "人物视觉更偏历史写实、演义戏剧化还是年轻化国潮",
+      "单局时长应稳定在 20 分钟还是允许 30 至 35 分钟的深度局",
+      "后续联网模式是否要求服务端权威战斗模拟"
+    ],
+    "evidence": [
+      {
+        "id": "E-001",
+        "label": "用户原始需求",
+        "source": "用户提出：根据三国人物背景制作一款自走棋游戏",
+        "note": "仅确认题材与游戏品类，其余首版范围均作为可调整假设。",
+        "confidence": "user-stated"
+      }
+    ],
+    "items": [
+      {
+        "id": "R-001",
+        "title": "完成一局清晰且紧凑的自走棋循环",
+        "description": "玩家能够经历准备、招募、布阵、自动战斗、结算和淘汰，直至产生最终胜者。",
+        "priority": "must",
+        "acceptanceCriteria": [
+          "新玩家在引导后 5 分钟内完成第一次购买、上阵和战斗",
+          "8 个参战方能够按回合结算生命值并产生唯一胜者",
+          "普通难度下单局中位时长落在 20 至 30 分钟",
+          "每轮开始前能明确看到当前阶段、剩余时间和下一场对手"
+        ],
+        "evidenceIds": ["E-001"],
+        "selectedDesignSectionId": "D-001"
+      },
+      {
+        "id": "R-002",
+        "title": "让武将背景转化为可辨识的玩法身份",
+        "description": "武将阵营、职业、技能和人物羁绊应来自其历史经历、演义形象或明确标记的玩法演绎。",
+        "priority": "must",
+        "acceptanceCriteria": [
+          "首版包含 24 名武将且四个阵营均不少于 5 人",
+          "每名武将拥有来源标签、角色定位、一个主动技能和数值模板",
+          "至少 8 名标志性人物的技能能被测试玩家正确联想到人物特征",
+          "历史、演义和玩法演绎信息在图鉴中有不同标识"
+        ],
+        "evidenceIds": ["E-001"],
+        "selectedDesignSectionId": "D-002"
+      },
+      {
+        "id": "R-003",
+        "parentRequirementId": "R-001",
+        "title": "通过羁绊、站位和技能形成阵容策略",
+        "description": "玩家需要在阵营羁绊、人物关系、职业协同和棋盘站位之间做取舍，而不是只追求单卡强度。",
+        "priority": "must",
+        "acceptanceCriteria": [
+          "至少提供 4 个阵营羁绊、6 个职业羁绊和 6 个双人或多人关系羁绊",
+          "前排、后排、突进和范围技能对站位产生可观察影响",
+          "同等星级阵容中至少存在三种可行的核心构筑方向",
+          "战斗详情能解释羁绊触发、技能目标和关键伤害来源"
+        ],
+        "evidenceIds": ["E-001"],
+        "selectedDesignSectionId": "D-003"
+      },
+      {
+        "id": "R-004",
+        "parentRequirementId": "R-001",
+        "title": "提供有取舍的招募、经济与成长系统",
+        "description": "玩家通过金币、商店刷新、人口、升星和装备管理阵容成长，并能理解每次投入的机会成本。",
+        "priority": "must",
+        "acceptanceCriteria": [
+          "商店概率随等级变化且在界面中可查看",
+          "三张同名同星武将可合成为更高星级",
+          "金币利息、连胜或连败奖励以及刷新成本有明确反馈",
+          "装备分配可改变至少两类核心构筑的优先级"
+        ],
+        "evidenceIds": ["E-001"],
+        "selectedDesignSectionId": "D-004"
+      },
+      {
+        "id": "R-005",
+        "parentRequirementId": "R-001",
+        "title": "用清楚的页面与战斗反馈降低理解成本",
+        "description": "准备界面需要同时承载棋盘、备战席、商店、经济和羁绊信息，战斗界面需要让结果可读。",
+        "priority": "must",
+        "acceptanceCriteria": [
+          "1440×900 视口下核心信息无需滚动即可访问",
+          "购买、拖动、合成、羁绊激活和金币变化均有即时反馈",
+          "色彩不是区分阵营、稀有度和状态的唯一方式",
+          "战斗结束后可查看伤害、承伤、治疗和技能施放摘要"
+        ],
+        "evidenceIds": ["E-001"],
+        "selectedDesignSectionId": "D-005"
+      },
+      {
+        "id": "R-006",
+        "title": "保证模拟稳定、可平衡并支持内容扩展",
+        "description": "核心规则需要确定性、数据驱动和可测试，能够快速定位异常并持续调整数值。",
+        "priority": "should",
+        "acceptanceCriteria": [
+          "相同随机种子与输入产生相同战斗结果",
+          "连续运行 1000 场机器人对局时无崩溃或无法结束的战斗",
+          "武将、技能、羁绊和商店概率均可通过数据配置调整",
+          "平衡报告能输出武将出场率、前四率、平均名次和组合胜率"
+        ],
+        "evidenceIds": ["E-001"],
+        "selectedDesignSectionId": "D-006"
+      }
+    ],
+    "updatedAt": "2026-09-15T11:00:00.000Z"
+  },
+  "design": {
+    "status": "review",
+    "revision": 0,
+    "basedOnRequirementsRevision": 1,
+    "summary": "采用 TypeScript 全栈同语言、React 管理界面、PixiJS 战斗渲染和纯 TypeScript 确定性规则内核。首版交付静态 Web 应用，配置与存档保存在本地，不引入服务端数据库；批量模拟在 Node.js CI 中运行。",
+    "blocks": [
+      {
+        "id": "D-000-B-001",
+        "type": "text",
+        "title": "项目技术基线",
+        "content": "### 语言与运行时\n\n使用 TypeScript 5.x 作为业务、规则与工具链的唯一开发语言；浏览器负责交互运行，Node.js 22 LTS 负责构建、测试和无渲染批量模拟。\n\n### 框架与 UI\n\n应用外壳、商店、阵容管理、图鉴与结算界面使用 React 19 + Vite 7。棋盘、武将、战斗动画与特效使用 PixiJS 8；React 不直接驱动逐帧战斗对象，只订阅阶段状态与 BattleEvent 投影。UI 采用 CSS/SVG 和系统字体，不引入另一套设计插件或运行时。\n\n### 规则与状态架构\n\n核心规则实现为无 DOM 依赖的纯 TypeScript 包：配置加载器 → 对局状态机 → 固定步长战斗模拟器 → BattleEvent 日志。界面状态与规则状态分离；机器人与玩家通过同一个 PlayerCommand 接口提交操作。\n\n### 数据与数据库\n\n武将、技能、羁绊、装备和商店概率使用版本化 JSON 配置。首版不需要服务端数据库；本地存档、设置和回放索引使用 IndexedDB，单局事件日志按压缩 JSON 保存。未来联网时再引入 PostgreSQL 保存账号、赛季与权威对局元数据，不能提前耦合首版规则内核。\n\n### 测试、构建与部署\n\nVitest 覆盖规则单元测试和固定种子快照，Playwright 覆盖核心用户流程，Node.js 无渲染 runner 执行 1000 场平衡回归。Vite 输出静态资源部署到 CDN；CI 依次执行类型检查、单元测试、固定种子回归、端到端冒烟和生产构建。"
+      },
+      {
+        "id": "D-000-B-002",
+        "type": "architecture",
+        "title": "项目总体技术架构",
+        "content": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1200 720\"><defs><marker id=\"a\" markerWidth=\"9\" markerHeight=\"9\" refX=\"8\" refY=\"4.5\" orient=\"auto\"><path d=\"M0 0L9 4.5L0 9Z\" fill=\"#5e5ce6\"/></marker></defs><rect width=\"1200\" height=\"720\" rx=\"28\" fill=\"#f5f5f7\"/><g font-family=\"-apple-system,BlinkMacSystemFont,sans-serif\"><text x=\"54\" y=\"60\" font-size=\"26\" font-weight=\"720\" fill=\"#1d1d1f\">《三国弈局》总体技术架构</text><text x=\"54\" y=\"89\" font-size=\"14\" fill=\"#6e6e73\">表现层只消费状态投影与事件，规则内核保持确定性、可复现、可无渲染运行</text><rect x=\"44\" y=\"126\" width=\"1112\" height=\"166\" rx=\"22\" fill=\"#ffffff\" stroke=\"#d8d8df\"/><text x=\"70\" y=\"158\" font-size=\"12\" font-weight=\"700\" fill=\"#5e5ce6\">BROWSER PRESENTATION</text><g fill=\"#f8f8fb\" stroke=\"#d8d8df\"><rect x=\"70\" y=\"181\" width=\"260\" height=\"76\" rx=\"16\"/><rect x=\"386\" y=\"181\" width=\"260\" height=\"76\" rx=\"16\"/><rect x=\"702\" y=\"181\" width=\"428\" height=\"76\" rx=\"16\"/></g><g fill=\"#1d1d1f\"><text x=\"94\" y=\"213\" font-size=\"16\" font-weight=\"680\">React 应用外壳</text><text x=\"410\" y=\"213\" font-size=\"16\" font-weight=\"680\">PixiJS 战斗舞台</text><text x=\"726\" y=\"213\" font-size=\"16\" font-weight=\"680\">UI 状态与事件投影</text></g><g fill=\"#6e6e73\" font-size=\"12\"><text x=\"94\" y=\"237\">商店 · 阵容 · 图鉴 · 结算</text><text x=\"410\" y=\"237\">棋盘 · 单位 · 动画 · 特效</text><text x=\"726\" y=\"237\">阶段状态 · 战斗日志 · 统计视图</text></g><rect x=\"44\" y=\"332\" width=\"1112\" height=\"198\" rx=\"22\" fill=\"#eef0ff\" stroke=\"#cfd0fa\"/><text x=\"70\" y=\"366\" font-size=\"12\" font-weight=\"700\" fill=\"#5e5ce6\">DETERMINISTIC CORE · PURE TYPESCRIPT</text><g fill=\"#ffffff\" stroke=\"#d8d8df\"><rect x=\"70\" y=\"395\" width=\"230\" height=\"92\" rx=\"16\"/><rect x=\"342\" y=\"395\" width=\"230\" height=\"92\" rx=\"16\"/><rect x=\"614\" y=\"395\" width=\"230\" height=\"92\" rx=\"16\"/><rect x=\"886\" y=\"395\" width=\"244\" height=\"92\" rx=\"16\"/></g><g text-anchor=\"middle\" fill=\"#1d1d1f\" font-size=\"15\" font-weight=\"680\"><text x=\"185\" y=\"433\">版本化配置加载器</text><text x=\"457\" y=\"433\">对局状态机</text><text x=\"729\" y=\"433\">固定步长战斗模拟</text><text x=\"1008\" y=\"433\">机器人与命令接口</text></g><g text-anchor=\"middle\" fill=\"#6e6e73\" font-size=\"12\"><text x=\"185\" y=\"458\">schema · 引用 · 版本</text><text x=\"457\" y=\"458\">准备 · 战斗 · 结算</text><text x=\"729\" y=\"458\">seed · tick · BattleEvent</text><text x=\"1008\" y=\"458\">PlayerCommand · BotPolicy</text></g><g stroke=\"#5e5ce6\" stroke-width=\"2.2\" fill=\"none\" marker-end=\"url(#a)\"><path d=\"M300 441H326\"/><path d=\"M572 441H598\"/><path d=\"M844 441H870\"/><path d=\"M729 332V306H914V273\"/></g><rect x=\"44\" y=\"570\" width=\"1112\" height=\"106\" rx=\"22\" fill=\"#ffffff\" stroke=\"#d8d8df\"/><text x=\"70\" y=\"604\" font-size=\"12\" font-weight=\"700\" fill=\"#34a853\">DATA &amp; TOOLING</text><g fill=\"#1d1d1f\" font-size=\"14\" font-weight=\"650\"><text x=\"70\" y=\"642\">JSON 内容配置</text><text x=\"314\" y=\"642\">IndexedDB 存档与回放</text><text x=\"630\" y=\"642\">Node.js 批量模拟</text><text x=\"910\" y=\"642\">Vite 静态构建 / CDN</text></g><g fill=\"#6e6e73\" font-size=\"11\"><text x=\"70\" y=\"660\">首版无服务端数据库</text><text x=\"314\" y=\"660\">本地持久化</text><text x=\"630\" y=\"660\">CI 平衡回归</text><text x=\"910\" y=\"660\">桌面浏览器交付</text></g></g></svg>"
+      }
+    ],
+    "sections": [
+      {
+        "id": "D-001",
+        "title": "8 方回合制垂直切片",
+        "body": "采用 1 名玩家加 7 名机器人的 8 方回合制自走棋。每轮包含准备与自动战斗，缩短首版验证路径，同时保留未来替换真人玩家的会话接口。",
+        "requirementIds": ["R-001"],
+        "evidenceIds": ["E-001"],
+        "blocks": [
+          {
+            "id": "D-001-B-001",
+            "type": "text",
+            "title": "核心循环技术设计",
+            "content": "### 模块职责\n\n`MatchCoordinator` 管理 8 名参战方、配对、阶段切换、伤害结算与淘汰；`EconomySystem` 管理收入、商店和人口；`FormationService` 校验上阵与站位；`BattleSimulator` 只接收不可变战斗快照并产出 BattleEvent；`MatchProjection` 把规则事件转换成 React 与 PixiJS 可消费的视图状态。\n\n### 状态与接口\n\n对局状态固定为 `preparing → battling → resolving → preparing | finished`。玩家和机器人统一提交 `PlayerCommand`，包括购买、出售、刷新、升级、装备和移动单位。进入战斗前冻结双方阵容并生成 `BattleInput`，其中包含 configVersion、round、seed、单位快照和羁绊快照。\n\n### 规则基线\n\n8 个参战方初始拥有 100 点生命值；准备阶段 30 秒；玩家从 1 级、3 金币开始，最高 8 级并最多上阵 8 人；首版使用 24 名武将共享卡池；一局目标 20–30 分钟。失败伤害只根据回合数和敌方存活单位结算。\n\n### 异常与恢复\n\n非法命令返回带原因的拒绝结果且不得部分修改状态。战斗超过规则时间上限时按剩余生命与总伤害判定，不允许无限运行。只在回合边界保存 `MatchSnapshot`；崩溃恢复后用 snapshot、configVersion 与 seed 重放当前回合。\n\n### 验证\n\n固定种子测试覆盖阶段转换、配对、平局、同时死亡、空棋盘和最终胜者；Playwright 验证玩家在 5 分钟内完成购买、上阵和首战；1000 局机器人回归检查所有对局均能结束。"
+          },
+          {
+            "id": "D-001-B-002",
+            "type": "flowchart",
+            "title": "单局主循环",
+            "content": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1100 450\"><defs><marker id=\"arrow\" markerWidth=\"9\" markerHeight=\"9\" refX=\"8\" refY=\"4.5\" orient=\"auto\"><path d=\"M0 0L9 4.5L0 9Z\" fill=\"#5e5ce6\"/></marker></defs><rect width=\"1100\" height=\"450\" rx=\"24\" fill=\"#f7f7fa\"/><g font-family=\"-apple-system,BlinkMacSystemFont,sans-serif\"><text x=\"42\" y=\"52\" font-size=\"22\" font-weight=\"700\" fill=\"#1d1d1f\">《三国弈局》单局主循环</text><text x=\"42\" y=\"78\" font-size=\"12\" fill=\"#6e6e73\">准备、战斗与淘汰持续循环，直到产生唯一胜者</text><g fill=\"#fff\" stroke=\"#d8d8df\"><rect x=\"42\" y=\"134\" width=\"150\" height=\"72\" rx=\"16\"/><rect x=\"250\" y=\"134\" width=\"150\" height=\"72\" rx=\"16\"/><rect x=\"458\" y=\"134\" width=\"150\" height=\"72\" rx=\"16\"/><rect x=\"666\" y=\"134\" width=\"150\" height=\"72\" rx=\"16\"/><path d=\"M920 110l65 60-65 60-65-60z\"/><rect x=\"840\" y=\"326\" width=\"160\" height=\"72\" rx=\"36\"/></g><g fill=\"#1d1d1f\" font-size=\"14\" font-weight=\"650\" text-anchor=\"middle\"><text x=\"117\" y=\"165\">回合开始</text><text x=\"117\" y=\"187\">收入与商店</text><text x=\"325\" y=\"165\">招募与成长</text><text x=\"325\" y=\"187\">刷新 · 升星</text><text x=\"533\" y=\"165\">布阵</text><text x=\"533\" y=\"187\">站位 · 装备</text><text x=\"741\" y=\"165\">自动战斗</text><text x=\"741\" y=\"187\">技能与羁绊</text><text x=\"920\" y=\"167\">是否</text><text x=\"920\" y=\"187\">淘汰</text><text x=\"920\" y=\"368\">产生最终胜者</text></g><g stroke=\"#5e5ce6\" stroke-width=\"2.2\" fill=\"none\" marker-end=\"url(#arrow)\"><path d=\"M192 170H234\"/><path d=\"M400 170H442\"/><path d=\"M608 170H650\"/><path d=\"M816 170H839\"/><path d=\"M920 230V310\"/><path d=\"M985 170H1040V270H117V222\"/></g><g font-size=\"11\" font-weight=\"650\" fill=\"#5e5ce6\"><text x=\"932\" y=\"270\">是 · 仅剩一名玩家</text><text x=\"510\" y=\"260\">否 · 结算伤害并进入下一轮</text></g></g></svg>"
+          }
+        ]
+      },
+      {
+        "id": "D-002",
+        "title": "三层来源的人物内容模型",
+        "body": "每名武将把历史事实、演义形象和玩法演绎分开记录，再映射为阵营、职业、能力关键词与技能，既保留辨识度，也避免来源混淆。",
+        "requirementIds": ["R-002"],
+        "evidenceIds": ["E-001"],
+        "blocks": [
+          {
+            "id": "D-002-B-001",
+            "type": "text",
+            "title": "首版人物框架",
+            "content": "魏：曹操、夏侯惇、张辽、典韦、郭嘉、甄姬。\n\n蜀：刘备、关羽、张飞、赵云、诸葛亮、黄忠。\n\n吴：孙权、周瑜、孙策、太史慈、吕蒙、大乔。\n\n群：吕布、貂蝉、董卓、袁绍、华佗、贾诩。\n\n示例映射：关羽以蓄势与斩将表现威震华夏；张辽以突进和压制表现逍遥津；郭嘉以低生命高收益表现遗计；周瑜以范围火攻和都督协同表现赤壁。"
+          },
+          {
+            "id": "D-002-B-002",
+            "type": "architecture",
+            "title": "人物内容生产结构",
+            "content": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 980 430\"><defs><marker id=\"a\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0 0L8 4L0 8Z\" fill=\"#5e5ce6\"/></marker></defs><rect width=\"980\" height=\"430\" rx=\"24\" fill=\"#f7f7fa\"/><g font-family=\"-apple-system,sans-serif\"><text x=\"42\" y=\"48\" font-size=\"20\" font-weight=\"700\" fill=\"#1d1d1f\">人物背景到玩法数据</text><g fill=\"#eef0ff\" stroke=\"#c9c8f7\"><rect x=\"42\" y=\"92\" width=\"190\" height=\"72\" rx=\"15\"/><rect x=\"42\" y=\"184\" width=\"190\" height=\"72\" rx=\"15\"/><rect x=\"42\" y=\"276\" width=\"190\" height=\"72\" rx=\"15\"/></g><g fill=\"#fff\" stroke=\"#d8d8df\"><rect x=\"326\" y=\"138\" width=\"210\" height=\"164\" rx=\"18\"/><rect x=\"630\" y=\"92\" width=\"280\" height=\"256\" rx=\"18\"/></g><g fill=\"#1d1d1f\" font-size=\"14\" font-weight=\"650\"><text x=\"92\" y=\"134\">历史材料</text><text x=\"92\" y=\"226\">演义形象</text><text x=\"92\" y=\"318\">玩法演绎</text><text x=\"365\" y=\"179\">人物设计档案</text><text x=\"665\" y=\"133\">可加载配置</text></g><g fill=\"#73737a\" font-size=\"12\"><text x=\"70\" y=\"151\">史实与时期</text><text x=\"70\" y=\"243\">典型桥段与性格</text><text x=\"70\" y=\"335\">平衡需要的合理改编</text><text x=\"365\" y=\"207\">来源标签 · 能力关键词</text><text x=\"365\" y=\"231\">阵营 · 职业 · 关系</text><text x=\"365\" y=\"255\">技能语义 · 禁用主题</text><text x=\"665\" y=\"167\">heroes.json</text><text x=\"665\" y=\"195\">abilities.json</text><text x=\"665\" y=\"223\">synergies.json</text><text x=\"665\" y=\"251\">localization.json</text><text x=\"665\" y=\"287\">数值检查与来源审阅</text></g><g stroke=\"#5e5ce6\" stroke-width=\"2\" fill=\"none\" marker-end=\"url(#a)\"><path d=\"M232 128H286V190H310\"/><path d=\"M232 220H310\"/><path d=\"M232 312H286V250H310\"/><path d=\"M536 220H614\"/></g></g></svg>"
+          }
+        ]
+      },
+      {
+        "id": "D-003",
+        "title": "确定性棋盘战斗与双层羁绊",
+        "body": "战斗使用固定步长与随机种子，规则层只产出事件，表现层消费事件播放动画。阵营和职业构成基础羁绊，少量人物关系构成高辨识度特例。",
+        "requirementIds": ["R-003"],
+        "evidenceIds": ["E-001"],
+        "blocks": [
+          {
+            "id": "D-003-B-001",
+            "type": "text",
+            "title": "战斗与羁绊规则",
+            "content": "棋盘为 7×6 六边形或错列方格，双方各使用半场。单位按距离、仇恨和技能规则选择目标。每个模拟 tick 只更新规则状态并追加 BattleEvent。\n\n基础羁绊：魏、蜀、吴、群以及先锋、猛将、谋士、射手、刺客、辅佐。\n\n关系羁绊只覆盖高识别组合，例如桃园结义、五虎上将、五子良将、江东双璧。关系羁绊效果较强但人数要求更具体，形成构筑取舍。"
+          },
+          {
+            "id": "D-003-B-002",
+            "type": "architecture",
+            "title": "战斗运行时架构",
+            "content": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 980 430\"><defs><marker id=\"m\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0 0L8 4L0 8Z\" fill=\"#5e5ce6\"/></marker></defs><rect width=\"980\" height=\"430\" rx=\"24\" fill=\"#f7f7fa\"/><g font-family=\"-apple-system,sans-serif\"><text x=\"42\" y=\"48\" font-size=\"20\" font-weight=\"700\" fill=\"#1d1d1f\">确定性战斗运行时</text><rect x=\"40\" y=\"84\" width=\"580\" height=\"300\" rx=\"20\" fill=\"#eef0ff\" stroke=\"#c9c8f7\"/><text x=\"66\" y=\"118\" font-size=\"13\" font-weight=\"700\" fill=\"#5e5ce6\">RULES · 可测试</text><g fill=\"#fff\" stroke=\"#d8d8df\"><rect x=\"72\" y=\"148\" width=\"150\" height=\"70\" rx=\"14\"/><rect x=\"256\" y=\"148\" width=\"150\" height=\"70\" rx=\"14\"/><rect x=\"440\" y=\"148\" width=\"150\" height=\"70\" rx=\"14\"/><rect x=\"164\" y=\"270\" width=\"170\" height=\"70\" rx=\"14\"/><rect x=\"390\" y=\"270\" width=\"170\" height=\"70\" rx=\"14\"/><rect x=\"692\" y=\"126\" width=\"240\" height=\"92\" rx=\"16\"/><rect x=\"692\" y=\"270\" width=\"240\" height=\"92\" rx=\"16\"/></g><g fill=\"#1d1d1f\" font-size=\"13\" font-weight=\"650\" text-anchor=\"middle\"><text x=\"147\" y=\"188\">状态与随机种子</text><text x=\"331\" y=\"188\">目标与移动系统</text><text x=\"515\" y=\"188\">技能与效果系统</text><text x=\"249\" y=\"310\">固定步长模拟器</text><text x=\"475\" y=\"310\">BattleEvent 日志</text><text x=\"812\" y=\"167\">表现播放器</text><text x=\"812\" y=\"188\">动画 · 音效 · 飘字</text><text x=\"812\" y=\"311\">复盘与平衡工具</text><text x=\"812\" y=\"332\">回放 · 指标 · 调试</text></g><g stroke=\"#5e5ce6\" stroke-width=\"2\" fill=\"none\" marker-end=\"url(#m)\"><path d=\"M222 183H240\"/><path d=\"M406 183H424\"/><path d=\"M515 218V254\"/><path d=\"M334 305H374\"/><path d=\"M560 305H676V190\"/><path d=\"M560 316H676\"/></g></g></svg>"
+          }
+        ]
+      },
+      {
+        "id": "D-004",
+        "title": "透明经济与三合一成长",
+        "body": "沿用易理解的金币、利息、商店和三合一升星框架，把人物关系与装备选择作为变化点。所有概率和收入变化均可查看。",
+        "requirementIds": ["R-004"],
+        "evidenceIds": ["E-001"],
+        "blocks": [
+          {
+            "id": "D-004-B-002",
+            "type": "text",
+            "title": "经济与成长技术设计",
+            "content": "### 数据模型\n\n`PlayerEconomy` 保存金币、等级、经验、连胜/连败和刷新次数；`SharedPool` 按武将与星级维护全局库存；`ShopOffer` 保存本轮候选与价格；`Roster` 保存棋盘和备战席实例。所有概率、利息阈值、升级费用与卡池数量来自版本化配置。\n\n### 事务边界\n\n购买、出售、刷新、升级和三合一合成均通过原子命令执行。命令先校验金币、格位和卡池库存，再一次性提交状态和事件；失败时不得扣款或消耗库存。三个同名同星实例合成后返还原实例并创建高星实例，装备归并规则必须确定。\n\n### 一致性与异常\n\n8 方共享卡池以对局状态为唯一真相，商店只持有引用。玩家淘汰、出售或刷新时必须归还正确数量。任何库存负数、重复实例或金币不守恒都立即记录诊断事件并阻断当前命令。\n\n### 验证\n\n属性测试覆盖随机购买、出售、刷新和淘汰序列下的金币与卡池守恒；固定场景覆盖满备战席合成、装备冲突和商店并发消耗；UI 测试验证每次金币变化均显示原因。"
+          },
+          {
+            "id": "D-004-B-001",
+            "type": "flowchart",
+            "title": "准备阶段决策流",
+            "content": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 980 410\"><defs><marker id=\"e\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0 0L8 4L0 8Z\" fill=\"#5e5ce6\"/></marker></defs><rect width=\"980\" height=\"410\" rx=\"24\" fill=\"#f7f7fa\"/><g font-family=\"-apple-system,sans-serif\"><text x=\"42\" y=\"48\" font-size=\"20\" font-weight=\"700\" fill=\"#1d1d1f\">准备阶段的机会成本</text><g fill=\"#fff\" stroke=\"#d8d8df\"><rect x=\"42\" y=\"150\" width=\"150\" height=\"70\" rx=\"35\"/><path d=\"M304 125l75 60-75 60-75-60z\"/><rect x=\"456\" y=\"72\" width=\"170\" height=\"68\" rx=\"14\"/><rect x=\"456\" y=\"166\" width=\"170\" height=\"68\" rx=\"14\"/><rect x=\"456\" y=\"260\" width=\"170\" height=\"68\" rx=\"14\"/><rect x=\"746\" y=\"150\" width=\"170\" height=\"70\" rx=\"35\"/></g><g fill=\"#1d1d1f\" font-size=\"13\" font-weight=\"650\" text-anchor=\"middle\"><text x=\"117\" y=\"190\">获得本轮金币</text><text x=\"304\" y=\"180\">阵容当前</text><text x=\"304\" y=\"200\">最缺什么</text><text x=\"541\" y=\"112\">购买或刷新</text><text x=\"541\" y=\"206\">升级人口</text><text x=\"541\" y=\"300\">保留金币吃利息</text><text x=\"831\" y=\"190\">锁定阵容并布阵</text></g><g stroke=\"#5e5ce6\" stroke-width=\"2\" fill=\"none\" marker-end=\"url(#e)\"><path d=\"M192 185H213\"/><path d=\"M379 160L440 111\"/><path d=\"M379 185H440\"/><path d=\"M379 210L440 289\"/><path d=\"M626 106H690V185H730\"/><path d=\"M626 200H730\"/><path d=\"M626 294H690V205H730\"/></g><g fill=\"#5e5ce6\" font-size=\"10\"><text x=\"399\" y=\"120\">缺核心卡</text><text x=\"397\" y=\"178\">缺上阵位</text><text x=\"387\" y=\"268\">强度足够</text></g></g></svg>"
+          }
+        ]
+      },
+      {
+        "id": "D-005",
+        "title": "棋盘中心的单屏准备界面",
+        "body": "主界面以棋盘为中心，顶部呈现阶段与对手，右侧呈现经济、人口和羁绊，底部保留备战席与商店。详细数据使用临时检查器展开。",
+        "requirementIds": ["R-005"],
+        "evidenceIds": ["E-001"],
+        "blocks": [
+          {
+            "id": "D-005-B-001",
+            "type": "text",
+            "title": "交互原则",
+            "content": "购买采用点击，部署采用拖放并提供可落点提示。武将卡始终同时显示姓名、费用和职业符号。羁绊变化在放下棋子前预览，放下后确认。战斗阶段锁定操作，但允许查看武将、伤害统计和对手阵容。"
+          },
+          {
+            "id": "D-005-B-002",
+            "type": "ui-svg",
+            "title": "准备阶段页面设计",
+            "content": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1200 760\"><defs><linearGradient id=\"bg\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop stop-color=\"#17181d\"/><stop offset=\"1\" stop-color=\"#242027\"/></linearGradient><linearGradient id=\"gold\"><stop stop-color=\"#e8c47c\"/><stop offset=\"1\" stop-color=\"#a8752d\"/></linearGradient></defs><rect width=\"1200\" height=\"760\" rx=\"24\" fill=\"url(#bg)\"/><g font-family=\"-apple-system,BlinkMacSystemFont,sans-serif\"><text x=\"40\" y=\"44\" font-size=\"16\" font-weight=\"700\" fill=\"#f3e7cf\">三国弈局</text><text x=\"510\" y=\"43\" font-size=\"15\" font-weight=\"650\" fill=\"#fff\">第 8 回合 · 准备阶段</text><rect x=\"1016\" y=\"20\" width=\"144\" height=\"38\" rx=\"19\" fill=\"#343139\"/><text x=\"1044\" y=\"44\" font-size=\"13\" fill=\"#f0c976\">下一战：孙策</text><rect x=\"36\" y=\"78\" width=\"870\" height=\"468\" rx=\"20\" fill=\"#242a27\" stroke=\"#5e584b\"/><g stroke=\"#4c544e\" stroke-width=\"1\"><path d=\"M60 100H882M60 168H882M60 236H882M60 304H882M60 372H882M60 440H882M60 508H882\"/><path d=\"M60 100V508M177 100V508M294 100V508M411 100V508M528 100V508M645 100V508M762 100V508M882 100V508\"/></g><g><circle cx=\"235\" cy=\"407\" r=\"31\" fill=\"#8f342f\" stroke=\"#e8c47c\" stroke-width=\"3\"/><text x=\"211\" y=\"412\" font-size=\"13\" font-weight=\"700\" fill=\"#fff\">关羽</text><circle cx=\"470\" cy=\"407\" r=\"31\" fill=\"#8f342f\" stroke=\"#e8c47c\" stroke-width=\"3\"/><text x=\"446\" y=\"412\" font-size=\"13\" font-weight=\"700\" fill=\"#fff\">张飞</text><circle cx=\"704\" cy=\"339\" r=\"31\" fill=\"#365f90\" stroke=\"#8ab4e8\" stroke-width=\"3\"/><text x=\"680\" y=\"344\" font-size=\"13\" font-weight=\"700\" fill=\"#fff\">赵云</text></g><rect x=\"930\" y=\"78\" width=\"234\" height=\"468\" rx=\"20\" fill=\"#2c2a30\"/><text x=\"956\" y=\"118\" font-size=\"13\" fill=\"#aaa7ad\">金币</text><text x=\"1118\" y=\"118\" text-anchor=\"end\" font-size=\"22\" font-weight=\"700\" fill=\"#f0c976\">37</text><text x=\"956\" y=\"158\" font-size=\"13\" fill=\"#aaa7ad\">人口</text><text x=\"1118\" y=\"158\" text-anchor=\"end\" font-size=\"15\" fill=\"#fff\">6 / 6</text><line x1=\"954\" y1=\"184\" x2=\"1140\" y2=\"184\" stroke=\"#47444c\"/><text x=\"956\" y=\"219\" font-size=\"13\" font-weight=\"650\" fill=\"#fff\">已激活羁绊</text><rect x=\"954\" y=\"238\" width=\"186\" height=\"48\" rx=\"12\" fill=\"#39353b\"/><text x=\"972\" y=\"266\" font-size=\"13\" fill=\"#f0c976\">蜀 4 · 全队回复</text><rect x=\"954\" y=\"298\" width=\"186\" height=\"48\" rx=\"12\" fill=\"#39353b\"/><text x=\"972\" y=\"326\" font-size=\"13\" fill=\"#f0c976\">桃园 3 · 同生共死</text><text x=\"956\" y=\"389\" font-size=\"13\" font-weight=\"650\" fill=\"#fff\">本轮建议</text><text x=\"956\" y=\"416\" font-size=\"12\" fill=\"#aaa7ad\">再上阵 1 名猛将</text><text x=\"956\" y=\"438\" font-size=\"12\" fill=\"#aaa7ad\">可激活 4 猛将</text><rect x=\"36\" y=\"566\" width=\"870\" height=\"72\" rx=\"16\" fill=\"#2c2a30\"/><text x=\"54\" y=\"590\" font-size=\"11\" fill=\"#8f8b92\">备战席</text><g fill=\"#454149\"><rect x=\"54\" y=\"601\" width=\"90\" height=\"25\" rx=\"8\"/><rect x=\"154\" y=\"601\" width=\"90\" height=\"25\" rx=\"8\"/><rect x=\"254\" y=\"601\" width=\"90\" height=\"25\" rx=\"8\"/></g><text x=\"71\" y=\"618\" font-size=\"11\" fill=\"#fff\">刘备 ★</text><text x=\"171\" y=\"618\" font-size=\"11\" fill=\"#fff\">黄忠 ★</text><text x=\"271\" y=\"618\" font-size=\"11\" fill=\"#fff\">华佗 ★</text><rect x=\"36\" y=\"656\" width=\"1128\" height=\"78\" rx=\"18\" fill=\"#2c2a30\"/><text x=\"54\" y=\"683\" font-size=\"11\" fill=\"#8f8b92\">招募</text><g fill=\"#3c3940\"><rect x=\"54\" y=\"692\" width=\"178\" height=\"30\" rx=\"9\"/><rect x=\"242\" y=\"692\" width=\"178\" height=\"30\" rx=\"9\"/><rect x=\"430\" y=\"692\" width=\"178\" height=\"30\" rx=\"9\"/><rect x=\"618\" y=\"692\" width=\"178\" height=\"30\" rx=\"9\"/><rect x=\"806\" y=\"692\" width=\"178\" height=\"30\" rx=\"9\"/></g><g font-size=\"11\" fill=\"#fff\"><text x=\"72\" y=\"712\">张辽 · 3 金</text><text x=\"260\" y=\"712\">郭嘉 · 4 金</text><text x=\"448\" y=\"712\">孙策 · 3 金</text><text x=\"636\" y=\"712\">貂蝉 · 2 金</text><text x=\"824\" y=\"712\">典韦 · 2 金</text></g><rect x=\"1002\" y=\"692\" width=\"142\" height=\"30\" rx=\"9\" fill=\"url(#gold)\"/><text x=\"1073\" y=\"712\" text-anchor=\"middle\" font-size=\"11\" font-weight=\"700\" fill=\"#251d12\">刷新 · 2 金</text></g></svg>"
+          }
+        ]
+      },
+      {
+        "id": "D-006",
+        "title": "数据驱动规则与自动平衡回放",
+        "body": "核心对象由版本化配置加载；模拟器能够批量运行机器人对局并输出指标，人工评审结合自动异常检测形成调整闭环。",
+        "requirementIds": ["R-006"],
+        "evidenceIds": ["E-001"],
+        "blocks": [
+          {
+            "id": "D-006-B-001",
+            "type": "text",
+            "title": "质量与平衡策略",
+            "content": "### 模块边界\n\n版本化配置仓库只保存规则与内容数据；静态校验器负责 schema、引用和数值范围；无渲染模拟器只依赖确定性规则内核；指标仓库按 configVersion、buildId 与 randomSeed 保存结果；发布门禁读取报告，但最终平衡结论由设计评审确认。\n\n### 指标与自动阻断\n\n报告至少包括武将出场率、购买率、前四率、平均名次、羁绊组合胜率、回合时长分布与异常终局率。1000 场回归中出现死循环、结果不可复现、P95 单局模拟超过 3 秒，或任一武将前四率相对基线偏移超过 8 个百分点时自动阻断。\n\n### 追踪与回滚\n\n每次运行记录 configVersion、代码 buildId、机器人策略版本与随机种子集合。发布产物保留上一稳定配置；评审拒绝或线上指标越界时，只回滚配置指针，不覆盖历史报告。首版要求单场无渲染模拟至少 20 倍速，并保持准备与战斗表现目标 60 FPS。"
+          },
+          {
+            "id": "D-006-B-002",
+            "type": "architecture",
+            "title": "自动验证与平衡平台",
+            "content": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1400 760\"><defs><marker id=\"arrow\" markerWidth=\"10\" markerHeight=\"10\" refX=\"9\" refY=\"5\" orient=\"auto\"><path d=\"M0 0L10 5L0 10Z\" fill=\"#6467d7\"/></marker><filter id=\"shadow\" x=\"-20%\" y=\"-20%\" width=\"140%\" height=\"140%\"><feDropShadow dx=\"0\" dy=\"8\" stdDeviation=\"14\" flood-color=\"#182033\" flood-opacity=\".08\"/></filter></defs><rect width=\"1400\" height=\"760\" rx=\"28\" fill=\"#f5f5f7\"/><g font-family=\"-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif\"><text x=\"64\" y=\"72\" font-size=\"28\" font-weight=\"720\" fill=\"#1d1d1f\">自动验证与平衡平台</text><text x=\"64\" y=\"104\" font-size=\"15\" fill=\"#6e6e73\">每份报告都能追溯到配置、构建、机器人策略与随机种子</text><rect x=\"54\" y=\"144\" width=\"1292\" height=\"220\" rx=\"24\" fill=\"#ffffff\" stroke=\"#dedee5\" filter=\"url(#shadow)\"/><text x=\"82\" y=\"180\" font-size=\"12\" font-weight=\"700\" fill=\"#6467d7\">AUTOMATED PIPELINE</text><g fill=\"#f8f8fb\" stroke=\"#d6d6de\"><rect x=\"82\" y=\"207\" width=\"190\" height=\"112\" rx=\"18\"/><rect x=\"328\" y=\"207\" width=\"190\" height=\"112\" rx=\"18\"/><rect x=\"574\" y=\"207\" width=\"190\" height=\"112\" rx=\"18\"/><rect x=\"820\" y=\"207\" width=\"190\" height=\"112\" rx=\"18\"/><rect x=\"1066\" y=\"207\" width=\"250\" height=\"112\" rx=\"18\"/></g><g fill=\"#1d1d1f\"><text x=\"104\" y=\"239\" font-size=\"16\" font-weight=\"680\">版本化配置仓库</text><text x=\"350\" y=\"239\" font-size=\"16\" font-weight=\"680\">静态校验器</text><text x=\"596\" y=\"239\" font-size=\"16\" font-weight=\"680\">无渲染模拟器</text><text x=\"842\" y=\"239\" font-size=\"16\" font-weight=\"680\">指标仓库</text><text x=\"1088\" y=\"239\" font-size=\"16\" font-weight=\"680\">平衡报告与门禁</text></g><g fill=\"#6e6e73\" font-size=\"13\"><text x=\"104\" y=\"266\">configVersion · schema</text><text x=\"104\" y=\"288\">武将 · 技能 · 羁绊</text><text x=\"350\" y=\"266\">引用 · 范围 · 兼容性</text><text x=\"350\" y=\"288\">失败即停止流水线</text><text x=\"596\" y=\"266\">固定种子回归</text><text x=\"596\" y=\"288\">1000 场机器人对局</text><text x=\"842\" y=\"266\">buildId · seedSet</text><text x=\"842\" y=\"288\">版本间趋势对比</text><text x=\"1088\" y=\"266\">阈值判断 · 差异摘要</text><text x=\"1088\" y=\"288\">可审阅、可追溯</text></g><g stroke=\"#6467d7\" stroke-width=\"2.5\" fill=\"none\" marker-end=\"url(#arrow)\"><path d=\"M272 263H312\"/><path d=\"M518 263H558\"/><path d=\"M764 263H804\"/><path d=\"M1010 263H1050\"/></g><rect x=\"54\" y=\"404\" width=\"820\" height=\"282\" rx=\"24\" fill=\"#ffffff\" stroke=\"#dedee5\"/><text x=\"82\" y=\"441\" font-size=\"12\" font-weight=\"700\" fill=\"#34a853\">HUMAN REVIEW</text><text x=\"82\" y=\"480\" font-size=\"22\" font-weight=\"680\" fill=\"#1d1d1f\">自动检测给证据，设计评审做决定</text><g><circle cx=\"111\" cy=\"536\" r=\"15\" fill=\"#e9f6ed\"/><text x=\"111\" y=\"541\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"700\" fill=\"#218739\">1</text><text x=\"142\" y=\"541\" font-size=\"15\" fill=\"#1d1d1f\">检查异常武将、羁绊与对局时长</text><circle cx=\"111\" cy=\"586\" r=\"15\" fill=\"#e9f6ed\"/><text x=\"111\" y=\"591\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"700\" fill=\"#218739\">2</text><text x=\"142\" y=\"591\" font-size=\"15\" fill=\"#1d1d1f\">对照基线与玩法目标解释差异</text><circle cx=\"111\" cy=\"636\" r=\"15\" fill=\"#e9f6ed\"/><text x=\"111\" y=\"641\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"700\" fill=\"#218739\">3</text><text x=\"142\" y=\"641\" font-size=\"15\" fill=\"#1d1d1f\">批准配置、要求调参或回滚稳定版本</text></g><rect x=\"914\" y=\"404\" width=\"432\" height=\"282\" rx=\"24\" fill=\"#eef0ff\" stroke=\"#cfd0fa\"/><text x=\"944\" y=\"447\" font-size=\"12\" font-weight=\"700\" fill=\"#6467d7\">RELEASE OUTPUT</text><text x=\"944\" y=\"490\" font-size=\"18\" font-weight=\"680\" fill=\"#1d1d1f\">批准后移动配置指针</text><text x=\"944\" y=\"521\" font-size=\"14\" fill=\"#6e6e73\">不覆盖历史版本与报告</text><line x1=\"944\" y1=\"552\" x2=\"1316\" y2=\"552\" stroke=\"#cfd0fa\"/><text x=\"944\" y=\"586\" font-size=\"14\" font-weight=\"650\" fill=\"#1d1d1f\">稳定版本</text><text x=\"1288\" y=\"586\" text-anchor=\"end\" font-size=\"14\" fill=\"#6467d7\">v0.3.12</text><text x=\"944\" y=\"622\" font-size=\"14\" font-weight=\"650\" fill=\"#1d1d1f\">快速回滚</text><text x=\"1288\" y=\"622\" text-anchor=\"end\" font-size=\"14\" fill=\"#6467d7\">切换指针</text><path d=\"M1191 404V382H1158V364\" stroke=\"#6467d7\" stroke-width=\"2.5\" fill=\"none\" marker-end=\"url(#arrow)\"/></g></svg>"
+          },
+          {
+            "id": "D-006-B-003",
+            "type": "flowchart",
+            "title": "数值变更质量闭环",
+            "content": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1400 760\"><defs><marker id=\"a\" markerWidth=\"10\" markerHeight=\"10\" refX=\"9\" refY=\"5\" orient=\"auto\"><path d=\"M0 0L10 5L0 10Z\" fill=\"#5e5ce6\"/></marker><marker id=\"r\" markerWidth=\"10\" markerHeight=\"10\" refX=\"9\" refY=\"5\" orient=\"auto\"><path d=\"M0 0L10 5L0 10Z\" fill=\"#d64b4b\"/></marker></defs><rect width=\"1400\" height=\"760\" rx=\"28\" fill=\"#f5f5f7\"/><g font-family=\"-apple-system,BlinkMacSystemFont,sans-serif\"><text x=\"64\" y=\"72\" font-size=\"28\" font-weight=\"720\" fill=\"#1d1d1f\">数值变更质量闭环</text><text x=\"64\" y=\"104\" font-size=\"15\" fill=\"#6e6e73\">任何失败都保留可复现证据，不允许跳过门禁直接发布</text><g fill=\"#ffffff\" stroke=\"#d8d8df\"><rect x=\"66\" y=\"215\" width=\"170\" height=\"74\" rx=\"37\"/><rect x=\"292\" y=\"215\" width=\"190\" height=\"74\" rx=\"18\"/><rect x=\"538\" y=\"215\" width=\"190\" height=\"74\" rx=\"18\"/><rect x=\"784\" y=\"215\" width=\"190\" height=\"74\" rx=\"18\"/><path d=\"M1100 184L1192 252L1100 320L1008 252Z\"/><rect x=\"1194\" y=\"215\" width=\"152\" height=\"74\" rx=\"37\"/></g><g text-anchor=\"middle\" fill=\"#1d1d1f\" font-size=\"15\" font-weight=\"650\"><text x=\"151\" y=\"258\">提交配置变更</text><text x=\"387\" y=\"247\">静态校验</text><text x=\"387\" y=\"268\" font-size=\"12\" fill=\"#6e6e73\">schema · 引用 · 范围</text><text x=\"633\" y=\"247\">固定种子回归</text><text x=\"633\" y=\"268\" font-size=\"12\" fill=\"#6e6e73\">快照必须一致</text><text x=\"879\" y=\"247\">1000 场模拟</text><text x=\"879\" y=\"268\" font-size=\"12\" fill=\"#6e6e73\">收集平衡指标</text><text x=\"1100\" y=\"247\">指标是否</text><text x=\"1100\" y=\"268\">越过阈值</text><text x=\"1270\" y=\"258\">批准发布</text></g><g stroke=\"#5e5ce6\" stroke-width=\"2.5\" fill=\"none\" marker-end=\"url(#a)\"><path d=\"M236 252H276\"/><path d=\"M482 252H522\"/><path d=\"M728 252H768\"/><path d=\"M974 252H992\"/><path d=\"M1192 252H1178\"/><path d=\"M1178 252H1179\"/></g><text x=\"1202\" y=\"235\" font-size=\"12\" font-weight=\"650\" fill=\"#27883f\">否</text><path d=\"M1100 320V382H879V424\" stroke=\"#d64b4b\" stroke-width=\"2.5\" fill=\"none\" marker-end=\"url(#r)\"/><text x=\"1115\" y=\"356\" font-size=\"12\" font-weight=\"650\" fill=\"#d64b4b\">是</text><rect x=\"688\" y=\"424\" width=\"382\" height=\"92\" rx=\"18\" fill=\"#fff3f2\" stroke=\"#f2c2bf\"/><text x=\"879\" y=\"462\" text-anchor=\"middle\" font-size=\"16\" font-weight=\"680\" fill=\"#9c3232\">人工评审：解释差异与玩法影响</text><text x=\"879\" y=\"488\" text-anchor=\"middle\" font-size=\"13\" fill=\"#7c5151\">选择调参重跑，或回滚到上一稳定配置</text><path d=\"M688 470H387V305\" stroke=\"#d64b4b\" stroke-width=\"2.5\" fill=\"none\" marker-end=\"url(#r)\"/><text x=\"492\" y=\"454\" font-size=\"12\" font-weight=\"650\" fill=\"#d64b4b\">调参后重新校验</text><rect x=\"688\" y=\"580\" width=\"382\" height=\"76\" rx=\"38\" fill=\"#ffffff\" stroke=\"#d8d8df\"/><text x=\"879\" y=\"614\" text-anchor=\"middle\" font-size=\"15\" font-weight=\"650\" fill=\"#1d1d1f\">回滚配置指针</text><text x=\"879\" y=\"636\" text-anchor=\"middle\" font-size=\"12\" fill=\"#6e6e73\">保留失败版本、报告与 seedSet</text><path d=\"M879 516V564\" stroke=\"#d64b4b\" stroke-width=\"2.5\" fill=\"none\" marker-end=\"url(#r)\"/><g fill=\"#6e6e73\" font-size=\"12\"><text x=\"292\" y=\"338\">失败：阻断并定位字段</text><text x=\"538\" y=\"338\">失败：输出 seed 与事件日志</text><text x=\"784\" y=\"338\">异常：保存完整指标快照</text></g></g></svg>"
+          }
+        ]
+      }
+    ],
+    "decisions": [
+      {
+        "id": "ADR-001",
+        "title": "首版使用机器人验证 8 方对局",
+        "decision": "先完成 1 名玩家加 7 名机器人的单机垂直切片，保留 PlayerController 接口以便后续接入网络玩家。",
+        "rationale": "能验证核心品类循环，同时避免匹配、断线、反作弊和服务端部署掩盖玩法问题。",
+        "alternatives": ["首版直接开发真人联网", "改为固定章节式 PvE"],
+        "consequences": ["首版不能验证真实玩家博弈", "机器人质量成为体验关键", "联网阶段需要重新评估权威模拟位置"],
+        "requirementIds": ["R-001", "R-006"]
+      },
+      {
+        "id": "ADR-002",
+        "title": "规则模拟与视觉表现解耦",
+        "decision": "使用固定步长、随机种子和事件日志运行规则，渲染层只消费事件。",
+        "rationale": "提供可复现测试、批量平衡、回放和未来服务端权威模拟的基础。",
+        "alternatives": ["动画直接驱动伤害结算", "使用不可控的逐帧物理模拟"],
+        "consequences": ["需要维护事件协议", "视觉播放需要处理快进和追帧", "自动测试和问题定位成本显著降低"],
+        "requirementIds": ["R-003", "R-006"]
+      },
+      {
+        "id": "ADR-003",
+        "title": "人物设定区分来源层级",
+        "decision": "所有人物内容显式区分历史、演义与玩法演绎，技能可以综合表达但图鉴必须标注。",
+        "rationale": "既保留熟悉的三国形象，又避免误导并为平衡改编留下空间。",
+        "alternatives": ["完全按正史", "完全按演义", "只借用人物姓名"],
+        "consequences": ["内容制作需要来源审阅", "玩家能理解改编边界", "同一人物未来可扩展不同版本"],
+        "requirementIds": ["R-002"]
+      }
+    ],
+    "risks": [
+      "24 名武将仍可能不足以支撑共享卡池和长期重复游玩",
+      "人物背景映射为技能时可能产生刻板化或史实争议",
+      "机器人如果不能运营经济，会让核心循环显得虚假",
+      "棋盘、商店和羁绊同时出现可能造成首局信息过载",
+      "确定性模拟与华丽表现之间需要处理播放节奏和同步"
+    ],
+    "validationStrategy": [
+      "5 名未接触项目的玩家完成首局可用性测试，记录首次购买、上阵和理解羁绊的时间",
+      "三国内容由至少一名熟悉史料与演义差异的评审者检查来源标签",
+      "固定种子回归测试覆盖目标选择、移动、控制、死亡和胜负结算",
+      "运行 1000 场机器人批量模拟并检查终止率、阵容分布和异常组合",
+      "至少进行两轮 8 至 12 人的平衡测试，比较主流构筑的前四率",
+      "在 1440×900 与 1280×720 视口完成信息可读性和键鼠操作检查"
+    ],
+    "updatedAt": "2026-09-15T11:00:00.000Z"
+  },
+  "executionPlan": {
+    "status": "review",
+    "revision": 0,
+    "basedOnDesignRevision": 1,
+    "objective": "交付一个可在桌面浏览器中完整游玩的《三国弈局》垂直切片，并用可复现模拟与用户测试判断是否值得进入联网和正式内容生产。",
+    "tasks": [
+      {
+        "id": "T-001",
+        "title": "冻结垂直切片规则规格",
+        "description": "明确棋盘、人口、回合、伤害、卡池、经济、升星、装备和胜负公式，形成后续实现的单一规则基线。",
+        "type": "task",
+        "phase": "定义",
+        "dependsOn": [],
+        "status": "planned",
+        "requirementIds": ["R-001", "R-003", "R-004"],
+        "designSectionIds": ["D-001", "D-003", "D-004"],
+        "deliverables": ["规则规格 v0.1", "公式与边界条件表"],
+        "acceptanceCriteria": ["所有核心数值有默认值和可配置范围", "至少覆盖平局、超时、空棋盘和同时死亡四类边界"],
+        "sourceReferences": []
+      },
+      {
+        "id": "T-002",
+        "title": "建立 24 名武将内容档案",
+        "description": "为首版人物整理来源层级、能力关键词、阵营、职业、关系与禁用表达。",
+        "type": "task",
+        "phase": "定义",
+        "dependsOn": [],
+        "status": "planned",
+        "requirementIds": ["R-002"],
+        "designSectionIds": ["D-002"],
+        "deliverables": ["24 名武将设计档案", "来源审阅清单"],
+        "acceptanceCriteria": ["每名武将均区分历史、演义和玩法演绎", "四个阵营均不少于 5 名武将"],
+        "sourceReferences": ["用户需求 E-001"]
+      },
+      {
+        "id": "T-003",
+        "title": "搭建游戏运行骨架",
+        "description": "创建 TypeScript 项目、场景状态机、资源加载、调试入口和自动测试环境。",
+        "type": "task",
+        "phase": "基础",
+        "dependsOn": ["T-001"],
+        "status": "planned",
+        "requirementIds": ["R-001", "R-006"],
+        "designSectionIds": ["D-001", "D-006"],
+        "deliverables": ["可运行应用骨架", "测试与构建流水线"],
+        "acceptanceCriteria": ["本地一条命令可启动与测试", "场景可以在准备、战斗、结算之间切换"],
+        "sourceReferences": []
+      },
+      {
+        "id": "T-004",
+        "title": "实现版本化内容配置与校验",
+        "description": "实现武将、技能、羁绊、装备和商店概率的数据模型、加载器与静态校验。",
+        "type": "task",
+        "phase": "基础",
+        "dependsOn": ["T-001", "T-002"],
+        "status": "planned",
+        "requirementIds": ["R-002", "R-006"],
+        "designSectionIds": ["D-002", "D-006"],
+        "deliverables": ["配置 Schema", "内容加载器", "校验报告"],
+        "acceptanceCriteria": ["错误引用和非法数值在启动前被拒绝", "配置版本随战斗日志记录"],
+        "sourceReferences": []
+      },
+      {
+        "id": "T-005",
+        "title": "实现确定性战斗模拟器",
+        "description": "完成棋盘状态、固定步长、随机种子、目标选择、移动、普攻、死亡和胜负判定。",
+        "type": "task",
+        "phase": "核心系统",
+        "dependsOn": ["T-003", "T-004"],
+        "status": "planned",
+        "requirementIds": ["R-001", "R-003", "R-006"],
+        "designSectionIds": ["D-001", "D-003", "D-006"],
+        "deliverables": ["无渲染战斗模拟器", "BattleEvent 协议", "固定种子回归用例"],
+        "acceptanceCriteria": ["相同输入和种子产生相同事件序列", "所有战斗在规则时间上限内结束"],
+        "sourceReferences": []
+      },
+      {
+        "id": "T-006",
+        "title": "实现技能、效果与羁绊系统",
+        "description": "支持主动技能、被动修正、状态效果、阵营职业羁绊和人物关系羁绊。",
+        "type": "task",
+        "phase": "核心系统",
+        "dependsOn": ["T-004", "T-005"],
+        "status": "planned",
+        "requirementIds": ["R-002", "R-003", "R-006"],
+        "designSectionIds": ["D-002", "D-003", "D-006"],
+        "deliverables": ["技能效果执行器", "羁绊计算器", "规则测试"],
+        "acceptanceCriteria": ["首版全部技能无需修改引擎代码即可配置", "羁绊触发和失效有可验证事件"],
+        "sourceReferences": []
+      },
+      {
+        "id": "T-007",
+        "title": "实现经济、商店与成长循环",
+        "description": "完成收入、利息、连胜连败、商店刷新、共享卡池、人口、经验、备战席和三合一升星。",
+        "type": "task",
+        "phase": "核心系统",
+        "dependsOn": ["T-003", "T-004"],
+        "status": "planned",
+        "requirementIds": ["R-001", "R-004"],
+        "designSectionIds": ["D-001", "D-004"],
+        "deliverables": ["对局经济服务", "商店与卡池模块", "升星规则测试"],
+        "acceptanceCriteria": ["8 方共享卡池数量守恒", "每次金币变化均记录原因", "商店概率与等级配置一致"],
+        "sourceReferences": []
+      },
+      {
+        "id": "T-008",
+        "title": "实现基础运营与布阵机器人",
+        "description": "让机器人能够评估购买、保留金币、升级、构筑羁绊和基础站位，完整参与 8 方对局。",
+        "type": "task",
+        "phase": "对手",
+        "dependsOn": ["T-005", "T-006", "T-007"],
+        "status": "planned",
+        "requirementIds": ["R-001", "R-003", "R-004", "R-006"],
+        "designSectionIds": ["D-001", "D-003", "D-004", "D-006"],
+        "deliverables": ["机器人决策器", "三档难度参数", "决策日志"],
+        "acceptanceCriteria": ["机器人能在无人工干预下结束 1000 场对局", "普通机器人能形成至少两种完整羁绊构筑"],
+        "sourceReferences": []
+      },
+      {
+        "id": "T-009",
+        "title": "实现准备阶段主界面",
+        "description": "实现棋盘、拖放、备战席、商店、经济、人口、装备、羁绊预览和阶段提示。",
+        "type": "task",
+        "phase": "体验",
+        "dependsOn": ["T-006", "T-007"],
+        "status": "planned",
+        "requirementIds": ["R-004", "R-005"],
+        "designSectionIds": ["D-004", "D-005"],
+        "deliverables": ["可交互准备界面", "键鼠操作与反馈状态"],
+        "acceptanceCriteria": ["1440×900 下核心信息无需滚动", "购买、拖放、合成和羁绊变化均有即时反馈"],
+        "sourceReferences": []
+      },
+      {
+        "id": "T-010",
+        "title": "实现战斗表现与结果解释",
+        "description": "消费 BattleEvent 播放移动、攻击、技能、状态和死亡，并提供战斗数据摘要。",
+        "type": "task",
+        "phase": "体验",
+        "dependsOn": ["T-005", "T-006"],
+        "status": "planned",
+        "requirementIds": ["R-003", "R-005"],
+        "designSectionIds": ["D-003", "D-005"],
+        "deliverables": ["战斗事件播放器", "伤害统计面板", "速度控制"],
+        "acceptanceCriteria": ["表现播放不改变规则结果", "玩家能查看伤害、承伤、治疗和技能施放次数"],
+        "sourceReferences": []
+      },
+      {
+        "id": "T-011",
+        "title": "制作首版武将、技能与羁绊配置",
+        "description": "把 24 名人物档案转换为可运行配置，补充费用、基础数值、技能参数和羁绊阈值。",
+        "type": "task",
+        "phase": "内容",
+        "dependsOn": ["T-004", "T-006"],
+        "status": "planned",
+        "requirementIds": ["R-002", "R-003"],
+        "designSectionIds": ["D-002", "D-003"],
+        "deliverables": ["24 名武将配置", "16 组羁绊配置", "占位视觉资源清单"],
+        "acceptanceCriteria": ["每名武将可在测试战斗中正常完成技能循环", "所有来源标签通过内容审阅"],
+        "sourceReferences": []
+      },
+      {
+        "id": "T-012",
+        "title": "集成完整 8 方对局垂直切片",
+        "description": "把核心系统、机器人、界面和人物内容组合为从开局到唯一胜者的可玩版本。",
+        "type": "milestone",
+        "phase": "集成",
+        "dependsOn": ["T-008", "T-009", "T-010", "T-011"],
+        "status": "planned",
+        "requirementIds": ["R-001", "R-002", "R-003", "R-004", "R-005"],
+        "designSectionIds": ["D-001", "D-002", "D-003", "D-004", "D-005"],
+        "deliverables": ["可玩垂直切片构建", "已知问题列表"],
+        "acceptanceCriteria": ["玩家能不使用调试命令完成一整局", "8 方生命、匹配和最终排名正确结算"],
+        "sourceReferences": []
+      },
+      {
+        "id": "T-013",
+        "title": "建立批量模拟与平衡报告",
+        "description": "运行批量机器人对局，输出武将、羁绊、组合、回合和名次指标，标记异常。",
+        "type": "task",
+        "phase": "验证",
+        "dependsOn": ["T-012"],
+        "status": "planned",
+        "requirementIds": ["R-003", "R-004", "R-006"],
+        "designSectionIds": ["D-003", "D-004", "D-006"],
+        "deliverables": ["1000 场模拟报告", "首轮数值调整建议"],
+        "acceptanceCriteria": ["1000 场对局全部终止且结果可复现", "报告覆盖出场率、前四率、平均名次与组合胜率"],
+        "sourceReferences": []
+      },
+      {
+        "id": "T-014",
+        "title": "完成首轮可用性、内容与性能测试",
+        "description": "组织玩家完成首局，评审人物来源标记，并在目标设备检查帧率、信息密度和操作可达性。",
+        "type": "review",
+        "phase": "验证",
+        "dependsOn": ["T-012"],
+        "status": "planned",
+        "requirementIds": ["R-001", "R-002", "R-005", "R-006"],
+        "designSectionIds": ["D-001", "D-002", "D-005", "D-006"],
+        "deliverables": ["5 人可用性报告", "内容审阅记录", "性能基线"],
+        "acceptanceCriteria": ["5 名新玩家均能在引导后完成第一次战斗", "来源标记无误导项", "目标浏览器主要交互稳定达到 60 FPS"],
+        "sourceReferences": []
+      },
+      {
+        "id": "T-015",
+        "title": "评审是否进入正式制作",
+        "description": "综合玩法、平衡、人物辨识度、可用性和技术风险，决定继续、调整或停止，并确定联网与内容扩展方向。",
+        "type": "milestone",
+        "phase": "决策",
+        "dependsOn": ["T-013", "T-014"],
+        "status": "planned",
+        "requirementIds": ["R-001", "R-002", "R-003", "R-004", "R-005", "R-006"],
+        "designSectionIds": ["D-001", "D-002", "D-003", "D-004", "D-005", "D-006"],
+        "deliverables": ["立项评审结论", "下一阶段范围与预算假设"],
+        "acceptanceCriteria": ["结论包含量化证据、未解决风险和明确下一步", "联网、平台与正式美术三个开放问题均有负责人或决策日期"],
+        "sourceReferences": []
+      }
+    ],
+    "positions": {},
+    "viewport": { "x": 0, "y": 0, "zoom": 1 },
+    "updatedAt": "2026-09-15T11:00:00.000Z"
+  }
+}

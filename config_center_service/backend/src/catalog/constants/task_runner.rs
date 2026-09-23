@@ -79,8 +79,6 @@ pub const TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_INTERVAL_MS_CONFIG_KEY: &str =
     "task_runner.retention.ask_user_prompt_cleanup_interval_ms";
 pub const TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_BATCH_SIZE_CONFIG_KEY: &str =
     "task_runner.retention.ask_user_prompt_cleanup_batch_size";
-pub const TASK_RUNNER_AUTO_MEMORY_SUMMARY_CONFIG_KEY: &str =
-    "task_runner.memory.auto_summary_enabled";
 pub const TASK_RUNNER_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "task_runner.downstream.user_service_base_url";
 pub const TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY: &str =
@@ -113,7 +111,6 @@ pub const TASK_RUNNER_PORT_CONFIG_KEY: &str = "task_runner.runtime.port";
 pub const TASK_RUNNER_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
     "task_runner.runtime.internal_mtls_port";
 pub const TASK_RUNNER_DATABASE_URL_CONFIG_KEY: &str = "task_runner.runtime.database_url";
-pub const TASK_RUNNER_MONGODB_DATABASE_CONFIG_KEY: &str = "task_runner.runtime.mongodb_database";
 pub const TASK_RUNNER_WORKSPACE_DIR_CONFIG_KEY: &str = "task_runner.runtime.workspace_dir";
 pub const TASK_RUNNER_ADMIN_USERNAME_CONFIG_KEY: &str = "task_runner.bootstrap.admin_username";
 pub const TASK_RUNNER_ADMIN_PASSWORD_CONFIG_KEY: &str = "task_runner.bootstrap.admin_password";

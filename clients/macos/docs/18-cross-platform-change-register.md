@@ -1,6 +1,6 @@
 # macOS / Windows 跨平台变更登记
 
-更新时间：2026-08-31
+更新时间：2026-09-23
 
 本文是 macOS 端发现或实现的产品行为变更的权威登记。目标是避免 macOS 修复、功能更新或协议调整只停留在 Swift 客户端，导致 Windows 客户端随后出现行为分叉。
 
@@ -79,7 +79,7 @@ Windows 状态只允许使用：
   4. 确认聊天模型选择器清除已失效选择，不保留不可用模型名称。
   5. 刷新、退出重进和客户端重启后仍保持空列表，且 SQLite 不再恢复旧审批模型 ID。
   6. 在 Windows 真机连接线上账号完成一次设置页与聊天页验收。
-- Windows 状态：`待实现`。
+- Windows 状态：`待真机验收`；已实现失效审批模型 ID 的 SQLite 清理，并覆盖 ViewModel 重建回归。
 
 ### CP-20260831-002：Raycast 风格全局快速搜索
 
@@ -92,7 +92,7 @@ Windows 状态只允许使用：
 - macOS 验证证据：`QuickSearchRankingTests` 通过；全量 Swift 测试 110 个 XCTest 与 93 个 Swift Testing 测试通过；本地化审计无缺项。
 - Windows 是否需要代码修改：需要。Windows 应使用原生 WinUI 浮层、Windows Search/索引 API 和 Shell 应用启动，不共享 macOS Spotlight 实现。
 - Windows 必做项：实现 ChatOS 数据、应用、文件、动作四类 provider；复刻排序、前缀、最近使用和键盘交互；完成全局快捷键、焦点恢复、应用启动与文件打开真机验收。
-- Windows 状态：`待实现`。
+- Windows 状态：`待真机验收`；已实现 ChatOS、应用、文件、内建动作四类 provider、排序、模式前缀、使用频次和全局快捷键回退。
 
 ### CP-20260831-003：本地剪贴板历史
 
@@ -105,7 +105,7 @@ Windows 状态只允许使用：
 - macOS 验证证据：`ClipboardHistoryStoreTests` 覆盖文本去重、固定、删除以及文件和图片往返；全量测试与本地化审计通过。
 - Windows 是否需要代码修改：需要。Windows 应使用原生剪贴板事件、SQLite 和 WinUI 面板，并实现等价的敏感格式过滤与容量策略。
 - Windows 必做项：实现文本、URL、文件、图片采集与恢复；敏感格式过滤；SQLite/payload 生命周期；全局快捷键、焦点恢复、持久化和重启回归。
-- Windows 状态：`待实现`。
+- Windows 状态：`待真机验收`；已实现 Windows Clipboard 监听、SQLite/payload、去重、固定、删除、恢复抑制、容量清理与搜索面板，自动化通过。
 
 ### CP-20260831-004：原生屏幕录制
 
@@ -118,7 +118,18 @@ Windows 状态只允许使用：
 - macOS 验证证据：全量 Swift 测试通过；Retina 窗口按 `contentRect × pointPixelScale` 计算偶数像素尺寸；本地化审计无缺项。
 - Windows 是否需要代码修改：需要。Windows 应使用 Windows Graphics Capture/Media Foundation 或等价原生链路，不能复用 ScreenCaptureKit。
 - Windows 必做项：实现显示器与窗口选择、系统音频、30fps H.264、悬浮停止条、仅排除录制控制条、结果提示和高 DPI 验收；显示器录制必须包含 ChatOS 主窗口和宠物。
-- Windows 状态：`待实现`。
+- Windows 状态：`待真机验收`；已接入 Windows 原生录屏选择、系统音频和停止控制条，并在录制完成后自动归档 MP4 到 `Videos/ChatOS`，状态机自动化通过。
+
+### CP-20260922-001：Agent 团队与需求调研
+
+- 来源：macOS Agent 团队、需求调研与 Todo 资产建议能力对齐。
+- 类型：功能更新、本机持久协作运行时。
+- 预期行为：Windows 与 macOS 都提供 Agent 配置、项目团队/私聊、消息与附件、Todo/依赖/进展、共享资产、模型工具循环、项目文件与审批终端，以及 Human 结构化需求调研闭环。
+- 修复范围：Windows 已新增账号隔离 SQLite Store、durable delivery/run/heartbeat、Responses API、项目工具、Presentation 和 WinUI；需求调研已改为项目归属并加入渐进场景 Skill、跨团队任务核对及 v14 迁移；附件正文分表且支持 UTF-8 按需读取；Agent 插件复用权限/审批、OAuth/Secret 与 Artifact 管线并按 run 清理。
+- macOS 状态：代码与自动化已验证；后续行为变化继续按本登记新增稳定编号。
+- Windows 是否需要代码修改：需要，且本地代码差距已关闭。账号级 Inbox/已读、run-scoped opaque reference、文档草稿/发送 receipt、成员变更提案审批、Todo 执行合同/来源/任务级能力与完整调度、独立 communication/executor lane、图片/PDF 多模态和项目级调研中心均已实现；executor 以有界批量查询加载跨会话来源消息、提及和附件元数据，不再逐来源查询或预载 payload；Todo 完成后的依赖释放以单条集合 SQL 原子推进受影响记录，不再无界加载全账号 Pending Todo 或逐项查询依赖。
+- Windows 必做项：在 Windows x64/ARM64 完成编译，并在 x64 真机验证 Agent/团队编辑与成员提案、团队切换、附件/多模态、项目调研中心、真实模型与插件进程、Artifact、命令审批、崩溃恢复和长对话内存占用。未提交、未编号的 macOS session-bound SSH MFA 工作区变化不并入本条；Windows 已独立预同步 SSH.NET 同会话验证码 continuation，待来源提交后另行分配编号，并在 Windows 真机验证跳板机与目标机连续挑战。
+- Windows 状态：`待真机验收`；Windows solution 502 项测试通过，本地可实现差距已关闭。
 
 ## 新记录模板
 

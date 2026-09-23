@@ -26,6 +26,13 @@ const RUNTIME_TARGET_COLORS: Record<PluginRuntimeTarget, string> = {
   local_connector: 'purple',
 };
 
+type PluginCatalogCursor = {
+  featured: boolean;
+  category: string;
+  displayName: string;
+  id: string;
+};
+
 function renderRuntimeTargets(
   targets: PluginRuntimeTarget[] | undefined,
   latestReleaseId: string,
@@ -56,16 +63,57 @@ export function PluginCatalogAdminPage({ user, onOpenReleases }: PluginCatalogAd
   const [modalOpen, setModalOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(12);
+  const [pageCursors, setPageCursors] = useState<Array<PluginCatalogCursor | null>>([null]);
   const isAdmin = user.role === 'super_admin';
+  const cursor = pageCursors[page - 1] || null;
   const pluginsQuery = useQuery({
-    queryKey: ['plugin-management', 'admin-plugins', page, pageSize],
+    queryKey: ['plugin-management', 'admin-plugins', 'catalog-page', pageSize, cursor],
     queryFn: () => api.listAdminPlugins({
-      limit: pageSize,
-      offset: (page - 1) * pageSize,
+      limit: pageSize + 1,
+      ...(cursor ? {
+        after_featured: cursor.featured,
+        after_category: cursor.category,
+        after_display_name: cursor.displayName,
+        after_id: cursor.id,
+      } : {}),
     }),
     enabled: isAdmin,
-    placeholderData: (previousData) => previousData,
   });
+  const visiblePlugins = (pluginsQuery.data?.items || []).slice(0, pageSize);
+  const canAdvance = (pluginsQuery.data?.items.length || 0) > pageSize;
+  const maxReachablePage = Math.max(
+    pageCursors.length,
+    page === pageCursors.length && canAdvance ? page + 1 : page,
+  );
+  const resetPagination = (nextPageSize = pageSize) => {
+    setPage(1);
+    setPageSize(nextPageSize);
+    setPageCursors([null]);
+  };
+  const changePage = (nextPage: number, nextPageSize: number) => {
+    if (nextPageSize !== pageSize) {
+      resetPagination(nextPageSize);
+      return;
+    }
+    if (nextPage < 1 || nextPage === page) return;
+    if (nextPage <= pageCursors.length) {
+      setPage(nextPage);
+      return;
+    }
+    if (nextPage !== page + 1 || page !== pageCursors.length || !canAdvance) return;
+    const lastPlugin = visiblePlugins[visiblePlugins.length - 1];
+    if (!lastPlugin) return;
+    setPageCursors((current) => [
+      ...current.slice(0, page),
+      {
+        featured: lastPlugin.featured,
+        category: lastPlugin.interface.category,
+        displayName: lastPlugin.display_name,
+        id: lastPlugin.id,
+      },
+    ]);
+    setPage(nextPage);
+  };
   const marketplacesQuery = useQuery({
     queryKey: ['plugin-management', 'plugin-marketplaces'],
     queryFn: api.listPluginMarketplaces,
@@ -185,17 +233,24 @@ export function PluginCatalogAdminPage({ user, onOpenReleases }: PluginCatalogAd
       <Table
         rowKey="id"
         columns={columns}
-        dataSource={pluginsQuery.data?.items || []}
-        loading={pluginsQuery.isLoading}
+        dataSource={visiblePlugins}
+        loading={pluginsQuery.isLoading || pluginsQuery.isFetching}
         scroll={{ x: 1450 }}
         pagination={{
           current: page,
           pageSize,
           total: pluginsQuery.data?.total || 0,
           showSizeChanger: true,
-          onChange: (nextPage, nextPageSize) => {
-            setPage(nextPageSize === pageSize ? nextPage : 1);
-            setPageSize(nextPageSize);
+          showLessItems: true,
+          onChange: changePage,
+          itemRender: (pageNumber, type, originalElement) => {
+            if (type === 'page' && pageNumber > maxReachablePage) {
+              return <span aria-disabled="true">{pageNumber}</span>;
+            }
+            if (type === 'jump-prev' || type === 'jump-next') {
+              return <span aria-disabled="true">•••</span>;
+            }
+            return originalElement;
           },
         }}
       />

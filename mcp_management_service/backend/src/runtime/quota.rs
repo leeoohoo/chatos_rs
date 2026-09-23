@@ -282,7 +282,6 @@ fn normalize_key_prefix(value: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use mongodb::bson::DateTime;
 
     use super::*;
     use crate::runtime::RuntimeInvocationStatus;
@@ -311,7 +310,7 @@ mod tests {
             terminal_error_code: None,
             terminal_error_message: None,
             file_modification_outcome: None,
-            expires_at: DateTime::from_millis(expires_at_unix * 1_000),
+            expires_at: chrono::DateTime::from_timestamp(expires_at_unix, 0).unwrap(),
             expires_at_unix,
         }
     }

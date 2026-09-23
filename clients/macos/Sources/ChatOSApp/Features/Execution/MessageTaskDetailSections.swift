@@ -98,6 +98,13 @@ struct MessageTaskDetailSections: View {
                     text: output,
                     allowsTextSelection: allowsTextSelection
                 )
+            } else if isActiveTask {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("本次运行仍在执行，模型输出将在完成后显示。")
+                        .appFont(.callout)
+                        .foregroundStyle(.secondary)
+                }
             } else if isLoadingModelOutput {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
@@ -202,11 +209,19 @@ struct MessageTaskDetailSections: View {
     }
 
     private var distinctResultSummary: String? {
+        // The task-level summary is updated after post-processing. During a retry it
+        // may briefly still contain the previous run's terminal result, so never
+        // present it as the active run's summary.
+        guard !isActiveTask else { return nil }
         guard let summary = task.resultSummary?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty else {
             return nil
         }
         guard summary != modelOutput else { return nil }
         return summary
+    }
+
+    private var isActiveTask: Bool {
+        task.normalizedStatus == "queued" || task.normalizedStatus == "running"
     }
 
     private var creatorDisplayName: String {

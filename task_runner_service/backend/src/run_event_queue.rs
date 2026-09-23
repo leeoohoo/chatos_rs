@@ -249,6 +249,33 @@ pub fn spawn_run_event_consumer(
     })
 }
 
+pub fn spawn_run_event_outbox_reconciler(
+    topology: TaskQueueTopology,
+    run_service: RunService,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(topology.event_outbox_reconcile_interval);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            match run_service
+                .publish_pending_run_events(topology.event_outbox_batch_size)
+                .await
+            {
+                Ok(count) if count > 0 => info!(
+                    published_count = count,
+                    "task runner reconciled pending Run event notifications"
+                ),
+                Ok(_) => {}
+                Err(error) => warn!(
+                    error = error.as_str(),
+                    "task runner failed to reconcile pending Run event notifications"
+                ),
+            }
+        }
+    })
+}
+
 fn run_event_bus() -> Result<&'static RunEventBus, String> {
     RUN_EVENT_BUS
         .get()

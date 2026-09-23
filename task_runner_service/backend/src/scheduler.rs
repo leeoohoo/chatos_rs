@@ -10,6 +10,8 @@ use crate::pressure::{PlatformPressureLevel, TaskRunnerPressureState};
 use crate::services::{RunService, TaskService};
 use crate::state::TaskRunnerRuntimeStats;
 
+const SCHEDULER_CLAIM_BATCH_SIZE: usize = 100;
+
 pub fn spawn_task_scheduler(
     config: AppConfig,
     task_service: TaskService,
@@ -34,7 +36,10 @@ pub fn spawn_task_scheduler(
             }
             runtime_stats.set_scheduler_pressure_paused(false);
             let now = chrono::Utc::now();
-            match task_service.list_due_scheduled_tasks(now).await {
+            match task_service
+                .claim_due_scheduled_tasks(now, SCHEDULER_CLAIM_BATCH_SIZE)
+                .await
+            {
                 Ok(tasks) => {
                     if !tasks.is_empty() {
                         info!(
@@ -47,100 +52,20 @@ pub fn spawn_task_scheduler(
                             "scheduler found due tasks"
                         );
                     }
-                    for task in tasks {
-                        match run_service.has_active_run_for_task(&task.id).await {
-                            Ok(true) => {
-                                match task_service
-                                    .mark_scheduled_run_started_if_due(&task, now)
-                                    .await
-                                {
-                                    Ok(Some(_)) => {
-                                        info!(
-                                            "scheduler consumed due slot for task {} because an active run already exists",
-                                            task.id
-                                        );
-                                    }
-                                    Ok(None) => {
-                                        info!(
-                                            "scheduler skipped due slot for task {} because another scheduler already advanced it",
-                                            task.id
-                                        );
-                                    }
-                                    Err(err) => {
-                                        warn!(
-                                            "scheduler failed to advance next_run_at for already-active task {}: {}",
-                                            task.id, err
-                                        );
-                                    }
-                                }
-                                continue;
-                            }
-                            Ok(false) => {}
-                            Err(err) => {
-                                warn!(
-                                    "scheduler failed to inspect active runs for task {}: {}",
-                                    task.id, err
-                                );
-                                continue;
-                            }
-                        }
-
+                    for claimed in tasks {
                         match run_service
-                            .start_scheduled_run(&task.id, StartTaskRunRequest::default())
+                            .start_scheduled_run(&claimed.id, StartTaskRunRequest::default())
                             .await
                         {
                             Ok(run) => {
-                                match task_service
-                                    .mark_scheduled_run_started_if_due(&task, now)
-                                    .await
-                                {
-                                    Ok(Some(_)) => {
-                                        info!(
-                                            "scheduler started run {} for task {}",
-                                            run.id, task.id
-                                        );
-                                    }
-                                    Ok(None) => {
-                                        info!(
-                                            "scheduler started run {} for task {}, but due slot was already advanced by another scheduler",
-                                            run.id, task.id
-                                        );
-                                    }
-                                    Err(err) => {
-                                        warn!(
-                                            "scheduler failed to advance next_run_at for task {} after run {}: {}",
-                                            task.id, run.id, err
-                                        );
-                                    }
-                                }
+                                info!("scheduler started run {} for task {}", run.id, claimed.id);
                             }
                             Err(err) => {
-                                warn!("scheduler failed to start task {}: {}", task.id, err);
+                                warn!("scheduler failed to start task {}: {}", claimed.id, err);
                                 if is_active_run_conflict_error(&err) {
-                                    match task_service
-                                        .mark_scheduled_run_started_if_due(&task, now)
-                                        .await
-                                    {
-                                        Ok(Some(_)) => {}
-                                        Ok(None) => {
-                                            info!(
-                                                "scheduler skipped active-run conflict slot for task {} because another scheduler already advanced it",
-                                                task.id
-                                            );
-                                        }
-                                        Err(mark_err) => {
-                                            warn!(
-                                                "scheduler failed to advance next_run_at after active-run conflict for task {}: {}",
-                                                task.id, mark_err
-                                            );
-                                        }
-                                    }
-                                } else if let Err(mark_err) =
-                                    task_service.mark_scheduled_run_failed(&task.id, &err).await
-                                {
-                                    warn!(
-                                        "scheduler failed to persist start failure for task {}: {}",
-                                        task.id, mark_err
+                                    info!(
+                                        "scheduler consumed due slot for task {} because an active run already exists",
+                                        claimed.id
                                     );
                                 }
                             }

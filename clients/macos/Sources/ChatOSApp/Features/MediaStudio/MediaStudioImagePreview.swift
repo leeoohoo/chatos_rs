@@ -12,7 +12,7 @@ struct MediaStudioImagePreview: View {
     @EnvironmentObject private var appModel: AppModel
     @Environment(\.dismiss) private var dismiss
     let request: MediaStudioImagePreviewRequest
-    let useForVideo: (GeneratedMediaAsset) -> Void
+    let useForVideo: ((GeneratedMediaAsset) -> Void)?
     @State private var index: Int
     @State private var image: NSImage?
     @State private var errorMessage: String?
@@ -22,6 +22,12 @@ struct MediaStudioImagePreview: View {
     init(request: MediaStudioImagePreviewRequest, useForVideo: @escaping (GeneratedMediaAsset) -> Void) {
         self.request = request
         self.useForVideo = useForVideo
+        _index = State(initialValue: min(max(0, request.selectedIndex), max(0, request.images.count - 1)))
+    }
+
+    init(request: MediaStudioImagePreviewRequest) {
+        self.request = request
+        self.useForVideo = nil
         _index = State(initialValue: min(max(0, request.selectedIndex), max(0, request.images.count - 1)))
     }
 
@@ -42,16 +48,18 @@ struct MediaStudioImagePreview: View {
                         .help(appModel.localized("下一张", english: "Next Image"))
                 }
                 Spacer()
-                Button {
-                    guard request.images.indices.contains(index) else { return }
-                    useForVideo(request.images[index])
-                    dismiss()
-                } label: {
-                    Label(appModel.localized("用作视频首帧", english: "Use as Video First Frame"), systemImage: "video.badge.plus")
+                if let useForVideo {
+                    Button {
+                        guard request.images.indices.contains(index) else { return }
+                        useForVideo(request.images[index])
+                        dismiss()
+                    } label: {
+                        Label(appModel.localized("用作视频首帧", english: "Use as Video First Frame"), systemImage: "video.badge.plus")
+                    }
+                    .disabled(image == nil)
+                    .buttonStyle(.borderedProminent)
+                    .tint(.purple)
                 }
-                .disabled(image == nil)
-                .buttonStyle(.borderedProminent)
-                .tint(.purple)
                 Button(appModel.localized("关闭", english: "Close")) { dismiss() }
                     .keyboardShortcut(.cancelAction)
             }
@@ -204,5 +212,89 @@ struct MediaStudioGeneratedImagePicker: View {
     private func select(_ asset: GeneratedMediaAsset) {
         viewModel.useGeneratedImageForVideo(asset)
         dismiss()
+    }
+}
+
+struct MediaStudioGeneratedReferencePicker: View {
+    @EnvironmentObject private var appModel: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var viewModel: MediaStudioViewModel
+    @State private var selectedIDs: Set<String> = []
+    @State private var preview: MediaStudioImagePreviewRequest?
+
+    private var selectedAssets: [GeneratedMediaAsset] {
+        viewModel.history.flatMap(\.images).filter { selectedIDs.contains($0.id) }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(appModel.localized("选择参考图", english: "Choose Reference Images")).font(.headline)
+                    Text(appModel.localized("可从生成记录选择多张，按页面顺序加入；总数最多 8 张。",
+                                            english: "Select multiple generated images. They are added in display order, up to 8 total."))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text("\(selectedAssets.count) / \(max(0, 8 - viewModel.inputImages.count))")
+                    .font(.caption.monospacedDigit()).foregroundStyle(.purple)
+                Button(appModel.localized("取消", english: "Cancel")) { dismiss() }
+                Button(appModel.localized("添加所选", english: "Add Selected")) {
+                    viewModel.addGeneratedImagesAsReferences(selectedAssets)
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent).tint(.purple)
+                .disabled(selectedAssets.isEmpty || selectedAssets.count + viewModel.inputImages.count > 8)
+            }.padding(18)
+            Divider()
+            if viewModel.history.isEmpty {
+                ContentUnavailableView(appModel.localized("还没有生成记录", english: "No Generated Images Yet"),
+                                       systemImage: "photo.on.rectangle.angled")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 20) {
+                        ForEach(viewModel.history) { record in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(record.prompt).font(.system(size: 12, weight: .medium)).lineLimit(2)
+                                Text("\(record.modelName) · \(record.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                                    ForEach(record.images) { asset in referenceCard(asset, siblings: record.images) }
+                                }
+                            }
+                        }
+                    }.padding(18)
+                }
+            }
+        }
+        .frame(width: min(820, (NSScreen.main?.visibleFrame.width ?? 980) - 100),
+               height: min(660, (NSScreen.main?.visibleFrame.height ?? 900) - 140))
+        .sheet(item: $preview) { request in
+            MediaStudioImagePreview(request: request).environmentObject(appModel)
+        }
+    }
+
+    private func referenceCard(_ asset: GeneratedMediaAsset, siblings: [GeneratedMediaAsset]) -> some View {
+        let selected = selectedIDs.contains(asset.id)
+        let atLimit = selectedAssets.count >= max(0, 8 - viewModel.inputImages.count)
+        return VStack(spacing: 8) {
+            Button {
+                if selected { selectedIDs.remove(asset.id) }
+                else if !atLimit { selectedIDs.insert(asset.id) }
+            } label: {
+                ZStack(alignment: .topTrailing) {
+                    GeneratedMediaAssetView(asset: asset, compact: true)
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(selected ? Color.purple : Color.secondary)
+                        .background(.regularMaterial, in: Circle()).padding(7)
+                }
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(selected ? Color.purple : Color.clear, lineWidth: 2))
+            }.buttonStyle(.plain).disabled(!selected && atLimit)
+            Button(appModel.localized("放大", english: "Preview")) {
+                preview = .init(images: siblings, selectedIndex: siblings.firstIndex(of: asset) ?? 0)
+            }.buttonStyle(.borderless).font(.caption)
+        }
     }
 }

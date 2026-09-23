@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use crate::models::{
-    ApplicableManagedRequirementsLayer, LocalConnectorDevice, LocalConnectorProjectBinding,
-    LocalConnectorSandboxPairing, LocalConnectorSession, LocalConnectorStoreStats,
-    LocalConnectorWorkspace, ManagedRequirementsAssignment, ManagedRequirementsPolicy,
-};
+use chrono::{DateTime, Utc};
+use serde::{de::DeserializeOwned, Serialize};
+use serde_json::Value;
+use sqlx::migrate::Migrator;
+use sqlx::types::Json;
 
-mod mongo;
+mod postgres;
 
-pub use self::mongo::MongoConnectorStore;
+pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations/postgres");
 
 #[derive(Debug)]
 pub enum SessionAcquireError {
@@ -18,417 +18,57 @@ pub enum SessionAcquireError {
 }
 
 #[derive(Clone)]
-pub enum ConnectorStore {
-    Mongo(MongoConnectorStore),
+pub struct ConnectorStore {
+    pool: chatos_postgres::PgPool,
 }
 
 impl ConnectorStore {
     pub async fn connect(database_url: &str) -> Result<Self, String> {
-        let normalized = database_url.trim();
-        if normalized.starts_with("mongodb://") || normalized.starts_with("mongodb+srv://") {
-            return MongoConnectorStore::connect(normalized)
-                .await
-                .map(Self::Mongo);
-        }
-        Err(format!(
-            "unsupported LOCAL_CONNECTOR_DATABASE_URL; expected mongodb:// or mongodb+srv://, got: {normalized}"
-        ))
+        let config = chatos_postgres::PostgresConfig::from_env(
+            database_url.to_string(),
+            "local-connector",
+            "LOCAL_CONNECTOR",
+        )
+        .map_err(|err| err.to_string())?;
+        let pool = chatos_postgres::connect(&config)
+            .await
+            .map_err(|err| format!("connect Local Connector PostgreSQL failed: {err}"))?;
+        chatos_postgres::ensure_migrations_applied(&pool, &MIGRATOR)
+            .await
+            .map_err(|err| err.to_string())?;
+        Ok(Self { pool })
     }
 
-    pub async fn create_device(&self, device: &LocalConnectorDevice) -> Result<(), String> {
-        match self {
-            Self::Mongo(store) => store.create_device(device).await,
-        }
+    pub(crate) fn pool(&self) -> &chatos_postgres::PgPool {
+        &self.pool
     }
+}
 
-    pub async fn get_device(&self, id: &str) -> Result<Option<LocalConnectorDevice>, String> {
-        match self {
-            Self::Mongo(store) => store.get_device(id).await,
-        }
-    }
+fn timestamp(value: &str) -> Result<DateTime<Utc>, String> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|value| value.with_timezone(&Utc))
+        .map_err(|err| format!("invalid RFC3339 timestamp {value:?}: {err}"))
+}
 
-    pub async fn register_device_windows_user_sid(
-        &self,
-        owner_user_id: &str,
-        id: &str,
-        windows_user_sid: &str,
-    ) -> Result<bool, String> {
-        match self {
-            Self::Mongo(store) => {
-                store
-                    .register_device_windows_user_sid(owner_user_id, id, windows_user_sid)
-                    .await
-            }
-        }
-    }
+fn json<T: Serialize>(value: &T) -> Result<Json<Value>, String> {
+    serde_json::to_value(value)
+        .map(Json)
+        .map_err(|err| err.to_string())
+}
 
-    pub async fn list_devices(
-        &self,
-        owner_user_id: &str,
-    ) -> Result<Vec<LocalConnectorDevice>, String> {
-        match self {
-            Self::Mongo(store) => {
-                store.cleanup_expired_owner_session(owner_user_id).await?;
-                store.list_devices(owner_user_id).await
-            }
-        }
-    }
+fn decode_optional<T: DeserializeOwned>(value: Option<Json<Value>>) -> Result<Option<T>, String> {
+    value
+        .map(|Json(value)| serde_json::from_value(value).map_err(|err| err.to_string()))
+        .transpose()
+}
 
-    pub async fn mark_device_online(&self, id: &str) -> Result<(), String> {
-        match self {
-            Self::Mongo(store) => store.mark_device_online(id).await,
-        }
-    }
+fn decode_all<T: DeserializeOwned>(values: Vec<Json<Value>>) -> Result<Vec<T>, String> {
+    values
+        .into_iter()
+        .map(|Json(value)| serde_json::from_value(value).map_err(|err| err.to_string()))
+        .collect()
+}
 
-    pub async fn mark_device_offline(&self, id: &str) -> Result<(), String> {
-        match self {
-            Self::Mongo(store) => store.mark_device_offline(id).await,
-        }
-    }
-
-    pub async fn revoke_device(&self, owner_user_id: &str, id: &str) -> Result<(), String> {
-        match self {
-            Self::Mongo(store) => store.revoke_device(owner_user_id, id).await,
-        }
-    }
-
-    pub async fn create_workspace(
-        &self,
-        workspace: &LocalConnectorWorkspace,
-    ) -> Result<(), String> {
-        match self {
-            Self::Mongo(store) => store.create_workspace(workspace).await,
-        }
-    }
-
-    pub async fn get_workspace(&self, id: &str) -> Result<Option<LocalConnectorWorkspace>, String> {
-        match self {
-            Self::Mongo(store) => store.get_workspace(id).await,
-        }
-    }
-
-    pub async fn list_workspaces(
-        &self,
-        owner_user_id: &str,
-        device_id: Option<String>,
-    ) -> Result<Vec<LocalConnectorWorkspace>, String> {
-        match self {
-            Self::Mongo(store) => store.list_workspaces(owner_user_id, device_id).await,
-        }
-    }
-
-    pub async fn update_workspace(
-        &self,
-        workspace: &LocalConnectorWorkspace,
-    ) -> Result<(), String> {
-        match self {
-            Self::Mongo(store) => store.update_workspace(workspace).await,
-        }
-    }
-
-    pub async fn delete_workspace(&self, owner_user_id: &str, id: &str) -> Result<(), String> {
-        match self {
-            Self::Mongo(store) => store.delete_workspace(owner_user_id, id).await,
-        }
-    }
-
-    pub async fn upsert_project_binding(
-        &self,
-        binding: &LocalConnectorProjectBinding,
-    ) -> Result<LocalConnectorProjectBinding, String> {
-        match self {
-            Self::Mongo(store) => store.upsert_project_binding(binding).await,
-        }
-    }
-
-    pub async fn get_project_binding(
-        &self,
-        id: &str,
-    ) -> Result<Option<LocalConnectorProjectBinding>, String> {
-        match self {
-            Self::Mongo(store) => store.get_project_binding(id).await,
-        }
-    }
-
-    pub async fn list_project_bindings(
-        &self,
-        owner_user_id: &str,
-        project_id: Option<String>,
-        mode: Option<String>,
-    ) -> Result<Vec<LocalConnectorProjectBinding>, String> {
-        match self {
-            Self::Mongo(store) => {
-                store
-                    .list_project_bindings(owner_user_id, project_id, mode)
-                    .await
-            }
-        }
-    }
-
-    pub async fn update_project_binding(
-        &self,
-        binding: &LocalConnectorProjectBinding,
-    ) -> Result<(), String> {
-        match self {
-            Self::Mongo(store) => store.update_project_binding(binding).await,
-        }
-    }
-
-    pub async fn delete_project_binding(
-        &self,
-        owner_user_id: &str,
-        id: &str,
-    ) -> Result<(), String> {
-        match self {
-            Self::Mongo(store) => store.delete_project_binding(owner_user_id, id).await,
-        }
-    }
-
-    pub async fn upsert_sandbox_pairing(
-        &self,
-        pairing: &LocalConnectorSandboxPairing,
-    ) -> Result<LocalConnectorSandboxPairing, String> {
-        match self {
-            Self::Mongo(store) => store.upsert_sandbox_pairing(pairing).await,
-        }
-    }
-
-    pub async fn get_sandbox_pairing(
-        &self,
-        id: &str,
-    ) -> Result<Option<LocalConnectorSandboxPairing>, String> {
-        match self {
-            Self::Mongo(store) => store.get_sandbox_pairing(id).await,
-        }
-    }
-
-    pub async fn list_sandbox_pairings(
-        &self,
-        owner_user_id: &str,
-        device_id: Option<String>,
-        workspace_id: Option<String>,
-    ) -> Result<Vec<LocalConnectorSandboxPairing>, String> {
-        match self {
-            Self::Mongo(store) => {
-                store
-                    .list_sandbox_pairings(owner_user_id, device_id, workspace_id)
-                    .await
-            }
-        }
-    }
-
-    pub async fn update_sandbox_pairing(
-        &self,
-        pairing: &LocalConnectorSandboxPairing,
-    ) -> Result<(), String> {
-        match self {
-            Self::Mongo(store) => store.update_sandbox_pairing(pairing).await,
-        }
-    }
-
-    pub async fn delete_sandbox_pairing(
-        &self,
-        owner_user_id: &str,
-        id: &str,
-    ) -> Result<(), String> {
-        match self {
-            Self::Mongo(store) => store.delete_sandbox_pairing(owner_user_id, id).await,
-        }
-    }
-
-    pub async fn open_session(
-        &self,
-        session: &LocalConnectorSession,
-    ) -> Result<(), SessionAcquireError> {
-        match self {
-            Self::Mongo(store) => store.open_session(session).await,
-        }
-    }
-
-    pub async fn heartbeat_session(
-        &self,
-        owner_user_id: &str,
-        session_id: &str,
-        device_id: &str,
-        lease_ttl: std::time::Duration,
-    ) -> Result<bool, String> {
-        match self {
-            Self::Mongo(store) => {
-                store
-                    .heartbeat_session(owner_user_id, session_id, device_id, lease_ttl)
-                    .await
-            }
-        }
-    }
-
-    pub async fn close_session(
-        &self,
-        owner_user_id: &str,
-        session_id: &str,
-        device_id: &str,
-    ) -> Result<bool, String> {
-        match self {
-            Self::Mongo(store) => {
-                store
-                    .close_session(owner_user_id, session_id, device_id)
-                    .await
-            }
-        }
-    }
-
-    pub async fn close_device_session(
-        &self,
-        owner_user_id: &str,
-        device_id: &str,
-    ) -> Result<bool, String> {
-        match self {
-            Self::Mongo(store) => store.close_device_session(owner_user_id, device_id).await,
-        }
-    }
-
-    pub async fn session_holds_active_lease(
-        &self,
-        owner_user_id: &str,
-        device_id: &str,
-    ) -> Result<bool, String> {
-        match self {
-            Self::Mongo(store) => {
-                store
-                    .session_holds_active_lease(owner_user_id, device_id)
-                    .await
-            }
-        }
-    }
-
-    pub async fn active_session(
-        &self,
-        owner_user_id: &str,
-    ) -> Result<Option<LocalConnectorSession>, String> {
-        match self {
-            Self::Mongo(store) => store.active_session(owner_user_id).await,
-        }
-    }
-
-    pub async fn system_stats(&self) -> Result<LocalConnectorStoreStats, String> {
-        match self {
-            Self::Mongo(store) => store.system_stats().await,
-        }
-    }
-
-    pub async fn create_managed_requirements_policy(
-        &self,
-        policy: &ManagedRequirementsPolicy,
-    ) -> Result<(), String> {
-        match self {
-            Self::Mongo(store) => store.create_managed_requirements_policy(policy).await,
-        }
-    }
-
-    pub async fn get_managed_requirements_policy(
-        &self,
-        id: &str,
-    ) -> Result<Option<ManagedRequirementsPolicy>, String> {
-        match self {
-            Self::Mongo(store) => store.get_managed_requirements_policy(id).await,
-        }
-    }
-
-    pub async fn list_managed_requirements_policies(
-        &self,
-    ) -> Result<Vec<ManagedRequirementsPolicy>, String> {
-        match self {
-            Self::Mongo(store) => store.list_managed_requirements_policies().await,
-        }
-    }
-
-    pub async fn update_managed_requirements_policy(
-        &self,
-        policy: &ManagedRequirementsPolicy,
-    ) -> Result<bool, String> {
-        match self {
-            Self::Mongo(store) => store.update_managed_requirements_policy(policy).await,
-        }
-    }
-
-    pub async fn delete_managed_requirements_policy(&self, id: &str) -> Result<bool, String> {
-        match self {
-            Self::Mongo(store) => store.delete_managed_requirements_policy(id).await,
-        }
-    }
-
-    pub async fn managed_requirements_policy_has_assignments(
-        &self,
-        policy_id: &str,
-    ) -> Result<bool, String> {
-        match self {
-            Self::Mongo(store) => {
-                store
-                    .managed_requirements_policy_has_assignments(policy_id)
-                    .await
-            }
-        }
-    }
-
-    pub async fn create_managed_requirements_assignment(
-        &self,
-        assignment: &ManagedRequirementsAssignment,
-    ) -> Result<(), String> {
-        match self {
-            Self::Mongo(store) => {
-                store
-                    .create_managed_requirements_assignment(assignment)
-                    .await
-            }
-        }
-    }
-
-    pub async fn get_managed_requirements_assignment(
-        &self,
-        id: &str,
-    ) -> Result<Option<ManagedRequirementsAssignment>, String> {
-        match self {
-            Self::Mongo(store) => store.get_managed_requirements_assignment(id).await,
-        }
-    }
-
-    pub async fn list_managed_requirements_assignments(
-        &self,
-    ) -> Result<Vec<ManagedRequirementsAssignment>, String> {
-        match self {
-            Self::Mongo(store) => store.list_managed_requirements_assignments().await,
-        }
-    }
-
-    pub async fn update_managed_requirements_assignment(
-        &self,
-        assignment: &ManagedRequirementsAssignment,
-    ) -> Result<bool, String> {
-        match self {
-            Self::Mongo(store) => {
-                store
-                    .update_managed_requirements_assignment(assignment)
-                    .await
-            }
-        }
-    }
-
-    pub async fn delete_managed_requirements_assignment(&self, id: &str) -> Result<bool, String> {
-        match self {
-            Self::Mongo(store) => store.delete_managed_requirements_assignment(id).await,
-        }
-    }
-
-    pub async fn applicable_managed_requirements_layers(
-        &self,
-        owner_user_id: &str,
-        role: &str,
-    ) -> Result<Vec<ApplicableManagedRequirementsLayer>, String> {
-        match self {
-            Self::Mongo(store) => {
-                store
-                    .applicable_managed_requirements_layers(owner_user_id, role)
-                    .await
-            }
-        }
-    }
+fn db_error(error: sqlx::Error) -> String {
+    error.to_string()
 }

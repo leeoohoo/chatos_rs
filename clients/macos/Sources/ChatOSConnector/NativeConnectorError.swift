@@ -1,7 +1,7 @@
 import Foundation
 import Security
 
-public enum NativeConnectorError: LocalizedError, Sendable {
+public enum NativeConnectorError: LocalizedError, Sendable, Equatable {
     case invalidEndpoint
     case keychain(OSStatus)
     case notPaired

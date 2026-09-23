@@ -1,29 +1,27 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use futures_util::TryStreamExt;
-use mongodb::bson::doc;
-use mongodb::options::FindOptions;
+use sqlx::types::Json;
 
 use crate::db::Db;
 use crate::models::{
     now_rfc3339, EngineJobPolicy, UpsertEngineJobPolicyRequest, PROMPT_LANGUAGE_EN,
     PROMPT_LANGUAGE_ZH,
 };
+use crate::repositories::postgres::{decode, json, timestamp};
 
-use super::common::{
-    default_job_policy, default_job_types, job_policy_collection, normalize_job_policy,
-};
+use super::common::{default_job_policy, default_job_types, normalize_job_policy};
 
 pub async fn list_job_policies(db: &Db) -> Result<Vec<EngineJobPolicy>, String> {
-    let options = FindOptions::builder().sort(doc! {"job_type": 1}).build();
-    let cursor = job_policy_collection(db)
-        .find(doc! {})
-        .with_options(options)
-        .await
-        .map_err(|err| err.to_string())?;
-    let mut items: Vec<EngineJobPolicy> =
-        cursor.try_collect().await.map_err(|err| err.to_string())?;
+    let mut items = sqlx::query_scalar::<_, Json<serde_json::Value>>(
+        "SELECT data FROM engine_job_policies ORDER BY job_type",
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|error| error.to_string())?
+    .into_iter()
+    .map(decode)
+    .collect::<Result<Vec<EngineJobPolicy>, _>>()?;
 
     for item in &mut items {
         normalize_job_policy(item);
@@ -42,19 +40,23 @@ pub async fn list_job_policies(db: &Db) -> Result<Vec<EngineJobPolicy>, String> 
 }
 
 pub async fn count_job_policies(db: &Db) -> Result<i64, String> {
-    let stored_count = job_policy_collection(db)
-        .count_documents(doc! {})
+    let stored_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM engine_job_policies")
+        .fetch_one(db)
         .await
-        .map(|count| count as i64)
-        .map_err(|err| err.to_string())?;
+        .map_err(|error| error.to_string())?;
     Ok(stored_count.max(default_job_types().len() as i64))
 }
 
 pub async fn get_job_policy(db: &Db, job_type: &str) -> Result<Option<EngineJobPolicy>, String> {
-    job_policy_collection(db)
-        .find_one(doc! {"job_type": job_type})
-        .await
-        .map_err(|err| err.to_string())
+    sqlx::query_scalar::<_, Json<serde_json::Value>>(
+        "SELECT data FROM engine_job_policies WHERE job_type=$1",
+    )
+    .bind(job_type)
+    .fetch_optional(db)
+    .await
+    .map_err(|error| error.to_string())?
+    .map(decode)
+    .transpose()
 }
 
 pub async fn get_effective_job_policy(db: &Db, job_type: &str) -> Result<EngineJobPolicy, String> {
@@ -133,11 +135,18 @@ pub async fn upsert_job_policy(
     normalize_job_policy(&mut current);
     current.updated_at = now_rfc3339();
 
-    job_policy_collection(db)
-        .replace_one(doc! {"job_type": &current.job_type}, current.clone())
-        .upsert(true)
-        .await
-        .map_err(|err| err.to_string())?;
+    sqlx::query(
+        "INSERT INTO engine_job_policies(job_type,enabled,updated_at,data) VALUES($1,$2,$3,$4) \
+         ON CONFLICT(job_type) DO UPDATE SET enabled=EXCLUDED.enabled, \
+         updated_at=EXCLUDED.updated_at,data=EXCLUDED.data",
+    )
+    .bind(&current.job_type)
+    .bind(current.enabled)
+    .bind(timestamp(&current.updated_at)?)
+    .bind(json(&current)?)
+    .execute(db)
+    .await
+    .map_err(|error| error.to_string())?;
 
     Ok(current)
 }

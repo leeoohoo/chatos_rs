@@ -211,7 +211,7 @@ pub async fn resolve_runtime_context(
     )
     .await;
     let resolved_project_id = resolved_project_runtime.project_id;
-    let resolved_project_name = resolved_project_runtime.project_name;
+    let mut resolved_project_name = resolved_project_runtime.project_name;
     let resolved_project_root =
         resolve_runtime_project_root(resolved_project_runtime.project_root).await;
     let resolved_project_root = resolved_project_root.logical_root;
@@ -230,6 +230,10 @@ pub async fn resolve_runtime_context(
         Ok(Some(snapshot))
             if resolved_project_id.as_deref() == Some(snapshot.project_id.as_str()) =>
         {
+            // ProjectRegistry on the client is the project authority.  After Project Service was
+            // removed there is no server-side project record from which this name can be filled,
+            // so preserve it from the validated client snapshot for the model/runtime prompt.
+            resolved_project_name = Some(snapshot.project_name.clone());
             Some(snapshot)
         }
         Ok(Some(_)) => {
@@ -286,6 +290,7 @@ pub async fn resolve_runtime_context(
         if !requires_concrete_project || task_runner_project_id.is_some() {
             match resolve_task_plugin_catalog_prompt(
                 task_runner_project_id,
+                client_project_context.as_ref(),
                 req.task_plugin_preferences.as_slice(),
                 user_output_locale,
             )

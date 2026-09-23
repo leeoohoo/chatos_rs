@@ -1,7 +1,6 @@
 import ChatOSConnector
 import ChatOSCore
 import Foundation
-import SQLite3
 import XCTest
 
 final class SQLiteProjectRegistryTests: XCTestCase {
@@ -9,10 +8,6 @@ final class SQLiteProjectRegistryTests: XCTestCase {
 
     private func databaseURL() -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("project-registry-\(UUID().uuidString)/projects.db")
-    }
-
-    private func legacy(_ id: String = "legacy-id", owner: String = "alice") -> LocalProjectRecord {
-        LocalProjectRecord(id: id, ownerUserID: owner, draft: draft, createdAtUnixMs: 1, updatedAtUnixMs: 2)
     }
 
     func testOfflineCreateSurvivesReopenAndIsAccountScoped() async throws {
@@ -67,49 +62,6 @@ final class SQLiteProjectRegistryTests: XCTestCase {
         XCTAssertEqual(restored.revision, 3)
     }
 
-    func testImportPreservesIDsIsIdempotentAndNeverResurrectsTombstone() async throws {
-        let url = databaseURL()
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        let registry = try SQLiteProjectRegistry(databaseURL: url)
-        let record = legacy()
-        let result = try await registry.importRecords(ownerUserID: "alice", sourceID: "export-1", records: [record])
-        let replay = try await registry.importRecords(ownerUserID: "alice", sourceID: "export-1", records: [record])
-        XCTAssertEqual(result.insertedIDs, [record.id])
-        XCTAssertEqual(replay, result)
-        _ = try await registry.update(ownerUserID: "alice", id: record.id, expectedRevision: 1, draft: draft, status: .removed)
-        let later = try await registry.importRecords(ownerUserID: "alice", sourceID: "export-2", records: [record])
-        XCTAssertEqual(later.skippedIDs, [record.id])
-        let active = try await registry.list(ownerUserID: "alice")
-        let removed = try await registry.get(ownerUserID: "alice", id: record.id)
-        XCTAssertTrue(active.isEmpty)
-        XCTAssertEqual(removed?.status, .removed)
-        do {
-            _ = try await registry.update(ownerUserID: "alice", id: record.id, expectedRevision: 2, draft: draft, status: .active)
-            XCTFail("Tombstone restored")
-        } catch { XCTAssertEqual(error as? ProjectRegistryError, .removed) }
-    }
-
-    func testImportRejectsWrongOwnerDuplicatesAndChangedReceiptWithoutPartialWrites() async throws {
-        let url = databaseURL()
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        let registry = try SQLiteProjectRegistry(databaseURL: url)
-        for records in [[legacy(), legacy("bad", owner: "bob")], [legacy(), legacy()]] {
-            do {
-                _ = try await registry.importRecords(ownerUserID: "alice", sourceID: "invalid", records: records)
-                XCTFail("Invalid import accepted")
-            } catch { XCTAssertTrue(error is ProjectRegistryError) }
-        }
-        let empty = try await registry.list(ownerUserID: "alice", includeInactive: true)
-        XCTAssertTrue(empty.isEmpty)
-        _ = try await registry.importRecords(ownerUserID: "alice", sourceID: "export", records: [legacy()])
-        do {
-            _ = try await registry.importRecords(ownerUserID: "alice", sourceID: "export", records: [legacy("another")])
-            XCTFail("Changed receipt accepted")
-        } catch { XCTAssertEqual(error as? ProjectRegistryError, .importSourceConflict) }
-        let missing = try await registry.get(ownerUserID: "alice", id: "another")
-        XCTAssertNil(missing)
-    }
-
     func testPortablePathValidationAndInactiveSnapshotRejection() throws {
         for path in ["/absolute", "../escape", "a/../b", "a/./b", "a//b", "a/", "C:/repo", "a\\b", "a\0b", " leading", "trailing "] {
             XCTAssertThrowsError(try LocalProjectDraft(name: "project", workspaceID: "ws", relativeRoot: path).validate(), path)
@@ -129,24 +81,4 @@ final class SQLiteProjectRegistryTests: XCTestCase {
         XCTAssertThrowsError(try SQLiteProjectRegistry(databaseURL: url))
     }
 
-    func testImportRollsBackRecordsAndReceiptOnDatabaseFailure() async throws {
-        let url = databaseURL()
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        let registry = try SQLiteProjectRegistry(databaseURL: url)
-        var database: OpaquePointer?
-        XCTAssertEqual(sqlite3_open(url.path, &database), SQLITE_OK)
-        defer { sqlite3_close(database) }
-        XCTAssertEqual(sqlite3_exec(database, """
-            CREATE TRIGGER fail_import BEFORE INSERT ON local_project_records
-            WHEN NEW.id = 'b' BEGIN SELECT RAISE(ABORT, 'injected failure'); END;
-            """, nil, nil, nil), SQLITE_OK)
-        do {
-            _ = try await registry.importRecords(ownerUserID: "alice", sourceID: "export", records: [legacy("a"), legacy("b")])
-            XCTFail("Database failure ignored")
-        } catch { XCTAssertTrue(error is ProjectRegistryError) }
-        let records = try await registry.list(ownerUserID: "alice", includeInactive: true)
-        XCTAssertTrue(records.isEmpty)
-        let retry = try await registry.importRecords(ownerUserID: "alice", sourceID: "export", records: [legacy("a")])
-        XCTAssertEqual(retry.insertedIDs, ["a"], "The receipt must roll back with the records")
-    }
 }

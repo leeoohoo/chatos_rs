@@ -185,9 +185,9 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ================================================================================
-COMPONENT: fast-uri@3.1.5
+COMPONENT: fast-uri@3.1.8
 DECLARED LICENSE: BSD-3-Clause
-SOURCE: https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz
+SOURCE: https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.8.tgz
 
 Copyright (c) 2011-2021, Gary Court until https://github.com/garycourt/uri-js/commit/a1acf730b4bba3f1097c9f52e7d9d3aba8cdcaae
 Copyright (c) 2021-present The Fastify team <https://github.com/fastify/fastify#team>
@@ -220,9 +220,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 The complete list of contributors can be found at:
 - https://github.com/garycourt/uri-js/graphs/contributors
 ================================================================================
-COMPONENT: fflate@0.8.2
+COMPONENT: fflate@0.8.3
 DECLARED LICENSE: MIT
-SOURCE: https://registry.npmjs.org/fflate/-/fflate-0.8.2.tgz
+SOURCE: https://registry.npmjs.org/fflate/-/fflate-0.8.3.tgz
 
 MIT License
 

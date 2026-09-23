@@ -1,0 +1,30 @@
+{
+  "pages": [
+    "pages/devices/index",
+    "pages/conversations/index",
+    "pages/conversation-detail/index",
+    "pages/bind/index",
+    "pages/settings/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "ChatOS",
+    "navigationBarBackgroundColor": "#F2F2F7",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#F2F2F7",
+    "backgroundTextStyle": "dark"
+  },
+  "tabBar": {
+    "color": "#8E8E93",
+    "selectedColor": "#007AFF",
+    "backgroundColor": "#FAFAFC",
+    "borderStyle": "white",
+    "list": [
+      { "pagePath": "pages/devices/index", "text": "设备" },
+      { "pagePath": "pages/conversations/index", "text": "会话" },
+      { "pagePath": "pages/settings/index", "text": "设置" }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents"
+}

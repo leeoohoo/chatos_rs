@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 namespace ChatOS.Core.Domain;
 
 public enum LocalProjectStatus { Active, Archived, Removed }
-public enum ProjectRegistryError { InvalidField, NotFound, RevisionConflict, Removed, ImportSourceConflict }
+public enum ProjectRegistryError { InvalidField, NotFound, RevisionConflict, Removed }
 
 public sealed class ProjectRegistryException(ProjectRegistryError code, string message) : Exception(message)
 {
@@ -40,8 +40,6 @@ public sealed record LocalProjectRecord(
             throw ProjectRegistryValidation.Invalid("timestamps");
     }
 }
-
-public sealed record ProjectRegistryImportResult(IReadOnlyList<string> InsertedIds, IReadOnlyList<string> SkippedIds);
 
 public static class ProjectRegistryValidation
 {

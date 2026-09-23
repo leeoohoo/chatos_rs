@@ -1,0 +1,5 @@
+<rich-text
+  class="markdown markdown-{{variant}} {{compact ? 'markdown-compact' : ''}}"
+  nodes="{{nodes}}"
+  user-select
+/>

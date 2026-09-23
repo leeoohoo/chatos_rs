@@ -158,6 +158,7 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
     public async Task WriteAsync(string data, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        TerminalTransportChunker.ValidateInput(data);
         if (HasExited)
         {
             throw new InvalidOperationException("Terminal session has exited.");
@@ -190,6 +191,9 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
     }
 
     public string Snapshot(int maximumLines = 500) => _outputBuffer.Snapshot(maximumLines);
+
+    public TerminalSnapshot SnapshotState(int maximumLines = 500) =>
+        _outputBuffer.SnapshotState(maximumLines);
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
@@ -261,8 +265,33 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
 
                 var count = decoder.GetChars(bytes, 0, read, characters, 0, flush: false);
                 var text = new string(characters, 0, count);
-                _outputBuffer.Append(text);
-                Publish(new TerminalEvent(TerminalEventKind.Output, Identity.SessionId, Data: text));
+                foreach (var chunk in TerminalTransportChunker.SplitOutput(text))
+                {
+                    var sequence = _outputBuffer.Append(chunk);
+                    Publish(new TerminalEvent(
+                        TerminalEventKind.Output,
+                        Identity.SessionId,
+                        Data: chunk,
+                        Sequence: sequence));
+                }
+            }
+
+            var remaining = decoder.GetChars(
+                Array.Empty<byte>(),
+                0,
+                0,
+                characters,
+                0,
+                flush: true);
+            foreach (var chunk in TerminalTransportChunker.SplitOutput(
+                new string(characters, 0, remaining)))
+            {
+                var sequence = _outputBuffer.Append(chunk);
+                Publish(new TerminalEvent(
+                    TerminalEventKind.Output,
+                    Identity.SessionId,
+                    Data: chunk,
+                    Sequence: sequence));
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

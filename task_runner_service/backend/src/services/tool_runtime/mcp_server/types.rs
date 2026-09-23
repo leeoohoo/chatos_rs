@@ -25,7 +25,8 @@ pub(super) use self::common::{decode_args, text_result};
 pub use self::jsonrpc::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 pub(super) use self::prompt::{CancelPromptArgs, ListPromptsArgs, PromptIdArgs, SubmitPromptArgs};
 pub(super) use self::run::{
-    GetTaskMemoryContextArgs, ListRunsArgs, ListTaskMemoryRecordsArgs, RunIdArgs, StartTaskRunArgs,
+    GetTaskMemoryContextArgs, ListRunEventsArgs, ListRunsArgs, ListTaskMemoryRecordsArgs,
+    RunIdArgs, StartTaskRunArgs,
 };
 pub(super) use self::task::{
     reject_ai_runtime_config, BatchTaskDeleteArgs, BatchTaskRunArgs, BatchTaskStatusUpdateArgs,

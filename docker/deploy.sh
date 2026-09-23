@@ -257,6 +257,18 @@ validate_production_secrets() {
     return 0
   fi
 
+  local postgres_image postgres_server_max_connections
+  postgres_image="$(env_value POSTGRES_IMAGE "")"
+  if [[ ! "$postgres_image" =~ ^postgres:18\.6-bookworm@sha256:[0-9a-f]{64}$ ]]; then
+    echo "[ERROR] production POSTGRES_IMAGE must pin postgres:18.6-bookworm by sha256 digest" >&2
+    failures=1
+  fi
+  postgres_server_max_connections="$(env_value POSTGRES_SERVER_MAX_CONNECTIONS "")"
+  if [[ ! "$postgres_server_max_connections" =~ ^[0-9]+$ ]] \
+    || (( postgres_server_max_connections < 150 )); then
+    echo "[ERROR] production POSTGRES_SERVER_MAX_CONNECTIONS must be an integer >= 150 for the current 11-process pool budget" >&2
+    failures=1
+  fi
   local key value default_value
   while IFS='|' read -r key default_value; do
     value="$(env_value "$key" "$default_value")"
@@ -265,7 +277,9 @@ validate_production_secrets() {
       failures=1
     fi
   done <<'EOF'
-MONGODB_PASSWORD|admin
+POSTGRES_ADMIN_PASSWORD|change_me_postgres_admin_password
+POSTGRES_APP_PASSWORD|change_me_postgres_app_password
+POSTGRES_MIGRATION_PASSWORD|change_me_postgres_migration_password
 HARNESS_ADMIN_PASSWORD|admin123456
 RABBITMQ_DEFAULT_PASS|change_me_rabbitmq_password
 VALKEY_PASSWORD|change_me_valkey_password
@@ -285,475 +299,7 @@ EOF
   fi
 }
 
-ensure_config_center_mtls_material() {
-  need_cmd openssl
-  local configured_dir resolved_dir
-  local required_file failures=0
-  configured_dir="$(env_value CONFIG_CENTER_MTLS_DIR ./secrets/config-center-mtls)"
-  if [[ "$configured_dir" = /* ]]; then
-    resolved_dir="$configured_dir"
-  else
-    resolved_dir="$SCRIPT_DIR/$configured_dir"
-  fi
-
-  for required_file in \
-    ca.crt server.crt server.key \
-    chatos-backend.identity.pem \
-    local-connector-service.identity.pem \
-    mcp-management-service.identity.pem \
-    memory-engine.identity.pem \
-    official-website.identity.pem \
-    plugin-management-service.identity.pem \
-    task-runner.identity.pem \
-    user-service.identity.pem
-  do
-    if [[ ! -s "$resolved_dir/$required_file" ]]; then
-      failures=1
-      break
-    fi
-  done
-
-  if (( failures > 0 )) && ! is_production_environment; then
-    "$ROOT_DIR/scripts/generate-config-center-mtls.sh" "$resolved_dir"
-    failures=0
-  fi
-  if (( failures > 0 )); then
-    echo "[ERROR] Configuration Center mTLS material is incomplete: $resolved_dir" >&2
-    echo "        Generate or provision it before deployment; production never creates certificates automatically." >&2
-    return 1
-  fi
-  if ! openssl verify -CAfile "$resolved_dir/ca.crt" "$resolved_dir/server.crt" >/dev/null; then
-    echo "[ERROR] Configuration Center server certificate is not trusted by the configured CA" >&2
-    return 1
-  fi
-  for required_file in \
-    chatos-backend.identity.pem \
-    local-connector-service.identity.pem \
-    mcp-management-service.identity.pem \
-    memory-engine.identity.pem \
-    official-website.identity.pem \
-    plugin-management-service.identity.pem \
-    task-runner.identity.pem \
-    user-service.identity.pem
-  do
-    if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
-      "$resolved_dir/$required_file" >/dev/null; then
-      echo "[ERROR] Configuration Center client certificate is invalid: $required_file" >&2
-      return 1
-    fi
-    if ! openssl pkey -in "$resolved_dir/$required_file" -noout >/dev/null 2>&1; then
-      echo "[ERROR] Configuration Center client identity has no readable private key: $required_file" >&2
-      return 1
-    fi
-  done
-}
-
-ensure_mcp_management_mtls_material() {
-  need_cmd openssl
-  local configured_dir resolved_dir
-  local required_file failures=0
-  configured_dir="$(env_value MCP_MANAGEMENT_MTLS_DIR ./secrets/mcp-management-mtls)"
-  if [[ "$configured_dir" = /* ]]; then
-    resolved_dir="$configured_dir"
-  else
-    resolved_dir="$SCRIPT_DIR/$configured_dir"
-  fi
-
-  for required_file in \
-    ca.crt server.crt server.key \
-    chatos.identity.pem \
-    task-runner.identity.pem \
-    configuration-center.identity.pem
-  do
-    if [[ ! -s "$resolved_dir/$required_file" ]]; then
-      failures=1
-      break
-    fi
-  done
-
-  if (( failures > 0 )) && ! is_production_environment; then
-    "$ROOT_DIR/scripts/generate-mcp-management-mtls.sh" "$resolved_dir"
-    failures=0
-  fi
-  if (( failures > 0 )); then
-    echo "[ERROR] MCP Management mTLS material is incomplete: $resolved_dir" >&2
-    echo "        Generate or provision it before deployment; production never creates certificates automatically." >&2
-    return 1
-  fi
-  if ! openssl verify -purpose sslserver -CAfile "$resolved_dir/ca.crt" \
-    "$resolved_dir/server.crt" >/dev/null; then
-    echo "[ERROR] MCP Management server certificate is not trusted by the configured CA" >&2
-    return 1
-  fi
-  for required_file in \
-    chatos.identity.pem \
-    task-runner.identity.pem \
-    configuration-center.identity.pem
-  do
-    if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
-      "$resolved_dir/$required_file" >/dev/null; then
-      echo "[ERROR] MCP Management client certificate is invalid: $required_file" >&2
-      return 1
-    fi
-    if ! openssl pkey -in "$resolved_dir/$required_file" -noout >/dev/null 2>&1; then
-      echo "[ERROR] MCP Management client identity has no readable private key: $required_file" >&2
-      return 1
-    fi
-  done
-}
-
-ensure_task_runner_mtls_material() {
-  need_cmd openssl
-  local configured_dir resolved_dir
-  local required_file failures=0
-  configured_dir="$(env_value TASK_RUNNER_MTLS_DIR ./secrets/task-runner-mtls)"
-  if [[ "$configured_dir" = /* ]]; then
-    resolved_dir="$configured_dir"
-  else
-    resolved_dir="$SCRIPT_DIR/$configured_dir"
-  fi
-
-  for required_file in \
-    ca.crt server.crt server.key \
-    chatos.identity.pem \
-    mcp-management-service.identity.pem \
-    user-service.identity.pem
-  do
-    if [[ ! -s "$resolved_dir/$required_file" ]]; then
-      failures=1
-      break
-    fi
-  done
-
-  if (( failures > 0 )) && ! is_production_environment; then
-    "$ROOT_DIR/scripts/generate-task-runner-mtls.sh" "$resolved_dir"
-    failures=0
-  fi
-  if (( failures > 0 )); then
-    echo "[ERROR] Task Runner mTLS material is incomplete: $resolved_dir" >&2
-    echo "        Generate or provision it before deployment; production never creates certificates automatically." >&2
-    return 1
-  fi
-  if ! openssl verify -purpose sslserver -CAfile "$resolved_dir/ca.crt" \
-    "$resolved_dir/server.crt" >/dev/null; then
-    echo "[ERROR] Task Runner server certificate is not trusted by the configured CA" >&2
-    return 1
-  fi
-  for required_file in \
-    chatos.identity.pem \
-    mcp-management-service.identity.pem \
-    user-service.identity.pem
-  do
-    if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
-      "$resolved_dir/$required_file" >/dev/null; then
-      echo "[ERROR] Task Runner client certificate is invalid: $required_file" >&2
-      return 1
-    fi
-    if ! openssl pkey -in "$resolved_dir/$required_file" -noout >/dev/null 2>&1; then
-      echo "[ERROR] Task Runner client identity has no readable private key: $required_file" >&2
-      return 1
-    fi
-  done
-}
-
-ensure_chatos_mtls_material() {
-  need_cmd openssl
-  local configured_dir resolved_dir
-  local required_file failures=0
-  configured_dir="$(env_value CHATOS_MTLS_DIR ./secrets/chatos-mtls)"
-  if [[ "$configured_dir" = /* ]]; then
-    resolved_dir="$configured_dir"
-  else
-    resolved_dir="$SCRIPT_DIR/$configured_dir"
-  fi
-
-  for required_file in \
-    ca.crt server.crt server.key \
-    task-runner.identity.pem \
-    mcp-management-service.identity.pem
-  do
-    if [[ ! -s "$resolved_dir/$required_file" ]]; then
-      failures=1
-      break
-    fi
-  done
-
-  if (( failures > 0 )) && ! is_production_environment; then
-    "$ROOT_DIR/scripts/generate-chatos-mtls.sh" "$resolved_dir"
-    failures=0
-  fi
-  if (( failures > 0 )); then
-    echo "[ERROR] ChatOS mTLS material is incomplete: $resolved_dir" >&2
-    echo "        Generate or provision it before deployment; production never creates certificates automatically." >&2
-    return 1
-  fi
-  if ! openssl verify -purpose sslserver -CAfile "$resolved_dir/ca.crt" \
-    "$resolved_dir/server.crt" >/dev/null; then
-    echo "[ERROR] ChatOS server certificate is not trusted by the configured CA" >&2
-    return 1
-  fi
-  if ! openssl pkey -in "$resolved_dir/server.key" -noout >/dev/null 2>&1; then
-    echo "[ERROR] ChatOS server key is unreadable" >&2
-    return 1
-  fi
-  for required_file in task-runner.identity.pem mcp-management-service.identity.pem
-  do
-    if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
-      "$resolved_dir/$required_file" >/dev/null; then
-      echo "[ERROR] ChatOS client certificate is invalid: $required_file" >&2
-      return 1
-    fi
-    if ! openssl pkey -in "$resolved_dir/$required_file" -noout >/dev/null 2>&1; then
-      echo "[ERROR] ChatOS client identity has no readable private key: $required_file" >&2
-      return 1
-    fi
-  done
-}
-
-ensure_local_connector_mtls_material() {
-  need_cmd openssl
-  local configured_dir resolved_dir
-  local required_file failures=0
-  configured_dir="$(env_value LOCAL_CONNECTOR_MTLS_DIR ./secrets/local-connector-mtls)"
-  if [[ "$configured_dir" = /* ]]; then
-    resolved_dir="$configured_dir"
-  else
-    resolved_dir="$SCRIPT_DIR/$configured_dir"
-  fi
-
-  for required_file in \
-    ca.crt server.crt server.key \
-    chatos-backend.identity.pem \
-    task-runner.identity.pem \
-    mcp-management-service.identity.pem
-  do
-    if [[ ! -s "$resolved_dir/$required_file" ]]; then
-      failures=1
-      break
-    fi
-  done
-
-  if (( failures > 0 )) && ! is_production_environment; then
-    "$ROOT_DIR/scripts/generate-local-connector-mtls.sh" "$resolved_dir"
-    failures=0
-  fi
-  if (( failures > 0 )); then
-    echo "[ERROR] Local Connector mTLS material is incomplete: $resolved_dir" >&2
-    echo "        Generate or provision it before deployment; production never creates certificates automatically." >&2
-    return 1
-  fi
-  if ! openssl verify -purpose sslserver -CAfile "$resolved_dir/ca.crt" \
-    "$resolved_dir/server.crt" >/dev/null; then
-    echo "[ERROR] Local Connector server certificate is not trusted by the configured CA" >&2
-    return 1
-  fi
-  if ! openssl pkey -in "$resolved_dir/server.key" -noout >/dev/null 2>&1; then
-    echo "[ERROR] Local Connector server key is unreadable" >&2
-    return 1
-  fi
-  for required_file in \
-    chatos-backend.identity.pem \
-    task-runner.identity.pem \
-    mcp-management-service.identity.pem
-  do
-    if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
-      "$resolved_dir/$required_file" >/dev/null; then
-      echo "[ERROR] Local Connector client certificate is invalid: $required_file" >&2
-      return 1
-    fi
-    if ! openssl pkey -in "$resolved_dir/$required_file" -noout >/dev/null 2>&1; then
-      echo "[ERROR] Local Connector client identity has no readable private key: $required_file" >&2
-      return 1
-    fi
-  done
-}
-
-ensure_user_service_mtls_material() {
-  need_cmd openssl
-  local configured_dir resolved_dir
-  local required_file failures=0
-  configured_dir="$(env_value USER_SERVICE_MTLS_DIR ./secrets/user-service-mtls)"
-  if [[ "$configured_dir" = /* ]]; then
-    resolved_dir="$configured_dir"
-  else
-    resolved_dir="$SCRIPT_DIR/$configured_dir"
-  fi
-
-  for required_file in \
-    ca.crt server.crt server.key \
-    chatos-backend.identity.pem \
-    task-runner.identity.pem
-  do
-    if [[ ! -s "$resolved_dir/$required_file" ]]; then
-      failures=1
-      break
-    fi
-  done
-
-  if (( failures > 0 )) && ! is_production_environment; then
-    "$ROOT_DIR/scripts/generate-user-service-mtls.sh" "$resolved_dir"
-    failures=0
-  fi
-  if (( failures > 0 )); then
-    echo "[ERROR] User Service mTLS material is incomplete: $resolved_dir" >&2
-    echo "        Generate or provision it before deployment; production never creates certificates automatically." >&2
-    return 1
-  fi
-  if ! openssl verify -purpose sslserver -CAfile "$resolved_dir/ca.crt" \
-    "$resolved_dir/server.crt" >/dev/null; then
-    echo "[ERROR] User Service server certificate is not trusted by the configured CA" >&2
-    return 1
-  fi
-  if ! openssl pkey -in "$resolved_dir/server.key" -noout >/dev/null 2>&1; then
-    echo "[ERROR] User Service server key is unreadable" >&2
-    return 1
-  fi
-  for required_file in \
-    chatos-backend.identity.pem \
-    task-runner.identity.pem
-  do
-    if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
-      "$resolved_dir/$required_file" >/dev/null; then
-      echo "[ERROR] User Service client certificate is invalid: $required_file" >&2
-      return 1
-    fi
-    if ! openssl pkey -in "$resolved_dir/$required_file" -noout >/dev/null 2>&1; then
-      echo "[ERROR] User Service client identity has no readable private key: $required_file" >&2
-      return 1
-    fi
-  done
-}
-
-validate_runtime_material() {
-  validate_production_secrets
-  ensure_config_center_mtls_material
-  ensure_mcp_management_mtls_material
-  ensure_task_runner_mtls_material
-  ensure_chatos_mtls_material
-  ensure_local_connector_mtls_material
-  ensure_user_service_mtls_material
-  ensure_plugin_management_mtls_material
-  ensure_memory_engine_mtls_material
-}
-
-ensure_plugin_management_mtls_material() {
-  need_cmd openssl
-  local configured_dir resolved_dir
-  local required_file failures=0
-  configured_dir="$(env_value PLUGIN_MANAGEMENT_MTLS_DIR ./secrets/plugin-management-mtls)"
-  if [[ "$configured_dir" = /* ]]; then
-    resolved_dir="$configured_dir"
-  else
-    resolved_dir="$SCRIPT_DIR/$configured_dir"
-  fi
-
-  for required_file in \
-    ca.crt server.crt server.key \
-    chatos-backend.identity.pem \
-    task-runner.identity.pem \
-    local-connector-service.identity.pem \
-    memory-engine.identity.pem \
-    mcp-management-service.identity.pem
-  do
-    if [[ ! -s "$resolved_dir/$required_file" ]]; then
-      failures=1
-      break
-    fi
-  done
-
-  if (( failures > 0 )) && ! is_production_environment; then
-    "$ROOT_DIR/scripts/generate-plugin-management-mtls.sh" "$resolved_dir"
-    failures=0
-  fi
-  if (( failures > 0 )); then
-    echo "[ERROR] Plugin Management mTLS material is incomplete: $resolved_dir" >&2
-    echo "        Generate or provision it before deployment; production never creates certificates automatically." >&2
-    return 1
-  fi
-  if ! openssl verify -purpose sslserver -CAfile "$resolved_dir/ca.crt" \
-    "$resolved_dir/server.crt" >/dev/null; then
-    echo "[ERROR] Plugin Management server certificate is not trusted by the configured CA" >&2
-    return 1
-  fi
-  if ! openssl pkey -in "$resolved_dir/server.key" -noout >/dev/null 2>&1; then
-    echo "[ERROR] Plugin Management server key is unreadable" >&2
-    return 1
-  fi
-  for required_file in \
-    chatos-backend.identity.pem \
-    task-runner.identity.pem \
-    local-connector-service.identity.pem \
-    memory-engine.identity.pem \
-    mcp-management-service.identity.pem
-  do
-    if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
-      "$resolved_dir/$required_file" >/dev/null; then
-      echo "[ERROR] Plugin Management client certificate is invalid: $required_file" >&2
-      return 1
-    fi
-    if ! openssl pkey -in "$resolved_dir/$required_file" -noout >/dev/null 2>&1; then
-      echo "[ERROR] Plugin Management client identity has no readable private key: $required_file" >&2
-      return 1
-    fi
-  done
-}
-
-ensure_memory_engine_mtls_material() {
-  need_cmd openssl
-  local configured_dir resolved_dir
-  local required_file failures=0
-  configured_dir="$(env_value MEMORY_ENGINE_MTLS_DIR ./secrets/memory-engine-mtls)"
-  if [[ "$configured_dir" = /* ]]; then
-    resolved_dir="$configured_dir"
-  else
-    resolved_dir="$SCRIPT_DIR/$configured_dir"
-  fi
-
-  for required_file in \
-    ca.crt server.crt server.key \
-    chatos-backend.identity.pem \
-    configuration-center.identity.pem \
-    task-runner.identity.pem \
-    user-service.identity.pem
-  do
-    if [[ ! -s "$resolved_dir/$required_file" ]]; then
-      failures=1
-      break
-    fi
-  done
-
-  if (( failures > 0 )) && ! is_production_environment; then
-    "$ROOT_DIR/scripts/generate-memory-engine-mtls.sh" "$resolved_dir"
-    failures=0
-  fi
-  if (( failures > 0 )); then
-    echo "[ERROR] Memory Engine mTLS material is incomplete: $resolved_dir" >&2
-    echo "        Generate or provision it before deployment; production never creates certificates automatically." >&2
-    return 1
-  fi
-  if ! openssl verify -purpose sslserver -CAfile "$resolved_dir/ca.crt" \
-    "$resolved_dir/server.crt" >/dev/null; then
-    echo "[ERROR] Memory Engine server certificate is not trusted by the configured CA" >&2
-    return 1
-  fi
-  for required_file in \
-    chatos-backend.identity.pem \
-    configuration-center.identity.pem \
-    task-runner.identity.pem \
-    user-service.identity.pem
-  do
-    if ! openssl verify -purpose sslclient -CAfile "$resolved_dir/ca.crt" \
-      "$resolved_dir/$required_file" >/dev/null; then
-      echo "[ERROR] Memory Engine client certificate is invalid: $required_file" >&2
-      return 1
-    fi
-    if ! openssl pkey -in "$resolved_dir/$required_file" -noout >/dev/null 2>&1; then
-      echo "[ERROR] Memory Engine client identity has no readable private key: $required_file" >&2
-      return 1
-    fi
-  done
-}
-
+source "$SCRIPT_DIR/deploy-mtls.sh"
 print_urls() {
   local main_backend_port local_connector_service_port mcp_management_port gateway_port
   local harness_port harness_ssh_host harness_ssh_port consul_port
@@ -850,7 +396,7 @@ clean_build_cache() {
 }
 
 clean_build_cache_if_enabled() {
-  if ! env_flag_enabled CHATOS_DOCKER_PRUNE_BUILD_CACHE true; then
+  if ! env_flag_enabled CHATOS_DOCKER_PRUNE_BUILD_CACHE false; then
     return 0
   fi
   clean_build_cache
@@ -924,6 +470,52 @@ start_default() {
   esac
 }
 
+verify_production_user_import() {
+  if ! is_production_environment; then
+    return 0
+  fi
+  CHATOS_BOOTSTRAP_FILE="$ENV_FILE" "$ROOT_DIR/scripts/postgres-verify-user-import.sh"
+}
+
+prepare_postgres() {
+  case "${CHATOS_DOCKER_MODE:-prebuilt}" in
+    build|local|dev)
+      build_local_images \
+        configuration-center-backend \
+        user-service-backend \
+        memory-engine-backend \
+        plugin-management-backend \
+        local-connector-service-backend \
+        mcp-management-service-backend \
+        task-runner-backend \
+        chatos-backend
+      ;;
+    prebuilt|pull|image|images)
+      pull_prebuilt_images
+      ;;
+    *)
+      echo "[ERROR] unsupported CHATOS_DOCKER_MODE=${CHATOS_DOCKER_MODE}" >&2
+      exit 2
+      ;;
+  esac
+  compose up -d postgres
+  compose run --rm postgres-provision
+  local migration_service
+  for migration_service in \
+    configuration-center-migrate \
+    user-service-migrate \
+    plugin-management-migrate \
+    local-connector-migrate \
+    task-runner-migrate \
+    mcp-management-migrate \
+    memory-engine-migrate \
+    chatos-migrate
+  do
+    compose run --rm --no-deps "$migration_service"
+  done
+  compose run --rm --no-deps postgres-finalize
+  echo "[OK] PostgreSQL is provisioned, migrated, and runtime privileges are finalized."
+}
 if [[ "$ACTION" == "build-services" ]]; then
   print_build_services
   exit 0
@@ -947,7 +539,7 @@ ensure_docker_ready
 cd "$ROOT_DIR"
 
 case "$ACTION" in
-  up|start|restart|fast|quick|up-fast|up-quick|restart-fast|restart-quick|dev|local|build-up|restart-dev|restart-local|rebuild)
+  up|start|restart|fast|quick|up-fast|up-quick|restart-fast|restart-quick|dev|local|build-up|restart-dev|restart-local|rebuild|postgres-prepare|verify-user-import)
     validate_runtime_material
     ensure_cloud_network
     ;;
@@ -956,33 +548,46 @@ esac
 case "$ACTION" in
   up|start)
     shift || true
+    verify_production_user_import
     start_default "$@"
     ;;
   restart)
     shift || true
+    verify_production_user_import
     compose down --remove-orphans
     start_default "$@"
     ;;
   fast|quick|up-fast|up-quick)
     shift || true
+    verify_production_user_import
     start_without_refresh "$@"
     ;;
   restart-fast|restart-quick)
     shift || true
+    verify_production_user_import
     restart_without_refresh "$@"
     ;;
   dev|local|build-up)
     shift || true
+    verify_production_user_import
     start_from_local_build "$@"
     ;;
   restart-dev|restart-local)
     shift || true
+    verify_production_user_import
     compose down --remove-orphans
     start_from_local_build "$@"
     ;;
   rebuild)
     shift || true
+    verify_production_user_import
     rebuild_services "$@"
+    ;;
+  postgres-prepare)
+    prepare_postgres
+    ;;
+  verify-user-import)
+    verify_production_user_import
     ;;
   build)
     shift || true
@@ -1019,7 +624,7 @@ case "$ACTION" in
     print_build_services
     ;;
   *)
-    echo "Usage: $0 [up|fast|restart|restart-fast|dev|restart-dev|rebuild|build|down|reset|logs|ps|pull|clean-images|clean-build-cache|services|build-services|validate-plugin-ui-origin|validate-runtime-material] [service...]" >&2
+    echo "Usage: $0 [up|fast|restart|restart-fast|dev|restart-dev|rebuild|build|postgres-prepare|verify-user-import|down|reset|logs|ps|pull|clean-images|clean-build-cache|services|build-services|validate-plugin-ui-origin|validate-runtime-material] [service...]" >&2
     echo "  up/restart pull prebuilt images by default." >&2
     echo "  fast/restart-fast reuse existing images and skip pull/build." >&2
     echo "  dev/restart-dev build local images; rebuild builds only the given build-service names." >&2
@@ -1029,6 +634,7 @@ case "$ACTION" in
     echo "  buildable service names can be listed with: $0 build-services" >&2
     echo "  Plugin UI origins can be checked without Docker using: $0 validate-plugin-ui-origin" >&2
     echo "  Runtime secrets and mTLS material can be checked without Docker using: $0 validate-runtime-material" >&2
+    echo "  Production cutover: postgres-prepare, migrate users, verify-user-import, then up." >&2
     exit 2
     ;;
 esac

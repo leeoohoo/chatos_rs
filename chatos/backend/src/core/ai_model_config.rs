@@ -82,10 +82,7 @@ pub fn resolve_chat_model_config(
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
 
-    let supports_responses = model_cfg
-        .get("supports_responses")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false);
+    let supports_responses = true;
 
     let supports_reasoning = model_cfg
         .get("supports_reasoning")
@@ -181,7 +178,7 @@ mod tests {
         assert_eq!(resolved.provider, "gpt");
         assert_eq!(resolved.temperature, 0.7);
         assert!(!resolved.supports_images);
-        assert!(!resolved.supports_responses);
+        assert!(resolved.supports_responses);
         assert!(!resolved.effective_reasoning);
         assert_eq!(resolved.api_key, "k");
         assert_eq!(resolved.base_url, "https://example.com");

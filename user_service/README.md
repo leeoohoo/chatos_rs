@@ -12,7 +12,7 @@ It owns:
 
 ## Stack
 
-- Backend: Rust + Axum + MongoDB + JWT
+- Backend: Rust + Axum + PostgreSQL + JWT
 - Frontend: React + Vite + Ant Design
 
 ## Ownership Model

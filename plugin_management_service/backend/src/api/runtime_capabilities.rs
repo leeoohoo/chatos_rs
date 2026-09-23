@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use futures_util::{stream, StreamExt, TryStreamExt};
 
 #[path = "runtime_capabilities/plugins.rs"]
 mod plugins;
@@ -133,164 +134,40 @@ async fn resolve_agent_capabilities_for_owner(
     let mut plugins = Vec::new();
     let mut local_connector_requirements = Vec::new();
 
-    for binding in bindings {
-        match binding.resource_kind.as_str() {
-            RESOURCE_KIND_MCP => {
-                let Some(resource) = state
-                    .store
-                    .get_mcp(binding.resource_id.as_str())
-                    .await
-                    .map_err(ApiError::internal)?
-                else {
-                    continue;
-                };
-                if !resource_visible_in_runtime(
-                    &resource.owner_user_id,
-                    &resource.visibility,
-                    owner_user_id.as_str(),
-                    &binding,
-                ) {
-                    continue;
+    let owner = owner_user_id.as_str();
+    let selected_device = device_id.as_deref();
+    let runtime_provider = runtime_context.runtime_provider.as_deref();
+    let mut binding_results = stream::iter(bindings.into_iter().enumerate().map(
+        |(index, binding)| async move {
+            resolve_runtime_binding(
+                state,
+                binding,
+                owner,
+                selected_device,
+                runtime_provider,
+                include_unavailable,
+            )
+            .await
+            .map(|resolution| (index, resolution))
+        },
+    ))
+    .buffer_unordered(8)
+    .try_collect::<Vec<_>>()
+    .await?;
+    binding_results.sort_by_key(|(index, _)| *index);
+    for (_, result) in binding_results {
+        match result {
+            RuntimeBindingResolution::Mcp(resolved, requirement) => {
+                if let Some(requirement) = requirement {
+                    local_connector_requirements.push(requirement);
                 }
-                let (available, status, reason) = availability_for_mcp_with_plugin_gate(
-                    state,
-                    &resource,
-                    owner_user_id.as_str(),
-                    device_id.as_deref(),
-                    runtime_context.runtime_provider.as_deref(),
-                )
-                .await?;
-                collect_local_connector_requirement_for_mcp(
-                    &mut local_connector_requirements,
-                    &resource,
-                    &binding,
-                    available,
-                    reason.clone(),
-                );
-                let tool_snapshot = state
-                    .store
-                    .get_check(RESOURCE_KIND_MCP, resource.id.as_str())
-                    .await
-                    .map_err(ApiError::internal)?
-                    .map(|check| check.tool_snapshot)
-                    .unwrap_or_default();
-                if available || include_unavailable {
-                    mcps.push(ResolvedMcp {
-                        resource,
-                        binding,
-                        available,
-                        status,
-                        reason,
-                        tool_snapshot,
-                    });
+                if let Some(resolved) = *resolved {
+                    mcps.push(resolved);
                 }
             }
-            RESOURCE_KIND_SKILL => {
-                let Some(resource) = state
-                    .store
-                    .get_skill(binding.resource_id.as_str())
-                    .await
-                    .map_err(ApiError::internal)?
-                else {
-                    continue;
-                };
-                if !resource_visible_in_runtime(
-                    &resource.owner_user_id,
-                    &resource.visibility,
-                    owner_user_id.as_str(),
-                    &binding,
-                ) {
-                    continue;
-                }
-                let (available, status, reason) = availability_for_skill_with_plugin_gate(
-                    state,
-                    &resource,
-                    owner_user_id.as_str(),
-                    device_id.as_deref(),
-                    runtime_context.runtime_provider.as_deref(),
-                )
-                .await?;
-                if available || include_unavailable {
-                    skills.push(ResolvedSkill {
-                        resource,
-                        binding,
-                        available,
-                        status,
-                        reason,
-                    });
-                }
-            }
-            RESOURCE_KIND_SKILL_PACKAGE => {
-                let Some(package) = state
-                    .store
-                    .get_skill_package(binding.resource_id.as_str())
-                    .await
-                    .map_err(ApiError::internal)?
-                else {
-                    continue;
-                };
-                if !package.installed
-                    || !resource_visible_in_runtime(
-                        &package.owner_user_id,
-                        &package.visibility,
-                        owner_user_id.as_str(),
-                        &binding,
-                    )
-                {
-                    continue;
-                }
-                for skill_id in &package.skill_ids {
-                    let Some(resource) = state
-                        .store
-                        .get_skill(skill_id.as_str())
-                        .await
-                        .map_err(ApiError::internal)?
-                    else {
-                        continue;
-                    };
-                    if !resource_visible_in_runtime(
-                        &resource.owner_user_id,
-                        &resource.visibility,
-                        owner_user_id.as_str(),
-                        &binding,
-                    ) {
-                        continue;
-                    }
-                    let (available, status, reason) = availability_for_skill_with_plugin_gate(
-                        state,
-                        &resource,
-                        owner_user_id.as_str(),
-                        device_id.as_deref(),
-                        runtime_context.runtime_provider.as_deref(),
-                    )
-                    .await?;
-                    if available || include_unavailable {
-                        skills.push(ResolvedSkill {
-                            resource,
-                            binding: binding.clone(),
-                            available,
-                            status,
-                            reason,
-                        });
-                    }
-                }
-            }
-            RESOURCE_KIND_PLUGIN | RESOURCE_KIND_PLUGIN_COMPONENT => {
-                if let Some(plugin) = resolve_plugin_binding(
-                    state,
-                    binding,
-                    owner_user_id.as_str(),
-                    device_id.as_deref(),
-                    runtime_context.runtime_provider.as_deref(),
-                )
-                .await?
-                {
-                    if plugin.available || include_unavailable {
-                        plugins.push(plugin);
-                    }
-                }
-            }
-            _ => {}
+            RuntimeBindingResolution::Skills(resolved) => skills.extend(resolved),
+            RuntimeBindingResolution::Plugin(resolved) => plugins.push(*resolved),
+            RuntimeBindingResolution::None => {}
         }
     }
 
@@ -434,6 +311,185 @@ async fn resolve_agent_capabilities_for_owner(
         plugins,
         local_connector_requirements,
     })
+}
+
+enum RuntimeBindingResolution {
+    Mcp(Box<Option<ResolvedMcp>>, Option<LocalConnectorRequirement>),
+    Skills(Vec<ResolvedSkill>),
+    Plugin(Box<ResolvedPlugin>),
+    None,
+}
+
+async fn resolve_runtime_binding(
+    state: &AppState,
+    binding: AgentBindingRecord,
+    owner_user_id: &str,
+    device_id: Option<&str>,
+    runtime_provider: Option<&str>,
+    include_unavailable: bool,
+) -> Result<RuntimeBindingResolution, ApiError> {
+    match binding.resource_kind.as_str() {
+        RESOURCE_KIND_MCP => {
+            let Some(resource) = state
+                .store
+                .get_mcp(binding.resource_id.as_str())
+                .await
+                .map_err(ApiError::internal)?
+            else {
+                return Ok(RuntimeBindingResolution::None);
+            };
+            if !resource_visible_in_runtime(
+                &resource.owner_user_id,
+                &resource.visibility,
+                owner_user_id,
+                &binding,
+            ) {
+                return Ok(RuntimeBindingResolution::None);
+            }
+            let (available, status, reason) = availability_for_mcp_with_plugin_gate(
+                state,
+                &resource,
+                owner_user_id,
+                device_id,
+                runtime_provider,
+            )
+            .await?;
+            let mut requirements = Vec::with_capacity(1);
+            collect_local_connector_requirement_for_mcp(
+                &mut requirements,
+                &resource,
+                &binding,
+                available,
+                reason.clone(),
+            );
+            let tool_snapshot = state
+                .store
+                .get_check(RESOURCE_KIND_MCP, resource.id.as_str())
+                .await
+                .map_err(ApiError::internal)?
+                .map(|check| check.tool_snapshot)
+                .unwrap_or_default();
+            let resolved = (available || include_unavailable).then_some(ResolvedMcp {
+                resource,
+                binding,
+                available,
+                status,
+                reason,
+                tool_snapshot,
+            });
+            Ok(RuntimeBindingResolution::Mcp(
+                Box::new(resolved),
+                requirements.pop(),
+            ))
+        }
+        RESOURCE_KIND_SKILL => {
+            let Some(resource) = state
+                .store
+                .get_skill(binding.resource_id.as_str())
+                .await
+                .map_err(ApiError::internal)?
+            else {
+                return Ok(RuntimeBindingResolution::None);
+            };
+            if !resource_visible_in_runtime(
+                &resource.owner_user_id,
+                &resource.visibility,
+                owner_user_id,
+                &binding,
+            ) {
+                return Ok(RuntimeBindingResolution::None);
+            }
+            let (available, status, reason) = availability_for_skill_with_plugin_gate(
+                state,
+                &resource,
+                owner_user_id,
+                device_id,
+                runtime_provider,
+            )
+            .await?;
+            let resolved = if available || include_unavailable {
+                vec![ResolvedSkill {
+                    resource,
+                    binding,
+                    available,
+                    status,
+                    reason,
+                }]
+            } else {
+                Vec::new()
+            };
+            Ok(RuntimeBindingResolution::Skills(resolved))
+        }
+        RESOURCE_KIND_SKILL_PACKAGE => {
+            let Some(package) = state
+                .store
+                .get_skill_package(binding.resource_id.as_str())
+                .await
+                .map_err(ApiError::internal)?
+            else {
+                return Ok(RuntimeBindingResolution::None);
+            };
+            if !package.installed
+                || !resource_visible_in_runtime(
+                    &package.owner_user_id,
+                    &package.visibility,
+                    owner_user_id,
+                    &binding,
+                )
+            {
+                return Ok(RuntimeBindingResolution::None);
+            }
+            let mut resolved = Vec::new();
+            for skill_id in &package.skill_ids {
+                let Some(resource) = state
+                    .store
+                    .get_skill(skill_id.as_str())
+                    .await
+                    .map_err(ApiError::internal)?
+                else {
+                    continue;
+                };
+                if !resource_visible_in_runtime(
+                    &resource.owner_user_id,
+                    &resource.visibility,
+                    owner_user_id,
+                    &binding,
+                ) {
+                    continue;
+                }
+                let (available, status, reason) = availability_for_skill_with_plugin_gate(
+                    state,
+                    &resource,
+                    owner_user_id,
+                    device_id,
+                    runtime_provider,
+                )
+                .await?;
+                if available || include_unavailable {
+                    resolved.push(ResolvedSkill {
+                        resource,
+                        binding: binding.clone(),
+                        available,
+                        status,
+                        reason,
+                    });
+                }
+            }
+            Ok(RuntimeBindingResolution::Skills(resolved))
+        }
+        RESOURCE_KIND_PLUGIN | RESOURCE_KIND_PLUGIN_COMPONENT => {
+            let resolved =
+                resolve_plugin_binding(state, binding, owner_user_id, device_id, runtime_provider)
+                    .await?;
+            Ok(match resolved {
+                Some(plugin) if plugin.available || include_unavailable => {
+                    RuntimeBindingResolution::Plugin(Box::new(plugin))
+                }
+                _ => RuntimeBindingResolution::None,
+            })
+        }
+        _ => Ok(RuntimeBindingResolution::None),
+    }
 }
 
 fn ensure_agent_supports_tools(agent: &SystemAgentRecord) -> Result<(), ApiError> {

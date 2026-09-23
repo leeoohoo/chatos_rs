@@ -5,7 +5,6 @@ public enum ProjectRegistryError: Error, Equatable, LocalizedError {
     case notFound
     case revisionConflict
     case removed
-    case importSourceConflict
     case storage(String)
 
     public var errorDescription: String? {
@@ -14,7 +13,6 @@ public enum ProjectRegistryError: Error, Equatable, LocalizedError {
         case .notFound: "本地项目不存在。"
         case .revisionConflict: "项目已被修改，请刷新后重试。"
         case .removed: "项目已删除，不能更新或自动恢复。"
-        case .importSourceConflict: "迁移来源已使用，但导入内容不一致。"
         case let .storage(message): "项目注册表不可用：\(message)"
         }
     }
@@ -30,19 +28,44 @@ public struct LocalProjectDraft: Codable, Sendable, Equatable {
     public let description: String
     public let workspaceID: String
     public let relativeRoot: String
+    public let projectTypeKey: String
 
-    public init(name: String, description: String = "", workspaceID: String, relativeRoot: String = "") {
+    public init(
+        name: String,
+        description: String = "",
+        workspaceID: String,
+        relativeRoot: String = "",
+        projectTypeKey: String = LocalAgentSkillCatalog.legacyProjectTypeKey
+    ) {
         self.name = name
         self.description = description
         self.workspaceID = workspaceID
         self.relativeRoot = relativeRoot
+        self.projectTypeKey = projectTypeKey
     }
 
     public func validate() throws {
         try ProjectRegistryValidation.identifier(name, field: "name")
         try ProjectRegistryValidation.routeIdentifier(workspaceID, field: "workspaceID")
         try ProjectRegistryValidation.relativeRoot(relativeRoot)
+        _ = try LocalAgentSkillCatalog.requireProjectType(key: projectTypeKey)
         guard !description.contains("\0") else { throw ProjectRegistryError.invalidField("description") }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, description, workspaceID, relativeRoot, projectTypeKey
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            name: try values.decode(String.self, forKey: .name),
+            description: try values.decodeIfPresent(String.self, forKey: .description) ?? "",
+            workspaceID: try values.decode(String.self, forKey: .workspaceID),
+            relativeRoot: try values.decodeIfPresent(String.self, forKey: .relativeRoot) ?? "",
+            projectTypeKey: try values.decodeIfPresent(String.self, forKey: .projectTypeKey)
+                ?? LocalAgentSkillCatalog.legacyProjectTypeKey
+        )
     }
 }
 
@@ -79,17 +102,6 @@ public struct LocalProjectRecord: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-public struct ProjectRegistryImportResult: Codable, Sendable, Equatable {
-    public let insertedIDs: [String]
-    /// Existing records, including tombstones, are never overwritten by an import.
-    public let skippedIDs: [String]
-
-    public init(insertedIDs: [String], skippedIDs: [String]) {
-        self.insertedIDs = insertedIDs
-        self.skippedIDs = skippedIDs
-    }
-}
-
 public protocol ProjectRegistry: Sendable {
     func list(ownerUserID: String, includeInactive: Bool) async throws -> [LocalProjectRecord]
     func get(ownerUserID: String, id: String) async throws -> LocalProjectRecord?
@@ -98,10 +110,6 @@ public protocol ProjectRegistry: Sendable {
         ownerUserID: String, id: String, expectedRevision: Int64,
         draft: LocalProjectDraft, status: LocalProjectStatus
     ) async throws -> LocalProjectRecord
-    /// Explicit, atomic, idempotent migration; not a remote refresh/merge operation.
-    func importRecords(
-        ownerUserID: String, sourceID: String, records: [LocalProjectRecord]
-    ) async throws -> ProjectRegistryImportResult
 }
 
 public enum ProjectRegistryValidation {

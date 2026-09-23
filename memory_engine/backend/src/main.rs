@@ -69,11 +69,9 @@ async fn main() -> Result<(), String> {
         &pressure_snapshot,
         config.worker_summary_concurrency,
     )?;
-    let cloud_agent_store = chatos_cloud_agent_runtime::CloudAgentStateStore::connect_to_database(
-        config.mongodb_uri.as_str(),
-        config.mongodb_database.as_str(),
-    )
-    .await?;
+    let cloud_agent_store = chatos_cloud_agent_runtime::CloudAgentStateStore::from_repository(
+        repositories::cloud_agent::CloudAgentPostgresStore::new(pool.clone()),
+    );
 
     let state = Arc::new(AppState {
         pool,

@@ -115,13 +115,6 @@ pub(super) fn normalize_tags(tags: Vec<String>) -> Vec<String> {
     out
 }
 
-pub(super) fn parse_tags_json(raw: &str) -> Vec<String> {
-    serde_json::from_str::<Vec<String>>(raw)
-        .ok()
-        .map(normalize_tags)
-        .unwrap_or_default()
-}
-
 pub(super) fn trimmed_non_empty(value: &str) -> Option<&str> {
     let trimmed = value.trim();
     if trimmed.is_empty() {

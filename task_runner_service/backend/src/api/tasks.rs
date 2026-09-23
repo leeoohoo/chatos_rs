@@ -35,6 +35,8 @@ pub(super) struct TaskListQuery {
     parent_task_id: Option<String>,
     include_subtasks: Option<bool>,
     source_run_id: Option<String>,
+    after_updated_at: Option<String>,
+    after_id: Option<String>,
     limit: Option<usize>,
     offset: Option<usize>,
 }
@@ -53,7 +55,9 @@ impl TaskListQuery {
             parent_task_id: self.parent_task_id,
             include_subtasks: Some(self.include_subtasks.unwrap_or(false)),
             source_run_id: self.source_run_id,
-            limit: self.limit,
+            after_updated_at: self.after_updated_at,
+            after_id: self.after_id,
+            limit: Some(self.limit.unwrap_or(100).clamp(1, 500)),
             offset: self.offset,
             ..TaskListFilters::default()
         }

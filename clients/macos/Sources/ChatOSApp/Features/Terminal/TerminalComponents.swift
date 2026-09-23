@@ -1,5 +1,14 @@
 import SwiftUI
 
+enum TerminalLayout {
+    static let contentInsets = EdgeInsets(
+        top: 8,
+        leading: 12,
+        bottom: 8,
+        trailing: 12
+    )
+}
+
 struct TerminalTabsView: View {
     let sessions: [TerminalWorkspaceViewModel.Session]
     let selectedSessionID: UUID?
@@ -34,12 +43,7 @@ struct TerminalTabsView: View {
             Button {
                 onSelect(session.id)
             } label: {
-                HStack(spacing: 7) {
-                    Circle().fill(.green).frame(width: 7, height: 7)
-                    Text(session.title)
-                        .appFont(.subheadline.weight(.medium))
-                        .lineLimit(1)
-                }
+                NativeTerminalTabLabel(terminal: session.terminal)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -78,8 +82,23 @@ struct TerminalTabsView: View {
     }
 }
 
-struct TerminalHeaderView: View {
-    @ObservedObject var terminal: TerminalViewModel
+private struct NativeTerminalTabLabel: View {
+    @ObservedObject var terminal: NativeLocalTerminalViewModel
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(terminal.statusColor)
+                .frame(width: 7, height: 7)
+            Text(terminal.title)
+                .appFont(.subheadline.weight(.medium))
+                .lineLimit(1)
+        }
+    }
+}
+
+struct NativeTerminalHeaderView: View {
+    @ObservedObject var terminal: NativeLocalTerminalViewModel
 
     var body: some View {
         HStack {
@@ -88,64 +107,13 @@ struct TerminalHeaderView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer()
-            StatusCapsule(title: "zsh", color: .secondary)
+            StatusCapsule(title: terminal.shellName, color: terminal.statusColor)
+            Text(terminal.statusTitle)
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 18)
-        .frame(height: 48)
+        .frame(height: 40)
         .background(AppPalette.canvas)
-    }
-}
-
-struct TerminalLineView: View {
-    let line: TerminalOutputLine
-    let promptPath: String
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            if line.kind == .command {
-                TerminalPromptPrefix(promptPath: promptPath)
-            }
-            Text(line.text).foregroundStyle(color)
-        }
-    }
-
-    private var color: Color {
-        switch line.kind {
-        case .command, .output: .primary
-        case .error: .red
-        case .success: AppPalette.terminalGreen
-        case .system: .secondary
-        }
-    }
-}
-
-struct TerminalPromptView: View {
-    @Binding var command: String
-    let isRunning: Bool
-    let promptPath: String
-    let isFocused: FocusState<Bool>.Binding
-    let onSubmit: () -> Void
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            TerminalPromptPrefix(promptPath: promptPath)
-            TextField("", text: $command)
-                .textFieldStyle(.plain)
-                .focused(isFocused)
-                .onSubmit(onSubmit)
-                .disabled(isRunning)
-            if isRunning { ProgressView().controlSize(.small) }
-        }
-    }
-}
-
-private struct TerminalPromptPrefix: View {
-    let promptPath: String
-
-    var body: some View {
-        Group {
-            Text(promptPath).foregroundStyle(Color.accentColor).fontWeight(.semibold)
-            Text("%").foregroundStyle(AppPalette.terminalGreen).fontWeight(.bold)
-        }
     }
 }

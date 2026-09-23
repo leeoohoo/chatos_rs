@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use chatos_mcp_management_sdk::ResolvedMcpRoute;
+use chatos_mcp_management_sdk::{ClientProjectContextSnapshot, ResolvedMcpRoute};
 use chatos_plugin_management_sdk::SystemAgentKey;
 use serde_json::Value;
 
@@ -44,6 +44,7 @@ impl ProviderDispatcher {
         owner_user_id: &str,
         agent_key: SystemAgentKey,
         project_id: Option<&str>,
+        client_project_context: Option<&ClientProjectContextSnapshot>,
         run_id: Option<&str>,
         turn_id: Option<&str>,
         task_id: Option<&str>,
@@ -61,6 +62,7 @@ impl ProviderDispatcher {
                 owner_user_id,
                 agent_key,
                 project_id,
+                client_project_context,
                 run_id,
                 turn_id,
                 task_id,

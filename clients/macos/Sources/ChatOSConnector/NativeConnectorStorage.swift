@@ -5,10 +5,15 @@ import LocalAuthentication
 import Security
 
 struct NativeConnectorPersistentState: Codable, Sendable {
+    var deploymentIdentifier: String?
+    var gatewayBaseURL: String?
     var user: LocalConnectorUser?
     var deviceID: String?
     var deviceName: String?
     var workspaces: [LocalConnectorWorkspace] = []
+    /// `false` means the user explicitly blocked server-to-client calls. Optional keeps
+    /// existing installations backward compatible: a missing value means enabled.
+    var gatewayConnectionEnabled: Bool?
     var developerMode = false
     var approvalMode: LocalConnectorApprovalMode = .requestApproval
     var commandApprovalModelConfigID: String?

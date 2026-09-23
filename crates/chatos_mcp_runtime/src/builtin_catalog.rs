@@ -26,6 +26,14 @@ pub const TERMINAL_CONTROLLER_MCP_ID: &str = "builtin_terminal_controller";
 pub const TERMINAL_CONTROLLER_SERVER_NAME: &str = "terminal_controller";
 pub const TERMINAL_CONTROLLER_COMMAND: &str = "builtin:terminal_controller";
 
+pub const REQUIREMENT_SURVEY_READ_MCP_ID: &str = "builtin_requirement_survey_read";
+pub const REQUIREMENT_SURVEY_READ_SERVER_NAME: &str = "requirement_survey_read";
+pub const REQUIREMENT_SURVEY_READ_COMMAND: &str = "builtin:requirement_survey_read";
+
+pub const REQUIREMENT_SURVEY_WRITE_MCP_ID: &str = "builtin_requirement_survey_write";
+pub const REQUIREMENT_SURVEY_WRITE_SERVER_NAME: &str = "requirement_survey_write";
+pub const REQUIREMENT_SURVEY_WRITE_COMMAND: &str = "builtin:requirement_survey_write";
+
 pub const NOTEPAD_MCP_ID: &str = "builtin_notepad";
 pub const NOTEPAD_SERVER_NAME: &str = "notepad";
 pub const NOTEPAD_COMMAND: &str = "builtin:notepad";
@@ -124,6 +132,8 @@ pub enum BuiltinMcpKind {
     CodeMaintainerRead,
     CodeMaintainerWrite,
     TerminalController,
+    RequirementSurveyRead,
+    RequirementSurveyWrite,
     /// Legacy compatibility only. The Task Manager builtin MCP is no longer exposed
     /// through catalogs, config parsing, prompts, or task runner execution.
     TaskManager,
@@ -142,6 +152,8 @@ impl BuiltinMcpKind {
             Self::CodeMaintainerRead => "CodeMaintainerRead",
             Self::CodeMaintainerWrite => "CodeMaintainerWrite",
             Self::TerminalController => "TerminalController",
+            Self::RequirementSurveyRead => "RequirementSurveyRead",
+            Self::RequirementSurveyWrite => "RequirementSurveyWrite",
             Self::TaskManager => "TaskManager",
             Self::Notepad => "Notepad",
             Self::AgentBuilder => "AgentBuilder",
@@ -158,6 +170,8 @@ impl BuiltinMcpKind {
             Self::CodeMaintainerRead => CODE_MAINTAINER_READ_SERVER_NAME,
             Self::CodeMaintainerWrite => CODE_MAINTAINER_WRITE_SERVER_NAME,
             Self::TerminalController => TERMINAL_CONTROLLER_SERVER_NAME,
+            Self::RequirementSurveyRead => REQUIREMENT_SURVEY_READ_SERVER_NAME,
+            Self::RequirementSurveyWrite => REQUIREMENT_SURVEY_WRITE_SERVER_NAME,
             Self::TaskManager => "task_manager",
             Self::Notepad => NOTEPAD_SERVER_NAME,
             Self::AgentBuilder => AGENT_BUILDER_SERVER_NAME,
@@ -174,6 +188,8 @@ impl BuiltinMcpKind {
             Self::CodeMaintainerRead => Some(CODE_MAINTAINER_READ_MCP_ID),
             Self::CodeMaintainerWrite => Some(CODE_MAINTAINER_WRITE_MCP_ID),
             Self::TerminalController => Some(TERMINAL_CONTROLLER_MCP_ID),
+            Self::RequirementSurveyRead => Some(REQUIREMENT_SURVEY_READ_MCP_ID),
+            Self::RequirementSurveyWrite => Some(REQUIREMENT_SURVEY_WRITE_MCP_ID),
             Self::TaskManager => None,
             Self::Notepad => Some(NOTEPAD_MCP_ID),
             Self::AgentBuilder => Some(AGENT_BUILDER_MCP_ID),
@@ -188,6 +204,8 @@ impl BuiltinMcpKind {
             Self::CodeMaintainerRead => Some(CODE_MAINTAINER_READ_COMMAND),
             Self::CodeMaintainerWrite => Some(CODE_MAINTAINER_WRITE_COMMAND),
             Self::TerminalController => Some(TERMINAL_CONTROLLER_COMMAND),
+            Self::RequirementSurveyRead => Some(REQUIREMENT_SURVEY_READ_COMMAND),
+            Self::RequirementSurveyWrite => Some(REQUIREMENT_SURVEY_WRITE_COMMAND),
             Self::TaskManager => None,
             Self::Notepad => Some(NOTEPAD_COMMAND),
             Self::AgentBuilder => Some(AGENT_BUILDER_COMMAND),
@@ -198,7 +216,7 @@ impl BuiltinMcpKind {
     }
 
     pub fn default_allow_writes(self) -> bool {
-        !matches!(self, Self::CodeMaintainerRead)
+        !matches!(self, Self::CodeMaintainerRead | Self::RequirementSurveyRead)
     }
 
     pub fn default_server(self, workspace_dir: impl Into<String>) -> McpBuiltinServer {
@@ -245,6 +263,8 @@ pub fn builtin_kind_by_kind_name(value: &str) -> Option<BuiltinMcpKind> {
         "CodeMaintainerRead" => Some(BuiltinMcpKind::CodeMaintainerRead),
         "CodeMaintainerWrite" => Some(BuiltinMcpKind::CodeMaintainerWrite),
         "TerminalController" => Some(BuiltinMcpKind::TerminalController),
+        "RequirementSurveyRead" => Some(BuiltinMcpKind::RequirementSurveyRead),
+        "RequirementSurveyWrite" => Some(BuiltinMcpKind::RequirementSurveyWrite),
         "Notepad" => Some(BuiltinMcpKind::Notepad),
         "AgentBuilder" => Some(BuiltinMcpKind::AgentBuilder),
         "AskUser" => Some(BuiltinMcpKind::AskUser),
@@ -261,6 +281,8 @@ pub fn builtin_kind_by_server_name(value: &str) -> Option<BuiltinMcpKind> {
         CODE_MAINTAINER_READ_SERVER_NAME => Some(BuiltinMcpKind::CodeMaintainerRead),
         CODE_MAINTAINER_WRITE_SERVER_NAME => Some(BuiltinMcpKind::CodeMaintainerWrite),
         TERMINAL_CONTROLLER_SERVER_NAME => Some(BuiltinMcpKind::TerminalController),
+        REQUIREMENT_SURVEY_READ_SERVER_NAME => Some(BuiltinMcpKind::RequirementSurveyRead),
+        REQUIREMENT_SURVEY_WRITE_SERVER_NAME => Some(BuiltinMcpKind::RequirementSurveyWrite),
         NOTEPAD_SERVER_NAME => Some(BuiltinMcpKind::Notepad),
         AGENT_BUILDER_SERVER_NAME => Some(BuiltinMcpKind::AgentBuilder),
         ASK_USER_SERVER_NAME => Some(BuiltinMcpKind::AskUser),
@@ -281,6 +303,8 @@ pub fn builtin_kind_by_config_id(value: &str) -> Option<BuiltinMcpKind> {
             Some(BuiltinMcpKind::CodeMaintainerWrite)
         }
         TERMINAL_CONTROLLER_MCP_ID => Some(BuiltinMcpKind::TerminalController),
+        REQUIREMENT_SURVEY_READ_MCP_ID => Some(BuiltinMcpKind::RequirementSurveyRead),
+        REQUIREMENT_SURVEY_WRITE_MCP_ID => Some(BuiltinMcpKind::RequirementSurveyWrite),
         NOTEPAD_MCP_ID => Some(BuiltinMcpKind::Notepad),
         AGENT_BUILDER_MCP_ID => Some(BuiltinMcpKind::AgentBuilder),
         ASK_USER_MCP_ID => Some(BuiltinMcpKind::AskUser),
@@ -296,6 +320,8 @@ pub fn builtin_kind_by_command(value: &str) -> Option<BuiltinMcpKind> {
             Some(BuiltinMcpKind::CodeMaintainerWrite)
         }
         TERMINAL_CONTROLLER_COMMAND => Some(BuiltinMcpKind::TerminalController),
+        REQUIREMENT_SURVEY_READ_COMMAND => Some(BuiltinMcpKind::RequirementSurveyRead),
+        REQUIREMENT_SURVEY_WRITE_COMMAND => Some(BuiltinMcpKind::RequirementSurveyWrite),
         NOTEPAD_COMMAND => Some(BuiltinMcpKind::Notepad),
         AGENT_BUILDER_COMMAND => Some(BuiltinMcpKind::AgentBuilder),
         ASK_USER_COMMAND => Some(BuiltinMcpKind::AskUser),
@@ -309,6 +335,8 @@ pub fn configurable_builtin_kinds() -> Vec<BuiltinMcpKind> {
         BuiltinMcpKind::CodeMaintainerRead,
         BuiltinMcpKind::CodeMaintainerWrite,
         BuiltinMcpKind::TerminalController,
+        BuiltinMcpKind::RequirementSurveyRead,
+        BuiltinMcpKind::RequirementSurveyWrite,
         BuiltinMcpKind::Notepad,
         BuiltinMcpKind::AgentBuilder,
         BuiltinMcpKind::AskUser,
@@ -318,7 +346,14 @@ pub fn configurable_builtin_kinds() -> Vec<BuiltinMcpKind> {
 pub fn default_runtime_builtin_kinds() -> Vec<BuiltinMcpKind> {
     configurable_builtin_kinds()
         .into_iter()
-        .filter(|kind| *kind != BuiltinMcpKind::AgentBuilder)
+        .filter(|kind| {
+            !matches!(
+                kind,
+                BuiltinMcpKind::AgentBuilder
+                    | BuiltinMcpKind::RequirementSurveyRead
+                    | BuiltinMcpKind::RequirementSurveyWrite
+            )
+        })
         .collect()
 }
 
@@ -347,6 +382,23 @@ where
             })
             .unwrap_or(out.len());
         out.insert(insert_at, BuiltinMcpKind::CodeMaintainerRead);
+    }
+
+    if let Some(write_index) = out
+        .iter()
+        .position(|kind| *kind == BuiltinMcpKind::RequirementSurveyWrite)
+    {
+        match out
+            .iter()
+            .position(|kind| *kind == BuiltinMcpKind::RequirementSurveyRead)
+        {
+            None => out.insert(write_index, BuiltinMcpKind::RequirementSurveyRead),
+            Some(read_index) if read_index > write_index => {
+                out.remove(read_index);
+                out.insert(write_index, BuiltinMcpKind::RequirementSurveyRead);
+            }
+            Some(_) => {}
+        }
     }
 
     out
@@ -474,6 +526,28 @@ mod tests {
             vec![
                 BuiltinMcpKind::CodeMaintainerRead,
                 BuiltinMcpKind::CodeMaintainerWrite,
+            ]
+        );
+    }
+
+    #[test]
+    fn requirement_survey_write_always_adds_read_before_write() {
+        assert_eq!(
+            complete_builtin_kind_dependencies([BuiltinMcpKind::RequirementSurveyWrite]),
+            vec![
+                BuiltinMcpKind::RequirementSurveyRead,
+                BuiltinMcpKind::RequirementSurveyWrite,
+            ]
+        );
+        assert_eq!(
+            complete_builtin_kind_dependencies([
+                BuiltinMcpKind::RequirementSurveyWrite,
+                BuiltinMcpKind::RequirementSurveyRead,
+                BuiltinMcpKind::RequirementSurveyWrite,
+            ]),
+            vec![
+                BuiltinMcpKind::RequirementSurveyRead,
+                BuiltinMcpKind::RequirementSurveyWrite,
             ]
         );
     }

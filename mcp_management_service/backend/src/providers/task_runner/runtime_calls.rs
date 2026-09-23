@@ -17,8 +17,7 @@ use crate::providers::{
 use crate::runtime::RuntimeSessionSnapshot;
 
 use super::{
-    ProviderCallError, TaskRunnerProvider, TaskRunnerRequestBinding, CALLER_SERVICE,
-    TASK_RUNNER_MCP_SCOPE, TOKEN_AUDIENCE,
+    ProviderCallError, TaskRunnerProvider, TaskRunnerRequestBinding, TASK_RUNNER_MCP_SCOPE,
 };
 
 impl TaskRunnerProvider {
@@ -131,61 +130,19 @@ impl TaskRunnerProvider {
                     "Task Runner route is not a supported System MCP",
                 )
             })?;
-        let token = chatos_service_runtime::issue_internal_service_token(
-            secret,
-            CALLER_SERVICE,
-            TOKEN_AUDIENCE,
-            TASK_RUNNER_MCP_SCOPE,
-            60,
-        )
-        .map_err(ProviderCallError::provider_unavailable)?;
         let endpoint = format!(
             "{}/internal/mcp-management/mcp/{}",
             self.base_url,
             urlencoding::encode(descriptor.key.as_str())
         );
-        let mut request = self
-            .http
-            .post(endpoint)
-            .header("x-task-runner-caller", CALLER_SERVICE)
-            .header("x-task-runner-internal-token", token)
-            .header(
-                "x-mcp-management-owner-user-id",
-                snapshot.owner_user_id.as_str(),
-            )
-            .header("x-mcp-management-agent-key", snapshot.agent_key.as_str())
-            .header("x-mcp-management-session-id", snapshot.session_id.as_str())
-            .header(
-                "x-mcp-management-session-expires-at-unix",
-                snapshot.expires_at_unix.to_string(),
-            )
-            .timeout(Duration::from_secs(5));
-        if let Some(project_id) = snapshot.project_id.as_deref() {
-            request = request
-                .header("x-mcp-management-project-id", project_id)
-                .header("x-chatos-project-id", project_id);
-        }
-        for (header, value) in [
-            (
-                "x-mcp-management-owner-role",
-                snapshot.owner_role.as_deref(),
-            ),
-            ("x-mcp-management-run-id", snapshot.run_id.as_deref()),
-            ("x-mcp-management-turn-id", snapshot.turn_id.as_deref()),
-            ("x-mcp-management-task-id", snapshot.task_id.as_deref()),
-            (
-                "x-mcp-management-source-session-id",
-                snapshot.source_session_id.as_deref(),
-            ),
-            (
-                "x-mcp-management-source-user-message-id",
-                snapshot.source_user_message_id.as_deref(),
-            ),
-        ] {
-            if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
-                request = request.header(header, value);
-            }
-        }
+        let binding = TaskRunnerRequestBinding::from(snapshot);
+        let request = self.bound_request(
+            &binding,
+            endpoint,
+            Duration::from_secs(5),
+            secret,
+            TASK_RUNNER_MCP_SCOPE,
+        )?;
         let response = request
             .json(&json!({
                 "jsonrpc": "2.0",

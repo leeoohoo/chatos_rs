@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text.Json;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
 using Microsoft.Data.Sqlite;
@@ -72,60 +70,6 @@ public sealed class SqliteProjectRegistry(LocalStateDatabase database) : IProjec
             throw new ProjectRegistryException(ProjectRegistryError.RevisionConflict, "Project has changed.");
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return record;
-    }
-
-    public async Task<ProjectRegistryImportResult> ImportAsync(
-        string ownerUserId, string sourceId, IReadOnlyList<LocalProjectRecord> records,
-        CancellationToken cancellationToken = default)
-    {
-        ProjectRegistryValidation.Identifier(ownerUserId, nameof(ownerUserId));
-        ProjectRegistryValidation.Identifier(sourceId, nameof(sourceId));
-        // Snapshot caller-owned collections before validation/hashing and the first await.
-        var sorted = records.OrderBy(record => record.Id, StringComparer.Ordinal).ToArray();
-        var ids = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var record in sorted)
-        {
-            record.Validate();
-            if (record.OwnerUserId != ownerUserId) throw ProjectRegistryValidation.Invalid(nameof(ownerUserId));
-            if (!ids.Add(record.Id)) throw ProjectRegistryValidation.Invalid("duplicate id");
-        }
-        var digest = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(sorted)));
-        await using var connection = await database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        using var transaction = connection.BeginTransaction(deferred: false);
-        using (var query = Command(connection, transaction, """
-            SELECT content_digest, result_json FROM local_project_imports
-            WHERE owner_user_id = @p0 AND source_id = @p1
-            """, ownerUserId, sourceId))
-        {
-            await using var reader = await query.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-            if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-            {
-                if (reader.GetString(0) != digest)
-                    throw new ProjectRegistryException(ProjectRegistryError.ImportSourceConflict, "Import source already used with different content.");
-                return JsonSerializer.Deserialize<ProjectRegistryImportResult>(reader.GetString(1))
-                    ?? throw new InvalidDataException("Invalid project import receipt.");
-            }
-        }
-        var inserted = new List<string>();
-        var skipped = new List<string>();
-        foreach (var record in sorted)
-        {
-            if (await ReadAsync(connection, transaction, ownerUserId, record.Id, cancellationToken).ConfigureAwait(false) is not null)
-                skipped.Add(record.Id);
-            else
-            {
-                await InsertAsync(connection, transaction, record, cancellationToken).ConfigureAwait(false);
-                inserted.Add(record.Id);
-            }
-        }
-        var result = new ProjectRegistryImportResult(inserted.ToArray(), skipped.ToArray());
-        using var receipt = Command(connection, transaction, """
-            INSERT INTO local_project_imports(owner_user_id, source_id, content_digest, result_json)
-            VALUES (@p0, @p1, @p2, @p3)
-            """, ownerUserId, sourceId, digest, JsonSerializer.Serialize(result));
-        await receipt.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return result;
     }
 
     private static async Task<LocalProjectRecord?> ReadAsync(

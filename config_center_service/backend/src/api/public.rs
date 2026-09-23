@@ -67,6 +67,7 @@ pub fn build_public_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
+        .route("/metrics", get(metrics))
         .route("/api/auth/login", post(login))
         .merge(admin)
         .with_state(state)
@@ -82,6 +83,16 @@ async fn health() -> Json<HealthResponse> {
         ok: true,
         service: "configuration-center".to_string(),
     })
+}
+
+async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        chatos_postgres::render_pool_metrics(state.store.pool(), "configuration-center"),
+    )
 }
 
 async fn ready(State(state): State<AppState>) -> Response {

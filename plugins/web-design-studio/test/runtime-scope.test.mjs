@@ -12,10 +12,14 @@ test('the transmitted ChatOS project id is part of a stable isolated runtime sco
     process.env.CHATOS_PROJECT_ID = 'host-project-a';
     const first = runtimeScopeFingerprint('/tmp/web-design-scope');
     const repeated = runtimeScopeFingerprint('/tmp/web-design-scope');
+    process.env.CHATOS_WORKSPACE_ID = 'workspace-changed-after-restart';
+    process.env.CHATOS_USER_ID = 'user-changed-outside-project-storage';
+    const afterWorkspaceChange = runtimeScopeFingerprint('/tmp/web-design-scope');
     process.env.CHATOS_PROJECT_ID = 'host-project-b';
     const second = runtimeScopeFingerprint('/tmp/web-design-scope');
     assert.match(first, /^[a-f0-9]{64}$/);
     assert.equal(repeated, first);
+    assert.equal(afterWorkspaceChange, first);
     assert.notEqual(second, first);
   } finally {
     for (const name of names) {

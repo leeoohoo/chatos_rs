@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use mongodb::bson::doc;
-
 use crate::db::Db;
-use crate::models::now_rfc3339;
-
-use super::common::summary_collection;
+use crate::models::{now_rfc3339, EngineSummary};
+use crate::repositories::postgres::{decode, json, timestamp};
+use sqlx::types::Json;
 
 pub async fn mark_summaries_rolled_up(
     db: &Db,
@@ -16,43 +14,23 @@ pub async fn mark_summaries_rolled_up(
     summary_ids: &[String],
     rollup_summary_id: &str,
 ) -> Result<usize, String> {
-    if summary_ids.is_empty() {
-        return Ok(0);
-    }
-
-    let now = now_rfc3339();
-    let result = summary_collection(db)
-        .update_many(
-            doc! {
-                "tenant_id": tenant_id,
-                "source_id": source_id,
-                "thread_id": thread_id,
-                "id": {"$in": summary_ids.to_vec()},
-                "rollup_status": "pending",
-            },
-            vec![doc! {
-                "$set": {
-                    "rollup_status": "done",
-                    "rollup_summary_id": rollup_summary_id,
-                    "rolled_up_at": &now,
-                    "updated_at": &now,
-                    "rollup_dispatch_pending": false,
-                    "rollup_dispatch_consumed_version": {
-                        "$max": [
-                            { "$ifNull": ["$rollup_dispatch_consumed_version", 0] },
-                            { "$ifNull": ["$rollup_dispatch_version", 0] },
-                        ]
-                    },
-                    "rollup_dispatch_consumed_at": &now,
-                }
-            }],
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-
-    Ok(result.modified_count as usize)
+    update(
+        db,
+        tenant_id,
+        source_id,
+        thread_id,
+        summary_ids,
+        "rollup_status='pending'",
+        None,
+        |s, now| {
+            s.rollup_status = "done".to_string();
+            s.rollup_summary_id = Some(rollup_summary_id.to_string());
+            s.rolled_up_at = Some(now.to_string());
+        },
+        true,
+    )
+    .await
 }
-
 pub async fn mark_summaries_subject_memory_summarized(
     db: &Db,
     tenant_id: &str,
@@ -60,34 +38,22 @@ pub async fn mark_summaries_subject_memory_summarized(
     thread_id: &str,
     summary_ids: &[String],
 ) -> Result<usize, String> {
-    if summary_ids.is_empty() {
-        return Ok(0);
-    }
-
-    let now = now_rfc3339();
-    let result = summary_collection(db)
-        .update_many(
-            doc! {
-                "tenant_id": tenant_id,
-                "source_id": source_id,
-                "thread_id": thread_id,
-                "id": {"$in": summary_ids.to_vec()},
-                "subject_memory_summarized": {"$ne": 1},
-            },
-            doc! {
-                "$set": {
-                    "subject_memory_summarized": 1,
-                    "subject_memory_summarized_at": &now,
-                    "updated_at": &now,
-                }
-            },
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-
-    Ok(result.modified_count as usize)
+    update(
+        db,
+        tenant_id,
+        source_id,
+        thread_id,
+        summary_ids,
+        "subject_memory_summarized<>1",
+        None,
+        |s, now| {
+            s.subject_memory_summarized = 1;
+            s.subject_memory_summarized_at = Some(now.to_string());
+        },
+        false,
+    )
+    .await
 }
-
 pub async fn mark_summaries_subject_memory_summarized_for_scope(
     db: &Db,
     tenant_id: &str,
@@ -96,33 +62,74 @@ pub async fn mark_summaries_subject_memory_summarized_for_scope(
     summary_ids: &[String],
     scope_key: &str,
 ) -> Result<usize, String> {
-    let normalized_scope_key = scope_key.trim();
-    if summary_ids.is_empty() || normalized_scope_key.is_empty() {
+    let key = scope_key.trim();
+    if key.is_empty() {
         return Ok(0);
     }
+    update(
+        db,
+        tenant_id,
+        source_id,
+        thread_id,
+        summary_ids,
+        "NOT ($5=ANY(subject_memory_scope_keys))",
+        Some(key),
+        |s, now| {
+            s.subject_memory_summarized = 1;
+            s.subject_memory_summarized_at = Some(now.to_string());
+        },
+        false,
+    )
+    .await
+}
 
+#[allow(clippy::too_many_arguments)]
+async fn update<F>(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+    ids: &[String],
+    condition: &str,
+    scope_key: Option<&str>,
+    mutate: F,
+    consume_rollup: bool,
+) -> Result<usize, String>
+where
+    F: Fn(&mut EngineSummary, &str),
+{
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let mut tx = db.begin().await.map_err(|e| e.to_string())?;
+    let sql=format!("SELECT data FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND id=ANY($4) AND {condition} FOR UPDATE");
+    let mut q = sqlx::query_scalar::<_, Json<serde_json::Value>>(&sql)
+        .bind(tenant_id)
+        .bind(source_id)
+        .bind(thread_id)
+        .bind(ids);
+    if let Some(key) = scope_key {
+        q = q.bind(key);
+    }
+    let rows = q.fetch_all(&mut *tx).await.map_err(|e| e.to_string())?;
     let now = now_rfc3339();
-    let result = summary_collection(db)
-        .update_many(
-            doc! {
-                "tenant_id": tenant_id,
-                "source_id": source_id,
-                "thread_id": thread_id,
-                "id": {"$in": summary_ids.to_vec()},
-                "subject_memory_scope_keys": {"$ne": normalized_scope_key},
-            },
-            doc! {
-                "$set": {
-                    "subject_memory_summarized": 1,
-                    "subject_memory_summarized_at": &now,
-                    "updated_at": &now,
-                },
-                "$addToSet": {
-                    "subject_memory_scope_keys": normalized_scope_key,
-                }
-            },
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(result.modified_count as usize)
+    let mut count = 0;
+    for row in rows {
+        let mut summary: EngineSummary = decode(row)?;
+        mutate(&mut summary, &now);
+        summary.updated_at = now.clone();
+        let result=if let Some(key)=scope_key{
+            sqlx::query("UPDATE engine_summaries SET subject_memory_summarized=$2,subject_memory_scope_keys=array_append(subject_memory_scope_keys,$3),updated_at=$4,data=$5 WHERE id=$1")
+                .bind(&summary.id).bind(summary.subject_memory_summarized).bind(key).bind(timestamp(&now)?).bind(json(&summary)?).execute(&mut *tx).await
+        }else if consume_rollup{
+            sqlx::query("UPDATE engine_summaries SET rollup_status=$2,rollup_dispatch_pending=false,rollup_dispatch_consumed_version=GREATEST(rollup_dispatch_consumed_version,rollup_dispatch_version),rollup_dispatch_consumed_at=$3,updated_at=$3,data=$4 WHERE id=$1")
+                .bind(&summary.id).bind(&summary.rollup_status).bind(timestamp(&now)?).bind(json(&summary)?).execute(&mut *tx).await
+        }else{
+            sqlx::query("UPDATE engine_summaries SET subject_memory_summarized=$2,updated_at=$3,data=$4 WHERE id=$1")
+                .bind(&summary.id).bind(summary.subject_memory_summarized).bind(timestamp(&now)?).bind(json(&summary)?).execute(&mut *tx).await
+        }.map_err(|e|e.to_string())?;
+        count += result.rows_affected() as usize;
+    }
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(count)
 }

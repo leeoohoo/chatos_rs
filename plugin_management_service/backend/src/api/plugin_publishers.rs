@@ -88,7 +88,7 @@ pub(super) async fn ensure_admin_managed_publisher(
         .replace_plugin_publisher(&record)
         .await
         .map_err(|error| {
-            if error.contains("E11000") {
+            if crate::store::is_unique_violation(error.as_str()) {
                 ApiError::conflict("Plugin publisher was created concurrently; retry publishing")
             } else {
                 ApiError::internal(error)
@@ -207,7 +207,7 @@ pub(super) async fn submit_plugin_publisher(
             .replace_plugin_publisher(&record)
             .await
             .map_err(|error| {
-                if error.contains("E11000") {
+                if crate::store::is_unique_violation(error.as_str()) {
                     ApiError::conflict("Publisher identity is already claimed")
                 } else {
                     ApiError::internal(error)

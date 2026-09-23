@@ -24,6 +24,11 @@ import {
   taskRunReportContent,
 } from './taskPageUtils';
 
+export type TaskListCursor = {
+  updatedAt: string;
+  id: string;
+};
+
 type UseTasksPageDataParams = {
   t: TranslateFn;
   statusFilter: 'all' | TaskStatus;
@@ -34,6 +39,7 @@ type UseTasksPageDataParams = {
   scheduledOnly: boolean;
   taskPage: number;
   taskPageSize: number;
+  taskCursor: TaskListCursor | null;
   detailTaskId: string | null;
   detailTaskPreview: TaskRecord | null;
   memoryTask: TaskRecord | null;
@@ -81,6 +87,7 @@ export function useTasksPageData({
   scheduledOnly,
   taskPage,
   taskPageSize,
+  taskCursor,
   detailTaskId,
   detailTaskPreview,
   memoryTask,
@@ -123,6 +130,7 @@ export function useTasksPageData({
       scheduledOnly,
       taskPage,
       taskPageSize,
+      taskCursor,
     ],
     queryFn: () =>
       api.listTasksPage({
@@ -133,7 +141,8 @@ export function useTasksPageData({
         project_id: routeProjectId,
         scheduled_only: scheduledOnly || undefined,
         limit: taskPageSize,
-        offset: (taskPage - 1) * taskPageSize,
+        after_updated_at: taskCursor?.updatedAt,
+        after_id: taskCursor?.id,
       }),
     refetchInterval: (query) => activeRefreshInterval(taskPageHasActiveItems(query.state.data)),
   });

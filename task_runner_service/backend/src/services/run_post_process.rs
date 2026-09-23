@@ -320,15 +320,6 @@ impl RunService {
         self.promote_execution_group_if_complete(&task, &mut run)
             .await?;
 
-        if !run.memory_summary_processed {
-            self.store
-                .mark_run_memory_summary_processed(
-                    run.id.as_str(),
-                    run.summary_job_run_id.as_deref(),
-                )
-                .await?;
-        }
-
         if !run.chatos_followup_processed {
             let dispatched = self
                 .dispatch_ready_chatos_async_tasks_for_source_task(&task)
@@ -484,7 +475,6 @@ mod tests {
             worker_id: "test-worker".to_string(),
             worker_claim_ttl: Duration::from_millis(120_000),
             worker_concurrency: 4,
-            auto_memory_summary: false,
             default_task_execution_max_iterations: 1,
             default_tool_result_model_max_chars: 1_000,
             default_tool_results_model_total_max_chars: 2_000,

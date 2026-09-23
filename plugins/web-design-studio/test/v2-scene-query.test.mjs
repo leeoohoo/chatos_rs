@@ -140,6 +140,19 @@ test('a reusable query index keeps document order, applies limits, and returns m
   assert.equal(document.pages[0].children[0].children[0].children[0].children[0].name, 'Hero heading');
 });
 
+test('container query results are flat and expose child references without recursive subtree duplication', () => {
+  const document = queryFixture();
+  const results = querySceneDocument(document, { pageIds: ['page-home'], limit: 256 });
+  const responsiveSection = results.find((entry) => entry.nodeId === 'section-responsive');
+  const primaryAction = results.find((entry) => entry.nodeId === 'library-primary-action');
+
+  assert.deepEqual(responsiveSection.node.childIds, ['frame-desktop']);
+  assert.equal(Object.hasOwn(responsiveSection.node, 'children'), false);
+  assert.deepEqual(primaryAction.node.slotChildIds, { label: ['text-button-label'] });
+  assert.equal(Object.hasOwn(primaryAction.node, 'slots'), false);
+  assert.ok(JSON.stringify(results).length < 80_000, 'small Scene queries must not recursively repeat descendant nodes');
+});
+
 test('scene query rejects ambiguous or accidentally broad malformed filters', () => {
   const document = queryFixture();
   assert.throws(() => querySceneDocument(document, { ids: [] }), /non-empty string list/);

@@ -61,7 +61,7 @@ impl AiClient {
             model: "test-model".to_string(),
             temperature: 0.0,
             timeout_secs: 5,
-            supports_responses: false,
+            supports_responses: true,
             disable_thinking: false,
             max_transient_retries,
         }

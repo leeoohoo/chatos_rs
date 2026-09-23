@@ -8,6 +8,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use futures::{stream, StreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -31,9 +32,11 @@ pub use self::plugin_ui::{
 
 use self::context::{
     resolve_message_task_runner_context, resolve_session_task_runner_context,
-    task_matches_message_source, MessageTaskRunnerLookupQuery,
+    task_matches_message_source, MessageTaskRunnerContext, MessageTaskRunnerLookupQuery,
 };
 use self::graph::normalize_message_task_graph_payload_edges_with_tasks;
+
+const COMPANION_TASK_DETAIL_CONCURRENCY: usize = 4;
 
 pub fn router() -> Router {
     Router::new()
@@ -145,21 +148,35 @@ async fn list_message_task_runner_tasks(
     Path(message_id): Path<String>,
     Query(query): Query<MessageTaskRunnerLookupQuery>,
 ) -> (StatusCode, Json<Value>) {
-    let context = match resolve_message_task_runner_context(&auth, &message_id, &query).await {
+    match load_message_task_runner_tasks(&auth, &message_id, &query).await {
+        Ok(payload) => (StatusCode::OK, Json(payload)),
+        Err(error) => error,
+    }
+}
+
+async fn load_message_task_runner_tasks(
+    auth: &AuthUser,
+    message_id: &str,
+    query: &MessageTaskRunnerLookupQuery,
+) -> Result<Value, (StatusCode, Json<Value>)> {
+    let context = match resolve_message_task_runner_context(auth, message_id, query).await {
         Ok(Some(context)) => context,
         Ok(None) => {
-            return (
-                StatusCode::OK,
-                Json(json!({
-                    "items": [],
-                    "source_session_id": null,
-                    "source_user_message_id": null,
-                    "source_turn_id": null,
-                })),
-            );
+            return Ok(json!({
+                "items": [],
+                "source_session_id": null,
+                "source_user_message_id": null,
+                "source_turn_id": null,
+            }));
         }
-        Err(err) => return err,
+        Err(err) => return Err(err),
     };
+    load_message_task_runner_tasks_for_context(&context).await
+}
+
+async fn load_message_task_runner_tasks_for_context(
+    context: &MessageTaskRunnerContext,
+) -> Result<Value, (StatusCode, Json<Value>)> {
     let payload = match task_runner_api_client::list_message_tasks(
         context.base_url.as_str(),
         context.source_session_id.as_str(),
@@ -170,10 +187,10 @@ async fn list_message_task_runner_tasks(
     {
         Ok(payload) => payload,
         Err(err) => {
-            return (
+            return Err((
                 StatusCode::BAD_GATEWAY,
                 Json(json!({"error": "读取任务系统任务失败", "detail": err})),
-            );
+            ));
         }
     };
     let items = payload
@@ -195,15 +212,152 @@ async fn list_message_task_runner_tasks(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    (
-        StatusCode::OK,
-        Json(json!({
-            "items": items,
-            "source_session_id": context.source_session_id,
-            "source_user_message_id": context.source_user_message_id,
-            "source_turn_id": context.source_turn_id,
-        })),
+    Ok(json!({
+        "items": items,
+        "source_session_id": context.source_session_id,
+        "source_user_message_id": context.source_user_message_id,
+        "source_turn_id": context.source_turn_id,
+    }))
+}
+
+pub(crate) async fn list_companion_message_tasks(
+    auth: &AuthUser,
+    message_id: &str,
+) -> Result<Vec<Value>, (StatusCode, Json<Value>)> {
+    let Some(context) = resolve_message_task_runner_context(
+        auth,
+        message_id,
+        &MessageTaskRunnerLookupQuery::default(),
     )
+    .await?
+    else {
+        return Ok(Vec::new());
+    };
+    let payload = load_message_task_runner_tasks_for_context(&context).await?;
+    let summaries = payload
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let tasks = stream::iter(summaries.into_iter().map(|summary| {
+        let context = &context;
+        async move {
+            let task_id = summary
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)?;
+            match task_runner_api_client::get_message_task(
+                context.base_url.as_str(),
+                task_id.as_str(),
+                context.source_session_id.as_str(),
+                context.source_user_message_id.as_deref(),
+                context.source_turn_id.as_deref(),
+            )
+            .await
+            {
+                Ok(detail)
+                    if task_value_is_top_level(&detail)
+                        && task_matches_message_source(
+                            &detail,
+                            context.source_session_id.as_str(),
+                            context.source_user_message_id.as_deref(),
+                            context.source_turn_id.as_deref(),
+                        ) =>
+                {
+                    Some(hydrate_companion_task_model_output(context, detail).await)
+                }
+                Ok(_) => {
+                    warn!(
+                        task_id = task_id.as_str(),
+                        "companion task detail did not match the owning message"
+                    );
+                    Some(summary)
+                }
+                Err(error) => {
+                    warn!(
+                        task_id = task_id.as_str(),
+                        error = error.as_str(),
+                        "companion task detail lookup failed"
+                    );
+                    Some(summary)
+                }
+            }
+        }
+    }))
+    .buffered(COMPANION_TASK_DETAIL_CONCURRENCY)
+    .filter_map(async move |task| task)
+    .collect::<Vec<_>>()
+    .await;
+    Ok(tasks)
+}
+
+async fn hydrate_companion_task_model_output(
+    context: &MessageTaskRunnerContext,
+    mut detail: Value,
+) -> Value {
+    let Some(run_id) = detail
+        .get("last_run_id")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            detail
+                .get("last_run")
+                .and_then(Value::as_object)
+                .and_then(|run| run.get("id"))
+                .and_then(Value::as_str)
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+    else {
+        return detail;
+    };
+    let run_payload = match task_runner_api_client::get_message_run(
+        context.base_url.as_str(),
+        run_id.as_str(),
+        context.source_session_id.as_str(),
+        context.source_user_message_id.as_deref(),
+        context.source_turn_id.as_deref(),
+        None,
+        None,
+        Some(false),
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => {
+            warn!(
+                run_id = run_id.as_str(),
+                error = error.as_str(),
+                "companion task model output lookup failed"
+            );
+            return detail;
+        }
+    };
+    let Some(content) = run_payload
+        .get("run")
+        .and_then(Value::as_object)
+        .and_then(|run| run.get("report"))
+        .and_then(Value::as_object)
+        .and_then(|report| report.get("content"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return detail;
+    };
+    let Some(task) = detail.as_object_mut() else {
+        return detail;
+    };
+    let last_run = task
+        .entry("last_run".to_string())
+        .or_insert_with(|| json!({ "id": run_id }));
+    let Some(last_run) = last_run.as_object_mut() else {
+        return detail;
+    };
+    last_run.insert("report".to_string(), json!({ "content": content }));
+    detail
 }
 
 async fn get_conversation_task_runner_active_message_tasks(
@@ -520,242 +674,4 @@ async fn get_message_task_runner_graph_run(
     (StatusCode::OK, Json(payload))
 }
 
-async fn get_message_task_runner_run(
-    auth: AuthUser,
-    Path((message_id, run_id)): Path<(String, String)>,
-    Query(query): Query<MessageTaskRunnerLookupQuery>,
-) -> (StatusCode, Json<Value>) {
-    let context = match resolve_message_task_runner_context(&auth, &message_id, &query).await {
-        Ok(Some(context)) => context,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "当前消息没有关联的任务来源"})),
-            );
-        }
-        Err(err) => return err,
-    };
-    let payload = match task_runner_api_client::get_message_run(
-        context.base_url.as_str(),
-        run_id.as_str(),
-        context.source_session_id.as_str(),
-        context.source_user_message_id.as_deref(),
-        context.source_turn_id.as_deref(),
-        query.event_limit(),
-        query.event_offset(),
-        query.include_events(),
-    )
-    .await
-    {
-        Ok(payload) => payload,
-        Err(err) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({"error": "读取运行详情失败", "detail": err})),
-            );
-        }
-    };
-    let matches = payload.get("task").is_some_and(|task| {
-        task_matches_message_source(
-            task,
-            context.source_session_id.as_str(),
-            context.source_user_message_id.as_deref(),
-            context.source_turn_id.as_deref(),
-        )
-    });
-    if !matches {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "运行记录不属于当前消息"})),
-        );
-    }
-    (StatusCode::OK, Json(payload))
-}
-
-async fn retry_message_task_runner_run(
-    auth: AuthUser,
-    Path((message_id, run_id)): Path<(String, String)>,
-    Query(query): Query<MessageTaskRunnerLookupQuery>,
-    body: Bytes,
-) -> (StatusCode, Json<Value>) {
-    let payload = match parse_retry_message_task_runner_run_request(body.as_ref()) {
-        Ok(payload) => payload,
-        Err(err) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "error": "重试请求格式不正确",
-                    "detail": err.to_string(),
-                })),
-            );
-        }
-    };
-    let context = match resolve_message_task_runner_context(&auth, &message_id, &query).await {
-        Ok(Some(context)) => context,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "当前消息没有关联的任务来源"})),
-            );
-        }
-        Err(err) => return err,
-    };
-    let retry_instruction = normalize_text(payload.retry_instruction.as_deref());
-    let execution_service_id = normalize_text(payload.execution_service_id.as_deref());
-    if retry_instruction
-        .as_deref()
-        .is_some_and(|value| value.chars().count() > 4000)
-    {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "阻塞处理意见不能超过 4000 个字符"})),
-        );
-    }
-    if execution_service_id
-        .as_deref()
-        .is_some_and(|value| value.chars().count() > 255)
-    {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "执行服务 ID 不能超过 255 个字符"})),
-        );
-    }
-    match task_runner_api_client::retry_message_run(
-        context.base_url.as_str(),
-        run_id.as_str(),
-        context.source_session_id.as_str(),
-        context.source_user_message_id.as_deref(),
-        context.source_turn_id.as_deref(),
-        retry_instruction.as_deref(),
-        execution_service_id.as_deref(),
-    )
-    .await
-    {
-        Ok(payload) => (StatusCode::CREATED, Json(payload)),
-        Err(err) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"error": "重试任务节点失败", "detail": err})),
-        ),
-    }
-}
-
-async fn get_message_task_runner_run_changes(
-    auth: AuthUser,
-    Path((message_id, run_id)): Path<(String, String)>,
-    Query(query): Query<MessageTaskRunnerLookupQuery>,
-) -> (StatusCode, Json<Value>) {
-    let context = match resolve_message_task_runner_context(&auth, &message_id, &query).await {
-        Ok(Some(context)) => context,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "当前消息没有关联的任务来源"})),
-            );
-        }
-        Err(err) => return err,
-    };
-    match task_runner_api_client::get_message_run_changes(
-        context.base_url.as_str(),
-        run_id.as_str(),
-        context.source_session_id.as_str(),
-        context.source_user_message_id.as_deref(),
-        context.source_turn_id.as_deref(),
-    )
-    .await
-    {
-        Ok(payload) => (StatusCode::OK, Json(payload)),
-        Err(err) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"error": "读取任务代码变更失败", "detail": err})),
-        ),
-    }
-}
-
-async fn retry_message_task_runner_run_integration(
-    auth: AuthUser,
-    Path((message_id, run_id)): Path<(String, String)>,
-    Query(query): Query<MessageTaskRunnerLookupQuery>,
-) -> (StatusCode, Json<Value>) {
-    let context = match resolve_message_task_runner_context(&auth, &message_id, &query).await {
-        Ok(Some(context)) => context,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "当前消息没有关联的任务来源"})),
-            );
-        }
-        Err(err) => return err,
-    };
-    match task_runner_api_client::retry_message_run_integration(
-        context.base_url.as_str(),
-        run_id.as_str(),
-        context.source_session_id.as_str(),
-        context.source_user_message_id.as_deref(),
-        context.source_turn_id.as_deref(),
-    )
-    .await
-    {
-        Ok(payload) => (StatusCode::OK, Json(payload)),
-        Err(err) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"error": "重新集成任务代码失败", "detail": err})),
-        ),
-    }
-}
-
-async fn waive_message_task_runner_run_integration(
-    auth: AuthUser,
-    Path((message_id, run_id)): Path<(String, String)>,
-    Query(query): Query<MessageTaskRunnerLookupQuery>,
-    Json(request): Json<WaiveMessageTaskRunnerRunIntegrationRequest>,
-) -> (StatusCode, Json<Value>) {
-    let context = match resolve_message_task_runner_context(&auth, &message_id, &query).await {
-        Ok(Some(context)) => context,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "当前消息没有关联的任务来源"})),
-            );
-        }
-        Err(err) => return err,
-    };
-    match task_runner_api_client::waive_message_run_integration(
-        context.base_url.as_str(),
-        run_id.as_str(),
-        context.source_session_id.as_str(),
-        context.source_user_message_id.as_deref(),
-        context.source_turn_id.as_deref(),
-        request.reason.as_str(),
-    )
-    .await
-    {
-        Ok(payload) => (StatusCode::OK, Json(payload)),
-        Err(err) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"error": "放弃任务代码变更失败", "detail": err})),
-        ),
-    }
-}
-
-#[cfg(test)]
-mod retry_request_tests {
-    use super::parse_retry_message_task_runner_run_request;
-
-    #[test]
-    fn empty_retry_body_uses_default_request() {
-        let request = parse_retry_message_task_runner_run_request(b"")
-            .expect("empty retry body must be accepted");
-        assert!(request.retry_instruction.is_none());
-    }
-
-    #[test]
-    fn retry_body_keeps_user_instruction() {
-        let request = parse_retry_message_task_runner_run_request(
-            r#"{"retry_instruction":"配置已经补齐","execution_service_id":"mdm-service"}"#
-                .as_bytes(),
-        )
-        .expect("retry instruction body must be parsed");
-        assert_eq!(request.retry_instruction.as_deref(), Some("配置已经补齐"));
-        assert_eq!(request.execution_service_id.as_deref(), Some("mdm-service"));
-    }
-}
+include!("message_task_runner_part01.rs");

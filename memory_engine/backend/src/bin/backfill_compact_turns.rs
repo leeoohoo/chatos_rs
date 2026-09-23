@@ -13,9 +13,9 @@ mod repositories;
 
 use std::collections::HashSet;
 
-use futures_util::TryStreamExt;
-use mongodb::bson::{doc, Document};
 use repositories::records::compact_turns;
+use sqlx::types::Json;
+use sqlx::{Postgres, QueryBuilder};
 
 use crate::models::EngineRecord;
 
@@ -24,32 +24,6 @@ fn optional_env(name: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-}
-
-fn build_filter(
-    tenant_id: Option<&str>,
-    source_id: Option<&str>,
-    thread_id: Option<&str>,
-    record_type: &str,
-) -> Document {
-    let mut filter = doc! {
-        "role": "user",
-        "record_type": record_type,
-        "metadata.conversation_turn_id": {
-            "$exists": true,
-            "$type": "string",
-        },
-    };
-    if let Some(value) = tenant_id {
-        filter.insert("tenant_id", value);
-    }
-    if let Some(value) = source_id {
-        filter.insert("source_id", value);
-    }
-    if let Some(value) = thread_id {
-        filter.insert("thread_id", value);
-    }
-    filter
 }
 
 #[tokio::main]
@@ -65,30 +39,34 @@ async fn main() -> Result<(), String> {
     let record_type =
         optional_env("MEMORY_ENGINE_BACKFILL_RECORD_TYPE").unwrap_or_else(|| "message".to_string());
 
-    let filter = build_filter(
-        tenant_id.as_deref(),
-        source_id.as_deref(),
-        thread_id.as_deref(),
-        record_type.as_str(),
+    let mut query = QueryBuilder::<Postgres>::new(
+        "SELECT data FROM engine_records WHERE role='user' AND record_type=",
     );
-    let mut cursor = pool
-        .collection::<EngineRecord>("engine_records")
-        .find(filter)
-        .sort(doc! {
-            "tenant_id": 1,
-            "source_id": 1,
-            "thread_id": 1,
-            "created_at": 1,
-            "id": 1,
-        })
+    query
+        .push_bind(&record_type)
+        .push(" AND NULLIF(data #>> '{metadata,conversation_turn_id}','') IS NOT NULL");
+    for (column, value) in [
+        ("tenant_id", tenant_id.as_deref()),
+        ("source_id", source_id.as_deref()),
+        ("thread_id", thread_id.as_deref()),
+    ] {
+        if let Some(value) = value {
+            query.push(" AND ").push(column).push("=").push_bind(value);
+        }
+    }
+    query.push(" ORDER BY tenant_id,source_id,thread_id,created_at,id");
+    let rows = query
+        .build_query_scalar::<Json<serde_json::Value>>()
+        .fetch_all(&pool)
         .await
-        .map_err(|err| err.to_string())?;
+        .map_err(|error| error.to_string())?;
 
     let mut seen = HashSet::new();
     let mut scanned_users = 0usize;
     let mut rebuilt_turns = 0usize;
 
-    while let Some(record) = cursor.try_next().await.map_err(|err| err.to_string())? {
+    for row in rows {
+        let record: EngineRecord = repositories::postgres::decode(row)?;
         scanned_users += 1;
         let Some(turn_id) = compact_turns::extract_turn_id(&record).map(ToOwned::to_owned) else {
             continue;

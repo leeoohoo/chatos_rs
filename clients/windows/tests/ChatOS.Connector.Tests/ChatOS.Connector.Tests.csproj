@@ -20,6 +20,8 @@
              Link="Desktop\ShellResourceViewModel.cs" />
     <Compile Include="..\..\src\ChatOS.Desktop\AppShell\MainWindowViewModel.cs"
              Link="Desktop\MainWindowViewModel.cs" />
+    <Compile Include="..\..\src\ChatOS.Desktop\AppShell\MainWindowViewModel.Resources.cs"
+             Link="Desktop\MainWindowViewModel.Resources.cs" />
     <Compile Include="..\..\src\ChatOS.Desktop\Features\Pet\PetQuickChatViewModel.cs"
              Link="Desktop\PetQuickChatViewModel.cs" />
     <Compile Include="..\..\src\ChatOS.Desktop\Features\Plugins\PluginVisualSessionsViewModel.cs"

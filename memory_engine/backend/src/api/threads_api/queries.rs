@@ -10,6 +10,8 @@ pub struct ListThreadRecordsQuery {
     pub role: Option<String>,
     pub record_type: Option<String>,
     pub summary_status: Option<String>,
+    pub after_created_at: Option<String>,
+    pub after_id: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
     pub order: Option<String>,
@@ -73,6 +75,9 @@ pub struct AdminListThreadsQuery {
     pub mapping_version: Option<String>,
     pub thread_label: Option<String>,
     pub status: Option<String>,
+    pub before_updated_at: Option<String>,
+    pub before_created_at: Option<String>,
+    pub before_id: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }

@@ -66,3 +66,44 @@ task ..> events : Publish work
   assert.ok(report.metrics.maxCrossBoundaryFan > 4);
   assert.ok(report.metrics.maxBoundaryPairEdges > 2);
 });
+
+test('architecture overview quality rejects a runtime call chain disguised as architecture', () => {
+  const document = plantUmlToDiagram(`@startuml
+left to right direction
+actor "用户" as user
+package "客户端" as client_boundary {
+  component "React 桌面界面" as react_ui
+  component "ChatOS CLI" as cli
+}
+package "产品核心" as core_boundary {
+  component "Electron 主进程与 IPC" as electron
+  component "UI Apps 插件运行时" as plugin_runtime
+  component "AIDE Agent / Chat 运行时" as agent
+}
+package "外部系统" as external_boundary {
+  cloud "模型 Provider" as model
+  cloud "MCP 服务" as mcp
+}
+package "本地数据与配置" as data_boundary {
+  database "状态库" as state
+  storage "会话文件" as files
+}
+user --> react_ui : 操作桌面应用
+user --> cli : 终端命令
+react_ui --> electron : Electron IPC
+electron --> plugin_runtime : 扫描与调用插件
+plugin_runtime --> agent : 注册并调用聊天能力
+cli --> agent : 加载内置引擎
+agent --> model : Chat Completions API
+agent --> mcp : MCP 调用
+plugin_runtime --> state : 管理状态与聊天记录
+agent --> files : 读取 Prompt 与运行状态
+@enduml`, { documentId: 'flow-like-architecture', kind: 'architecture' });
+  const report = inspectDiagramQuality(document, 'architecture-overview');
+
+  assert.equal(report.ready, false);
+  assert.ok(report.warnings.some((warning) => warning.code === 'architecture_flow_like_chain' && warning.blocking));
+  assert.ok(report.metrics.architectureLongestPathNodeCount >= 5);
+  assert.ok(report.metrics.architectureLongestPathRatio >= 0.55);
+  assert.ok(report.metrics.architectureProcessLikeEdgeCount >= 2);
+});

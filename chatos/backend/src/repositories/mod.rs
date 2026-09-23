@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+pub mod agent_artifacts;
 pub mod agents;
 pub mod applications;
-pub mod auth_users;
 pub mod chatos_memory_mappings;
+pub mod cloud_agent;
 pub mod db;
 pub mod memory_skills;
 pub mod pet_activity_inbox;

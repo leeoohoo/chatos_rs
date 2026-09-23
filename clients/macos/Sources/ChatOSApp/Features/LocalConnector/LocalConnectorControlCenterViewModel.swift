@@ -39,28 +39,44 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         self.service = service
     }
 
-    func activate(pairIfNeeded: Bool) {
+    func activate(pairIfNeeded: Bool, expectedOwnerUserID: String? = nil) {
         startApprovalMonitoring()
         isStarting = true
-        refreshStatus(pairIfNeeded: pairIfNeeded)
+        refreshStatus(
+            pairIfNeeded: pairIfNeeded,
+            expectedOwnerUserID: expectedOwnerUserID
+        )
     }
 
-    func refreshStatus(pairIfNeeded: Bool = false) {
+    func refreshStatus(
+        pairIfNeeded: Bool = false,
+        expectedOwnerUserID: String? = nil
+    ) {
         refreshGeneration += 1
         let generation = refreshGeneration
         isLoading = true
         errorMessage = nil
         Task {
             do {
-                let nextStatus = try await fetchStatusWithStartupRetry()
-                guard generation == refreshGeneration else { return }
-                if pairIfNeeded && !nextStatus.configured {
-                    status = try await service.pairWithCurrentChatOSSession(
+                // A restored ChatOS login does not guarantee that the independent Connector
+                // credential is still accepted by the gateway. Refresh it on every authenticated
+                // activation; the native service reuses the existing device/workspace when the
+                // account and deployment are unchanged.
+                let nextStatus = if pairIfNeeded {
+                    try await service.pairWithCurrentChatOSSession(
                         deviceName: Host.current().localizedName
                     )
                 } else {
-                    status = nextStatus
+                    try await fetchStatusWithStartupRetry()
                 }
+                guard generation == refreshGeneration else { return }
+                let ownerMismatch = expectedOwnerUserID.map {
+                    nextStatus.user?.id != $0
+                } ?? false
+                guard !ownerMismatch else {
+                    throw CancellationError()
+                }
+                status = nextStatus
             } catch {
                 guard generation == refreshGeneration else { return }
                 errorMessage = error.localizedDescription
@@ -91,7 +107,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     }
 
     func disconnect() {
-        performAction(successNotice: "已断开这台设备与网关的配对。") {
+        performAction(successNotice: "已阻断服务端到本机的调用，本机数据和配置均已保留。") {
             self.status = try await self.service.disconnect()
         }
     }
@@ -114,15 +130,21 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         plugins = []
         browserExtensionPairedPluginIDs = []
         Task {
-            _ = try? await service.disconnect()
+            // A missing/expired login session is not an explicit request to erase this
+            // Mac's persisted project and workspace access state.
+            await service.suspendForSignedOut()
         }
     }
 
     func reconnect() {
-        performAction(successNotice: "设备已重新配对。") {
-            self.status = try await self.service.pairWithCurrentChatOSSession(
-                deviceName: Host.current().localizedName
-            )
+        performAction(successNotice: "服务端到本机的调用通道已恢复。") {
+            if self.status?.configured == true {
+                self.status = try await self.service.resumeServerAccess()
+            } else {
+                self.status = try await self.service.pairWithCurrentChatOSSession(
+                    deviceName: Host.current().localizedName
+                )
+            }
         }
     }
 

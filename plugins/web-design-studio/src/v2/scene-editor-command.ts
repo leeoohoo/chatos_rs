@@ -29,7 +29,6 @@ import {
 } from './scene-schema.js';
 import { SceneDocumentStore, SceneRevisionConflictError } from './scene-store.js';
 import type { SceneTransaction, SceneTransactionSummary } from './scene-transaction.js';
-
 type ScenePadding = number | { top: number; right: number; bottom: number; left: number };
 
 export interface SceneEditorNodePatch {
@@ -532,9 +531,9 @@ export function createSceneEditorCommandTransaction(
         gap: { row: 0, column: 0 },
         alignItems: 'stretch',
         justifyContent: 'start',
-        sizingX: 'fixed',
+        sizingX: 'fill',
         sizingY: 'hug',
-        minHeight: command.height,
+        minHeight: 1,
         position: 'flow',
         clipContent: false
       },
@@ -798,128 +797,4 @@ export async function executeSceneEditorCommand(
   return { ...result, commandType: request.command.type, recovered: false };
 }
 
-const sceneIdSchema = { type: 'string', minLength: 1, maxLength: 160, pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$' } as const;
-const sceneNodeIdsSchema = { type: 'array', minItems: 1, maxItems: 256, uniqueItems: true, items: sceneIdSchema } as const;
-const sceneDeltaSchema = { type: 'number', minimum: -100000, maximum: 100000 } as const;
-const scenePaddingSchema = {
-  oneOf: [
-    { type: 'number', minimum: 0, maximum: 10000 },
-    {
-      type: 'object',
-      properties: {
-        top: { type: 'number', minimum: 0, maximum: 10000 },
-        right: { type: 'number', minimum: 0, maximum: 10000 },
-        bottom: { type: 'number', minimum: 0, maximum: 10000 },
-        left: { type: 'number', minimum: 0, maximum: 10000 }
-      },
-      required: ['top', 'right', 'bottom', 'left'],
-      additionalProperties: false
-    }
-  ]
-} as const;
-
-export const sceneEditorCommandRequestSchema = {
-  type: 'object',
-  properties: {
-    transactionId: sceneIdSchema,
-    expectedRevision: { type: 'integer', minimum: 0 },
-    reason: { type: 'string', minLength: 1, maxLength: 240 },
-    command: {
-      oneOf: [
-        {
-          type: 'object',
-          properties: { type: { const: 'move' }, nodeIds: sceneNodeIdsSchema, deltaX: sceneDeltaSchema, deltaY: sceneDeltaSchema },
-          required: ['type', 'nodeIds', 'deltaX', 'deltaY'], additionalProperties: false
-        },
-        {
-          type: 'object',
-          properties: {
-            type: { const: 'align' }, nodeIds: { ...sceneNodeIdsSchema, minItems: 2 },
-            alignment: { type: 'string', enum: ['left', 'horizontal-center', 'right', 'top', 'vertical-center', 'bottom'] }
-          },
-          required: ['type', 'nodeIds', 'alignment'], additionalProperties: false
-        },
-        {
-          type: 'object',
-          properties: {
-            type: { const: 'distribute' }, nodeIds: { ...sceneNodeIdsSchema, minItems: 3 },
-            axis: { type: 'string', enum: ['horizontal', 'vertical'] }
-          },
-          required: ['type', 'nodeIds', 'axis'], additionalProperties: false
-        },
-        {
-          type: 'object',
-          properties: {
-            type: { const: 'reorder' }, nodeIds: sceneNodeIdsSchema,
-            placement: { type: 'string', enum: ['front', 'forward', 'backward', 'back'] }
-          },
-          required: ['type', 'nodeIds', 'placement'], additionalProperties: false
-        },
-        {
-          type: 'object',
-          properties: {
-            type: { const: 'resize' }, nodeId: sceneIdSchema,
-            handle: { type: 'string', enum: [...resizeHandles] },
-            deltaX: sceneDeltaSchema, deltaY: sceneDeltaSchema,
-            minimumWidth: { type: 'number', minimum: 0, maximum: 100000 },
-            minimumHeight: { type: 'number', minimum: 0, maximum: 100000 }
-          },
-          required: ['type', 'nodeId', 'handle', 'deltaX', 'deltaY'], additionalProperties: false
-        },
-        {
-          type: 'object',
-          properties: { type: { const: 'group' }, nodeIds: { ...sceneNodeIdsSchema, minItems: 2 }, wrapperId: sceneIdSchema, name: { type: 'string', minLength: 1, maxLength: 240 } },
-          required: ['type', 'nodeIds', 'wrapperId', 'name'], additionalProperties: false
-        },
-        {
-          type: 'object',
-          properties: { type: { const: 'frame' }, nodeIds: { ...sceneNodeIdsSchema, minItems: 2 }, wrapperId: sceneIdSchema, name: { type: 'string', minLength: 1, maxLength: 240 }, padding: scenePaddingSchema },
-          required: ['type', 'nodeIds', 'wrapperId', 'name'], additionalProperties: false
-        },
-        {
-          type: 'object',
-          properties: {
-            type: { const: 'auto-layout-frame' }, nodeIds: { ...sceneNodeIdsSchema, minItems: 2 }, wrapperId: sceneIdSchema,
-            name: { type: 'string', minLength: 1, maxLength: 240 }, direction: { type: 'string', enum: ['horizontal', 'vertical'] },
-            padding: scenePaddingSchema, gap: { type: 'number', minimum: 0, maximum: 10000 },
-            alignItems: { type: 'string', enum: ['start', 'center', 'end', 'stretch', 'baseline'] },
-            justifyContent: { type: 'string', enum: ['start', 'center', 'end', 'between', 'around', 'evenly'] },
-            sizingX: { type: 'string', enum: ['fixed', 'hug'] }, sizingY: { type: 'string', enum: ['fixed', 'hug'] }
-          },
-          required: ['type', 'nodeIds', 'wrapperId', 'name', 'direction'], additionalProperties: false
-        },
-        {
-          type: 'object', properties: { type: { const: 'ungroup' }, wrapperId: sceneIdSchema },
-          required: ['type', 'wrapperId'], additionalProperties: false
-        },
-        {
-          type: 'object',
-          properties: {
-            type: { const: 'update-node' },
-            nodeId: sceneIdSchema,
-            patches: {
-              type: 'array', minItems: 1, maxItems: 32,
-              items: {
-                type: 'object',
-                properties: {
-                  path: {
-                    enum: [...editableNodePaths.keys()].map((path) => path.split('.'))
-                  },
-                  value: {}
-                },
-                required: ['path', 'value'], additionalProperties: false
-              }
-            }
-          },
-          required: ['type', 'nodeId', 'patches'], additionalProperties: false
-        },
-        {
-          type: 'object', properties: { type: { const: 'delete-nodes' }, nodeIds: sceneNodeIdsSchema },
-          required: ['type', 'nodeIds'], additionalProperties: false
-        }
-      ]
-    }
-  },
-  required: ['transactionId', 'expectedRevision', 'command'],
-  additionalProperties: false
-} as const;
+export { sceneEditorCommandRequestSchema } from './scene-editor-command-schema.js';

@@ -245,6 +245,7 @@ struct McpManagementBinding {
     session_id: String,
     session_expires_at_unix: i64,
     project_id: Option<String>,
+    project_context: Option<chatos_mcp_management_sdk::ClientProjectContextSnapshot>,
     run_id: Option<String>,
     turn_id: Option<String>,
     task_id: Option<String>,
@@ -438,7 +439,7 @@ async fn dispatch_bound_task_runner_tool(
     };
     let request_context = McpRequestContext {
         project_id: binding.project_id.clone(),
-        project_context: None,
+        project_context: binding.project_context.clone(),
         source_session_id: binding.source_session_id.clone(),
         source_turn_id: binding.turn_id.clone(),
         source_user_message_id: binding.source_user_message_id.clone(),

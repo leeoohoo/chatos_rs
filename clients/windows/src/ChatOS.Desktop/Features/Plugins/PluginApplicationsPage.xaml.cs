@@ -1,8 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
-using ChatOS.Api.Tasks;
 using ChatOS.Connector.Plugins;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
@@ -23,15 +21,8 @@ public sealed partial class PluginApplicationsPage : Page
     private static readonly HashSet<string> HostCapabilities =
     [
         "host.context.read",
-        "task.batch.prepare",
-        "task.batch.status",
-        "task.workspace.open",
     ];
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
-    {
-        PropertyNameCaseInsensitive = false,
-        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
-    };
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private const string BootstrapScript = """
         (() => {
           if (window.top !== window) return;
@@ -72,9 +63,6 @@ public sealed partial class PluginApplicationsPage : Page
 
     private readonly ILocalPluginApplicationService _applications;
     private readonly ILocalProjectsService _projects;
-    private readonly IUserModelDefaultsService _defaults;
-    private readonly IConversationRuntimeSettingsService _models;
-    private readonly TaskRunnerHostService _taskRunner;
     private CancellationTokenSource? _launchCancellation;
     private LocalPluginApplication? _selectedApplication;
     private ShellResourceViewModel? _selectedProject;
@@ -84,23 +72,16 @@ public sealed partial class PluginApplicationsPage : Page
     private bool _webViewInitialized;
     private string _adapterSessionId = string.Empty;
     private string _hostSessionNonce = string.Empty;
-    private TaskWorkspaceState? _taskWorkspace;
 
     public PluginApplicationsPage(
         MainWindowViewModel shell,
         ILocalPluginApplicationService applications,
         ILocalProjectsService projects,
-        IUserModelDefaultsService defaults,
-        IConversationRuntimeSettingsService models,
-        TaskRunnerHostService taskRunner,
         LocalizationViewModel localization)
     {
         Shell = shell;
         _applications = applications;
         _projects = projects;
-        _defaults = defaults;
-        _models = models;
-        _taskRunner = taskRunner;
         Localization = localization;
         InitializeComponent();
     }
@@ -128,12 +109,6 @@ public sealed partial class PluginApplicationsPage : Page
     public string ApplicationHostName => Localization.Text("插件应用工作台", "Plugin application workbench");
     public string RetryText => Localization.Text("重试", "Try again");
     public string SwitchProjectText => Localization.Text("切换项目", "Switch project");
-    public string TaskWorkspaceTitle => Localization.Text("任务工作区", "Task workspace");
-    public string TaskWorkspaceDescription => Localization.Text(
-        "Task Runner 是任务与运行状态的唯一权威来源",
-        "Task Runner is the sole authority for task and run status");
-    public string StartExecutionText => Localization.Text("开始执行", "Start execution");
-    public string CloseText => Localization.Text("关闭", "Close");
 
     public async Task OpenAsync(CancellationToken cancellationToken = default)
     {
@@ -151,8 +126,6 @@ public sealed partial class PluginApplicationsPage : Page
         _projectContext = null;
         _launch = null;
         _allowedUrl = null;
-        _taskWorkspace = null;
-        TaskWorkspaceOverlay.Visibility = Visibility.Collapsed;
         if (_webViewInitialized)
         {
             PluginWebView.CoreWebView2.Navigate("about:blank");
@@ -348,7 +321,7 @@ public sealed partial class PluginApplicationsPage : Page
             {
                 return;
             }
-            var result = await HandleBridgeRequestAsync(method, payload.Clone());
+            var result = await HandleBridgeRequestAsync(method);
             SendBridgeResponse(requestId, true, result);
         }
         catch (Exception exception)
@@ -365,14 +338,11 @@ public sealed partial class PluginApplicationsPage : Page
         }
     }
 
-    private async Task<object> HandleBridgeRequestAsync(string method, JsonElement payload)
+    private async Task<object> HandleBridgeRequestAsync(string method)
     {
         return method switch
         {
             "host.context.read" => await ReadHostContextAsync(),
-            "task.batch.prepare" => await PrepareTaskBatchAsync(payload),
-            "task.batch.status" => await ReadTaskStatusesAsync(payload),
-            "task.workspace.open" => await OpenTaskWorkspaceAsync(payload),
             _ => throw new InvalidOperationException("Host capability is not implemented."),
         };
     }
@@ -387,60 +357,6 @@ public sealed partial class PluginApplicationsPage : Page
         return new { projectId = context.ProjectId, projectName = context.ProjectName, capabilities = GrantedCapabilities() };
     }
 
-    private async Task<object> PrepareTaskBatchAsync(JsonElement payload)
-    {
-        var (owner, context) = await ResolveCurrentProjectContextAsync();
-        var defaultsTask = _defaults.FetchAsync();
-        var modelsTask = _models.FetchAvailableModelsAsync();
-        await Task.WhenAll(defaultsTask, modelsTask);
-        EnsureOwner(owner);
-        var modelId = defaultsTask.Result.TaskRunnerDefaultModelConfigId;
-        var model = modelsTask.Result.FirstOrDefault(value =>
-            string.Equals(value.Id, modelId, StringComparison.Ordinal));
-        if (string.IsNullOrWhiteSpace(modelId))
-            throw new InvalidOperationException(Localization.Text(
-                "请先在设置中选择 Task Runner 默认模型。",
-                "Select a Task Runner default model in Settings first."));
-        if (model is null || !model.TaskEnabled || !model.HasApiKey)
-            throw new InvalidOperationException(Localization.Text(
-                "Task Runner 默认模型已不可用、未启用 Task，或缺少凭据。",
-                "The Task Runner default is unavailable, not enabled for Task, or missing credentials."));
-        var request = JsonSerializer.Deserialize<PluginHostTaskBatchRequest>(payload.GetRawText(), JsonOptions)
-            ?? throw new InvalidOperationException("Task batch request is empty.");
-        var launch = _launch ?? throw new InvalidOperationException("Plugin host session is unavailable.");
-        return await _taskRunner.PrepareBatchAsync(
-            request,
-            context,
-            new PluginHostIdentity(
-                launch.Application.PluginId,
-                launch.Application.ComponentKey,
-                launch.ReleaseId,
-                launch.Version,
-                launch.ArtifactSha256),
-            modelId,
-            default);
-    }
-
-    private async Task<object> ReadTaskStatusesAsync(JsonElement payload)
-    {
-        var (_, context) = await ResolveCurrentProjectContextAsync();
-        var taskIds = ReadIdentifiers(payload, "taskIds", 200, allowEmpty: true);
-        return await _taskRunner.TaskStatusesAsync(taskIds, context.ProjectId);
-    }
-
-    private async Task<object> OpenTaskWorkspaceAsync(JsonElement payload)
-    {
-        var (_, context) = await ResolveCurrentProjectContextAsync();
-        var batchId = ValidIdentifier(ReadString(payload, "batchId"))
-            ?? throw new InvalidOperationException("Task workspace batch ID is invalid.");
-        var taskIds = ReadIdentifiers(payload, "taskIds", 200, allowEmpty: false);
-        var tasks = await _taskRunner.TaskStatusesAsync(taskIds, context.ProjectId);
-        _taskWorkspace = new TaskWorkspaceState(batchId, taskIds, context.ProjectId);
-        RenderTaskWorkspace(tasks, null);
-        TaskWorkspaceOverlay.Visibility = Visibility.Visible;
-        return new { opened = true };
-    }
-
     private async Task<(string Owner, ProjectContextSnapshot Context)> ResolveCurrentProjectContextAsync()
     {
         var project = _selectedProject
@@ -452,138 +368,6 @@ public sealed partial class PluginApplicationsPage : Page
         _projectContext = context;
         ProjectBadgeText.Text = context.ProjectName;
         return (owner, context);
-    }
-
-    private async Task RefreshTaskWorkspaceAsync()
-    {
-        if (_taskWorkspace is null) return;
-        TaskWorkspaceProgress.IsActive = true;
-        TaskWorkspaceMessage.Text = string.Empty;
-        try
-        {
-            var (_, context) = await ResolveCurrentProjectContextAsync();
-            if (!string.Equals(context.ProjectId, _taskWorkspace.ProjectId, StringComparison.Ordinal))
-                throw new InvalidOperationException("The selected project changed.");
-            var tasks = await _taskRunner.TaskStatusesAsync(_taskWorkspace.TaskIds, context.ProjectId);
-            RenderTaskWorkspace(tasks, null);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            TaskWorkspaceMessage.Text = exception.Message;
-        }
-        catch (OperationCanceledException)
-        {
-            TaskWorkspaceMessage.Text = Localization.Text("账户或项目上下文已变化。", "The account or project context changed.");
-        }
-        finally
-        {
-            TaskWorkspaceProgress.IsActive = false;
-        }
-    }
-
-    private void RenderTaskWorkspace(IReadOnlyList<PluginHostTaskReference> tasks, string? message)
-    {
-        TaskItems.Children.Clear();
-        foreach (var task in tasks)
-        {
-            var color = StatusColor(task.Status);
-            var content = new Grid { ColumnSpacing = 12 };
-            content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
-            content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            content.Children.Add(new Border
-            {
-                Width = 9,
-                Height = 9,
-                VerticalAlignment = VerticalAlignment.Center,
-                Background = new SolidColorBrush(color),
-                CornerRadius = new CornerRadius(5),
-            });
-            var text = new StackPanel { Spacing = 3 };
-            text.Children.Add(new TextBlock { Text = task.Title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-            text.Children.Add(new TextBlock
-            {
-                Text = task.TaskId,
-                FontFamily = new FontFamily("Cascadia Mono, Consolas"),
-                FontSize = 11,
-                Foreground = ResourceBrush("ChatOSSecondaryTextBrush"),
-            });
-            Grid.SetColumn(text, 1);
-            content.Children.Add(text);
-            var status = new TextBlock
-            {
-                Text = StatusTitle(task.Status),
-                VerticalAlignment = VerticalAlignment.Center,
-                Foreground = new SolidColorBrush(color),
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            };
-            Grid.SetColumn(status, 2);
-            content.Children.Add(status);
-            TaskItems.Children.Add(new Border
-            {
-                Padding = new Thickness(13),
-                Background = ResourceBrush("ChatOSSidebarBackgroundBrush"),
-                BorderBrush = ResourceBrush("ChatOSBorderBrush"),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(11),
-                Child = content,
-            });
-        }
-        StartTaskBatchButton.IsEnabled = tasks.Any(value => value.Status == "ready");
-        TaskWorkspaceMessage.Text = message ?? string.Empty;
-    }
-
-    private async void OnRefreshTaskWorkspaceClicked(object sender, RoutedEventArgs e) =>
-        await RefreshTaskWorkspaceAsync();
-
-    private async void OnStartTaskBatchClicked(object sender, RoutedEventArgs e)
-    {
-        if (_taskWorkspace is null) return;
-        var dialog = new ContentDialog
-        {
-            XamlRoot = XamlRoot,
-            Title = Localization.Text("开始执行这个任务批次？", "Start this task batch?"),
-            Content = Localization.Text(
-                "Task Runner 会按依赖关系调度待执行任务。关闭项目管理插件不会停止已经启动的任务。",
-                "Task Runner will schedule ready tasks by dependency. Closing Project Management will not stop tasks already started."),
-            PrimaryButtonText = StartExecutionText,
-            CloseButtonText = Localization.Cancel,
-            DefaultButton = ContentDialogButton.Close,
-        };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        TaskWorkspaceProgress.IsActive = true;
-        StartTaskBatchButton.IsEnabled = false;
-        try
-        {
-            var (_, context) = await ResolveCurrentProjectContextAsync();
-            if (!string.Equals(context.ProjectId, _taskWorkspace.ProjectId, StringComparison.Ordinal))
-                throw new InvalidOperationException("The selected project changed.");
-            var results = await _taskRunner.StartBatchAsync(_taskWorkspace.TaskIds, context.ProjectId);
-            var failures = results.Where(value => !value.Ok)
-                .Select(value => value.Message)
-                .Where(value => !string.IsNullOrWhiteSpace(value));
-            await RefreshTaskWorkspaceAsync();
-            var failureMessage = string.Join("；", failures.OfType<string>());
-            if (failureMessage.Length > 0) TaskWorkspaceMessage.Text = failureMessage;
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            TaskWorkspaceMessage.Text = exception.Message;
-        }
-        catch (OperationCanceledException)
-        {
-            TaskWorkspaceMessage.Text = Localization.Text("账户或项目上下文已变化。", "The account or project context changed.");
-        }
-        finally
-        {
-            TaskWorkspaceProgress.IsActive = false;
-        }
-    }
-
-    private void OnCloseTaskWorkspaceClicked(object sender, RoutedEventArgs e)
-    {
-        TaskWorkspaceOverlay.Visibility = Visibility.Collapsed;
-        _taskWorkspace = null;
     }
 
     private void OnBackToApplicationsClicked(object sender, RoutedEventArgs e) => ShowCatalog();
@@ -608,7 +392,6 @@ public sealed partial class PluginApplicationsPage : Page
 
     private void ShowCatalog()
     {
-        TaskWorkspaceOverlay.Visibility = Visibility.Collapsed;
         HostView.Visibility = Visibility.Collapsed;
         CatalogView.Visibility = Visibility.Visible;
     }
@@ -675,12 +458,6 @@ public sealed partial class PluginApplicationsPage : Page
             throw new OperationCanceledException("The signed-in account changed.");
     }
 
-    private void EnsureOwner(string expectedOwner)
-    {
-        if (!string.Equals(Shell.CurrentOwnerUserId, expectedOwner, StringComparison.Ordinal))
-            throw new OperationCanceledException("The signed-in account changed.");
-    }
-
     private static bool RequiresProject(LocalPluginApplication application) =>
         application.ContextScope is "project" or "workspace";
 
@@ -695,52 +472,6 @@ public sealed partial class PluginApplicationsPage : Page
             ? value
             : null;
 
-    private static IReadOnlyList<string> ReadIdentifiers(
-        JsonElement payload,
-        string name,
-        int maximum,
-        bool allowEmpty)
-    {
-        if (!payload.TryGetProperty(name, out var values) || values.ValueKind != JsonValueKind.Array)
-            throw new InvalidOperationException("Task Runner references are invalid.");
-        var result = values.EnumerateArray().Select(value =>
-            value.ValueKind == JsonValueKind.String ? ValidIdentifier(value.GetString()) : null).ToArray();
-        if ((!allowEmpty && result.Length == 0) || result.Length > maximum || result.Any(value => value is null) ||
-            result.Distinct(StringComparer.Ordinal).Count() != result.Length)
-            throw new InvalidOperationException("Task Runner references are invalid.");
-        return result.Select(value => value!).ToArray();
-    }
-
-    private static Brush ResourceBrush(string key) =>
-        (Brush)Application.Current.Resources[key];
-
-    private static Color StatusColor(string status) => status switch
-    {
-        "succeeded" => Color.FromArgb(255, 40, 160, 95),
-        "failed" or "cancelled" => Color.FromArgb(255, 210, 69, 69),
-        "blocked" => Color.FromArgb(255, 217, 119, 32),
-        "running" or "queued" => Color.FromArgb(255, 37, 99, 235),
-        _ => Color.FromArgb(255, 110, 110, 115),
-    };
-
-    private string StatusTitle(string status) => status switch
-    {
-        "draft" => Localization.Text("草稿", "Draft"),
-        "ready" => Localization.Text("待执行", "Ready"),
-        "queued" => Localization.Text("排队中", "Queued"),
-        "running" => Localization.Text("运行中", "Running"),
-        "succeeded" => Localization.Text("已完成", "Succeeded"),
-        "failed" => Localization.Text("失败", "Failed"),
-        "blocked" => Localization.Text("阻塞", "Blocked"),
-        "cancelled" => Localization.Text("已取消", "Cancelled"),
-        "archived" => Localization.Text("已归档", "Archived"),
-        _ => status,
-    };
-
-    private sealed record TaskWorkspaceState(
-        string BatchId,
-        IReadOnlyList<string> TaskIds,
-        string ProjectId);
 }
 
 public sealed class PluginApplicationCardViewModel

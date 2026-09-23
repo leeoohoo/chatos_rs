@@ -20,33 +20,18 @@ struct NativeConnectorGatewayDTOTests {
     }
 
     @Test
-    func authenticatedUnauthorizedResponsePublishesSessionExpiration() async {
-        let center = NotificationCenter()
-        await confirmation("connector authentication expiration") { confirmed in
-            let observer = center.addObserver(
-                forName: .chatOSAuthenticationDidExpire,
-                object: nil,
-                queue: nil
-            ) { _ in
-                confirmed()
-            }
-            defer { center.removeObserver(observer) }
-
-            #expect(NativeConnectorGateway.publishAuthenticationExpirationIfNeeded(
-                statusCode: 401,
-                token: "expired-token",
-                notificationCenter: center
-            ))
-        }
-        #expect(!NativeConnectorGateway.publishAuthenticationExpirationIfNeeded(
+    func connectorUnauthorizedResponseIsKeptSeparateFromPrimaryAuthentication() {
+        #expect(NativeConnectorGateway.isConnectorAuthenticationRejected(
             statusCode: 401,
-            token: nil,
-            notificationCenter: center
+            token: "expired-token"
         ))
-        #expect(!NativeConnectorGateway.publishAuthenticationExpirationIfNeeded(
+        #expect(!NativeConnectorGateway.isConnectorAuthenticationRejected(
+            statusCode: 401,
+            token: nil
+        ))
+        #expect(!NativeConnectorGateway.isConnectorAuthenticationRejected(
             statusCode: 500,
-            token: "token",
-            notificationCenter: center
+            token: "token"
         ))
     }
 
@@ -145,7 +130,6 @@ struct NativeConnectorGatewayDTOTests {
               "model_request_max_retries": 4,
               "memory_summary_model_config_id": "memory-model",
               "memory_summary_thinking_level": "low",
-              "task_runner_default_model_config_id": "task-model"
             }
             """.utf8
         )
@@ -153,6 +137,52 @@ struct NativeConnectorGatewayDTOTests {
         #expect(settings.modelRequestMaxRetries == 4)
         #expect(settings.memorySummaryModelConfigID == "memory-model")
         #expect(settings.memorySummaryThinkingLevel == "low")
-        #expect(settings.taskRunnerDefaultModelConfigID == "task-model")
+    }
+
+    @Test
+    func managedAgentPromptBundleDecodesGatewayContract() throws {
+        let data = Data(
+            """
+            {
+              "bundle_version": 12,
+              "updated_at": "2026-09-21T00:00:00Z",
+              "prompts": [{
+                "agent_key": "local_connector_command_approval_agent",
+                "vendor": "gpt",
+                "content": "managed approval prompt",
+                "revision": 3,
+                "checksum": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "published_at": "2026-09-21T00:00:00Z"
+              }]
+            }
+            """.utf8
+        )
+
+        let bundle = try JSONDecoder().decode(GatewayAgentPromptBundleDTO.self, from: data)
+        let prompt = try #require(bundle.prompts.first)
+        #expect(bundle.bundleVersion == 12)
+        #expect(prompt.agentKey == NativeApprovalAgent.agentKey)
+        #expect(prompt.vendor == "gpt")
+        #expect(prompt.revision == 3)
+    }
+
+    @Test
+    func managedAgentCapabilityDecodesGatewayContract() throws {
+        let data = Data(
+            """
+            {
+              "agent_key": "local_connector_command_approval_agent",
+              "owner_user_id": "owner-1",
+              "policy_revision": "policy-9",
+              "agent_enabled": true
+            }
+            """.utf8
+        )
+
+        let capability = try JSONDecoder().decode(GatewayAgentCapabilityDTO.self, from: data)
+        #expect(capability.agentKey == NativeApprovalAgent.agentKey)
+        #expect(capability.ownerUserID == "owner-1")
+        #expect(capability.policyRevision == "policy-9")
+        #expect(capability.agentEnabled)
     }
 }

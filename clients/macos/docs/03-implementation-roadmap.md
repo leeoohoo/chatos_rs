@@ -70,7 +70,7 @@
 交付：
 
 - 系统权限检查与引导。
-- Permission layer、Sandbox lease、本地进程限制。
+- Permission layer、任务 lease、本地进程限制。
 - 风险识别、白名单、Session Approval、待审批通知。
 - Remote Terminal、SSH/SFTP。
 

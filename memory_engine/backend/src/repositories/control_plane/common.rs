@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use mongodb::bson::{Bson, Document};
-
-use crate::db::Db;
 use crate::models::{
-    now_rfc3339, EngineJobPolicy, EngineJobRun, DEFAULT_ENGINE_MEMORY_ROLLUP_PROMPT_TEMPLATE,
+    now_rfc3339, EngineJobPolicy, DEFAULT_ENGINE_MEMORY_ROLLUP_PROMPT_TEMPLATE,
     DEFAULT_ENGINE_MEMORY_ROLLUP_PROMPT_TEMPLATE_EN, DEFAULT_ENGINE_ROLLUP_PROMPT_TEMPLATE,
     DEFAULT_ENGINE_ROLLUP_PROMPT_TEMPLATE_EN, DEFAULT_ENGINE_SUBJECT_MEMORY_PROMPT_TEMPLATE,
     DEFAULT_ENGINE_SUBJECT_MEMORY_PROMPT_TEMPLATE_EN, DEFAULT_ENGINE_SUMMARY_PROMPT_TEMPLATE,
@@ -19,23 +16,6 @@ pub(crate) const JOB_TYPE_SUMMARY: &str = "summary";
 pub(crate) const JOB_TYPE_ROLLUP: &str = "rollup";
 pub(crate) const JOB_TYPE_SUBJECT_MEMORY: &str = "subject_memory";
 pub(crate) const JOB_TYPE_THREAD_REPAIR: &str = "thread_repair";
-
-pub(crate) fn job_policy_collection(db: &Db) -> mongodb::Collection<EngineJobPolicy> {
-    db.collection::<EngineJobPolicy>("engine_job_policies")
-}
-
-pub(crate) fn job_run_collection(db: &Db) -> mongodb::Collection<EngineJobRun> {
-    db.collection::<EngineJobRun>("engine_job_runs")
-}
-
-pub(crate) fn doc_i64(doc: &Document, key: &str) -> i64 {
-    match doc.get(key) {
-        Some(Bson::Int32(v)) => *v as i64,
-        Some(Bson::Int64(v)) => *v,
-        Some(Bson::Double(v)) => *v as i64,
-        _ => 0,
-    }
-}
 
 pub fn default_job_types() -> &'static [&'static str] {
     &[

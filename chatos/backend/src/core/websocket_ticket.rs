@@ -16,6 +16,7 @@ static WS_TICKET_STORE: Lazy<DashMap<String, WebSocketTicketRecord>> = Lazy::new
 pub struct WebSocketTicketRecord {
     pub access_token: String,
     pub auth_user: AuthUser,
+    pub scopes: Vec<String>,
     pub expires_at_epoch_seconds: i64,
 }
 
@@ -29,6 +30,7 @@ pub struct WebSocketTicketResponse {
 pub fn issue_websocket_ticket(
     access_token: &str,
     auth_user: &AuthUser,
+    scopes: &[String],
 ) -> Result<WebSocketTicketResponse, AuthHeaderError> {
     let normalized_access_token = access_token.trim();
     if normalized_access_token.is_empty() {
@@ -42,6 +44,7 @@ pub fn issue_websocket_ticket(
     let record = WebSocketTicketRecord {
         access_token: normalized_access_token.to_string(),
         auth_user: auth_user.clone(),
+        scopes: scopes.to_vec(),
         expires_at_epoch_seconds,
     };
     WS_TICKET_STORE.insert(ticket.clone(), record);
@@ -95,18 +98,23 @@ mod tests {
 
     #[test]
     fn websocket_ticket_is_single_use() {
-        let response =
-            issue_websocket_ticket("access_token_1", &build_auth_user()).expect("issue ticket");
+        let response = issue_websocket_ticket(
+            "access_token_1",
+            &build_auth_user(),
+            &["wechat_companion".to_string()],
+        )
+        .expect("issue ticket");
 
         let consumed = consume_websocket_ticket(response.ticket.as_str()).expect("consume ticket");
         assert_eq!(consumed.access_token, "access_token_1");
         assert_eq!(consumed.auth_user.user_id, "user_1");
+        assert_eq!(consumed.scopes, vec!["wechat_companion"]);
 
         assert!(consume_websocket_ticket(response.ticket.as_str()).is_err());
     }
 
     #[test]
     fn websocket_ticket_rejects_blank_access_token() {
-        assert!(issue_websocket_ticket("   ", &build_auth_user()).is_err());
+        assert!(issue_websocket_ticket("   ", &build_auth_user(), &[]).is_err());
     }
 }

@@ -14,7 +14,8 @@ public sealed record TerminalSessionIdentity(
     string WorkspaceId,
     string WorkspaceRoot,
     string WorkingDirectory,
-    ControlledNetworkPolicyEnvelope? NetworkPolicy = null);
+    ControlledNetworkPolicyEnvelope? NetworkPolicy = null,
+    bool RelayOwned = false);
 
 public enum TerminalEventKind
 {
@@ -30,7 +31,21 @@ public sealed record TerminalEvent(
     string SessionId,
     string? Data = null,
     int? ExitCode = null,
-    bool? Busy = null);
+    bool? Busy = null,
+    long? Sequence = null,
+    long? BaseSequence = null,
+    bool? Truncated = null,
+    bool Remote = false,
+    string? State = null,
+    string? ErrorCode = null,
+    string? Prompt = null,
+    bool? Recoverable = null);
+
+public sealed record TerminalSnapshot(
+    string Data,
+    long BaseSequence,
+    long Sequence,
+    bool Truncated);
 
 public interface ITerminalSession : IAsyncDisposable
 {
@@ -47,6 +62,9 @@ public interface ITerminalSession : IAsyncDisposable
     Task ResizeAsync(TerminalSize size, CancellationToken cancellationToken = default);
 
     string Snapshot(int maximumLines = 500);
+
+    TerminalSnapshot SnapshotState(int maximumLines = 500) =>
+        new(Snapshot(maximumLines), 0, 0, false);
 
     Task StopAsync(CancellationToken cancellationToken = default);
 }

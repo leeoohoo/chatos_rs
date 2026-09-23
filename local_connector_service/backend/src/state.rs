@@ -25,6 +25,7 @@ use crate::valkey_coordination::{DevicePresence, ValkeyCoordinator};
 use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClientConfig};
 
 const LOCAL_CONNECTOR_CONFIG_WATCH_INTERVAL: Duration = Duration::from_secs(15);
+const RELAY_PENDING_REAPER_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
 pub struct AppState {
@@ -126,6 +127,7 @@ impl AppState {
             config.relay_correlation_grace_ttl,
             config.relay_delivery_ack_timeout,
         );
+        relay.start_pending_reaper(RELAY_PENDING_REAPER_INTERVAL);
         relay.set_platform_pressure_level(pressure.snapshot().level);
         spawn_local_connector_runtime_config_watcher(
             local_connector_config_center_client.clone(),

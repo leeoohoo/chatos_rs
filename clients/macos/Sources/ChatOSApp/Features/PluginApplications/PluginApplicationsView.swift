@@ -142,7 +142,6 @@ struct PluginApplicationHostView: View {
     @State private var selectedProjectID: String?
     @State private var launchContext: LocalConnectorPluginApplicationContext?
     @State private var launchTask: Task<Void, Never>?
-    @State private var taskWorkspace: PluginTaskWorkspaceContext?
 
     private var requiresContextSelection: Bool {
         application.contextScope == "project" || application.contextScope == "workspace"
@@ -202,9 +201,7 @@ struct PluginApplicationHostView: View {
                     RestrictedPluginWebView(
                         launch: launch,
                         projectContext: launchContext,
-                        reloadToken: reloadToken,
-                        model: model,
-                        onOpenWorkspace: { taskWorkspace = $0 }
+                        reloadToken: reloadToken
                     )
                 } else if let errorMessage {
                     ContentUnavailableView {
@@ -241,12 +238,6 @@ struct PluginApplicationHostView: View {
             }
         }
         .onDisappear { launchTask?.cancel() }
-        .sheet(item: $taskWorkspace) { workspace in
-            PluginTaskWorkspaceView(
-                workspace: workspace,
-                service: model.taskRunnerHostService
-            )
-        }
     }
 
     private var selectedProjectName: String? {
@@ -388,15 +379,11 @@ private struct RestrictedPluginWebView: NSViewRepresentable {
     var launch: LocalConnectorPluginApplicationLaunch
     var projectContext: LocalConnectorPluginApplicationContext?
     var reloadToken: Int
-    let model: AppModel
-    let onOpenWorkspace: @MainActor (PluginTaskWorkspaceContext) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
             launch: launch,
-            projectContext: projectContext,
-            model: model,
-            onOpenWorkspace: onOpenWorkspace
+            projectContext: projectContext
         )
     }
 
@@ -420,8 +407,7 @@ private struct RestrictedPluginWebView: NSViewRepresentable {
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.update(
             launch: launch,
-            projectContext: projectContext,
-            onOpenWorkspace: onOpenWorkspace
+            projectContext: projectContext
         )
         context.coordinator.load(launch.url, in: webView, reloadToken: reloadToken)
     }
@@ -470,8 +456,6 @@ private struct RestrictedPluginWebView: NSViewRepresentable {
 
         private(set) var launch: LocalConnectorPluginApplicationLaunch
         private var projectContext: LocalConnectorPluginApplicationContext?
-        private let model: AppModel
-        private var onOpenWorkspace: @MainActor (PluginTaskWorkspaceContext) -> Void
         var allowedURL: URL
         private var loadedURL: URL?
         private var loadedReloadToken: Int?
@@ -481,25 +465,19 @@ private struct RestrictedPluginWebView: NSViewRepresentable {
 
         init(
             launch: LocalConnectorPluginApplicationLaunch,
-            projectContext: LocalConnectorPluginApplicationContext?,
-            model: AppModel,
-            onOpenWorkspace: @escaping @MainActor (PluginTaskWorkspaceContext) -> Void
+            projectContext: LocalConnectorPluginApplicationContext?
         ) {
             self.launch = launch
             self.projectContext = projectContext
-            self.model = model
-            self.onOpenWorkspace = onOpenWorkspace
             self.allowedURL = launch.url
         }
 
         func update(
             launch: LocalConnectorPluginApplicationLaunch,
-            projectContext: LocalConnectorPluginApplicationContext?,
-            onOpenWorkspace: @escaping @MainActor (PluginTaskWorkspaceContext) -> Void
+            projectContext: LocalConnectorPluginApplicationContext?
         ) {
             self.launch = launch
             self.projectContext = projectContext
-            self.onOpenWorkspace = onOpenWorkspace
             allowedURL = launch.url
         }
 
@@ -569,27 +547,6 @@ private struct RestrictedPluginWebView: NSViewRepresentable {
                     "projectName": projectContext?.projectName as Any,
                     "capabilities": launch.application.bridgeCapabilities,
                 ]
-            case "task.batch.prepare":
-                guard let projectContext else { throw ChatOSAPIError.invalidRequest("插件未绑定项目") }
-                let data = try JSONSerialization.data(withJSONObject: payload)
-                let request = try JSONDecoder().decode(PluginHostTaskBatchRequest.self, from: data)
-                return try jsonObject(await model.preparePluginTaskBatch(request, launch: launch, context: projectContext))
-            case "task.batch.status":
-                guard let projectContext,
-                      let taskIDs = payload["taskIds"] as? [String] else {
-                    throw ChatOSAPIError.invalidRequest("任务状态请求无效")
-                }
-                return try jsonObject(await model.pluginTaskStatuses(taskIDs: taskIDs, context: projectContext))
-            case "task.workspace.open":
-                guard let projectContext, let projectID = projectContext.projectID,
-                      let batchID = validIdentifier(payload["batchId"] as? String),
-                      let taskIDs = payload["taskIds"] as? [String],
-                      !taskIDs.isEmpty else {
-                    throw ChatOSAPIError.invalidRequest(String(localized: "任务工作区请求无效"))
-                }
-                _ = try await model.pluginTaskStatuses(taskIDs: taskIDs, context: projectContext)
-                onOpenWorkspace(.init(batchID: batchID, taskIDs: taskIDs, projectID: projectID))
-                return ["opened": true]
             default:
                 throw ChatOSAPIError.invalidRequest("宿主能力未实现")
             }
@@ -628,10 +585,6 @@ private struct RestrictedPluginWebView: NSViewRepresentable {
             webView.evaluateJavaScript("window.__chatosReceiveHostMessage(\(json))")
         }
 
-        private func jsonObject<T: Encodable>(_ value: T) throws -> Any {
-            try JSONSerialization.jsonObject(with: JSONEncoder().encode(value))
-        }
-
         private func validIdentifier(_ value: String?) -> String? {
             guard let value, !value.isEmpty, value.utf8.count <= 256,
                   value.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else { return nil }
@@ -661,121 +614,6 @@ private struct RestrictedPluginWebView: NSViewRepresentable {
                 && destination.host == allowedURL.host
                 && destination.port == allowedURL.port
         }
-    }
-}
-
-struct PluginTaskWorkspaceContext: Identifiable, Equatable {
-    let batchID: String
-    let taskIDs: [String]
-    let projectID: String
-    var id: String { batchID }
-}
-
-private struct PluginTaskWorkspaceView: View {
-    let workspace: PluginTaskWorkspaceContext
-    let service: ChatOSTaskRunnerHostService
-    @Environment(\.dismiss) private var dismiss
-    @State private var tasks: [PluginHostTaskReference] = []
-    @State private var isLoading = true
-    @State private var isStarting = false
-    @State private var errorMessage: String?
-    @State private var showStartConfirmation = false
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Image(systemName: "point.3.connected.trianglepath.dotted")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.tint)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("任务工作区").font(.headline)
-                    Text("Task Runner 是运行状态的唯一来源").font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("刷新", systemImage: "arrow.clockwise") { Task { await load() } }
-                    .disabled(isLoading || isStarting)
-                Button("开始执行", systemImage: "play.fill") { showStartConfirmation = true }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(tasks.isEmpty || isLoading || isStarting || !tasks.contains(where: { $0.status == "ready" }))
-                Button("关闭", action: dismiss.callAsFunction)
-            }
-            .padding(16)
-            Divider()
-            if isLoading && tasks.isEmpty {
-                ProgressView("正在读取真实任务状态…").frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if tasks.isEmpty {
-                ContentUnavailableView(
-                    "任务不可用",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(errorMessage ?? String(localized: "Task Runner 没有返回任务"))
-                )
-            } else {
-                List(tasks) { task in
-                    HStack(spacing: 12) {
-                        Circle().fill(statusColor(task.status)).frame(width: 9, height: 9)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(task.title).font(.system(size: 13, weight: .medium))
-                            Text(task.taskID).font(.caption2.monospaced()).foregroundStyle(.tertiary)
-                        }
-                        Spacer()
-                        Text(statusTitle(task.status)).font(.caption.weight(.medium))
-                            .foregroundStyle(statusColor(task.status))
-                            .padding(.horizontal, 8).padding(.vertical, 4)
-                            .background(statusColor(task.status).opacity(0.1), in: Capsule())
-                    }
-                    .padding(.vertical, 5)
-                }
-                .listStyle(.inset)
-                if let errorMessage {
-                    Text(errorMessage).font(.caption).foregroundStyle(.red).padding(10)
-                }
-            }
-        }
-        .frame(minWidth: 760, minHeight: 520)
-        .task { await load() }
-        .confirmationDialog("开始执行这个任务批次？", isPresented: $showStartConfirmation, titleVisibility: .visible) {
-            Button("开始执行", role: .none) { Task { await start() } }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("Task Runner 会按依赖关系调度已就绪任务。关闭项目管理插件不会停止任务。")
-        }
-    }
-
-    private func load() async {
-        isLoading = true; errorMessage = nil
-        do { tasks = try await service.taskStatuses(taskIDs: workspace.taskIDs, projectID: workspace.projectID) }
-        catch { errorMessage = error.localizedDescription }
-        isLoading = false
-    }
-
-    private func start() async {
-        isStarting = true; errorMessage = nil
-        do {
-            let results = try await service.startBatch(taskIDs: workspace.taskIDs, projectID: workspace.projectID)
-            let failures = results.filter { !$0.ok }
-            if !failures.isEmpty { errorMessage = failures.compactMap(\.message).joined(separator: "；") }
-            await load()
-        } catch { errorMessage = error.localizedDescription }
-        isStarting = false
-    }
-
-    private func statusTitle(_ status: String) -> String {
-        switch status {
-        case "draft": String(localized: "草稿")
-        case "ready": String(localized: "待执行")
-        case "queued": String(localized: "排队中")
-        case "running": String(localized: "运行中")
-        case "succeeded": String(localized: "已完成")
-        case "failed": String(localized: "失败")
-        case "blocked": String(localized: "阻塞")
-        case "cancelled": String(localized: "已取消")
-        case "archived": String(localized: "已归档")
-        default: status
-        }
-    }
-
-    private func statusColor(_ status: String) -> Color {
-        switch status { case "succeeded": .green; case "failed", "cancelled": .red; case "blocked": .orange; case "running", "queued": .blue; default: .secondary }
     }
 }
 

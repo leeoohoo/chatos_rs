@@ -143,6 +143,7 @@ pub fn shared_runtime_callbacks_from_chatos(callbacks: &AiClientCallbacks) -> Ru
         }),
         on_before_model_request: None,
         on_before_send_model_request: callbacks.on_before_send_model_request.clone(),
+        on_model_response: None,
     }
 }
 

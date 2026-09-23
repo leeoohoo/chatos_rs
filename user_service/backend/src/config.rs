@@ -16,7 +16,6 @@ pub struct AppConfig {
     pub otlp_trace_sample_ratio: f64,
     pub otlp_export_timeout: Duration,
     pub database_url: String,
-    pub mongodb_database: String,
     pub jwt_secret: String,
     pub jwt_issuer: String,
     pub user_service_audience: String,
@@ -26,6 +25,7 @@ pub struct AppConfig {
     pub super_admin_username: String,
     pub super_admin_password: String,
     pub super_admin_display_name: String,
+    pub allow_empty_database_admin_creation: bool,
     pub memory_engine_internal_api_secret: Option<String>,
     pub task_runner_internal_api_secret: Option<String>,
     pub downstream_request_timeout_ms: i64,
@@ -49,22 +49,23 @@ pub struct AppConfig {
     pub login_max_failed_attempts: i64,
     pub login_failure_window_seconds: i64,
     pub login_lockout_seconds: i64,
+    pub wechat_mini_program_app_id: Option<String>,
+    pub wechat_mini_program_app_secret: Option<String>,
+    pub wechat_mini_program_identity_hash_secret: Option<String>,
+    pub wechat_mini_program_api_base_url: String,
+    pub wechat_mini_program_env_version: String,
+    pub wechat_mini_program_development_login_enabled: bool,
+    pub wechat_mini_program_request_timeout_ms: i64,
+    pub wechat_mini_program_bind_ticket_ttl_seconds: i64,
+    pub wechat_mini_program_client_session_ttl_seconds: i64,
+    pub retention_interval: Duration,
+    pub retention_batch_size: usize,
 }
 
 impl AppConfig {
     pub fn from_env() -> Result<Self, String> {
-        let explicit_mongodb_database = read_env("USER_SERVICE_MONGODB_DATABASE");
-        let default_mongodb_database = explicit_mongodb_database
-            .clone()
-            .unwrap_or_else(|| "user_service".to_string());
-        let database_url = read_env("USER_SERVICE_DATABASE_URL").unwrap_or_else(|| {
-            format!(
-                "mongodb://admin:admin@127.0.0.1:27018/{default_mongodb_database}?authSource=admin"
-            )
-        });
-        let mongodb_database = explicit_mongodb_database
-            .or_else(|| mongodb_database_from_url(database_url.as_str()))
-            .unwrap_or(default_mongodb_database);
+        let database_url = read_env("USER_SERVICE_DATABASE_URL")
+            .ok_or_else(|| "USER_SERVICE_DATABASE_URL is required".to_string())?;
         let otlp_endpoint = require_config_center_text("USER_SERVICE_OTEL_EXPORTER_OTLP_ENDPOINT")?;
         require_http_endpoint(
             "USER_SERVICE_OTEL_EXPORTER_OTLP_ENDPOINT",
@@ -93,7 +94,6 @@ impl AppConfig {
             otlp_trace_sample_ratio,
             otlp_export_timeout: Duration::from_millis(otlp_export_timeout_ms),
             database_url,
-            mongodb_database,
             jwt_secret: require_config_center_secret("USER_SERVICE_JWT_SECRET")?,
             jwt_issuer: require_config_center_text("USER_SERVICE_JWT_ISSUER")?,
             user_service_audience: require_config_center_text("USER_SERVICE_USER_AUDIENCE")?,
@@ -110,6 +110,9 @@ impl AppConfig {
             )?,
             super_admin_display_name: require_config_center_text(
                 "USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME",
+            )?,
+            allow_empty_database_admin_creation: require_config_center_bool(
+                "USER_SERVICE_ALLOW_EMPTY_DATABASE_ADMIN_CREATION",
             )?,
             memory_engine_internal_api_secret: Some(require_config_center_secret(
                 "USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",
@@ -164,9 +167,55 @@ impl AppConfig {
                 "USER_SERVICE_LOGIN_FAILURE_WINDOW_SECONDS",
             )?,
             login_lockout_seconds: require_config_center_i64("USER_SERVICE_LOGIN_LOCKOUT_SECONDS")?,
+            wechat_mini_program_app_id: optional_config_center_text(
+                "USER_SERVICE_WECHAT_MINI_PROGRAM_APP_ID",
+            ),
+            wechat_mini_program_app_secret: optional_config_center_text(
+                "USER_SERVICE_WECHAT_MINI_PROGRAM_APP_SECRET",
+            ),
+            wechat_mini_program_identity_hash_secret: optional_config_center_text(
+                "USER_SERVICE_WECHAT_MINI_PROGRAM_IDENTITY_HASH_SECRET",
+            ),
+            wechat_mini_program_api_base_url: optional_config_center_text(
+                "USER_SERVICE_WECHAT_MINI_PROGRAM_API_BASE_URL",
+            )
+            .unwrap_or_else(|| "https://api.weixin.qq.com".to_string()),
+            wechat_mini_program_env_version: optional_config_center_text(
+                "USER_SERVICE_WECHAT_MINI_PROGRAM_ENV_VERSION",
+            )
+            .unwrap_or_else(|| "release".to_string())
+            .to_ascii_lowercase(),
+            wechat_mini_program_development_login_enabled: optional_config_center_bool(
+                "USER_SERVICE_WECHAT_MINI_PROGRAM_DEVELOPMENT_LOGIN_ENABLED",
+            )?
+            .unwrap_or(false),
+            wechat_mini_program_request_timeout_ms: optional_config_center_i64(
+                "USER_SERVICE_WECHAT_MINI_PROGRAM_REQUEST_TIMEOUT_MS",
+            )?
+            .unwrap_or(5_000)
+            .max(500),
+            wechat_mini_program_bind_ticket_ttl_seconds: optional_config_center_i64(
+                "USER_SERVICE_WECHAT_MINI_PROGRAM_BIND_TICKET_TTL_SECONDS",
+            )?
+            .unwrap_or(120)
+            .clamp(60, 300),
+            wechat_mini_program_client_session_ttl_seconds: optional_config_center_i64(
+                "USER_SERVICE_WECHAT_MINI_PROGRAM_CLIENT_SESSION_TTL_SECONDS",
+            )?
+            .unwrap_or(604_800)
+            .clamp(900, 2_592_000),
+            retention_interval: Duration::from_secs(
+                require_config_center_u64("USER_SERVICE_RETENTION_INTERVAL_SECONDS")?
+                    .clamp(10, 24 * 60 * 60),
+            ),
+            retention_batch_size: usize::try_from(
+                require_config_center_u64("USER_SERVICE_RETENTION_BATCH_SIZE")?.clamp(1, 10_000),
+            )
+            .map_err(|_| "USER_SERVICE_RETENTION_BATCH_SIZE is too large".to_string())?,
         };
 
         validate_login_throttle_config(&config)?;
+        validate_wechat_mini_program_config(&config)?;
 
         validate_production_secret(
             "USER_SERVICE_JWT_SECRET",
@@ -230,6 +279,47 @@ fn validate_login_throttle_config(config: &AppConfig) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_wechat_mini_program_config(config: &AppConfig) -> Result<(), String> {
+    if !matches!(
+        config.wechat_mini_program_env_version.as_str(),
+        "release" | "trial" | "develop"
+    ) {
+        return Err(
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_ENV_VERSION must be release, trial, or develop"
+                .to_string(),
+        );
+    }
+    let configured = [
+        config.wechat_mini_program_app_id.as_deref(),
+        config.wechat_mini_program_app_secret.as_deref(),
+        config.wechat_mini_program_identity_hash_secret.as_deref(),
+    ];
+    let configured_count = configured.iter().filter(|value| value.is_some()).count();
+    if configured_count != 0 && configured_count != configured.len() {
+        return Err(
+            "WeChat Mini Program requires APP_ID, APP_SECRET, and IDENTITY_HASH_SECRET together"
+                .to_string(),
+        );
+    }
+    if configured_count == configured.len() {
+        require_http_endpoint(
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_API_BASE_URL",
+            config.wechat_mini_program_api_base_url.as_str(),
+        )?;
+        validate_production_secret(
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_APP_SECRET",
+            config.wechat_mini_program_app_secret.as_deref(),
+            &["change_me_wechat_mini_program_secret"],
+        )?;
+        validate_production_secret(
+            "USER_SERVICE_WECHAT_MINI_PROGRAM_IDENTITY_HASH_SECRET",
+            config.wechat_mini_program_identity_hash_secret.as_deref(),
+            &["change_me_wechat_identity_hash_secret"],
+        )?;
+    }
+    Ok(())
+}
+
 pub fn load_user_service_dotenv() {
     chatos_service_runtime::load_service_dotenv(std::path::Path::new(env!("CARGO_MANIFEST_DIR")));
 }
@@ -252,6 +342,12 @@ fn require_config_center_i64(key: &str) -> Result<i64, String> {
     require_config_center_text(key)?
         .parse()
         .map_err(|err| format!("invalid {key}: {err}"))
+}
+
+fn optional_config_center_i64(key: &str) -> Result<Option<i64>, String> {
+    optional_config_center_text(key)
+        .map(|value| value.parse().map_err(|err| format!("invalid {key}: {err}")))
+        .transpose()
 }
 
 fn require_config_center_u16(key: &str) -> Result<u16, String> {
@@ -281,32 +377,19 @@ fn require_http_endpoint(key: &str, value: &str) -> Result<(), String> {
 }
 
 fn require_config_center_bool(key: &str) -> Result<bool, String> {
-    match require_config_center_text(key)?
-        .to_ascii_lowercase()
-        .as_str()
-    {
+    parse_bool(key, require_config_center_text(key)?.as_str())
+}
+
+fn optional_config_center_bool(key: &str) -> Result<Option<bool>, String> {
+    optional_config_center_text(key)
+        .map(|value| parse_bool(key, value.as_str()))
+        .transpose()
+}
+
+fn parse_bool(key: &str, value: &str) -> Result<bool, String> {
+    match value.to_ascii_lowercase().as_str() {
         "true" | "1" | "yes" | "on" => Ok(true),
         "false" | "0" | "no" | "off" => Ok(false),
         _ => Err(format!("invalid {key}: expected true/false")),
-    }
-}
-
-fn mongodb_database_from_url(url: &str) -> Option<String> {
-    let trimmed = url.trim();
-    if !trimmed.starts_with("mongodb://") && !trimmed.starts_with("mongodb+srv://") {
-        return None;
-    }
-    let without_query = trimmed
-        .split_once('?')
-        .map(|(base, _)| base)
-        .unwrap_or(trimmed);
-    let scheme_end = without_query.find("://")?;
-    let remainder = &without_query[(scheme_end + 3)..];
-    let (_, path) = remainder.split_once('/')?;
-    let database = path.trim_matches('/');
-    if database.is_empty() {
-        None
-    } else {
-        Some(database.to_string())
     }
 }

@@ -27,7 +27,7 @@ mod tests {
         .await
         .expect("input items");
 
-        assert_eq!(items.len(), 3);
+        assert_eq!(items.len(), 2);
         assert_eq!(
             items[0]["content"][0]["text"].as_str(),
             Some("contact prompt")
@@ -36,9 +36,5 @@ mod tests {
             items[1]["content"][0]["text"].as_str(),
             Some("routing prompt")
         );
-        assert!(items[2]["content"][0]["text"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("[Task Board]"));
     }
 }

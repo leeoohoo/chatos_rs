@@ -3,8 +3,13 @@ import path from 'node:path';
 import { AtomicJsonDirectory } from '../storage/atomic-json-directory.js';
 import type { WebDesignSurfaceKind } from '../schema.js';
 import { normalizeWorkspaceCamera, type WorkspaceCamera } from './workspace-camera.js';
+import {
+  CURRENT_WORKSPACE_VIEWPORT_DEFAULTS_VERSION,
+  migrateWorkspaceViewportDefaults
+} from './workspace-viewport-defaults.js';
 
 export type WorkspaceSurfaceKind = WebDesignSurfaceKind;
+export { CURRENT_WORKSPACE_VIEWPORT_DEFAULTS_VERSION } from './workspace-viewport-defaults.js';
 
 export interface WorkspaceArtboardPlacement {
   artboardId: string;
@@ -18,6 +23,7 @@ export interface WorkspaceArtboardPlacement {
 
 export interface WorkspacePlacementDocument {
   schemaVersion: 2;
+  viewportDefaultsVersion?: number;
   documentId: string;
   revision: number;
   camera: WorkspaceCamera;
@@ -73,6 +79,11 @@ function assertIdentifier(value: string, label: string): void {
 
 export function assertWorkspacePlacement(value: WorkspacePlacementDocument): void {
   if (!value || value.schemaVersion !== 2) throw new Error('Workspace placement is invalid.');
+  if (value.viewportDefaultsVersion !== undefined
+    && (!Number.isSafeInteger(value.viewportDefaultsVersion) || value.viewportDefaultsVersion < 1
+      || value.viewportDefaultsVersion > CURRENT_WORKSPACE_VIEWPORT_DEFAULTS_VERSION)) {
+    throw new Error('Workspace viewport defaults version is invalid.');
+  }
   assertIdentifier(value.documentId, 'Workspace documentId');
   if (!Number.isSafeInteger(value.revision) || value.revision < 1) throw new Error('Workspace placement revision is invalid.');
   normalizeWorkspaceCamera(value.camera);
@@ -81,7 +92,16 @@ export function assertWorkspacePlacement(value: WorkspacePlacementDocument): voi
 }
 
 function initial(documentId: string, camera: WorkspaceCamera, timestamp: string): WorkspacePlacementDocument {
-  const value: WorkspacePlacementDocument = { schemaVersion: 2, documentId, revision: 1, camera: normalizeWorkspaceCamera(camera), artboards: [], createdAt: timestamp, updatedAt: timestamp };
+  const value: WorkspacePlacementDocument = {
+    schemaVersion: 2,
+    viewportDefaultsVersion: CURRENT_WORKSPACE_VIEWPORT_DEFAULTS_VERSION,
+    documentId,
+    revision: 1,
+    camera: normalizeWorkspaceCamera(camera),
+    artboards: [],
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
   assertWorkspacePlacement(value);
   return value;
 }
@@ -102,7 +122,10 @@ export class WorkspacePlacementStore {
         const current = await this.files.read<WorkspacePlacementDocument>(name);
         assertWorkspacePlacement(current);
         if (current.documentId !== documentId) throw new Error('Workspace placement identity mismatch.');
-        return structuredClone(current);
+        const migrated = migrateWorkspaceViewportDefaults(current);
+        assertWorkspacePlacement(migrated.value);
+        if (migrated.changed) await this.files.write(name, migrated.value);
+        return structuredClone(migrated.value);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
@@ -126,6 +149,8 @@ export class WorkspacePlacementStore {
       }
       assertWorkspacePlacement(current);
       if (current.documentId !== documentId) throw new Error('Workspace placement identity mismatch.');
+      current = migrateWorkspaceViewportDefaults(current).value;
+      assertWorkspacePlacement(current);
       const next: WorkspacePlacementDocument = {
         ...structuredClone(current), revision: current.revision + 1, camera: normalized, updatedAt: new Date().toISOString()
       };
@@ -150,6 +175,8 @@ export class WorkspacePlacementStore {
       }
       assertWorkspacePlacement(current);
       if (current.documentId !== documentId) throw new Error('Workspace placement identity mismatch.');
+      current = migrateWorkspaceViewportDefaults(current).value;
+      assertWorkspacePlacement(current);
       const next: WorkspacePlacementDocument = {
         ...structuredClone(current), revision: current.revision + 1, artboards: normalized, updatedAt: new Date().toISOString()
       };

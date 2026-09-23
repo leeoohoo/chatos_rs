@@ -10,6 +10,7 @@ import { AnnotationAiService } from './v2/annotation-ai-service.js';
 import { GenerationVisualArtifactStore } from './v2/generation-visual-artifact-store.js';
 import { GenerationVisualService } from './v2/generation-visual-service.js';
 import { GenerationCandidateStore } from './v2/generation-candidate-store.js';
+import type { GenerationArtifact } from './v2/generation-plan-schema.js';
 import { GenerationPlanRevisionConflictError, GenerationPlanStore } from './v2/generation-plan-store.js';
 import { GenerationSoftProtectionStore } from './v2/generation-soft-protection-store.js';
 import { ChromiumSceneImageRenderer } from './v2/headless-scene-renderer.js';
@@ -34,7 +35,8 @@ const defaultProject = await store.ensureScopedProject(
   scopeKey,
   contextKind === 'project' && process.env.CHATOS_PROJECT_ID
     ? process.env.CHATOS_PROJECT_NAME?.trim() || 'ChatOS 网站项目'
-    : '公共网站设计'
+    : '公共网站设计',
+  { consolidateDefaultProjects: contextKind === 'project' }
 );
 const defaultProjectId = defaultProject.projectId;
 const workspacePlacements = new WorkspacePlacementStore(store.rootDirectory);
@@ -44,6 +46,13 @@ const generationProjectId = process.env.CHATOS_PROJECT_ID ?? defaultProjectId;
 const generationPlans = new GenerationPlanStore(store.rootDirectory);
 const generationCandidates = new GenerationCandidateStore(store.rootDirectory);
 const generationProtections = new GenerationSoftProtectionStore(store.rootDirectory);
+const visualService = new GenerationVisualService({
+  projectId: generationProjectId,
+  scenes,
+  artifacts: visualArtifacts,
+  renderer: new ChromiumSceneImageRenderer(),
+  assertDocumentInScope: async (documentId) => { await store.readInScope(documentId, scopeKey); }
+});
 const progressiveGeneration = new ProgressiveGenerationService({
   projectId: generationProjectId,
   repositories: {
@@ -52,14 +61,14 @@ const progressiveGeneration = new ProgressiveGenerationService({
     candidates: generationCandidates,
     protections: generationProtections
   },
-  assertDocumentInScope: async (documentId) => ({ name: (await store.readInScope(documentId, scopeKey)).title })
-});
-const visualService = new GenerationVisualService({
-  projectId: generationProjectId,
-  scenes,
-  artifacts: visualArtifacts,
-  renderer: new ChromiumSceneImageRenderer(),
-  assertDocumentInScope: async (documentId) => { await store.readInScope(documentId, scopeKey); }
+  assertDocumentInScope: async (documentId) => ({ name: (await store.readInScope(documentId, scopeKey)).title }),
+  verifyCandidate: (input) => visualService.verifyCandidate(input),
+  captureVisualInputs: async ({ documentId, pageId, viewportWidths }) => {
+    const captures = await Promise.all(viewportWidths.map((viewportWidth) => visualService.capturePage(documentId, pageId, viewportWidth)));
+    return captures.flatMap((capture) => (capture.artifacts as GenerationArtifact[])
+      .filter((artifact) => artifact.kind === 'page-snapshot' || artifact.kind === 'visual-grounding'));
+  },
+  loadArtifactImages: (scope, artifacts) => visualService.loadArtifactImages(scope.documentId, artifacts)
 });
 const annotationAiService = new AnnotationAiService({
   projectId: generationProjectId,
@@ -194,7 +203,7 @@ app.post('/api/scenes/:documentId/redo', async (request, response, next) => {
 app.get('/api/generation/:documentId/plan', async (request, response, next) => {
   try {
     response.setHeader('Cache-Control', 'no-store');
-    response.json(await progressiveGeneration.getPlan(request.params.documentId));
+    response.json(await progressiveGeneration.getPlan(request.params.documentId, 'full'));
   } catch (error) {
     next(error);
   }

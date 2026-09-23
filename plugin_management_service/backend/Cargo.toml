@@ -19,10 +19,11 @@ chatos_mcp_runtime = { path = "../../crates/chatos_mcp_runtime" }
 chatos_plugin_management_sdk = { path = "../../crates/chatos_plugin_management_sdk" }
 chatos_queue_observability = { path = "../../crates/chatos_queue_observability" }
 chatos_service_runtime = { path = "../../crates/chatos_service_runtime", features = ["axum-support"] }
+chatos_postgres = { path = "../../crates/chatos_postgres" }
 futures-util = "0.3"
 flate2 = "1"
 lapin = "2.5"
-mongodb = { version = "2.8", features = ["tokio-runtime"] }
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "postgres", "chrono", "json", "migrate"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pemfile = "2"

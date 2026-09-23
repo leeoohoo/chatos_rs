@@ -19,11 +19,12 @@ mod session_handlers;
 mod summary_handlers;
 mod support;
 
+pub(crate) use self::contracts::CompactHistoryQuery;
+pub(crate) use self::message_handlers::get_session_compact_history;
 use self::message_handlers::{
-    create_session_message, get_session_compact_history, get_session_messages,
-    get_session_turn_display_messages, get_session_turn_display_messages_by_turn,
-    get_session_turn_runtime_context_by_turn, get_session_turn_runtime_context_latest,
-    get_session_user_message_turns,
+    create_session_message, get_session_messages, get_session_turn_display_messages,
+    get_session_turn_display_messages_by_turn, get_session_turn_runtime_context_by_turn,
+    get_session_turn_runtime_context_latest, get_session_user_message_turns,
 };
 use self::review_handlers::{get_session_review_repair_status, run_session_review_repair};
 use self::runtime_settings_handlers::{

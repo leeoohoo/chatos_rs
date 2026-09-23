@@ -16,6 +16,16 @@ pub(super) async fn seed_agent_prompts(
 ) -> Result<(), String> {
     let mut seeded_any = false;
     let mut changed_agents = Vec::new();
+    for agent_key in SystemAgentKey::ALL {
+        let allowed_profiles = agent_prompt_profiles_for_agent(agent_key.as_str());
+        if store
+            .remove_agent_prompt_profiles_except(agent_key.as_str(), allowed_profiles.as_slice())
+            .await?
+        {
+            seeded_any = true;
+            changed_agents.push(agent_key.as_str());
+        }
+    }
     for (agent_key, profile, content) in baseline_prompts() {
         let content = content.trim().to_string();
         let checksum = agent_prompt_checksum(content.as_str());
@@ -308,21 +318,26 @@ mod tests {
     #[test]
     fn managed_prompts_assign_network_plugins_per_task() {
         let prompts = baseline_prompts();
-        for (agent_key, profile) in [(
+        let (agent_key, profile) = (
             SystemAgentKey::ChatosConversationAgent.as_str(),
             DEFAULT_AGENT_PROMPT_PROFILE,
-        )] {
-            let content = prompts
-                .iter()
-                .find(|(key, candidate_profile, _)| {
-                    *key == agent_key && *candidate_profile == profile
-                })
-                .map(|(_, _, content)| *content)
-                .unwrap_or_else(|| panic!("missing prompt: {agent_key}/{profile}"));
-            assert!(content.contains("plugin_hints"));
-            assert!(content.contains("Browser CDP"));
-            assert!(content.contains("公开互联网"));
-        }
+        );
+        let content = prompts
+            .iter()
+            .find(|(key, candidate_profile, _)| *key == agent_key && *candidate_profile == profile)
+            .map(|(_, _, content)| *content)
+            .unwrap_or_else(|| panic!("missing prompt: {agent_key}/{profile}"));
+        assert!(content.contains("plugin_hints"));
+        assert!(content.contains("Browser CDP"));
+        assert!(content.contains("公开互联网"));
+        assert!(content.contains("读取成功不等于当前需求已经完成"));
+        assert!(content.contains("不得把旧 Task 的完成状态"));
+        assert!(content.contains("项目绑定本身不是创建 Task 的条件"));
+        assert!(content.contains("`wait_for_task_completion` 表示"));
+        assert!(content.contains("不得等待任务终态或产物"));
+        assert!(content.contains("以联系人第一人称自然说明"));
+        assert!(content.contains("不得向用户提及 Task"));
+        assert!(content.contains("然后结束当前轮"));
 
         let run_prompt = prompts
             .iter()
@@ -335,6 +350,9 @@ mod tests {
         assert!(run_prompt.contains("`requires_execution=false`"));
         assert!(run_prompt.contains("不能据此推断任务是“仅文件处理任务”"));
         assert!(run_prompt.contains("本轮实际注册并暴露的工具"));
+        assert!(run_prompt.contains("有节奏的用户可见任务过程记录"));
+        assert!(run_prompt.contains("关键验证得出结果"));
+        assert!(run_prompt.contains("不要为每次工具调用"));
     }
 
     #[test]

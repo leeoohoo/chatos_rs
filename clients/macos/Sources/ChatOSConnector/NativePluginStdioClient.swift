@@ -1,3 +1,5 @@
+import ChatOSProcessRuntime
+import Darwin
 import Foundation
 import OSLog
 
@@ -12,10 +14,15 @@ actor NativePluginStdioClient {
         var timeoutBehavior: TimeoutBehavior
     }
 
-    private let process: Process
+    private let launch: NativePreparedPluginLaunch
     private let input: FileHandle
     private let output: FileHandle
     private let errorOutput: FileHandle
+    private let childInput: FileHandle
+    private let childOutput: FileHandle
+    private let childErrorOutput: FileHandle
+    private var processID: pid_t?
+    private var processExitSource: DispatchSourceProcess?
     private var outputReaderTask: Task<Void, Never>?
     private var errorReaderTask: Task<Void, Never>?
     private var nextRequestID = 1
@@ -34,22 +41,17 @@ actor NativePluginStdioClient {
         let inputPipe = Pipe()
         let outputPipe = Pipe()
         let errorPipe = Pipe()
-        let process = Process()
-        process.executableURL = launch.executableURL
-        process.arguments = launch.arguments
-        process.currentDirectoryURL = launch.installationURL
-        process.standardInput = inputPipe
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-        process.environment = NativePluginProcessEnvironment.make(overrides: launch.environment)
-        self.process = process
+        self.launch = launch
         self.input = inputPipe.fileHandleForWriting
         self.output = outputPipe.fileHandleForReading
         self.errorOutput = errorPipe.fileHandleForReading
+        self.childInput = inputPipe.fileHandleForReading
+        self.childOutput = outputPipe.fileHandleForWriting
+        self.childErrorOutput = errorPipe.fileHandleForWriting
     }
 
     func start() throws {
-        guard !process.isRunning else { return }
+        guard processID == nil else { return }
         let outputStream = AsyncStream<Data> { continuation in
             output.readabilityHandler = { handle in
                 let data = handle.availableData
@@ -82,10 +84,43 @@ actor NativePluginStdioClient {
                 await self.consumeError(data)
             }
         }
-        process.terminationHandler = { [weak self] process in
-            Task { await self?.processEnded(exitCode: process.terminationStatus) }
+        let environment = NativePluginProcessEnvironment.make(overrides: launch.environment)
+        let arguments = [launch.executableURL.path] + launch.arguments
+        var spawnedPID: pid_t = 0
+        let spawnResult = Self.withCStringArray(arguments) { argv in
+            Self.withCStringArray(environment.map { "\($0.key)=\($0.value)" }) { envp in
+                chatos_spawn_process_group(
+                    launch.executableURL.path,
+                    argv,
+                    envp,
+                    launch.installationURL.path,
+                    childInput.fileDescriptor,
+                    childOutput.fileDescriptor,
+                    childErrorOutput.fileDescriptor,
+                    &spawnedPID
+                )
+            }
         }
-        try process.run()
+        guard spawnResult == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: spawnResult) ?? .EIO)
+        }
+        processID = spawnedPID
+        let launchedPID = spawnedPID
+        childInput.closeFile()
+        childOutput.closeFile()
+        childErrorOutput.closeFile()
+        let source = DispatchSource.makeProcessSource(
+            identifier: launchedPID,
+            eventMask: .exit,
+            queue: .global(qos: .utility)
+        )
+        source.setEventHandler { [weak self] in
+            var exitCode: Int32 = 1
+            _ = chatos_reap_process(launchedPID, &exitCode)
+            Task { await self?.processEnded(processID: launchedPID, exitCode: exitCode) }
+        }
+        processExitSource = source
+        source.resume()
     }
 
     func initialize() async throws -> (instructions: String?, tools: [NativeJSONValue]) {
@@ -153,7 +188,7 @@ actor NativePluginStdioClient {
         timeout: Duration,
         timeoutBehavior: TimeoutBehavior = .terminateProcess
     ) async throws -> NativeJSONValue {
-        guard !stopped, process.isRunning else { throw NativePluginRuntimeError.processUnavailable }
+        guard !stopped, processID != nil else { throw NativePluginRuntimeError.processUnavailable }
         let requestID = nextRequestID
         nextRequestID += 1
         let envelope = NativeJSONValue.object([
@@ -186,7 +221,7 @@ actor NativePluginStdioClient {
     }
 
     private func notify(method: String, params: NativeJSONValue) throws {
-        guard !stopped, process.isRunning else { throw NativePluginRuntimeError.processUnavailable }
+        guard !stopped, processID != nil else { throw NativePluginRuntimeError.processUnavailable }
         try input.write(contentsOf: encodedLine(.object([
             "jsonrpc": .string("2.0"),
             "method": .string(method),
@@ -290,7 +325,11 @@ actor NativePluginStdioClient {
         )
     }
 
-    private func processEnded(exitCode: Int32) {
+    private func processEnded(processID: pid_t, exitCode: Int32) {
+        guard self.processID == processID else { return }
+        self.processID = nil
+        processExitSource?.cancel()
+        processExitSource = nil
         if exitCode != 0 {
             logPluginDiagnostics(reason: "process exited with code \(exitCode)")
         }
@@ -338,18 +377,37 @@ actor NativePluginStdioClient {
         errorReaderTask?.cancel()
         outputReaderTask = nil
         errorReaderTask = nil
-        process.terminationHandler = nil
+        processExitSource?.cancel()
+        processExitSource = nil
         output.closeFile()
         errorOutput.closeFile()
         input.closeFile()
-        if terminateProcess, process.isRunning {
-            process.terminate()
+        if terminateProcess, let processID {
+            _ = chatos_signal_process_group(processID, SIGTERM)
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(2))
+                await self?.forceKillProcessGroup(processID)
+            }
         }
         let requests = pending.values
         pending.removeAll()
         for request in requests {
             request.continuation.resume(throwing: error)
         }
+    }
+
+    private func forceKillProcessGroup(_ expectedProcessID: pid_t) {
+        guard processID == expectedProcessID else { return }
+        _ = chatos_signal_process_group(expectedProcessID, SIGKILL)
+    }
+
+    private static func withCStringArray<Result>(
+        _ values: [String],
+        _ body: ([UnsafeMutablePointer<CChar>?]) throws -> Result
+    ) rethrows -> Result {
+        let pointers = values.map { strdup($0) }
+        defer { pointers.forEach { free($0) } }
+        return try body(pointers + [nil])
     }
 }
 

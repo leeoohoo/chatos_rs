@@ -1,4 +1,5 @@
 import ChatOSAPI
+import ChatOSAgentRuntime
 import ChatOSConnector
 import ChatOSCore
 import AppKit
@@ -7,7 +8,7 @@ import Foundation
 import SwiftUI
 
 @MainActor
-final class AppModel: ObservableObject {
+final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding {
     @Published var selection: SidebarSelection?
     @Published var projectTab: ProjectWorkspaceTab = .messages
     @Published var isNotepadPresented = false
@@ -22,10 +23,10 @@ final class AppModel: ObservableObject {
     )) {
         didSet { languagePreferenceDidChange() }
     }
-    @Published private(set) var isLanguagePreferencesLoading = false
-    @Published private(set) var isLanguagePreferencesSaving = false
-    @Published private(set) var languagePreferencesError: String?
-    @Published private(set) var requestedConnectorSettingsTab: LocalConnectorControlTab?
+    @Published var isLanguagePreferencesLoading = false
+    @Published var isLanguagePreferencesSaving = false
+    @Published var languagePreferencesError: String?
+    @Published var requestedConnectorSettingsTab: LocalConnectorControlTab?
     @Published var preventsIdleSystemSleep = UserDefaults.standard.bool(
         forKey: "ChatOS.preventsIdleSystemSleep"
     ) {
@@ -50,23 +51,23 @@ final class AppModel: ObservableObject {
             }
         }
     }
-    @Published private(set) var projectConversation: ConversationSessionViewModel?
-    @Published private(set) var contactConversation: ConversationSessionViewModel?
-    @Published private(set) var contacts: [ResourceItem] = []
-    @Published private(set) var projects: [ResourceItem] = []
-    @Published private(set) var workspaceProjects: [WorkspaceProject] = []
-    @Published private(set) var workspaceContacts: [WorkspaceContact] = []
-    private var workspaceConversations: [WorkspaceConversation] = []
-    @Published private(set) var remoteConnections: [RemoteConnection] = []
-    @Published private(set) var pluginApplications: [LocalConnectorPluginApplication] = []
-    @Published private(set) var isPluginApplicationsLoading = false
-    @Published private(set) var pluginApplicationsError: String?
-    @Published private(set) var isRemoteConnectionsLoading = false
-    @Published private(set) var remoteConnectionsError: String?
-    @Published private(set) var isWorkspaceLoading = false
-    @Published private(set) var workspaceError: String?
-    @Published private(set) var preparingProjectConversationIDs: Set<String> = []
-    @Published private(set) var projectConversationPreparationErrors: [String: String] = [:]
+    @Published var projectConversation: ConversationSessionViewModel?
+    @Published var contactConversation: ConversationSessionViewModel?
+    @Published var contacts: [ResourceItem] = []
+    @Published var projects: [ResourceItem] = []
+    @Published var workspaceProjects: [WorkspaceProject] = []
+    @Published var workspaceContacts: [WorkspaceContact] = []
+    var workspaceConversations: [WorkspaceConversation] = []
+    @Published var remoteConnections: [RemoteConnection] = []
+    @Published var pluginApplications: [LocalConnectorPluginApplication] = []
+    @Published var isPluginApplicationsLoading = false
+    @Published var pluginApplicationsError: String?
+    @Published var isRemoteConnectionsLoading = false
+    @Published var remoteConnectionsError: String?
+    @Published var isWorkspaceLoading = false
+    @Published var workspaceError: String?
+    @Published var preparingProjectConversationIDs: Set<String> = []
+    @Published var projectConversationPreparationErrors: [String: String] = [:]
 
     let historyStore: ConversationHistoryStore
     let authentication: AuthenticationViewModel
@@ -77,6 +78,7 @@ final class AppModel: ObservableObject {
     let petDefaultFileHandlerPrompt = PetDefaultFileHandlerPromptController()
     let petOverlayStore = PetOverlayStore()
     let globalUtilityPreferences = GlobalUtilityPreferencesStore()
+    let terminalWorkspace = TerminalWorkspaceViewModel()
     private(set) lazy var globalUtilityCoordinator = GlobalUtilityCoordinator(
         model: self,
         preferences: globalUtilityPreferences
@@ -94,18 +96,17 @@ final class AppModel: ObservableObject {
         ]
     }
 
-    private let conversationService: ChatOSConversationService
+    let conversationService: ChatOSConversationService
     let realtimeService: ChatOSRealtimeClient
-    private let commandService: ChatOSConversationCommandService
-    private let turnProcessService: ChatOSTurnProcessService
+    let commandService: ChatOSConversationCommandService
+    let turnProcessService: ChatOSTurnProcessService
     let messageTaskGraphService: ChatOSMessageTaskGraphService
-    private let runtimeSettingsService: ChatOSConversationRuntimeSettingsService
-    private let askUserPromptService: ChatOSAskUserPromptService
-    private let petActivityInboxService: ChatOSPetActivityInboxService
-    let taskRunnerHostService: ChatOSTaskRunnerHostService
-    private let workspaceService: ChatOSWorkspaceService
-    private let localConnectorService: NativeLocalConnectorService
-    private let projectConversationService: ChatOSProjectConversationService
+    let runtimeSettingsService: ChatOSConversationRuntimeSettingsService
+    let askUserPromptService: ChatOSAskUserPromptService
+    let petActivityInboxService: ChatOSPetActivityInboxService
+    let workspaceService: ChatOSWorkspaceService
+    let localConnectorService: NativeLocalConnectorService
+    let projectConversationService: ChatOSProjectConversationService
     let localProjectsService: NativeLocalProjectsService
     let remoteConnectionService: NativeRemoteConnectionService
     let remoteFileService: NativeRemoteFileService
@@ -114,21 +115,31 @@ final class AppModel: ObservableObject {
     let projectCodeNavigationService: NativeProjectCodeNavigationService
     let projectGitService: NativeProjectGitService
     let projectRunService: NativeProjectRunService
+    let agentGroupChatService: NativeAgentGroupChatService
+    let agentSkillLibrary: LocalAgentSkillLibrary
+    let agentGroupChatScheduler: LocalAgentGroupChatScheduler
+    let agentGroupChatBuilderService: LocalAgentBuilderService
     let notepadService: ChatOSNotepadService
-    private let userLanguagePreferencesService: ChatOSUserLanguagePreferencesService
-    private var conversationCache: [String: ConversationSessionViewModel] = [:]
-    private var workspaceLoadGeneration: Int64 = 0
-    private var pluginApplicationsLoadGeneration: Int64 = 0
-    private var visualSessionExpansion: [String: Bool] = [:]
-    private var visualSessionSelection: [String: String] = [:]
-    private var visualSessionMonitorTask: Task<Void, Never>?
-    private var petOverlayCoordinator: PetOverlayCoordinator?
-    private let idleSleepController = AppIdleSleepController()
-    private var cancellables = Set<AnyCancellable>()
-    private var authenticatedUserID: String?
-    private var workspaceAccountGeneration: UInt64 = 0
-    private var isApplyingLanguagePreferences = false
-    private var languagePreferencesSaveTask: Task<Void, Never>?
+    let wechatCompanionService: ChatOSWeChatCompanionService
+    let userLanguagePreferencesService: ChatOSUserLanguagePreferencesService
+    var conversationCache: [String: ConversationSessionViewModel] = [:]
+    var conversationCacheRecency = ConversationCacheRecency(capacity: 8)
+    var projectConversationPreparationTasks: [String: Task<String, Error>] = [:]
+    var workspaceLoadGeneration: Int64 = 0
+    var pluginApplicationsLoadGeneration: Int64 = 0
+    var visualSessionExpansion: [String: Bool] = [:]
+    var visualSessionSelection: [String: String] = [:]
+    var visualSessionMonitorTask: Task<Void, Never>?
+    var petOverlayCoordinator: PetOverlayCoordinator?
+    let idleSleepController = AppIdleSleepController()
+    var cancellables = Set<AnyCancellable>()
+    var authenticatedUserID: String?
+    var workspaceAccountGeneration: UInt64 = 0
+    var isApplyingLanguagePreferences = false
+    var languagePreferencesSaveTask: Task<Void, Never>?
+    var agentHeartbeatTask: Task<Void, Never>?
+    var agentCommunicationTask: Task<Void, Never>?
+    var agentArtifactSyncTask: Task<Void, Never>?
     var mainWindowPresentationHandler: (() -> Void)?
     var settingsWindowPresentationHandler: (() -> Void)?
 
@@ -152,10 +163,19 @@ final class AppModel: ObservableObject {
         let localConnectorService = NativeLocalConnectorService(
             configuration: .init(
                 gatewayBaseURL: RuntimeConfiguration.localConnectorCloudBaseURL,
-                stateURL: RuntimeConfiguration.nativeConnectorStateURL
+                stateURL: RuntimeConfiguration.nativeConnectorStateURL,
+                deploymentIdentifier: RuntimeConfiguration.deployment.identifier
             ),
             ticketProvider: connectorTicketProvider,
-            remoteConnectionRuntime: remoteConnectionService
+            remoteConnectionRuntime: remoteConnectionService,
+            approvalMemoryProviderFactory: { tenantID, workspaceID, runID, runtimeScope in
+                let scope = try AgentMemoryScope(
+                    tenantID: tenantID, profile: "approval", projectID: workspaceID,
+                    runID: runID, runtimeScope: runtimeScope
+                )
+                let memory = try await ChatOSMemoryEngineService(client: apiClient, scope: scope)
+                return AgentMemoryContextProvider(scope: scope, service: memory)
+            }
         )
 
         self.historyStore = historyStore
@@ -163,18 +183,128 @@ final class AppModel: ObservableObject {
         self.localConnectorControl = LocalConnectorControlCenterViewModel(
             service: localConnectorService
         )
+        let remoteAgentServices = ChatOSStoryPlanningService(client: apiClient)
+        let agentServices: any AgentServiceProviding
+        do {
+            agentServices = try OfflineCapableAgentServiceProvider(
+                upstream: remoteAgentServices,
+                databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
+                    .appendingPathComponent("AgentMemoryCache.sqlite3")
+            )
+        } catch {
+            // Storage initialization is validated again by the scheduler. Keep
+            // app startup recoverable if the local cache file needs repair.
+            agentServices = remoteAgentServices
+        }
         self.mediaStudio = MediaStudioViewModel(
             service: ChatOSMediaGenerationService(client: apiClient),
-            storyPlanner: ChatOSStoryPlanningService(client: apiClient)
+            storyPlanner: remoteAgentServices
         )
         self.localConnectorService = localConnectorService
         self.conversationService = conversationService
         self.workspaceService = ChatOSWorkspaceService(client: apiClient)
         self.projectConversationService = ChatOSProjectConversationService(client: apiClient)
-        self.localProjectsService = NativeLocalProjectsService(
+        let localProjectsService = NativeLocalProjectsService(
             connector: localConnectorService,
             databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
                 .appendingPathComponent("Projects.sqlite3")
+        )
+        self.localProjectsService = localProjectsService
+        let agentGroupChatService = NativeAgentGroupChatService(
+            databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
+                .appendingPathComponent("AgentGroupChat.sqlite3"),
+            agentArtifactService: ChatOSAgentArtifactService(client: apiClient)
+        )
+        Task { await localConnectorService.setAgentGroupChatService(agentGroupChatService) }
+        let agentSkillLibrary = LocalAgentSkillLibrary(
+            fileURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
+                .appendingPathComponent("AgentSkillOverrides.json")
+        )
+        self.agentGroupChatService = agentGroupChatService
+        self.agentSkillLibrary = agentSkillLibrary
+        self.agentGroupChatScheduler = LocalAgentGroupChatScheduler(
+            service: agentGroupChatService,
+            services: agentServices,
+            projectTypeKeyProvider: { ownerUserID, projectID in
+                try await localProjectsService.registry().get(
+                    ownerUserID: ownerUserID,
+                    id: projectID
+                )?.draft.projectTypeKey
+            },
+            professionProvider: { ownerUserID, key in
+                agentSkillLibrary.profession(ownerUserID: ownerUserID, key: key)
+            },
+            projectTypeProvider: { ownerUserID, key in
+                agentSkillLibrary.projectType(ownerUserID: ownerUserID, key: key)
+            },
+            professionCatalogProvider: { ownerUserID in
+                agentSkillLibrary.professions(ownerUserID: ownerUserID)
+            },
+            todoPluginCatalogProvider: { ownerUserID in
+                try await localConnectorService.installedAgentPlugins(
+                    ownerUserID: ownerUserID
+                ).map {
+                    LocalAgentTodoPluginOption(
+                        pluginID: $0.id,
+                        displayName: $0.displayName,
+                        description: $0.description
+                    )
+                }
+            },
+            contextLanguageProvider: { _ in
+                ChatOSLanguage(normalizing: UserDefaults.standard.string(
+                    forKey: "ChatOS.internalContextLanguage"
+                ))
+            },
+            additionalToolProviders: { profile, member, runContext in
+                var providers: [any AgentToolProvider] = []
+                if LocalAgentPermission.canAccessLocalProjects(profile.draft.defaultSkillIDs) {
+                    let store = try await agentGroupChatService.store()
+                    let registry = try await localProjectsService.registry()
+                    let projects = try await registry.list(
+                        ownerUserID: runContext.ownerUserID,
+                        includeInactive: false
+                    )
+                    providers.append(LocalAgentProjectToolProvider(
+                        store: store,
+                        projects: projects,
+                        projectTypes: agentSkillLibrary.projectTypes(
+                            ownerUserID: runContext.ownerUserID
+                        ),
+                        projectsService: localProjectsService,
+                        context: runContext
+                    ))
+                }
+                if runContext.lane == .executor {
+                    let store = try await agentGroupChatService.store()
+                    guard let todo = try await store.todoForDelivery(
+                        ownerUserID: runContext.ownerUserID,
+                        deliveryID: runContext.deliveryID
+                    ), todo.agentID == profile.id,
+                    todo.teamRoomID == member.roomID,
+                    !runContext.projectID.hasPrefix("direct:") else {
+                        throw AgentGroupChatError.conflict
+                    }
+                    let projectContext = try await localProjectsService.pluginContext(
+                        ownerUserID: runContext.ownerUserID,
+                        projectID: runContext.projectID
+                    )
+                    providers.append(try await localConnectorService.makeAgentCapabilityToolProvider(
+                        ownerUserID: runContext.ownerUserID,
+                        runContext: runContext,
+                        projectContext: projectContext,
+                        executionPlan: todo.executionPlan
+                    ))
+                }
+                return providers
+            }
+        )
+        self.agentGroupChatBuilderService = LocalAgentBuilderService(
+            groupChatService: agentGroupChatService,
+            projectsService: localProjectsService,
+            connectorService: localConnectorService,
+            agentServices: agentServices,
+            skillLibrary: agentSkillLibrary
         )
         let remoteFileService = NativeRemoteFileService(runtime: remoteConnectionService)
         self.remoteConnectionService = remoteConnectionService
@@ -187,6 +317,7 @@ final class AppModel: ObservableObject {
         self.projectCodeNavigationService = NativeProjectCodeNavigationService(connector: localConnectorService)
         self.projectGitService = NativeProjectGitService(connector: localConnectorService)
         self.notepadService = ChatOSNotepadService(client: apiClient)
+        self.wechatCompanionService = ChatOSWeChatCompanionService(client: apiClient)
         self.userLanguagePreferencesService = ChatOSUserLanguagePreferencesService(client: apiClient)
         self.projectRunService = NativeProjectRunService(
             connector: localConnectorService,
@@ -200,7 +331,6 @@ final class AppModel: ObservableObject {
         self.runtimeSettingsService = ChatOSConversationRuntimeSettingsService(client: apiClient)
         self.askUserPromptService = ChatOSAskUserPromptService(client: apiClient)
         self.petActivityInboxService = ChatOSPetActivityInboxService(client: apiClient)
-        self.taskRunnerHostService = ChatOSTaskRunnerHostService(client: apiClient)
         self.realtimeService = ChatOSRealtimeClient(
             apiClient: apiClient,
             conversationService: conversationService
@@ -229,13 +359,30 @@ final class AppModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.recoverLocalConnector(forceReconnect: true)
+                self?.restartAgentHeartbeatCoordinator()
+                self?.restartAgentArtifactSyncCoordinator()
+            }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: .agentHeartbeatConfigurationDidChange)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.restartAgentHeartbeatCoordinator()
             }
             .store(in: &cancellables)
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.recoverLocalConnector(forceReconnect: false)
+                self?.restartAgentArtifactSyncCoordinator()
             }
+            .store(in: &cancellables)
+        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.stopVisualSessionMonitoring() }
+            .store(in: &cancellables)
+        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.startVisualSessionMonitoring() }
             .store(in: &cancellables)
         localConnectorControl.$status
             .map { $0?.connectorRunning == true }
@@ -261,1051 +408,12 @@ final class AppModel: ObservableObject {
                 self?.activateConversation(for: selection)
             }
             .store(in: &cancellables)
-        visualSessionMonitorTask = Task { [weak self, localConnectorService] in
-            while !Task.isCancelled {
-                let selectedAdapterSessionID = self?.visualSessionStore.selectedAdapterSessionID
-                let preferredAdapterSessionIDs = selectedAdapterSessionID.map { Set([$0]) } ?? []
-                let sessions = await localConnectorService.fetchPluginVisualSessions(
-                    loadFrameDataForAdapterSessionIDs: preferredAdapterSessionIDs
-                )
-                self?.applyPluginVisualSessions(sessions)
-                try? await Task.sleep(for: .milliseconds(450))
-            }
+        startVisualSessionMonitoring()
+        Task { [weak self, localConnectorService] in
+            guard let self else { return }
+            await localConnectorService.setCompanionRuntime(self)
         }
         authentication.start()
     }
 
-    var currentConversationID: String? {
-        switch selection {
-        case .contact:
-            return contactConversation?.sessionID
-        case .project:
-            return projectConversation?.sessionID
-        default:
-            return nil
-        }
-    }
-
-    var interfaceLocale: Locale {
-        interfaceLanguage.locale
-    }
-
-    func localized(_ chinese: String, english: String) -> String {
-        interfaceLanguage == .english ? english : chinese
-    }
-
-    func toggleNavigationSidebar() {
-        navigationSplitVisibility = navigationSplitVisibility == .detailOnly
-            ? .all
-            : .detailOnly
-    }
-
-    func startPetOverlayIfNeeded() {
-        guard petOverlayCoordinator == nil else { return }
-        petOverlayCoordinator = PetOverlayCoordinator(
-            model: self,
-            store: petOverlayStore,
-            preferences: petPreferences
-        )
-    }
-
-    func openPetFile(
-        path: String,
-        targetLine: Int? = nil,
-        mode: PetFileOpenMode = .preview,
-        access: PetFileAccess = .workspace
-    ) {
-        startPetOverlayIfNeeded()
-        if !petPreferences.isEnabled {
-            petPreferences.isEnabled = true
-        }
-        petOverlayCoordinator?.openFile(PetFileOpenRequest(
-            path: path,
-            targetLine: targetLine,
-            mode: mode,
-            access: access
-        ))
-    }
-
-    func openUserSelectedPetFiles(_ urls: [URL]) {
-        for url in urls where url.isFileURL {
-            openPetFile(
-                path: url.standardizedFileURL.path,
-                access: .userSelectedLocal
-            )
-        }
-    }
-
-    @discardableResult
-    func openPetFileLink(_ url: URL, projectRootPath: String?) -> Bool {
-        guard let resolved = PetFileLinkResolver.resolve(
-            url,
-            projectRootPath: projectRootPath
-        ) else { return false }
-        openPetFile(path: resolved.path, targetLine: resolved.targetLine)
-        return true
-    }
-
-    func startGlobalUtilitiesIfNeeded() {
-        globalUtilityCoordinator.start()
-    }
-
-    func openPetActivity(_ activity: PetActivity?) {
-        if activity?.source == .localApproval {
-            openGlobalSearchSettings(tab: .approvals)
-            return
-        }
-
-        var targetConversation: ConversationSessionViewModel?
-        if let projectID = activity?.route.projectID,
-           let project = projects.first(where: { $0.id == projectID }) {
-            selection = .project(projectID)
-            projectTab = .messages
-            if let conversationID = activity?.route.conversationID ?? project.conversationID {
-                targetConversation = conversation(for: conversationID)
-                projectConversation = targetConversation
-            }
-        } else if let conversationID = activity?.route.conversationID {
-            if let project = projects.first(where: { $0.conversationID == conversationID }) {
-                selection = .project(project.id)
-                projectTab = .messages
-                targetConversation = conversation(for: conversationID)
-                projectConversation = targetConversation
-            } else if let contact = contacts.first(where: { $0.conversationID == conversationID }) {
-                selection = .contact(contact.id)
-                targetConversation = conversation(for: conversationID)
-                contactConversation = targetConversation
-            }
-        }
-
-        if let route = activity?.route {
-            targetConversation?.focus(
-                turnID: route.turnID,
-                promptID: route.promptID,
-                taskID: route.taskID,
-                runID: route.runID
-            )
-        }
-
-        showMainWindow()
-    }
-
-    func openGlobalSearchProject(_ projectID: String) {
-        guard projects.contains(where: { $0.id == projectID }) else { return }
-        selection = .project(projectID)
-        projectTab = .messages
-        showMainWindow()
-    }
-
-    func openGlobalSearchContact(_ contactID: String) {
-        guard contacts.contains(where: { $0.id == contactID }) else { return }
-        selection = .contact(contactID)
-        showMainWindow()
-    }
-
-    func openGlobalSearchSettings(tab: LocalConnectorControlTab? = nil) {
-        if let tab {
-            requestConnectorSettings(tab)
-        }
-        if let settingsWindowPresentationHandler {
-            settingsWindowPresentationHandler()
-            return
-        }
-        NSApp.activate(ignoringOtherApps: true)
-        if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
-            _ = NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-        }
-    }
-
-    private func showMainWindow() {
-        if let mainWindowPresentationHandler {
-            mainWindowPresentationHandler()
-            return
-        }
-        NSApp.activate(ignoringOtherApps: true)
-        let mainWindow = NSApp.windows.first {
-            !($0 is NSPanel) && $0.title == "ChatOS"
-        }
-        mainWindow?.makeKeyAndOrderFront(nil)
-    }
-
-    func retryPetActivity(_ activity: PetActivity, instruction: String) async throws {
-        guard let messageID = activity.route.messageID?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !messageID.isEmpty,
-              let runID = activity.route.runID?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !runID.isEmpty else {
-            throw PetActivityActionError.retryUnavailable
-        }
-        _ = try await messageTaskGraphService.retryRun(
-            messageID: messageID,
-            runID: runID,
-            lookup: MessageTaskLookup(
-                sessionID: activity.route.conversationID,
-                turnID: activity.route.turnID
-            ),
-            instruction: instruction
-        )
-    }
-
-    func cancelPetActivity(_ activity: PetActivity) async throws {
-        if let messageID = activity.route.messageID?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !messageID.isEmpty,
-           let taskID = activity.route.taskID?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !taskID.isEmpty {
-            try await messageTaskGraphService.cancelTask(
-                messageID: messageID,
-                taskID: taskID,
-                lookup: MessageTaskLookup(
-                    sessionID: activity.route.conversationID,
-                    turnID: activity.route.turnID
-                ),
-                reason: "用户从全局宠物面板取消任务"
-            )
-            return
-        }
-
-        if activity.source == .chat,
-           let conversationID = activity.route.conversationID?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !conversationID.isEmpty,
-           let turnID = activity.route.turnID?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !turnID.isEmpty {
-            try await commandService.stopTurn(conversationID: conversationID, turnID: turnID)
-            return
-        }
-
-        throw PetActivityActionError.cancelUnavailable
-    }
-
-    func loadPetTask(_ activity: PetActivity) async throws -> MessageTask {
-        guard let messageID = activity.route.messageID?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-              !messageID.isEmpty,
-              let taskID = activity.route.taskID?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-              !taskID.isEmpty else {
-            throw PetActivityActionError.taskDetailUnavailable
-        }
-        let lookup = MessageTaskLookup(
-            sessionID: activity.route.conversationID,
-            turnID: activity.route.turnID
-        )
-        let task = try await messageTaskGraphService.fetchTask(
-            messageID: messageID,
-            taskID: taskID,
-            lookup: lookup
-        )
-        guard let runID = (activity.route.runID ?? task.lastRunID)?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-              !runID.isEmpty else {
-            return task
-        }
-        let runDetail = try? await messageTaskGraphService.fetchRun(
-            messageID: messageID,
-            runID: runID,
-            lookup: lookup,
-            includeEvents: true,
-            eventLimit: 40,
-            eventOffset: 0
-        )
-        guard let runDetail else { return task }
-        var mergedTask = runDetail.task.merging(run: runDetail.run)
-        let existingProcess = mergedTask.processLog?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if existingProcess.isEmpty, !runDetail.events.isEmpty {
-            let formatter = ISO8601DateFormatter()
-            mergedTask.processLog = runDetail.events.map { event in
-                let timestamp = event.createdAt.map(formatter.string(from:)) ?? "事件"
-                let title = event.eventType.trimmingCharacters(in: .whitespacesAndNewlines)
-                let detail = event.message?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return "[\(timestamp)] \(title.isEmpty ? "过程更新" : title)\n"
-                    + (detail.isEmpty ? "已记录该执行事件" : detail)
-            }
-            .joined(separator: "\n")
-        }
-        return mergedTask
-    }
-
-    func loadPetAskUserPrompt(_ activity: PetActivity) async throws -> AskUserPrompt {
-        guard let sessionID = activity.route.conversationID?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-              !sessionID.isEmpty,
-              let promptID = activity.route.promptID?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-              !promptID.isEmpty else {
-            throw PetActivityActionError.promptUnavailable
-        }
-        let prompts = try await askUserPromptService.fetchPrompts(sessionID: sessionID, limit: 100)
-        guard let prompt = prompts.first(where: { $0.id == promptID && $0.status.isPending }) else {
-            throw PetActivityActionError.promptResolved
-        }
-        return prompt
-    }
-
-    func submitPetAskUserPrompt(
-        _ prompt: AskUserPrompt,
-        submission: AskUserSubmission
-    ) async throws {
-        _ = try await askUserPromptService.submit(
-            promptID: prompt.id,
-            sessionID: prompt.sessionID,
-            submission: submission
-        )
-    }
-
-    func cancelPetAskUserPrompt(_ prompt: AskUserPrompt) async throws {
-        _ = try await askUserPromptService.cancel(
-            promptID: prompt.id,
-            sessionID: prompt.sessionID
-        )
-    }
-
-    func applyPetActivityDisposition(
-        _ disposition: PetActivityDisposition,
-        to activity: PetActivity
-    ) async throws {
-        try await petActivityInboxService.apply(disposition, to: activity)
-    }
-
-    func recoverPetActivities() async throws -> [PetActivity] {
-        try await petActivityInboxService.fetchOpenActivities(limit: 500)
-    }
-
-    var interfaceDynamicTypeSize: DynamicTypeSize {
-        switch Int(interfaceFontSize.rounded()) {
-        case ...12: .small
-        case 13: .medium
-        case 14: .large
-        case 15: .xLarge
-        case 16: .xxLarge
-        case 17: .xxxLarge
-        default: .accessibility1
-        }
-    }
-
-    func toggleVisualSession() {
-        guard var visualSession = visualSessionStore.selectedPresentation else { return }
-        visualSession.isExpanded.toggle()
-        visualSessionExpansion[visualSession.session.adapterSessionID] = visualSession.isExpanded
-        visualSessionStore.updatePresentation(visualSession)
-    }
-
-    func selectPreviousVisualSession() {
-        selectVisualSession(offset: -1)
-    }
-
-    func selectNextVisualSession() {
-        selectVisualSession(offset: 1)
-    }
-
-    private func applyPluginVisualSessions(_ sessions: [PluginVisualSession]) {
-        guard let conversationID = currentConversationID else {
-            visualSessionStore.update([], selectedAdapterSessionID: nil)
-            return
-        }
-
-        let previousPresentations = Dictionary(uniqueKeysWithValues:
-            visualSessionStore.presentations.map { ($0.session.adapterSessionID, $0) }
-        )
-        let matchingSessions = sessions
-            .filter { $0.owner.conversationID == conversationID }
-            .sorted { lhs, rhs in
-                let lhsDate = lhs.capturedAt ?? .distantPast
-                let rhsDate = rhs.capturedAt ?? .distantPast
-                if lhsDate != rhsDate { return lhsDate > rhsDate }
-                return lhs.adapterSessionID < rhs.adapterSessionID
-            }
-
-        let presentations = matchingSessions.map { incoming -> VisualSessionPresentation in
-            var session = incoming
-            if session.frameData == nil,
-               let previous = previousPresentations[session.adapterSessionID],
-               previous.session.frameSequence == session.frameSequence {
-                session.frameData = previous.session.frameData
-            }
-            let key = session.adapterSessionID
-            let isExpanded = visualSessionExpansion[key]
-                ?? previousPresentations[key]?.isExpanded
-                ?? true
-            visualSessionExpansion[key] = isExpanded
-            return .init(session: session, isExpanded: isExpanded)
-        }
-
-        let activeAdapterSessionIDs = Set(presentations.map(\.session.adapterSessionID))
-        let rememberedSelection = visualSessionSelection[conversationID]
-            ?? visualSessionStore.selectedAdapterSessionID
-        let selectedAdapterSessionID = rememberedSelection.flatMap { candidate in
-            activeAdapterSessionIDs.contains(candidate) ? candidate : nil
-        } ?? presentations.first?.session.adapterSessionID
-        visualSessionSelection[conversationID] = selectedAdapterSessionID
-        visualSessionStore.update(
-            presentations,
-            selectedAdapterSessionID: selectedAdapterSessionID
-        )
-
-        let activeKeys = Set(sessions.map(\.adapterSessionID))
-        visualSessionExpansion = visualSessionExpansion.filter { activeKeys.contains($0.key) }
-    }
-
-    private func selectVisualSession(offset: Int) {
-        let presentations = visualSessionStore.presentations
-        guard presentations.count > 1 else { return }
-        let currentIndex = visualSessionStore.selectedIndex ?? 0
-        let nextIndex = (currentIndex + offset + presentations.count) % presentations.count
-        let nextAdapterSessionID = presentations[nextIndex].session.adapterSessionID
-        visualSessionStore.select(adapterSessionID: nextAdapterSessionID)
-        if let conversationID = currentConversationID {
-            visualSessionSelection[conversationID] = nextAdapterSessionID
-        }
-    }
-
-    func refreshWorkspace() {
-        guard let ownerUserID = authenticatedUserID else { return }
-        workspaceLoadGeneration += 1
-        let generation = workspaceLoadGeneration
-        isWorkspaceLoading = true
-        workspaceError = nil
-
-        Task {
-            do {
-                let registry = try await localProjectsService.registry()
-                let loader = try ClientOwnedWorkspaceLoader(registry: registry, remote: workspaceService, ownerUserID: ownerUserID)
-                let deviceID = try? await localProjectsService.deviceID(ownerUserID: ownerUserID)
-                try? await localProjectsService.repairRootWorkspaceBindings(ownerUserID: ownerUserID)
-                var local = try await loader.loadLocal(deviceID: deviceID)
-                guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
-                local.contacts = workspaceContacts
-                local.conversations = workspaceConversations
-                await publishWorkspace(local, generation: generation, ownerUserID: ownerUserID)
-                guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
-                let result = try await loader.refresh(deviceID: deviceID)
-                guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
-                var snapshot = result.snapshot
-                if result.remoteError != nil {
-                    snapshot.contacts = workspaceContacts
-                    snapshot.conversations = workspaceConversations
-                }
-                await publishWorkspace(snapshot, generation: generation, ownerUserID: ownerUserID)
-                guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
-                workspaceError = result.remoteError
-            } catch {
-                guard generation == workspaceLoadGeneration else { return }
-                workspaceError = error.localizedDescription
-            }
-            if generation == workspaceLoadGeneration {
-                isWorkspaceLoading = false
-            }
-        }
-    }
-
-    private func publishWorkspace(_ snapshot: WorkspaceSnapshot, generation: Int64, ownerUserID: String) async {
-        guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
-        await projectRunService.updateProjects(snapshot.projects)
-        guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
-        workspaceProjects = snapshot.projects
-        workspaceContacts = snapshot.contacts
-        workspaceConversations = snapshot.conversations
-        let resources = WorkspaceResourceResolver.resolve(snapshot)
-        contacts = resources.contacts
-        projects = resources.projects
-        reconcileSelection()
-    }
-
-    var localProjectCreator: AccountLocalProjectCreator? {
-        authenticatedUserID.map { AccountLocalProjectCreator(ownerUserID: $0, service: localProjectsService) }
-    }
-
-    var localProjectOwnerUserID: String? { authenticatedUserID }
-
-    func renameLocalProject(id: String, name: String) async throws {
-        guard let owner = authenticatedUserID else { throw CancellationError() }
-        let registry = try await localProjectsService.registry()
-        guard let old = try await registry.get(ownerUserID: owner, id: id) else { throw ProjectRegistryError.notFound }
-        guard owner == authenticatedUserID else { throw CancellationError() }
-        try await localProjectsService.rename(ownerUserID: owner, id: id, name: name, expectedRevision: old.revision)
-        guard owner == authenticatedUserID else { return }
-        refreshWorkspace()
-    }
-
-    func refreshAllResources() {
-        refreshWorkspace()
-        refreshRemoteConnections()
-        refreshPluginApplications()
-        localConnectorControl.refreshStatus()
-    }
-
-    func refreshPluginApplications() {
-        pluginApplicationsLoadGeneration += 1
-        let generation = pluginApplicationsLoadGeneration
-        isPluginApplicationsLoading = true
-        pluginApplicationsError = nil
-        let service = localConnectorService
-        Task { [weak self] in
-            do {
-                let applications = try await service.fetchPluginApplications()
-                guard let self, generation == pluginApplicationsLoadGeneration else { return }
-                pluginApplications = applications
-                reconcilePluginApplicationSelection()
-            } catch {
-                guard let self, generation == pluginApplicationsLoadGeneration else { return }
-                pluginApplicationsError = error.localizedDescription
-            }
-            guard let self, generation == pluginApplicationsLoadGeneration else { return }
-            isPluginApplicationsLoading = false
-        }
-    }
-
-    func pluginApplication(pluginID: String, componentKey: String) -> LocalConnectorPluginApplication? {
-        pluginApplications.first {
-            $0.pluginID == pluginID && $0.componentKey == componentKey
-        }
-    }
-
-    func launchPluginApplication(
-        _ application: LocalConnectorPluginApplication,
-        context: LocalConnectorPluginApplicationContext? = nil
-    ) async throws -> LocalConnectorPluginApplicationLaunch {
-        guard let owner = authenticatedUserID else { throw CancellationError() }
-        let accountGeneration = workspaceAccountGeneration
-        let resolved: LocalConnectorPluginApplicationContext?
-        if let projectID = context?.projectID {
-            resolved = try await localProjectsService.pluginContext(ownerUserID: owner, projectID: projectID)
-        } else {
-            resolved = context
-        }
-        guard owner == authenticatedUserID, accountGeneration == workspaceAccountGeneration else { throw CancellationError() }
-        let launch = try await localConnectorService.launchPluginApplication(
-            pluginID: application.pluginID, componentKey: application.componentKey, context: resolved,
-            expectedOwnerUserID: owner
-        )
-        guard owner == authenticatedUserID, accountGeneration == workspaceAccountGeneration else { throw CancellationError() }
-        return launch
-    }
-
-    func preparePluginTaskBatch(
-        _ request: PluginHostTaskBatchRequest,
-        launch: LocalConnectorPluginApplicationLaunch,
-        context: LocalConnectorPluginApplicationContext
-    ) async throws -> PluginHostTaskBatch {
-        guard let owner = authenticatedUserID, let projectID = context.projectID else {
-            throw ChatOSAPIError.invalidRequest("插件任务必须绑定本地项目")
-        }
-        let generation = workspaceAccountGeneration
-        let project = try await localProjectsService.projectContext(ownerUserID: owner, projectID: projectID)
-        let modelCatalog = try await localConnectorService.fetchModelCatalog(refresh: false)
-        guard let defaultModelConfigID = modelCatalog.settings.taskRunnerDefaultModelConfigID?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-              !defaultModelConfigID.isEmpty else {
-            throw ChatOSAPIError.invalidRequest(
-                "请先在设置 > Local Connector > 模型配置中选择 Task Runner 默认模型"
-            )
-        }
-        guard let defaultModel = modelCatalog.items.first(where: { $0.id == defaultModelConfigID }) else {
-            throw ChatOSAPIError.invalidRequest("Task Runner 默认模型不存在或当前账户无权访问")
-        }
-        guard defaultModel.enabled else {
-            throw ChatOSAPIError.invalidRequest("Task Runner 默认模型已被禁用")
-        }
-        guard defaultModel.taskEnabled else {
-            throw ChatOSAPIError.invalidRequest("Task Runner 默认模型未启用任务执行")
-        }
-        guard defaultModel.hasAPIKey else {
-            throw ChatOSAPIError.invalidRequest("Task Runner 默认模型缺少可用凭据")
-        }
-        guard owner == authenticatedUserID, generation == workspaceAccountGeneration else { throw CancellationError() }
-        return try await taskRunnerHostService.prepareBatch(
-            request,
-            project: project,
-            host: .init(
-                pluginID: launch.application.pluginID,
-                componentKey: launch.application.componentKey,
-                releaseID: launch.releaseID,
-                version: launch.version,
-                artifactSHA256: launch.artifactSHA256
-            ),
-            defaultModelConfigID: defaultModelConfigID
-        )
-    }
-
-    func pluginTaskStatuses(
-        taskIDs: [String],
-        context: LocalConnectorPluginApplicationContext
-    ) async throws -> [PluginHostTaskReference] {
-        guard let projectID = context.projectID else {
-            throw ChatOSAPIError.invalidRequest("插件任务必须绑定本地项目")
-        }
-        return try await taskRunnerHostService.taskStatuses(taskIDs: taskIDs, projectID: projectID)
-    }
-
-    private func reconcilePluginApplicationSelection() {
-        guard case let .pluginApplication(pluginID, componentKey) = selection else { return }
-        if pluginApplication(pluginID: pluginID, componentKey: componentKey) == nil {
-            selection = .applications
-        }
-    }
-
-    private func recoverLocalConnector(forceReconnect: Bool) {
-        let service = localConnectorService
-        Task { [weak self] in
-            await service.recoverGatewayConnection(forceReconnect: forceReconnect)
-            try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                self?.localConnectorControl.refreshStatus()
-            }
-        }
-    }
-
-    func requestConnectorSettings(_ tab: LocalConnectorControlTab) {
-        requestedConnectorSettingsTab = tab
-    }
-
-    func consumeConnectorSettingsRequest() {
-        requestedConnectorSettingsTab = nil
-    }
-
-    private func applyAuthenticationPhase(_ phase: AuthenticationViewModel.Phase) {
-        switch phase {
-        case let .authenticated(session):
-            workspaceAccountGeneration += 1
-            if authenticatedUserID != session.user.id {
-                workspaceConversations = []
-                workspaceContacts = []
-                workspaceProjects = []
-                contacts = []
-                projects = []
-                conversationCache = [:]
-                projectConversation = nil
-                contactConversation = nil
-                preparingProjectConversationIDs = []
-                projectConversationPreparationErrors = [:]
-            }
-            authenticatedUserID = session.user.id
-            mediaStudio.activate(userID: session.user.id)
-            loadLanguagePreferences()
-            localConnectorControl.activate(pairIfNeeded: true)
-            refreshWorkspace()
-            refreshRemoteConnections()
-            refreshPluginApplications()
-        case .signedOut:
-            workspaceAccountGeneration += 1
-            authenticatedUserID = nil
-            languagePreferencesSaveTask?.cancel()
-            isLanguagePreferencesLoading = false
-            isLanguagePreferencesSaving = false
-            languagePreferencesError = nil
-            localConnectorControl.resetForSignedOut()
-            mediaStudio.resetForSignedOut()
-            workspaceLoadGeneration += 1
-            contacts = []
-            projects = []
-            workspaceProjects = []
-            workspaceContacts = []
-            workspaceConversations = []
-            remoteConnections = []
-            remoteConnectionWorkspaceStore.removeAllWorkspaces()
-            pluginApplicationsLoadGeneration += 1
-            pluginApplications = []
-            isPluginApplicationsLoading = false
-            pluginApplicationsError = nil
-            conversationCache = [:]
-            projectConversation = nil
-            contactConversation = nil
-            preparingProjectConversationIDs = []
-            projectConversationPreparationErrors = [:]
-        case .restoring, .authenticating:
-            break
-        }
-    }
-
-    private func loadLanguagePreferences() {
-        guard let expectedUserID = authenticatedUserID else { return }
-        isLanguagePreferencesLoading = true
-        languagePreferencesError = nil
-        let service = userLanguagePreferencesService
-        Task { [weak self] in
-            do {
-                let preferences = try await service.fetch()
-                guard let self, authenticatedUserID == expectedUserID else { return }
-                applyLanguagePreferences(preferences)
-            } catch {
-                self?.languagePreferencesError = error.localizedDescription
-            }
-            self?.isLanguagePreferencesLoading = false
-        }
-    }
-
-    private func languagePreferenceDidChange() {
-        persistLanguagePreferencesLocally()
-        guard !isApplyingLanguagePreferences,
-              let authenticatedUserID else { return }
-
-        languagePreferencesSaveTask?.cancel()
-        let preferences = UserLanguagePreferences(
-            interfaceLanguage: interfaceLanguage,
-            internalContextLanguage: contextLanguage
-        )
-        let service = userLanguagePreferencesService
-        languagePreferencesSaveTask = Task { [weak self] in
-            do {
-                try await Task.sleep(for: .milliseconds(250))
-                guard !Task.isCancelled else { return }
-                self?.isLanguagePreferencesSaving = true
-                self?.languagePreferencesError = nil
-                let saved = try await service.update(
-                    userID: authenticatedUserID,
-                    preferences: preferences
-                )
-                guard !Task.isCancelled else {
-                    self?.isLanguagePreferencesSaving = false
-                    return
-                }
-                guard let self else { return }
-                applyLanguagePreferences(saved)
-            } catch is CancellationError {
-                self?.isLanguagePreferencesSaving = false
-                return
-            } catch {
-                self?.languagePreferencesError = error.localizedDescription
-            }
-            self?.isLanguagePreferencesSaving = false
-        }
-    }
-
-    private func applyLanguagePreferences(_ preferences: UserLanguagePreferences) {
-        isApplyingLanguagePreferences = true
-        interfaceLanguage = preferences.interfaceLanguage
-        contextLanguage = preferences.internalContextLanguage
-        isApplyingLanguagePreferences = false
-        persistLanguagePreferencesLocally()
-    }
-
-    private func persistLanguagePreferencesLocally() {
-        UserDefaults.standard.set(
-            interfaceLanguage.rawValue,
-            forKey: "ChatOS.interfaceLanguage"
-        )
-        UserDefaults.standard.set(
-            contextLanguage.rawValue,
-            forKey: "ChatOS.internalContextLanguage"
-        )
-    }
-
-    func workspaceProject(id: String) -> WorkspaceProject? {
-        workspaceProjects.first(where: { $0.id == id })
-    }
-
-    var defaultProjectContact: WorkspaceContact? {
-        workspaceContacts.first {
-            $0.name.trimmingCharacters(in: .whitespacesAndNewlines) == "叽咕狸"
-                && $0.status?.lowercased() != "disabled"
-        }
-    }
-
-    var petQuickChatResources: [PetQuickChatResource] {
-        var resources: [PetQuickChatResource] = []
-        let preferredContactID = defaultProjectContact?.id
-        if let contact = contacts.first(where: { $0.id == preferredContactID })
-            ?? contacts.first(where: {
-                $0.title.trimmingCharacters(in: .whitespacesAndNewlines) == "叽咕狸"
-            }) {
-            resources.append(PetQuickChatResource(
-                id: "contact:\(contact.id)",
-                sourceID: contact.id,
-                kind: .contact,
-                title: contact.title,
-                subtitle: contact.subtitle,
-                conversationID: contact.conversationID
-            ))
-        }
-
-        resources.append(contentsOf: projects
-            .filter { petPreferences.isFavorite(projectID: $0.id) }
-            .map { project in
-                PetQuickChatResource(
-                    id: "project:\(project.id)",
-                    sourceID: project.id,
-                    kind: .project,
-                    title: project.title,
-                    subtitle: project.subtitle,
-                    conversationID: project.conversationID
-                )
-            })
-        return resources
-    }
-
-    func petConversation(for resource: PetQuickChatResource) -> ConversationSessionViewModel? {
-        guard let conversationID = resource.conversationID else {
-            if resource.kind == .project {
-                prepareProjectConversationIfNeeded(projectID: resource.sourceID)
-            }
-            return nil
-        }
-        return conversation(for: conversationID)
-    }
-
-    func registerCreatedProject(_ project: WorkspaceProject) {
-        if let index = workspaceProjects.firstIndex(where: { $0.id == project.id }) {
-            workspaceProjects[index] = project
-        } else {
-            workspaceProjects.append(project)
-        }
-        let resource = ResourceItem(
-            id: project.id,
-            title: project.name,
-            subtitle: project.displayRootPath ?? project.rootPath,
-            conversationID: project.latestConversationID,
-            contactName: defaultProjectContact?.name
-        )
-        if let index = projects.firstIndex(where: { $0.id == project.id }) {
-            projects[index] = resource
-        } else {
-            projects.append(resource)
-            projects.sort { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-        }
-        projectTab = .directory
-        selection = .project(project.id)
-        refreshWorkspace()
-    }
-
-    func deleteProject(id: String) async throws {
-        guard let owner = authenticatedUserID else { throw CancellationError() }
-        let registry = try await localProjectsService.registry()
-        guard let old = try await registry.get(ownerUserID: owner, id: id) else { throw ProjectRegistryError.notFound }
-        guard owner == authenticatedUserID else { throw CancellationError() }
-        try await localProjectsService.remove(ownerUserID: owner, id: id, expectedRevision: old.revision)
-        guard owner == authenticatedUserID else { return }
-
-        // A workspace refresh may already be in flight. Invalidate it so an
-        // older response cannot resurrect the project after deletion.
-        workspaceLoadGeneration += 1
-        isWorkspaceLoading = false
-
-        let conversationIDs = Set(
-            workspaceProjects
-                .filter { $0.id == id }
-                .compactMap(\.latestConversationID)
-        )
-        workspaceProjects.removeAll { $0.id == id }
-        projects.removeAll { $0.id == id }
-        preparingProjectConversationIDs.remove(id)
-        projectConversationPreparationErrors.removeValue(forKey: id)
-        petPreferences.setFavorite(false, projectID: id)
-        for conversationID in conversationIDs {
-            conversationCache.removeValue(forKey: conversationID)
-        }
-
-        if selection == .project(id) {
-            projectConversation = nil
-            projectTab = .messages
-        }
-        await projectRunService.updateProjects(workspaceProjects)
-        reconcileSelection()
-    }
-
-    func isPreparingProjectConversation(projectID: String) -> Bool {
-        preparingProjectConversationIDs.contains(projectID)
-    }
-
-    func projectConversationPreparationError(projectID: String) -> String? {
-        projectConversationPreparationErrors[projectID]
-    }
-
-    func retryProjectConversationPreparation(projectID: String) {
-        projectConversationPreparationErrors[projectID] = nil
-        prepareProjectConversationIfNeeded(projectID: projectID, force: true)
-    }
-
-    func prepareProjectChat(projectID: String) {
-        guard projects.first(where: { $0.id == projectID })?.conversationID == nil else { return }
-        prepareProjectConversationIfNeeded(projectID: projectID)
-    }
-
-    func refreshRemoteConnections() {
-        isRemoteConnectionsLoading = true
-        remoteConnectionsError = nil
-        Task {
-            do {
-                remoteConnections = try await remoteConnectionService.listConnections()
-                    .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-            } catch {
-                remoteConnectionsError = error.localizedDescription
-            }
-            isRemoteConnectionsLoading = false
-        }
-    }
-
-    func remoteConnection(id: String) -> RemoteConnection? {
-        remoteConnections.first(where: { $0.id == id })
-    }
-
-    func registerRemoteConnection(_ connection: RemoteConnection) {
-        remoteConnectionWorkspaceStore.removeWorkspace(for: connection.id)
-        if let index = remoteConnections.firstIndex(where: { $0.id == connection.id }) {
-            remoteConnections[index] = connection
-        } else {
-            remoteConnections.append(connection)
-        }
-        remoteConnections.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        selection = .remote(connection.id)
-    }
-
-    func deleteRemoteConnection(id: String) async throws {
-        try await remoteConnectionService.deleteConnection(id: id)
-        remoteConnectionWorkspaceStore.removeWorkspace(for: id)
-        remoteConnections.removeAll(where: { $0.id == id })
-        if selection == .remote(id) {
-            selection = projects.first.map { .project($0.id) }
-                ?? contacts.first.map { .contact($0.id) }
-        }
-    }
-
-    private func reconcileSelection() {
-        if case let .project(id) = selection, projects.contains(where: { $0.id == id }) { return }
-        if case let .contact(id) = selection, contacts.contains(where: { $0.id == id }) { return }
-        if case let .remote(id) = selection,
-           remoteConnections.contains(where: { $0.id == id }) { return }
-        if case let .terminal(id) = selection,
-           terminals.contains(where: { $0.id == id }) { return }
-        if selection == .localConnector { return }
-        selection = projects.first.map { .project($0.id) }
-            ?? contacts.first.map { .contact($0.id) }
-            ?? remoteConnections.first.map { .remote($0.id) }
-            ?? terminals.first.map { .terminal($0.id) }
-    }
-
-    private func activateConversation(for selection: SidebarSelection?) {
-        switch selection {
-        case let .project(id):
-            let conversationID = projects.first(where: { $0.id == id })?.conversationID
-            projectConversation = conversationID.map { conversationID in
-                let conversation = conversation(for: conversationID)
-                conversation.activate()
-                return conversation
-            }
-            contactConversation = nil
-            if conversationID == nil, projectTab == .messages {
-                prepareProjectConversationIfNeeded(projectID: id)
-            }
-        case let .contact(id):
-            let conversationID = contacts.first(where: { $0.id == id })?.conversationID
-            contactConversation = conversationID.map { conversationID in
-                let conversation = conversation(for: conversationID)
-                conversation.activate()
-                return conversation
-            }
-            projectConversation = nil
-        default:
-            projectConversation = nil
-            contactConversation = nil
-        }
-    }
-
-    private func prepareProjectConversationIfNeeded(projectID: String, force: Bool = false) {
-        guard let owner = authenticatedUserID else { return }
-        let accountGeneration = workspaceAccountGeneration
-        guard !preparingProjectConversationIDs.contains(projectID) else { return }
-        guard force || projectConversationPreparationErrors[projectID] == nil else { return }
-        guard var project = workspaceProject(id: projectID),
-              let contact = defaultProjectContact else { return }
-
-        preparingProjectConversationIDs.insert(projectID)
-        projectConversationPreparationErrors[projectID] = nil
-        Task {
-            do {
-                project.projectContext = try await localProjectsService.projectContext(
-                    ownerUserID: owner,
-                    projectID: projectID
-                )
-                let conversationID = try await projectConversationService.ensureConversation(
-                    project: project,
-                    contact: contact
-                )
-                guard owner == authenticatedUserID, accountGeneration == workspaceAccountGeneration,
-                      workspaceProject(id: projectID) != nil else { return }
-                applyPreparedConversation(
-                    conversationID,
-                    projectID: projectID,
-                    contactName: contact.name
-                )
-            } catch {
-                guard owner == authenticatedUserID, accountGeneration == workspaceAccountGeneration,
-                      workspaceProject(id: projectID) != nil else { return }
-                projectConversationPreparationErrors[projectID] = error.localizedDescription
-            }
-            preparingProjectConversationIDs.remove(projectID)
-        }
-    }
-
-    private func applyPreparedConversation(
-        _ conversationID: String,
-        projectID: String,
-        contactName: String
-    ) {
-        if let index = workspaceProjects.firstIndex(where: { $0.id == projectID }) {
-            workspaceProjects[index].latestConversationID = conversationID
-        }
-        if let index = projects.firstIndex(where: { $0.id == projectID }) {
-            let existing = projects[index]
-            projects[index] = ResourceItem(
-                id: existing.id,
-                title: existing.title,
-                subtitle: existing.subtitle,
-                conversationID: conversationID,
-                contactName: contactName
-            )
-        }
-        projectConversationPreparationErrors[projectID] = nil
-        if selection == .project(projectID) {
-            let conversation = conversation(for: conversationID)
-            conversation.activate()
-            projectConversation = conversation
-        }
-    }
-
-    private func conversation(
-        for sessionID: String
-    ) -> ConversationSessionViewModel {
-        if let cached = conversationCache[sessionID] {
-            return cached
-        }
-        let created = ConversationSessionViewModel(
-            sessionID: sessionID,
-            initialTurns: [],
-            historyStore: historyStore,
-            remoteService: conversationService,
-            realtimeService: realtimeService,
-            commandService: commandService,
-            turnProcessService: turnProcessService,
-            messageTaskGraphService: messageTaskGraphService,
-            runtimeSettingsService: runtimeSettingsService,
-            askUserPromptService: askUserPromptService
-        )
-        conversationCache[sessionID] = created
-        return created
-    }
-}
-
-private enum PetActivityActionError: LocalizedError {
-    case retryUnavailable
-    case cancelUnavailable
-    case promptUnavailable
-    case promptResolved
-    case taskDetailUnavailable
-
-    var errorDescription: String? {
-        switch self {
-        case .retryUnavailable:
-            "当前事件缺少重试所需的任务运行信息，请打开详情处理。"
-        case .cancelUnavailable:
-            "当前事件缺少取消任务所需的信息，请打开详情处理。"
-        case .promptUnavailable:
-            "当前提问缺少直接处理所需的信息，请打开详情处理。"
-        case .promptResolved:
-            "这个提问已经处理或失效。"
-        case .taskDetailUnavailable:
-            "当前事件缺少读取任务执行过程所需的信息。"
-        }
-    }
 }

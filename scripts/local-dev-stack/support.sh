@@ -50,6 +50,22 @@ log_file_for() {
   printf '%s/%s.log\n' "$LOG_DIR" "$1"
 }
 
+rotate_service_log() {
+  local log_file="$1"
+  local log_dir log_name archive
+  log_dir="$(dirname "$log_file")"
+  log_name="$(basename "$log_file")"
+  mkdir -p "$log_dir"
+  if [[ -s "$log_file" ]]; then
+    archive="${log_file}.$(date -u +%Y%m%dT%H%M%SZ)"
+    mv -- "$log_file" "$archive"
+  fi
+  : >"$log_file"
+  # Local diagnostics are retained for seven days. Only timestamped archives
+  # belonging to this exact service log are eligible for removal.
+  find "$log_dir" -maxdepth 1 -type f -name "${log_name}.20*T*Z" -mtime +7 -delete
+}
+
 spawn_detached() {
   local cwd="$1"
   local log_file="$2"

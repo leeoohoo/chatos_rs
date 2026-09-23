@@ -351,6 +351,7 @@ impl AppState {
                 );
             }
         }
+        validate_postgres_pool_budget(values, &mut errors);
         for key in [
             SHARED_MCP_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY,
             CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL_CONFIG_KEY,
@@ -365,7 +366,10 @@ impl AppState {
                 ));
             }
         }
-        for key in [TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY] {
+        for key in [
+            TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+            MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+        ] {
             let is_https = values
                 .get(key)
                 .and_then(Value::as_str)
@@ -493,6 +497,49 @@ impl AppState {
     }
 }
 
+fn validate_postgres_pool_budget(values: &BTreeMap<String, Value>, errors: &mut Vec<String>) {
+    let mut pool_budget = 0_i64;
+    for namespace in [
+        "configuration_center",
+        "chatos",
+        "user_service",
+        "plugin_management",
+        "local_connector",
+        "mcp_management",
+        "task_runner",
+        "memory_engine",
+    ] {
+        let max_key = format!("{namespace}.postgres.pool.max_connections");
+        let min_key = format!("{namespace}.postgres.pool.min_connections");
+        let replicas_key = format!("{namespace}.postgres.process_replicas");
+        let max = values.get(max_key.as_str()).and_then(Value::as_i64);
+        let min = values.get(min_key.as_str()).and_then(Value::as_i64);
+        let replicas = values.get(replicas_key.as_str()).and_then(Value::as_i64);
+        if let (Some(min), Some(max)) = (min, max) {
+            if min > max {
+                errors.push(format!("{min_key} must be less than or equal to {max_key}"));
+            }
+        }
+        if let (Some(max), Some(replicas)) = (max, replicas) {
+            pool_budget = pool_budget.saturating_add(max.saturating_mul(replicas));
+        }
+    }
+    let server_max = values
+        .get("platform.postgres.server_max_connections")
+        .and_then(Value::as_i64);
+    let reserved = values
+        .get("platform.postgres.reserved_connections")
+        .and_then(Value::as_i64);
+    if let (Some(server_max), Some(reserved)) = (server_max, reserved) {
+        let required = pool_budget.saturating_add(reserved);
+        if required > server_max {
+            errors.push(format!(
+                "PostgreSQL connection budget requires {required} connections ({pool_budget} service pool + {reserved} reserved), exceeding platform.postgres.server_max_connections={server_max}"
+            ));
+        }
+    }
+}
+
 pub(super) fn preserve_user_service_secret_rotation(
     current: &BTreeMap<String, Value>,
     next: &mut BTreeMap<String, Value>,
@@ -587,4 +634,72 @@ pub(super) fn overlay_pressure_state(
         "env": snapshot.env,
     }))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod postgres_budget_tests {
+    use super::*;
+
+    fn values_with_pool_defaults() -> BTreeMap<String, Value> {
+        let mut values = BTreeMap::from([
+            (
+                "platform.postgres.server_max_connections".to_string(),
+                json!(200),
+            ),
+            (
+                "platform.postgres.reserved_connections".to_string(),
+                json!(40),
+            ),
+        ]);
+        for (namespace, replicas) in [
+            ("configuration_center", 1),
+            ("chatos", 1),
+            ("user_service", 1),
+            ("plugin_management", 1),
+            ("local_connector", 1),
+            ("mcp_management", 1),
+            ("task_runner", 3),
+            ("memory_engine", 2),
+        ] {
+            values.insert(
+                format!("{namespace}.postgres.pool.max_connections"),
+                json!(10),
+            );
+            values.insert(
+                format!("{namespace}.postgres.pool.min_connections"),
+                json!(1),
+            );
+            values.insert(
+                format!("{namespace}.postgres.process_replicas"),
+                json!(replicas),
+            );
+        }
+        values
+    }
+
+    #[test]
+    fn default_pool_budget_leaves_operational_reserve() {
+        let mut errors = Vec::new();
+        validate_postgres_pool_budget(&values_with_pool_defaults(), &mut errors);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn rejects_over_budget_and_invalid_minimum() {
+        let mut values = values_with_pool_defaults();
+        values.insert(
+            "task_runner.postgres.pool.max_connections".to_string(),
+            json!(60),
+        );
+        values.insert(
+            "task_runner.postgres.pool.min_connections".to_string(),
+            json!(61),
+        );
+        let mut errors = Vec::new();
+        validate_postgres_pool_budget(&values, &mut errors);
+        assert!(errors.iter().any(|error| error.contains("must be less")));
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("connection budget requires")));
+    }
 }

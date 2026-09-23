@@ -178,44 +178,5 @@
             </Grid>
         </Grid>
 
-        <Grid x:Name="TaskWorkspaceOverlay" AutomationProperties.AutomationId="ChatOS.Applications.TaskWorkspace" AutomationProperties.Name="{x:Bind TaskWorkspaceTitle, Mode=OneWay}" Background="#66000000" Visibility="Collapsed">
-            <Border Width="820" MaxHeight="620" Padding="0" HorizontalAlignment="Center" VerticalAlignment="Center" Background="{StaticResource ChatOSContentBackgroundBrush}" BorderBrush="{StaticResource ChatOSBorderBrush}" BorderThickness="1" CornerRadius="16">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="64" />
-                        <RowDefinition Height="1" />
-                        <RowDefinition Height="*" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-                    <Grid Padding="18,0" ColumnSpacing="10">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel VerticalAlignment="Center" Spacing="2">
-                            <TextBlock Text="{x:Bind TaskWorkspaceTitle, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                            <TextBlock Text="{x:Bind TaskWorkspaceDescription, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                        </StackPanel>
-                        <ProgressRing x:Name="TaskWorkspaceProgress" Grid.Column="1" Width="20" Height="20" VerticalAlignment="Center" />
-                        <Button Grid.Column="2" AutomationProperties.AutomationId="ChatOS.Applications.TaskWorkspace.Refresh" Click="OnRefreshTaskWorkspaceClicked" Content="{x:Bind Localization.Refresh, Mode=OneWay}" />
-                        <Button x:Name="StartTaskBatchButton" Grid.Column="3" AutomationProperties.AutomationId="ChatOS.Applications.TaskWorkspace.Start" Click="OnStartTaskBatchClicked" Content="{x:Bind StartExecutionText, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
-                    </Grid>
-                    <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
-                    <ScrollViewer Grid.Row="2" Padding="18" VerticalScrollBarVisibility="Auto">
-                        <StackPanel x:Name="TaskItems" Spacing="9" />
-                    </ScrollViewer>
-                    <Grid Grid.Row="3" Padding="18,10" ColumnSpacing="10">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock x:Name="TaskWorkspaceMessage" VerticalAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                        <Button Grid.Column="1" AutomationProperties.AutomationId="ChatOS.Applications.TaskWorkspace.Close" Click="OnCloseTaskWorkspaceClicked" Content="{x:Bind CloseText, Mode=OneWay}" />
-                    </Grid>
-                </Grid>
-            </Border>
-        </Grid>
     </Grid>
 </Page>

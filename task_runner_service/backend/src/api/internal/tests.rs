@@ -245,6 +245,7 @@ async fn test_state() -> AppState {
 
     AppState {
         config,
+        postgres_pool: None,
         task_queue_topology,
         task_service,
         model_config_service,
@@ -288,7 +289,6 @@ fn test_config() -> AppConfig {
         worker_id: "test-worker".to_string(),
         worker_claim_ttl: Duration::from_millis(120_000),
         worker_concurrency: 4,
-        auto_memory_summary: false,
         default_task_execution_max_iterations: 1,
         default_tool_result_model_max_chars: 1_000,
         default_tool_results_model_total_max_chars: 2_000,

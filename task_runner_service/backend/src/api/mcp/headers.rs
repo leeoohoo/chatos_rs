@@ -7,6 +7,8 @@ use chatos_agent::{
 
 use super::*;
 
+const CLIENT_PROJECT_CONTEXT_HEADER: &str = "x-mcp-management-client-project-context";
+
 pub(super) fn mcp_management_binding_from_headers(
     headers: &HeaderMap,
 ) -> Result<McpManagementBinding, String> {
@@ -16,6 +18,23 @@ pub(super) fn mcp_management_binding_from_headers(
     let agent_key_text = required("x-mcp-management-agent-key")?;
     let agent_key = parse_system_agent_key(&agent_key_text)
         .ok_or_else(|| "x-mcp-management-agent-key is not a registered System Agent".to_string())?;
+    let project_id = header_text(headers, "x-mcp-management-project-id");
+    let project_context = client_project_context_from_headers(headers)?;
+    match (project_id.as_deref(), project_context.as_ref()) {
+        (Some(project_id), Some(snapshot)) => snapshot.validate_project_id(project_id)?,
+        (Some(_), None) => {
+            return Err(
+                "x-mcp-management-client-project-context is required for a project binding"
+                    .to_string(),
+            )
+        }
+        (None, Some(_)) => {
+            return Err(
+                "x-mcp-management-client-project-context requires a project binding".to_string(),
+            )
+        }
+        (None, None) => {}
+    }
     Ok(McpManagementBinding {
         owner_user_id,
         owner_role: header_text(headers, "x-mcp-management-owner-role"),
@@ -26,7 +45,8 @@ pub(super) fn mcp_management_binding_from_headers(
             .map_err(|_| {
                 "x-mcp-management-session-expires-at-unix must be an integer".to_string()
             })?,
-        project_id: header_text(headers, "x-mcp-management-project-id"),
+        project_id,
+        project_context,
         run_id: header_text(headers, "x-mcp-management-run-id"),
         turn_id: header_text(headers, "x-mcp-management-turn-id"),
         task_id: header_text(headers, "x-mcp-management-task-id"),
@@ -42,6 +62,22 @@ pub(super) fn mcp_management_binding_from_headers(
             .map(|value| crate::models::normalize_task_profile(Some(value.as_str())))
             .transpose()?,
     })
+}
+
+fn client_project_context_from_headers(
+    headers: &HeaderMap,
+) -> Result<Option<chatos_mcp_management_sdk::ClientProjectContextSnapshot>, String> {
+    let Some(encoded) = header_text(headers, CLIENT_PROJECT_CONTEXT_HEADER) else {
+        return Ok(None);
+    };
+    let json = urlencoding::decode(encoded.as_str())
+        .map_err(|error| format!("invalid {CLIENT_PROJECT_CONTEXT_HEADER} encoding: {error}"))?;
+    let snapshot = serde_json::from_str::<chatos_mcp_management_sdk::ClientProjectContextSnapshot>(
+        json.as_ref(),
+    )
+    .map_err(|error| format!("invalid {CLIENT_PROJECT_CONTEXT_HEADER}: {error}"))?;
+    snapshot.validate()?;
+    Ok(Some(snapshot))
 }
 
 pub(super) fn task_matches_mcp_management_binding(

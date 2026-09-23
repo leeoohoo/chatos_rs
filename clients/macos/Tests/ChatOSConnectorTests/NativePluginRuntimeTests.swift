@@ -1,5 +1,6 @@
 @testable import ChatOSConnector
 import ChatOSCore
+import Darwin
 import Foundation
 import Testing
 
@@ -24,6 +25,8 @@ struct NativePluginRuntimeTests {
         let launcher = binDirectory.appendingPathComponent("demo-app")
         let script = #"""
         #!/bin/sh
+        sleep 60 &
+        echo $! > "$CHATOS_PLUGIN_DATA_DIR/child.pid"
         exec node -e 'const http=require("http");const port=Number(process.env.CHATOS_PLUGIN_APP_PORT);http.createServer((req,res)=>{res.writeHead(200,{"content-type":"text/html"});res.end(process.env.CHATOS_PLUGIN_RELEASE_ID)}).listen(port,"127.0.0.1")'
         """#
         try Data(script.utf8).write(to: launcher)
@@ -93,6 +96,8 @@ struct NativePluginRuntimeTests {
         #expect(FileManager.default.fileExists(
             atPath: runtimeRoot.appendingPathComponent("data", isDirectory: true).path
         ))
+        let childPID = try await waitForPID(below: runtimeRoot)
+        #expect(processExists(childPID))
 
         var updatedRecord = record
         updatedRecord.releaseID = "release-demo-2"
@@ -115,6 +120,28 @@ struct NativePluginRuntimeTests {
         let updatedBody = try await URLSession.shared.data(from: updatedLaunch.url).0
         #expect(String(decoding: updatedBody, as: UTF8.self) == "release-demo-2")
         await runtime.stopAll()
+        #expect(!processExists(childPID))
+    }
+
+    private func waitForPID(below root: URL) async throws -> pid_t {
+        for _ in 0..<50 {
+            let url = FileManager.default.enumerator(
+                at: root,
+                includingPropertiesForKeys: nil
+            )?.compactMap { $0 as? URL }
+                .first { $0.lastPathComponent == "child.pid" }
+            if let url,
+               let value = try? String(contentsOf: url, encoding: .utf8),
+               let pid = pid_t(value.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                return pid
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        throw CocoaError(.fileReadNoSuchFile)
+    }
+
+    private func processExists(_ pid: pid_t) -> Bool {
+        kill(pid, 0) == 0 || errno == EPERM
     }
 
     @Test("all plugins use different data directories for different ChatOS users")
@@ -785,7 +812,7 @@ struct NativePluginRuntimeTests {
         #expect(launch.executableURL == launcher.standardizedFileURL)
         #expect(launch.arguments == ["mcp"])
         #expect(launch.environment["CHATOS_PLUGIN_RUNTIME_SESSION_ID"] == "adapter-1")
-        #expect(launch.environment["CHATOS_WORKSPACE"] == root.path)
+        #expect(launch.environment["CHATOS_WORKSPACE"] == nil)
         for key in [
             "CHATOS_PLUGIN_VISUAL_SESSION_DIR",
             "CHATOS_PLUGIN_ARTIFACT_DIR",
@@ -895,6 +922,68 @@ struct NativePluginRuntimeTests {
         )
         #expect(result.jsonObject?["content"]?.jsonArray?.first?.jsonObject?["text"]?.jsonString == "ok")
         await client.terminate()
+    }
+
+    @Test("terminating a stdio plugin also terminates its spawned descendants")
+    func stdioTerminationKillsPluginProcessGroup() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let grandchildPIDFile = root.appendingPathComponent("grandchild.pid")
+        let script = root.appendingPathComponent("fixture.zsh")
+        try """
+        while IFS= read -r line; do
+          if [[ "$line" == *'tools/list'* ]]; then
+            echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"hang","description":"Hang","inputSchema":{"type":"object"}}]}}'
+          elif [[ "$line" == *'tools/call'* ]]; then
+            /bin/sleep 60 &
+            echo $! > '\(grandchildPIDFile.path)'
+            wait
+          elif [[ "$line" == *'initialize'* ]]; then
+            echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}}}}'
+          fi
+        done
+        """.write(to: script, atomically: true, encoding: .utf8)
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data("""
+            {"schemaVersion":3,"name":"fixture","version":"1.0.0","mcpServers":{"fixture":{"type":"stdio","bin":"fixture","args":[]}}}
+            """.utf8)
+        )
+        let launch = NativePreparedPluginLaunch(
+            manifest: manifest,
+            componentKey: "fixture",
+            server: manifest.mcpServers["fixture"]!,
+            executableURL: URL(fileURLWithPath: "/bin/zsh"),
+            arguments: [script.path],
+            environment: [:],
+            installationURL: root,
+            visualSessionURL: root.appendingPathComponent("visual"),
+            artifactURL: root.appendingPathComponent("artifacts"),
+            displayName: "Fixture"
+        )
+        let client = NativePluginStdioClient(launch: launch)
+        try await client.start()
+        _ = try await client.initialize()
+        let call = Task {
+            try await client.callTool(name: "hang", arguments: .object([:]), timeout: .seconds(30))
+        }
+        for _ in 0..<100 where !FileManager.default.fileExists(atPath: grandchildPIDFile.path) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let text = try String(contentsOf: grandchildPIDFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let grandchildPID = try #require(pid_t(text))
+        #expect(Darwin.kill(grandchildPID, 0) == 0)
+
+        await client.terminate()
+        _ = try? await call.value
+        for _ in 0..<100 where Darwin.kill(grandchildPID, 0) == 0 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(Darwin.kill(grandchildPID, 0) == -1)
+        #expect(errno == ESRCH)
     }
 
     @Test("stdio client preserves the byte order of a large chunked response")
@@ -1912,7 +2001,7 @@ struct NativePluginRuntimeTests {
     }
 
     @Test("plugin permissions use the installed app's real diagnostic state")
-    func pluginPermissionDiagnostics() throws {
+    func pluginPermissionDiagnostics() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let bin = root.appendingPathComponent("bin", isDirectory: true)
@@ -1952,7 +2041,7 @@ struct NativePluginRuntimeTests {
             installedAt: "2026-08-27T00:00:00Z"
         )
 
-        let permissions = NativePluginPermissionInspector.permissions(
+        let permissions = await NativePluginPermissionInspector.permissions(
             record: record,
             manifest: manifest
         )
@@ -1985,7 +2074,7 @@ struct NativePluginRuntimeTests {
     }
 
     @Test("plugin capabilities are reported as available instead of ambiguous on-demand permissions")
-    func pluginCapabilityStatusIsExplicit() throws {
+    func pluginCapabilityStatusIsExplicit() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -2014,7 +2103,7 @@ struct NativePluginRuntimeTests {
             installedAt: "2026-08-27T00:00:00Z"
         )
 
-        let permissions = NativePluginPermissionInspector.permissions(
+        let permissions = await NativePluginPermissionInspector.permissions(
             record: record,
             manifest: manifest
         )
@@ -2027,7 +2116,7 @@ struct NativePluginRuntimeTests {
     }
 
     @Test("older plugin launchers show a non-blocking unknown permission state")
-    func oldPluginPermissionLauncherDoesNotStartMCP() throws {
+    func oldPluginPermissionLauncherDoesNotStartMCP() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let bin = root.appendingPathComponent("bin", isDirectory: true)
@@ -2064,7 +2153,7 @@ struct NativePluginRuntimeTests {
         )
 
         let permission = try #require(
-            NativePluginPermissionInspector.permissions(record: record, manifest: manifest)
+            await NativePluginPermissionInspector.permissions(record: record, manifest: manifest)
                 .first(where: { $0.permissionID == "computer.screen-recording" })
         )
 

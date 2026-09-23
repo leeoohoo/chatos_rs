@@ -14,29 +14,22 @@ struct RootView: View {
             ResourceSidebar()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 244, max: 290)
         } detail: {
-            ZStack(alignment: .topTrailing) {
-                detail
-                    .workspaceFill()
-
-                GlobalApprovalOverlayHost(viewModel: model.localConnectorControl)
+            detail
+                .overlay(alignment: .topTrailing) {
+                    GlobalApprovalOverlayHost(viewModel: model.localConnectorControl)
+                        .padding(18)
+                        .zIndex(30)
+                }
+                .overlay(alignment: model.localConnectorControl.pendingApprovals.isEmpty
+                    ? .topTrailing
+                    : .bottomTrailing) {
+                    VisualSessionOverlayHost(
+                        store: model.visualSessionStore,
+                        currentConversationID: model.currentConversationID
+                    )
                     .padding(18)
-                    .zIndex(30)
-
-                VisualSessionOverlayHost(
-                    store: model.visualSessionStore,
-                    currentConversationID: model.currentConversationID
-                )
-                .padding(18)
-                .frame(
-                    maxWidth: .infinity,
-                    maxHeight: .infinity,
-                    alignment: model.localConnectorControl.pendingApprovals.isEmpty
-                        ? .topTrailing
-                        : .bottomTrailing
-                )
-                .zIndex(20)
-            }
-            .workspaceFill()
+                    .zIndex(20)
+                }
         }
         .navigationSplitViewStyle(.balanced)
         .toolbar(removing: .sidebarToggle)
@@ -63,6 +56,37 @@ struct RootView: View {
                 PluginApplicationsView()
             case .mediaStudio:
                 MediaStudioView(viewModel: model.mediaStudio)
+            case .agentGroupChat:
+                if let ownerUserID = model.localProjectOwnerUserID {
+                    AgentGroupChatWorkspaceView(
+                        ownerUserID: ownerUserID,
+                        service: model.agentGroupChatService,
+                        scheduler: model.agentGroupChatScheduler,
+                        builderService: model.agentGroupChatBuilderService,
+                        skillLibrary: model.agentSkillLibrary
+                    )
+                    .id(ownerUserID)
+                } else {
+                    ContentUnavailableView(
+                        model.localized("请先登录", english: "Sign in required"),
+                        systemImage: "person.crop.circle.badge.exclamationmark"
+                    )
+                }
+            case .requirementSurveys:
+                if let ownerUserID = model.localProjectOwnerUserID {
+                    RequirementSurveyCenterView(
+                        ownerUserID: ownerUserID,
+                        projects: model.projects,
+                        service: model.agentGroupChatService,
+                        scheduler: model.agentGroupChatScheduler
+                    )
+                    .id(ownerUserID)
+                } else {
+                    ContentUnavailableView(
+                        model.localized("请先登录", english: "Sign in required"),
+                        systemImage: "person.crop.circle.badge.exclamationmark"
+                    )
+                }
             case let .pluginApplication(pluginID, componentKey):
                 if let application = model.pluginApplication(
                     pluginID: pluginID,
@@ -74,7 +98,7 @@ struct RootView: View {
                     PluginApplicationsView()
                 }
             case .terminal:
-                TerminalWorkspaceView()
+                TerminalWorkspaceView(workspace: model.terminalWorkspace)
             case let .remote(remoteID):
                 RemoteConnectionDetailView(connectionID: remoteID)
                     .id(remoteID)
@@ -89,7 +113,10 @@ struct RootView: View {
                 )
             }
         }
-        .workspaceFill()
+        // NavigationStack destinations can otherwise remain cached by NavigationSplitView after
+        // the sidebar selection changes. Key the complete detail subtree to the authoritative
+        // sidebar selection so a pushed survey/project page can never cover another main area.
+        .id(model.selection)
     }
 }
 

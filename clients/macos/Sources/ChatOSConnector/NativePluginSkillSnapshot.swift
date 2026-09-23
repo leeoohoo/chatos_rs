@@ -1,3 +1,4 @@
+import ChatOSCore
 import Foundation
 
 enum NativePluginSkillSnapshotLoader {
@@ -92,7 +93,7 @@ enum NativePluginSkillSnapshotLoader {
             expectedSnapshot: expectedSnapshot,
             fileManager: fileManager
         )
-        let normalizedPath = try normalizedRelativePath(relativePath)
+        let normalizedPath = try ProgressiveSkillFileLoader.normalizedRelativePath(relativePath)
         guard normalizedPath != "SKILL.md",
               let descriptor = validated.resources.first(where: {
                   $0.jsonObject?["relative_path"]?.jsonString == normalizedPath
@@ -107,7 +108,7 @@ enum NativePluginSkillSnapshotLoader {
         let resourceURL = validated.collectionURL
             .appendingPathComponent(normalizedPath, isDirectory: false)
             .standardizedFileURL
-        let data = try readRegularFile(
+        let data = try ProgressiveSkillFileLoader.readRegularFile(
             resourceURL,
             beneath: validated.installationURL,
             maximumBytes: maximumResourceBytes,
@@ -178,7 +179,9 @@ enum NativePluginSkillSnapshotLoader {
         guard let matchingSkill else {
             throw NativePluginRuntimeError.invalidManifest("没有找到对应的 Plugin Skill 组件")
         }
-        let relativeCollectionPath = try normalizedRelativePath(matchingSkill.path)
+        let relativeCollectionPath = try ProgressiveSkillFileLoader.normalizedRelativePath(
+            matchingSkill.path
+        )
         let relativeSkillPath = relativeCollectionPath + "/SKILL.md"
         guard try expected.requireString("relative_skill_path") == relativeSkillPath else {
             throw NativePluginRuntimeError.invalidRequest("Plugin Skill 路径与固定快照不匹配")
@@ -186,8 +189,12 @@ enum NativePluginSkillSnapshotLoader {
         let collectionURL = installationURL
             .appendingPathComponent(relativeCollectionPath, isDirectory: true)
             .standardizedFileURL
-        try validateDirectory(collectionURL, beneath: installationURL, fileManager: fileManager)
-        let skillData = try readRegularFile(
+        try ProgressiveSkillFileLoader.validateDirectory(
+            collectionURL,
+            beneath: installationURL,
+            fileManager: fileManager
+        )
+        let skillData = try ProgressiveSkillFileLoader.readRegularFile(
             collectionURL.appendingPathComponent("SKILL.md", isDirectory: false),
             beneath: installationURL,
             maximumBytes: maximumInstructionsBytes,
@@ -266,7 +273,7 @@ enum NativePluginSkillSnapshotLoader {
             guard resources.count < maximumResourceCount else {
                 throw NativePluginRuntimeError.invalidManifest("Plugin Skill 资源数量过多")
             }
-            let data = try readRegularFile(
+            let data = try ProgressiveSkillFileLoader.readRegularFile(
                 fileURL,
                 beneath: installationURL,
                 maximumBytes: maximumResourceBytes,
@@ -302,61 +309,6 @@ enum NativePluginSkillSnapshotLoader {
         default: return "other"
         }
     }
-
-
-    private static func validateDirectory(
-        _ directoryURL: URL,
-        beneath installationURL: URL,
-        fileManager: FileManager
-    ) throws {
-        guard directoryURL.path.hasPrefix(installationURL.path + "/"),
-              fileManager.fileExists(atPath: directoryURL.path) else {
-            throw NativePluginRuntimeError.invalidManifest("Plugin Skill 目录不存在")
-        }
-        let values = try directoryURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-        guard values.isDirectory == true, values.isSymbolicLink != true else {
-            throw NativePluginRuntimeError.invalidManifest("Plugin Skill 目录不可用")
-        }
-    }
-
-    private static func readRegularFile(
-        _ fileURL: URL,
-        beneath installationURL: URL,
-        maximumBytes: Int,
-        fileManager: FileManager
-    ) throws -> Data {
-        let standardized = fileURL.standardizedFileURL
-        guard standardized.path.hasPrefix(installationURL.path + "/"),
-              fileManager.fileExists(atPath: standardized.path) else {
-            throw NativePluginRuntimeError.invalidManifest("Plugin Skill 资源不存在")
-        }
-        let values = try standardized.resourceValues(forKeys: [
-            .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
-        ])
-        guard values.isRegularFile == true,
-              values.isSymbolicLink != true,
-              values.fileSize ?? maximumBytes + 1 <= maximumBytes else {
-            throw NativePluginRuntimeError.invalidManifest("Plugin Skill 资源不可用或过大")
-        }
-        let data = try Data(contentsOf: standardized, options: .mappedIfSafe)
-        guard data.count <= maximumBytes else {
-            throw NativePluginRuntimeError.invalidManifest("Plugin Skill 资源过大")
-        }
-        return data
-    }
-
-    private static func normalizedRelativePath(_ value: String) throws -> String {
-        var path = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if path.hasPrefix("./") { path.removeFirst(2) }
-        let segments = path.split(separator: "/", omittingEmptySubsequences: false)
-        guard !path.isEmpty, !path.hasPrefix("/"), segments.allSatisfy({
-            !$0.isEmpty && $0 != "." && $0 != ".."
-        }) else {
-            throw NativePluginRuntimeError.invalidManifest("Plugin Skill 路径无效")
-        }
-        return path
-    }
-
     private static func componentKeyFromPath(_ path: String, fallback: String, index: Int) -> String {
         let candidate = path
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))

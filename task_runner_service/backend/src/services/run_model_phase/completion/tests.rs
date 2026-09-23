@@ -167,7 +167,6 @@ fn test_config() -> AppConfig {
         worker_id: "test-worker".to_string(),
         worker_claim_ttl: Duration::from_millis(120_000),
         worker_concurrency: 4,
-        auto_memory_summary: false,
         default_task_execution_max_iterations: 1,
         default_tool_result_model_max_chars: 1000,
         default_tool_results_model_total_max_chars: 2000,
@@ -297,9 +296,7 @@ fn run_record(task: &TaskRecord) -> TaskRunRecord {
         post_process_dead_lettered: false,
         post_process_attempt_count: 0,
         post_process_last_error: None,
-        memory_summary_processed: false,
         chatos_followup_processed: false,
-        summary_job_run_id: None,
         worker_id: None,
         claim_token: None,
         claim_until: None,
@@ -360,6 +357,16 @@ async fn completed_run_persists_success_when_report_completed() {
         .expect("get parent")
         .expect("parent");
     assert_eq!(saved_parent.status, TaskStatus::Succeeded);
+    assert_eq!(
+        saved_parent.task_tool_state.outcome_items[0].kind,
+        "summary"
+    );
+    assert_eq!(saved_parent.task_tool_state.outcome_items[0].text, "done");
+    assert!(saved_parent
+        .task_tool_state
+        .outcome_items
+        .iter()
+        .any(|item| item.kind == "verification" && item.text == "focused test passed"));
 }
 
 #[tokio::test]

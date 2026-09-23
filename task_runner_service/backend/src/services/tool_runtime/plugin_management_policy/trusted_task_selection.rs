@@ -11,7 +11,7 @@ use chatos_plugin_management_sdk::{
 use crate::auth::CurrentUser;
 use crate::models::{
     normalize_project_id, normalize_task_profile, now_rfc3339, CreateTaskPluginHint,
-    CreateTaskRequest, TaskPluginSelectionAudit, TaskScheduleConfig, TaskSelectedPluginSnapshot,
+    CreateTaskRequest, TaskPluginSelectionAudit, TaskSelectedPluginSnapshot,
 };
 
 use super::{TaskRunnerCapabilityPolicy, TaskScheduleModeExt, TaskService};
@@ -42,10 +42,7 @@ impl TaskService {
             .await?;
         let task_profile = normalize_task_profile(input.task_profile.as_deref())?;
         let agent_key = chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase;
-        let schedule = input
-            .schedule
-            .clone()
-            .unwrap_or_else(TaskScheduleConfig::default);
+        let schedule = input.schedule.clone().unwrap_or_default();
         let Some(policy) = self
             .resolve_task_runner_policy_for_agent_project(
                 Some(current_user),

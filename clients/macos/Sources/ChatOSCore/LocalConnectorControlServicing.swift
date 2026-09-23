@@ -7,6 +7,10 @@ public protocol LocalConnectorPairingTicketProviding: Sendable {
 public protocol LocalConnectorControlServicing: Sendable {
     func fetchStatus() async throws -> LocalConnectorStatus
     func pairWithCurrentChatOSSession(deviceName: String?) async throws -> LocalConnectorStatus
+    /// Stops account-scoped runtime activity without deleting persisted local state.
+    /// Authentication loss and app replacement must not be treated as an explicit unpair.
+    func suspendForSignedOut() async
+    func resumeServerAccess() async throws -> LocalConnectorStatus
     func disconnect() async throws -> LocalConnectorStatus
     func fetchRuntimeSettings() async throws -> LocalConnectorRuntimeSettings
     func updateDeveloperMode(_ enabled: Bool) async throws -> LocalConnectorRuntimeSettings
@@ -56,6 +60,9 @@ public protocol LocalConnectorControlServicing: Sendable {
 }
 
 public extension LocalConnectorControlServicing {
+    func suspendForSignedOut() async {}
+    func resumeServerAccess() async throws -> LocalConnectorStatus { try await fetchStatus() }
+
     func fetchPluginApplications() async throws -> [LocalConnectorPluginApplication] { [] }
 
     func launchPluginApplication(

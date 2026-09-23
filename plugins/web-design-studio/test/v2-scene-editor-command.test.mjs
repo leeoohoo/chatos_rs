@@ -218,8 +218,9 @@ test('Scene editor creates and renames independent human artboards without legac
     assert.equal(page.children[0].role, 'page-root');
     assert.deepEqual(page.children[0].frame, { x: 0, y: 0, width: 720, height: 640 });
     assert.equal(page.children[0].layout.mode, 'auto');
+    assert.equal(page.children[0].layout.sizingX, 'fill');
     assert.equal(page.children[0].layout.sizingY, 'hug');
-    assert.equal(page.children[0].layout.minHeight, 640);
+    assert.equal(page.children[0].layout.minHeight, 1);
 
     const renamed = await executeSceneEditorCommand(store, created.documentId, {
       transactionId: 'command:rename-modal-page', expectedRevision: inserted.document.revision,

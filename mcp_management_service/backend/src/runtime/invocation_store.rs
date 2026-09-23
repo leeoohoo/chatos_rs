@@ -6,13 +6,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, Weak};
 
 use chatos_mcp::code_maintainer::{classify_file_modification_error, FileModificationOutcome};
-use futures_util::TryStreamExt;
-use mongodb::bson::{self, doc, DateTime};
-use mongodb::error::{ErrorKind as MongoErrorKind, WriteFailure};
-use mongodb::options::{FindOneAndUpdateOptions, IndexOptions, ReturnDocument};
-use mongodb::{Client, Collection, IndexModel};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sqlx::types::Json;
 use tokio::sync::{Notify, RwLock};
 
 use super::{
@@ -81,8 +78,15 @@ pub struct RuntimeInvocationRecord {
     pub terminal_error_message: Option<String>,
     #[serde(default)]
     pub file_modification_outcome: Option<FileModificationOutcome>,
-    pub expires_at: DateTime,
+    pub expires_at: DateTime<Utc>,
     pub expires_at_unix: i64,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ExpiredRuntimeInvocationClaim {
+    pub record: RuntimeInvocationRecord,
+    pub claim_token: String,
+    pub cancellation_required: bool,
 }
 
 #[derive(Clone)]
@@ -205,7 +209,7 @@ impl RuntimeInvocationDiagnostics {
 #[cfg_attr(not(test), allow(dead_code))]
 enum RuntimeInvocationStoreBackend {
     Memory(RwLock<HashMap<String, RuntimeInvocationRecord>>),
-    Mongo(Collection<RuntimeInvocationRecord>),
+    Postgres(chatos_postgres::PgPool),
 }
 
 impl RuntimeInvocationStore {
@@ -232,91 +236,17 @@ impl RuntimeInvocationStore {
         database_url: &str,
         quota: RuntimeInvocationQuota,
     ) -> Result<Self, String> {
-        let client = Client::with_uri_str(database_url)
-            .await
-            .map_err(|error| format!("connect MCP invocation MongoDB failed: {error}"))?;
-        let database = client.default_database().ok_or_else(|| {
-            "MCP_MANAGEMENT_DATABASE_URL must include a MongoDB database name".to_string()
-        })?;
-        let collection =
-            database.collection::<RuntimeInvocationRecord>("mcp_management_runtime_invocations");
-        collection
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! { "expires_at": 1 })
-                    .options(
-                        IndexOptions::builder()
-                            .name("runtime_invocation_expiry_ttl".to_string())
-                            .expire_after(Some(std::time::Duration::from_secs(0)))
-                            .build(),
-                    )
-                    .build(),
-                None,
-            )
-            .await
-            .map_err(|error| format!("initialize Runtime Invocation TTL index failed: {error}"))?;
-        collection
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! { "session_id": 1, "request_id_key": 1 })
-                    .options(
-                        IndexOptions::builder()
-                            .name("runtime_invocation_session_request".to_string())
-                            .unique(true)
-                            .build(),
-                    )
-                    .build(),
-                None,
-            )
-            .await
-            .map_err(|error| {
-                format!("initialize Runtime Invocation identity index failed: {error}")
-            })?;
-        for (name, keys) in [
-            (
-                "runtime_invocation_status_expiry",
-                doc! { "expires_at": 1, "status": 1 },
-            ),
-            (
-                "runtime_invocation_tenant_status",
-                doc! { "tenant_id": 1, "status": 1, "expires_at": 1 },
-            ),
-            (
-                "runtime_invocation_owner_status",
-                doc! { "owner_user_id": 1, "status": 1, "expires_at": 1 },
-            ),
-            (
-                "runtime_invocation_project_status",
-                doc! { "project_id": 1, "status": 1, "expires_at": 1 },
-            ),
-            (
-                "runtime_invocation_device_status",
-                doc! { "device_id": 1, "status": 1, "expires_at": 1 },
-            ),
-            (
-                "runtime_invocation_file_modification_outcome",
-                doc! { "expires_at": 1, "file_modification_outcome": 1 },
-            ),
-        ] {
-            collection
-                .create_index(
-                    IndexModel::builder()
-                        .keys(keys)
-                        .options(IndexOptions::builder().name(name.to_string()).build())
-                        .build(),
-                    None,
-                )
-                .await
-                .map_err(|error| {
-                    format!("initialize Runtime Invocation quota index {name} failed: {error}")
-                })?;
-        }
-        Ok(Self {
-            backend: Arc::new(RuntimeInvocationStoreBackend::Mongo(collection)),
+        let pool = crate::postgres::connect(database_url).await?;
+        Ok(Self::from_pool(pool, quota))
+    }
+
+    pub(crate) fn from_pool(pool: chatos_postgres::PgPool, quota: RuntimeInvocationQuota) -> Self {
+        Self {
+            backend: Arc::new(RuntimeInvocationStoreBackend::Postgres(pool)),
             quota,
             diagnostics: Arc::new(RuntimeInvocationDiagnostics::default()),
             cancellation_waiters: Arc::new(StdMutex::new(HashMap::new())),
-        })
+        }
     }
 
     pub async fn register(
@@ -392,75 +322,51 @@ impl RuntimeInvocationStore {
                     Ok(())
                 }
             }
-            RuntimeInvocationStoreBackend::Mongo(collection) => {
-                collection
-                    .delete_many(
-                        doc! {
-                            "session_id": record.session_id.as_str(),
-                            "request_id_key": record.request_id_key.as_str(),
-                            "status": { "$in": [
-                                RuntimeInvocationStatus::Completed.as_str(),
-                                RuntimeInvocationStatus::Failed.as_str(),
-                                RuntimeInvocationStatus::Cancelled.as_str(),
-                                RuntimeInvocationStatus::UnknownExecutionState.as_str(),
-                            ] },
-                        },
-                        None,
-                    )
-                    .await
-                    .map_err(|error| {
-                        RuntimeInvocationRegisterError::StoreUnavailable(format!(
-                            "remove prior terminal Runtime Invocation failed: {error}"
-                        ))
-                    })?;
-                match collection.insert_one(record.clone(), None).await {
-                    Ok(_) => Ok(()),
-                    Err(error) if is_mongodb_duplicate_key(&error) => {
-                        match collection
-                            .find_one(
-                                doc! {
-                                    "session_id": record.session_id.as_str(),
-                                    "request_id_key": record.request_id_key.as_str(),
-                                },
-                                None,
-                            )
-                            .await
+            RuntimeInvocationStoreBackend::Postgres(pool) => {
+                let mut tx = pool.begin().await.map_err(|error| {
+                    RuntimeInvocationRegisterError::StoreUnavailable(error.to_string())
+                })?;
+                sqlx::query(
+                    "DELETE FROM mcp_management_runtime_invocations WHERE session_id=$1 AND request_id_key=$2 \
+                     AND status IN ('completed','failed','cancelled','unknown_execution_state')",
+                )
+                .bind(&record.session_id)
+                .bind(&record.request_id_key)
+                .execute(&mut *tx)
+                .await
+                .map_err(|error| RuntimeInvocationRegisterError::StoreUnavailable(format!(
+                    "remove prior terminal Runtime Invocation failed: {error}"
+                )))?;
+                match insert_invocation(&mut *tx, &record).await {
+                    Ok(()) => {
+                        tx.commit().await.map_err(|error| {
+                            RuntimeInvocationRegisterError::StoreUnavailable(error.to_string())
+                        })?;
+                        Ok(())
+                    }
+                    Err(error) if is_postgres_unique_violation(&error) => {
+                        tx.rollback().await.ok();
+                        match load_invocation_by_session_request(
+                            pool,
+                            &record.session_id,
+                            &record.request_id_key,
+                        )
+                        .await
                         {
-                            Ok(Some(existing))
-                                if existing.invocation_id == record.invocation_id =>
-                            {
+                            Ok(Some(existing)) if existing.invocation_id == record.invocation_id => {
                                 Ok(())
                             }
                             Ok(Some(_)) => Err(RuntimeInvocationRegisterError::DuplicateActiveId),
-                            Ok(None) => {
-                                match collection
-                                    .find_one(
-                                        doc! { "_id": record.invocation_id.as_str() },
-                                        None,
-                                    )
-                                    .await
-                                {
-                                    Ok(Some(_)) => Err(
-                                        RuntimeInvocationRegisterError::InvalidRecord(
-                                            "Runtime Invocation id is already in use".to_string(),
-                                        ),
-                                    ),
-                                    Ok(None) => Err(RuntimeInvocationRegisterError::StoreUnavailable(
-                                        "MongoDB reported a duplicate Runtime Invocation key without a matching record"
-                                            .to_string(),
-                                    )),
-                                    Err(lookup_error) => Err(
-                                        RuntimeInvocationRegisterError::StoreUnavailable(format!(
-                                            "verify duplicate Runtime Invocation id failed: {lookup_error}"
-                                        )),
-                                    ),
-                                }
-                            }
-                            Err(lookup_error) => {
-                                Err(RuntimeInvocationRegisterError::StoreUnavailable(format!(
-                                    "verify duplicate Runtime Invocation failed: {lookup_error}"
-                                )))
-                            }
+                            Ok(None) => match load_invocation(pool, &record.invocation_id).await {
+                                Ok(Some(_)) => Err(RuntimeInvocationRegisterError::InvalidRecord(
+                                    "Runtime Invocation id is already in use".to_string(),
+                                )),
+                                Ok(None) => Err(RuntimeInvocationRegisterError::StoreUnavailable(
+                                    "PostgreSQL reported a duplicate Runtime Invocation without a matching record".to_string(),
+                                )),
+                                Err(error) => Err(RuntimeInvocationRegisterError::StoreUnavailable(error)),
+                            },
+                            Err(error) => Err(RuntimeInvocationRegisterError::StoreUnavailable(error)),
                         }
                     }
                     Err(error) => Err(RuntimeInvocationRegisterError::StoreUnavailable(format!(
@@ -547,17 +453,45 @@ impl RuntimeInvocationStore {
                     .filter(|record| record.caller_service == caller_service)
                     .cloned())
             }
-            RuntimeInvocationStoreBackend::Mongo(collection) => collection
-                .find_one(
-                    doc! {
-                        "_id": invocation_id,
-                        "caller_service": caller_service,
-                        "expires_at_unix": { "$gt": now },
-                    },
-                    None,
+            RuntimeInvocationStoreBackend::Postgres(pool) => {
+                load_invocation_by(
+                    pool,
+                    "SELECT data FROM mcp_management_runtime_invocations \
+                 WHERE invocation_id=$1 AND caller_service=$2 AND expires_at_unix>$3",
+                    invocation_id,
+                    caller_service,
+                    now,
                 )
                 .await
-                .map_err(|error| format!("load Runtime Invocation failed: {error}")),
+            }
+        }
+    }
+
+    pub(crate) async fn get_for_recovery(
+        &self,
+        invocation_id: &str,
+        caller_service: &str,
+    ) -> Result<Option<RuntimeInvocationRecord>, String> {
+        match self.backend.as_ref() {
+            RuntimeInvocationStoreBackend::Memory(invocations) => Ok(invocations
+                .read()
+                .await
+                .get(invocation_id)
+                .filter(|record| record.caller_service == caller_service)
+                .cloned()),
+            RuntimeInvocationStoreBackend::Postgres(pool) => {
+                sqlx::query_scalar::<_, Json<serde_json::Value>>(
+                    "SELECT data FROM mcp_management_runtime_invocations \
+                     WHERE invocation_id=$1 AND caller_service=$2",
+                )
+                .bind(invocation_id)
+                .bind(caller_service)
+                .fetch_optional(pool)
+                .await
+                .map_err(|error| error.to_string())?
+                .map(decode_invocation)
+                .transpose()
+            }
         }
     }
 }
@@ -571,15 +505,139 @@ fn active_runtime_invocation_statuses() -> &'static [RuntimeInvocationStatus] {
     ]
 }
 
-fn is_mongodb_duplicate_key(error: &mongodb::error::Error) -> bool {
-    match error.kind.as_ref() {
-        MongoErrorKind::Write(WriteFailure::WriteError(error)) => error.code == 11_000,
-        MongoErrorKind::BulkWrite(failure) => failure
-            .write_errors
-            .as_ref()
-            .is_some_and(|errors| errors.iter().any(|error| error.code == 11_000)),
-        _ => false,
-    }
+fn is_postgres_unique_violation(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .and_then(|error| error.code())
+        .as_deref()
+        == Some("23505")
+}
+
+async fn insert_invocation<'e, E>(
+    executor: E,
+    record: &RuntimeInvocationRecord,
+) -> Result<(), sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let data =
+        Json(serde_json::to_value(record).map_err(|error| sqlx::Error::Encode(error.into()))?);
+    sqlx::query(
+        "INSERT INTO mcp_management_runtime_invocations \
+         (invocation_id,session_id,request_id_key,caller_service,tenant_id,owner_user_id,project_id,device_id, \
+          resource_id,status,mutation_may_have_started,cancel_supported,created_at_unix_ms,started_at_unix_ms, \
+          completed_at_unix_ms,file_modification_outcome,expires_at,expires_at_unix,data) \
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)",
+    )
+    .bind(&record.invocation_id)
+    .bind(&record.session_id)
+    .bind(&record.request_id_key)
+    .bind(&record.caller_service)
+    .bind(&record.tenant_id)
+    .bind(&record.owner_user_id)
+    .bind(&record.project_id)
+    .bind(&record.device_id)
+    .bind(&record.resource_id)
+    .bind(record.status.as_str())
+    .bind(record.mutation_may_have_started)
+    .bind(record.cancel_supported)
+    .bind(record.created_at_unix_ms)
+    .bind(record.started_at_unix_ms)
+    .bind(record.completed_at_unix_ms)
+    .bind(record.file_modification_outcome.map(|outcome| outcome.as_str()))
+    .bind(record.expires_at)
+    .bind(record.expires_at_unix)
+    .bind(data)
+    .execute(executor)
+    .await
+    .map(|_| ())
+}
+
+pub(super) async fn persist_invocation<'e, E>(
+    executor: E,
+    record: &RuntimeInvocationRecord,
+) -> Result<(), String>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let data = serde_json::to_value(record)
+        .map(Json)
+        .map_err(|error| error.to_string())?;
+    sqlx::query(
+        "UPDATE mcp_management_runtime_invocations SET status=$1,mutation_may_have_started=$2, \
+         started_at_unix_ms=$3,completed_at_unix_ms=$4,file_modification_outcome=$5,data=$6 \
+         WHERE invocation_id=$7",
+    )
+    .bind(record.status.as_str())
+    .bind(record.mutation_may_have_started)
+    .bind(record.started_at_unix_ms)
+    .bind(record.completed_at_unix_ms)
+    .bind(
+        record
+            .file_modification_outcome
+            .map(|outcome| outcome.as_str()),
+    )
+    .bind(data)
+    .bind(&record.invocation_id)
+    .execute(executor)
+    .await
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
+pub(super) async fn load_invocation(
+    pool: &chatos_postgres::PgPool,
+    invocation_id: &str,
+) -> Result<Option<RuntimeInvocationRecord>, String> {
+    sqlx::query_scalar::<_, Json<serde_json::Value>>(
+        "SELECT data FROM mcp_management_runtime_invocations WHERE invocation_id=$1",
+    )
+    .bind(invocation_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| error.to_string())?
+    .map(decode_invocation)
+    .transpose()
+}
+
+async fn load_invocation_by_session_request(
+    pool: &chatos_postgres::PgPool,
+    session_id: &str,
+    request_id_key: &str,
+) -> Result<Option<RuntimeInvocationRecord>, String> {
+    load_invocation_by(
+        pool,
+        "SELECT data FROM mcp_management_runtime_invocations \
+         WHERE session_id=$1 AND request_id_key=$2 AND expires_at_unix>$3",
+        session_id,
+        request_id_key,
+        chrono::Utc::now().timestamp(),
+    )
+    .await
+}
+
+async fn load_invocation_by(
+    pool: &chatos_postgres::PgPool,
+    query: &str,
+    first: &str,
+    second: &str,
+    now: i64,
+) -> Result<Option<RuntimeInvocationRecord>, String> {
+    sqlx::query_scalar::<_, Json<serde_json::Value>>(query)
+        .bind(first)
+        .bind(second)
+        .bind(now)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| error.to_string())?
+        .map(decode_invocation)
+        .transpose()
+}
+
+pub(super) fn decode_invocation(
+    value: Json<serde_json::Value>,
+) -> Result<RuntimeInvocationRecord, String> {
+    serde_json::from_value(value.0).map_err(|error| error.to_string())
 }
 
 #[path = "invocation_store/coordination.rs"]

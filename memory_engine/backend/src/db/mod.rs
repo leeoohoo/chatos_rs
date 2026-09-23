@@ -2,12 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 mod connection;
-mod index_helpers;
 mod schema;
 
-use mongodb::Database;
-
-pub type Db = Database;
+pub type Db = chatos_postgres::PgPool;
 
 pub use self::connection::init_pool;
 pub use self::schema::init_schema;

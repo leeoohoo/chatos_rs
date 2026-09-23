@@ -72,7 +72,10 @@ impl RoutingEngine {
         };
         let allow_writes = descriptor.allow_writes && resource.allow_writes;
         match descriptor.key {
-            SystemMcpKey::CodeMaintainerRead | SystemMcpKey::CodeMaintainerWrite => {
+            SystemMcpKey::CodeMaintainerRead
+            | SystemMcpKey::CodeMaintainerWrite
+            | SystemMcpKey::RequirementSurveyRead
+            | SystemMcpKey::RequirementSurveyWrite => {
                 self.resolve_workspace(context, resource, allow_writes)
             }
             SystemMcpKey::TerminalController => {

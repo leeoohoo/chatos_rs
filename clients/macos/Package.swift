@@ -14,16 +14,37 @@ let package = Package(
         .library(name: "ChatOSConnector", targets: ["ChatOSConnector"]),
         .executable(name: "ChatOSSwift", targets: ["ChatOSApp"]),
     ],
+    dependencies: [
+        .package(
+            url: "https://github.com/migueldeicaza/SwiftTerm.git",
+            exact: "1.20.0"
+        ),
+    ],
     targets: [
+        .target(
+            name: "ChatOSProcessRuntime",
+            publicHeadersPath: "include"
+        ),
         .target(name: "ChatOSAgentRuntime"),
-        .target(name: "ChatOSCore"),
+        .target(
+            name: "ChatOSCore",
+            resources: [
+                .process("Resources"),
+                .copy("Skills"),
+            ]
+        ),
         .target(
             name: "ChatOSAPI",
             dependencies: ["ChatOSCore", "ChatOSAgentRuntime"]
         ),
         .target(
             name: "ChatOSConnector",
-            dependencies: ["ChatOSCore", "ChatOSAgentRuntime"],
+            dependencies: [
+                "ChatOSCore",
+                "ChatOSAgentRuntime",
+                "ChatOSProcessRuntime",
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
+            ],
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
                 .linkedFramework("ApplicationServices"),
@@ -38,12 +59,19 @@ let package = Package(
         ),
         .executableTarget(
             name: "ChatOSApp",
-            dependencies: ["ChatOSCore", "ChatOSAPI", "ChatOSConnector", "ChatOSAgentRuntime"],
+            dependencies: [
+                "ChatOSCore",
+                "ChatOSAPI",
+                "ChatOSConnector",
+                "ChatOSAgentRuntime",
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
+            ],
             linkerSettings: [
                 .linkedFramework("ApplicationServices"),
                 .linkedFramework("Carbon"),
                 .linkedFramework("Security"),
                 .linkedFramework("WebKit"),
+                .linkedFramework("AVFoundation"),
                 .linkedLibrary("sqlite3"),
             ]
         ),
@@ -61,7 +89,8 @@ let package = Package(
         ),
         .testTarget(
             name: "ChatOSConnectorTests",
-            dependencies: ["ChatOSConnector", "ChatOSCore"]
+            dependencies: ["ChatOSConnector", "ChatOSCore"],
+            resources: [.copy("Fixtures")]
         ),
         .testTarget(
             name: "ChatOSAppTests",

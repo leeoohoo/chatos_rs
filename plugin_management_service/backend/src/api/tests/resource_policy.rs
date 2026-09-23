@@ -101,37 +101,33 @@ fn super_admin_can_choose_public_and_system_private_visibility() {
 #[test]
 fn ordinary_users_can_only_create_local_connector_mcps() {
     let ordinary = user(USER_ROLE_USER);
-    for kind in [RUNTIME_KIND_HTTP] {
-        let payload = McpPayload {
-            runtime: Some(McpRuntime {
-                kind: kind.to_string(),
-                ..McpRuntime::default()
-            }),
-            ..McpPayload::default()
-        };
-        let err = validate_client_managed_mcp_payload(&payload, &ordinary)
-            .expect_err("ordinary external HTTP MCP should be rejected");
-        assert_eq!(err.status, StatusCode::FORBIDDEN);
-        let runtime = payload.runtime.as_ref().expect("test runtime");
-        let err = validate_client_managed_mcp_runtime(runtime, &ordinary)
-            .expect_err("persisted external HTTP MCP should also be rejected");
-        assert_eq!(err.status, StatusCode::FORBIDDEN);
-    }
+    let payload = McpPayload {
+        runtime: Some(McpRuntime {
+            kind: RUNTIME_KIND_HTTP.to_string(),
+            ..McpRuntime::default()
+        }),
+        ..McpPayload::default()
+    };
+    let err = validate_client_managed_mcp_payload(&payload, &ordinary)
+        .expect_err("ordinary external HTTP MCP should be rejected");
+    assert_eq!(err.status, StatusCode::FORBIDDEN);
+    let runtime = payload.runtime.as_ref().expect("test runtime");
+    let err = validate_client_managed_mcp_runtime(runtime, &ordinary)
+        .expect_err("persisted external HTTP MCP should also be rejected");
+    assert_eq!(err.status, StatusCode::FORBIDDEN);
 }
 
 #[test]
 fn super_admin_can_create_external_http_mcps() {
     let admin = user(USER_ROLE_SUPER_ADMIN);
-    for kind in [RUNTIME_KIND_HTTP] {
-        let payload = McpPayload {
-            runtime: Some(McpRuntime {
-                kind: kind.to_string(),
-                ..McpRuntime::default()
-            }),
-            ..McpPayload::default()
-        };
-        assert!(validate_client_managed_mcp_payload(&payload, &admin).is_ok());
-    }
+    let payload = McpPayload {
+        runtime: Some(McpRuntime {
+            kind: RUNTIME_KIND_HTTP.to_string(),
+            ..McpRuntime::default()
+        }),
+        ..McpPayload::default()
+    };
+    assert!(validate_client_managed_mcp_payload(&payload, &admin).is_ok());
 }
 
 #[test]

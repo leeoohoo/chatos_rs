@@ -170,7 +170,7 @@ pub(super) async fn get_system_stats(
                 .as_millis() as u64,
             rabbitmq_queues,
             worker_consumers_expected: state.config.worker_enabled(),
-            callback_consumer_expected: state.config.callback_delivery_enabled()
+            callback_consumer_expected: state.config.callback_consumer_enabled()
                 && state.task_queue_topology.callback_delivery_mode
                     == crate::platform_queue::TaskQueueMode::RabbitMq,
             event_outbox_reconcile_ms: state
@@ -239,6 +239,12 @@ pub(super) async fn prometheus_metrics(State(state): State<AppState>) -> impl In
         .await
         .unwrap_or_default();
     let mut body = chatos_queue_observability::render_prometheus_metrics("task-runner", &stats);
+    if let Some(pool) = state.postgres_pool.as_ref() {
+        body.push_str(&chatos_postgres::render_pool_metrics(
+            pool,
+            "task-runner-api",
+        ));
+    }
     body.push_str(
         "# HELP chatos_task_runner_integration_runs Current Run counts by code integration state.\n\
 # TYPE chatos_task_runner_integration_runs gauge\n",

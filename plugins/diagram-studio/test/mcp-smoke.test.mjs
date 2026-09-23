@@ -7,7 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const checklistByKind = {
-  architecture: ['single_architecture_viewpoint', 'boundaries_show_ownership', 'primary_path_is_visible', 'implementation_detail_is_excluded', 'independent_concerns_are_split', 'code_evidence_is_mapped'],
+  architecture: ['single_architecture_viewpoint', 'components_are_capabilities_not_steps', 'boundaries_show_ownership', 'primary_path_is_visible', 'relationships_are_aggregated', 'relationships_are_stable_dependencies', 'overview_is_not_a_runtime_chain', 'runtime_cycles_are_moved_to_detail', 'implementation_detail_is_excluded', 'independent_concerns_are_split', 'code_evidence_is_mapped'],
   flowchart: ['single_business_outcome', 'start_and_terminal_states_are_clear', 'decisions_have_named_outcomes', 'failure_and_retry_paths_are_bounded', 'independent_processes_are_split', 'code_evidence_is_mapped'],
   swimlane: ['single_collaboration_scenario', 'lanes_represent_real_ownership', 'handoffs_are_explicit', 'decisions_have_named_outcomes', 'independent_scenarios_are_split', 'code_evidence_is_mapped'],
   topology: ['single_environment_or_traffic_question', 'deployment_boundaries_are_real', 'traffic_direction_is_visible', 'redundancy_is_not_fake_detail', 'logical_architecture_is_separated', 'configuration_evidence_is_mapped'],
@@ -217,6 +217,7 @@ function planFor(kind, goal, overrides = {}) {
   return {
     goal,
     scope: 'Only the selected scenario and its primary path.',
+    ...(kind === 'architecture' ? { viewpoint: 'system-context' } : {}),
     excludedDetails: ['Unrelated business journeys and implementation details.'],
     estimatedPrimaryItemCount: kind === 'sequence' ? 4 : kind === 'mindmap' ? 9 : 6,
     estimatedEdgeCount: kind === 'mindmap' ? 8 : 8,

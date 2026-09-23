@@ -12,6 +12,7 @@ const MAX_CONFIRMED_PROJECT_PATHS: usize = 128;
 const MAX_CONFIRMED_VALIDATION_COMMANDS: usize = 128;
 const MAX_CONFIRMED_ACCEPTANCE_TOOLS: usize = 128;
 const MAX_PENDING_VALIDATION_COMMANDS: usize = 64;
+const MAX_PENDING_COMPLETION_REQUIREMENTS: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskExecutionReviewPolicy {
@@ -85,6 +86,7 @@ pub struct TaskExecutionProgressState {
     confirmed_validation_commands: Mutex<BTreeSet<String>>,
     confirmed_acceptance_tools: Mutex<BTreeSet<String>>,
     pending_validation_commands: Mutex<BTreeMap<String, String>>,
+    pending_completion_requirements: Mutex<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +108,8 @@ pub struct TaskExecutionProgressSnapshot {
     pub confirmed_acceptance_tools: Vec<String>,
     #[serde(default)]
     pub pending_validation_commands: BTreeMap<String, String>,
+    #[serde(default)]
+    pub pending_completion_requirements: BTreeMap<String, String>,
 }
 
 impl Default for TaskExecutionProgressState {
@@ -131,6 +135,7 @@ impl TaskExecutionProgressState {
             confirmed_validation_commands: Mutex::new(BTreeSet::new()),
             confirmed_acceptance_tools: Mutex::new(BTreeSet::new()),
             pending_validation_commands: Mutex::new(BTreeMap::new()),
+            pending_completion_requirements: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -170,6 +175,7 @@ impl TaskExecutionProgressState {
                 .lock()
                 .map(|commands| commands.clone())
                 .unwrap_or_default(),
+            pending_completion_requirements: self.pending_completion_requirements(),
         }
     }
 
@@ -240,6 +246,16 @@ impl TaskExecutionProgressState {
                     .map(|(process_id, command)| (process_id.clone(), command.clone())),
             );
         }
+        if let Ok(mut pending) = self.pending_completion_requirements.lock() {
+            pending.clear();
+            pending.extend(
+                snapshot
+                    .pending_completion_requirements
+                    .iter()
+                    .take(MAX_PENDING_COMPLETION_REQUIREMENTS)
+                    .map(|(id, verifier)| (id.clone(), verifier.clone())),
+            );
+        }
     }
 
     pub fn begin_iteration(&self, iteration: usize) {
@@ -248,6 +264,7 @@ impl TaskExecutionProgressState {
 
     pub fn observe_tool_result(&self, payload: &Value) {
         self.record_confirmed_project_paths(payload);
+        self.record_completion_contract(payload);
         let iteration = self.current_iteration.load(Ordering::Relaxed);
         if tool_result_is_project_mutation(payload) {
             self.project_mutation_generation
@@ -300,6 +317,68 @@ impl TaskExecutionProgressState {
             .lock()
             .map(|tools| tools.iter().cloned().collect())
             .unwrap_or_default()
+    }
+
+    pub fn pending_completion_requirements(&self) -> BTreeMap<String, String> {
+        self.pending_completion_requirements
+            .lock()
+            .map(|requirements| requirements.clone())
+            .unwrap_or_default()
+    }
+
+    fn record_completion_contract(&self, payload: &Value) {
+        if payload.get("success").and_then(Value::as_bool) != Some(true)
+            || payload.get("is_error").and_then(Value::as_bool) == Some(true)
+        {
+            return;
+        }
+        let tool_name = payload
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown_tool");
+        if let Some(requirement) = tool_result_field(payload, "completionRequirement") {
+            let id = requirement
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let verifier = requirement
+                .get("verifier")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if let (Some(id), Some(verifier), Ok(mut pending)) =
+                (id, verifier, self.pending_completion_requirements.lock())
+            {
+                if pending.len() < MAX_PENDING_COMPLETION_REQUIREMENTS || pending.contains_key(id) {
+                    pending.insert(id.to_string(), verifier.to_string());
+                }
+            }
+        }
+        if let Some(proof) = tool_result_field(payload, "completionProof") {
+            let id = proof
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let verifier = proof
+                .get("verifier")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if let (Some(id), Some(verifier), Ok(mut pending)) =
+                (id, verifier, self.pending_completion_requirements.lock())
+            {
+                if pending.get(id).is_some_and(|expected| expected == verifier) {
+                    pending.remove(id);
+                    if let Ok(mut tools) = self.confirmed_acceptance_tools.lock() {
+                        if tools.len() < MAX_CONFIRMED_ACCEPTANCE_TOOLS {
+                            tools.insert(tool_name.to_string());
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn validation_command_from_tool_result(&self, payload: &Value) -> Option<String> {
@@ -615,899 +694,4 @@ fn confirmed_project_paths_from_tool_result(payload: &Value) -> Vec<String> {
         .collect()
 }
 
-fn collect_confirmed_project_paths(value: &Value, output: &mut BTreeSet<String>) {
-    if output.len() >= MAX_CONFIRMED_PROJECT_PATHS {
-        return;
-    }
-    match value {
-        Value::Object(map) => {
-            for (key, value) in map {
-                if matches!(
-                    key.as_str(),
-                    "path" | "file" | "filename" | "relative_path" | "changed_paths"
-                ) {
-                    collect_path_values(value, output);
-                } else if value.is_object() || value.is_array() {
-                    collect_confirmed_project_paths(value, output);
-                }
-                if output.len() >= MAX_CONFIRMED_PROJECT_PATHS {
-                    break;
-                }
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                collect_confirmed_project_paths(item, output);
-                if output.len() >= MAX_CONFIRMED_PROJECT_PATHS {
-                    break;
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-fn collect_path_values(value: &Value, output: &mut BTreeSet<String>) {
-    match value {
-        Value::String(path) => {
-            if let Some(path) = normalize_confirmed_project_path(path) {
-                output.insert(path);
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                collect_path_values(item, output);
-            }
-        }
-        Value::Object(_) => collect_confirmed_project_paths(value, output),
-        _ => {}
-    }
-}
-
-fn normalize_confirmed_project_path(path: &str) -> Option<String> {
-    let normalized = path
-        .trim()
-        .trim_matches('`')
-        .replace('\\', "/")
-        .trim_start_matches("./")
-        .to_string();
-    if normalized.is_empty()
-        || normalized.starts_with('/')
-        || normalized.chars().count() > 512
-        || normalized.as_bytes().get(1) == Some(&b':')
-        || normalized
-            .split('/')
-            .any(|component| component.is_empty() || component == "." || component == "..")
-        || !project_path_is_meaningful_progress(normalized.as_str())
-    {
-        return None;
-    }
-    Some(normalized)
-}
-
-fn tool_name_ends_with_any(name: &str, suffixes: &[&str]) -> bool {
-    suffixes.iter().any(|suffix| name.ends_with(suffix))
-}
-
-fn collect_tool_result_error_text(value: &Value, output: &mut String) {
-    match value {
-        Value::String(text) => {
-            output.push(' ');
-            output.push_str(text);
-        }
-        Value::Array(items) => {
-            for item in items {
-                collect_tool_result_error_text(item, output);
-            }
-        }
-        Value::Object(map) => {
-            for (key, value) in map {
-                if matches!(
-                    key.as_str(),
-                    "content"
-                        | "result"
-                        | "error"
-                        | "message"
-                        | "detail"
-                        | "details"
-                        | "path"
-                        | "file"
-                        | "filename"
-                ) {
-                    collect_tool_result_error_text(value, output);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-fn write_result_has_meaningful_project_path(payload: &Value) -> bool {
-    let parsed_content = payload
-        .get("content")
-        .and_then(Value::as_str)
-        .and_then(|content| serde_json::from_str::<Value>(content).ok());
-    payload
-        .get("result")
-        .into_iter()
-        .chain(parsed_content.as_ref())
-        .any(value_contains_meaningful_project_path)
-}
-
-fn value_contains_meaningful_project_path(value: &Value) -> bool {
-    match value {
-        Value::Object(map) => map.iter().any(|(key, value)| {
-            if key == "path" {
-                return value
-                    .as_str()
-                    .is_some_and(project_path_is_meaningful_progress);
-            }
-            value_contains_meaningful_project_path(value)
-        }),
-        Value::Array(items) => items.iter().any(value_contains_meaningful_project_path),
-        _ => false,
-    }
-}
-
-fn value_contains_placeholder_progress_path(value: &Value) -> bool {
-    match value {
-        Value::Object(map) => map.iter().any(|(key, value)| {
-            if key == "path" {
-                return value
-                    .as_str()
-                    .is_some_and(|path| !project_path_is_meaningful_progress(path));
-            }
-            value_contains_placeholder_progress_path(value)
-        }),
-        Value::Array(items) => items.iter().any(value_contains_placeholder_progress_path),
-        _ => false,
-    }
-}
-
-fn project_path_is_meaningful_progress(path: &str) -> bool {
-    let normalized = path.trim().replace('\\', "/");
-    if normalized.is_empty() {
-        return false;
-    }
-    let components = normalized
-        .trim_start_matches("./")
-        .split('/')
-        .filter(|component| !component.is_empty());
-    !components
-        .into_iter()
-        .any(project_path_component_is_non_engineering_progress)
-}
-
-fn project_path_component_is_non_engineering_progress(component: &str) -> bool {
-    let normalized = component.trim().to_ascii_lowercase();
-    if matches!(
-        normalized.as_str(),
-        ".chatos" | ".git" | ".cache" | "node_modules" | "target" | "target-shared"
-    ) {
-        return true;
-    }
-    [
-        "progress-guard",
-        "inspection-unlock",
-        "read-unlock",
-        "unblock",
-        "unlock",
-        "restore",
-        "enable-tools",
-        "enable_tools",
-        "resume-tools",
-        "resume_tools",
-        "placeholder",
-        "sentinel",
-        "probe",
-        "task-runner-notes",
-        "task_runner_notes",
-        "task-runner-progress",
-        "task_runner_progress",
-        "task_runner_progress_note",
-        "task-runner-progress-note",
-        "execution-notes",
-        "execution_notes",
-        "inspection-note",
-        "inspection_note",
-        "progress-note",
-        "progress_note",
-        "执行记录",
-    ]
-    .iter()
-    .any(|marker| normalized.contains(marker))
-        || [
-            ["task_runner", "temp"],
-            ["task-runner", "temp"],
-            ["task_runner", "notes"],
-            ["task-runner", "notes"],
-            ["temp", "restore"],
-        ]
-        .iter()
-        .any(|markers| markers.iter().all(|marker| normalized.contains(marker)))
-}
-
-fn terminal_result_command(payload: &Value) -> String {
-    let content = payload
-        .get("content")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let parsed = serde_json::from_str::<Value>(content).ok();
-    parsed
-        .as_ref()
-        .map(chatos_mcp_runtime::structured_result_payload)
-        .and_then(|value| value.get("common"))
-        .and_then(Value::as_str)
-        .or_else(|| {
-            payload
-                .get("result")
-                .map(chatos_mcp_runtime::structured_result_payload)
-                .and_then(|value| value.get("common"))
-                .and_then(Value::as_str)
-        })
-        .unwrap_or_default()
-        .to_ascii_lowercase()
-}
-
-fn terminal_result_exit_succeeded(payload: &Value) -> bool {
-    terminal_result_exit_code(payload) == Some(0)
-}
-
-fn terminal_result_exit_code(payload: &Value) -> Option<i64> {
-    let direct_exit_code = payload
-        .get("result")
-        .map(chatos_mcp_runtime::structured_result_payload)
-        .and_then(|result| result.get("exit_code"))
-        .and_then(Value::as_i64);
-    let content_exit_code = payload
-        .get("content")
-        .and_then(Value::as_str)
-        .and_then(|content| serde_json::from_str::<Value>(content).ok())
-        .map(|content| chatos_mcp_runtime::structured_result_payload(&content).clone())
-        .and_then(|content| content.get("exit_code").and_then(Value::as_i64));
-    direct_exit_code.or(content_exit_code)
-}
-
-fn terminal_result_has_validation_command(payload: &Value) -> bool {
-    let command = terminal_result_command(payload);
-    terminal_command_is_validation(command.as_str())
-}
-
-fn terminal_command_is_validation(command: &str) -> bool {
-    [
-        "cargo test",
-        "cargo check",
-        "cargo clippy",
-        "pytest",
-        "python -m unittest",
-        "npm test",
-        "npm run test",
-        "npm run typecheck",
-        "npm run build",
-        "npm ci",
-        "npm install",
-        "npm audit",
-        "pnpm test",
-        "pnpm run test",
-        "pnpm run typecheck",
-        "pnpm build",
-        "pnpm install",
-        "pnpm audit",
-        "yarn test",
-        "yarn run test",
-        "yarn run typecheck",
-        "yarn build",
-        "yarn install",
-        "yarn audit",
-        "go test",
-        "mvn test",
-        "mvn clean test",
-        "mvn verify",
-        "mvn clean verify",
-        "mvn package",
-        "mvn clean package",
-        "./mvnw test",
-        "./mvnw clean test",
-        "./mvnw verify",
-        "./mvnw clean verify",
-        "./mvnw package",
-        "./mvnw clean package",
-        "gradle test",
-        "gradle check",
-        "gradle build",
-        "./gradlew test",
-        "./gradlew check",
-        "./gradlew build",
-        "dotnet test",
-    ]
-    .iter()
-    .any(|needle| command.contains(needle))
-}
-
-fn terminal_result_process_id(payload: &Value) -> Option<String> {
-    terminal_result_field(payload, "process_id")
-        .and_then(|value| value.as_str().map(str::trim).map(ToString::to_string))
-        .filter(|value| !value.is_empty())
-}
-
-fn terminal_result_is_busy(payload: &Value) -> bool {
-    terminal_result_field(payload, "busy").and_then(|value| value.as_bool()) == Some(true)
-}
-
-fn terminal_result_field(payload: &Value, field: &str) -> Option<Value> {
-    payload
-        .get("result")
-        .map(chatos_mcp_runtime::structured_result_payload)
-        .and_then(|result| result.get(field))
-        .cloned()
-        .or_else(|| {
-            payload
-                .get("content")
-                .and_then(Value::as_str)
-                .and_then(|content| serde_json::from_str::<Value>(content).ok())
-                .and_then(|content| {
-                    chatos_mcp_runtime::structured_result_payload(&content)
-                        .get(field)
-                        .cloned()
-                })
-        })
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-
-    #[test]
-    fn review_triggers_after_repeated_read_only_iterations() {
-        let progress = TaskExecutionProgressState::default();
-
-        assert!(progress.should_trigger_review(7).is_none());
-        let checkpoint = progress
-            .should_trigger_review(8)
-            .expect("read-only checkpoint");
-        assert_eq!(checkpoint.trigger, TaskExecutionReviewTrigger::ReadOnlyLoop);
-        assert_eq!(checkpoint.read_only_iterations, 8);
-        assert!(progress.should_trigger_review(9).is_none());
-        assert!(progress.should_trigger_review(16).is_some());
-    }
-
-    #[test]
-    fn missing_targeted_reads_trigger_review_without_restricting_tools() {
-        let progress = TaskExecutionProgressState::default();
-        for iteration in [1, 2] {
-            progress.begin_iteration(iteration);
-            progress.observe_tool_result(&json!({
-                "name": "code_maintainer_read_read_file_raw",
-                "success": false,
-                "is_error": true,
-                "content": "ENOENT: package.json does not exist",
-            }));
-        }
-
-        let checkpoint = progress
-            .should_trigger_review(3)
-            .expect("missing-read checkpoint");
-        assert_eq!(
-            checkpoint.trigger,
-            TaskExecutionReviewTrigger::MissingTargetedReads
-        );
-        assert_eq!(checkpoint.missing_read_failures, 2);
-    }
-
-    #[test]
-    fn successful_source_write_resets_missing_read_budget() {
-        let progress = TaskExecutionProgressState::default();
-        for iteration in [1, 2] {
-            progress.begin_iteration(iteration);
-            progress.observe_tool_result(&json!({
-                "name": "code_maintainer_read_read_file",
-                "success": false,
-                "is_error": true,
-                "content": "README.md not found",
-            }));
-        }
-        assert!(progress.should_trigger_review(3).is_some());
-
-        progress.begin_iteration(4);
-        progress.observe_tool_result(&json!({
-            "name": "code_maintainer_write_commit_edit_session",
-            "success": true,
-            "is_error": false,
-            "result": {
-                "committed_paths": [{ "path": "src/lib.rs" }],
-            },
-        }));
-
-        assert!(progress.should_trigger_review(5).is_none());
-    }
-
-    #[test]
-    fn placeholder_progress_write_triggers_review_and_is_not_meaningful_progress() {
-        let payload = json!({
-            "name": "code_maintainer_write_commit_edit_session",
-            "success": true,
-            "is_error": false,
-            "result": {
-                "committed_paths": [{ "path": "TASK_RUNNER_PROGRESS_NOTE.md" }],
-            },
-        });
-        assert!(!tool_result_is_meaningful_engineering_action(&payload));
-        assert!(tool_result_is_placeholder_progress_write(&payload));
-
-        let progress = TaskExecutionProgressState::default();
-        progress.begin_iteration(4);
-        progress.observe_tool_result(&payload);
-        let checkpoint = progress
-            .should_trigger_review(5)
-            .expect("placeholder checkpoint");
-        assert_eq!(
-            checkpoint.trigger,
-            TaskExecutionReviewTrigger::PlaceholderProgressWrite
-        );
-    }
-
-    #[test]
-    fn missing_targeted_read_detection_supports_harness_prefixed_tools() {
-        assert!(tool_result_is_missing_targeted_read(&json!({
-            "name": "harness_code_read_file_range",
-            "success": false,
-            "is_error": true,
-            "content": "file not found: src/main.rs",
-        })));
-        assert!(!tool_result_is_missing_targeted_read(&json!({
-            "name": "harness_code_search_text",
-            "success": false,
-            "is_error": true,
-            "content": "not found",
-        })));
-    }
-
-    #[test]
-    fn observation_and_task_bookkeeping_are_not_engineering_progress() {
-        for name in [
-            "task_runner_update_task",
-            "task_run_process_record_process",
-            "code_maintainer_read_read_file_raw",
-        ] {
-            assert!(!tool_result_is_meaningful_engineering_action(&json!({
-                "name": name,
-                "success": true,
-                "is_error": false,
-            })));
-        }
-    }
-
-    #[test]
-    fn placeholder_paths_are_rejected_but_source_writes_are_meaningful() {
-        for path in [
-            ".chatos/tmp/inspection-unlock.txt",
-            "mdm-service/.progress-guard-placeholder",
-            "UNBLOCK.md",
-            "src/probe_progress_guard.py",
-            "TASK_RUNNER_TEMP_RESTORE.txt",
-            "task-runner-temp-unlock.txt",
-            "ENABLE_TOOLS_AFTER_WRITE.md",
-            "docs/oms-order-entry-task-runner-notes.md",
-            "docs/task_runner_execution_notes.md",
-        ] {
-            let payload = json!({
-                "name": "code_maintainer_write_commit_edit_session",
-                "success": true,
-                "is_error": false,
-                "result": { "committed_paths": [{ "path": path }] },
-            });
-            assert!(!tool_result_is_meaningful_engineering_action(&payload));
-            assert!(tool_result_is_placeholder_progress_write(&payload));
-        }
-
-        assert!(tool_result_is_meaningful_engineering_action(&json!({
-            "name": "code_maintainer_write_commit_edit_session",
-            "success": true,
-            "is_error": false,
-            "content": serde_json::to_string(&json!({
-                "committed_paths": [{ "path": "src/lib.rs" }],
-            })).expect("content"),
-        })));
-    }
-
-    #[test]
-    fn targeted_test_command_is_meaningful_progress() {
-        assert!(tool_result_is_meaningful_engineering_action(&json!({
-            "name": "terminal_controller_execute_command",
-            "success": true,
-            "is_error": false,
-            "content": serde_json::to_string(&json!({
-                "common": "python -m unittest discover -s tests -v",
-                "exit_code": 0,
-            })).expect("content"),
-            "result": { "exit_code": 0 },
-        })));
-    }
-
-    #[test]
-    fn terminal_file_overwrite_is_not_meaningful_engineering_progress() {
-        assert!(!tool_result_is_meaningful_engineering_action(&json!({
-            "name": "terminal_controller_execute_command",
-            "success": true,
-            "is_error": false,
-            "content": serde_json::to_string(&json!({
-                "common": "python3 -c \"from pathlib import Path; Path('a').write_text('x')\"",
-                "exit_code": 0,
-            })).expect("content"),
-            "result": { "exit_code": 0 },
-        })));
-    }
-
-    #[test]
-    fn successful_file_tools_build_a_bounded_confirmed_path_index() {
-        let progress = TaskExecutionProgressState::default();
-        progress.observe_tool_result(&json!({
-            "name": "code_maintainer_read_search_text",
-            "success": true,
-            "is_error": false,
-            "result": {
-                "matches": [
-                    { "path": "src/domain/index.ts", "line": 4 },
-                    { "path": "src/domain/index.ts", "line": 9 },
-                    { "path": "../outside.rs", "line": 1 },
-                    { "path": "/absolute.rs", "line": 1 },
-                    { "path": "target/debug/generated.rs", "line": 1 },
-                    { "path": "node_modules/pkg/index.js", "line": 1 }
-                ]
-            }
-        }));
-        progress.observe_tool_result(&json!({
-            "name": "harness_code_commit_edit_session",
-            "success": true,
-            "is_error": false,
-            "content": serde_json::to_string(&json!({
-                "changed_paths": ["src/domain/index.ts", "src/domain/domain.test.ts"]
-            })).expect("content")
-        }));
-
-        assert_eq!(
-            progress.confirmed_project_paths(),
-            vec![
-                "src/domain/domain.test.ts".to_string(),
-                "src/domain/index.ts".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn confirmed_project_path_index_stops_at_managed_capacity() {
-        let progress = TaskExecutionProgressState::default();
-        let entries = (0..MAX_CONFIRMED_PROJECT_PATHS + 16)
-            .map(|index| json!({ "path": format!("src/module_{index}.rs") }))
-            .collect::<Vec<_>>();
-
-        progress.observe_tool_result(&json!({
-            "name": "code_maintainer_read_list_dir",
-            "success": true,
-            "is_error": false,
-            "result": { "entries": entries }
-        }));
-
-        assert_eq!(
-            progress.confirmed_project_paths().len(),
-            MAX_CONFIRMED_PROJECT_PATHS
-        );
-    }
-
-    #[test]
-    fn failed_file_tools_do_not_confirm_paths() {
-        let progress = TaskExecutionProgressState::default();
-        progress.observe_tool_result(&json!({
-            "name": "code_maintainer_read_read_file_raw",
-            "success": false,
-            "is_error": true,
-            "content": "not found",
-            "result": { "path": "src/missing.rs" }
-        }));
-
-        assert!(progress.confirmed_project_paths().is_empty());
-    }
-
-    #[test]
-    fn repeated_validation_only_counts_once_without_a_new_mutation() {
-        let progress = TaskExecutionProgressState::default();
-        let validation = json!({
-            "name": "terminal_controller_execute_command",
-            "success": true,
-            "is_error": false,
-            "content": serde_json::to_string(&json!({
-                "common": "npm run build",
-                "exit_code": 0,
-            })).expect("content"),
-            "result": { "exit_code": 0 },
-        });
-
-        progress.begin_iteration(1);
-        progress.observe_tool_result(&validation);
-        progress.begin_iteration(5);
-        progress.observe_tool_result(&validation);
-
-        assert!(progress.should_trigger_review(8).is_none());
-        let checkpoint = progress
-            .should_trigger_review(9)
-            .expect("repeated validation must not reset progress");
-        assert_eq!(checkpoint.read_only_iterations, 8);
-    }
-
-    #[test]
-    fn all_successful_validation_commands_are_kept_for_acceptance_evidence() {
-        let progress = TaskExecutionProgressState::default();
-        for command in ["npm test", "npm run build"] {
-            progress.observe_tool_result(&json!({
-                "name": "terminal_controller_execute_command",
-                "success": true,
-                "is_error": false,
-                "content": serde_json::to_string(&json!({
-                    "common": command,
-                    "exit_code": 0,
-                })).expect("content"),
-                "result": { "exit_code": 0 },
-            }));
-        }
-
-        assert_eq!(
-            progress.confirmed_validation_commands(),
-            vec!["npm run build".to_string(), "npm test".to_string()]
-        );
-    }
-
-    #[test]
-    fn async_maven_validation_is_recorded_after_successful_wait() {
-        let progress = TaskExecutionProgressState::default();
-        progress.observe_tool_result(&json!({
-            "name": "terminal_controller_execute_command",
-            "success": true,
-            "is_error": false,
-            "content": serde_json::to_string(&json!({
-                "common": "mvn clean verify",
-                "busy": true,
-                "process_id": "local-proc-1",
-            })).expect("content"),
-            "result": {
-                "busy": true,
-                "process_id": "local-proc-1",
-            },
-        }));
-
-        assert!(progress.confirmed_validation_commands().is_empty());
-
-        let restored = TaskExecutionProgressState::default();
-        restored.restore_snapshot(&progress.snapshot());
-
-        restored.observe_tool_result(&json!({
-            "name": "terminal_controller_process_wait",
-            "success": true,
-            "is_error": false,
-            "content": serde_json::to_string(&json!({
-                "busy": false,
-                "process_id": "local-proc-1",
-                "exit_code": 0,
-                "output": "BUILD SUCCESS",
-            })).expect("content"),
-            "result": {
-                "busy": false,
-                "process_id": "local-proc-1",
-                "exit_code": 0,
-            },
-        }));
-
-        assert_eq!(
-            restored.confirmed_validation_commands(),
-            ["mvn clean verify"]
-        );
-    }
-
-    #[test]
-    fn failed_async_validation_is_not_recorded() {
-        let progress = TaskExecutionProgressState::default();
-        progress.observe_tool_result(&json!({
-            "name": "terminal_controller_execute_command",
-            "success": true,
-            "is_error": false,
-            "result": {
-                "common": "./gradlew check",
-                "busy": true,
-                "process_id": "local-proc-2",
-            },
-        }));
-        progress.observe_tool_result(&json!({
-            "name": "terminal_controller_process_poll",
-            "success": true,
-            "is_error": false,
-            "result": {
-                "busy": false,
-                "process_id": "local-proc-2",
-                "exit_code": 1,
-            },
-        }));
-
-        assert!(progress.confirmed_validation_commands().is_empty());
-    }
-
-    #[test]
-    fn common_node_dependency_and_typecheck_commands_are_kept_for_acceptance_evidence() {
-        let progress = TaskExecutionProgressState::default();
-        for command in [
-            "npm install --package-lock-only --ignore-scripts --registry=https://registry.npmjs.org",
-            "npm ci --ignore-scripts --registry=https://registry.npmjs.org",
-            "npm run typecheck",
-            "npm audit --audit-level=high --json --registry=https://registry.npmjs.org",
-        ] {
-            progress.observe_tool_result(&json!({
-                "name": "terminal_controller_execute_command",
-                "success": true,
-                "is_error": false,
-                "content": serde_json::to_string(&json!({
-                    "common": command,
-                    "exit_code": 0,
-                })).expect("content"),
-                "result": { "exit_code": 0 },
-            }));
-        }
-
-        assert_eq!(
-            progress.confirmed_validation_commands(),
-            vec![
-                "npm audit --audit-level=high --json --registry=https://registry.npmjs.org".to_string(),
-                "npm ci --ignore-scripts --registry=https://registry.npmjs.org".to_string(),
-                "npm install --package-lock-only --ignore-scripts --registry=https://registry.npmjs.org".to_string(),
-                "npm run typecheck".to_string(),
-            ]
-        );
-        assert_eq!(
-            progress.confirmed_project_paths(),
-            vec!["package-lock.json".to_string(), "package.json".to_string()]
-        );
-    }
-
-    #[test]
-    fn nested_structured_validation_result_is_kept_for_acceptance_evidence() {
-        let progress = TaskExecutionProgressState::default();
-        progress.observe_tool_result(&json!({
-            "name": "terminal_controller_execute_command",
-            "success": true,
-            "is_error": false,
-            "content": serde_json::to_string(&json!({
-                "_structured_result": {
-                    "_structured_result": {
-                        "common": "cargo test -p example",
-                        "exit_code": 0
-                    }
-                }
-            })).expect("content"),
-            "result": {
-                "_structured_result": {
-                    "_structured_result": {
-                        "exit_code": 0
-                    }
-                }
-            },
-        }));
-
-        assert_eq!(
-            progress.confirmed_validation_commands(),
-            vec!["cargo test -p example".to_string()]
-        );
-    }
-
-    #[test]
-    fn project_mutation_allows_one_new_validation_to_count_as_progress() {
-        let progress = TaskExecutionProgressState::default();
-        let validation = json!({
-            "name": "terminal_controller_execute_command",
-            "success": true,
-            "is_error": false,
-            "content": serde_json::to_string(&json!({
-                "common": "cargo test -p example",
-                "exit_code": 0,
-            })).expect("content"),
-            "result": { "exit_code": 0 },
-        });
-        let mutation = json!({
-            "name": "code_maintainer_write_commit_edit_session",
-            "success": true,
-            "is_error": false,
-            "result": {
-                "committed_paths": [{ "path": "src/lib.rs" }],
-            },
-        });
-
-        progress.begin_iteration(1);
-        progress.observe_tool_result(&validation);
-        progress.begin_iteration(8);
-        progress.observe_tool_result(&mutation);
-        progress.begin_iteration(12);
-        progress.observe_tool_result(&validation);
-
-        assert!(progress.should_trigger_review(19).is_none());
-        assert!(progress.should_trigger_review(20).is_some());
-    }
-
-    #[test]
-    fn repeated_checkpoints_track_reviews_since_last_progress() {
-        let progress = TaskExecutionProgressState::default();
-
-        let first = progress.should_trigger_review(8).expect("first checkpoint");
-        let second = progress
-            .should_trigger_review(16)
-            .expect("second checkpoint");
-        let third = progress
-            .should_trigger_review(24)
-            .expect("third checkpoint");
-
-        assert_eq!(first.checkpoints_since_action, 1);
-        assert_eq!(second.checkpoints_since_action, 2);
-        assert_eq!(third.checkpoints_since_action, 3);
-    }
-
-    #[test]
-    fn failed_validation_command_is_not_progress() {
-        let progress = TaskExecutionProgressState::default();
-        let failed_build = json!({
-            "name": "terminal_controller_execute_command",
-            "success": true,
-            "is_error": false,
-            "content": serde_json::to_string(&json!({
-                "common": "npm run build",
-                "exit_code": 127,
-            })).expect("content"),
-            "result": {
-                "common": "npm run build",
-                "exit_code": 127,
-            },
-        });
-
-        progress.begin_iteration(1);
-        progress.observe_tool_result(&failed_build);
-
-        let checkpoint = progress
-            .should_trigger_review(8)
-            .expect("failed build must not reset review progress");
-        assert_eq!(checkpoint.read_only_iterations, 8);
-    }
-
-    #[test]
-    fn process_input_is_not_validation_progress() {
-        let progress = TaskExecutionProgressState::default();
-        let process_write = json!({
-            "name": "terminal_controller_process_write",
-            "success": true,
-            "is_error": false,
-            "content": "submitted",
-        });
-
-        progress.begin_iteration(1);
-        progress.observe_tool_result(&process_write);
-
-        assert!(progress.should_trigger_review(8).is_some());
-    }
-
-    #[test]
-    fn stale_session_write_failure_triggers_actionable_review() {
-        let progress = TaskExecutionProgressState::default();
-        let stale_patch = json!({
-            "name": "code_maintainer_write_stage_edit_batch",
-            "success": false,
-            "is_error": true,
-            "content": "Patch context not found in file. Patch context is stale.",
-        });
-
-        progress.begin_iteration(3);
-        progress.observe_tool_result(&stale_patch);
-
-        let checkpoint = progress
-            .should_trigger_review(4)
-            .expect("stale patch failure must trigger review");
-        assert_eq!(
-            checkpoint.trigger,
-            TaskExecutionReviewTrigger::StaleProjectWrite
-        );
-    }
-}
+include!("progress_review_part01.rs");

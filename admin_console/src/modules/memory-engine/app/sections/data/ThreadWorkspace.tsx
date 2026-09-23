@@ -255,6 +255,16 @@ function recordsTable(props: ThreadWorkspaceProps) {
           total: props.threadRecordTotal,
           showSizeChanger: true,
           onChange: props.onThreadRecordPageChange,
+          showLessItems: true,
+          itemRender: (pageNumber, type, originalElement) => {
+            if (type === 'page' && pageNumber > props.threadRecordMaxReachablePage) {
+              return <span aria-disabled="true">{pageNumber}</span>;
+            }
+            if (type === 'jump-prev' || type === 'jump-next') {
+              return <span aria-disabled="true">•••</span>;
+            }
+            return originalElement;
+          },
         }}
         expandable={{
           expandedRowRender: (record) => (
@@ -280,6 +290,10 @@ function recordsTable(props: ThreadWorkspaceProps) {
 }
 
 function summariesTable(props: ThreadWorkspaceProps) {
+  const total =
+    (props.threadSummaryPage - 1) * props.threadSummaryPageSize +
+    props.threadSummaries.length +
+    (props.threadSummaryHasMore ? 1 : 0);
   return (
     <div className="engine-data-tab-pane">
       <Table<EngineSummary>
@@ -288,7 +302,24 @@ function summariesTable(props: ThreadWorkspaceProps) {
         dataSource={props.threadSummaries}
         loading={props.threadDetailLoading}
         columns={summaryColumns}
-        pagination={{ pageSize: 10 }}
+        pagination={{
+          current: props.threadSummaryPage,
+          pageSize: props.threadSummaryPageSize,
+          total,
+          showSizeChanger: true,
+          pageSizeOptions: [10, 20, 50, 100],
+          onChange: props.onThreadSummaryPageChange,
+          showLessItems: true,
+          itemRender: (pageNumber, type, originalElement) => {
+            if (type === 'page' && pageNumber > props.threadSummaryMaxReachablePage) {
+              return <span aria-disabled="true">{pageNumber}</span>;
+            }
+            if (type === 'jump-prev' || type === 'jump-next') {
+              return <span aria-disabled="true">•••</span>;
+            }
+            return originalElement;
+          },
+        }}
         scroll={{ x: 960, y: 'calc(100vh - 430px)' }}
         expandable={{
           expandedRowRender: (summary) => jsonBlock(summary),
@@ -326,6 +357,10 @@ export function ThreadWorkspace(props: ThreadWorkspaceProps) {
     detailTab,
     onDetailTabChange,
   } = props;
+  const threadTotal =
+    (props.threadPage - 1) * props.threadPageSize +
+    threads.length +
+    (props.threadHasMore ? 1 : 0);
 
   const detailItems: TabsProps['items'] = [
     {
@@ -348,7 +383,7 @@ export function ThreadWorkspace(props: ThreadWorkspaceProps) {
   return (
     <div className="engine-data-workspace">
       <div className="engine-data-column">
-        <Card className="engine-data-card" title={`线程 (${threads.length})`}>
+        <Card className="engine-data-card" title={`线程（第 ${props.threadPage} 页）`}>
           <div className="engine-data-table-shell">
             <Table<EngineThread>
               className="engine-fill-table"
@@ -356,7 +391,24 @@ export function ThreadWorkspace(props: ThreadWorkspaceProps) {
               dataSource={threads}
               loading={threadsLoading}
               columns={threadColumns(selectedThread, props.tenantLabelsById ?? {})}
-              pagination={{ pageSize: 20 }}
+              pagination={{
+                current: props.threadPage,
+                pageSize: props.threadPageSize,
+                total: threadTotal,
+                showSizeChanger: true,
+                pageSizeOptions: [20, 50, 100, 200, 500],
+                onChange: props.onThreadPageChange,
+                showLessItems: true,
+                itemRender: (pageNumber, type, originalElement) => {
+                  if (type === 'page' && pageNumber > props.threadMaxReachablePage) {
+                    return <span aria-disabled="true">{pageNumber}</span>;
+                  }
+                  if (type === 'jump-prev' || type === 'jump-next') {
+                    return <span aria-disabled="true">•••</span>;
+                  }
+                  return originalElement;
+                },
+              }}
               scroll={{ x: 880, y: 'calc(100vh - 390px)' }}
               rowClassName={(record) =>
                 threadScopeKey(record) === threadScopeKey(selectedThread)

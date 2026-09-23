@@ -2,30 +2,40 @@ import ChatOSAPI
 import Foundation
 
 enum RuntimeConfiguration {
-    static var apiBaseURL: URL {
-        environmentURL("CHATOS_API_BASE_URL")
-            ?? bundleURL("ChatOSAPIBaseURL")
-            ?? URL(string: "http://127.0.0.1:9080/api/chatos")!
+    struct Deployment: Sendable, Equatable {
+        let identifier: String
+        let apiBaseURL: URL
+        let connectorBaseURL: URL
     }
+
+    static let deployment = loadDeployment()
+
+    static var apiBaseURL: URL { deployment.apiBaseURL }
 
     static var projectConversationID: String {
         nonEmptyEnvironmentValue("CHATOS_PROJECT_CONVERSATION_ID")
             ?? "conversation-test-project"
     }
 
-    static var localConnectorCloudBaseURL: URL {
-        environmentURL("CHATOS_LOCAL_CONNECTOR_CLOUD_BASE_URL")
-            ?? bundleURL("ChatOSLocalConnectorCloudBaseURL")
-            ?? URL(string: "http://127.0.0.1:39230")!
-    }
+    static var localConnectorCloudBaseURL: URL { deployment.connectorBaseURL }
 
     static var nativeConnectorStateURL: URL {
         let root = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first ?? FileManager.default.homeDirectoryForCurrentUser
-        return root
-            .appendingPathComponent("ChatOSSwift", isDirectory: true)
+        let appRoot = root.appendingPathComponent("ChatOSSwift", isDirectory: true)
+        let deploymentRoot: URL
+        if deployment.identifier == "production" {
+            // Keep the released profile on the historical path so existing projects,
+            // plugins and permissions remain available after this migration.
+            deploymentRoot = appRoot
+        } else {
+            deploymentRoot = appRoot
+                .appendingPathComponent("Environments", isDirectory: true)
+                .appendingPathComponent(safePathComponent(deployment.identifier), isDirectory: true)
+        }
+        return deploymentRoot
             .appendingPathComponent("NativeConnector", isDirectory: true)
             .appendingPathComponent("state.json", isDirectory: false)
     }
@@ -45,15 +55,58 @@ enum RuntimeConfiguration {
         return value?.isEmpty == false ? value : nil
     }
 
-    private static func environmentURL(_ key: String) -> URL? {
-        nonEmptyEnvironmentValue(key).flatMap(URL.init(string:))
+    private static func loadDeployment() -> Deployment {
+        let requestedProfile = nonEmptyEnvironmentValue("CHATOS_DEPLOYMENT_PROFILE")
+            ?? bundleString("ChatOSDeploymentProfile")
+            ?? "local"
+        if let profiles = Bundle.main.object(
+            forInfoDictionaryKey: "ChatOSDeploymentProfiles"
+        ) as? [String: Any],
+           let value = profiles[requestedProfile] as? [String: Any],
+           let apiBaseURL = validHTTPURL(value["APIBaseURL"]),
+           let connectorBaseURL = validHTTPURL(value["ConnectorBaseURL"]) {
+            return .init(
+                identifier: requestedProfile,
+                apiBaseURL: apiBaseURL,
+                connectorBaseURL: connectorBaseURL
+            )
+        }
+        if requestedProfile == "production" {
+            return .init(
+                identifier: "production",
+                apiBaseURL: URL(string: "https://gateway.jgoool.com/api/chatos")!,
+                connectorBaseURL: URL(string: "https://connector.jgoool.com")!
+            )
+        }
+        return .init(
+            identifier: "local",
+            apiBaseURL: URL(string: "http://127.0.0.1:9080/api/chatos")!,
+            connectorBaseURL: URL(string: "http://127.0.0.1:9080/api/connector")!
+        )
     }
 
-    private static func bundleURL(_ key: String) -> URL? {
+    private static func bundleString(_ key: String) -> String? {
         (Bundle.main.object(forInfoDictionaryKey: key) as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .nonEmpty
-            .flatMap(URL.init(string:))
+    }
+
+    private static func validHTTPURL(_ rawValue: Any?) -> URL? {
+        guard let value = (rawValue as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              let url = URL(string: value),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              url.host != nil else {
+            return nil
+        }
+        return url
+    }
+
+    private static func safePathComponent(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+        let normalized = value.unicodeScalars.map { allowed.contains($0) ? String($0) : "-" }
+            .joined()
+        return normalized.isEmpty ? "default" : normalized
     }
 }
 

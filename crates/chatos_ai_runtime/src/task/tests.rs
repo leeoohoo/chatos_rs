@@ -311,9 +311,6 @@ fn task_memory_runtime_config_serializes_direct_memory_settings() {
     assert_eq!(memory.source_id, "task_runner");
     assert_eq!(memory.timeout_ms, 500);
     assert!(!memory.compose_context);
-    assert!(memory.retry_on_context_overflow);
-    assert_eq!(memory.active_summary_poll_interval_ms, 10_000);
-    assert_eq!(memory.active_summary_poll_timeout_ms, 120_000);
     assert_eq!(
         memory
             .record_scope

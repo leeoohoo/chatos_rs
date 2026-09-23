@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use mongodb::bson::{doc, Bson, Document};
-use mongodb::options::UpdateOptions;
-use std::sync::Arc;
+use std::{future::Future, pin::Pin, sync::Arc};
+
+use chrono::{DateTime, Utc};
+use serde::{de::DeserializeOwned, Serialize};
+use serde_json::Value;
+use sqlx::types::Json;
 
 use crate::db::{self, Database};
 
@@ -11,109 +14,47 @@ pub async fn get_db() -> Result<Arc<Database>, String> {
     db::get_db().await
 }
 
-pub fn to_doc(doc: Document) -> Document {
-    doc.into_iter()
-        .filter(|(_, v)| !matches!(v, Bson::Null))
+pub async fn with_db<'env, T: 'env, F>(f: F) -> Result<T, String>
+where
+    F: FnOnce(
+        &'static chatos_postgres::PgPool,
+    ) -> Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'env>>,
+{
+    let _ = get_db().await?;
+    f(db::get_pool()?).await
+}
+
+pub fn timestamp(value: &str) -> Result<DateTime<Utc>, String> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|value| value.with_timezone(&Utc))
+        .map_err(|error| format!("invalid RFC3339 timestamp {value:?}: {error}"))
+}
+
+pub fn optional_timestamp(value: Option<&str>) -> Result<Option<DateTime<Utc>>, String> {
+    value.map(timestamp).transpose()
+}
+
+pub fn json<T: Serialize>(value: &T) -> Result<Json<Value>, String> {
+    serde_json::to_value(value)
+        .map(Json)
+        .map_err(|error| error.to_string())
+}
+
+pub fn decode_optional<T: DeserializeOwned>(
+    value: Option<Json<Value>>,
+) -> Result<Option<T>, String> {
+    value
+        .map(|Json(value)| serde_json::from_value(value).map_err(|error| error.to_string()))
+        .transpose()
+}
+
+pub fn decode_all<T: DeserializeOwned>(values: Vec<Json<Value>>) -> Result<Vec<T>, String> {
+    values
+        .into_iter()
+        .map(|Json(value)| serde_json::from_value(value).map_err(|error| error.to_string()))
         .collect()
 }
 
-pub fn doc_from_pairs(pairs: Vec<(&str, Bson)>) -> Document {
-    pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
-}
-
-pub async fn mongo_find_one_doc(
-    db: &mongodb::Database,
-    collection_name: &str,
-    filter: Document,
-) -> Result<Option<Document>, String> {
-    db.collection::<Document>(collection_name)
-        .find_one(filter, None)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-pub async fn mongo_insert_doc(
-    db: &mongodb::Database,
-    collection_name: &str,
-    doc: Document,
-) -> Result<(), String> {
-    db.collection::<Document>(collection_name)
-        .insert_one(doc, None)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-pub async fn mongo_update_set_doc(
-    db: &mongodb::Database,
-    collection_name: &str,
-    filter: Document,
-    set_doc: Document,
-) -> Result<(), String> {
-    mongo_update_one_doc(db, collection_name, filter, doc! { "$set": set_doc }, None).await
-}
-
-pub async fn mongo_update_many_set_doc(
-    db: &mongodb::Database,
-    collection_name: &str,
-    filter: Document,
-    set_doc: Document,
-) -> Result<(), String> {
-    db.collection::<Document>(collection_name)
-        .update_many(filter, doc! { "$set": set_doc }, None)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-pub async fn mongo_update_one_doc(
-    db: &mongodb::Database,
-    collection_name: &str,
-    filter: Document,
-    update: Document,
-    options: Option<UpdateOptions>,
-) -> Result<(), String> {
-    db.collection::<Document>(collection_name)
-        .update_one(filter, update, options)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-pub async fn mongo_delete_one_doc(
-    db: &mongodb::Database,
-    collection_name: &str,
-    filter: Document,
-) -> Result<(), String> {
-    db.collection::<Document>(collection_name)
-        .delete_one(filter, None)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-pub async fn mongo_delete_many_doc(
-    db: &mongodb::Database,
-    collection_name: &str,
-    filter: Document,
-) -> Result<(), String> {
-    db.collection::<Document>(collection_name)
-        .delete_many(filter, None)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-pub async fn with_db<T, Fmongo>(mongo_fn: Fmongo) -> Result<T, String>
-where
-    Fmongo: for<'a> FnOnce(
-        &'a mongodb::Database,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<T, String>> + Send + 'a>,
-    >,
-{
-    let db = get_db().await?;
-    match db.as_ref() {
-        Database::Mongo { db, .. } => mongo_fn(db).await,
-    }
+pub fn db_error(error: sqlx::Error) -> String {
+    error.to_string()
 }

@@ -18,13 +18,14 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use chatos_mcp_runtime::{ToolCallContext, ToolCallerModelRuntime, ToolResult, ToolResultCallback};
 
+use super::input_items::{
+    append_runtime_input_items, merge_current_turn_tool_history_into_input,
+    merge_pending_tool_turn_into_input,
+};
 use super::{
-    active_context_exceeds_hard_limit, append_runtime_input_items,
-    empty_final_response_followup_item, estimated_json_tokens,
-    merge_current_turn_tool_history_into_input, merge_pending_tool_turn_into_input,
-    merge_record_metadata, prepare_iteration_request, should_persist_tool_result,
-    IterativeContextRefresh, ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS,
-    DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS, EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT,
+    bounded_provider_usage_metadata, empty_final_response_followup_item, merge_record_metadata,
+    prepare_iteration_request, should_persist_tool_result, IterativeContextRefresh,
+    EMPTY_FINAL_RESPONSE_FOLLOWUP_PROMPT,
 };
 use crate::{
     AiResponse, AiRuntime, AiRuntimeOptions, AiRuntimeResult, AiSingleStepRequest, AiTurnReport,
@@ -49,25 +50,6 @@ impl MemoryRecordWriter for RecordingWriter {
 struct TestLifecycleHook;
 
 struct PagingToolExecutor;
-
-#[test]
-fn active_summary_budget_does_not_compact_a_176k_turn_but_catches_the_window_reserve() {
-    let below = json!([{"role": "user", "content": "x".repeat(704_000)}]);
-    let above = json!([{"role": "user", "content": "x".repeat(900_000)}]);
-
-    assert!(estimated_json_tokens(&below) < ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS);
-    assert!(estimated_json_tokens(&above) > ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS);
-}
-
-#[test]
-fn active_summary_soft_budget_is_not_the_failure_limit() {
-    let just_over_soft_budget = ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS + 3_262;
-    assert!(just_over_soft_budget < DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS);
-    assert!(!active_context_exceeds_hard_limit(just_over_soft_budget));
-    assert!(active_context_exceeds_hard_limit(
-        DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS + 1
-    ));
-}
 
 #[async_trait]
 impl ToolExecutor for PagingToolExecutor {
@@ -166,6 +148,64 @@ async fn lifecycle_hook_builds_ephemeral_iteration_request() {
 }
 
 #[tokio::test]
+async fn lifecycle_hook_does_not_duplicate_an_existing_runtime_item() {
+    let runtime_item = json!({"role": "system", "content": "dynamic"});
+    let request = ModelRequest::openai_compatible(
+        "http://localhost",
+        "key",
+        "model",
+        "openai_compatible",
+        json!([
+            {"role": "user", "content": "hello"},
+            runtime_item.clone()
+        ]),
+    );
+    let options = AiRuntimeOptions::for_conversation("session-1")
+        .with_lifecycle_hook(Some(Arc::new(TestLifecycleHook)));
+
+    let (iteration_request, _) = prepare_iteration_request(&request, &options, 2, "tool_results")
+        .await
+        .expect("iteration request");
+
+    let items = iteration_request.input.as_array().expect("input array");
+    assert_eq!(items.len(), 2);
+    assert_eq!(
+        items.iter().filter(|item| *item == &runtime_item).count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn durable_history_is_dispatched_without_a_local_token_guard() {
+    let request = ModelRequest::openai_compatible(
+        "http://127.0.0.1:9",
+        "key",
+        "test-model",
+        "openai_compatible",
+        json!([{"type": "reasoning", "id": "rs_1", "summary": "x".repeat(1_100_000)}]),
+    )
+    .with_responses_support(true);
+    let outcome = AiRuntime::new(None)
+        .execute_once(AiSingleStepRequest {
+            model_request: request,
+            runtime_options: AiRuntimeOptions::for_conversation("durable-token-guard"),
+            iteration: 2,
+            reason: "tool_results".to_string(),
+            model_attempt: 1,
+            force_identity_encoding: false,
+        })
+        .await
+        .expect("dispatch outcome");
+
+    match outcome {
+        crate::runtime::AiSingleStepOutcome::Retry { error, .. } => {
+            assert!(error.contains("127.0.0.1:9/responses"));
+        }
+        other => panic!("expected provider dispatch, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn lifecycle_hook_can_disable_selected_tools_for_one_iteration() {
     let request = ModelRequest::openai_compatible(
         "http://localhost",
@@ -206,6 +246,22 @@ fn lifecycle_record_metadata_overlays_static_record_metadata() {
     assert_eq!(merged["message_mode"], "chat");
     assert_eq!(merged["shared"], "hook");
     assert_eq!(merged["task_turn_review"]["outcome"], "pass");
+}
+
+#[test]
+fn persisted_provider_usage_drops_unbounded_attribution_details() {
+    let metadata = bounded_provider_usage_metadata(&json!({
+        "input_tokens": 120,
+        "output_tokens": 30,
+        "input_tokens_details": {"cached_tokens": 80},
+        "attribution": [{"input_index": 1, "detail": "x".repeat(200_000)}]
+    }));
+
+    assert_eq!(metadata["provider_usage"]["input_tokens"], 120);
+    assert_eq!(metadata["provider_usage"]["cached_tokens"], 80);
+    assert_eq!(metadata["provider_usage"]["output_tokens"], 30);
+    assert!(metadata["provider_usage"].get("attribution").is_none());
+    assert!(metadata.to_string().len() < 256);
 }
 
 #[derive(Clone)]
@@ -326,7 +382,17 @@ async fn single_step_persists_the_runtime_supplied_assistant_message_id() {
     let (base_url, _requests, _headers, server) = start_lifecycle_mock_provider(vec![json!({
         "id": "response-final",
         "status": "completed",
-        "output_text": "done"
+        "output": [
+            {"type": "reasoning", "encrypted_content": "opaque-state"},
+            {"type": "message", "id": "message-final", "role": "assistant", "content": [
+                {"type": "output_text", "text": "done"}
+            ]}
+        ],
+        "usage": {
+            "input_tokens": 12,
+            "input_tokens_details": {"cached_tokens": 8},
+            "output_tokens": 4
+        }
     })])
     .await;
     let writer = RecordingWriter::default();
@@ -358,6 +424,13 @@ async fn single_step_persists_the_runtime_supplied_assistant_message_id() {
         records[0].message_id.as_deref(),
         Some("cloud-run:1:assistant")
     );
+    let metadata = records[0].packed_metadata().expect("assistant metadata");
+    assert_eq!(metadata["responses_output"][0]["type"], "reasoning");
+    assert_eq!(
+        metadata["responses_output"][0]["encrypted_content"],
+        "opaque-state"
+    );
+    assert_eq!(metadata["provider_usage"]["cached_tokens"], 8);
 }
 
 #[tokio::test]
@@ -396,6 +469,45 @@ async fn single_step_injects_runtime_tools_into_the_model_request() {
         tools[0].get("name").and_then(Value::as_str),
         Some("list_page")
     );
+}
+
+#[tokio::test]
+async fn single_step_stops_after_a_repeated_empty_final_response() {
+    let (base_url, _requests, _headers, server) = start_lifecycle_mock_provider(vec![json!({
+        "id": "response-empty-again",
+        "status": "completed",
+        "output_text": "",
+        "output": []
+    })])
+    .await;
+    let request = ModelRequest::openai_compatible(
+        base_url,
+        "test-key",
+        "gpt-test",
+        "openai",
+        json!([{"role": "user", "content": "Please provide the final result."}]),
+    )
+    .with_responses_support(true);
+    let mut step = AiSingleStepRequest::new(
+        request,
+        AiRuntimeOptions::for_conversation("single-step-empty-final"),
+    );
+    step.iteration = 2;
+    step.reason = "empty_final_response_followup".to_string();
+
+    let outcome = AiRuntime::new(None)
+        .execute_once(step)
+        .await
+        .expect("single step");
+    server.abort();
+
+    match outcome {
+        crate::AiSingleStepOutcome::Failed { error } => {
+            assert!(error.contains("仍返回空结果"));
+            assert!(error.contains("避免无限重试"));
+        }
+        other => panic!("expected terminal empty-response failure, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -518,7 +630,7 @@ async fn iterative_context_refresh_keeps_prior_tool_batches_in_later_model_reque
 }
 
 #[tokio::test]
-async fn responses_tool_loop_uses_previous_response_id_and_delta_input() {
+async fn responses_tool_loop_uses_stateless_full_output_history() {
     let (base_url, requests, _connection_headers, server) = start_lifecycle_mock_provider(vec![
         json!({
             "id": "response-page-1",
@@ -562,12 +674,7 @@ async fn responses_tool_loop_uses_previous_response_id_and_delta_input() {
     assert_eq!(result.content, "done");
     let requests = requests.lock().await;
     assert_eq!(requests.len(), 2);
-    assert_eq!(
-        requests[1]
-            .get("previous_response_id")
-            .and_then(Value::as_str),
-        Some("response-page-1")
-    );
+    assert!(requests[1].get("previous_response_id").is_none());
     assert_eq!(
         requests[0].get("prompt_cache_key").and_then(Value::as_str),
         Some("conversation:session-continuation")
@@ -580,12 +687,16 @@ async fn responses_tool_loop_uses_previous_response_id_and_delta_input() {
         .get("input")
         .and_then(Value::as_array)
         .expect("continuation input");
-    assert_eq!(continuation_input.len(), 1);
+    assert_eq!(continuation_input.len(), 3);
     assert_eq!(
-        continuation_input[0].get("type").and_then(Value::as_str),
+        continuation_input[1].get("type").and_then(Value::as_str),
+        Some("function_call")
+    );
+    assert_eq!(
+        continuation_input[2].get("type").and_then(Value::as_str),
         Some("function_call_output")
     );
-    assert!(!requests[1].to_string().contains("verify every page"));
+    assert!(requests[1].to_string().contains("verify every page"));
 }
 
 #[derive(Clone, Default)]
@@ -631,7 +742,7 @@ async fn mock_continuation_fallback_provider(
 }
 
 #[tokio::test]
-async fn unsupported_continuation_falls_back_to_full_input_once() {
+async fn stateless_continuation_sends_full_input_without_fallback() {
     let state = ContinuationFallbackProviderState::default();
     let requests = Arc::clone(&state.requests);
     let app = Router::new()
@@ -665,11 +776,10 @@ async fn unsupported_continuation_falls_back_to_full_input_once() {
 
     assert_eq!(result.content, "fallback complete");
     let requests = requests.lock().await;
-    assert_eq!(requests.len(), 3);
-    assert!(requests[1].get("previous_response_id").is_some());
-    assert!(requests[2].get("previous_response_id").is_none());
-    assert!(requests[2].to_string().contains("keep the full prompt"));
-    assert!(requests[2].to_string().contains("result-call-1"));
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1].get("previous_response_id").is_none());
+    assert!(requests[1].to_string().contains("keep the full prompt"));
+    assert!(requests[1].to_string().contains("result-call-1"));
 }
 
 #[derive(Clone, Default)]
@@ -855,12 +965,7 @@ async fn lifecycle_continuation_runs_hidden_review_and_restores_visible_response
         .is_none_or(Vec::is_empty));
     assert!(captured[1].to_string().contains("visible summary"));
     assert!(captured[1].to_string().contains("TASK_REVIEW: pass"));
-    assert_eq!(
-        captured[1]
-            .get("previous_response_id")
-            .and_then(Value::as_str),
-        Some("response-visible")
-    );
+    assert!(captured[1].get("previous_response_id").is_none());
 }
 
 #[tokio::test]

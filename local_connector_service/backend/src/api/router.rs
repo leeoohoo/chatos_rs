@@ -11,6 +11,7 @@ use tracing::Level;
 use crate::state::AppState;
 
 use super::managed_runtime_config::get_managed_runtime_config;
+use super::metrics::{health_handler, prometheus_metrics};
 use super::{
     connect_device, controlled_network_readiness, create_device,
     create_managed_requirements_assignment, create_managed_requirements_policy,
@@ -18,7 +19,7 @@ use super::{
     delete_managed_requirements_assignment, delete_managed_requirements_policy,
     delete_project_binding, delete_sandbox_pairing, delete_workspace, disconnect_device,
     get_agent_prompt_bundle, get_agent_prompt_bundle_manifest, get_device,
-    get_managed_requirements, health_handler, heartbeat_device, list_devices,
+    get_managed_requirements, heartbeat_device, list_devices,
     list_managed_requirements_assignments, list_managed_requirements_policies,
     list_plugin_install_sources, list_project_bindings, list_sandbox_pairings, list_workspaces,
     mcp_relay, plugin_artifact_create_relay, plugin_artifact_list_relay,
@@ -56,6 +57,26 @@ fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
         .route(
             "/api/local-connectors/devices",
             get(list_devices).post(create_device),
+        )
+        .route(
+            "/api/local-connectors/companion/devices",
+            get(super::devices::list_companion_devices),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/resources",
+            get(super::companion::list_companion_resources),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/resources/resolve",
+            post(super::companion::resolve_companion_resource),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/approvals",
+            get(super::companion::list_companion_approvals),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/approvals/{approval_id}/resolve",
+            post(super::companion::resolve_companion_approval),
         )
         .route("/api/local-connectors/devices/{id}", get(get_device))
         .route(
@@ -250,6 +271,7 @@ pub fn build_public_router(state: AppState) -> Router {
     apply_common_layers(
         Router::new()
             .route("/api/health", get(health_handler))
+            .route("/metrics", get(prometheus_metrics))
             .route("/api/auth/login", post(user_service_public_proxy))
             .route("/api/auth/register", post(user_service_public_proxy))
             .route(

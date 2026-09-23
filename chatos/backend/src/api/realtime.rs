@@ -4,6 +4,7 @@
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::WebSocketUpgrade;
 use axum::response::IntoResponse;
+use axum::Extension;
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -11,31 +12,54 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use crate::api::metrics::{ActiveWebSocketConnection, WebSocketKind};
-use crate::core::auth::AuthUser;
+use crate::api::{RequestAccessToken, RequestClientScopes};
+use crate::core::auth::{resolve_auth_user_and_scopes_via_user_service, AuthUser};
 use crate::services::realtime::{
     subscribe_user_events, RealtimeAckMessage, RealtimeClientControlMessage, RealtimeErrorMessage,
-    RealtimeSubscriptionSet,
+    RealtimeSubscriptionSet, RealtimeTopic, RealtimeTopicScope,
 };
 use crate::utils::ws_outbound;
 
 const REALTIME_WS_OUTBOUND_QUEUE_CAPACITY: usize = 256;
 const REALTIME_WS_CHANNEL: &str = "realtime";
+const COMPANION_SESSION_REVALIDATE_SECONDS: u64 = 30;
 
 pub fn router() -> axum::Router {
     axum::Router::new().route("/api/realtime/ws", axum::routing::get(realtime_ws))
 }
 
-async fn realtime_ws(auth: AuthUser, ws: WebSocketUpgrade) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_realtime_socket(auth.user_id, socket))
+async fn realtime_ws(
+    auth: AuthUser,
+    scopes: Option<Extension<RequestClientScopes>>,
+    access_token: Option<Extension<RequestAccessToken>>,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    let companion = scopes
+        .as_ref()
+        .is_some_and(|Extension(scopes)| scopes.is_wechat_companion());
+    let access_token = access_token.map(|Extension(token)| token.as_str().to_string());
+    ws.on_upgrade(move |socket| {
+        handle_realtime_socket(auth.user_id, socket, companion, access_token)
+    })
 }
 
-async fn handle_realtime_socket(user_id: String, socket: WebSocket) {
+async fn handle_realtime_socket(
+    user_id: String,
+    socket: WebSocket,
+    companion: bool,
+    access_token: Option<String>,
+) {
     let _active_connection = ActiveWebSocketConnection::start(WebSocketKind::Realtime);
     let mut receiver = subscribe_user_events();
     let (mut sender, mut receiver_ws) = socket.split();
     let (outbound_tx, mut outbound_rx) = ws_outbound::channel(REALTIME_WS_OUTBOUND_QUEUE_CAPACITY);
     let shutdown = CancellationToken::new();
     let subscriptions = Arc::new(Mutex::new(RealtimeSubscriptionSet::default()));
+    let mut session_revalidation = tokio::time::interval(std::time::Duration::from_secs(
+        COMPANION_SESSION_REVALIDATE_SECONDS,
+    ));
+    session_revalidation.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    session_revalidation.tick().await;
 
     let send_task = tokio::spawn({
         let shutdown = shutdown.clone();
@@ -84,7 +108,7 @@ async fn handle_realtime_socket(user_id: String, socket: WebSocket) {
                         if !allowed {
                             continue;
                         }
-                        let payload = match serde_json::to_string(envelope.as_ref()) {
+                        let payload = match serialize_event(envelope.as_ref(), companion) {
                             Ok(value) => value,
                             Err(_) => continue,
                         };
@@ -115,6 +139,12 @@ async fn handle_realtime_socket(user_id: String, socket: WebSocket) {
     loop {
         let msg = tokio::select! {
             _ = shutdown.cancelled() => break,
+            _ = session_revalidation.tick(), if companion => {
+                if !companion_session_still_valid(user_id.as_str(), access_token.as_deref()).await {
+                    break;
+                }
+                continue;
+            }
             msg = receiver_ws.next() => msg,
         };
         match msg {
@@ -139,7 +169,14 @@ async fn handle_realtime_socket(user_id: String, socket: WebSocket) {
                     Ok(control) if control.message_type == "subscribe" => {
                         let result = {
                             let mut subscriptions = subscriptions.lock().await;
-                            subscriptions.subscribe(control.topics)
+                            if companion && !companion_topics_allowed(control.topics.as_slice()) {
+                                Err(
+                                    "WeChat Companion may only subscribe to a conversation topic"
+                                        .to_string(),
+                                )
+                            } else {
+                                subscriptions.subscribe(control.topics)
+                            }
                         };
                         if !send_control_response(
                             &outbound_tx,
@@ -196,6 +233,42 @@ async fn handle_realtime_socket(user_id: String, socket: WebSocket) {
     shutdown.cancel();
     events_task.abort();
     send_task.abort();
+}
+
+async fn companion_session_still_valid(user_id: &str, access_token: Option<&str>) -> bool {
+    let Some(access_token) = access_token else {
+        return false;
+    };
+    matches!(
+        resolve_auth_user_and_scopes_via_user_service(access_token).await,
+        Ok((auth, scopes))
+            if auth.user_id == user_id
+                && scopes.iter().any(|scope| scope == "wechat_companion")
+    )
+}
+
+fn companion_topics_allowed(topics: &[RealtimeTopic]) -> bool {
+    !topics.is_empty()
+        && topics
+            .iter()
+            .all(|topic| topic.scope == RealtimeTopicScope::Conversation && topic.id.is_some())
+}
+
+fn serialize_event(
+    envelope: &crate::services::realtime::SequencedRealtimeEventEnvelope,
+    companion: bool,
+) -> Result<String, serde_json::Error> {
+    if !companion {
+        return serde_json::to_string(envelope);
+    }
+    serde_json::to_string(&serde_json::json!({
+        "type": envelope.message_type,
+        "event": envelope.event,
+        "event_id": envelope.event_id,
+        "event_sequence": envelope.event_sequence,
+        "conversation_id": envelope.conversation_id,
+        "ts": envelope.ts,
+    }))
 }
 
 fn is_ping_message(text: &str) -> bool {
@@ -259,5 +332,61 @@ fn send_control_response(
             }
             true
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{companion_topics_allowed, serialize_event};
+    use crate::services::realtime::{
+        ChatStreamRealtimePayload, RealtimeEventEnvelope, RealtimeEventPayload, RealtimeTopic,
+        RealtimeTopicScope, SequencedRealtimeEventEnvelope,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn companion_realtime_only_accepts_conversation_topics() {
+        assert!(companion_topics_allowed(&[RealtimeTopic {
+            scope: RealtimeTopicScope::Conversation,
+            id: Some("conversation-1".to_string()),
+        }]));
+        assert!(!companion_topics_allowed(&[RealtimeTopic {
+            scope: RealtimeTopicScope::Sessions,
+            id: None,
+        }]));
+    }
+
+    #[test]
+    fn companion_realtime_event_is_an_invalidation_without_runtime_payload() {
+        let envelope = SequencedRealtimeEventEnvelope {
+            event_id: "event-1".to_string(),
+            event_sequence: 1,
+            envelope: RealtimeEventEnvelope {
+                message_type: "event",
+                event: "chat.delta",
+                user_id: "user-1".to_string(),
+                conversation_id: Some("conversation-1".to_string()),
+                project_id: Some("project-secret".to_string()),
+                payload: RealtimeEventPayload::ChatStream(ChatStreamRealtimePayload {
+                    conversation_id: "conversation-1".to_string(),
+                    conversation_turn_id: Some("turn-1".to_string()),
+                    project_id: Some("project-secret".to_string()),
+                    user_message_id: None,
+                    stream_type: "delta".to_string(),
+                    raw: json!({ "workspace_root": "/private/work", "delta": "secret" }),
+                }),
+                ts: "2026-09-14T00:00:00Z".to_string(),
+            },
+        };
+        let value: serde_json::Value = serde_json::from_str(
+            serialize_event(&envelope, true)
+                .expect("serialize companion event")
+                .as_str(),
+        )
+        .expect("parse companion event");
+        assert_eq!(value["conversation_id"], "conversation-1");
+        assert!(value.get("payload").is_none());
+        assert!(value.get("project_id").is_none());
+        assert!(value.get("user_id").is_none());
     }
 }

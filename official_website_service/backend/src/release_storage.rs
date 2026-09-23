@@ -300,7 +300,7 @@ impl ReleaseStorage {
         }
 
         let manifest = ClientReleaseManifest {
-            product: "Okra Local Connector".to_string(),
+            product: "叽咕狸桌面客户端".to_string(),
             channel: self.config.channel.clone(),
             version: request.version,
             published_at: Utc::now().to_rfc3339(),

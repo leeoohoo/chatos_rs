@@ -84,6 +84,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "mcp management async tool dispatch topology configured"
     );
     let mut background_handles = Vec::new();
+    if let Some(retention) = app_state.runtime_retention.as_ref() {
+        background_handles.push(retention.spawn());
+    }
     if let Some(handle) = app_state
         .async_tool_dispatch
         .spawn_rabbitmq_consumer(app_state.clone())

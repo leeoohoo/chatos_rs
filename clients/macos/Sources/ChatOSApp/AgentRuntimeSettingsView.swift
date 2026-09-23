@@ -12,7 +12,7 @@ struct AgentRuntimeSettingsView: View {
 
     private enum Field: String, CaseIterable {
         case calls, approval, story, retries, requestTimeout, runTimeout, noProgress
-        case window, reserve, threshold, compactions, summaryTimeout, summaryPoll
+        case window, reserve
         var title: (String, String) {
             switch self {
             case .calls: ("全局模型调用上限", "Global model call limit")
@@ -24,10 +24,6 @@ struct AgentRuntimeSettingsView: View {
             case .noProgress: ("连续无进展暂停阈值", "No-progress round limit")
             case .window: ("模型窗口预算", "Model context window budget")
             case .reserve: ("输出预留 tokens", "Reserved output tokens")
-            case .threshold: ("输入压缩触发阈值", "Input compaction threshold")
-            case .compactions: ("单次输入最多压缩次数", "Compaction passes per input")
-            case .summaryTimeout: ("等待摘要超时（秒）", "Summary wait timeout (seconds)")
-            case .summaryPoll: ("摘要状态查询间隔（秒）", "Summary polling interval (seconds)")
             }
         }
         var range: String {
@@ -39,10 +35,6 @@ struct AgentRuntimeSettingsView: View {
             case .noProgress: "1–100"
             case .window: "2048–2000000"
             case .reserve: "≥ 256"
-            case .threshold: "≥ 512"
-            case .compactions: "1–16"
-            case .summaryTimeout: "5–1800"
-            case .summaryPoll: "1–30"
             }
         }
     }
@@ -50,7 +42,7 @@ struct AgentRuntimeSettingsView: View {
     var body: some View {
         SettingsGroupedPage {
             LocalConnectorCard(model.localized("Agent 运行", english: "Agent Runtime"),
-                subtitle: model.localized("保存于这台 Mac，修改对下一次运行生效。默认最多调用模型 600 次，重试也计入。", english: "Stored on this Mac; changes apply to the next run. The default limit is 600 model calls, including retries."),
+                subtitle: model.localized("保存于这台 Mac，修改对下一次运行生效。默认最多调用模型 600 次；单次请求默认重试 5 次，并采用 1、2、4、8、16 秒指数退避。重试也计入调用次数。", english: "Stored on this Mac; changes apply to the next run. The defaults are 600 model calls and five retries per request with 1, 2, 4, 8, and 16-second exponential backoff. Retries count as model calls."),
                 systemImage: "arrow.triangle.2.circlepath") {
                 VStack(spacing: 12) {
                     ForEach([Field.calls, .approval, .story, .retries, .requestTimeout, .runTimeout, .noProgress], id: \.self) { field in row(field) }
@@ -61,15 +53,21 @@ struct AgentRuntimeSettingsView: View {
                     }
                 }
             }
-            LocalConnectorCard(model.localized("上下文窗口与压缩", english: "Context Window & Compaction"),
-                subtitle: model.localized("窗口按所用模型调整。当前使用保守的 UTF-8 字节安全估计，不是精确 token 计数。阈值必须小于窗口减去输出预留。", english: "Match the window to your model. Input uses a conservative UTF-8 byte estimate, not exact token counts. The threshold must be below the window minus the output reserve."),
+            LocalConnectorCard(model.localized("上下文窗口", english: "Context Window"),
+                subtitle: model.localized("本轮开始或恢复时从 Memory Engine 读取已总结内容和未总结记录。所有文本模型统一通过 OpenAI Responses 协议调用，并在轮内使用 200k server-side compaction。", english: "At the start or resume boundary, summarized context and unsummarized records are read from Memory Engine. Every text model uses the OpenAI Responses protocol with 200k server-side compaction during the run."),
                 systemImage: "text.alignleft") {
                 VStack(spacing: 12) {
-                    ForEach([Field.window, .reserve, .threshold, .compactions, .summaryTimeout, .summaryPoll], id: \.self) { field in row(field) }
+                    ForEach([Field.window, .reserve], id: \.self) { field in row(field) }
                     Divider()
-                    Text(model.localized("审批和剧情规划已使用公共循环。审批不会自动上传记录；剧情规划默认使用 Memory Engine，同步文字上下文并在接近窗口预算时进行压缩。", english: "Approval and story planning use the shared loop. Approval records are not uploaded automatically. Story planning uses Memory Engine by default to sync text context and compact it near the context-window budget."))
+                    if hasSavedPreferences {
+                        let context = saved.global.context ?? AgentContextPolicy()
+                        Text(model.localized("当前已保存生效值：窗口 \(context.windowTokens) · 预留 \(context.outputReserveTokens)", english: "Current saved values: window \(context.windowTokens) · reserve \(context.outputReserveTokens)"))
+                            .appFont(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    Text(model.localized("审批和剧情规划使用同一套本机循环。审批不会自动上传记录；剧情规划持续把记录同步到 Memory Engine，但只在每次开始或恢复时 compose 一次。Memory Engine 的摘要由服务端后台自动调度。", english: "Approval and story planning use the same native loop. Approval records are not uploaded automatically. Story planning keeps syncing records to Memory Engine, but composes once per start or resume. Memory Engine summaries are scheduled automatically in the background."))
                         .appFont(.caption).foregroundStyle(.secondary)
-                    Text(model.localized("摘要使用 Memory Engine 配置的摘要 Agent，可能产生额外模型费用，不计入这里的 600 次调用。等待摘要或视频任务不消耗模型调用次数。", english: "Summaries use the Agent configured in Memory Engine and may incur additional model costs outside this 600-call budget. Waiting for summaries or videos does not consume model calls."))
+                    Text(model.localized("模型请求会发送 context_management.compaction，并把完整 response.output 追加到下一次 input，使用无状态 Responses 链继续运行；Memory Engine 仍完整记录用户、助手、工具调用和工具结果，但不再处理轮内溢出。", english: "Model requests send context_management.compaction and append the complete response.output to the next input for stateless Responses chaining. Memory Engine still records every user message, assistant message, tool call, and tool result, but no longer handles in-run overflow."))
                         .appFont(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -106,9 +104,7 @@ struct AgentRuntimeSettingsView: View {
         values = [.calls: "\(policy.maximumModelCalls)", .approval: preferences.approvalMaximumCalls.map(String.init) ?? "",
                   .story: preferences.storyMaximumCalls.map(String.init) ?? "", .retries: "\(policy.maximumRequestRetries)",
                   .requestTimeout: "\(policy.requestTimeoutSeconds)", .runTimeout: "\(policy.runTimeoutSeconds)",
-                  .noProgress: "\(policy.maximumNoProgressRounds)", .window: "\(context.windowTokens)", .reserve: "\(context.outputReserveTokens)",
-                  .threshold: "\(context.compactionThresholdTokens)", .compactions: "\(context.maximumCompactionPasses)",
-                  .summaryTimeout: "\(context.summaryTimeoutSeconds)", .summaryPoll: "\(context.summaryPollSeconds)"]
+                  .noProgress: "\(policy.maximumNoProgressRounds)", .window: "\(context.windowTokens)", .reserve: "\(context.outputReserveTokens)"]
     }
     private func number(_ field: Field) throws -> Int {
         guard let value = Int((values[field] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)) else { throw AgentRuntimeError.invalidPolicy }
@@ -129,8 +125,6 @@ struct AgentRuntimeSettingsView: View {
             preferences.global.maximumNoProgressRounds = try number(.noProgress)
             var context = AgentContextPolicy()
             context.windowTokens = try number(.window); context.outputReserveTokens = try number(.reserve)
-            context.compactionThresholdTokens = try number(.threshold); context.maximumCompactionPasses = try number(.compactions)
-            context.summaryTimeoutSeconds = try number(.summaryTimeout); context.summaryPollSeconds = try number(.summaryPoll)
             preferences.global.context = context
             try store.save(preferences)
             saved = preferences; didSave = true; error = false

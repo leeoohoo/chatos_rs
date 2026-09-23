@@ -321,6 +321,7 @@ impl Drop for ActiveRunEventStreamLease {
 #[derive(Clone)]
 pub struct AppState {
     pub config: AppConfig,
+    pub(crate) postgres_pool: Option<chatos_postgres::PgPool>,
     pub task_queue_topology: TaskQueueTopology,
     pub task_service: TaskService,
     pub model_config_service: ModelConfigService,
@@ -354,10 +355,21 @@ impl AppState {
             None
         };
         let store = AppStore::new(&config).await?;
+        let postgres_pool = match &store {
+            AppStore::Postgres(store) => Some(store.pool().clone()),
+            AppStore::InMemory(_) => None,
+        };
         let cloud_agent_store = match config.store_mode {
             crate::config::StoreMode::Memory => CloudAgentStateStore::memory(),
-            crate::config::StoreMode::Mongo => {
-                CloudAgentStateStore::connect(config.database_url.as_str()).await?
+            crate::config::StoreMode::Postgres => {
+                let AppStore::Postgres(postgres_store) = &store else {
+                    return Err("Task Runner PostgreSQL store was not initialized".to_string());
+                };
+                CloudAgentStateStore::from_repository(
+                    crate::store::cloud_agent::CloudAgentPostgresStore::new(
+                        postgres_store.pool().clone(),
+                    ),
+                )
             }
         };
         let auth_service = AuthService::new(config.clone(), store.clone());
@@ -399,6 +411,7 @@ impl AppState {
         );
         Ok(Self {
             config,
+            postgres_pool,
             task_queue_topology,
             task_service,
             model_config_service,

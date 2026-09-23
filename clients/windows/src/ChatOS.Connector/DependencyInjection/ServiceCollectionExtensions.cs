@@ -1,4 +1,5 @@
 using ChatOS.Api.Http;
+using ChatOS.Connector.AgentTeams;
 using ChatOS.Connector.Connection;
 using ChatOS.Connector.Persistence;
 using ChatOS.Connector.Security;
@@ -33,12 +34,23 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IProjectRegistry, SqliteProjectRegistry>();
         services.AddSingleton<ILocalProjectsService, LocalProjectsService>();
         services.AddSingleton<IAppPreferencesStore, SqliteAppPreferencesStore>();
+        services.AddSingleton<IClipboardHistoryStore, SqliteClipboardHistoryStore>();
+        services.AddSingleton<IQuickSearchUsageStore, SqliteQuickSearchUsageStore>();
         services.AddSingleton<AppPreferencesManager>();
         services.AddSingleton<IPetActivitySuppressionStore, SqlitePetActivitySuppressionStore>();
         services.AddSingleton<IPetWindowPlacementStore, SqlitePetWindowPlacementStore>();
         services.AddSingleton<IPetFavoriteProjectsStore, SqlitePetFavoriteProjectsStore>();
         services.AddSingleton<PetFavoriteProjectsManager>();
         services.AddSingleton<IConversationCacheStore, SqliteConversationCacheStore>();
+        services.AddSingleton<SqliteAgentTeamStore>();
+        services.AddSingleton<IAgentTeamStore>(provider =>
+            provider.GetRequiredService<SqliteAgentTeamStore>());
+        services.AddSingleton<AgentTeamModelGateway>();
+        services.AddSingleton<AgentProjectToolExecutor>();
+        services.AddSingleton<AgentTeamToolExecutor>();
+        services.AddSingleton<AgentPluginToolRuntime>();
+        services.AddSingleton<AgentTeamScheduler>();
+        services.AddSingleton<IAgentTeamService, AgentTeamCoordinator>();
         services.AddSingleton<PetActivityCoordinator>();
         services.AddSingleton<ConnectorReconnectPolicy>();
         services.AddSingleton<ConnectorConnectionStateMachine>();
@@ -78,10 +90,17 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IRemoteSshSessionFactory, SshNetRemoteSessionFactory>();
         services.AddSingleton<IRemoteConnectionTester, SshNetRemoteConnectionTester>();
         services.AddSingleton<WindowsRemoteConnectionService>();
-        services.AddSingleton<IRemoteConnectionService>(provider => provider.GetRequiredService<WindowsRemoteConnectionService>());
         services.AddSingleton<IRemoteConnectionRuntime>(provider => provider.GetRequiredService<WindowsRemoteConnectionService>());
         services.AddSingleton<IRemoteSftpService, SshNetRemoteSftpService>();
         services.AddSingleton<IRemoteTerminalCommandService, SshNetRemoteTerminalCommandService>();
+        services.AddSingleton<IRemoteTerminalSessionFactory, SshNetRemoteTerminalSessionFactory>();
+        services.AddSingleton<RemoteTerminalSessionManager>();
+        services.AddSingleton<IRemoteConnectionService, TerminalAwareRemoteConnectionService>();
+        services.AddSingleton<RemoteTerminalRelayHandler>();
+        services.AddSingleton<IRelayRequestHandler>(provider =>
+            provider.GetRequiredService<RemoteTerminalRelayHandler>());
+        services.AddSingleton<IRelayOneWayHandler>(provider =>
+            provider.GetRequiredService<RemoteTerminalRelayHandler>());
         services.AddSingleton<IRelaySecurityContextProvider>(provider =>
             provider.GetRequiredService<ConnectorRuntimeContext>());
         services.AddSingleton<IRelayRequestVerifier, Ed25519RelayRequestVerifier>();
@@ -97,6 +116,15 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient(OpenAiCompatibleCommandApprovalReviewer.HttpClientName, client =>
         {
             client.Timeout = TimeSpan.FromSeconds(45);
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            AllowAutoRedirect = false,
+            AutomaticDecompression = System.Net.DecompressionMethods.None,
+            UseCookies = false,
+        });
+        services.AddHttpClient(ApprovalMemoryEngineRecorder.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(30);
         }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
         {
             AllowAutoRedirect = false,
@@ -121,6 +149,15 @@ public static class ServiceCollectionExtensions
             AutomaticDecompression = System.Net.DecompressionMethods.None,
             UseCookies = false,
         });
+        services.AddHttpClient(AgentTeamModelGateway.HttpClientName, client =>
+        {
+            client.Timeout = Timeout.InfiniteTimeSpan;
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            AllowAutoRedirect = false,
+            AutomaticDecompression = System.Net.DecompressionMethods.None,
+            UseCookies = false,
+        });
         services.AddSingleton<IConnectorGatewayClient, ConnectorGatewayHttpClient>();
         services.AddSingleton<ConnectorPairingService>();
         services.AddSingleton<ILocalConnectorControlService, LocalConnectorControlService>();
@@ -135,6 +172,7 @@ public static class ServiceCollectionExtensions
             provider.GetRequiredService<IControlledNetworkGuardClient>()));
         services.AddSingleton<SandboxExecutionPolicyProvider>();
         services.AddSingleton<ApprovalModelRuntimeConfigurationService>();
+        services.AddSingleton<IApprovalMemoryEngineRecorder, ApprovalMemoryEngineRecorder>();
         services.AddSingleton<IApprovalReviewerReadinessService, ApprovalReviewerReadinessService>();
         services.AddSingleton<ICommandApprovalAiReviewer, OpenAiCompatibleCommandApprovalReviewer>();
         services.AddSingleton<CommandApprovalCoordinator>();
@@ -152,6 +190,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IConnectorControlledNetworkReadinessService,
             ConnectorControlledNetworkReadinessService>();
         services.AddHostedService<ConnectorManagedConfigBackgroundService>();
+        services.AddHostedService<AgentTeamBackgroundService>();
         services.AddHostedService<ConnectorBackgroundService>();
         return services;
     }

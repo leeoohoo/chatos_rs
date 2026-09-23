@@ -3,13 +3,11 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use chatos_mcp_management_sdk::CloseRuntimeSessionResponse;
-use mongodb::bson::{doc, DateTime};
-use mongodb::options::{IndexOptions, ReplaceOptions};
-use mongodb::{Client, Collection, IndexModel};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::types::Json;
 use tokio::sync::RwLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,7 +16,7 @@ struct RuntimeSessionCloseRecord {
     session_id: String,
     caller_service: String,
     response: CloseRuntimeSessionResponse,
-    expires_at: DateTime,
+    expires_at: DateTime<Utc>,
     expires_at_unix: i64,
 }
 
@@ -29,7 +27,7 @@ pub struct RuntimeSessionCloseStore {
 
 enum RuntimeSessionCloseStoreBackend {
     Memory(RwLock<HashMap<String, RuntimeSessionCloseRecord>>),
-    Mongo(Collection<RuntimeSessionCloseRecord>),
+    Postgres(chatos_postgres::PgPool),
 }
 
 impl RuntimeSessionCloseStore {
@@ -42,35 +40,14 @@ impl RuntimeSessionCloseStore {
     }
 
     pub async fn connect(database_url: &str) -> Result<Self, String> {
-        let client = Client::with_uri_str(database_url)
-            .await
-            .map_err(|error| format!("connect Runtime Session close MongoDB failed: {error}"))?;
-        let database = client.default_database().ok_or_else(|| {
-            "MCP_MANAGEMENT_DATABASE_URL must include a MongoDB database name".to_string()
-        })?;
-        let collection = database.collection::<RuntimeSessionCloseRecord>(
-            "mcp_management_runtime_session_close_results",
-        );
-        collection
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! { "expires_at": 1 })
-                    .options(
-                        IndexOptions::builder()
-                            .name("runtime_session_close_result_expiry_ttl".to_string())
-                            .expire_after(Some(Duration::from_secs(0)))
-                            .build(),
-                    )
-                    .build(),
-                None,
-            )
-            .await
-            .map_err(|error| {
-                format!("initialize Runtime Session close result TTL index failed: {error}")
-            })?;
-        Ok(Self {
-            backend: Arc::new(RuntimeSessionCloseStoreBackend::Mongo(collection)),
-        })
+        let pool = crate::postgres::connect(database_url).await?;
+        Ok(Self::from_pool(pool))
+    }
+
+    pub(crate) fn from_pool(pool: chatos_postgres::PgPool) -> Self {
+        Self {
+            backend: Arc::new(RuntimeSessionCloseStoreBackend::Postgres(pool)),
+        }
     }
 
     pub async fn get(
@@ -85,16 +62,19 @@ impl RuntimeSessionCloseStore {
                 records.retain(|_, record| record.expires_at_unix > now);
                 records.get(session_id).cloned()
             }
-            RuntimeSessionCloseStoreBackend::Mongo(collection) => collection
-                .find_one(
-                    doc! {
-                        "_id": session_id,
-                        "expires_at_unix": { "$gt": now },
-                    },
-                    None,
+            RuntimeSessionCloseStoreBackend::Postgres(pool) => {
+                sqlx::query_scalar::<_, Json<serde_json::Value>>(
+                    "SELECT data FROM mcp_management_runtime_session_close_results \
+                 WHERE session_id=$1 AND expires_at_unix>$2",
                 )
+                .bind(session_id)
+                .bind(now)
+                .fetch_optional(pool)
                 .await
-                .map_err(|error| format!("load Runtime Session close result failed: {error}"))?,
+                .map_err(|error| format!("load Runtime Session close result failed: {error}"))?
+                .map(|value| serde_json::from_value(value.0).map_err(|error| error.to_string()))
+                .transpose()?
+            }
         };
         let Some(record) = record else {
             return Ok(None);
@@ -117,7 +97,9 @@ impl RuntimeSessionCloseStore {
             session_id: response.session_id.clone(),
             caller_service: caller_service.to_string(),
             response,
-            expires_at: DateTime::from_millis(expires_at_unix.saturating_mul(1_000)),
+            expires_at: DateTime::<Utc>::from_timestamp(expires_at_unix, 0).ok_or_else(|| {
+                "Runtime Session close expiry is outside timestamp range".to_string()
+            })?,
             expires_at_unix,
         };
         match self.backend.as_ref() {
@@ -128,15 +110,27 @@ impl RuntimeSessionCloseStore {
                     .insert(record.session_id.clone(), record);
                 Ok(())
             }
-            RuntimeSessionCloseStoreBackend::Mongo(collection) => collection
-                .replace_one(
-                    doc! { "_id": record.session_id.as_str() },
-                    record,
-                    ReplaceOptions::builder().upsert(true).build(),
+            RuntimeSessionCloseStoreBackend::Postgres(pool) => {
+                let data = serde_json::to_value(&record)
+                    .map(Json)
+                    .map_err(|error| error.to_string())?;
+                sqlx::query(
+                    "INSERT INTO mcp_management_runtime_session_close_results \
+                     (session_id,caller_service,expires_at,expires_at_unix,data,updated_at) \
+                     VALUES($1,$2,$3,$4,$5,now()) ON CONFLICT(session_id) DO UPDATE SET \
+                     caller_service=EXCLUDED.caller_service,expires_at=EXCLUDED.expires_at, \
+                     expires_at_unix=EXCLUDED.expires_at_unix,data=EXCLUDED.data,updated_at=now()",
                 )
+                .bind(&record.session_id)
+                .bind(&record.caller_service)
+                .bind(record.expires_at)
+                .bind(record.expires_at_unix)
+                .bind(data)
+                .execute(pool)
                 .await
                 .map(|_| ())
-                .map_err(|error| format!("persist Runtime Session close result failed: {error}")),
+                .map_err(|error| format!("persist Runtime Session close result failed: {error}"))
+            }
         }
     }
 }

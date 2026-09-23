@@ -9,7 +9,9 @@ use memory_engine_sdk::{
 };
 use serde_json::Value;
 
-use crate::core::chat_runtime::{contact_agent_id_from_metadata, contact_id_from_metadata};
+use crate::core::chat_runtime::{
+    contact_agent_id_from_metadata, contact_id_from_metadata, project_id_from_metadata,
+};
 use crate::core::messages::message_is_hidden;
 use crate::core::time::now_rfc3339;
 use crate::models::message::Message;
@@ -258,6 +260,9 @@ pub async fn list_chatos_sessions(
             mapping_version: None,
             thread_label: None,
             status,
+            before_updated_at: None,
+            before_created_at: None,
+            before_id: None,
             limit,
             offset: Some(offset),
         })
@@ -294,6 +299,9 @@ pub async fn list_chatos_sessions_by_agent(
             mapping_version: None,
             thread_label: None,
             status: status.map(ToOwned::to_owned),
+            before_updated_at: None,
+            before_created_at: None,
+            before_id: None,
             limit,
             offset: Some(offset),
         })
@@ -343,6 +351,8 @@ async fn list_chatos_message_page(
                 role: None,
                 record_type: Some("message".to_string()),
                 summary_status: None,
+                after_created_at: None,
+                after_id: None,
                 limit,
                 offset: Some(offset),
                 order: Some(if asc {
@@ -535,6 +545,9 @@ pub async fn list_chatos_summaries(
                 summary_type: None,
                 status: None,
                 level: None,
+                after_level: None,
+                after_created_at: None,
+                after_id: None,
                 limit,
                 offset: Some(offset),
             },
@@ -560,6 +573,9 @@ pub async fn delete_chatos_summary(
                 summary_type: None,
                 status: None,
                 level: None,
+                after_level: None,
+                after_created_at: None,
+                after_id: None,
                 limit: Some(5_000),
                 offset: Some(0),
             },
@@ -604,10 +620,14 @@ async fn find_existing_active_chatos_session(
                 mapping_version: None,
                 thread_label: None,
                 status: Some("active".to_string()),
+                before_updated_at: None,
+                before_created_at: None,
+                before_id: None,
                 limit: Some(20),
                 offset: Some(0),
             })
             .await?;
+        let items = matching_project_scope(items, project_scope);
         if let Some(session) = choose_existing_chatos_session(&client, items).await? {
             return Ok(Some(session));
         }
@@ -627,14 +647,64 @@ async fn find_existing_active_chatos_session(
                 mapping_version: None,
                 thread_label: None,
                 status: Some("active".to_string()),
+                before_updated_at: None,
+                before_created_at: None,
+                before_id: None,
                 limit: Some(20),
                 offset: Some(0),
             })
             .await?;
+        let items = matching_project_scope(items, project_scope);
         if let Some(session) = choose_existing_chatos_session(&client, items).await? {
             return Ok(Some(session));
         }
     }
 
     Ok(None)
+}
+
+fn matching_project_scope(
+    items: Vec<EngineThread>,
+    project_scope: Option<&str>,
+) -> Vec<EngineThread> {
+    items
+        .into_iter()
+        .filter(|item| metadata_matches_project_scope(item.metadata.as_ref(), project_scope))
+        .collect()
+}
+
+fn metadata_matches_project_scope(metadata: Option<&Value>, project_scope: Option<&str>) -> bool {
+    project_id_from_metadata(metadata).as_deref() == project_scope
+}
+
+#[cfg(test)]
+mod tests {
+    use super::metadata_matches_project_scope;
+    use serde_json::json;
+
+    #[test]
+    fn direct_scope_does_not_match_project_thread() {
+        let metadata = json!({
+            "source_metadata": {
+                "chat_runtime": { "project_id": "project_1" }
+            }
+        });
+
+        assert!(!metadata_matches_project_scope(Some(&metadata), None));
+        assert!(metadata_matches_project_scope(
+            Some(&metadata),
+            Some("project_1")
+        ));
+    }
+
+    #[test]
+    fn direct_scope_matches_thread_without_project() {
+        let metadata = json!({
+            "source_metadata": {
+                "chat_runtime": { "contact_id": "contact_1" }
+            }
+        });
+
+        assert!(metadata_matches_project_scope(Some(&metadata), None));
+    }
 }

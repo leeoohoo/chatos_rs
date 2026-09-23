@@ -21,7 +21,7 @@ pub fn build_responses_request_payload(
     model: String,
     instructions: Option<String>,
     prompt_cache_key: Option<String>,
-    previous_response_id: Option<String>,
+    _previous_response_id: Option<String>,
     tools: Option<Vec<Value>>,
     request_cwd: Option<String>,
     temperature: Option<f64>,
@@ -43,6 +43,7 @@ pub fn build_responses_request_payload(
     let mut payload = json!({
         "model": model,
         "input": input,
+        "store": false,
     });
     if let Some(instructions) = normalized_option(instructions.as_deref()) {
         payload["instructions"] = Value::String(instructions);
@@ -54,9 +55,6 @@ pub fn build_responses_request_payload(
     }
     if has_prompt_cache_key && include_prompt_cache_retention {
         payload["prompt_cache_retention"] = Value::String(CHAT_PROMPT_CACHE_RETENTION.to_string());
-    }
-    if let Some(response_id) = normalized_option(previous_response_id.as_deref()) {
-        payload["previous_response_id"] = Value::String(response_id);
     }
     if let Some(tools) = tools.filter(|items| !items.is_empty()) {
         payload["tools"] = Value::Array(tools);
@@ -77,6 +75,7 @@ pub fn build_responses_request_payload(
             reasoning_payload["summary"] = Value::String("auto".to_string());
         }
         payload["reasoning"] = reasoning_payload;
+        payload["include"] = json!(["reasoning.encrypted_content"]);
     }
     if let Some(output_format) = output_format {
         payload["text"] = json!({
@@ -84,23 +83,6 @@ pub fn build_responses_request_payload(
         });
     }
     payload["stream"] = Value::Bool(stream);
-    payload
-}
-
-pub(crate) fn responses_input_token_count_payload(mut payload: Value) -> Value {
-    let Some(object) = payload.as_object_mut() else {
-        return payload;
-    };
-    for key in [
-        "stream",
-        "temperature",
-        "max_output_tokens",
-        "prompt_cache_key",
-        "prompt_cache_retention",
-        "cwd",
-    ] {
-        object.remove(key);
-    }
     payload
 }
 
@@ -624,56 +606,6 @@ fn chat_content_part_to_value(part: &Value) -> Option<Value> {
                     "text": text,
                 }))
             }
-        }
-    }
-}
-
-#[cfg(test)]
-mod input_token_count_tests {
-    use serde_json::json;
-
-    use super::responses_input_token_count_payload;
-
-    #[test]
-    fn input_token_count_payload_keeps_context_fields_only() {
-        let payload = responses_input_token_count_payload(json!({
-            "model": "gpt-test",
-            "input": [{"role": "user", "content": "hello"}],
-            "instructions": "system",
-            "previous_response_id": "resp_1",
-            "tools": [{"type": "function", "name": "lookup"}],
-            "tool_choice": "auto",
-            "reasoning": {"effort": "high"},
-            "text": {"format": {"type": "json_object"}},
-            "stream": true,
-            "temperature": 0.2,
-            "max_output_tokens": 100,
-            "prompt_cache_key": "cache",
-            "prompt_cache_retention": "24h",
-            "cwd": "/workspace"
-        }));
-
-        for key in [
-            "model",
-            "input",
-            "instructions",
-            "previous_response_id",
-            "tools",
-            "tool_choice",
-            "reasoning",
-            "text",
-        ] {
-            assert!(payload.get(key).is_some(), "missing {key}");
-        }
-        for key in [
-            "stream",
-            "temperature",
-            "max_output_tokens",
-            "prompt_cache_key",
-            "prompt_cache_retention",
-            "cwd",
-        ] {
-            assert!(payload.get(key).is_none(), "unexpected {key}");
         }
     }
 }

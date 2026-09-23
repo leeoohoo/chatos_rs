@@ -111,6 +111,8 @@ pub(crate) fn shared_builtin_kind(
         ChatosBuiltinMcpKind::TerminalController => {
             Some(chatos_mcp_runtime::BuiltinMcpKind::TerminalController)
         }
+        ChatosBuiltinMcpKind::RequirementSurveyRead
+        | ChatosBuiltinMcpKind::RequirementSurveyWrite => None,
         ChatosBuiltinMcpKind::TaskManager => None,
         ChatosBuiltinMcpKind::Notepad => Some(chatos_mcp_runtime::BuiltinMcpKind::Notepad),
         ChatosBuiltinMcpKind::AgentBuilder => {
@@ -137,10 +139,19 @@ pub(crate) fn chatos_builtin_server(
 ) -> Result<ChatosBuiltinServer, String> {
     let kind = chatos_mcp_runtime::builtin_kind_by_any(server.kind.as_str())
         .ok_or_else(|| format!("unknown builtin mcp kind: {}", server.kind))?;
+    let kind = chatos_builtin_kind(kind).ok_or_else(|| match kind {
+        chatos_mcp_runtime::BuiltinMcpKind::TaskManager => {
+            "TaskManager builtin MCP has been removed".to_string()
+        }
+        chatos_mcp_runtime::BuiltinMcpKind::RequirementSurveyRead
+        | chatos_mcp_runtime::BuiltinMcpKind::RequirementSurveyWrite => {
+            "Requirement Survey MCP is hosted by the Local Connector".to_string()
+        }
+        _ => "builtin MCP is not supported by ChatOS".to_string(),
+    })?;
     Ok(ChatosBuiltinServer {
         name: server.name,
-        kind: chatos_builtin_kind(kind)
-            .ok_or_else(|| "TaskManager builtin MCP has been removed".to_string())?,
+        kind,
         workspace_dir: server.workspace_dir,
         user_id: server.user_id,
         project_id: server.project_id,
@@ -167,6 +178,8 @@ pub(crate) fn chatos_builtin_kind(
         chatos_mcp_runtime::BuiltinMcpKind::TerminalController => {
             Some(ChatosBuiltinMcpKind::TerminalController)
         }
+        chatos_mcp_runtime::BuiltinMcpKind::RequirementSurveyRead
+        | chatos_mcp_runtime::BuiltinMcpKind::RequirementSurveyWrite => None,
         chatos_mcp_runtime::BuiltinMcpKind::TaskManager => None,
         chatos_mcp_runtime::BuiltinMcpKind::Notepad => Some(ChatosBuiltinMcpKind::Notepad),
         chatos_mcp_runtime::BuiltinMcpKind::AgentBuilder => {

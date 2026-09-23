@@ -245,22 +245,6 @@ fn task_plugin_routing_description(plugin_key: &str, description: &str) -> Strin
     description.to_string()
 }
 
-#[cfg(test)]
-mod plugin_routing_tests {
-    use super::task_plugin_routing_description;
-
-    #[test]
-    fn distinguishes_native_apps_from_browser_pages() {
-        let computer = task_plugin_routing_description("open-computer-use", "Desktop control.");
-        assert!(computer.contains("native desktop applications"));
-        assert!(computer.contains("Feishu/Lark"));
-
-        let browser = task_plugin_routing_description("chatos-browser-cdp", "Browser control.");
-        assert!(browser.contains("only for websites"));
-        assert!(browser.contains("Do not select it for native desktop applications"));
-    }
-}
-
 fn merge_mcp_choice(
     choices: &mut BTreeMap<String, String>,
     value: String,
@@ -297,4 +281,20 @@ fn tool_name(tool: &Value) -> Option<String> {
     tool.get("name")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
+}
+
+#[cfg(test)]
+mod plugin_routing_tests {
+    use super::task_plugin_routing_description;
+
+    #[test]
+    fn distinguishes_native_apps_from_browser_pages() {
+        let computer = task_plugin_routing_description("open-computer-use", "Desktop control.");
+        assert!(computer.contains("native desktop applications"));
+        assert!(computer.contains("Feishu/Lark"));
+
+        let browser = task_plugin_routing_description("chatos-browser-cdp", "Browser control.");
+        assert!(browser.contains("only for websites"));
+        assert!(browser.contains("Do not select it for native desktop applications"));
+    }
 }

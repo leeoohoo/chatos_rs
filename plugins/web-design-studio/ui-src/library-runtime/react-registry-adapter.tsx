@@ -8,7 +8,13 @@ interface ReactRegistryAdapterOptions {
   library: string;
   entries: Record<string, ReactRegistryEntry>;
   modules: Record<string, () => Promise<unknown>>;
-  previewProps?: (slug: string, props: Record<string, unknown>, content: string) => Record<string, unknown>;
+  previewProps?: (
+    slug: string,
+    props: Record<string, unknown>,
+    content: string,
+    context: { mode: 'root' | 'preview' }
+  ) => Record<string, unknown>;
+  renderRootWithContent?: (slug: string, props: Record<string, unknown>, content: string) => boolean;
   wrap?: (node: ReactNode) => ReactNode;
 }
 
@@ -41,21 +47,24 @@ export function createReactRegistryAdapter(options: ReactRegistryAdapterOptions)
       const root: Root = createRoot(target);
       let generation = 0;
       const render = async (nextProps: Record<string, unknown>, nextContent: string) => {
-        const requestedDemo = typeof nextProps.registryDemo === 'string' ? nextProps.registryDemo : undefined;
-        const demo = entry.demos?.find((candidate) => candidate.id === requestedDemo);
+        const renderRoot = options.renderRootWithContent?.(slug, nextProps, nextContent) === true;
+        const requestedDemo = renderRoot || typeof nextProps.registryDemo !== 'string' ? undefined : nextProps.registryDemo;
+        const demo = renderRoot ? undefined : entry.demos?.find((candidate) => candidate.id === requestedDemo);
         const currentGeneration = ++generation;
         const composedPreview = demo?.composition
           ? await renderReactRegistryComposition(demo.composition, { content: nextContent, props: nextProps, modules: options.modules })
           : undefined;
-        const previewPath = demo?.path ?? entry.previewPath;
-        const previewExport = demo?.export ?? entry.previewExport;
+        const previewPath = renderRoot ? entry.rootPath : demo?.path ?? entry.previewPath;
+        const previewExport = renderRoot ? entry.rootExport : demo?.export ?? entry.previewExport;
         const loader = composedPreview ? undefined : options.modules[previewPath];
         if (!composedPreview && !loader) throw new Error(`${options.library} preview module is missing: ${previewPath}`);
         const Preview = composedPreview ? undefined : exportedComponent(await loader!() as ReactModule, previewExport);
         if (currentGeneration !== generation) return;
-        const configured = options.previewProps?.(slug, nextProps, nextContent) ?? nextProps;
+        const configured = options.previewProps?.(slug, nextProps, nextContent, { mode: renderRoot ? 'root' : 'preview' }) ?? nextProps;
         const { children: configuredChildren, registryDemo: _registryDemo, ...runtimeProps } = configured;
-        const children = (demo || entry.demo || entry.acceptsChildren === false ? undefined : configuredChildren ?? nextContent) as ReactNode;
+        const children = (renderRoot
+          ? configuredChildren ?? nextContent
+          : demo || entry.demo || entry.acceptsChildren === false ? undefined : configuredChildren ?? nextContent) as ReactNode;
         const previewNode = composedPreview ?? createElement(Preview!, runtimeProps, children);
         const wrappedPreview = options.wrap ? options.wrap(previewNode) : previewNode;
         root.render(createElement(RuntimeErrorBoundary, { emit },

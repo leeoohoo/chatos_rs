@@ -1,18 +1,21 @@
 {
   "schemaVersion": 1,
   "guideId": "diagram-architecture",
-  "guideVersion": "1.1.0",
+  "guideVersion": "1.2.0",
   "kind": "architecture",
   "defaultMode": "overview",
   "modes": {
-    "overview": { "qualityProfile": "architecture-overview", "maxPrimaryItems": 10, "maxEdges": 12, "minStructureItems": 2, "maxStructureItems": 5 },
-    "detail": { "qualityProfile": "architecture-detail", "maxPrimaryItems": 16, "maxEdges": 22, "minStructureItems": 1, "maxStructureItems": 4 }
+    "overview": { "qualityProfile": "architecture-overview", "viewpoints": ["system-context", "container"], "maxPrimaryItems": 10, "maxEdges": 12, "minStructureItems": 2, "maxStructureItems": 5 },
+    "detail": { "qualityProfile": "architecture-detail", "viewpoints": ["container", "component"], "maxPrimaryItems": 16, "maxEdges": 22, "minStructureItems": 1, "maxStructureItems": 4 }
   },
   "checklist": [
     "single_architecture_viewpoint",
+    "components_are_capabilities_not_steps",
     "boundaries_show_ownership",
     "primary_path_is_visible",
     "relationships_are_aggregated",
+    "relationships_are_stable_dependencies",
+    "overview_is_not_a_runtime_chain",
     "runtime_cycles_are_moved_to_detail",
     "implementation_detail_is_excluded",
     "independent_concerns_are_split",

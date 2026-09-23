@@ -143,7 +143,9 @@ fn remove_execution_only_kinds(kinds: &mut Vec<BuiltinMcpKind>, requires_executi
     kinds.retain(|kind| {
         !matches!(
             kind,
-            BuiltinMcpKind::CodeMaintainerWrite | BuiltinMcpKind::TerminalController
+            BuiltinMcpKind::CodeMaintainerWrite
+                | BuiltinMcpKind::TerminalController
+                | BuiltinMcpKind::RequirementSurveyWrite
         )
     });
 }
@@ -284,6 +286,13 @@ fn complete_required_dependencies(
             push_required(
                 &mut out,
                 BuiltinMcpKind::CodeMaintainerRead,
+                requirement.source,
+            );
+        }
+        if requirement.kind == BuiltinMcpKind::RequirementSurveyWrite {
+            push_required(
+                &mut out,
+                BuiltinMcpKind::RequirementSurveyRead,
                 requirement.source,
             );
         }

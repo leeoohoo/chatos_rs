@@ -320,15 +320,12 @@ struct NotepadSheet: View {
     }
 
     private var markdownPreview: some View {
-        ScrollView {
-            MarkdownDocumentView(
-                markdown: viewModel.content.isEmpty
-                    ? model.localized("_暂无内容_", english: "_No content_")
-                    : viewModel.content
-            )
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .padding(12)
-        }
+        MarkdownReaderView(
+            markdown: viewModel.content.isEmpty
+                ? model.localized("_暂无内容_", english: "_No content_")
+                : viewModel.content
+        )
+        .padding(12)
         .background(Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 7))
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(.separator))

@@ -75,7 +75,7 @@ export interface SceneQueryAncestor {
 }
 
 export interface SceneQueryResult {
-  node: SceneNode;
+  node: SceneQueryNode;
   nodeId: string;
   parentId: string;
   pageId: string;
@@ -85,6 +85,18 @@ export interface SceneQueryResult {
   ancestors: SceneQueryAncestor[];
 }
 
+/**
+ * Query responses are deliberately flat. Returning a container's full children
+ * here duplicates every descendant once for each ancestor and can make a
+ * modest page exceed the native MCP response limit. Hierarchy is already
+ * represented by parentId/path/ancestors, so containers expose stable child
+ * references instead of recursively embedding their subtrees.
+ */
+export type SceneQueryNode = Omit<SceneNode, 'children' | 'slots'> & {
+  childIds?: string[];
+  slotChildIds?: Record<string, string[]>;
+};
+
 interface IndexedQueryEntry {
   node: SceneNode;
   parentId: string;
@@ -92,6 +104,24 @@ interface IndexedQueryEntry {
   path: number[];
   slot?: string;
   ancestors: SceneNode[];
+}
+
+function compactQueryNode(node: SceneNode): SceneQueryNode {
+  const compact = structuredClone(node) as SceneNode & {
+    childIds?: string[];
+    slotChildIds?: Record<string, string[]>;
+  };
+  if (isSceneContainer(node)) {
+    compact.childIds = node.children.map((child) => child.id);
+    delete (compact as Partial<{ children: SceneNode[] }>).children;
+  }
+  if (isSceneSlotContainer(node)) {
+    compact.slotChildIds = Object.fromEntries(
+      Object.entries(node.slots).map(([slot, children]) => [slot, children.map((child) => child.id)])
+    );
+    delete (compact as Partial<{ slots: Record<string, SceneNode[]> }>).slots;
+  }
+  return compact as unknown as SceneQueryNode;
 }
 
 const sceneNodeTypes: SceneNodeType[] = [
@@ -254,7 +284,7 @@ export class SceneQueryIndex {
     for (const entry of this.entries) {
       if (!this.matchesEntry(entry, query)) continue;
       results.push({
-        node: structuredClone(entry.node),
+        node: compactQueryNode(entry.node),
         nodeId: entry.node.id,
         parentId: entry.parentId,
         pageId: entry.pageId,

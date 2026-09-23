@@ -7,7 +7,12 @@ impl InMemoryStore {
     pub(in crate::store) fn list_tasks(&self) -> Vec<TaskRecord> {
         let data = self.inner.read();
         let mut items = data.tasks.values().cloned().collect::<Vec<_>>();
-        items.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        items.sort_by(|left, right| {
+            right
+                .updated_at
+                .cmp(&left.updated_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
         items
     }
 
@@ -107,7 +112,21 @@ impl InMemoryStore {
             })
             .cloned()
             .collect::<Vec<_>>();
-        items.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        items.sort_by(|left, right| {
+            right
+                .updated_at
+                .cmp(&left.updated_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        if let Ok(Some((cursor_updated_at, cursor_id))) = filters.cursor() {
+            items.retain(|task| {
+                DateTime::parse_from_rfc3339(&task.updated_at).is_ok_and(|updated_at| {
+                    let updated_at = updated_at.with_timezone(&Utc);
+                    updated_at < cursor_updated_at
+                        || (updated_at == cursor_updated_at && task.id.as_str() > cursor_id)
+                })
+            });
+        }
         apply_offset_limit(&mut items, filters.offset, filters.limit);
         items
     }
@@ -119,28 +138,30 @@ impl InMemoryStore {
         let mut count_filters = filters.clone();
         count_filters.limit = None;
         count_filters.offset = None;
+        count_filters.after_updated_at = None;
+        count_filters.after_id = None;
         let total = self.list_tasks_filtered(&count_filters).len();
-        build_page_response(
-            self.list_tasks_filtered(filters),
-            total,
-            filters.limit.unwrap_or(DEFAULT_PAGE_LIMIT),
-            filters.offset.unwrap_or(0),
-        )
+        let limit = filters.limit.unwrap_or(DEFAULT_PAGE_LIMIT);
+        let offset = filters.offset.unwrap_or(0);
+        if filters.cursor().ok().flatten().is_some() {
+            let mut page_filters = filters.clone();
+            page_filters.limit = Some(limit.saturating_add(1));
+            let mut items = self.list_tasks_filtered(&page_filters);
+            let has_more = items.len() > limit;
+            items.truncate(limit);
+            return PaginatedResponse {
+                items,
+                total,
+                limit,
+                offset,
+                has_more,
+            };
+        }
+        build_page_response(self.list_tasks_filtered(filters), total, limit, offset)
     }
 
     pub(in crate::store) fn get_task(&self, id: &str) -> Option<TaskRecord> {
         self.inner.read().tasks.get(id).cloned()
-    }
-
-    pub(in crate::store) fn list_task_summaries(&self) -> Vec<TaskSummaryRecord> {
-        let data = self.inner.read();
-        let mut items = data
-            .tasks
-            .values()
-            .map(TaskSummaryRecord::from)
-            .collect::<Vec<_>>();
-        items.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
-        items
     }
 
     pub(in crate::store) fn list_task_summaries_filtered(

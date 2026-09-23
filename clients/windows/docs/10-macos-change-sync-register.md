@@ -1,6 +1,6 @@
 # macOS 变更的 Windows 同步登记
 
-更新时间：2026-08-31
+更新时间：2026-09-23
 
 本文是 Windows 客户端针对 macOS 端 Bug 修复、功能更新和协议变化的执行队列。macOS 侧的来源登记位于 `chatos_swift/docs/18-cross-platform-change-register.md`。
 
@@ -18,10 +18,15 @@
 
 | 编号 | macOS 变更 | 影响层 | Windows 状态 | 下一步 |
 | --- | --- | --- | --- | --- |
-| CP-20260831-001 | 没有模型供应商时仍展示历史模型 | 共享后端、模型 DTO、设置与聊天模型 UI | 待实现 | 清理 SQLite 中失效的本机审批模型 ID，增加回归测试后做 Windows 真机验收 |
-| CP-20260831-002 | Raycast 风格全局快速搜索 | WinUI、Windows Search、Shell、全局快捷键 | 待实现 | 建立四类搜索 provider、排序状态机和原生浮层 |
-| CP-20260831-003 | 本地剪贴板历史 | Windows Clipboard、SQLite、WinUI、隐私过滤 | 待实现 | 实现本地采集、恢复、去重、清理和持久化 |
-| CP-20260831-004 | 原生屏幕录制 | Windows Graphics Capture、Media Foundation、WinUI | 待实现 | 实现目标选择、系统声音、停止条和 H.264 文件输出 |
+| CP-20260831-001 | 没有模型供应商时仍展示历史模型 | 共享后端、模型 DTO、设置与聊天模型 UI | 待真机验收 | 已清理 SQLite 中失效的审批模型 ID并覆盖重建回归；验证设置页空态与重启行为 |
+| CP-20260831-002 | Raycast 风格全局快速搜索 | WinUI、Windows Search、Shell、全局快捷键 | 待真机验收 | 已实现四类 provider、排序、模式前缀和全局快捷键；验证快捷键冲突与焦点恢复 |
+| CP-20260831-003 | 本地剪贴板历史 | Windows Clipboard、SQLite、WinUI、隐私过滤 | 待真机验收 | 已实现采集、恢复、去重、清理和持久化；验证跨应用恢复与敏感格式过滤 |
+| CP-20260831-004 | 原生屏幕录制 | Windows 原生 Snipping Tool、WinUI | 待真机验收 | 已接入显示器/窗口选择、系统音频与原生停止条，并自动归档 MP4；验证系统版本兼容性与媒体参数 |
+| CP-20260922-001 | Agent 团队与需求调研 | Core、SQLite、Connector、Presentation、WinUI | 待真机验收 | 项目级调研中心、统一渐进调研、多模态输入、跨会话 Inbox、run-scoped opaque refs、成员提案、Todo 隔离调度和失败 delivery/run 恢复均已补；验证 Windows 真机模型、Plugin、崩溃恢复和长对话内存占用 |
+
+## 未编号工作区观察
+
+- 2026-09-22 审计到两处未提交、由外部并行修改的 macOS 远程连接代码：SSH 二次验证码从“携码重连”改为保留原认证进程并在同一会话续交，以支持 session-bound MFA。Windows 已独立补齐 SSH.NET 同会话 continuation：认证提示出现后保留原 attempt，验证码只提交给当前回调，支持跳板机与目标机的连续挑战；待验证 attempt 限每类 8 个、5 分钟失效、单 attempt 最多 4 轮提示。自动化覆盖同一 attempt 续交、一次性验证码消费和密码提示隔离，仍待 Windows 真机 SSH 服务器验收。macOS 变更仍未提交且未获 `CP-*` 编号，因此这里只记录观察与预同步结果，不触碰外部修改、不伪造编号。
 
 ## 详细记录
 
@@ -44,7 +49,7 @@
   1. 使用同一线上账号打开模型设置页，确认显示空态。
   2. 打开聊天页，确认不存在已删除模型名称。
   3. 执行刷新、退出重进和应用重启，结果保持一致。
-- 当前状态：`待实现`。
+- 当前状态：`待真机验收`；SQLite 清理与 ViewModel 重建回归测试已通过。
 - 关闭条件：完成 SQLite 失效选择清理和自动化后标记为 `待真机验收`；Windows 真机证据完成后标记为 `已同步`，并回写 macOS 来源登记。
 
 ### CP-20260831-002：Raycast 风格全局快速搜索
@@ -54,7 +59,7 @@
 - Windows 代码修改：使用 WinUI 浮层和 Windows Search/Shell API，实现四类 provider、`>`/`@`/`/` 前缀、精确/前缀/包含/模糊排序与最近使用加权。
 - Windows 自动化要求：覆盖排序稳定性、查询 generation 保护、使用频率上限、空索引降级、ChatOS 项目与联系人动作路由。
 - Windows 真机要求：全局快捷键呼出；搜索并启动应用、打开文件、进入 ChatOS 项目；上下键、回车、Escape 与原应用焦点恢复均正确。
-- 当前状态：`待实现`。
+- 当前状态：`待真机验收`；四类 provider、排序、前缀过滤、使用频次和快捷键回退自动化已通过。
 - 关闭条件：代码和自动化完成后进入 `待真机验收`，真机验证后回写两端登记。
 
 ### CP-20260831-003：本地剪贴板历史
@@ -64,18 +69,34 @@
 - Windows 代码修改：使用 Windows Clipboard 事件和 SQLite，实现敏感格式过滤、SHA256 去重、恢复标记、500 条/30 天清理、固定与搜索。
 - Windows 自动化要求：覆盖四种 payload、重复复制、固定条目不清理、恢复不重复采集、数据库重启恢复和损坏 payload 降级。
 - Windows 真机要求：从多个应用复制并恢复测试数据；确认恢复后焦点回到原应用；密码管理器内容不进入历史；重启后记录仍存在。
-- 当前状态：`待实现`。
+- 当前状态：`待真机验收`；文本、URL、文件、图片、去重、固定、恢复抑制和清理测试已通过。
 - 关闭条件：隐私过滤与持久化测试完成后进入 `待真机验收`，真机证据完成后关闭。
 
 ### CP-20260831-004：原生屏幕录制
 
 - macOS 状态：显示器/窗口、可选系统声音、悬浮停止条、H.264 MOV 和结果提示已实现；编译与全量测试通过，等待真机录制验收。
 - Windows 风险：高 DPI 尺寸、系统声音回环、最小化窗口、录制中设备变化，以及“包含 ChatOS 与宠物但只排除控制条”的窗口过滤均为平台特有风险。
-- Windows 代码修改：使用 Windows Graphics Capture 与 Media Foundation（或等价原生 API）实现显示器/窗口选择、系统音频、30fps H.264 和结果归档。
+- Windows 代码修改：通过 Windows 原生 Snipping Tool 录屏协议提供显示器/窗口选择、系统声音、停止控制条及 H.264 MP4，由 ChatOS 状态协调器检测完成文件并复制到 `Videos/ChatOS`。
 - Windows 自动化要求：覆盖状态机、重复开始/停止、输出路径、异常终止与文件命名；媒体管线部分提供可替换测试边界。
 - Windows 真机要求：分别录制窗口、单显示器和系统声音；检查分辨率、方向、音画时长；显示器录制应包含 ChatOS 主窗口和宠物但不包含录制控制条，并验证录制完成提示。
-- 当前状态：`待实现`。
+- 当前状态：`待真机验收`；归档候选状态机自动化已通过，Windows 原生录制与系统音频仍需真机媒体证据。
 - 关闭条件：代码、自动化与 Windows 真机媒体文件证据完成后标记 `已同步`。
+
+### CP-20260922-001：Agent 团队与需求调研
+
+- macOS 状态：Agent 团队包含 Agent 配置、项目团队/私聊、消息与附件、Todo 调度、共享资产、项目工具、模型循环，以及最新的结构化需求调研和执行者资产更新建议。
+- Windows 风险：Windows 原先完全没有 Agent 团队领域模型、持久化、调度或 UI；普通任务图不能提供 durable delivery、团队权限、项目边界或 Human 调研闭环。
+- Windows 代码修改：新增账号隔离 SQLite schema、Agent/Room/Message/Todo/Asset/Survey/Delivery/Run 模型与 Store；Responses API 工具循环；默认插件与成员 allowlist 交集驱动的 MCP 真执行，并复用权限/逐次审批、OAuth/Secret 和 Artifact 管线且按 run 清理；项目文件与审批终端；后台心跳/恢复；Presentation 状态机；项目工作区 WinUI；附件元数据与 payload 分表、UTF-8 正文按需读取；触发消息与冻结 Todo 来源中的 PNG/JPEG/GIF/WebP/PDF 使用 Responses 图片/文件 part，并以最多 8 项、单项 8 MiB、合计 16 MiB、文件签名和会话+消息+附件归属二次校验约束模型输入；账号级跨会话 Inbox、成员范围过滤、排除自身回复、单调已读游标、原子读取/标记、批量元数据查询和 v16 迁移；真实模型 Run 使用独立 opaque reference vault 隔离 Agent/会话/消息/附件/Todo/资产/调研/Plugin 持久 ID，并提供账号级工作区快照；Agent 间私聊；Todo 不可变执行合同、跨会话来源关系、builtin 能力依赖补全、opaque Plugin 选择快照和 v17 迁移，并以原子 schedule state/start-next 保证每 Agent 单执行槽及优先级选取；共享资产 create/update 分离、分类对齐和项目经理自动维护唤醒；需求调研改为项目归属并接入统一渐进 Skill 协议、跨团队任务核对和 v14 迁移，独立项目入口提供跨团队列表、阶段排序、详情、填写/提交、解决方案与执行步骤、空态/错误态/刷新和明确的 Human/Agent 权限状态，提交不再依赖当前选中的团队房间；成员变更提案使用显式 hire+terminate 权限、v15 持久化和 Human 原子审批，新建/入队/移出均不会由 Agent 直接生效。
+- Windows 自动化要求：覆盖账号隔离、默认/@ 路由、4-hop/12-run、Todo 依赖/revision/manager 通知、资产版本与 manager/executor 权限、资产维护去重唤醒、需求调研幂等/提交/解决/专职 Agent 权限、成员提案权限组合/幂等冲突/审批前隔离/原子生效/账号隔离/v15 重启、附件按需正文、心跳、模型错误脱敏、完整模型回复/工具循环和插件 MCP run session。
+- 已关闭的最新差距：Todo communication/executor lane 已拆分状态工具与服务端权限边界；经理通讯通道只能重排/取消，执行通道的 complete/block/progress 会统一二次核对正在运行的 owning delivery、room、Agent 和当前 Todo，不能用同一 Agent 上下文中的其他 run-scoped Todo ref 越权写进展；`todo_progress` 仅接受非终态 `Update`，Completed/Blocked/Failed 分别只能由专用完成/阻塞工具或调度器失败路径写入。隐藏工具调用同样由服务端拒绝，回归覆盖跨 Todo progress 和伪造终态 progress kind。两条 lane 现按账号分别加锁并用 trigger 定向原子 claim，过期崩溃恢复只扫描当前 lane；独立 2 秒 communication 后台循环和 UI 触发可在长 Todo executor 仍运行时完成新消息回复，且不会把另一 lane 的活跃 delivery 当作遗留任务。图片/PDF 多模态输入已覆盖普通触发消息和 Todo 冻结来源，二进制不经 UTF-8 解码且只暴露 run-scoped opaque ref。团队与项目 Todo 查询已对齐 macOS `c53e0568b` 的活跃优先语义，并显式容纳 Windows 的 Ready 状态：执行中、就绪、等待依赖、阻塞均排在完成和取消历史前，同状态内再按优先级与手工顺序稳定排序。
+- 已关闭的项目调研 UI 差距：新增项目顶层“需求调研”入口和独立 Presentation 状态机，单次项目级查询加载跨团队调研，按待填写、等待方案、已解决排序；查询限制 1–500 条、默认 200 条且由 SQL 优先保留待处理项，避免长期项目产生无界 payload 或 UI 集合；完整展示问卷答案、备注、解决方案、执行步骤、风险与资料，Human 只能填写待处理调研且提交后只读，解决权限状态显式说明；空态、错误态、忙碌态和刷新均已覆盖。自动化验证 project-scoped 提交、阶段排序、只读权限、查询上限和错误恢复，XAML XML 解析与 Automation ID 静态契约通过。
+- 已关闭的失败恢复差距：对照 macOS `669665a46`，Windows 会在超时、408、429 或 5xx 时于同一 run 的总调用预算内以 1/2/4/8/16 秒退避最多重试 5 次；显式把失败 Todo 恢复为 Ready 时，事务会复活同一 delivery、清空失败字段并保留 attempt，旧 `todo:{id}:revision:{n}` 键会惰性收敛为稳定 `todo:{id}`。调度器读取该 delivery 的 durable run，复用 run ID 和累计模型调用数，失败请求也先持久化调用计数；不会复制触发消息或越过 16 次总预算。完成/取消路径同时兼容稳定键与旧 revision 键。
+- 已关闭的 Windows 性能差距：团队和项目 Todo 查询在活跃优先排序后于 SQL 层限制结果，默认 200、服务端硬上限 1000；模型 `todo_list` 默认 100 且参数在工具 schema 与执行端共同限制为最多 200，WinUI snapshot 和调研任务核对最多 200，避免长期项目把全部历史、来源关系和大字段无界送入内存或模型上下文。executor 改为按 delivery 精确读取当前 Todo，并用单次 `IN` 查询按合同声明顺序加载最多 100 个依赖，不再为了查一个执行合同扫描整块任务板；最多 64 条跨会话来源消息也改为同一连接上的三条批量 SQL，一次读取正文、提及和附件元数据并保持合同顺序，不再产生逐来源 N+1，也不会把附件 payload 提前载入内存。Todo 完成后的依赖释放现由单条集合 SQL 原子筛选直接引用当前 Todo 且全部前置完成的记录，不再把全账号 Pending Todo 无界读入内存后逐项查询依赖；依赖完成校验本身也从逐 ID 查询收敛为一次有界聚合查询。
+- 当前未发现 CP-20260922-001 范围内仍可由本地代码关闭的差距；未编号的 session-bound SSH MFA 工作区变化另列上方观察，等待来源提交和登记。
+- 2026-09-23 复核：自上一轮自动化后没有新的 macOS 提交；在保留两处外部 macOS SSH 工作区修改的前提下，Windows 关闭 Todo 依赖释放的无界读取与 N+1，并保持 Agent/调研登记为“待真机验收”。此前独立补齐的 SSH.NET session-bound MFA continuation 不伪造同步编号；Windows 自动化总数增至 502 项。
+- Windows 真机要求：代码差距关闭后，验证 Agent/团队编辑与提案对话框、团队切换、附件/多模态、项目调研中心、模型工具、真实插件进程、Artifact、命令审批、崩溃恢复和长对话内存占用。
+- 当前状态：`待真机验收`；Windows solution 502 项测试通过；macOS 需求调研大文件已按列表/详情职责拆分，全仓生产源码均低于 800 行且体积门禁通过。
+- 关闭条件：在 Windows x64/ARM64 编译，x64 完成 UI/模型/Plugin/终端/崩溃恢复 smoke 后，两端登记改为 `已同步`。
 
 ## 新记录模板
 

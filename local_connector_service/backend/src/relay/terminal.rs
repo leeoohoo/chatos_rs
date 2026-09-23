@@ -267,6 +267,11 @@ impl ConnectorRelay {
                 | "workspace_directory_list_response"
                 | "workspace_directory_create_response"
                 | "workspace_filesystem_response"
+                | "companion_resources_response"
+                | "companion_resolve_resource_response"
+                | "companion_approvals_response"
+                | "companion_resolve_approval_response"
+                | "companion_error_response"
                 | "relay_response"
         ) {
             if message_type.ends_with("_response")

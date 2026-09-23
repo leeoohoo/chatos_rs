@@ -15,4 +15,8 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\..\src\ChatOS.Desktop\Features\QuickSearch\WindowsScreenRecordingCoordinator.cs"
+             Link="Desktop\WindowsScreenRecordingCoordinator.cs" />
+  </ItemGroup>
 </Project>

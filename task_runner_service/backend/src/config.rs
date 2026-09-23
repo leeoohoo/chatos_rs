@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use memory_engine_sdk::MemoryEngineClient;
 
-mod database;
 mod dotenv;
 mod env_support;
 
@@ -17,7 +16,7 @@ pub const DEFAULT_TASK_RUN_EXECUTION_TIMEOUT_MS: u64 = 7_200_000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StoreMode {
     Memory,
-    Mongo,
+    Postgres,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,7 +50,6 @@ pub struct AppConfig {
     pub worker_id: String,
     pub worker_claim_ttl: Duration,
     pub worker_concurrency: usize,
-    pub auto_memory_summary: bool,
     pub default_task_execution_max_iterations: usize,
     pub default_tool_result_model_max_chars: usize,
     pub default_tool_results_model_total_max_chars: usize,
@@ -89,7 +87,7 @@ impl AppConfig {
         matches!(self.role, TaskRunnerRole::All | TaskRunnerRole::Scheduler)
     }
 
-    pub fn callback_delivery_enabled(&self) -> bool {
+    pub fn callback_consumer_enabled(&self) -> bool {
         matches!(self.role, TaskRunnerRole::All | TaskRunnerRole::Worker)
     }
 
@@ -116,17 +114,10 @@ impl AppConfig {
 }
 
 impl StoreMode {
-    fn from_env(value: Option<&str>) -> Self {
-        match value.unwrap_or("mongo") {
-            "memory" => Self::Memory,
-            _ => Self::Mongo,
-        }
-    }
-
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Memory => "memory",
-            Self::Mongo => "mongo",
+            Self::Postgres => "postgres",
         }
     }
 }
@@ -153,41 +144,7 @@ impl TaskRunnerRole {
 
 #[cfg(test)]
 mod tests {
-    use super::database::normalize_mongodb_database_url;
     use super::dotenv::task_runner_dotenv_files;
-
-    #[test]
-    fn appends_database_when_missing() {
-        let normalized = normalize_mongodb_database_url(
-            "mongodb://127.0.0.1:27018".to_string(),
-            "task_runner_service",
-        );
-        assert_eq!(normalized, "mongodb://127.0.0.1:27018/task_runner_service");
-    }
-
-    #[test]
-    fn appends_database_before_query_when_missing() {
-        let normalized = normalize_mongodb_database_url(
-            "mongodb://127.0.0.1:27018/?replicaSet=rs0".to_string(),
-            "task_runner_service",
-        );
-        assert_eq!(
-            normalized,
-            "mongodb://127.0.0.1:27018/task_runner_service?replicaSet=rs0"
-        );
-    }
-
-    #[test]
-    fn keeps_existing_database_path() {
-        let normalized = normalize_mongodb_database_url(
-            "mongodb://127.0.0.1:27018/existing_db?retryWrites=true".to_string(),
-            "task_runner_service",
-        );
-        assert_eq!(
-            normalized,
-            "mongodb://127.0.0.1:27018/existing_db?retryWrites=true"
-        );
-    }
 
     #[test]
     fn dotenv_file_order_prefers_more_specific_files_first() {
@@ -207,8 +164,8 @@ mod tests {
             otlp_trace_sample_ratio: 0.0,
             otlp_export_timeout: std::time::Duration::from_secs(1),
             role: super::TaskRunnerRole::Api,
-            store_mode: super::StoreMode::Mongo,
-            database_url: "mongodb://example/task_runner_service".to_string(),
+            store_mode: super::StoreMode::Postgres,
+            database_url: "postgresql://example/task_runner_service".to_string(),
             memory_engine_base_url: None,
             memory_engine_source_id: "task".to_string(),
             memory_engine_operator_token: None,
@@ -222,7 +179,6 @@ mod tests {
             worker_id: "worker".to_string(),
             worker_claim_ttl: std::time::Duration::from_secs(30),
             worker_concurrency: 1,
-            auto_memory_summary: false,
             default_task_execution_max_iterations: 1,
             default_tool_result_model_max_chars: 1,
             default_tool_results_model_total_max_chars: 1,
@@ -241,24 +197,24 @@ mod tests {
         assert!(config.api_enabled());
         assert!(!config.worker_enabled());
         assert!(!config.scheduler_enabled());
-        assert!(!config.callback_delivery_enabled());
+        assert!(!config.callback_consumer_enabled());
 
         config.role = super::TaskRunnerRole::Worker;
         assert!(!config.api_enabled());
         assert!(config.worker_enabled());
         assert!(!config.scheduler_enabled());
-        assert!(config.callback_delivery_enabled());
+        assert!(config.callback_consumer_enabled());
 
         config.role = super::TaskRunnerRole::Scheduler;
         assert!(!config.api_enabled());
         assert!(!config.worker_enabled());
         assert!(config.scheduler_enabled());
-        assert!(!config.callback_delivery_enabled());
+        assert!(!config.callback_consumer_enabled());
 
         config.role = super::TaskRunnerRole::All;
         assert!(config.api_enabled());
         assert!(config.worker_enabled());
         assert!(config.scheduler_enabled());
-        assert!(config.callback_delivery_enabled());
+        assert!(config.callback_consumer_enabled());
     }
 }

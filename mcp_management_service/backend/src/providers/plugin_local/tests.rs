@@ -121,8 +121,8 @@ fn skill_component_binding(
     component_key: &str,
     expires_at_unix: i64,
 ) -> PluginLocalToolComponentBinding {
-    let instructions_sha256 = format!("{}", "2".repeat(64));
-    let resource_manifest_sha256 = format!("{}", "3".repeat(64));
+    let instructions_sha256 = "2".repeat(64);
+    let resource_manifest_sha256 = "3".repeat(64);
     let skill_snapshot = PluginSkillComponentSnapshot {
         protocol_version: SKILL_RUNTIME_PROTOCOL_VERSION,
         skill_id: skill_name.to_string(),
@@ -285,6 +285,7 @@ fn runtime_snapshot(
         agent_key: RUN_AGENT_KEY.to_string(),
         task_profile: Some("default".to_string()),
         project_id: Some("project-1".to_string()),
+        client_project_context: None,
         device_id: None,
         run_id: Some("run-1".to_string()),
         execution_group_id: None,
@@ -988,6 +989,11 @@ fn only_definitely_unexecuted_adapter_failures_are_recoverable() {
     assert!(local_runtime::is_recoverable_adapter_session_error(
         &ProviderCallError::provider_unavailable(
             "Plugin Local Provider rejected execute with HTTP 400: Plugin 本机会话不存在或已经结束",
+        )
+    ));
+    assert!(local_runtime::is_recoverable_adapter_session_error(
+        &ProviderCallError::provider_unavailable(
+            "Plugin Local Provider rejected execute with HTTP 400: Plugin local session does not exist or has ended.",
         )
     ));
     assert!(local_runtime::is_recoverable_adapter_session_error(

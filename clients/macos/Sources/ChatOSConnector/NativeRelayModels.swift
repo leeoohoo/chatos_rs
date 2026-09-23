@@ -50,6 +50,49 @@ struct NativeTerminalRelayBody: Decodable, Sendable {
     }
 }
 
+struct NativeTerminalSessionCreateRelayBody: Decodable, Sendable {
+    var terminalSessionID: String
+    var cwd: String?
+    var columns: Int?
+    var rows: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case cwd, rows
+        case terminalSessionID = "terminal_session_id"
+        case columns = "cols"
+    }
+}
+
+struct NativeTerminalControlRelayBody: Decodable, Sendable {
+    var terminalSessionID: String
+    var data: String?
+    var command: String?
+    var columns: Int?
+    var rows: Int?
+    var lines: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case data, command, rows, lines
+        case terminalSessionID = "terminal_session_id"
+        case columns = "cols"
+    }
+}
+
+struct NativeRemoteTerminalSessionCreateRelayBody: Decodable, Sendable {
+    var terminalSessionID: String
+    var connection: NativeJSONValue
+    var verificationCode: String?
+    var columns: Int?
+    var rows: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case connection, rows
+        case terminalSessionID = "terminal_session_id"
+        case verificationCode = "verification_code"
+        case columns = "cols"
+    }
+}
+
 struct NativeRelayResponse: Encodable, Sendable {
     var type: String
     var requestID: String

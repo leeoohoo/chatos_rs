@@ -166,11 +166,9 @@ pub(crate) async fn generate_or_defer_from_config(
     spec: CloudSummaryPipelineSpec,
     terminal_context: Value,
 ) -> Result<crate::services::ai_pipeline::SummaryBuildResult, String> {
-    let store = CloudAgentStateStore::connect_to_database(
-        config.mongodb_uri.as_str(),
-        config.mongodb_database.as_str(),
-    )
-    .await?;
+    let store = CloudAgentStateStore::from_repository(
+        crate::repositories::cloud_agent::CloudAgentPostgresStore::new(db.clone()),
+    );
     generate_or_defer(
         config,
         db,
@@ -265,6 +263,7 @@ pub(crate) async fn finalize_terminal(
                 .get("job_run_id")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "Memory summary terminal context has no job_run_id".to_string())?;
+            let dispatch_error = error.clone();
             crate::services::summary::fail_cloud_summary_job(
                 &state.pool,
                 tenant_id,
@@ -274,7 +273,14 @@ pub(crate) async fn finalize_terminal(
                 error,
             )
             .await?;
-            settle_summary_dispatch(state, tenant_id, source_id, thread_id, false).await?;
+            crate::summary_queue::dead_letter_current_summary_dispatch(
+                state,
+                tenant_id,
+                source_id,
+                thread_id,
+                dispatch_error.as_str(),
+            )
+            .await?;
         } else {
             finalize_failed_domain_job(state, &terminal_context, error).await?;
         }
@@ -298,9 +304,7 @@ pub(crate) async fn finalize_terminal(
             )
             .await;
             match result {
-                Ok(_) => {
-                    settle_summary_dispatch(state, tenant_id, source_id, thread_id, true).await
-                }
+                Ok(_) => settle_summary_dispatch(state, tenant_id, source_id, thread_id).await,
                 Err(error) if error == MEMORY_CLOUD_AGENT_DEFERRED => Ok(()),
                 Err(error) => Err(error),
             }
@@ -414,7 +418,6 @@ async fn settle_summary_dispatch(
     tenant_id: &str,
     source_id: &str,
     thread_id: &str,
-    _rearm: bool,
 ) -> Result<(), String> {
     if let Some(event) = crate::repositories::threads::get_summary_dispatch_state(
         &state.pool,

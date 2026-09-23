@@ -5,6 +5,7 @@ export interface RenderedSceneNodeMeasurement {
   rect: SceneRect;
   scrollWidth?: number;
   scrollHeight?: number;
+  renderedText?: string;
 }
 
 export type RenderedSceneMeasurements = Record<string, RenderedSceneNodeMeasurement>;

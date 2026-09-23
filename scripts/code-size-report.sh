@@ -113,7 +113,7 @@ human_bytes() {
 is_source_file() {
   local rel="$1"
   case "$rel" in
-    *.rs|*.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.py|*.sh|*.ps1|*.html|*.css|*.scss|*.sql|*.toml|*.yaml|*.yml)
+    *.rs|*.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.py|*.sh|*.ps1|*.cs|*.swift|*.xaml|*.html|*.css|*.scss|*.sql|*.toml|*.yaml|*.yml)
       return 0
       ;;
     *)
@@ -128,7 +128,7 @@ is_excluded_path() {
     .git/*|.github/*|.cache/*|.local/*|.vite/*|.task_runner/*|bundled-tools/*)
       return 0
       ;;
-    target/*|target-*/*|*/target/*|*/node_modules/*|*/dist/*|*/build/*|*/coverage/*)
+    target/*|target-*/*|*/target/*|*/node_modules/*|*/dist/*|*/build/*|*/.build/*|*/.build-native/*|*/bin/*|*/obj/*|*/coverage/*)
       return 0
       ;;
     docs/*|*/docs/*|*.md|*.lock|package-lock.json|pnpm-lock.yaml|yarn.lock)

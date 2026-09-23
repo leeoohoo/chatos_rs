@@ -21,6 +21,7 @@ members = [
   "crates/chatos_terminal_runtime",
   "crates/chatos_config_sdk",
   "crates/chatos_plugin_management_sdk",
+  "crates/chatos_postgres",
   "crates/chatos_local_workspace",
   "crates/chatos_queue_observability",
   "config_center_service/backend",
@@ -35,6 +36,16 @@ exclude = [
 ]
 
 resolver = "2"
+
+[workspace.dependencies]
+sqlx = { version = "0.8.6", default-features = false, features = [
+  "runtime-tokio-rustls",
+  "postgres",
+  "chrono",
+  "json",
+  "migrate",
+  "macros",
+] }
 
 [profile.release]
 opt-level = 3

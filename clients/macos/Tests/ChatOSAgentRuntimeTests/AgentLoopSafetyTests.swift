@@ -41,13 +41,120 @@ final class AgentLoopSafetyTests: XCTestCase {
         XCTAssertEqual(result.modelCalls, 0)
     }
 
+    func testWriteFailurePersistsVisibleInterruptionReason() async throws {
+        let model = ScriptModel([
+            .init(role: .assistant, toolCalls: [
+                .init(id: "write-failure", name: "write", arguments: "{}"),
+            ]),
+        ])
+        let result = try await AgentRuntime().run(
+            checkpoint: base,
+            scope: base.scope,
+            policy: .init(),
+            model: model,
+            tools: [
+                .init(
+                    name: "write",
+                    description: "write",
+                    schema: Data(#"{"type":"object","additionalProperties":false}"#.utf8),
+                    effect: .write
+                ),
+            ],
+            execute: { _ in
+                throw NSError(domain: "test", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "database schema is unavailable",
+                ])
+            }
+        )
+
+        XCTAssertEqual(result.status, .needsReview)
+        XCTAssertEqual(result.inFlightCallID, "write-failure")
+        XCTAssertEqual(result.stopReason, "write 执行中断：database schema is unavailable")
+    }
+
+    func testExplicitCancellationOfWriteToolPausesWithoutNeedsReview() async throws {
+        let model = ScriptModel([
+            .init(role: .assistant, toolCalls: [
+                .init(id: "cancelled-write", name: "write", arguments: "{}"),
+            ]),
+        ])
+        let result = try await AgentRuntime().run(
+            checkpoint: base,
+            scope: base.scope,
+            policy: .init(),
+            model: model,
+            tools: [
+                .init(
+                    name: "write",
+                    description: "write",
+                    schema: Data(#"{"type":"object","additionalProperties":false}"#.utf8),
+                    effect: .write
+                ),
+            ],
+            execute: { _ in throw CancellationError() }
+        )
+
+        XCTAssertEqual(result.status, .paused)
+        XCTAssertNotEqual(result.status, .needsReview)
+        XCTAssertNil(result.receipts["cancelled-write"])
+    }
+
     func testRetriesConsumeBudget() async throws {
         let model = FailingModel()
         var policy = AgentRunPolicy(); policy.maximumModelCalls = 2
-        let result = try await AgentRuntime().run(checkpoint: base, scope: base.scope, policy: policy,
+        let result = try await AgentRuntime(retrySleeper: { _ in }).run(checkpoint: base, scope: base.scope, policy: policy,
             model: model, tools: runtimeTestTools, execute: { _ in .init("unused") })
         XCTAssertEqual(result.modelCalls, 2)
         XCTAssertEqual(result.status, .limitReached)
+    }
+
+    func testTransientFailuresUseFiveVisibleExponentiallySpacedRetries() async throws {
+        let delays = DelayRecorder()
+        let eventRecorder = EventRecorder()
+        let model = FailingModel()
+        var policy = AgentRunPolicy(); policy.maximumModelCalls = 10
+        let runtime = AgentRuntime(retrySleeper: { duration in await delays.append(duration) })
+        let result = try await runtime.run(
+            checkpoint: base, scope: base.scope, policy: policy,
+            model: model, tools: runtimeTestTools, execute: { _ in .init("unused") },
+            record: { _, event in await eventRecorder.append(event) }
+        )
+        XCTAssertEqual(result.modelCalls, 6, "Initial request plus five retries")
+        XCTAssertEqual(result.status, .failed)
+        let recordedDelays = await delays.values
+        XCTAssertEqual(recordedDelays, [.seconds(1), .seconds(2), .seconds(4), .seconds(8), .seconds(16)])
+        let events = await eventRecorder.values
+        let retryEvents = events.filter { $0.kind == "model_retry" }
+        XCTAssertEqual(retryEvents.count, 5)
+        XCTAssertTrue(retryEvents.last?.detail.contains("5 / 5") == true)
+        XCTAssertTrue(retryEvents.last?.detail.contains("16 秒") == true)
+    }
+
+    func testRequestTimeoutIsRetriedWithinTheSameRun() async throws {
+        let model = TimeoutThenSuccessModel()
+        let delays = DelayRecorder()
+        var policy = AgentRunPolicy()
+        policy.maximumRequestRetries = 1
+        let result = try await AgentRuntime(
+            retrySleeper: { duration in await delays.append(duration) }
+        ).run(
+            checkpoint: base,
+            scope: base.scope,
+            policy: policy,
+            model: model,
+            tools: runtimeTestTools,
+            execute: { call in
+                XCTAssertEqual(call.name, "finish")
+                return .init("done")
+            }
+        )
+
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(result.modelCalls, 2)
+        let callCount = await model.callCount
+        let recordedDelays = await delays.values
+        XCTAssertEqual(callCount, 2)
+        XCTAssertEqual(recordedDelays, [.seconds(1)])
     }
 
     func testSettingsPersistAndValidateOverridesAndWindowBudget() throws {
@@ -82,6 +189,36 @@ final class AgentLoopSafetyTests: XCTestCase {
         XCTAssertEqual(result.modelCalls, 3)
     }
 
+    func testResumingPausedRunGetsFreshNoProgressWindowWithoutResettingElapsedTime() async throws {
+        var checkpoint = base
+        checkpoint.status = .paused
+        checkpoint.stopReason = "连续无进展，已暂停。请检查工具错误或调整设置后继续。"
+        checkpoint.noProgressRounds = 2
+        checkpoint.elapsedSeconds = 37
+        var policy = AgentRunPolicy()
+        policy.maximumNoProgressRounds = 2
+        let model = ScriptModel([
+            .init(
+                role: .assistant,
+                toolCalls: [.init(id: "finish-after-resume", name: "finish", arguments: "{}")]
+            ),
+        ])
+
+        let result = try await AgentRuntime().run(
+            checkpoint: checkpoint,
+            scope: checkpoint.scope,
+            policy: policy,
+            model: model,
+            tools: runtimeTestTools,
+            execute: { _ in .init("resumed") }
+        )
+
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(result.noProgressRounds, 0)
+        XCTAssertGreaterThanOrEqual(result.elapsedSeconds, 37)
+        XCTAssertLessThan(result.elapsedSeconds, 38)
+    }
+
     func testPauseDoesNotCallModel() async throws {
         let model = ScriptModel([])
         let result = try await AgentRuntime().run(checkpoint: base, scope: base.scope, policy: .init(), model: model,
@@ -98,6 +235,25 @@ final class AgentLoopSafetyTests: XCTestCase {
         XCTAssertEqual(result.status, .failed)
         XCTAssertLessThanOrEqual(result.modelCalls, 1)
         XCTAssertLessThan(result.elapsedSeconds, 11)
+    }
+
+    func testTimeoutDoesNotWaitForProviderThatIgnoresCancellation() async throws {
+        let started = Date()
+        do {
+            _ = try await withAgentTimeout(seconds: 0.05) {
+                await withCheckedContinuation { continuation in
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 0.8) {
+                        continuation.resume(returning: "late")
+                    }
+                }
+            }
+            XCTFail("Expected timeout")
+        } catch AgentRuntimeError.timeout {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.4)
     }
 
     private var base: AgentRunCheckpoint { .init(scope: "test", messages: [.init(role: .user, content: "test")]) }
@@ -124,4 +280,27 @@ private struct SlowModel: AgentModelClient {
         try await Task.sleep(for: .seconds(2))
         return .init(role: .assistant, content: "late")
     }
+}
+private actor TimeoutThenSuccessModel: AgentModelClient {
+    var callCount = 0
+    func complete(
+        messages: [AgentMessage],
+        tools: [AgentToolDefinition],
+        timeout: TimeInterval
+    ) async throws -> AgentMessage {
+        callCount += 1
+        if callCount == 1 { throw AgentRuntimeError.timeout }
+        return .init(
+            role: .assistant,
+            toolCalls: [.init(id: "finish-after-timeout", name: "finish", arguments: "{}")]
+        )
+    }
+}
+private actor DelayRecorder {
+    var values: [Duration] = []
+    func append(_ value: Duration) { values.append(value) }
+}
+private actor EventRecorder {
+    var values: [AgentRunEvent] = []
+    func append(_ value: AgentRunEvent) { values.append(value) }
 }

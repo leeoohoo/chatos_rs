@@ -29,6 +29,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
             .to_string(),
         task_profile: Some("default".to_string()),
         project_id: Some("project-1".to_string()),
+        client_project_context: None,
         device_id: Some("device-1".to_string()),
         run_id: Some("run-1".to_string()),
         execution_group_id: Some("group-1".to_string()),
@@ -1103,9 +1104,7 @@ async fn unconfirmed_mutation_cancellation_returns_unknown_execution_state() {
             terminal_error_code: None,
             terminal_error_message: None,
             file_modification_outcome: None,
-            expires_at: DateTime::from_millis(
-                (chrono::Utc::now().timestamp() + 60).saturating_mul(1_000),
-            ),
+            expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
             expires_at_unix: chrono::Utc::now().timestamp() + 60,
         })
         .await

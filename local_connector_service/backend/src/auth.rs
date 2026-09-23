@@ -11,24 +11,41 @@ use chatos_service_runtime::{
     normalize_owned_identity_text as normalize_text, BearerTokenError,
 };
 use reqwest::Method;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config::AppConfig;
 use crate::models::CurrentUser;
 
 #[derive(Debug, Deserialize)]
 struct UserServiceVerifiedPrincipal {
+    jti: String,
     principal_type: String,
     user_id: Option<String>,
     username: Option<String>,
     display_name: Option<String>,
     role: Option<String>,
     owner_user_id: Option<String>,
+    #[serde(default)]
+    scopes: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct UserServiceVerifyResponse {
     principal: UserServiceVerifiedPrincipal,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeviceProofVerificationRequest {
+    pub surface: String,
+    pub method: String,
+    pub target: String,
+    pub body_sha512: String,
+    pub client_session_id: String,
+    pub device_id: String,
+    pub timestamp: i64,
+    pub nonce: String,
+    pub signature_algorithm: String,
+    pub signature: String,
 }
 
 pub fn bearer_token_from_headers(headers: &HeaderMap) -> Result<&str, String> {
@@ -74,6 +91,41 @@ pub async fn verify_token_via_user_service(
     current_user_from_principal(payload.principal)
 }
 
+pub async fn verify_request_via_user_service(
+    config: &AppConfig,
+    client: &reqwest::Client,
+    token: &str,
+    proof: &DeviceProofVerificationRequest,
+) -> Result<CurrentUser, String> {
+    let endpoint = format!(
+        "{}/api/auth/device-proof/verify",
+        config.user_service_base_url.trim().trim_end_matches('/')
+    );
+    let response = client
+        .request(Method::POST, endpoint)
+        .bearer_auth(token.trim())
+        .json(proof)
+        .send()
+        .await
+        .map_err(|err| format!("user_service request failed: {err}"))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let text =
+            read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
+                .await;
+        return Err(if text.trim().is_empty() {
+            format!("user_service device proof verification failed with status {status}")
+        } else {
+            text
+        });
+    }
+    let payload =
+        read_response_json_limited::<UserServiceVerifyResponse>(response, JSON_BODY_LIMIT_BYTES)
+            .await
+            .map_err(|err| format!("parse user_service verify response failed: {err}"))?;
+    current_user_from_principal(payload.principal)
+}
+
 fn current_user_from_principal(
     principal: UserServiceVerifiedPrincipal,
 ) -> Result<CurrentUser, String> {
@@ -88,6 +140,7 @@ fn current_user_from_principal(
         .ok_or_else(|| "user_service principal missing user_id".to_string())?;
     Ok(CurrentUser {
         principal_type,
+        token_jti: normalize_text(principal.jti),
         user_id,
         username: principal.username.and_then(normalize_text),
         display_name: principal.display_name.and_then(normalize_text),
@@ -96,5 +149,6 @@ fn current_user_from_principal(
             .and_then(normalize_text)
             .unwrap_or_else(|| "user".to_string()),
         owner_user_id: principal.owner_user_id.and_then(normalize_text),
+        scopes: principal.scopes,
     })
 }

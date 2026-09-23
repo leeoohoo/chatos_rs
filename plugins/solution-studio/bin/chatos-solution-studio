@@ -1,0 +1,10 @@
+#!/usr/bin/env node
+const command = process.argv[2] ?? 'studio';
+try {
+  if (command === 'mcp') await import('../dist/mcp-server.mjs');
+  else if (command === 'studio') await import('../dist/studio-server.mjs');
+  else throw new Error(`Unknown command: ${command}`);
+} catch (error) {
+  process.stderr.write(`Failed to start Solution Studio: ${error instanceof Error ? error.message : String(error)}\n`);
+  process.exitCode = 1;
+}

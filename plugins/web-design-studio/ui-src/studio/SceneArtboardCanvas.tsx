@@ -26,7 +26,11 @@ import {
   type EditorSelectionRect
 } from './selection-model';
 import { LibraryCanvasComponent } from './LibraryCanvasComponent';
+import { sceneArtboardContentHeight } from './scene-artboard-bounds';
 import type { SceneInsertionFocus } from './scene-insertion-target';
+import { scenePointerDelta } from './scene-pointer-transform';
+
+export { sceneArtboardContentHeight } from './scene-artboard-bounds';
 
 const RESIZE_HANDLES: readonly SceneResizeHandle[] = [
   'north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'
@@ -44,6 +48,7 @@ type PointerTransform = {
   handle?: SceneResizeHandle;
   deltaX: number;
   deltaY: number;
+  captureTarget: HTMLElement;
 };
 
 type PointerMarquee = {
@@ -55,6 +60,8 @@ type PointerMarquee = {
   initialIds: string[];
   additive: boolean;
   moved: boolean;
+  nodes: EditorSelectableNode[];
+  captureTarget: HTMLElement;
 };
 
 function childrenOf(node: SceneNode): SceneNode[] {
@@ -181,21 +188,6 @@ function previewTransform(active: PointerTransform, deltaX: number, deltaY: numb
   return applySceneTransaction(active.snapshot, transaction, active.snapshot.updatedAt).document;
 }
 
-export function sceneArtboardContentHeight(
-  scene: SceneDocument,
-  pageId: string,
-  viewportWidth: number,
-  minimumHeight: number
-): number {
-  const rootNodeId = scene.pages.find((page) => page.id === pageId)?.children[0]?.id;
-  if (!rootNodeId) return minimumHeight;
-  try {
-    return Math.max(minimumHeight, renderSceneDocumentRoot(scene, rootNodeId, viewportWidth).height);
-  } catch {
-    return minimumHeight;
-  }
-}
-
 export function sceneArtboardSelectionBounds(
   scene: SceneDocument,
   pageId: string,
@@ -224,7 +216,8 @@ export function SceneArtboardCanvas({
   onCommit,
   onError,
   onPrototypeActivate,
-  contentFocus
+  contentFocus,
+  onContentHeightChange
 }: {
   scene: SceneDocument;
   pageId: string;
@@ -240,13 +233,23 @@ export function SceneArtboardCanvas({
   onError: (message: string) => void;
   onPrototypeActivate?: (link: ScenePrototypeLink, node: SceneNode) => void;
   contentFocus?: SceneInsertionFocus;
+  onContentHeightChange?: (height?: number) => void;
 }) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const transformRef = useRef<PointerTransform | undefined>(undefined);
+  const marqueeRef = useRef<PointerMarquee | undefined>(undefined);
+  const onCommitRef = useRef(onCommit);
+  const onErrorRef = useRef(onError);
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  const onContentHeightChangeRef = useRef(onContentHeightChange);
+  const contentHeightFrame = useRef<number | undefined>(undefined);
+  const pendingSceneCommits = useRef(0);
   const [previewScene, setPreviewScene] = useState<SceneDocument>();
-  const [transform, setTransform] = useState<PointerTransform>();
+  const [optimisticScene, setOptimisticScene] = useState<SceneDocument>();
+  const [transforming, setTransforming] = useState(false);
   const [marquee, setMarquee] = useState<PointerMarquee>();
   const [marqueeRect, setMarqueeRect] = useState<EditorSelectionRect>();
-  const displayedScene = previewScene ?? scene;
+  const displayedScene = previewScene ?? optimisticScene ?? scene;
   const effectiveScene = useMemo(() => resolveResponsiveScene(displayedScene, viewportWidth).document, [displayedScene, viewportWidth]);
   const page = displayedScene.pages.find((candidate) => candidate.id === pageId);
   const rootNodeId = page?.children[0]?.id;
@@ -259,15 +262,23 @@ export function SceneArtboardCanvas({
     () => rootNodeId ? renderSceneDocumentRoot(displayedScene, rootNodeId, viewportWidth) : undefined,
     [displayedScene, rootNodeId, viewportWidth]
   );
+  const contentHeight = useMemo(
+    () => sceneArtboardContentHeight(displayedScene, pageId, viewportWidth, viewportHeight),
+    [displayedScene, pageId, viewportHeight, viewportWidth]
+  );
   const renderedNodes = useMemo(() => {
     if (!rootNodeId) return [];
     const solved = solveSceneLayout(effectiveScene, { rootNodeId, viewportWidth });
     const effectiveIndex = indexSceneDocument(effectiveScene);
     return [...effectiveIndex.values()].flatMap(({ node, pageId: nodePageId }) => {
       const box = solved.boxes.get(node.id);
-      return nodePageId === pageId && box && node.visible ? [{ node, box }] : [];
+      if (nodePageId !== pageId || !box || !node.visible) return [];
+      return [{
+        node,
+        box: node.id === rootNodeId ? { ...box, width: viewportWidth, height: contentHeight } : box
+      }];
     });
-  }, [displayedScene, effectiveScene, pageId, rootNodeId, viewportWidth]);
+  }, [contentHeight, effectiveScene, pageId, rootNodeId, viewportWidth]);
   const overlayItems = useMemo<SelectionOverlayItem[]>(() => selectedIds.flatMap((id) => {
     const node = nodesById.get(id);
     if (!node) return [];
@@ -275,14 +286,52 @@ export function SceneArtboardCanvas({
   }), [nodesById, primaryId, selectedIds]);
 
   useEffect(() => {
-    if (!transform && !marquee) return;
+    onCommitRef.current = onCommit;
+    onErrorRef.current = onError;
+    onSelectionChangeRef.current = onSelectionChange;
+    onContentHeightChangeRef.current = onContentHeightChange;
+  }, [onCommit, onContentHeightChange, onError, onSelectionChange]);
+
+  useEffect(() => {
+    if (contentHeightFrame.current !== undefined) window.cancelAnimationFrame(contentHeightFrame.current);
+    if (!previewScene && !optimisticScene) {
+      onContentHeightChangeRef.current?.(undefined);
+      contentHeightFrame.current = undefined;
+      return;
+    }
+    contentHeightFrame.current = window.requestAnimationFrame(() => {
+      onContentHeightChangeRef.current?.(contentHeight);
+      contentHeightFrame.current = undefined;
+    });
+    return () => {
+      if (contentHeightFrame.current !== undefined) window.cancelAnimationFrame(contentHeightFrame.current);
+    };
+  }, [contentHeight, optimisticScene, previewScene]);
+
+  useEffect(() => {
+    if (pendingSceneCommits.current === 0 && optimisticScene && scene.revision >= optimisticScene.revision) {
+      setOptimisticScene(undefined);
+    }
+  }, [optimisticScene, scene]);
+
+  useEffect(() => () => {
+    if (contentHeightFrame.current !== undefined) window.cancelAnimationFrame(contentHeightFrame.current);
+    onContentHeightChangeRef.current?.(undefined);
+  }, []);
+
+  useEffect(() => {
     const onMove = (event: PointerEvent) => {
+      const transform = transformRef.current;
       if (transform && event.pointerId === transform.pointerId) {
-        const deltaX = Math.round(((event.clientX - transform.startClientX) / transform.scale) * 10) / 10;
-        const deltaY = Math.round(((event.clientY - transform.startClientY) / transform.scale) * 10) / 10;
+        const { deltaX, deltaY } = scenePointerDelta(
+          { clientX: transform.startClientX, clientY: transform.startClientY },
+          event,
+          transform.scale
+        );
         const relevantX = transform.kind === 'move' || transform.handle?.includes('east') || transform.handle?.includes('west') ? deltaX : 0;
         const relevantY = transform.kind === 'move' || transform.handle?.includes('north') || transform.handle?.includes('south') ? deltaY : 0;
-        setTransform((current) => current ? { ...current, deltaX: relevantX, deltaY: relevantY } : current);
+        transform.deltaX = relevantX;
+        transform.deltaY = relevantY;
         if (relevantX === 0 && relevantY === 0) {
           setPreviewScene(undefined);
           return;
@@ -290,10 +339,11 @@ export function SceneArtboardCanvas({
         try {
           setPreviewScene(previewTransform(transform, relevantX, relevantY));
         } catch (error) {
-          onError(error instanceof Error ? error.message : String(error));
+          onErrorRef.current(error instanceof Error ? error.message : String(error));
         }
         return;
       }
+      const marquee = marqueeRef.current;
       if (marquee && event.pointerId === marquee.pointerId) {
         const moved = marquee.moved || Math.hypot(event.clientX - marquee.startClientX, event.clientY - marquee.startClientY) >= 4;
         if (!moved) return;
@@ -302,21 +352,27 @@ export function SceneArtboardCanvas({
           y: marquee.startPoint.y + (event.clientY - marquee.startClientY) / marquee.scale
         };
         const rect = normalizedSelectionRect(marquee.startPoint, point);
-        const matched = selectionNodesInRect(nodes, rect).map((node) => node.id);
+        const matched = selectionNodesInRect(marquee.nodes, rect).map((node) => node.id);
         const nextIds = marquee.additive
           ? [...marquee.initialIds, ...matched.filter((id) => !marquee.initialIds.includes(id))]
           : matched;
-        setMarquee((current) => current ? { ...current, moved: true } : current);
+        marquee.moved = true;
+        setMarquee({ ...marquee });
         setMarqueeRect(rect);
-        onSelectionChange(nextIds, matched.at(-1) ?? nextIds.at(-1));
+        onSelectionChangeRef.current(nextIds, matched.at(-1) ?? nextIds.at(-1));
       }
     };
     const onUp = (event: PointerEvent) => {
+      const transform = transformRef.current;
       if (transform && event.pointerId === transform.pointerId) {
         const completed = transform;
-        setTransform(undefined);
-        if (completed.deltaX === 0 && completed.deltaY === 0) {
+        transformRef.current = undefined;
+        if (completed.captureTarget.hasPointerCapture?.(completed.pointerId)) {
+          completed.captureTarget.releasePointerCapture(completed.pointerId);
+        }
+        if (event.type === 'pointercancel' || (completed.deltaX === 0 && completed.deltaY === 0)) {
           setPreviewScene(undefined);
+          setTransforming(false);
           return;
         }
         const command: SceneEditorCommand = completed.kind === 'move'
@@ -325,13 +381,36 @@ export function SceneArtboardCanvas({
             type: 'resize', nodeId: completed.nodeId, handle: completed.handle!,
             deltaX: completed.deltaX, deltaY: completed.deltaY, minimumWidth: 1, minimumHeight: 1
           };
-        void onCommit(command).catch((error) => {
-          onError(error instanceof Error ? error.message : String(error));
-        }).finally(() => setPreviewScene(undefined));
+        let optimisticDocument: SceneDocument;
+        try {
+          optimisticDocument = previewTransform(completed, completed.deltaX, completed.deltaY);
+        } catch (error) {
+          onErrorRef.current(error instanceof Error ? error.message : String(error));
+          setPreviewScene(undefined);
+          setTransforming(false);
+          return;
+        }
+        pendingSceneCommits.current += 1;
+        setOptimisticScene(optimisticDocument);
+        setPreviewScene(undefined);
+        setTransforming(false);
+        void onCommitRef.current(command).then((confirmedDocument) => {
+          pendingSceneCommits.current = Math.max(0, pendingSceneCommits.current - 1);
+          if (pendingSceneCommits.current === 0) setOptimisticScene(confirmedDocument);
+        }).catch((error) => {
+          pendingSceneCommits.current = Math.max(0, pendingSceneCommits.current - 1);
+          setOptimisticScene(undefined);
+          onErrorRef.current(error instanceof Error ? error.message : String(error));
+        });
         return;
       }
+      const marquee = marqueeRef.current;
       if (marquee && event.pointerId === marquee.pointerId) {
-        if (!marquee.moved && !marquee.additive) onSelectionChange([]);
+        marqueeRef.current = undefined;
+        if (marquee.captureTarget.hasPointerCapture?.(marquee.pointerId)) {
+          marquee.captureTarget.releasePointerCapture(marquee.pointerId);
+        }
+        if (!marquee.moved && !marquee.additive) onSelectionChangeRef.current([]);
         setMarquee(undefined);
         setMarqueeRect(undefined);
       }
@@ -344,7 +423,7 @@ export function SceneArtboardCanvas({
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
     };
-  }, [marquee, nodes, onCommit, onError, onSelectionChange, transform]);
+  }, []);
 
   function beginNodeMove(event: ReactPointerEvent<HTMLDivElement>) {
     if (interactive) {
@@ -358,13 +437,15 @@ export function SceneArtboardCanvas({
       return;
     }
     if (!active || event.button !== 0) return;
+    if (transformRef.current) return;
     const target = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-scene-node-id]') : null;
     if (!target) {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const bounds = canvas.getBoundingClientRect();
       const scale = pointerScale(canvas);
-      setMarquee({
+      canvas.setPointerCapture?.(event.pointerId);
+      const nextMarquee: PointerMarquee = {
         pointerId: event.pointerId,
         startClientX: event.clientX,
         startClientY: event.clientY,
@@ -372,8 +453,12 @@ export function SceneArtboardCanvas({
         scale,
         initialIds: [...selectedIds],
         additive: event.shiftKey,
-        moved: false
-      });
+        moved: false,
+        nodes,
+        captureTarget: canvas
+      };
+      marqueeRef.current = nextMarquee;
+      setMarquee(nextMarquee);
       return;
     }
     event.preventDefault();
@@ -387,10 +472,13 @@ export function SceneArtboardCanvas({
     if (selectionOnly || !node || node.locked || event.shiftKey || nextIds.length === 0) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    setTransform({
+    canvas.setPointerCapture?.(event.pointerId);
+    transformRef.current = {
       kind: 'move', pointerId: event.pointerId, startClientX: event.clientX, startClientY: event.clientY,
-      scale: pointerScale(canvas), snapshot: scene, nodeIds: nextIds, nodeId, deltaX: 0, deltaY: 0
-    });
+      scale: pointerScale(canvas), snapshot: displayedScene, nodeIds: nextIds, nodeId, deltaX: 0, deltaY: 0,
+      captureTarget: canvas
+    };
+    setTransforming(true);
   }
 
   function selectNodeFromClick(event: ReactMouseEvent<HTMLDivElement>) {
@@ -407,14 +495,18 @@ export function SceneArtboardCanvas({
 
   function beginResize(nodeId: string, handle: SceneResizeHandle, event: ReactPointerEvent<HTMLSpanElement>) {
     if (!active) return;
+    if (transformRef.current) return;
     event.preventDefault();
     event.stopPropagation();
     const canvas = canvasRef.current;
     if (!canvas) return;
-    setTransform({
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    transformRef.current = {
       kind: 'resize', pointerId: event.pointerId, startClientX: event.clientX, startClientY: event.clientY,
-      scale: pointerScale(canvas), snapshot: scene, nodeIds: [nodeId], nodeId, handle, deltaX: 0, deltaY: 0
-    });
+      scale: pointerScale(canvas), snapshot: displayedScene, nodeIds: [nodeId], nodeId, handle, deltaX: 0, deltaY: 0,
+      captureTarget: event.currentTarget
+    };
+    setTransforming(true);
   }
 
   if (!rootNodeId || !rendered) {
@@ -423,12 +515,12 @@ export function SceneArtboardCanvas({
 
   return <div
     ref={canvasRef}
-    className="scene-v2-artboard-canvas"
-    style={{ width: viewportWidth, minHeight: Math.max(viewportHeight, rendered.height) }}
+    className={`scene-v2-artboard-canvas ${transforming ? 'transforming' : ''}`}
+    style={{ width: viewportWidth, height: contentHeight }}
     onPointerDown={beginNodeMove}
     onClick={selectNodeFromClick}
   >
-    <div className="scene-v2-rendered-content" style={{ position: 'relative', width: rendered.width, height: rendered.height }}>
+    <div className="scene-v2-rendered-content" style={{ position: 'relative', width: viewportWidth, height: contentHeight }}>
       {renderedNodes.map(({ node, box }) => <SceneNodeLayer key={node.id} node={node} box={box} interactive={interactive} contentFocused={!interactive && contentFocus?.nodeId === node.id} />)}
     </div>
     {active && <SelectionOverlay

@@ -95,7 +95,6 @@ pub(super) fn model_settings_public_value(
         "model_request_max_retries": record.model_request_max_retries,
         "memory_summary_model_config_id": record.memory_summary_model_config_id,
         "memory_summary_thinking_level": record.memory_summary_thinking_level,
-        "task_runner_default_model_config_id": record.task_runner_default_model_config_id,
         "updated_at": record.updated_at,
     });
     if let Some(sync_warnings) = sync_warnings.filter(|items| !items.is_empty()) {

@@ -68,7 +68,7 @@ pub(super) fn sanitize_task_schedule_config(
     Ok(schedule)
 }
 
-pub(super) fn advance_task_schedule_after_dispatch(
+pub(crate) fn advance_task_schedule_after_dispatch(
     schedule: &TaskScheduleConfig,
     started_at: DateTime<Utc>,
 ) -> Result<TaskScheduleConfig, String> {

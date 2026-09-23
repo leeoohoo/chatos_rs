@@ -15,6 +15,7 @@ services:
         MANIFEST_PATH: Cargo.toml
         PACKAGE_NAME: config_center_service_backend
         BIN_NAME: config_center_service_backend
+        MIGRATION_BIN_NAME: migrate
         CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
   user-service-backend:
@@ -24,6 +25,7 @@ services:
       args:
         MANIFEST_PATH: user_service/backend/Cargo.toml
         BIN_NAME: user_service_backend
+        MIGRATION_BIN_NAME: migrate
         CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
   memory-engine-backend:
@@ -33,6 +35,7 @@ services:
       args:
         MANIFEST_PATH: memory_engine/backend/Cargo.toml
         BIN_NAME: memory_engine
+        MIGRATION_BIN_NAME: migrate
         CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
   plugin-management-backend:
@@ -43,6 +46,7 @@ services:
         MANIFEST_PATH: Cargo.toml
         PACKAGE_NAME: plugin_management_service_backend
         BIN_NAME: plugin_management_service_backend
+        MIGRATION_BIN_NAME: migrate
         CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
   local-connector-service-backend:
@@ -53,6 +57,7 @@ services:
         MANIFEST_PATH: Cargo.toml
         PACKAGE_NAME: local_connector_service_backend
         BIN_NAME: local_connector_service_backend
+        MIGRATION_BIN_NAME: migrate
         CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
   mcp-management-service-backend:
@@ -63,6 +68,7 @@ services:
         MANIFEST_PATH: Cargo.toml
         PACKAGE_NAME: mcp_management_service_backend
         BIN_NAME: mcp_management_service_backend
+        MIGRATION_BIN_NAME: migrate
         CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
   task-runner-backend:
@@ -73,6 +79,7 @@ services:
         MANIFEST_PATH: Cargo.toml
         PACKAGE_NAME: task_runner_service_backend
         BIN_NAME: task_runner_service_backend
+        MIGRATION_BIN_NAME: migrate
         CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
   chatos-backend:
@@ -83,6 +90,7 @@ services:
         MANIFEST_PATH: Cargo.toml
         PACKAGE_NAME: chat_app_server_rs
         BIN_NAME: chat_app_server_rs
+        MIGRATION_BIN_NAME: migrate
         CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
   official-website-backend:

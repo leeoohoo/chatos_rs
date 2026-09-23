@@ -2,6 +2,8 @@
 
 macOS 后续 Bug 修复、功能更新和协议变化先进入 `10-macos-change-sync-register.md`，完成 Windows 自动化与真机验收后再回写本矩阵。
 
+本地代码完成审计：2026-09-23。当前登记范围内未发现仍可由本地代码关闭的 Windows/macOS 差距；剩余项均为 Windows 真机、工具链、签名、硬件、外部凭据或尚未提交登记的上游变化。
+
 状态定义：
 
 - `未开始`：尚无 Windows 实现。
@@ -30,12 +32,17 @@ macOS 后续 Bug 修复、功能更新和协议变化先进入 `10-macos-change-
 | 项目 | Git 状态、Diff、历史和提交 | Windows 验收 | 安全路径、状态、双层 Diff、历史、暂存、提交、分支、远端、取消和 ff-only 拉取已完成并测试，不覆盖外部修改 |
 | 项目 | Plan、Requirement 和执行范围 | Windows 验收 | 需求层级、任务、文档、Execution Plan 查询/创建、精确 identity 确认、放弃和停止已实现 |
 | 项目 | 运行环境、目标和实例 | Windows 验收 | Catalog/State/Environment、目标分析、工具链与环境变量、启动/停止/删除、日志轮询和 WinUI 页面已完成 |
+| Agent 团队 | Agent 配置、团队、成员、项目经理和默认 Agent | Windows 验收 | 本机账号隔离的 Agent Profile、模型/推理/职业/插件/Skill/心跳配置，项目团队、成员职责、项目经理、默认路由和 Human/Agent 私聊已接入；具有双重人员权限的 Agent 可发起新建成员、已有成员入队和移出成员提案，Human 在成员提案页批准/拒绝后由 SQLite v15 事务原子生效，移出保留 Profile，等待 Windows 真机 UI 验收 |
+| Agent 团队 | 团队消息、@ 路由、附件和 Agent 间私聊 | Windows 验收 | durable message/delivery、精确 @、默认 Agent、4-hop/12-run、附件 payload 分表和 UTF-8 正文按需分段读取已实现；账号级全会话 Inbox 支持成员范围过滤、排除自身回复、单调已读游标、跨会话原子读取/标记和 v16 迁移，批量读取不加载 payload 且消除逐消息 N+1；每次真实模型 Run 使用独立 opaque reference vault，Agent/会话/消息/附件/Todo/资产/调研引用不可跨 Run 复用或用持久 ID 猜测，并提供账号工作区快照；触发消息和冻结 Todo 来源中的 PNG/JPEG/GIF/WebP/PDF 以 Responses 多模态 part 输入，限制最多 8 项、单项 8 MiB、合计 16 MiB，二次校验 MIME、Kind、实际字节数、文件签名及会话+消息归属，二进制不会进入 UTF-8 读取；Run 内 Markdown 文档草稿可作为一次性附件发送，团队/私聊/Inbox 回复具备 call receipt 幂等防重；等待 Windows 真机模型验收 |
+| Agent 团队 | Todo、依赖、进展、调度和共享资产 | Windows 验收 | Todo 不可变执行合同、跨会话来源关系、任务级 builtin/Plugin 能力快照及 allowlist 交集校验、原子 schedule state/start-next、单 Agent 单执行槽、优先级选取、revision、依赖释放、排序、进展、manager 状态唤醒和资产建议已实现；团队与项目查询固定按执行中、就绪、等待依赖、阻塞、完成、取消展示，终态历史不会压住活跃工作；列表 SQL 默认最多 200 条、服务端硬上限 1000 条，模型 `todo_list` 默认 100 条且二次限制最多 200 条，避免历史增长形成无界数据库读取、来源附加和模型/UI payload；executor 不扫描整块任务板，而按 delivery 精确读取当前 Todo，以单次有界查询加载最多 100 个冻结依赖，并用同一连接上的三条批量 SQL 按合同顺序加载最多 64 条跨会话来源消息、提及和附件元数据，不逐来源查询且不加载附件 payload；Todo 完成后的依赖释放使用单条集合 SQL，只推进直接引用该 Todo 且全部前置已完成的待处理项，不再无界物化全账号 Pending Todo 或逐项查询依赖；Plugin 通过 run-scoped opaque ref 选择且执行时只加载冻结子集；executor 输入已隔离为冻结合同/来源/依赖/能力/资产，启动时由 v18 持久化团队资产 revision 快照，拒绝经理聊天历史、实时资产漂移和快照外工具；communication lane 只允许项目经理重排/取消，executor lane 的 complete/block/progress 均二次核对正在运行的 owning delivery、room、Agent 和当前 Todo，不能借同一 Agent 的其他 run-scoped Todo ref 越权写进展，且 progress 只接受非终态 Update；隐藏工具调用仍由服务端拒绝；两条 lane 使用独立账号锁、定向原子 claim 和定向崩溃恢复，2 秒 communication 后台循环不会等待长 Todo executor；瞬时模型超时、408、429 与 5xx 在同一 run 和 16 次总预算内以 1/2/4/8/16 秒退避最多重试 5 次，显式重试失败 Todo 会原子复活同一 delivery、兼容旧 revision 键并延续同一 durable run identity/累计调用数，不复制触发消息；来源与合同由 v17 无损迁移，等待 Windows 真机模型与崩溃恢复验收 |
+| Agent 团队 | 项目级需求调研 | Windows 验收 | 调研已从房间归属迁移为项目归属，v13→v14 无损回填；项目经理或获授 `requirement.survey.manage` 的成员可创建/读取/解决，支持统一 `skill_activate/list_resources/read_resource` 渐进协议、跨团队项目 Todo 核对、Human 填写和 durable 回唤；独立项目入口、按阶段排序的列表、详情、问卷提交、只读权限状态、解决方案/执行步骤、空态、错误态与刷新均已接入 WinUI，单次查询限制 1–500 条且默认 200 条并优先保留待处理项，等待 Windows 真机视觉和交互验收 |
+| Agent 团队 | 模型循环、插件、项目工具和终端 | Windows 验收 | OpenAI Responses 工具循环、16 次预算、供应商错误脱敏、已安装且启用的默认插件 MCP 真执行、成员 allowlist、插件权限规则/逐次审批、OAuth/Secret 注入、Artifact 注册和 run-scoped 清理，以及项目边界文件读写/搜索、现有命令审批、项目根 sandbox、后台心跳和 durable run 均已实现；等待 Windows 真机模型、插件进程与命令审批验收 |
 | 记事本 | 目录、搜索、编辑、预览和导出 | Windows 验收 | 服务端目录/笔记 API、稳定选择、切换前保存、默认预览、编辑/分栏、基础 Markdown 渲染和原生导出已完成 |
 | 本机 | Connector 注册、心跳和重连 | Windows 验收 | ticket、设备/多工作区配对、独立 Connector 凭据、断开、状态轮询、managed trust、签名 WebSocket、心跳、有界重连和睡眠/唤醒恢复已完成并测试 |
 | 本机 | Workspace 文件 Relay | Windows 验收 | 全部文件操作、原地响应、目录/盘符/UNC/ADS/symlink/junction 边界和可恢复覆盖移动已实现并测试 |
 | 本机 | 代码导航与搜索 | Windows 验收 | 文件名/内容搜索与定义/引用启发式导航已完成；均限制当前项目边界、结果数量、超时、取消和短缓存，文件页可点击结果跳转 |
 | 本机 | ConPTY 终端 | Windows 验收 | 原生 pseudo console 和一次性 terminal exec 均使用暂停启动 + Kill-on-close Job Object；超时、取消、完整进程树回收、有界输出及 Relay 408 已完成，等待 Windows ANSI/IME/复制和原生进程验收 |
-| 远端 | SSH 测试与凭据 | Windows 验收 | 云端元数据 CRUD、本机 Credential Manager 凭据隔离、密码/私钥/证书认证、双段跳板机、SHA-256 主机指纹、取消/超时、二次验证码和 WinUI 编辑/测试已完成 |
+| 远端 | SSH 测试与凭据 | Windows 验收 | 云端元数据 CRUD、本机 Credential Manager 凭据隔离、密码/私钥/证书认证、双段跳板机、SHA-256 主机指纹、取消/超时、二次验证码和 WinUI 编辑/测试已完成；SSH.NET 会保留原认证 attempt 并在同一会话内续交 session-bound MFA，待 Windows 真机验证跳板机与目标机的单次/连续挑战；对应 macOS 工作区变化仍未提交、未编号 |
 | 远端 | SFTP 与远程终端 | Windows 验收 | SFTP 浏览、UTF-8 预览、上传下载、覆盖、目录/重命名/递归删除，以及保留 cwd、取消、二次验证和 200k 有界输出的远程命令终端已完成 |
 | 插件 | 安装、校验、状态和卸载 | Windows 验收 | Catalog、hash、平台、架构、权限、升级补偿、禁用和卸载清理已实现并测试 |
 | 插件 | stdio/HTTP MCP Relay | Windows 验收 | stdio/HTTP、取消、超时、大响应、进程回收、Secret 模板和 OAuth Bearer 已实现并测试 |
@@ -49,13 +56,17 @@ macOS 后续 Bug 修复、功能更新和协议变化先进入 `10-macos-change-
 | 宠物 | 完成、阻塞和运行中任务 | Windows 验收 | 完成/阻塞保留详情，可忽略、标记处理；运行中按精确任务或会话 identity 取消 |
 | 宠物 | 审批与 Ask User 原地处理 | Windows 验收 | 本机审批可拒绝/本次/本会话允许；Ask User 完整字段、选项、密文和提交在宠物窗口内处理 |
 | 宠物 | 叽咕狸与常用项目快捷聊天 | Windows 验收 | 叽咕狸固定首项、项目常用开关、本地持久化、项目会话准备、最近消息、Realtime 和发送已接入 |
-| 设置 | 常规、连接、模型、插件、沙箱、审批 | Windows 验收 | 插件、模型同步、AI 审批 reviewer、审批策略、待处理/审计和 AppContainer 文件/网络边界设置已完成 |
+| 设置 | 常规、连接、模型、插件、权限控制、审批 | Windows 验收 | 插件、模型同步、AI 审批 reviewer、审批策略、待处理/审计和 AppContainer 文件/网络边界设置已完成 |
 | 设置 | 宠物、语言和字号 | Windows 验收 | SQLite 持久化和运行时即时生效已完成，等待 Windows 视觉与重启验收 |
+| 全局效率 | 失效模型清理 | Windows 验收 | 权威目录移除模型后同步清除 SQLite 审批模型 ID，自动化覆盖刷新和 ViewModel 重建；等待设置页与聊天页真机验收 |
+| 全局效率 | 全局快速搜索 | Windows 验收 | ChatOS、应用、Indexed Library 文件与内建动作四类 provider、模式前缀、排序、频次和快捷键冲突回退已完成；等待焦点与启动行为真机验收 |
+| 全局效率 | 剪贴板历史 | Windows 验收 | 文本、URL、文件和图片采集/恢复、SHA-256 去重、固定、搜索、500 条/30 天清理、20MB 限制与敏感内容过滤已完成；等待跨应用真机验收 |
+| 全局效率 | 原生屏幕录制 | Windows 验收 | Windows 原生录屏负责显示器/窗口选择、系统音频、H.264 MP4 与停止条；ChatOS 状态机自动检测完成文件并归档到 `Videos/ChatOS`，等待 Windows 版本和媒体参数真机验收 |
 | 安全 | 受控域名网络 | 实现中 | Windows SID 由设备私钥签名连接上报并服务端绑定，域名只从托管权限配置推导；后端策略签发、Relay、exec/ConPTY 挂起进程 lease、每进程 SID、Service/broker、WFP 驱动和端到端脚本均已完成；已增加 Hardware Dev Center CAB/微软签名结果导入，严格区分 unsigned、local_test、microsoft_production，正式验收只接受 Microsoft Hardware Compatibility Publisher；仅剩实际 WDK 编译、微软生产签名及不可绕过真机证据 |
 | 发布 | x64 MSIX | Windows 验收 | manifest、品牌资源、隔离的 x64 输出目录、证书签名校验和自动安装/升级/打包启动/UI smoke/卸载证据脚本已接入；待干净 Windows 账号执行 |
 | 发布 | ARM64 MSIX | Windows 验收 | ARM64 构建、隔离的未签名/签名包和同一生命周期验收脚本已接入；需 ARM64 Windows 真机执行 |
-| 质量 | Core/API 自动化测试 | Windows 验收 | 当前 Core 20、API 49、Presentation 52、Connector 242、NetworkGuard 19，共 382 项测试通过；其中 9 项 WindowsNative 和 2 项显式启用的 NetworkGuard 端到端测试需在 Windows 执行真实系统 API |
-| 质量 | Connector 集成测试 | Windows 验收 | 当前 Connector 242 项，覆盖插件、AI 审批、AppContainer profile/ACL 回收、NetworkGuard 策略/协议/lease/broker、服务端 Controlled readiness、宠物、终端和 Desktop Automation ID 静态契约；WindowsNative 还验证 suspended-before-lease、ConPTY acquire 失败不恢复进程和 Credential Manager |
+| 质量 | Core/API 自动化测试 | Windows 验收 | 当前 Core 25、API 45、Presentation 50、Connector 363、NetworkGuard 19，共 502 项测试通过；WindowsNative 和显式启用的 NetworkGuard 端到端测试仍需在 Windows 执行真实系统 API |
+| 质量 | Connector 集成测试 | Windows 验收 | Connector 自动化新增覆盖 Agent 团队账号隔离、路由限流、附件 payload/正文按需读取、图片/PDF 多模态 allowlist/签名/数量/字节边界/触发与 Todo 来源上下文、跨会话 Inbox/单调游标/v16 重启、run-scoped opaque refs/跨 Run 失效/持久 ID 拒绝、Markdown 文档草稿/一次性消费/发送 receipt 防重/Inbox 引用回复、Todo 不可变执行合同/来源关系/来源消息有界批量读取/builtin 与 Plugin 能力快照/allowlist 交集/v17 迁移/单执行槽原子调度/优先级/活跃优先有界展示/精确批量依赖读取/集合式依赖释放/隔离 executor/lane 状态写入边界/跨 Todo progress 拒绝/终态 progress kind 拒绝/communication-executor 并发隔离/失败 delivery 原子复活与 durable run 延续/瞬时模型重试/依赖/进展、资产建议/权限/维护唤醒、项目级需求调研/v14 迁移/有界查询、成员提案双权限/幂等/原子审批/v15 持久化、心跳、Responses API、模型工具循环、插件 MCP run session，以及 SSH session-bound MFA 同会话续交/一次性验证码消费；WindowsNative 还验证系统 API、Credential Manager、WinUI 和原生命令执行 |
 | 质量 | NetworkGuard 自动化测试 | 实现中 | 当前 19 项单元/服务测试通过；端到端验收要求两个指定测试真实出现在 TRX，覆盖 Microsoft 生产签名门禁、同 IP denied SNI、HTTP/TLS、IP literal、DNS/DoH/QUIC/UDP、无 SNI、子进程、服务/驱动重启和 lease residue=0，等待 Windows 专用验收机生成证据 |
 | 质量 | Windows CI | Windows 验收 | Windows 2022 x64/ARM64 restore、串行测试、WindowsNative TRX/JSON、Desktop Release、未签名/签名 MSIX，以及 x64/ARM64 unsigned WDK SYS/CAT/INF/Service 编译与 schema v2 hash 报告上传均已接入；生产驱动签名由 Hardware Dev Center 外部流程完成，统一校验器拒绝 local_test 冒充生产、零测试、缺项、残留或伪通过，等待远端首次运行 |
-| 质量 | UI 自动化与可访问性 | Windows 验收 | 76 个稳定 Automation ID 覆盖登录、Shell、设置、聊天、项目导航、本机终端、全局审批和宠物关键路径；静态测试校验唯一性/必备项/显式 accessible name，smoke 支持匿名登录页和 Secret 驱动的真实登录后 Shell → 设置路径，等待 Windows CI 首次运行 |
+| 质量 | UI 自动化与可访问性 | Windows 验收 | 87 个稳定 Automation ID 覆盖登录、Shell、设置、聊天、项目导航、需求调研、本机终端、全局审批和宠物关键路径；静态测试校验唯一性/必备项/显式 accessible name，smoke 支持匿名登录页和 Secret 驱动的真实登录后 Shell → 设置路径，等待 Windows CI 首次运行 |

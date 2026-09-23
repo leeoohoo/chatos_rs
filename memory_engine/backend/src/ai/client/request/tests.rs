@@ -10,15 +10,6 @@ fn assert_pure_generation_request(body: &Value) {
 }
 
 #[test]
-fn chat_completions_request_is_text_generation_only() {
-    let body = build_chat_completions_body("model", "system", "user", Some(800), 0.2, false, false);
-
-    assert_pure_generation_request(&body);
-    assert_eq!(body["stream"], true);
-    assert_eq!(body["messages"][0]["role"], "system");
-}
-
-#[test]
 fn responses_request_is_text_generation_only() {
     let body = build_responses_body(
         "model",
@@ -54,13 +45,8 @@ fn byte_buffer_preserves_multibyte_text_split_across_chunks() {
 
     let mut output = String::new();
     let mut saw_stream_text = false;
-    let terminal = process_sse_event(
-        raw_event.as_str(),
-        StreamResponseKind::Responses,
-        &mut output,
-        &mut saw_stream_text,
-    )
-    .expect("valid sse event");
+    let terminal = process_sse_event(raw_event.as_str(), &mut output, &mut saw_stream_text)
+        .expect("valid sse event");
 
     assert!(!terminal);
     assert_eq!(output, "你好世界");
@@ -69,20 +55,15 @@ fn byte_buffer_preserves_multibyte_text_split_across_chunks() {
 
 #[test]
 fn byte_buffer_accepts_crlf_event_delimiter() {
-    let event = b"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\r\n\r\n";
+    let event = b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\r\n\r\n";
     let (index, delimiter_len) =
         find_sse_event_delimiter(event.as_slice()).expect("crlf delimiter");
     let raw_event = decode_sse_event_bytes(event[..index].to_vec()).expect("valid utf-8");
 
     let mut output = String::new();
     let mut saw_stream_text = false;
-    process_sse_event(
-        raw_event.as_str(),
-        StreamResponseKind::ChatCompletions,
-        &mut output,
-        &mut saw_stream_text,
-    )
-    .expect("valid sse event");
+    process_sse_event(raw_event.as_str(), &mut output, &mut saw_stream_text)
+        .expect("valid sse event");
 
     assert_eq!(delimiter_len, 4);
     assert_eq!(output, "hello");

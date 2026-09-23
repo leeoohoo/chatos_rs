@@ -20,6 +20,11 @@ export function DataSection(props: DataSectionProps) {
         threads={props.threads}
         tenantLabelsById={props.tenantLabelsById}
         threadsLoading={props.threadsLoading}
+        threadPage={props.threadPage}
+        threadPageSize={props.threadPageSize}
+        threadHasMore={props.threadHasMore}
+        threadMaxReachablePage={props.threadMaxReachablePage}
+        onThreadPageChange={props.onThreadPageChange}
         selectedThread={props.selectedThread}
         onSelectThread={props.onSelectThread}
         threadDetailLoading={props.threadDetailLoading}
@@ -28,8 +33,14 @@ export function DataSection(props: DataSectionProps) {
         threadRecordPage={props.threadRecordPage}
         threadRecordPageSize={props.threadRecordPageSize}
         threadRecordTotal={props.threadRecordTotal}
+        threadRecordMaxReachablePage={props.threadRecordMaxReachablePage}
         onThreadRecordPageChange={props.onThreadRecordPageChange}
         threadSummaries={props.threadSummaries}
+        threadSummaryPage={props.threadSummaryPage}
+        threadSummaryPageSize={props.threadSummaryPageSize}
+        threadSummaryHasMore={props.threadSummaryHasMore}
+        threadSummaryMaxReachablePage={props.threadSummaryMaxReachablePage}
+        onThreadSummaryPageChange={props.onThreadSummaryPageChange}
         subjectMemories={props.subjectMemories}
         detailTab={props.detailTab}
         onDetailTabChange={props.onDetailTabChange}

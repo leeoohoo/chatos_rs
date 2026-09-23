@@ -4,7 +4,6 @@ const MODULE_PREFIXES = new Map([
   ['/modules/config-center/styles.css', '.config-center-module'],
   ['/modules/memory-engine/styles.css', '.memory-engine-module'],
   ['/modules/plugin-management/styles.css', '.plugin-management-module'],
-  ['/modules/project-management/styles.css', '.project-management-module'],
   ['/modules/task-runner/styles.css', '.task-runner-module'],
 ]);
 

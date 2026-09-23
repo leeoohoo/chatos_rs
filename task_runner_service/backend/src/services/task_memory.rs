@@ -119,6 +119,8 @@ impl TaskService {
                     role: options.role.clone(),
                     record_type: options.record_type.clone(),
                     summary_status: options.summary_status.clone(),
+                    after_created_at: None,
+                    after_id: None,
                     limit: Some(limit),
                     offset: Some(offset),
                     order: Some(order.clone()),

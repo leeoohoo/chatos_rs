@@ -204,9 +204,6 @@ public sealed partial class SettingsPage : UserControl
     private async void OnSaveModelsClicked(object sender, RoutedEventArgs e) =>
         await ModelSettings.SaveAsync();
 
-    private void OnClearTaskRunnerModelClicked(object sender, RoutedEventArgs e) =>
-        ModelSettings.SelectedTaskRunnerModel = null;
-
     private void OnClearApprovalModelClicked(object sender, RoutedEventArgs e) =>
         ModelSettings.SelectedApprovalModel = null;
 

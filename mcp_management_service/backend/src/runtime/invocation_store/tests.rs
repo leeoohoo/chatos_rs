@@ -28,7 +28,7 @@ fn record() -> RuntimeInvocationRecord {
         terminal_error_code: None,
         terminal_error_message: None,
         file_modification_outcome: None,
-        expires_at: DateTime::from_millis((chrono::Utc::now().timestamp() + 60) * 1_000),
+        expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
         expires_at_unix: chrono::Utc::now().timestamp() + 60,
     }
 }
@@ -108,6 +108,53 @@ async fn cancellation_waiter_is_released_by_event_signal_without_polling() {
         .expect("cancellation waiter should be event-driven")
         .unwrap()
         .unwrap();
+}
+
+#[tokio::test]
+async fn expired_started_mutation_is_claimed_and_closed_as_unknown() {
+    let store = RuntimeInvocationStore::memory();
+    let mut expired = record();
+    expired.mutation_may_have_started = true;
+    expired.expires_at = chrono::Utc::now() - chrono::Duration::seconds(1);
+    expired.expires_at_unix = expired.expires_at.timestamp();
+    match store.backend.as_ref() {
+        RuntimeInvocationStoreBackend::Memory(invocations) => {
+            invocations
+                .write()
+                .await
+                .insert(expired.invocation_id.clone(), expired.clone());
+        }
+        RuntimeInvocationStoreBackend::Postgres(_) => unreachable!(),
+    }
+
+    let claims = store
+        .claim_expired_active(10, std::time::Duration::from_secs(30))
+        .await
+        .unwrap();
+    assert_eq!(claims.len(), 1);
+    assert!(claims[0].cancellation_required);
+    assert_eq!(
+        claims[0].record.status,
+        RuntimeInvocationStatus::CancelRequested
+    );
+    assert!(store.finish_expired_claim(&claims[0]).await.unwrap());
+
+    let recovered = store
+        .get_for_recovery(
+            expired.invocation_id.as_str(),
+            expired.caller_service.as_str(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        recovered.status,
+        RuntimeInvocationStatus::UnknownExecutionState
+    );
+    assert_eq!(
+        recovered.terminal_error_code,
+        Some(chatos_mcp_service::MCP_ERROR_UNKNOWN_EXECUTION_STATE)
+    );
 }
 
 #[tokio::test]
@@ -374,10 +421,10 @@ async fn waiting_for_user_keeps_quota_reserved_until_completion() {
 }
 
 #[tokio::test]
-#[ignore = "requires CHATOS_MCP_MANAGEMENT_TEST_DATABASE_URL"]
-async fn mongodb_store_coordinates_cancellation_across_service_instances() {
-    let database_url = std::env::var("CHATOS_MCP_MANAGEMENT_TEST_DATABASE_URL")
-        .expect("CHATOS_MCP_MANAGEMENT_TEST_DATABASE_URL");
+#[ignore = "requires MCP_MANAGEMENT_TEST_DATABASE_URL"]
+async fn postgresql_store_coordinates_cancellation_across_service_instances() {
+    let database_url = std::env::var("MCP_MANAGEMENT_TEST_DATABASE_URL")
+        .expect("MCP_MANAGEMENT_TEST_DATABASE_URL");
     let invocation_id = format!("shared-invocation-test-{}", uuid::Uuid::new_v4());
     let mut invocation = record();
     invocation.invocation_id = invocation_id.clone();
@@ -429,6 +476,86 @@ async fn mongodb_store_coordinates_cancellation_across_service_instances() {
     let stats = first.stats().await.unwrap();
     assert_eq!(stats.total_active, 0);
     assert_eq!(stats.registration.duplicate_active_id, 0);
+}
+
+#[tokio::test]
+#[ignore = "requires MCP_MANAGEMENT_TEST_DATABASE_URL and migrated PostgreSQL"]
+async fn postgresql_expired_invocation_claim_has_one_winner_and_recovers_lease() {
+    let database_url = std::env::var("MCP_MANAGEMENT_TEST_DATABASE_URL")
+        .expect("MCP_MANAGEMENT_TEST_DATABASE_URL");
+    let quota = RuntimeInvocationQuota::memory(
+        RuntimeInvocationQuotaLimits::new(100, 100, 100, 100).unwrap(),
+    );
+    let first = RuntimeInvocationStore::connect(database_url.as_str(), quota.clone())
+        .await
+        .unwrap();
+    let second = RuntimeInvocationStore::connect(database_url.as_str(), quota)
+        .await
+        .unwrap();
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let invocation_id = format!("expired-claim-{suffix}");
+    let mut invocation = record();
+    invocation.invocation_id = invocation_id.clone();
+    invocation.session_id = format!("expired-claim-session-{suffix}");
+    invocation.request_id_key = format!("\"expired-claim-request-{suffix}\"");
+    invocation.status = RuntimeInvocationStatus::Queued;
+    invocation.started_at_unix_ms = None;
+    first.register(invocation).await.unwrap();
+    let pool = crate::postgres::connect(database_url.as_str())
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE mcp_management_runtime_invocations \
+         SET expires_at=now()-interval '1 second',expires_at_unix=extract(epoch FROM now()-interval '1 second')::bigint \
+         WHERE invocation_id=$1",
+    )
+    .bind(invocation_id.as_str())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let (left, right) = tokio::join!(
+        first.claim_expired_active(1, std::time::Duration::from_secs(30)),
+        second.claim_expired_active(1, std::time::Duration::from_secs(30)),
+    );
+    let mut claims = left.unwrap();
+    claims.extend(right.unwrap());
+    let matching = claims
+        .into_iter()
+        .filter(|claim| claim.record.invocation_id == invocation_id)
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1);
+    assert!(!matching[0].cancellation_required);
+    sqlx::query(
+        "UPDATE mcp_management_runtime_invocations \
+         SET recovery_claim_until=now()-interval '1 second' WHERE invocation_id=$1",
+    )
+    .bind(invocation_id.as_str())
+    .execute(&pool)
+    .await
+    .unwrap();
+    let reclaimed = second
+        .claim_expired_active(1, std::time::Duration::from_secs(30))
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|claim| claim.record.invocation_id == invocation_id)
+        .expect("expired recovery lease should be claimable");
+    assert_ne!(matching[0].claim_token, reclaimed.claim_token);
+    assert!(!first.finish_expired_claim(&matching[0]).await.unwrap());
+    assert!(second.finish_expired_claim(&reclaimed).await.unwrap());
+
+    let recovered = second
+        .get_for_recovery(&invocation_id, "task-runner")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(recovered.status, RuntimeInvocationStatus::Cancelled);
+    sqlx::query("DELETE FROM mcp_management_runtime_invocations WHERE invocation_id=$1")
+        .bind(invocation_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

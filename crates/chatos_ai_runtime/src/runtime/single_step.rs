@@ -4,18 +4,15 @@
 use serde_json::Value;
 
 use crate::error_policy::{classify_transient_retry, TransientRetryAction};
-use crate::model_config::{effective_responses_support, supports_previous_response_id};
 use crate::tool_call::tool_calls_value_has_items;
 use crate::traits::{ModelRequest, DEFAULT_MODEL_REQUEST_MAX_RETRIES};
 use crate::{RuntimeFinalResponseAction, RuntimeFinalResponseContext};
 
-use super::input_items::{append_runtime_input_items, input_item_count, json_value_size_bytes};
+use super::input_items::{input_item_count, json_value_size_bytes};
 use super::model_request::dispatch_model_request;
 use super::{
-    active_context_exceeds_hard_limit, count_iteration_input_tokens,
-    estimated_iteration_input_tokens, prepare_iteration_request, runtime_result_from_response,
-    AiRuntime, AiRuntimeOptions, AiRuntimeResult, ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS,
-    DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS, MAX_ACTIVE_CONTEXT_COMPACTION_PASSES,
+    prepare_iteration_request, runtime_result_from_response, AiRuntime, AiRuntimeOptions,
+    AiRuntimeResult,
 };
 
 #[derive(Clone)]
@@ -100,39 +97,8 @@ pub(super) async fn execute_once(
         model_attempt,
         force_identity_encoding,
     } = request;
-    model_request.supports_responses = effective_responses_support(
-        model_request.provider.as_str(),
-        model_request.base_url.as_str(),
-        model_request.supports_responses,
-    );
-    if !supports_previous_response_id(
-        model_request.provider.as_str(),
-        model_request.base_url.as_str(),
-    ) {
-        model_request.previous_response_id = None;
-    }
-    if let Some(refresh) = &runtime_options.iterative_context_refresh {
-        match refresh
-            .wait_for_inflight_summary(&runtime_options.callbacks)
-            .await
-        {
-            Ok(true) => {
-                model_request.previous_response_id = None;
-                model_request.input = refresh.compose_input().await?;
-            }
-            Ok(false) => {}
-            Err(error) => tracing::warn!(
-                conversation_id = runtime_options.conversation_id.as_deref().unwrap_or(""),
-                conversation_turn_id = runtime_options
-                    .conversation_turn_id
-                    .as_deref()
-                    .unwrap_or(""),
-                iteration,
-                error = error.as_str(),
-                "ai runtime could not observe in-flight context summary"
-            ),
-        }
-    }
+    model_request.supports_responses = true;
+    model_request.previous_response_id = None;
     if let Some(executor) = &runtime.tool_executor {
         let tools = executor.available_tools();
         if !tools.is_empty() {
@@ -142,95 +108,7 @@ pub(super) async fn execute_once(
     let (mut iteration_request, lifecycle_before) =
         prepare_iteration_request(&model_request, &runtime_options, iteration, reason.as_str())
             .await?;
-    if let Some(refresh) = runtime_options
-        .iterative_context_refresh
-        .as_ref()
-        .filter(|refresh| refresh.has_memory_composer())
-    {
-        let mut remaining_input_tokens = None;
-        let mut count_source = "local_estimate";
-        for compaction_pass in 0..=MAX_ACTIVE_CONTEXT_COMPACTION_PASSES {
-            let count = count_iteration_input_tokens(
-                &runtime.request_handler,
-                &iteration_request,
-                &runtime_options,
-            )
-            .await;
-            remaining_input_tokens = Some(count.tokens);
-            count_source = count.source;
-            tracing::info!(
-                conversation_id = runtime_options.conversation_id.as_deref().unwrap_or(""),
-                conversation_turn_id = runtime_options
-                    .conversation_turn_id
-                    .as_deref()
-                    .unwrap_or(""),
-                iteration,
-                input_tokens = count.tokens,
-                token_count_source = count.source,
-                compaction_threshold = ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS,
-                "ai runtime measured model input context"
-            );
-            if count.tokens <= ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS {
-                break;
-            }
-            if compaction_pass == MAX_ACTIVE_CONTEXT_COMPACTION_PASSES {
-                break;
-            }
-            match refresh
-                .compact_active_context(&runtime_options.callbacks)
-                .await
-            {
-                Ok(true) => {
-                    model_request.previous_response_id = None;
-                    model_request.input = refresh.compose_input().await?;
-                    iteration_request.input = append_runtime_input_items(
-                        model_request.input.clone(),
-                        lifecycle_before.input_items.as_slice(),
-                    );
-                    iteration_request.previous_response_id = None;
-                }
-                Ok(false) => break,
-                Err(error) => {
-                    tracing::warn!(
-                        conversation_id = runtime_options.conversation_id.as_deref().unwrap_or(""),
-                        conversation_turn_id = runtime_options
-                            .conversation_turn_id
-                            .as_deref()
-                            .unwrap_or(""),
-                        iteration,
-                        error = error.as_str(),
-                        "ai runtime proactive context compaction failed"
-                    );
-                    break;
-                }
-            }
-        }
-        let remaining_input_tokens = remaining_input_tokens
-            .unwrap_or_else(|| estimated_iteration_input_tokens(&iteration_request));
-        if active_context_exceeds_hard_limit(remaining_input_tokens) {
-            return Ok(AiSingleStepOutcome::Failed {
-                error: format!(
-                    "主动上下文压缩后输入仍为 {} tokens（计数来源：{}），超过模型上下文硬限制 {} tokens，已停止本次模型请求以避免异常消耗",
-                    remaining_input_tokens, count_source, DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS
-                ),
-            });
-        }
-        if remaining_input_tokens > ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS {
-            tracing::warn!(
-                conversation_id = runtime_options.conversation_id.as_deref().unwrap_or(""),
-                conversation_turn_id = runtime_options
-                    .conversation_turn_id
-                    .as_deref()
-                    .unwrap_or(""),
-                iteration,
-                input_tokens = remaining_input_tokens,
-                token_count_source = count_source,
-                compaction_threshold = ACTIVE_CONTEXT_COMPACTION_INPUT_TOKENS,
-                hard_limit = DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS,
-                "ai runtime continuing single-step input above active compaction threshold but within hard context limit"
-            );
-        }
-    }
+    iteration_request.previous_response_id = None;
     let request_input_items = crate::turn::input_value_to_items(iteration_request.input.clone());
     let response = dispatch_model_request(
         &runtime.request_handler,
@@ -278,6 +156,16 @@ pub(super) async fn execute_once(
     }
 
     if response.content.trim().is_empty() {
+        // A cloud-agent continuation is persisted and executed by a later queue
+        // delivery, so the in-process guard used by `run_turn` cannot protect
+        // this path.  Treat a second consecutive empty final response as a
+        // terminal provider failure instead of creating an unbounded chain of
+        // `empty_final_response_followup` events.
+        if reason == "empty_final_response_followup" {
+            return Ok(AiSingleStepOutcome::Failed {
+                error: "模型在补充追问后仍返回空结果，已停止任务以避免无限重试".to_string(),
+            });
+        }
         let mut response = runtime_result_from_response(response);
         response.request_input_items = request_input_items;
         return Ok(AiSingleStepOutcome::Continue {
@@ -310,6 +198,19 @@ pub(super) async fn execute_once(
                     response,
                     input_items,
                     reason: normalized_reason(reason, "lifecycle_followup"),
+                });
+            }
+            RuntimeFinalResponseAction::ContinueReplacingResponse {
+                response: replacement,
+                input_items,
+                reason,
+            } => {
+                let mut response = runtime_result_from_response(*replacement);
+                response.request_input_items = request_input_items;
+                return Ok(AiSingleStepOutcome::Continue {
+                    response,
+                    input_items,
+                    reason: normalized_reason(reason, "lifecycle_sanitized_followup"),
                 });
             }
         }

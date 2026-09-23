@@ -133,7 +133,29 @@ fn normalized_config_preserves_explicit_selection_for_policy_validation() {
 
     assert_eq!(
         sanitized.enabled_builtin_kinds,
-        vec!["AskUser".to_string(), "CodeMaintainerWrite".to_string()]
+        vec![
+            "AskUser".to_string(),
+            "CodeMaintainerRead".to_string(),
+            "CodeMaintainerWrite".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn normalized_config_forces_requirement_survey_read_for_write() {
+    let config = TaskMcpConfig {
+        enabled_builtin_kinds: vec!["RequirementSurveyWrite".to_string()],
+        ..TaskMcpConfig::default()
+    };
+
+    let sanitized = super::sanitize_task_mcp_config(config);
+
+    assert_eq!(
+        sanitized.enabled_builtin_kinds,
+        vec![
+            "RequirementSurveyRead".to_string(),
+            "RequirementSurveyWrite".to_string(),
+        ]
     );
 }
 

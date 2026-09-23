@@ -4,10 +4,12 @@
 use std::time::Duration;
 
 use chatos_agent::ChatosAgentProfile;
-use chatos_mcp_gateway::McpManagementGatewayBuilder;
+use chatos_mcp_gateway::{
+    authorize_project_context as authorize_mcp_project_context, McpManagementGatewayBuilder,
+};
 use chatos_mcp_management_sdk::{
-    ClientProjectContextSnapshot, CreateRuntimeSessionRequest, McpManagementClient,
-    McpManagementClientConfig, McpManagementRuntimeSessionHandle, ProjectContextAuthorization,
+    ClientProjectContextSnapshot, CreateRuntimeSessionRequest, McpManagementRuntimeSessionHandle,
+    ProjectContextAuthorization,
 };
 use chatos_plugin_management_sdk::{PluginCommandInvocation, SelectedPluginRef, SystemMcpKey};
 use tracing::{info, warn};
@@ -131,7 +133,7 @@ async fn authorize_project_context(
     project_id: Option<&str>,
     snapshot: Option<&ClientProjectContextSnapshot>,
 ) -> Result<Option<ProjectContextAuthorization>, String> {
-    match (project_id, snapshot) {
+    let snapshot = match (project_id, snapshot) {
         (None, None) => return Ok(None),
         (None, Some(_)) => {
             return Err("client project context was supplied without a project".to_string())
@@ -139,19 +141,15 @@ async fn authorize_project_context(
         (Some(_), None) => {
             return Err("client project context authorization is required".to_string())
         }
-        (Some(project_id), Some(snapshot)) => snapshot.validate_project_id(project_id)?,
-    }
-    let snapshot = snapshot.expect("validated project context presence");
-    let config = McpManagementClientConfig::from_env("chatos")
-        .await
-        .map_err(|error| format!("load MCP Management config failed: {error}"))?;
-    let client = McpManagementClient::new(config)
-        .map_err(|error| format!("initialize MCP Management client failed: {error}"))?;
-    client
-        .authorize_project_context(owner_user_id, snapshot)
+        (Some(project_id), Some(snapshot)) => {
+            snapshot.validate_project_id(project_id)?;
+            snapshot
+        }
+    };
+    authorize_mcp_project_context("chatos", owner_user_id, snapshot)
         .await
         .map(Some)
-        .map_err(|error| format!("authorize client project context failed: {error}"))
+        .map_err(|error| format!("authorize project context through MCP gateway failed: {error}"))
 }
 
 pub(super) async fn resolve_existing_mcp_management_gateway(

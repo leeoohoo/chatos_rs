@@ -3,16 +3,15 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use chatos_mcp_management_sdk::WorkspaceProviderKind;
-use mongodb::bson::{doc, DateTime};
-use mongodb::error::{ErrorKind as MongoErrorKind, WriteFailure};
-use mongodb::options::{FindOneAndUpdateOptions, IndexOptions, ReturnDocument};
-use mongodb::{Client, Collection, IndexModel};
-use serde::{Deserialize, Serialize};
+use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
+use sqlx::types::Json;
 use tokio::sync::RwLock;
+
+#[path = "execution_scope_store_turns.rs"]
+mod turns;
 
 const ORPHAN_GRACE_SECONDS: i64 = 60;
 
@@ -34,14 +33,23 @@ pub struct ReleasedInvocationTurn {
     pub next_invocation_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct RuntimeExecutionScopeInvocationRef {
     invocation_id: String,
     sequence: i64,
-    #[serde(default)]
     batch_id: Option<String>,
-    #[serde(default)]
     call_index: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeExecutionScopeDocument {
+    generation: i64,
+    status: String,
+    session_refs: HashMap<String, i64>,
+    next_invocation_sequence: i64,
+    invocation_queue: Vec<RuntimeExecutionScopeInvocationRef>,
+    running_invocation_id: Option<String>,
+    expires_at_unix: i64,
 }
 
 impl std::fmt::Display for RuntimeExecutionScopeStoreError {
@@ -53,33 +61,6 @@ impl std::fmt::Display for RuntimeExecutionScopeStoreError {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RuntimeExecutionScopeDocument {
-    #[serde(rename = "_id")]
-    id: String,
-    owner_user_id: String,
-    scope_kind: String,
-    #[serde(default)]
-    project_id: Option<String>,
-    run_id: String,
-    provider: String,
-    generation: i64,
-    status: String,
-    #[serde(default)]
-    session_refs: HashMap<String, i64>,
-    #[serde(default)]
-    terminal_status: Option<String>,
-    #[serde(default)]
-    next_invocation_sequence: i64,
-    #[serde(default)]
-    invocation_queue: Vec<RuntimeExecutionScopeInvocationRef>,
-    #[serde(default)]
-    running_invocation_id: Option<String>,
-    updated_at: DateTime,
-    expires_at: DateTime,
-    expires_at_unix: i64,
-}
-
 #[derive(Clone)]
 pub struct RuntimeExecutionScopeStore {
     backend: Arc<RuntimeExecutionScopeStoreBackend>,
@@ -87,7 +68,7 @@ pub struct RuntimeExecutionScopeStore {
 
 enum RuntimeExecutionScopeStoreBackend {
     Memory(RwLock<HashMap<String, RuntimeExecutionScopeDocument>>),
-    Mongo(Collection<RuntimeExecutionScopeDocument>),
+    Postgres(chatos_postgres::PgPool),
 }
 
 impl RuntimeExecutionScopeStore {
@@ -105,7 +86,13 @@ impl RuntimeExecutionScopeStore {
                         .map(|reference| reference.invocation_id.clone())
                 })
                 .collect(),
-            RuntimeExecutionScopeStoreBackend::Mongo(_) => Vec::new(),
+            RuntimeExecutionScopeStoreBackend::Postgres(pool) => sqlx::query_scalar::<_, String>(
+                "SELECT invocation_id FROM mcp_management_runtime_execution_scope_queue_items \
+                 WHERE status='queued' ORDER BY scope_id,sequence",
+            )
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default(),
         }
     }
 
@@ -118,32 +105,15 @@ impl RuntimeExecutionScopeStore {
     }
 
     pub async fn connect(database_url: &str) -> Result<Self, String> {
-        let client = Client::with_uri_str(database_url)
-            .await
-            .map_err(|error| format!("connect MCP execution scope MongoDB failed: {error}"))?;
-        let database = client.default_database().ok_or_else(|| {
-            "MCP_MANAGEMENT_DATABASE_URL must include a MongoDB database name".to_string()
-        })?;
-        let collection = database
-            .collection::<RuntimeExecutionScopeDocument>("mcp_management_runtime_execution_scopes");
-        collection
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! { "expires_at": 1 })
-                    .options(
-                        IndexOptions::builder()
-                            .name("runtime_execution_scope_expiry_ttl".to_string())
-                            .expire_after(Some(Duration::from_secs(0)))
-                            .build(),
-                    )
-                    .build(),
-                None,
-            )
-            .await
-            .map_err(|error| format!("initialize execution scope TTL index failed: {error}"))?;
-        Ok(Self {
-            backend: Arc::new(RuntimeExecutionScopeStoreBackend::Mongo(collection)),
-        })
+        Ok(Self::from_pool(
+            crate::postgres::connect(database_url).await?,
+        ))
+    }
+
+    pub(crate) fn from_pool(pool: chatos_postgres::PgPool) -> Self {
+        Self {
+            backend: Arc::new(RuntimeExecutionScopeStoreBackend::Postgres(pool)),
+        }
     }
 
     pub async fn attach_session(
@@ -156,7 +126,7 @@ impl RuntimeExecutionScopeStore {
         session_expires_at_unix: i64,
     ) -> Result<i64, RuntimeExecutionScopeStoreError> {
         let id = scope_id(owner_user_id, project_id, run_id, provider);
-        let now = chrono::Utc::now().timestamp();
+        let now = Utc::now().timestamp();
         let expires_at_unix = session_expires_at_unix.saturating_add(ORPHAN_GRACE_SECONDS);
         match self.backend.as_ref() {
             RuntimeExecutionScopeStoreBackend::Memory(scopes) => {
@@ -168,95 +138,95 @@ impl RuntimeExecutionScopeStore {
                 {
                     return Err(RuntimeExecutionScopeStoreError::Terminal);
                 }
-                let scope =
-                    scopes
-                        .entry(id.clone())
-                        .or_insert_with(|| RuntimeExecutionScopeDocument {
-                            id,
-                            owner_user_id: owner_user_id.to_string(),
-                            scope_kind: execution_scope_kind(project_id).to_string(),
-                            project_id: project_id.map(ToOwned::to_owned),
-                            run_id: run_id.to_string(),
-                            provider: provider.as_str().to_string(),
-                            generation: 1,
-                            status: "active".to_string(),
-                            session_refs: HashMap::new(),
-                            terminal_status: None,
-                            next_invocation_sequence: 0,
-                            invocation_queue: Vec::new(),
-                            running_invocation_id: None,
-                            updated_at: DateTime::now(),
-                            expires_at: DateTime::from_millis(
-                                expires_at_unix.saturating_mul(1_000),
-                            ),
-                            expires_at_unix,
-                        });
+                let scope = scopes
+                    .entry(id)
+                    .or_insert_with(|| RuntimeExecutionScopeDocument {
+                        generation: 1,
+                        status: "active".to_string(),
+                        session_refs: HashMap::new(),
+                        next_invocation_sequence: 0,
+                        invocation_queue: Vec::new(),
+                        running_invocation_id: None,
+                        expires_at_unix,
+                    });
                 scope
                     .session_refs
                     .retain(|_, expires_at_unix| *expires_at_unix > now);
                 scope
                     .session_refs
                     .insert(session_id.to_string(), session_expires_at_unix);
-                scope.updated_at = DateTime::now();
                 scope.expires_at_unix = scope.expires_at_unix.max(expires_at_unix);
-                scope.expires_at =
-                    DateTime::from_millis(scope.expires_at_unix.saturating_mul(1_000));
                 Ok(scope.generation)
             }
-            RuntimeExecutionScopeStoreBackend::Mongo(collection) => {
-                let project_id_bson = project_id
-                    .map(|value| mongodb::bson::Bson::String(value.to_string()))
-                    .unwrap_or(mongodb::bson::Bson::Null);
-                if collection
-                    .find_one(doc! { "_id": id.as_str(), "status": "terminal" }, None)
+            RuntimeExecutionScopeStoreBackend::Postgres(pool) => {
+                let expires_at = timestamp(expires_at_unix).map_err(unavailable)?;
+                let mut tx = pool.begin().await.map_err(store_error)?;
+                lock_scope_id(&mut tx, id.as_str())
                     .await
-                    .map_err(store_error)?
-                    .is_some()
+                    .map_err(store_error)?;
+                sqlx::query(
+                    "DELETE FROM mcp_management_runtime_execution_scopes \
+                     WHERE id=$1 AND expires_at<=now()",
+                )
+                .bind(&id)
+                .execute(&mut *tx)
+                .await
+                .map_err(store_error)?;
+                let existing = sqlx::query_as::<_, (i64, String, Json<HashMap<String, i64>>, i64)>(
+                    "SELECT generation,status,session_refs,expires_at_unix \
+                         FROM mcp_management_runtime_execution_scopes WHERE id=$1 FOR UPDATE",
+                )
+                .bind(&id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(store_error)?;
+                let generation = if let Some((generation, status, Json(mut refs), old_expiry)) =
+                    existing
                 {
-                    return Err(RuntimeExecutionScopeStoreError::Terminal);
-                }
-                let session_ref_path = format!("session_refs.{session_id}");
-                let mut set_document = doc! { "updated_at": DateTime::now() };
-                set_document.insert(session_ref_path, session_expires_at_unix);
-                let result = collection
-                    .find_one_and_update(
-                        doc! { "_id": id.as_str(), "status": { "$ne": "terminal" } },
-                        doc! {
-                            "$setOnInsert": {
-                                "owner_user_id": owner_user_id,
-                                "scope_kind": execution_scope_kind(project_id),
-                                "project_id": project_id_bson,
-                                "run_id": run_id,
-                                "provider": provider.as_str(),
-                                "generation": 1_i64,
-                                "status": "active",
-                                "terminal_status": mongodb::bson::Bson::Null,
-                                "next_invocation_sequence": 0_i64,
-                                "invocation_queue": [],
-                                "running_invocation_id": mongodb::bson::Bson::Null,
-                            },
-                            "$set": set_document,
-                            "$max": {
-                                "expires_at": DateTime::from_millis(expires_at_unix.saturating_mul(1_000)),
-                                "expires_at_unix": expires_at_unix,
-                            },
-                        },
-                        FindOneAndUpdateOptions::builder()
-                            .upsert(true)
-                            .return_document(ReturnDocument::After)
-                            .build(),
-                    )
-                    .await;
-                match result {
-                    Ok(Some(scope)) => Ok(scope.generation),
-                    Ok(None) => Err(RuntimeExecutionScopeStoreError::Unavailable(
-                        "attach Runtime Session did not return an execution scope".to_string(),
-                    )),
-                    Err(error) if is_duplicate_key(&error) => {
-                        Err(RuntimeExecutionScopeStoreError::Terminal)
+                    if status == "terminal" {
+                        return Err(RuntimeExecutionScopeStoreError::Terminal);
                     }
-                    Err(error) => Err(store_error(error)),
-                }
+                    refs.retain(|_, expiry| *expiry > now);
+                    refs.insert(session_id.to_string(), session_expires_at_unix);
+                    let new_expiry = old_expiry.max(expires_at_unix);
+                    sqlx::query(
+                        "UPDATE mcp_management_runtime_execution_scopes SET session_refs=$2, \
+                         updated_at=now(),expires_at=$3,expires_at_unix=$4 WHERE id=$1",
+                    )
+                    .bind(&id)
+                    .bind(Json(refs))
+                    .bind(timestamp(new_expiry).map_err(unavailable)?)
+                    .bind(new_expiry)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(store_error)?;
+                    generation
+                } else {
+                    let mut refs = HashMap::new();
+                    refs.insert(session_id.to_string(), session_expires_at_unix);
+                    sqlx::query(
+                        "INSERT INTO mcp_management_runtime_execution_scopes \
+                         (id,owner_user_id,scope_kind,project_id,run_id,provider,generation,status, \
+                          terminal_status,next_invocation_sequence,running_invocation_id,session_refs, \
+                          updated_at,expires_at,expires_at_unix) \
+                         VALUES($1,$2,$3,$4,$5,$6,1,'active',NULL,0,NULL,$7,now(),$8,$9)",
+                    )
+                    .bind(&id)
+                    .bind(owner_user_id)
+                    .bind(execution_scope_kind(project_id))
+                    .bind(project_id)
+                    .bind(run_id)
+                    .bind(provider.as_str())
+                    .bind(Json(refs))
+                    .bind(expires_at)
+                    .bind(expires_at_unix)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(store_error)?;
+                    1
+                };
+                tx.commit().await.map_err(store_error)?;
+                Ok(generation)
             }
         }
     }
@@ -275,7 +245,6 @@ impl RuntimeExecutionScopeStore {
                 let mut scopes = scopes.write().await;
                 let remove = if let Some(scope) = scopes.get_mut(id.as_str()) {
                     scope.session_refs.remove(session_id);
-                    scope.updated_at = DateTime::now();
                     scope.session_refs.is_empty()
                         && scope.invocation_queue.is_empty()
                         && scope.running_invocation_id.is_none()
@@ -287,39 +256,49 @@ impl RuntimeExecutionScopeStore {
                 }
                 Ok(remove)
             }
-            RuntimeExecutionScopeStoreBackend::Mongo(collection) => {
-                collection
-                    .update_one(
-                        doc! { "_id": id },
-                        {
-                            let mut unset = mongodb::bson::Document::new();
-                            unset.insert(format!("session_refs.{session_id}"), "");
-                            doc! {
-                                "$unset": unset,
-                                "$set": { "updated_at": DateTime::now() },
-                            }
-                        },
-                        None,
+            RuntimeExecutionScopeStoreBackend::Postgres(pool) => {
+                let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+                let scope = sqlx::query_as::<_, (Json<HashMap<String, i64>>, Option<String>)>(
+                    "SELECT session_refs,running_invocation_id \
+                         FROM mcp_management_runtime_execution_scopes WHERE id=$1 FOR UPDATE",
+                )
+                .bind(&id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|error| error.to_string())?;
+                let Some((Json(mut refs), running)) = scope else {
+                    tx.commit().await.map_err(|error| error.to_string())?;
+                    return Ok(false);
+                };
+                refs.remove(session_id);
+                let queue_count = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM mcp_management_runtime_execution_scope_queue_items \
+                     WHERE scope_id=$1",
+                )
+                .bind(&id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|error| error.to_string())?;
+                let remove = refs.is_empty() && running.is_none() && queue_count == 0;
+                if remove {
+                    sqlx::query("DELETE FROM mcp_management_runtime_execution_scopes WHERE id=$1")
+                        .bind(&id)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                } else {
+                    sqlx::query(
+                        "UPDATE mcp_management_runtime_execution_scopes \
+                         SET session_refs=$2,updated_at=now() WHERE id=$1",
                     )
+                    .bind(&id)
+                    .bind(Json(refs))
+                    .execute(&mut *tx)
                     .await
-                    .map_err(|error| {
-                        format!("detach Runtime Session from execution scope failed: {error}")
-                    })?;
-                collection
-                    .delete_one(
-                        doc! {
-                            "_id": scope_id(owner_user_id, project_id, run_id, provider),
-                            "session_refs": {},
-                            "invocation_queue": { "$size": 0 },
-                            "running_invocation_id": mongodb::bson::Bson::Null,
-                        },
-                        None,
-                    )
-                    .await
-                    .map(|result| result.deleted_count > 0)
-                    .map_err(|error| {
-                        format!("release empty Runtime Execution Scope failed: {error}")
-                    })
+                    .map_err(|error| error.to_string())?;
+                }
+                tx.commit().await.map_err(|error| error.to_string())?;
+                Ok(remove)
             }
         }
     }
@@ -332,16 +311,21 @@ impl RuntimeExecutionScopeStore {
         provider: WorkspaceProviderKind,
     ) -> Result<(), RuntimeExecutionScopeStoreError> {
         let id = scope_id(owner_user_id, project_id, run_id, provider);
-        let scope = match self.backend.as_ref() {
-            RuntimeExecutionScopeStoreBackend::Memory(scopes) => {
-                scopes.read().await.get(id.as_str()).cloned()
-            }
-            RuntimeExecutionScopeStoreBackend::Mongo(collection) => collection
-                .find_one(doc! { "_id": id }, None)
+        let status = match self.backend.as_ref() {
+            RuntimeExecutionScopeStoreBackend::Memory(scopes) => scopes
+                .read()
                 .await
-                .map_err(store_error)?,
+                .get(id.as_str())
+                .map(|scope| scope.status.clone()),
+            RuntimeExecutionScopeStoreBackend::Postgres(pool) => sqlx::query_scalar::<_, String>(
+                "SELECT status FROM mcp_management_runtime_execution_scopes WHERE id=$1",
+            )
+            .bind(&id)
+            .fetch_optional(pool)
+            .await
+            .map_err(store_error)?,
         };
-        if scope.is_some_and(|scope| scope.status == "terminal") {
+        if status.as_deref() == Some("terminal") {
             Err(RuntimeExecutionScopeStoreError::Terminal)
         } else {
             Ok(())
@@ -361,9 +345,7 @@ impl RuntimeExecutionScopeStore {
             RuntimeExecutionScopeStoreBackend::Memory(scopes) => {
                 let mut scopes = scopes.write().await;
                 let scope = scopes.get_mut(id.as_str()).ok_or_else(|| {
-                    RuntimeExecutionScopeStoreError::Unavailable(
-                        "execution scope is missing while enqueueing an invocation".to_string(),
-                    )
+                    unavailable("execution scope is missing while enqueueing an invocation")
                 })?;
                 if scope.status == "terminal" {
                     return Err(RuntimeExecutionScopeStoreError::Terminal);
@@ -388,84 +370,53 @@ impl RuntimeExecutionScopeStore {
                         batch_id: None,
                         call_index: None,
                     });
-                scope.updated_at = DateTime::now();
                 Ok(sequence)
             }
-            RuntimeExecutionScopeStoreBackend::Mongo(collection) => {
-                let invocation = invocation_id.to_string();
-                let updated = collection
-                    .find_one_and_update(
-                        doc! {
-                            "_id": id,
-                            "status": "active",
-                            "invocation_queue.invocation_id": { "$ne": invocation_id },
-                            "running_invocation_id": { "$ne": invocation_id },
-                        },
-                        vec![doc! {
-                            "$set": {
-                                "next_invocation_sequence": {
-                                    "$add": [{ "$ifNull": ["$next_invocation_sequence", 0_i64] }, 1_i64]
-                                },
-                                "invocation_queue": {
-                                    "$concatArrays": [
-                                        { "$ifNull": ["$invocation_queue", []] },
-                                        [{
-                                            "invocation_id": invocation,
-                                            "sequence": {
-                                                "$add": [{ "$ifNull": ["$next_invocation_sequence", 0_i64] }, 1_i64]
-                                            },
-                                            "batch_id": mongodb::bson::Bson::Null,
-                                            "call_index": mongodb::bson::Bson::Null,
-                                        }]
-                                    ]
-                                },
-                                "updated_at": DateTime::now(),
-                            }
-                        }],
-                        FindOneAndUpdateOptions::builder()
-                            .return_document(ReturnDocument::After)
-                            .build(),
-                    )
+            RuntimeExecutionScopeStoreBackend::Postgres(pool) => {
+                let mut tx = pool.begin().await.map_err(store_error)?;
+                let (_, status) = lock_scope(&mut tx, id.as_str())
                     .await
-                    .map_err(store_error)?;
-                if let Some(scope) = updated {
-                    return scope
-                        .invocation_queue
-                        .iter()
-                        .find(|reference| reference.invocation_id == invocation_id)
-                        .map(|reference| reference.sequence)
-                        .ok_or_else(|| {
-                            RuntimeExecutionScopeStoreError::Unavailable(
-                                "enqueued invocation is missing from execution scope queue"
-                                    .to_string(),
-                            )
-                        });
+                    .map_err(store_error)?
+                    .ok_or_else(|| {
+                        unavailable("execution scope is missing while enqueueing an invocation")
+                    })?;
+                if status == "terminal" {
+                    return Err(RuntimeExecutionScopeStoreError::Terminal);
                 }
-                let scope = collection
-                    .find_one(
-                        doc! { "_id": scope_id(owner_user_id, project_id, run_id, provider) },
-                        None,
-                    )
-                    .await
-                    .map_err(store_error)?;
-                match scope {
-                    Some(scope) if scope.status == "terminal" => {
-                        Err(RuntimeExecutionScopeStoreError::Terminal)
+                if let Some((existing_scope, sequence)) = sqlx::query_as::<_, (String, i64)>(
+                    "SELECT scope_id,sequence \
+                         FROM mcp_management_runtime_execution_scope_queue_items \
+                         WHERE invocation_id=$1",
+                )
+                .bind(invocation_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(store_error)?
+                {
+                    if existing_scope == id {
+                        tx.commit().await.map_err(store_error)?;
+                        return Ok(sequence);
                     }
-                    Some(scope) => scope
-                        .invocation_queue
-                        .iter()
-                        .find(|reference| reference.invocation_id == invocation_id)
-                        .map(|reference| reference.sequence)
-                        .ok_or_else(|| {
-                            RuntimeExecutionScopeStoreError::Unavailable(
-                                "execution scope rejected invocation queue insertion".to_string(),
-                            )
-                        }),
-                    None => Err(RuntimeExecutionScopeStoreError::Unavailable(
-                        "execution scope is missing while enqueueing an invocation".to_string(),
-                    )),
+                    return Err(unavailable(
+                        "execution scope invocation id is active in another scope",
+                    ));
                 }
+                let sequence = increment_sequence(&mut tx, id.as_str(), 1)
+                    .await
+                    .map_err(store_error)?;
+                sqlx::query(
+                    "INSERT INTO mcp_management_runtime_execution_scope_queue_items \
+                     (scope_id,invocation_id,sequence,batch_id,call_index,status) \
+                     VALUES($1,$2,$3,NULL,NULL,'queued')",
+                )
+                .bind(&id)
+                .bind(invocation_id)
+                .bind(sequence)
+                .execute(&mut *tx)
+                .await
+                .map_err(store_error)?;
+                tx.commit().await.map_err(store_error)?;
+                Ok(sequence)
             }
         }
     }
@@ -487,10 +438,7 @@ impl RuntimeExecutionScopeStore {
             RuntimeExecutionScopeStoreBackend::Memory(scopes) => {
                 let mut scopes = scopes.write().await;
                 let scope = scopes.get_mut(id.as_str()).ok_or_else(|| {
-                    RuntimeExecutionScopeStoreError::Unavailable(
-                        "execution scope is missing while enqueueing an invocation batch"
-                            .to_string(),
-                    )
+                    unavailable("execution scope is missing while enqueueing an invocation batch")
                 })?;
                 if scope.status == "terminal" {
                     return Err(RuntimeExecutionScopeStoreError::Terminal);
@@ -505,298 +453,150 @@ impl RuntimeExecutionScopeStore {
                             .iter()
                             .any(|reference| reference.invocation_id == *invocation_id)
                 }) {
-                    return Err(RuntimeExecutionScopeStoreError::Unavailable(
-                        "execution scope invocation batch contains an active duplicate".to_string(),
+                    return Err(unavailable(
+                        "execution scope invocation batch contains an active duplicate",
                     ));
                 }
                 let mut sequences = Vec::with_capacity(invocations.len());
                 for (invocation_id, call_index) in invocations {
                     scope.next_invocation_sequence =
                         scope.next_invocation_sequence.saturating_add(1);
-                    let sequence = scope.next_invocation_sequence;
-                    sequences.push(sequence);
+                    sequences.push(scope.next_invocation_sequence);
                     scope
                         .invocation_queue
                         .push(RuntimeExecutionScopeInvocationRef {
                             invocation_id: invocation_id.clone(),
-                            sequence,
+                            sequence: scope.next_invocation_sequence,
                             batch_id: Some(batch_id.to_string()),
                             call_index: Some(*call_index),
                         });
                 }
-                scope.updated_at = DateTime::now();
                 Ok(sequences)
             }
-            RuntimeExecutionScopeStoreBackend::Mongo(collection) => {
+            RuntimeExecutionScopeStoreBackend::Postgres(pool) => {
+                let mut tx = pool.begin().await.map_err(store_error)?;
+                let (_, status) = lock_scope(&mut tx, id.as_str())
+                    .await
+                    .map_err(store_error)?
+                    .ok_or_else(|| {
+                        unavailable(
+                            "execution scope is missing while enqueueing an invocation batch",
+                        )
+                    })?;
+                if status == "terminal" {
+                    return Err(RuntimeExecutionScopeStoreError::Terminal);
+                }
                 let invocation_ids = invocations
                     .iter()
                     .map(|(invocation_id, _)| invocation_id.clone())
                     .collect::<Vec<_>>();
-                let count = i64::try_from(invocations.len()).map_err(|_| {
-                    RuntimeExecutionScopeStoreError::Unavailable(
-                        "execution scope invocation batch is too large".to_string(),
+                let existing =
+                    sqlx::query_as::<_, (String, String, i64, Option<String>, Option<i64>)>(
+                        "SELECT scope_id,invocation_id,sequence,batch_id,call_index \
+                     FROM mcp_management_runtime_execution_scope_queue_items \
+                     WHERE invocation_id=ANY($1)",
                     )
-                })?;
-                let appended = invocations
-                    .iter()
-                    .enumerate()
-                    .map(|(sequence_offset, (invocation_id, call_index))| {
-                        mongodb::bson::Bson::Document(doc! {
-                            "invocation_id": invocation_id,
-                            "sequence": {
-                                "$add": [
-                                    { "$ifNull": ["$next_invocation_sequence", 0_i64] },
-                                    i64::try_from(sequence_offset).unwrap_or(i64::MAX).saturating_add(1),
-                                ]
-                            },
-                            "batch_id": batch_id,
-                            "call_index": i64::try_from(*call_index).unwrap_or(i64::MAX),
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                let updated = collection
-                    .find_one_and_update(
-                        doc! {
-                            "_id": id.as_str(),
-                            "status": "active",
-                            "invocation_queue.invocation_id": { "$nin": invocation_ids.as_slice() },
-                            "running_invocation_id": { "$nin": invocation_ids.as_slice() },
-                        },
-                        vec![doc! {
-                            "$set": {
-                                "next_invocation_sequence": {
-                                    "$add": [
-                                        { "$ifNull": ["$next_invocation_sequence", 0_i64] },
-                                        count,
-                                    ]
-                                },
-                                "invocation_queue": {
-                                    "$concatArrays": [
-                                        { "$ifNull": ["$invocation_queue", []] },
-                                        appended,
-                                    ]
-                                },
-                                "updated_at": DateTime::now(),
-                            }
-                        }],
-                        FindOneAndUpdateOptions::builder()
-                            .return_document(ReturnDocument::After)
-                            .build(),
-                    )
+                    .bind(&invocation_ids)
+                    .fetch_all(&mut *tx)
                     .await
                     .map_err(store_error)?;
-                let Some(scope) = updated else {
-                    let scope = collection
-                        .find_one(doc! { "_id": id }, None)
-                        .await
-                        .map_err(store_error)?;
-                    return match scope {
-                        Some(scope) if scope.status == "terminal" => {
-                            Err(RuntimeExecutionScopeStoreError::Terminal)
-                        }
-                        Some(scope) => existing_batch_sequences(&scope, batch_id, invocations)
-                            .ok_or_else(|| {
-                                RuntimeExecutionScopeStoreError::Unavailable(
-                                    "execution scope rejected invocation batch insertion because one or more invocation ids are already active under a different batch"
-                                        .to_string(),
+                if !existing.is_empty() {
+                    let replay = invocations
+                        .iter()
+                        .map(|(invocation_id, call_index)| {
+                            existing
+                                .iter()
+                                .find(
+                                    |(scope_id, existing_id, _, existing_batch, existing_index)| {
+                                        scope_id == &id
+                                            && existing_id == invocation_id
+                                            && existing_batch.as_deref() == Some(batch_id)
+                                            && *existing_index == i64::try_from(*call_index).ok()
+                                    },
                                 )
-                            }),
-                        None => Err(RuntimeExecutionScopeStoreError::Unavailable(
-                            "execution scope is missing while enqueueing an invocation batch"
-                                .to_string(),
-                        )),
-                    };
-                };
-                invocation_ids
-                    .iter()
-                    .map(|invocation_id| {
-                        scope
-                            .invocation_queue
-                            .iter()
-                            .find(|reference| reference.invocation_id == *invocation_id)
-                            .map(|reference| reference.sequence)
-                            .ok_or_else(|| {
-                                RuntimeExecutionScopeStoreError::Unavailable(
-                                    "enqueued invocation is missing from execution scope batch"
-                                        .to_string(),
-                                )
-                            })
-                    })
-                    .collect()
-            }
-        }
-    }
-
-    pub async fn try_acquire_invocation_turn(
-        &self,
-        owner_user_id: &str,
-        project_id: Option<&str>,
-        run_id: &str,
-        provider: WorkspaceProviderKind,
-        invocation_id: &str,
-    ) -> Result<RuntimeExecutionTurnState, String> {
-        let id = scope_id(owner_user_id, project_id, run_id, provider);
-        match self.backend.as_ref() {
-            RuntimeExecutionScopeStoreBackend::Memory(scopes) => {
-                let mut scopes = scopes.write().await;
-                let Some(scope) = scopes.get_mut(id.as_str()) else {
-                    return Err("execution scope is missing while acquiring a turn".to_string());
-                };
-                if scope.status == "terminal" {
-                    return Ok(RuntimeExecutionTurnState::Terminal);
+                                .map(|(_, _, sequence, _, _)| *sequence)
+                        })
+                        .collect::<Option<Vec<_>>>();
+                    if let Some(sequences) = replay {
+                        tx.commit().await.map_err(store_error)?;
+                        return Ok(sequences);
+                    }
+                    return Err(unavailable(
+                        "execution scope invocation batch contains an active duplicate",
+                    ));
                 }
-                if scope.running_invocation_id.as_deref() == Some(invocation_id) {
-                    return Ok(RuntimeExecutionTurnState::Acquired);
-                }
-                if scope.running_invocation_id.is_some()
-                    || scope
-                        .invocation_queue
-                        .first()
-                        .is_none_or(|reference| reference.invocation_id != invocation_id)
-                {
-                    return Ok(RuntimeExecutionTurnState::Waiting);
-                }
-                scope.invocation_queue.remove(0);
-                scope.running_invocation_id = Some(invocation_id.to_string());
-                scope.updated_at = DateTime::now();
-                Ok(RuntimeExecutionTurnState::Acquired)
-            }
-            RuntimeExecutionScopeStoreBackend::Mongo(collection) => {
-                let updated = collection
-                    .find_one_and_update(
-                        doc! {
-                            "_id": id.as_str(),
-                            "status": "active",
-                            "$or": [
-                                { "running_invocation_id": mongodb::bson::Bson::Null },
-                                { "running_invocation_id": { "$exists": false } },
-                            ],
-                            "invocation_queue.0.invocation_id": invocation_id,
-                        },
-                        doc! {
-                            "$set": {
-                                "running_invocation_id": invocation_id,
-                                "updated_at": DateTime::now(),
-                            },
-                            "$pop": { "invocation_queue": -1_i32 },
-                        },
-                        FindOneAndUpdateOptions::builder()
-                            .return_document(ReturnDocument::After)
-                            .build(),
+                let count = i64::try_from(invocations.len())
+                    .map_err(|_| unavailable("execution scope invocation batch is too large"))?;
+                let last_sequence = increment_sequence(&mut tx, id.as_str(), count)
+                    .await
+                    .map_err(store_error)?;
+                let first_sequence = last_sequence.saturating_sub(count).saturating_add(1);
+                let mut sequences = Vec::with_capacity(invocations.len());
+                for (offset, (invocation_id, call_index)) in invocations.iter().enumerate() {
+                    let sequence =
+                        first_sequence.saturating_add(i64::try_from(offset).unwrap_or(i64::MAX));
+                    let call_index = i64::try_from(*call_index)
+                        .map_err(|_| unavailable("execution scope call index is too large"))?;
+                    sqlx::query(
+                        "INSERT INTO mcp_management_runtime_execution_scope_queue_items \
+                         (scope_id,invocation_id,sequence,batch_id,call_index,status) \
+                         VALUES($1,$2,$3,$4,$5,'queued')",
                     )
+                    .bind(&id)
+                    .bind(invocation_id)
+                    .bind(sequence)
+                    .bind(batch_id)
+                    .bind(call_index)
+                    .execute(&mut *tx)
                     .await
-                    .map_err(|error| {
-                        format!("acquire execution scope invocation turn failed: {error}")
-                    })?;
-                if updated.is_some() {
-                    return Ok(RuntimeExecutionTurnState::Acquired);
+                    .map_err(store_error)?;
+                    sequences.push(sequence);
                 }
-                let scope = collection
-                    .find_one(doc! { "_id": id }, None)
-                    .await
-                    .map_err(|error| {
-                        format!("load execution scope invocation turn failed: {error}")
-                    })?
-                    .ok_or_else(|| {
-                        "execution scope is missing while acquiring a turn".to_string()
-                    })?;
-                if scope.status == "terminal" {
-                    Ok(RuntimeExecutionTurnState::Terminal)
-                } else if scope.running_invocation_id.as_deref() == Some(invocation_id) {
-                    Ok(RuntimeExecutionTurnState::Acquired)
-                } else {
-                    Ok(RuntimeExecutionTurnState::Waiting)
-                }
+                tx.commit().await.map_err(store_error)?;
+                Ok(sequences)
             }
         }
     }
+}
 
-    pub async fn release_invocation_turn(
-        &self,
-        owner_user_id: &str,
-        project_id: Option<&str>,
-        run_id: &str,
-        provider: WorkspaceProviderKind,
-        invocation_id: &str,
-    ) -> Result<(), String> {
-        self.release_invocation_turn_and_next(
-            owner_user_id,
-            project_id,
-            run_id,
-            provider,
-            invocation_id,
-        )
+async fn lock_scope(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    id: &str,
+) -> Result<Option<(Option<String>, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (Option<String>, String)>(
+        "SELECT running_invocation_id,status \
+         FROM mcp_management_runtime_execution_scopes WHERE id=$1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut **tx)
+    .await
+}
+
+async fn lock_scope_id(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    id: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+        .bind(id)
+        .execute(&mut **tx)
         .await
         .map(|_| ())
-    }
+}
 
-    pub async fn release_invocation_turn_and_next(
-        &self,
-        owner_user_id: &str,
-        project_id: Option<&str>,
-        run_id: &str,
-        provider: WorkspaceProviderKind,
-        invocation_id: &str,
-    ) -> Result<ReleasedInvocationTurn, String> {
-        let id = scope_id(owner_user_id, project_id, run_id, provider);
-        match self.backend.as_ref() {
-            RuntimeExecutionScopeStoreBackend::Memory(scopes) => {
-                if let Some(scope) = scopes.write().await.get_mut(id.as_str()) {
-                    if scope.running_invocation_id.as_deref() == Some(invocation_id) {
-                        scope.running_invocation_id = None;
-                    }
-                    scope
-                        .invocation_queue
-                        .retain(|reference| reference.invocation_id != invocation_id);
-                    scope.updated_at = DateTime::now();
-                    return Ok(ReleasedInvocationTurn {
-                        next_invocation_id: scope
-                            .invocation_queue
-                            .first()
-                            .map(|reference| reference.invocation_id.clone()),
-                    });
-                }
-                Ok(ReleasedInvocationTurn {
-                    next_invocation_id: None,
-                })
-            }
-            RuntimeExecutionScopeStoreBackend::Mongo(collection) => collection
-                .find_one_and_update(
-                    doc! { "_id": id },
-                    vec![doc! {
-                        "$set": {
-                            "running_invocation_id": {
-                                "$cond": [
-                                    { "$eq": ["$running_invocation_id", invocation_id] },
-                                    mongodb::bson::Bson::Null,
-                                    "$running_invocation_id",
-                                ]
-                            },
-                            "invocation_queue": {
-                                "$filter": {
-                                    "input": { "$ifNull": ["$invocation_queue", []] },
-                                    "as": "queued",
-                                    "cond": { "$ne": ["$$queued.invocation_id", invocation_id] },
-                                }
-                            },
-                            "updated_at": DateTime::now(),
-                        }
-                    }],
-                    FindOneAndUpdateOptions::builder()
-                        .return_document(ReturnDocument::After)
-                        .build(),
-                )
-                .await
-                .map(|scope| ReleasedInvocationTurn {
-                    next_invocation_id: scope
-                        .and_then(|scope| scope.invocation_queue.first().cloned())
-                        .map(|reference| reference.invocation_id),
-                })
-                .map_err(|error| {
-                    format!("release execution scope invocation turn failed: {error}")
-                }),
-        }
-    }
+async fn increment_sequence(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    id: &str,
+    count: i64,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>(
+        "UPDATE mcp_management_runtime_execution_scopes \
+         SET next_invocation_sequence=next_invocation_sequence+$2,updated_at=now() \
+         WHERE id=$1 RETURNING next_invocation_sequence",
+    )
+    .bind(id)
+    .bind(count)
+    .fetch_one(&mut **tx)
+    .await
 }
 
 fn existing_batch_sequences(
@@ -851,327 +651,18 @@ fn execution_scope_kind(project_id: Option<&str>) -> &'static str {
     }
 }
 
-fn store_error(error: mongodb::error::Error) -> RuntimeExecutionScopeStoreError {
-    RuntimeExecutionScopeStoreError::Unavailable(format!(
-        "Runtime Execution Scope store failed: {error}"
-    ))
+fn timestamp(value: i64) -> Result<DateTime<Utc>, String> {
+    DateTime::<Utc>::from_timestamp(value, 0)
+        .ok_or_else(|| "Runtime Execution Scope expiry is outside the supported range".to_string())
 }
 
-fn is_duplicate_key(error: &mongodb::error::Error) -> bool {
-    match error.kind.as_ref() {
-        MongoErrorKind::Write(WriteFailure::WriteError(error)) => error.code == 11_000,
-        MongoErrorKind::BulkWrite(failure) => failure
-            .write_errors
-            .as_ref()
-            .is_some_and(|errors| errors.iter().any(|error| error.code == 11_000)),
-        _ => false,
-    }
+fn store_error(error: impl std::fmt::Display) -> RuntimeExecutionScopeStoreError {
+    unavailable(format!("Runtime Execution Scope store failed: {error}"))
+}
+
+fn unavailable(message: impl Into<String>) -> RuntimeExecutionScopeStoreError {
+    RuntimeExecutionScopeStoreError::Unavailable(message.into())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn session_renewal_updates_one_reference_and_preserves_generation() {
-        let store = RuntimeExecutionScopeStore::memory();
-        let renewed_expiry = chrono::Utc::now().timestamp() + 300;
-        let first_generation = store
-            .attach_session(
-                "user-1",
-                Some("project-1"),
-                "run-1",
-                WorkspaceProviderKind::LocalConnector,
-                "session-1",
-                chrono::Utc::now().timestamp() + 60,
-            )
-            .await
-            .unwrap();
-        let renewed_generation = store
-            .attach_session(
-                "user-1",
-                Some("project-1"),
-                "run-1",
-                WorkspaceProviderKind::LocalConnector,
-                "session-1",
-                renewed_expiry,
-            )
-            .await
-            .unwrap();
-        assert_eq!(first_generation, 1);
-        assert_eq!(renewed_generation, first_generation);
-
-        let RuntimeExecutionScopeStoreBackend::Memory(scopes) = store.backend.as_ref() else {
-            panic!("expected memory scope store");
-        };
-        let scopes = scopes.read().await;
-        let scope = scopes.values().next().unwrap();
-        assert_eq!(scope.session_refs.len(), 1);
-        assert_eq!(
-            scope.session_refs.get("session-1").copied(),
-            Some(renewed_expiry)
-        );
-    }
-
-    #[tokio::test]
-    async fn execution_scope_is_released_only_after_the_last_session_detaches() {
-        let store = RuntimeExecutionScopeStore::memory();
-        let expires_at = chrono::Utc::now().timestamp() + 300;
-        for session_id in ["session-1", "session-2"] {
-            store
-                .attach_session(
-                    "user-1",
-                    Some("project-1"),
-                    "run-1",
-                    WorkspaceProviderKind::LocalConnector,
-                    session_id,
-                    expires_at,
-                )
-                .await
-                .unwrap();
-        }
-
-        assert!(!store
-            .detach_session(
-                "user-1",
-                Some("project-1"),
-                "run-1",
-                WorkspaceProviderKind::LocalConnector,
-                "session-1",
-            )
-            .await
-            .unwrap());
-        assert!(store
-            .detach_session(
-                "user-1",
-                Some("project-1"),
-                "run-1",
-                WorkspaceProviderKind::LocalConnector,
-                "session-2",
-            )
-            .await
-            .unwrap());
-    }
-
-    #[tokio::test]
-    async fn one_run_executes_invocations_in_fifo_order() {
-        let store = RuntimeExecutionScopeStore::memory();
-        store
-            .attach_session(
-                "user-1",
-                Some("project-1"),
-                "run-1",
-                WorkspaceProviderKind::LocalConnector,
-                "session-1",
-                chrono::Utc::now().timestamp() + 300,
-            )
-            .await
-            .unwrap();
-        store
-            .enqueue_invocation_batch(
-                "user-1",
-                Some("project-1"),
-                "run-1",
-                WorkspaceProviderKind::LocalConnector,
-                "batch-1",
-                &[
-                    ("invocation-1".to_string(), 0),
-                    ("invocation-2".to_string(), 1),
-                ],
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(
-            store
-                .try_acquire_invocation_turn(
-                    "user-1",
-                    Some("project-1"),
-                    "run-1",
-                    WorkspaceProviderKind::LocalConnector,
-                    "invocation-2",
-                )
-                .await
-                .unwrap(),
-            RuntimeExecutionTurnState::Waiting
-        );
-        assert_eq!(
-            store
-                .try_acquire_invocation_turn(
-                    "user-1",
-                    Some("project-1"),
-                    "run-1",
-                    WorkspaceProviderKind::LocalConnector,
-                    "invocation-1",
-                )
-                .await
-                .unwrap(),
-            RuntimeExecutionTurnState::Acquired
-        );
-        assert_eq!(
-            store
-                .try_acquire_invocation_turn(
-                    "user-1",
-                    Some("project-1"),
-                    "run-1",
-                    WorkspaceProviderKind::LocalConnector,
-                    "invocation-2",
-                )
-                .await
-                .unwrap(),
-            RuntimeExecutionTurnState::Waiting
-        );
-        store
-            .release_invocation_turn(
-                "user-1",
-                Some("project-1"),
-                "run-1",
-                WorkspaceProviderKind::LocalConnector,
-                "invocation-1",
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            store
-                .try_acquire_invocation_turn(
-                    "user-1",
-                    Some("project-1"),
-                    "run-1",
-                    WorkspaceProviderKind::LocalConnector,
-                    "invocation-2",
-                )
-                .await
-                .unwrap(),
-            RuntimeExecutionTurnState::Acquired
-        );
-    }
-
-    #[tokio::test]
-    async fn exact_batch_replay_reuses_existing_scope_queue_entries() {
-        let store = RuntimeExecutionScopeStore::memory();
-        store
-            .attach_session(
-                "user-1",
-                Some("project-1"),
-                "run-1",
-                WorkspaceProviderKind::LocalConnector,
-                "session-1",
-                chrono::Utc::now().timestamp() + 300,
-            )
-            .await
-            .unwrap();
-        let invocations = [
-            ("invocation-1".to_string(), 0),
-            ("invocation-2".to_string(), 1),
-        ];
-        let first = store
-            .enqueue_invocation_batch(
-                "user-1",
-                Some("project-1"),
-                "run-1",
-                WorkspaceProviderKind::LocalConnector,
-                "batch-1",
-                &invocations,
-            )
-            .await
-            .unwrap();
-        let replay = store
-            .enqueue_invocation_batch(
-                "user-1",
-                Some("project-1"),
-                "run-1",
-                WorkspaceProviderKind::LocalConnector,
-                "batch-1",
-                &invocations,
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(replay, first);
-        assert_eq!(store.queued_invocation_ids().await.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn invocation_ids_cannot_be_reused_by_a_different_batch() {
-        let store = RuntimeExecutionScopeStore::memory();
-        store
-            .attach_session(
-                "user-1",
-                Some("project-1"),
-                "run-1",
-                WorkspaceProviderKind::LocalConnector,
-                "session-1",
-                chrono::Utc::now().timestamp() + 300,
-            )
-            .await
-            .unwrap();
-        let invocations = [("invocation-1".to_string(), 0)];
-        store
-            .enqueue_invocation_batch(
-                "user-1",
-                Some("project-1"),
-                "run-1",
-                WorkspaceProviderKind::LocalConnector,
-                "batch-1",
-                &invocations,
-            )
-            .await
-            .unwrap();
-
-        let error = store
-            .enqueue_invocation_batch(
-                "user-1",
-                Some("project-1"),
-                "run-1",
-                WorkspaceProviderKind::LocalConnector,
-                "batch-2",
-                &invocations,
-            )
-            .await
-            .expect_err("different batch must not reuse an active invocation id");
-        assert!(error.to_string().contains("active duplicate"));
-    }
-
-    #[tokio::test]
-    async fn different_runs_acquire_turns_independently() {
-        let store = RuntimeExecutionScopeStore::memory();
-        for run_id in ["run-1", "run-2"] {
-            store
-                .attach_session(
-                    "user-1",
-                    Some("project-1"),
-                    run_id,
-                    WorkspaceProviderKind::LocalConnector,
-                    format!("session-{run_id}").as_str(),
-                    chrono::Utc::now().timestamp() + 300,
-                )
-                .await
-                .unwrap();
-            store
-                .enqueue_invocation(
-                    "user-1",
-                    Some("project-1"),
-                    run_id,
-                    WorkspaceProviderKind::LocalConnector,
-                    format!("invocation-{run_id}").as_str(),
-                )
-                .await
-                .unwrap();
-        }
-        for run_id in ["run-1", "run-2"] {
-            assert_eq!(
-                store
-                    .try_acquire_invocation_turn(
-                        "user-1",
-                        Some("project-1"),
-                        run_id,
-                        WorkspaceProviderKind::LocalConnector,
-                        format!("invocation-{run_id}").as_str(),
-                    )
-                    .await
-                    .unwrap(),
-                RuntimeExecutionTurnState::Acquired
-            );
-        }
-    }
-}
+include!("execution_scope_store_inline_tests.rs");

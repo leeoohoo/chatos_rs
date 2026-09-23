@@ -3,7 +3,10 @@
 
 use super::*;
 use crate::mcp_server::support::create_tasks_with_prerequisites_schema;
-use crate::mcp_server::{reject_ai_runtime_config, support::remove_internal_task_fields};
+use crate::mcp_server::{
+    reject_ai_runtime_config,
+    support::{compact_agent_tool_payload, remove_internal_task_fields},
+};
 use serde_json::Value;
 
 #[test]
@@ -143,6 +146,26 @@ fn agent_task_payload_hides_identity_and_runtime_routing_snapshots() {
     ] {
         assert!(payload.pointer(pointer).is_none(), "leaked {pointer}");
     }
+}
+
+#[test]
+fn historical_task_results_are_bounded_before_returning_to_the_model() {
+    let mut payload = json!({
+        "id": "task-1",
+        "result_summary": "project/file.rs\n".repeat(1_000),
+        "nested": { "description": "detail ".repeat(2_000) }
+    });
+
+    compact_agent_tool_payload(&mut payload);
+
+    let summary = payload["result_summary"].as_str().expect("summary");
+    assert!(summary.chars().count() < 2_500);
+    assert!(summary.contains("[truncated"));
+    assert_eq!(payload["_truncated_fields"], json!(["result_summary"]));
+    assert_eq!(
+        payload["nested"]["_truncated_fields"],
+        json!(["description"])
+    );
 }
 
 #[test]

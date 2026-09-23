@@ -22,11 +22,11 @@ pub const MEMORY_ENGINE_HOST_CONFIG_KEY: &str = "memory_engine.runtime.host";
 pub const MEMORY_ENGINE_PORT_CONFIG_KEY: &str = "memory_engine.runtime.port";
 pub const MEMORY_ENGINE_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
     "memory_engine.runtime.internal_mtls_port";
-pub const MEMORY_ENGINE_MONGODB_URI_CONFIG_KEY: &str = "memory_engine.runtime.mongodb_uri";
-pub const MEMORY_ENGINE_MONGODB_DATABASE_CONFIG_KEY: &str =
-    "memory_engine.runtime.mongodb_database";
+pub const MEMORY_ENGINE_DATABASE_URL_CONFIG_KEY: &str = "memory_engine.runtime.database_url";
 pub const MEMORY_ENGINE_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "memory_engine.downstream.user_service_base_url";
+pub const MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY: &str =
+    "memory_engine.downstream.user_service_internal_base_url";
 pub const MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "memory_engine.downstream.user_service_request_timeout_ms";
 pub const MEMORY_ENGINE_AI_REQUEST_TIMEOUT_SECS_CONFIG_KEY: &str =
@@ -57,6 +57,10 @@ pub const MEMORY_ENGINE_RABBITMQ_EXCHANGE_CONFIG_KEY: &str =
     "memory_engine.queue.rabbitmq_exchange";
 pub const MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS_CONFIG_KEY: &str =
     "memory_engine.queue.rabbitmq_reconnect_delay_ms";
+pub const MEMORY_ENGINE_CLOUD_AGENT_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
+    "memory_engine.queue.cloud_agent_outbox_reconcile_ms";
+pub const MEMORY_ENGINE_CLOUD_AGENT_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =
+    "memory_engine.queue.cloud_agent_outbox_batch_size";
 pub const MEMORY_ENGINE_SUMMARY_QUEUE_CONFIG_KEY: &str = "memory_engine.queue.summary_queue";
 pub const MEMORY_ENGINE_SUMMARY_RETRY_QUEUE_CONFIG_KEY: &str =
     "memory_engine.queue.summary_retry_queue";

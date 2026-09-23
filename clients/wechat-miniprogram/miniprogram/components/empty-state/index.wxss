@@ -1,0 +1,4 @@
+.empty { padding: 78rpx 32rpx; text-align: center; }
+.symbol { color: #c7c7cc; font-size: 54rpx; font-weight: 300; }
+.title { margin-top: 13rpx; color: #1c1c1e; font-size: 27rpx; font-weight: 600; }
+.description { margin-top: 8rpx; color: #85858b; font-size: 22rpx; line-height: 1.5; }

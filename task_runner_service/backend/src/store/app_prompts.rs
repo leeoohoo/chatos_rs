@@ -12,7 +12,7 @@ impl AppStore {
     ) -> Result<Vec<AskUserPromptRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_ask_user_prompts(task_id, run_id, status)),
-            Self::Mongo(store) => store.list_ask_user_prompts(task_id, run_id, status).await,
+            Self::Postgres(store) => store.list_ask_user_prompts(task_id, run_id, status).await,
         }
     }
 
@@ -22,7 +22,7 @@ impl AppStore {
     ) -> Result<PaginatedResponse<AskUserPromptRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_ask_user_prompts_page(filters)),
-            Self::Mongo(store) => store.list_ask_user_prompts_page(filters).await,
+            Self::Postgres(store) => store.list_ask_user_prompts_page(filters).await,
         }
     }
 
@@ -32,7 +32,7 @@ impl AppStore {
     ) -> Result<Option<AskUserPromptRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.get_ask_user_prompt(id)),
-            Self::Mongo(store) => store.get_ask_user_prompt(id).await,
+            Self::Postgres(store) => store.get_ask_user_prompt(id).await,
         }
     }
 
@@ -42,7 +42,7 @@ impl AppStore {
     ) -> Result<AskUserPromptRecord, String> {
         match self {
             Self::InMemory(store) => Ok(store.save_ask_user_prompt(prompt)),
-            Self::Mongo(store) => store.save_ask_user_prompt(prompt).await,
+            Self::Postgres(store) => store.save_ask_user_prompt(prompt).await,
         }
     }
 
@@ -55,7 +55,7 @@ impl AppStore {
             Self::InMemory(store) => {
                 Ok(store.prune_terminal_ask_user_prompts_before(cutoff, candidate_limit))
             }
-            Self::Mongo(store) => {
+            Self::Postgres(store) => {
                 store
                     .prune_terminal_ask_user_prompts_before(cutoff, candidate_limit)
                     .await
@@ -69,7 +69,7 @@ impl AppStore {
     ) -> Result<Vec<AskUserPromptRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_pending_ask_user_resolution_events(limit)),
-            Self::Mongo(store) => store.list_pending_ask_user_resolution_events(limit).await,
+            Self::Postgres(store) => store.list_pending_ask_user_resolution_events(limit).await,
         }
     }
 
@@ -79,7 +79,7 @@ impl AppStore {
     ) -> Result<bool, String> {
         match self {
             Self::InMemory(store) => Ok(store.acknowledge_ask_user_resolution_event(prompt_id)),
-            Self::Mongo(store) => store.acknowledge_ask_user_resolution_event(prompt_id).await,
+            Self::Postgres(store) => store.acknowledge_ask_user_resolution_event(prompt_id).await,
         }
     }
 
@@ -90,7 +90,7 @@ impl AppStore {
     ) -> Result<Vec<AskUserPromptTaskCountRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_ask_user_prompt_task_counts(status, task_ids)),
-            Self::Mongo(store) => {
+            Self::Postgres(store) => {
                 store
                     .list_ask_user_prompt_task_counts(status, task_ids)
                     .await

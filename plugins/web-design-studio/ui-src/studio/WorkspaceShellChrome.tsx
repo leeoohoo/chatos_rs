@@ -1,4 +1,4 @@
-import { memo, useRef, type PointerEvent as ReactPointerEvent } from 'react';
+import { memo, useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { type WorkspaceArea, type WorkspaceTool } from './workspace-shell-model';
 
 const navigationItems: Array<{ area: WorkspaceArea; icon: string; label: string }> = [
@@ -32,11 +32,12 @@ const tools: Array<{ tool: WorkspaceTool; icon: string; label: string; shortcut?
   { tool: 'ai', icon: '✦', label: 'AI 修改' }
 ];
 
-export const WorkspaceBottomToolbar = memo(function WorkspaceBottomToolbar({ activeTool, leftPanelOpen, rightPanelOpen, canvasMaximized, onSelectTool, onToggleLeft, onToggleRight, onToggleMaximize }: {
+export const WorkspaceBottomToolbar = memo(function WorkspaceBottomToolbar({ activeTool, leftPanelOpen, rightPanelOpen, canvasMaximized, workspaceActions, onSelectTool, onToggleLeft, onToggleRight, onToggleMaximize }: {
   activeTool: WorkspaceTool;
   leftPanelOpen: boolean;
   rightPanelOpen: boolean;
   canvasMaximized: boolean;
+  workspaceActions?: ReactNode;
   onSelectTool: (tool: WorkspaceTool) => void;
   onToggleLeft: () => void;
   onToggleRight: () => void;
@@ -47,6 +48,7 @@ export const WorkspaceBottomToolbar = memo(function WorkspaceBottomToolbar({ act
       <button className="panel-toggle" title={leftPanelOpen ? '收起左侧栏' : '展开左侧栏'} aria-label={leftPanelOpen ? '收起左侧栏' : '展开左侧栏'} onClick={onToggleLeft}><b>{leftPanelOpen ? '◧' : '▯'}</b><em>左栏</em></button>
       <span />
       {tools.map((item) => <button key={item.tool} className={`workspace-tool-button ${activeTool === item.tool ? 'active' : ''}`} title={`${item.label}${item.shortcut ? ` · ${item.shortcut}` : ''}`} aria-label={`${item.label}${item.shortcut ? `，快捷键 ${item.shortcut}` : ''}`} onClick={() => onSelectTool(item.tool)}><b>{item.icon}</b><em>{item.label}</em>{item.shortcut && <kbd>{item.shortcut}</kbd>}</button>)}
+      {workspaceActions && <><span /><div className="workspace-bottom-actions" aria-label="工作区视图控制">{workspaceActions}</div></>}
       <span />
       <button className="panel-toggle" title={rightPanelOpen ? '收起属性栏' : '展开属性栏'} aria-label={rightPanelOpen ? '收起属性栏' : '展开属性栏'} onClick={onToggleRight}><b>{rightPanelOpen ? '◨' : '▯'}</b><em>属性</em></button>
       <button className={canvasMaximized ? 'active panel-toggle' : 'panel-toggle'} title={canvasMaximized ? '恢复左右面板' : '隐藏面板，专注画布'} aria-label={canvasMaximized ? '恢复左右面板' : '隐藏面板，专注画布'} onClick={onToggleMaximize}><b>{canvasMaximized ? '⊡' : '□'}</b><em>{canvasMaximized ? '恢复' : '专注'}</em></button>

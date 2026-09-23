@@ -1,4 +1,6 @@
 import ChatOSAgentRuntime
+import ChatOSCore
+import CryptoKit
 import Foundation
 
 enum NativeApprovalDecision: Sendable, Equatable {
@@ -19,6 +21,9 @@ struct NativeApprovalAgentRequest: Sendable {
 }
 
 struct NativeApprovalAgent: Sendable {
+    static let agentKey = "local_connector_command_approval_agent"
+    static let maximumManagedPromptBytes = 256 * 1024
+
     private let tools = NativeApprovalAgentTools()
     private let settingsStore: AgentSettingsStore
 
@@ -27,30 +32,49 @@ struct NativeApprovalAgent: Sendable {
     func evaluate(
         request: NativeApprovalAgentRequest,
         model: GatewayModelConfigDTO,
-        thinkingLevel: String?
+        systemPrompt: String,
+        thinkingLevel: String?,
+        runID: UUID = UUID(),
+        runtimeScope: String? = nil,
+        contextProvider: AgentMemoryContextProvider? = nil
     ) async -> NativeApprovalDecision {
         do {
             let policy = try settingsStore.load().effective(.approval)
             guard model.enabled != false,
+                  model.taskEnabled != false,
                   let apiKey = model.apiKey?.trimmedNonEmpty,
                   let baseURLText = model.baseURL?.trimmedNonEmpty,
                   let baseURL = URL(string: baseURLText), !model.model.isEmpty else {
                 throw NativeApprovalAgentError.invalidModelConfiguration
             }
             let reserve = (policy.context ?? .init()).outputReserveTokens
-            let client = try AgentChatModelClient(baseURL: baseURL, model: model.model, apiKey: apiKey,
-                thinking: thinkingLevel, maximumOutputTokens: min(max(1, model.maxOutputTokens ?? 1_200), reserve),
-                temperature: model.temperature ?? 0)
-            return await evaluate(request: request, modelClient: client, policy: policy)
+            let maximumOutputTokens = min(max(1, model.maxOutputTokens ?? 1_200), reserve)
+            let client: any AgentModelClient = try AgentResponsesModelClient(
+                baseURL: baseURL, model: model.model, apiKey: apiKey,
+                thinking: thinkingLevel, maximumOutputTokens: maximumOutputTokens,
+                temperature: model.temperature ?? 0,
+                promptCacheKey: "approval-agent:\(model.id)"
+            )
+            return await evaluate(
+                request: request, modelClient: client, systemPrompt: systemPrompt, policy: policy,
+                runID: runID, runtimeScope: runtimeScope, contextProvider: contextProvider
+            )
         } catch {
             return .askUser(reason: "本机审批 Agent 不可用：\(error.localizedDescription)")
         }
     }
 
-    /// Shared loop, separate read-only registry. No automatic cloud memory upload of local files.
+    /// Shared loop with a separate read-only registry. Production callers provide
+    /// a Memory Engine context so prompts, tool calls, and tool results share the
+    /// same durable audit contract as the story and server Agents.
     func evaluate(request: NativeApprovalAgentRequest, modelClient: any AgentModelClient,
-                  policy: AgentRunPolicy) async -> NativeApprovalDecision {
+                  systemPrompt: String,
+                  policy: AgentRunPolicy, runID: UUID = UUID(), runtimeScope: String? = nil,
+                  contextProvider: AgentMemoryContextProvider? = nil) async -> NativeApprovalDecision {
         do {
+            guard systemPrompt.trimmedNonEmpty != nil else {
+                throw NativeApprovalAgentError.invalidManagedPrompt
+            }
             let definitions = try Self.toolSchemas.map { schema -> AgentToolDefinition in
                 guard let function = schema["function"] as? [String: Any],
                       let name = function["name"] as? String,
@@ -62,10 +86,15 @@ struct NativeApprovalAgent: Sendable {
                     schema: try JSONSerialization.data(withJSONObject: parameters),
                     effect: name == "approval_decision" ? .terminal : .readOnly)
             }
-            let checkpoint = AgentRunCheckpoint(scope: "approval:\(UUID())", messages: [
-                .init(role: .system, content: Self.systemPrompt),
+            let scope = runtimeScope ?? "approval:\(runID.uuidString)"
+            var checkpoint = AgentRunCheckpoint(scope: scope, messages: [
+                .init(role: .system, content: systemPrompt),
                 .init(role: .user, content: prompt(for: request)),
             ])
+            checkpoint.id = runID
+            if let contextProvider {
+                checkpoint = try contextProvider.bind(checkpoint)
+            }
             let result = try await AgentRuntime().run(checkpoint: checkpoint, scope: checkpoint.scope, policy: policy,
                 model: modelClient, tools: definitions, execute: { call in
                     let arguments = try decodeArguments(call.arguments)
@@ -75,13 +104,76 @@ struct NativeApprovalAgent: Sendable {
                     }
                     let output = tools.execute(name: call.name, arguments: arguments, projectRoot: request.projectRoot)
                     return output.hasPrefix("工具执行失败：") ? .failure(output) : .init(output)
-                })
+                }, contextProvider: contextProvider)
             guard result.status == .completed, let output = result.result else {
                 return .askUser(reason: result.stopReason ?? "本机审批 Agent 未形成有效结论，已转交人工确认。")
             }
             return try decision(from: decodeArguments(output))
         } catch {
             return .askUser(reason: "本机审批 Agent 不可用：\(error.localizedDescription)")
+        }
+    }
+
+    static func resolveManagedSystemPrompt(
+        model: GatewayModelConfigDTO,
+        bundle: GatewayAgentPromptBundleDTO,
+        capability: GatewayAgentCapabilityDTO,
+        ownerUserID: String
+    ) throws -> String {
+        guard capability.agentEnabled,
+              capability.agentKey == agentKey,
+              capability.ownerUserID == ownerUserID,
+              capability.policyRevision.trimmedNonEmpty != nil else {
+            throw NativeApprovalAgentError.invalidManagedCapability
+        }
+        guard bundle.bundleVersion > 0 else {
+            throw NativeApprovalAgentError.invalidManagedPrompt
+        }
+        let vendor = try normalizedPromptVendor(
+            explicitVendor: model.promptVendor,
+            provider: model.provider
+        )
+        guard let prompt = bundle.prompts.first(where: {
+            $0.agentKey == agentKey && $0.vendor.caseInsensitiveCompare(vendor) == .orderedSame
+        }), prompt.revision > 0 else {
+            throw NativeApprovalAgentError.invalidManagedPrompt
+        }
+        guard prompt.content.trimmedNonEmpty != nil,
+              prompt.content.lengthOfBytes(using: .utf8) <= maximumManagedPromptBytes else {
+            throw NativeApprovalAgentError.invalidManagedPrompt
+        }
+        let digest = SHA256.hash(data: Data(prompt.content.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        guard prompt.checksum.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            == "sha256:\(digest)" else {
+            throw NativeApprovalAgentError.invalidManagedPrompt
+        }
+        return prompt.content
+    }
+
+    private static func normalizedPromptVendor(
+        explicitVendor: String?,
+        provider: String
+    ) throws -> String {
+        let provider = provider.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+        let normalizedProvider: String
+        switch provider {
+        case "openai", "gpt": normalizedProvider = "gpt"
+        case "moonshot", "kimik2", "kimi": normalizedProvider = "kimi"
+        case "zhipu", "zhipuai", "zai", "chatglm", "glm": normalizedProvider = "glm"
+        case "deepseek": normalizedProvider = "deepseek"
+        default: throw NativeApprovalAgentError.unsupportedPromptVendor
+        }
+        let candidate = explicitVendor?.trimmedNonEmpty?.lowercased() ?? normalizedProvider
+        switch candidate {
+        case "gpt", "openai": return "gpt"
+        case "deepseek": return "deepseek"
+        case "kimi", "moonshot": return "kimi"
+        case "glm", "zhipu", "zai": return "glm"
+        default: throw NativeApprovalAgentError.unsupportedPromptVendor
         }
     }
 
@@ -111,28 +203,18 @@ struct NativeApprovalAgent: Sendable {
     }
 
     private func prompt(for request: NativeApprovalAgentRequest) -> String {
-        """
-        请审核下面这次本机操作。它可能是 shell 命令，也可能是 Browser CDP、Computer Use 或其他本机 Plugin 操作。必要时先使用只读工具检查项目，再调用 approval_decision。
-
-        - source: \(request.source)
-        - cwd: \(request.cwd)
-        - operation: \(([request.command] + request.arguments).joined(separator: " "))
-        - requested_permissions: \(request.requestedPermissionsDescription ?? "null")
-        - static_risk_level: \(request.riskLevel)
-        - static_risk_reason: \(request.riskReason ?? "无")
-
-        规则：
-        1. 只判断这一次请求，不要执行命令，也不要修改文件。
-        2. 信息不足、路径不明确、请求范围过大或存在不可逆风险时，必须 ask_user。
-        3. deny 用于明确恶意、越权或与用户目标冲突的操作。
-        4. approve 只用于意图清晰、范围受控且与当前项目任务一致的操作。
-        5. Browser CDP、Computer Use 和其他 Plugin 操作不是 shell 命令，不要因为项目中找不到同名文件而拒绝或追问。ChatOS 生成的 browser_session_id、tab_id、cdp_session_id 等不透明标识属于正常会话边界，应结合工具名、参数摘要和权限说明判断。
-        """
+        LocalAgentPromptCatalog.render(
+            .approvalUser,
+            values: [
+                "source": request.source,
+                "cwd": request.cwd,
+                "operation": ([request.command] + request.arguments).joined(separator: " "),
+                "requested_permissions": request.requestedPermissionsDescription ?? "null",
+                "risk_level": request.riskLevel,
+                "risk_reason": request.riskReason ?? "无",
+            ]
+        )
     }
-
-    private static let systemPrompt = """
-    你是 ChatOS 运行在用户 Mac 上的本机操作审批 Agent，负责审核 shell 命令、Browser CDP、Computer Use 和其他本机 Plugin 操作。你只能使用提供的只读项目工具进行核对，最终必须调用 approval_decision。你不得把普通文字回答当作审批结论，不得执行命令、写文件或访问项目根目录之外的路径。无法可靠判断时必须 ask_user。
-    """
 
     private static var toolSchemas: [[String: Any]] { [
         functionTool("read_file_raw", "读取项目内 UTF-8 文本文件。", [
@@ -187,6 +269,9 @@ struct NativeApprovalAgent: Sendable {
 
 private enum NativeApprovalAgentError: LocalizedError {
     case invalidModelConfiguration
+    case invalidManagedCapability
+    case invalidManagedPrompt
+    case unsupportedPromptVendor
     case invalidResponse
     case invalidToolArguments
     case invalidDecision
@@ -195,6 +280,9 @@ private enum NativeApprovalAgentError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidModelConfiguration: "审批模型配置缺少 Base URL、模型名或 API Key"
+        case .invalidManagedCapability: "审批 Agent 的能力策略缺失或校验失败"
+        case .invalidManagedPrompt: "审批 Agent 的托管 Prompt 缺失或校验失败"
+        case .unsupportedPromptVendor: "审批模型不支持对应的托管 Prompt 类型"
         case .invalidResponse: "审批模型返回格式无效"
         case .invalidToolArguments: "审批模型返回了无效工具参数"
         case .invalidDecision: "审批模型没有返回有效审批结论"

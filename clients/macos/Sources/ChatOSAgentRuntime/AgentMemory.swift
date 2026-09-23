@@ -9,9 +9,21 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
     public let subjectID: String
     public let runID: UUID
     public let runtimeScope: String
+    /// `nil` preserves the original story behavior (subject recall enabled).
+    /// Approval runs are isolated so prior approval content cannot influence a
+    /// later security decision, while their complete records are still stored.
+    public let includeSubjectMemory: Bool?
 
     public init(tenantID: String, profile: String, projectID: UUID, runID: UUID, runtimeScope: String) throws {
+        try self.init(
+            tenantID: tenantID, profile: profile, projectID: projectID.uuidString,
+            runID: runID, runtimeScope: runtimeScope
+        )
+    }
+
+    public init(tenantID: String, profile: String, projectID: String, runID: UUID, runtimeScope: String) throws {
         guard !tenantID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !projectID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               ["approval", "story"].contains(profile), !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
         self.tenantID = tenantID
         self.sourceID = "chatos"
@@ -19,9 +31,98 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
         self.subjectID = "client-agent:\(profile):\(projectID)"
         self.runID = runID
         self.runtimeScope = runtimeScope
+        self.includeSubjectMemory = profile == "approval" ? false : nil
+    }
+
+    /// Local chat Agent manager runs own one continuous Memory identity across private chats,
+    /// teams and separate wake-ups. Todo execution deliberately uses the Todo-scoped initializer
+    /// below so execution records never enter the Agent's long-lived communications thread.
+    public init(
+        tenantID: String,
+        agentID: String,
+        projectID: String,
+        runID: UUID,
+        runtimeScope: String
+    ) throws {
+        let identifiers = [tenantID, agentID, projectID]
+        guard identifiers.allSatisfy({ value in
+            !value.isEmpty
+                && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
+                && value.rangeOfCharacter(from: .controlCharacters) == nil
+        }), !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
+        self.tenantID = tenantID
+        self.sourceID = "chatos"
+        self.threadID = "client-agent:manager:\(agentID)"
+        self.subjectID = "agent-manager:\(agentID)"
+        self.runID = runID
+        self.runtimeScope = runtimeScope
+        self.includeSubjectMemory = nil
+    }
+
+    /// A Todo owns an isolated Memory identity. It may continue across retries of that same Todo,
+    /// but it never recalls the assignee's manager subject or another Todo's execution history.
+    public init(
+        tenantID: String,
+        todoID: String,
+        runID: UUID,
+        runtimeScope: String
+    ) throws {
+        let identifiers = [tenantID, todoID]
+        guard identifiers.allSatisfy({ value in
+            !value.isEmpty
+                && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
+                && value.rangeOfCharacter(from: .controlCharacters) == nil
+        }), !runtimeScope.isEmpty else { throw AgentRuntimeError.scopeMismatch }
+        self.tenantID = tenantID
+        self.sourceID = "chatos"
+        self.threadID = "client-agent:todo:\(todoID)"
+        self.subjectID = "todo:\(todoID)"
+        self.runID = runID
+        self.runtimeScope = runtimeScope
+        self.includeSubjectMemory = false
     }
 
     public func recordID(at index: Int) -> String { "client-agent:\(runID):message:\(index)" }
+
+    /// Returns whether an immutable record can be written through a Memory service bound to this
+    /// thread. Manager and Todo identities intentionally reuse one thread across separate runs,
+    /// so their durable outbox may contain records created by an earlier run. Run-scoped story
+    /// and approval services must continue to reject those foreign records.
+    public func acceptsRecord(id: String, index: Int) -> Bool {
+        guard let location = recordLocation(for: id), location.index == index else { return false }
+        return location.runID == runID || allowsCrossRunHistory
+    }
+
+    /// Story and approval threads belong to one run. Manager and Todo threads are stable for their
+    /// respective identity, so compose may return records written by earlier runs of that same
+    /// manager or Todo. The legacy group-chat prefix remains accepted for bound pre-migration runs.
+    public var allowsCrossRunHistory: Bool {
+        threadID.hasPrefix("client-agent:manager:")
+            || threadID.hasPrefix("client-agent:todo:")
+            || threadID.hasPrefix("client-agent:group-chat:")
+    }
+
+    /// Parses only record IDs emitted by `recordID(at:)`. Memory Engine has already verified the
+    /// tenant/source/thread boundary; this additionally prevents arbitrary IDs inside that thread
+    /// from being promoted into model context.
+    public func recordLocation(for id: String) -> (runID: UUID, index: Int)? {
+        let prefix = "client-agent:"
+        let marker = ":message:"
+        guard id.hasPrefix(prefix),
+              let markerRange = id.range(of: marker, options: .backwards),
+              markerRange.lowerBound > id.index(id.startIndex, offsetBy: prefix.count) else {
+            return nil
+        }
+        let runText = String(id[id.index(id.startIndex, offsetBy: prefix.count)..<markerRange.lowerBound])
+        let indexText = String(id[markerRange.upperBound...])
+        guard let parsedRunID = UUID(uuidString: runText),
+              parsedRunID.uuidString == runText,
+              let index = Int(indexText), index >= 0,
+              String(index) == indexText else {
+            return nil
+        }
+        return (parsedRunID, index)
+    }
 }
 
 public struct AgentMemoryEntry: Sendable {
@@ -34,24 +135,26 @@ public struct AgentMemoryEntry: Sendable {
     }
 }
 
-public struct AgentMemoryContext: Sendable {
-    public let summaries: [String]
-    public let recentRecordIDs: [String]
-    public init(summaries: [String], recentRecordIDs: [String]) {
-        self.summaries = summaries; self.recentRecordIDs = recentRecordIDs
-    }
+public struct AgentMemoryContextBlock: Equatable, Sendable {
+    public let blockType: String
+    public let text: String
+    public init(blockType: String, text: String) { self.blockType = blockType; self.text = text }
 }
 
-public struct AgentSummaryStatus: Sendable {
-    public var jobID: String?
-    public var running: Bool
-    public var completed: Bool
-    public var failed: Bool
-    public var compacted: Bool
-    public init(jobID: String? = nil, running: Bool = false, completed: Bool = false,
-                failed: Bool = false, compacted: Bool = false) {
-        self.jobID = jobID; self.running = running; self.completed = completed
-        self.failed = failed; self.compacted = compacted
+public struct AgentMemoryContextRecord: Equatable, Sendable {
+    public let id: String
+    public let message: AgentMessage
+    public init(id: String, message: AgentMessage) { self.id = id; self.message = message }
+}
+
+/// The native representation of Memory Engine's `ComposeContextResponse`.
+/// Keep both blocks and records: callers must use the composed response rather than rebuilding
+/// a different context from a list of record IDs.
+public struct AgentMemoryContext: Sendable {
+    public let blocks: [AgentMemoryContextBlock]
+    public let recentRecords: [AgentMemoryContextRecord]
+    public init(blocks: [AgentMemoryContextBlock], recentRecords: [AgentMemoryContextRecord]) {
+        self.blocks = blocks; self.recentRecords = recentRecords
     }
 }
 
@@ -59,8 +162,6 @@ public protocol AgentMemoryServicing: Sendable {
     func ensureThread() async throws
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws
     func compose() async throws -> AgentMemoryContext
-    func startSummary(reason: String) async throws -> AgentSummaryStatus
-    func summaryStatus(jobID: String?) async throws -> AgentSummaryStatus
 }
 
 /// The full audit transcript stays in AgentRunCheckpoint.messages, not in each model request.
@@ -72,55 +173,63 @@ public struct AgentMemoryCheckpoint: Codable, Equatable, Sendable {
     public var syncedDigest: String = ""
     public var threadCreated = false
     public var syncInFlightEnd: Int?
-    public var summaryJobID: String?
-    public var summaryRequested = false
-    public var summaryInputEstimate: Int?
-    public var compactions = 0
     public init(scope: AgentMemoryScope, pinnedMessageCount: Int, recordEpoch: Date = Date()) {
         self.scope = scope; self.pinnedMessageCount = pinnedMessageCount; self.recordEpoch = recordEpoch
     }
 }
 
 public struct AgentContextPolicy: Codable, Equatable, Sendable {
-    /// Conservative configurable budget for unknown models; this is not model metadata.
-    public var windowTokens = 32_768
-    public var outputReserveTokens = 4_096
-    public var compactionThresholdTokens = 20_000
-    public var maximumCompactionPasses = 4
-    public var summaryTimeoutSeconds = 120
-    public var summaryPollSeconds = 2
+    /// The first request in a run/resume must fit this local safety budget.
+    /// Official OpenAI Responses owns subsequent in-run compaction.
+    public var windowTokens = 250_000
+    public var outputReserveTokens = 30_000
     public init() {}
-    public var hardInputLimit: Int { windowTokens - outputReserveTokens }
+    public var hardInputLimit: Int { windowTokens }
     public func validate() throws {
-        guard (2_048...2_000_000).contains(windowTokens), (256..<windowTokens).contains(outputReserveTokens),
-              (512..<hardInputLimit).contains(compactionThresholdTokens),
-              (1...16).contains(maximumCompactionPasses), (5...1_800).contains(summaryTimeoutSeconds),
-              (1...30).contains(summaryPollSeconds) else { throw AgentRuntimeError.invalidPolicy }
+        guard (2_048...2_000_000).contains(windowTokens),
+              (256..<windowTokens).contains(outputReserveTokens) else {
+            throw AgentRuntimeError.invalidPolicy
+        }
     }
 }
 
 public enum AgentContextError: LocalizedError, Sendable {
-    case unavailable, invalidHistory, syncUncertain, summaryFailed, summaryTimedOut, noImprovement, budgetExceeded
+    case unavailable, invalidHistory, syncUncertain, budgetExceeded
     public var errorDescription: String? {
         switch self {
         case .unavailable: "Memory Engine 同步或上下文服务不可用，运行已暂停。"
         case .invalidHistory: "运行历史或记忆范围不一致，已暂停，不能丢弃记录或重放工具。"
         case .syncUncertain: "部分运行记录尚未确认写入，已暂停。请稍后恢复核对；不会自动重发并重置已有摘要。"
-        case .summaryFailed: "Memory Engine 摘要任务失败，请检查摘要 Agent 模型与策略配置。"
-        case .summaryTimedOut: "等待上下文压缩超时，已保存摘要任务，可稍后继续。"
-        case .noImprovement: "压缩没有缩小上下文，已暂停；请检查摘要配置或缩小单次输入。"
         case .budgetExceeded: "上下文仍超过设置的窗口预算，已暂停，未继续调用模型。"
         }
     }
 }
 
 public enum AgentContextBudget {
-    /// UTF-8 byte accounting deliberately overestimates ordinary text. It is a safety estimate,
-    /// not an exact tokenizer. Includes tool schemas, framing and an extra safety margin.
+    /// Mirrors `chatos_ai_runtime::estimated_json_tokens`: serialize the complete model-input
+    /// payload and use four JSON bytes per estimated token. This remains an estimate, but the
+    /// returned unit is tokens rather than raw UTF-8 bytes.
     public static func estimate(messages: [AgentMessage], tools: [AgentToolDefinition]) throws -> Int {
-        let transcript = try JSONEncoder().encode(messages).count
-        let definitions = tools.reduce(0) { $0 + $1.schema.count + $1.name.utf8.count + $1.description.utf8.count + 128 }
-        return transcript + definitions + 1_024
+        let messagePayload = messages.map { message -> [String: Any] in
+            var value: [String: Any] = ["role": message.role.rawValue, "content": message.content]
+            if let toolCallID = message.toolCallID { value["tool_call_id"] = toolCallID }
+            if !message.toolCalls.isEmpty {
+                value["tool_calls"] = message.toolCalls.map { call in
+                    ["id": call.id, "type": "function", "function": ["name": call.name, "arguments": call.arguments]]
+                }
+            }
+            return value
+        }
+        let toolPayload = try tools.map { tool -> [String: Any] in
+            ["type": "function", "function": [
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": try JSONSerialization.jsonObject(with: tool.schema),
+            ]]
+        }
+        let payload: [String: Any] = ["messages": messagePayload, "tools": toolPayload]
+        let bytes = try JSONSerialization.data(withJSONObject: payload).count
+        return max(1, (bytes + 3) / 4)
     }
 
     static func digest(_ messages: ArraySlice<AgentMessage>) throws -> String {

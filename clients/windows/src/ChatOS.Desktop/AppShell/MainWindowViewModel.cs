@@ -6,8 +6,11 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ChatOS.Presentation.Chat;
 using ChatOS.Presentation.Projects;
+using ChatOS.Presentation.AgentTeams;
 using ChatOS.Presentation.Settings;
 using ChatOS.Presentation.Remote;
+using ChatOS.Connector.Remote;
+using ChatOS.Connector.Terminal;
 
 namespace ChatOS.Desktop.AppShell;
 
@@ -27,6 +30,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private CancellationTokenSource? _selectionCancellation;
     private readonly SemaphoreSlim _conversationPreparationGate = new(1, 1);
     private bool _suppressSelectionActivation;
+    private readonly TerminalSessionManager? _terminalSessions;
+    private readonly RemoteTerminalSessionManager? _remoteTerminalSessions;
 
     public MainWindowViewModel(
         IAuthenticationService authenticationService,
@@ -40,7 +45,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ProjectGitViewModel projectGit,
         ProjectRunViewModel projectRun,
         RemoteConnectionsViewModel remoteConnections,
-        LocalizationViewModel localization)
+        LocalizationViewModel localization,
+        AgentTeamWorkspaceViewModel? agentTeam = null,
+        ProjectRequirementSurveysViewModel? requirementSurveys = null,
+        TerminalSessionManager? terminalSessions = null,
+        RemoteTerminalSessionManager? remoteTerminalSessions = null)
     {
         _authenticationService = authenticationService;
         _workspaceRelations = workspaceRelations;
@@ -52,8 +61,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ProjectFiles = projectFiles;
         ProjectGit = projectGit;
         ProjectRun = projectRun;
+        AgentTeam = agentTeam;
+        RequirementSurveys = requirementSurveys;
         RemoteConnections = remoteConnections;
         Localization = localization;
+        _terminalSessions = terminalSessions;
+        _remoteTerminalSessions = remoteTerminalSessions;
         RemoteConnections.Connections.CollectionChanged += (_, _) => RebuildRemoteResources();
         Localization.PropertyChanged += (_, _) => RelocalizeResources();
         ApplicationResources.Add(CreateApplicationsResource());
@@ -66,6 +79,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public ProjectGitViewModel ProjectGit { get; }
 
     public ProjectRunViewModel ProjectRun { get; }
+
+    public AgentTeamWorkspaceViewModel? AgentTeam { get; }
+
+    public ProjectRequirementSurveysViewModel? RequirementSurveys { get; }
 
     public RemoteConnectionsViewModel RemoteConnections { get; }
 
@@ -358,6 +375,26 @@ public sealed partial class MainWindowViewModel : ObservableObject
         LocalResources.Clear();
         RemoteResources.Clear();
         SelectedResource = null;
+        if (_terminalSessions is not null)
+        {
+            try
+            {
+                await _terminalSessions.CloseAllAsync(CancellationToken.None);
+            }
+            catch
+            {
+            }
+        }
+        if (_remoteTerminalSessions is not null)
+        {
+            try
+            {
+                await _remoteTerminalSessions.CloseAllAsync(CancellationToken.None);
+            }
+            catch
+            {
+            }
+        }
         await _authenticationService.LogoutAsync();
         await ProjectRun.CloseAsync();
         await ProjectGit.CloseAsync();
@@ -581,6 +618,16 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 case "run":
                     await ProjectRun.OpenAsync(project, token);
                     break;
+                case "agent-team":
+                    var owner = RequireAccount(AccountGeneration);
+                    if (AgentTeam is not null)
+                        await AgentTeam.OpenAsync(owner, project, token);
+                    break;
+                case "requirement-surveys":
+                    var surveyOwner = RequireAccount(AccountGeneration);
+                    if (RequirementSurveys is not null)
+                        await RequirementSurveys.OpenAsync(surveyOwner, project, token);
+                    break;
             }
         }
         catch (OperationCanceledException) { }
@@ -702,93 +749,4 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    private void RebuildRemoteResources()
-    {
-        var selectedId = SelectedResource?.Kind == WorkspaceResourceKind.RemoteConnection
-            ? SelectedResource.Id
-            : null;
-        RemoteResources.Clear();
-        foreach (var connection in RemoteConnections.Connections)
-        {
-            RemoteResources.Add(new ShellResourceViewModel(
-                connection.Id,
-                WorkspaceResourceKind.RemoteConnection,
-                connection.Name,
-                $"{connection.Username}@{connection.Host}:{connection.Port}",
-                "\uE968"));
-        }
-        if (selectedId is not null)
-        {
-            SetSelectedResourceWithoutActivation(
-                RemoteResources.FirstOrDefault(value => value.Id == selectedId));
-        }
-    }
-
-    private void SetSelectedResourceWithoutActivation(ShellResourceViewModel? resource)
-    {
-        _suppressSelectionActivation = true;
-        try
-        {
-            SelectedResource = resource;
-        }
-        finally
-        {
-            _suppressSelectionActivation = false;
-        }
-    }
-
-    private void RelocalizeResources()
-    {
-        ApplicationResources.Clear();
-        ApplicationResources.Add(CreateApplicationsResource());
-        for (var index = 0; index < Contacts.Count; index++)
-        {
-            var current = Contacts[index];
-            var contact = _workspaceSnapshot.Contacts.FirstOrDefault(value => value.Id == current.Id);
-            Contacts[index] = contact is null
-                ? current with
-                {
-                    Title = Localization.Text("叽咕狸", "Jiguli"),
-                    Subtitle = Localization.Text("和叽咕狸开始对话", "Start a conversation with Jiguli"),
-                }
-                : current with { Subtitle = ContactSubtitle(contact.Status) };
-        }
-
-        for (var index = 0; index < Projects.Count; index++)
-        {
-            var current = Projects[index];
-            var project = _workspaceSnapshot.Projects.FirstOrDefault(value => value.Id == current.Id);
-            if (project is not null && string.IsNullOrWhiteSpace(project.DisplayRootPath ?? project.RootPath))
-            {
-                Projects[index] = current with { Subtitle = Localization.Projects };
-            }
-        }
-
-        for (var index = 0; index < LocalResources.Count; index++)
-        {
-            var current = LocalResources[index];
-            if (current.Kind != WorkspaceResourceKind.LocalTerminal) continue;
-            var workspace = LocalConnectorStatus?.Workspaces.FirstOrDefault(value => value.Id == current.WorkspaceId);
-            var alias = workspace?.Alias ?? current.Title.Split('·', 2)[0].Trim();
-            LocalResources[index] = current with { Title = $"{alias} · {Localization.Terminal}" };
-        }
-
-        if (LocalConnectorStatus is not null)
-        {
-            ApplyLocalConnectorStatus(LocalConnectorStatus);
-        }
-
-        if (SelectedResource is { } selected)
-        {
-            SetSelectedResourceWithoutActivation(Contacts.Concat(Projects).Concat(ApplicationResources).Concat(LocalResources).Concat(RemoteResources)
-                .FirstOrDefault(value => value.Kind == selected.Kind && value.Id == selected.Id));
-        }
-    }
-
-    private ShellResourceViewModel CreateApplicationsResource() => new(
-        "applications",
-        WorkspaceResourceKind.Applications,
-        Localization.Applications,
-        Localization.InstalledPluginApplications,
-        "\uE71D");
 }

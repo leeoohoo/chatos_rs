@@ -129,16 +129,21 @@ private struct FileContentDTO: Decodable, Sendable {
     }
 
     var domainModel: ProjectFileContent {
-        ProjectFileContent(
+        let binary = isBinary ?? false
+        let payload = content ?? ""
+        return ProjectFileContent(
             path: path ?? "",
             displayPath: displayPath ?? relativePath,
             name: name ?? URL(fileURLWithPath: path ?? "").lastPathComponent,
             contentType: contentType,
-            isBinary: isBinary ?? false,
+            isBinary: binary,
             isWritable: writable ?? false,
             size: size ?? 0,
             modifiedAt: APIDateParser.parse(modifiedAt),
-            content: content ?? ""
+            content: binary ? "" : payload,
+            binaryData: binary
+                ? Data(base64Encoded: payload, options: .ignoreUnknownCharacters)
+                : nil
         )
     }
 }

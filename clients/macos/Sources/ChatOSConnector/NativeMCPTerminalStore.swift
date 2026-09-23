@@ -108,7 +108,8 @@ actor NativeMCPTerminalStore {
         command: String,
         cwd: URL,
         projectRoot: URL,
-        background: Bool
+        background: Bool,
+        ownerRunID: String? = nil
     ) async throws -> NativeJSONValue {
         let id = UUID().uuidString
         let process = Process()
@@ -129,6 +130,7 @@ actor NativeMCPTerminalStore {
             command: command,
             cwd: cwd,
             projectRoot: projectRoot.standardizedFileURL.resolvingSymlinksInPath(),
+            ownerRunID: ownerRunID,
             process: process,
             input: input.fileHandleForWriting,
             output: output,
@@ -180,7 +182,12 @@ actor NativeMCPTerminalStore {
             ])
         }
 
-        _ = try await waitForExit(id: id, timeoutMilliseconds: Self.maximumWaitMilliseconds)
+        do {
+            _ = try await waitForExit(id: id, timeoutMilliseconds: Self.maximumWaitMilliseconds)
+        } catch is CancellationError {
+            cancelProcess(id: id, reason: "terminal cancelled with executor run")
+            throw CancellationError()
+        }
         guard let completed = processes[id] else { throw NativeMCPTerminalError.processNotFound }
         let stdout = combinedOutput(completed, kinds: ["stdout"])
         let stderr = combinedOutput(completed, kinds: ["stderr"])
@@ -273,6 +280,17 @@ actor NativeMCPTerminalStore {
         default:
             throw NativeMCPTerminalError.unsupportedTool(name)
         }
+    }
+
+    @discardableResult
+    func cancel(ownerRunID: String) -> Int {
+        let matchingIDs = processes.values.compactMap { process in
+            process.ownerRunID == ownerRunID && process.status != "exited" ? process.id : nil
+        }
+        for id in matchingIDs {
+            cancelProcess(id: id, reason: "terminal cancelled with executor run")
+        }
+        return matchingIDs.count
     }
 
     private func compatibilityCall(
@@ -443,10 +461,15 @@ actor NativeMCPTerminalStore {
     }
 
     private func kill(id: String, projectRoot: URL) throws -> NativeJSONValue {
-        let process = try requireProcess(id: id, projectRoot: projectRoot)
-        if process.process.isRunning { process.process.terminate() }
-        append(kind: "system", content: "[terminal killed]\n", to: id)
+        _ = try requireProcess(id: id, projectRoot: projectRoot)
+        cancelProcess(id: id, reason: "terminal killed")
         return .object(["ok": .bool(true), "terminal_id": .string(id), "killed": .bool(true)])
+    }
+
+    private func cancelProcess(id: String, reason: String) {
+        guard let process = processes[id], process.status != "exited" else { return }
+        if process.process.isRunning { process.process.terminate() }
+        append(kind: "system", content: "[\(reason)]\n", to: id)
     }
 
     private func waitForExit(id: String, timeoutMilliseconds: Int) async throws -> Bool {
@@ -628,6 +651,7 @@ private final class ManagedTerminalProcess: @unchecked Sendable {
     let command: String
     let cwd: URL
     let projectRoot: URL
+    let ownerRunID: String?
     let process: Process
     let input: FileHandle
     let output: Pipe
@@ -643,6 +667,7 @@ private final class ManagedTerminalProcess: @unchecked Sendable {
         command: String,
         cwd: URL,
         projectRoot: URL,
+        ownerRunID: String?,
         process: Process,
         input: FileHandle,
         output: Pipe,
@@ -657,6 +682,7 @@ private final class ManagedTerminalProcess: @unchecked Sendable {
         self.command = command
         self.cwd = cwd
         self.projectRoot = projectRoot
+        self.ownerRunID = ownerRunID
         self.process = process
         self.input = input
         self.output = output

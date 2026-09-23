@@ -7,6 +7,13 @@ public struct TaskProcessTimelineItem: Identifiable, Sendable, Equatable {
     public var occurredAt: String?
     public var status: String
 
+    public var occurredAtDate: Date? {
+        guard let occurredAt else { return nil }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: occurredAt) ?? ISO8601DateFormatter().date(from: occurredAt)
+    }
+
     public init(
         id: String,
         title: String,

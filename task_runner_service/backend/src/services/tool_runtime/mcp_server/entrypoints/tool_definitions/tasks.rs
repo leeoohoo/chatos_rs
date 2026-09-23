@@ -7,7 +7,7 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
     vec![
         tool_definition(
             "list_tasks",
-            "List historical Task Runner tasks created for the current owner and current task profile. Default profile returns ordinary tasks; Chatos Plan profile returns planning tasks. Use keyword for fuzzy search and limit/offset to page older history.",
+            "List historical Task Runner tasks created for the current owner. Historical tasks are background context only; they do not prove that the current request has been executed. Use keyword for fuzzy search and limit/offset to page older history.",
             json!({
                 "type": "object",
                 "properties": {
@@ -110,7 +110,7 @@ pub(super) fn task_tool_definitions() -> Vec<Value> {
         ),
         tool_definition(
             "wait_for_task_completion",
-            "Use after the requested Task Runner tasks have been created or adjusted. It confirms that the arranged tasks should continue through Task Runner's normal background execution flow.",
+            "Use exactly once after the requested Task Runner tasks have been created or adjusted. This is a background-handoff signal, not a polling wait. After it succeeds, call no more task tools, do not inspect task status, and immediately return a concise user-facing handoff summary; the final result arrives through the normal callback.",
             empty_object_schema(),
         ),
         tool_definition(

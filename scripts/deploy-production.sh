@@ -7,54 +7,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEPLOY_SERVER="${CHATOS_DEPLOY_SERVER:-root@8.155.171.124}"
-DEPLOY_BRANCH="${CHATOS_DEPLOY_BRANCH:-3.0.1}"
+DEPLOY_BRANCH="${CHATOS_DEPLOY_BRANCH:-3.0.3}"
 REMOTE_SOURCE_REPO="${CHATOS_DEPLOY_SOURCE_REPO:-/opt/chatos_rs}"
 REMOTE_DEPLOY_ROOT="${CHATOS_DEPLOY_ROOT:-/opt/chatos-deploy}"
 DEPLOY_SERVICES_CSV="${CHATOS_DEPLOY_SERVICES:-}"
+DEPLOY_WECHAT_DEVELOPMENT_LOGIN_ENABLED="${CHATOS_DEPLOY_WECHAT_DEVELOPMENT_LOGIN_ENABLED:-}"
 
-need_cmd() {
-  if ! command -v "$1" >/dev/null 2>&1; then
-    echo "[ERROR] missing command: $1" >&2
-    exit 1
-  fi
-}
-
-need_cmd git
-need_cmd ssh
-need_cmd bash
-need_cmd cargo
-
-cd "$ROOT_DIR"
-
-if [[ -n "$DEPLOY_SERVICES_CSV" ]]; then
-  IFS=',' read -r -a requested_services <<< "$DEPLOY_SERVICES_CSV"
-  available_services="$(./docker/deploy.sh build-services)"
-  normalized_services=()
-  for service in "${requested_services[@]}"; do
-    service="$(printf '%s' "$service" | xargs)"
-    [[ -n "$service" ]] || continue
-    if [[ "$service" == "gateway-config" ]]; then
-      normalized_services+=("$service")
-      continue
-    fi
-    if ! grep -Fxq "$service" <<< "$available_services"; then
-      echo "[ERROR] service is not independently buildable: $service" >&2
-      echo "Available services:" >&2
-      printf '%s\n' "$available_services" >&2
-      printf '%s\n' "gateway-config" >&2
-      exit 2
-    fi
-    normalized_services+=("$service")
-  done
-  if [[ ${#normalized_services[@]} -eq 0 ]]; then
-    echo "[ERROR] CHATOS_DEPLOY_SERVICES did not contain a valid service" >&2
-    exit 2
-  fi
-  DEPLOY_SERVICES_CSV="$(IFS=,; printf '%s' "${normalized_services[*]}")"
-  echo "[INFO] selected production services: $DEPLOY_SERVICES_CSV"
-else
-  echo "[INFO] selected production scope: all cloud services"
-fi
+source "$SCRIPT_DIR/deploy-production-preflight.sh"
+validate_deploy_preflight
 
 current_branch="$(git branch --show-current)"
 if [[ "$current_branch" != "$DEPLOY_BRANCH" ]]; then
@@ -69,7 +29,7 @@ while IFS= read -r dirty_line; do
   [[ -n "$dirty_line" ]] || continue
   dirty_path="${dirty_line:3}"
   case "$dirty_path" in
-    clients/macos/*|clients/windows/*|plugins/web-design-studio/*|plugins/project-management/*)
+    clients/macos/*|clients/windows/*|plugins/web-design-studio/*)
       ignored_dirty_count=$((ignored_dirty_count + 1))
       ;;
     *)
@@ -115,7 +75,8 @@ if ! ssh -o BatchMode=yes "$DEPLOY_SERVER" bash -s -- \
   "$DEPLOY_BRANCH" \
   "$REMOTE_SOURCE_REPO" \
   "$REMOTE_DEPLOY_ROOT" \
-  "$remote_deploy_services_arg" <<'REMOTE_SCRIPT'
+  "$remote_deploy_services_arg" \
+  "$DEPLOY_WECHAT_DEVELOPMENT_LOGIN_ENABLED" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
 run_deployment() {
@@ -126,6 +87,10 @@ deploy_branch="$3"
 source_repo="$4"
 deploy_root="$5"
 deploy_services_arg="$6"
+# OpenSSH reconstructs the remote command through a shell, which drops an empty
+# trailing argument. Keep the optional deployment override empty when the caller
+# did not provide a seventh positional argument instead of failing under `set -u`.
+deploy_wechat_development_login_enabled="${7:-}"
 if [[ "$deploy_services_arg" == "__CHATOS_ALL_SERVICES__" ]]; then
   deploy_services_csv=""
 else
@@ -258,7 +223,6 @@ ensure_admin_certificate() {
     config.jgoool.com
     user.jgoool.com
     memory.jgoool.com
-    project.jgoool.com
     plugin.jgoool.com
     task.jgoool.com
     official.jgoool.com
@@ -304,6 +268,7 @@ ensure_admin_certificate() {
 start_release_with_retries() {
   local target_release="$1"
   local attempt
+  ensure_release_postgres_running "$target_release"
   for attempt in 1 2 3; do
     if (
       cd "$target_release"
@@ -317,6 +282,57 @@ start_release_with_retries() {
     fi
   done
   return 1
+}
+
+ensure_release_postgres_running() {
+  local target_release="$1"
+  local deadline container_id health
+  if ! (
+    cd "$target_release"
+    docker compose \
+      -f docker/compose.yml \
+      -f docker/compose.platform.yml \
+      --env-file docker/bootstrap.conf \
+      config --services
+  ) | grep -Fxq postgres; then
+    return 0
+  fi
+  (
+    cd "$target_release"
+    docker compose \
+      -f docker/compose.yml \
+      -f docker/compose.platform.yml \
+      --env-file docker/bootstrap.conf \
+      up -d --no-build --pull never postgres
+  )
+  deadline=$((SECONDS + 180))
+  while true; do
+    container_id="$(
+      cd "$target_release"
+      docker compose \
+        -f docker/compose.yml \
+        -f docker/compose.platform.yml \
+        --env-file docker/bootstrap.conf \
+        ps -q postgres
+    )"
+    health=""
+    if [[ -n "$container_id" ]]; then
+      health="$(
+        docker inspect \
+          --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+          "$container_id"
+      )"
+    fi
+    if [[ "$health" == "healthy" || "$health" == "running" ]]; then
+      echo "[OK] PostgreSQL is $health before production import verification"
+      return 0
+    fi
+    if (( SECONDS >= deadline )); then
+      echo "[ERROR] PostgreSQL did not become healthy before production import verification: ${health:-missing}" >&2
+      return 1
+    fi
+    sleep 3
+  done
 }
 
 restart_selected_release_with_retries() {
@@ -335,6 +351,40 @@ restart_selected_release_with_retries() {
       sleep 10
     fi
   done
+  return 1
+}
+
+wait_for_http_probe() {
+  local label="$1"
+  local acceptance="$2"
+  shift 2
+  local attempt status
+  for ((attempt = 1; attempt <= 12; attempt++)); do
+    status="$(
+      curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+        --max-time 30 "$@" || true
+    )"
+    case "$acceptance:$status" in
+      success:2??|success:3??)
+        echo "[OK] deployment probe $label returned HTTP $status"
+        return 0
+        ;;
+      route:???)
+        case "$status" in
+          000|502|503|504) ;;
+          *)
+            echo "[OK] deployment probe $label returned HTTP $status"
+            return 0
+            ;;
+        esac
+        ;;
+    esac
+    if (( attempt < 12 )); then
+      echo "[WARN] deployment probe $label returned HTTP ${status:-000}; retrying ($attempt/12)" >&2
+      sleep 5
+    fi
+  done
+  echo "[ERROR] deployment probe $label remained unavailable: HTTP ${status:-000}" >&2
   return 1
 }
 
@@ -435,7 +485,11 @@ update_image_tag=true
 if (( deploy_all == 0 )) && [[ ${#deploy_services[@]} -eq 0 ]]; then
   update_image_tag=false
 fi
-python3 - "$release_dir/docker/bootstrap.conf" "$release_tag" "$update_image_tag" <<'PY'
+python3 - \
+  "$release_dir/docker/bootstrap.conf" \
+  "$release_tag" \
+  "$update_image_tag" \
+  "$deploy_wechat_development_login_enabled" <<'PY'
 from pathlib import Path
 import secrets
 import sys
@@ -443,6 +497,7 @@ import sys
 path = Path(sys.argv[1])
 release_tag = sys.argv[2]
 update_image_tag = sys.argv[3] == "true"
+development_login_enabled = sys.argv[4]
 secret_key = "CHATOS_USER_SERVICE_INTERNAL_API_SECRET"
 development_secret = "change_me_chatos_user_service_secret"
 updates = {
@@ -450,6 +505,8 @@ updates = {
 }
 if update_image_tag:
     updates["CHATOS_IMAGE_TAG"] = release_tag
+if development_login_enabled:
+    updates["USER_SERVICE_WECHAT_MINI_PROGRAM_DEVELOPMENT_LOGIN_ENABLED"] = development_login_enabled
 lines = path.read_text().splitlines()
 current_values = {}
 for line in lines:
@@ -567,40 +624,31 @@ while true; do
   sleep 5
 done
 
-curl --fail --silent --show-error --max-time 20 \
-  http://127.0.0.1:9080/api/chatos/health >/dev/null
+wait_for_http_probe local-chatos-health success \
+  http://127.0.0.1:9080/api/chatos/health
 
-curl --fail --silent --show-error --max-time 20 \
+wait_for_http_probe local-admin-user-service-health success \
   --header "Host: admin.jgoool.com" \
-  http://127.0.0.1:9080/api/admin/user-service/health >/dev/null
+  http://127.0.0.1:9080/api/admin/user-service/health
 
 frontend_hosts=(
   admin.jgoool.com
   config.jgoool.com
   user.jgoool.com
   memory.jgoool.com
-  project.jgoool.com
   plugin.jgoool.com
   task.jgoool.com
   official.jgoool.com
 )
 for host in "${frontend_hosts[@]}"; do
-  curl --fail --silent --show-error --max-time 20 \
+  wait_for_http_probe "local-frontend-$host" success \
     --header "Host: $host" \
-    http://127.0.0.1:9080/ >/dev/null
+    http://127.0.0.1:9080/
 done
 
-connector_status="$(
-  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
-    --max-time 20 --header 'Host: connector.jgoool.com' \
-    http://127.0.0.1:9080/health
-)"
-case "$connector_status" in
-  000|502|503|504)
-    echo "[ERROR] connector gateway route is unavailable: HTTP $connector_status" >&2
-    exit 1
-    ;;
-esac
+wait_for_http_probe local-connector-route route \
+  --header 'Host: connector.jgoool.com' \
+  http://127.0.0.1:9080/health
 
 for url in \
   https://gateway.jgoool.com/api/chatos/health \
@@ -608,11 +656,10 @@ for url in \
   https://admin.jgoool.com \
   https://user.jgoool.com \
   https://memory.jgoool.com \
-  https://project.jgoool.com \
   https://plugin.jgoool.com \
   https://official.jgoool.com
 do
-  curl --fail --silent --show-error --max-time 30 "$url" >/dev/null
+  wait_for_http_probe "public-$url" success "$url"
 done
 
 echo "[OK] production release is healthy: $release_tag"

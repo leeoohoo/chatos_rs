@@ -9,6 +9,7 @@ import type {
   ThreadQuery,
   ThreadRecordsPage,
   ThreadRecordsQuery,
+  ThreadSummariesPage,
   ThreadSummariesQuery,
 } from '../types';
 
@@ -30,6 +31,9 @@ export const threadsApi = {
         mapping_version: params?.mapping_version,
         thread_label: params?.thread_label,
         status: params?.status,
+        before_updated_at: params?.before_updated_at,
+        before_created_at: params?.before_created_at,
+        before_id: params?.before_id,
         limit: params?.limit ?? 200,
         offset: params?.offset ?? 0,
       },
@@ -61,6 +65,8 @@ export const threadsApi = {
         role: params?.role,
         record_type: params?.record_type,
         summary_status: params?.summary_status,
+        after_created_at: params?.after_created_at,
+        after_id: params?.after_id,
         limit: params?.limit ?? 200,
         offset: params?.offset ?? 0,
         order: params?.order ?? 'asc',
@@ -69,13 +75,14 @@ export const threadsApi = {
     return {
       items: data.items ?? [],
       total: Number(data.total ?? 0),
+      has_more: Boolean(data.has_more),
     };
   },
 
   async listThreadSummaries(
     threadId: string,
     params?: ThreadSummariesQuery,
-  ): Promise<EngineSummary[]> {
+  ): Promise<ThreadSummariesPage> {
     const { data } = await client.get(`/threads/${encodeURIComponent(threadId)}/summaries`, {
       params: {
         tenant_id: params?.tenant_id,
@@ -83,11 +90,17 @@ export const threadsApi = {
         summary_type: params?.summary_type,
         status: params?.status,
         level: params?.level,
+        after_level: params?.after_level,
+        after_created_at: params?.after_created_at,
+        after_id: params?.after_id,
         limit: params?.limit ?? 100,
         offset: params?.offset ?? 0,
       },
     });
-    return data.items ?? [];
+    return {
+      items: data.items ?? [],
+      has_more: Boolean(data.has_more),
+    };
   },
 
   async listSubjectMemories(

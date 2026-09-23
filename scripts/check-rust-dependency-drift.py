@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
-MONITORED = ("axum", "tower-http", "mongodb")
+MONITORED = ("axum", "tower-http", "sqlx")
 SKIP_DIRS = {
     ".git",
     ".local",
@@ -23,21 +23,24 @@ SKIP_DIRS = {
 }
 
 BASELINE: dict[str, dict[str, str]] = {
+    "Cargo.toml": {
+        "sqlx": "0.8.6",
+    },
     "chatos/backend/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",
-        "mongodb": "2.8",
+        "sqlx": "0.8.6",
     },
     "config_center_service/backend/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",
-        "mongodb": "2.8",
+        "sqlx": "workspace",
     },
     "crates/chatos_ai_runtime/Cargo.toml": {
         "axum": "0.8",
     },
-    "crates/chatos_cloud_agent_runtime/Cargo.toml": {
-        "mongodb": "2.8",
+    "crates/chatos_postgres/Cargo.toml": {
+        "sqlx": "workspace",
     },
     "crates/chatos_mcp_runtime/Cargo.toml": {
         "axum": "0.8",
@@ -48,17 +51,17 @@ BASELINE: dict[str, dict[str, str]] = {
     "local_connector_service/backend/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",
-        "mongodb": "2.8",
+        "sqlx": "0.8.6",
     },
     "mcp_management_service/backend/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",
-        "mongodb": "2.8",
+        "sqlx": "workspace",
     },
     "memory_engine/backend/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",
-        "mongodb": "3",
+        "sqlx": "0.8.6",
     },
     "official_website_service/backend/Cargo.toml": {
         "axum": "0.8",
@@ -67,17 +70,20 @@ BASELINE: dict[str, dict[str, str]] = {
     "plugin_management_service/backend/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",
-        "mongodb": "2.8",
+        "sqlx": "0.8.6",
     },
     "task_runner_service/backend/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",
-        "mongodb": "2.8",
+        "sqlx": "0.8.6",
+    },
+    "tools/postgres-user-migration/Cargo.toml": {
+        "sqlx": "0.8.6",
     },
     "user_service/backend/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",
-        "mongodb": "2.8",
+        "sqlx": "0.8.6",
     },
 }
 

@@ -175,6 +175,7 @@ export interface DiagramDocument {
     planHash: string;
     permitId: string;
     qualityProfile: string;
+    viewpoint?: string;
     generatedAt: string;
   };
 }
@@ -275,6 +276,7 @@ export function assertDiagramDocument(value: unknown): asserts value is DiagramD
       planHash: provenance.planHash,
       permitId: provenance.permitId,
       qualityProfile: provenance.qualityProfile,
+      ...(provenance.viewpoint === undefined ? {} : { viewpoint: provenance.viewpoint }),
       generatedAt: provenance.generatedAt
     })) {
       if (typeof item !== 'string' || item.length === 0 || item.length > 256) {
@@ -283,6 +285,10 @@ export function assertDiagramDocument(value: unknown): asserts value is DiagramD
     }
     if (!/^[a-f0-9]{64}$/.test(provenance.guideHash) || !/^[a-f0-9]{64}$/.test(provenance.planHash)) {
       throw new Error('Diagram generation provenance hashes are invalid.');
+    }
+    if (provenance.viewpoint !== undefined
+      && !['system-context', 'container', 'component'].includes(provenance.viewpoint)) {
+      throw new Error('Diagram generation provenance viewpoint is invalid.');
     }
     if (!Number.isFinite(Date.parse(provenance.generatedAt))) {
       throw new Error('Diagram generation provenance generatedAt is invalid.');

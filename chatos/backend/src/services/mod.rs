@@ -2,19 +2,18 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 pub mod access_token_scope;
+pub mod agent_artifact_maintenance;
 pub mod agent_builder;
 pub mod agent_runtime;
 pub(crate) mod ai_client_common;
 pub(crate) mod ai_common;
 pub mod ai_prompt_tool;
 pub mod ask_user_prompt_manager;
-pub mod auth_user_backfill;
 pub mod chatos_agents;
 pub mod chatos_memory_engine;
 pub mod chatos_memory_mappings;
 pub mod chatos_sessions;
 pub mod code_nav;
-pub mod legacy_auth_store;
 pub mod llm_prompt_runner;
 pub mod memory_engine_client;
 pub mod memory_engine_source_bootstrap;
@@ -38,7 +37,6 @@ pub(crate) mod shared_builtin_memory_readers;
 pub(crate) mod shared_builtin_notepad;
 pub(crate) mod shared_mcp_runtime;
 pub mod system_context_ai;
-pub mod task_board_prompt;
 pub mod task_manager;
 pub(crate) mod task_runner_api_client;
 pub(crate) mod text_normalization;

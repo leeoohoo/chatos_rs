@@ -28,7 +28,7 @@ import { TaskListToolbar } from './tasks/TaskListToolbar';
 import { TaskListTable } from './tasks/TaskListTable';
 import { useTasksPageEffects } from './tasks/useTasksPageEffects';
 import { useTaskMutations } from './tasks/useTaskMutations';
-import { useTasksPageData } from './tasks/useTasksPageData';
+import { useTasksPageData, type TaskListCursor } from './tasks/useTasksPageData';
 import type {
   StartTaskRunPayload,
   TaskRecord,
@@ -67,6 +67,7 @@ export function TasksPage() {
   const [taskIndexEnabled, setTaskIndexEnabled] = useState(false);
   const [taskPage, setTaskPage] = useState(1);
   const [taskPageSize, setTaskPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [taskPageCursors, setTaskPageCursors] = useState<Array<TaskListCursor | null>>([null]);
   const [memoryRoleFilter, setMemoryRoleFilter] = useState<TaskMemoryRoleFilter>('all');
   const [memorySummaryFilter, setMemorySummaryFilter] =
     useState<TaskMemorySummaryFilter>('all');
@@ -77,6 +78,7 @@ export function TasksPage() {
   const routeTaskId = searchParams.get('task_id');
   const routeModelConfigId = searchParams.get('model_config_id') || undefined;
   const routeProjectId = searchParams.get('project_id') || undefined;
+  const taskCursor = taskPageCursors[taskPage - 1] || null;
 
   useEffect(() => {
     const timer = window.setTimeout(() => setKeywordFilter(keywordInput.trim()), 300);
@@ -122,6 +124,7 @@ export function TasksPage() {
     scheduledOnly,
     taskPage,
     taskPageSize,
+    taskCursor,
     detailTaskId,
     detailTaskPreview,
     memoryTask,
@@ -146,6 +149,7 @@ export function TasksPage() {
     subtasksParentTask,
     setSelectedTaskIds,
     setTaskPage,
+    setTaskPageCursors,
     setDetailTaskId,
     setDetailTaskPreview,
   });
@@ -420,10 +424,37 @@ export function TasksPage() {
           page={taskPage}
           pageSize={taskPageSize}
           total={tasksQuery.data?.total || 0}
+          maxReachablePage={Math.max(
+            taskPageCursors.length,
+            taskPage === taskPageCursors.length && tasksQuery.data?.has_more
+              ? taskPage + 1
+              : taskPage,
+          )}
           onSelectedTaskIdsChange={setSelectedTaskIds}
-          onPageChange={(page, pageSize) => {
-            setTaskPage(page);
-            setTaskPageSize(pageSize);
+          onPageChange={(nextPage, nextPageSize) => {
+            if (nextPageSize !== taskPageSize) {
+              setTaskPage(1);
+              setTaskPageSize(nextPageSize);
+              setTaskPageCursors([null]);
+              return;
+            }
+            if (nextPage < 1 || nextPage === taskPage) return;
+            if (nextPage <= taskPageCursors.length) {
+              setTaskPage(nextPage);
+              return;
+            }
+            if (
+              nextPage !== taskPage + 1
+              || taskPage !== taskPageCursors.length
+              || !tasksQuery.data?.has_more
+            ) return;
+            const lastTask = tasksQuery.data.items[tasksQuery.data.items.length - 1];
+            if (!lastTask) return;
+            setTaskPageCursors((current) => [
+              ...current.slice(0, taskPage),
+              { updatedAt: lastTask.updated_at, id: lastTask.id },
+            ]);
+            setTaskPage(nextPage);
           }}
         />
       </Space>

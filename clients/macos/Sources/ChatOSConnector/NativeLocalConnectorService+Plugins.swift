@@ -76,13 +76,26 @@ extension NativeLocalConnectorService {
     }
 
     public func fetchPlugins() async throws -> [LocalConnectorPlugin] {
+        do {
+            return try await fetchPluginsWithCurrentPairing()
+        } catch NativeConnectorError.notPaired {
+            // Switching between local and deployed gateways can leave only the connector token
+            // stale. Re-pair it once through the still-valid primary ChatOS session.
+            _ = try await pairWithCurrentChatOSSession(deviceName: Host.current().localizedName)
+            return try await fetchPluginsWithCurrentPairing()
+        }
+    }
+
+    private func fetchPluginsWithCurrentPairing() async throws -> [LocalConnectorPlugin] {
         let token = try requireAccessToken()
         let sources = try await gateway.pluginSources(token: token)
         if reconcileInstalledPluginIdentities(with: sources.items) {
             try stateStore.save(state)
             try? await sendPluginInstallationStatus()
         }
-        return sources.items.map { source in
+        var plugins: [LocalConnectorPlugin] = []
+        plugins.reserveCapacity(sources.items.count)
+        for source in sources.items {
             let id = source.catalog.id
             let installedRecord = state.installedPluginRecords?[id]
             let installed = installedRecord != nil || state.installedPluginIDs.contains(id)
@@ -91,7 +104,7 @@ extension NativeLocalConnectorService {
             if let installedRecord,
                let manifest = try? installedPluginManifest(record: installedRecord) {
                 installedManifest = manifest
-                permissions = NativePluginPermissionInspector.permissions(
+                permissions = await NativePluginPermissionInspector.permissions(
                     record: installedRecord,
                     manifest: manifest
                 )
@@ -99,7 +112,7 @@ extension NativeLocalConnectorService {
                 installedManifest = nil
                 permissions = []
             }
-            return .init(
+            plugins.append(.init(
                 pluginID: id,
                 packageName: source.catalog.name,
                 pluginKey: source.catalog.pluginKey,
@@ -124,8 +137,9 @@ extension NativeLocalConnectorService {
                 enabled: state.pluginPreferences[id] ?? source.preference?.enabled ?? true,
                 hasUI: source.catalog.hasUI ?? installedManifest.map { !$0.ui.isEmpty },
                 permissions: permissions
-            )
+            ))
         }
+        return plugins
     }
 
     static func pluginUpdateAvailable(
@@ -254,7 +268,7 @@ extension NativeLocalConnectorService {
             throw NativeConnectorError.pluginInstallation("Plugin 尚未安装")
         }
         let manifest = try installedPluginManifest(record: record)
-        if try NativePluginPermissionInspector.request(
+        if try await NativePluginPermissionInspector.request(
             record: record,
             manifest: manifest,
             permissionID: permissionID

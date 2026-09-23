@@ -16,7 +16,6 @@ OLD_FRONTEND_SERVICES = (
     "configuration-center-frontend",
     "user-service-frontend",
     "memory-engine-frontend",
-    "project-management-frontend",
     "plugin-management-frontend",
     "task-runner-frontend",
 )
@@ -50,7 +49,9 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
         self.assertIn("hosts: &admin_hosts", config)
         self.assertIn("hosts: *admin_hosts", config)
         self.assertIn("admin/(?:user-service|task-runner", config)
-        self.assertIn("(?:chatos|user|project|plugin|plugins|task|memory|local)", config)
+        self.assertIn("(?:chatos|user|plugin|plugins|task|memory|local)", config)
+        self.assertNotIn("project.jgoool.com", config)
+        self.assertNotIn("project-management", config)
         self.assertIn("(?:api/)?internal(?:/|\\\\?|$)", config)
         self.assertIn("admin.jgoool.com", config)
         self.assertIn('"admin-console-frontend:80"', config)
@@ -92,6 +93,24 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
         self.assertIn('local target="${1:-deploy}"', online)
         self.assertIn('exec tail -n 200 -F "$log_file"', online)
         self.assertIn("the server deployment will continue", online)
+
+    def test_cloud_deploy_retries_labeled_http_probes(self) -> None:
+        deploy = (ROOT / "scripts/deploy-production.sh").read_text()
+        self.assertIn("wait_for_http_probe()", deploy)
+        self.assertIn("attempt <= 12", deploy)
+        self.assertIn("deployment probe $label returned HTTP", deploy)
+        self.assertIn("deployment probe $label remained unavailable", deploy)
+        self.assertIn("wait_for_http_probe local-chatos-health success", deploy)
+        self.assertIn("wait_for_http_probe local-connector-route route", deploy)
+        self.assertIn('wait_for_http_probe "public-$url" success', deploy)
+
+    def test_full_cloud_deploy_starts_postgres_before_import_verification(self) -> None:
+        deploy = (ROOT / "scripts/deploy-production.sh").read_text()
+        start = deploy.index("start_release_with_retries()")
+        helper_call = deploy.index('ensure_release_postgres_running "$target_release"', start)
+        fast_start = deploy.index("./docker/deploy.sh fast", start)
+        self.assertLess(helper_call, fast_start)
+        self.assertIn("PostgreSQL is $health before production import verification", deploy)
 
 
 if __name__ == "__main__":

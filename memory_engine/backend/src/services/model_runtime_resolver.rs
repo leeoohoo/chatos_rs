@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use chatos_service_runtime::http_body::{
     read_response_json_limited, read_response_preview_text_limited_or_message,
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
 };
-use reqwest::{Client, Method};
+use reqwest::Method;
 use serde::Deserialize;
 
 use crate::config::AppConfig;
@@ -156,10 +155,14 @@ where
     )?;
     let endpoint = format!(
         "{}{}",
-        config.user_service_base_url.trim().trim_end_matches('/'),
+        config
+            .user_service_internal_base_url
+            .trim()
+            .trim_end_matches('/'),
         path
     );
-    let response = user_service_client()
+    let response = config
+        .user_service_internal_http
         .request(Method::GET, endpoint)
         .timeout(Duration::from_millis(
             config.user_service_request_timeout_ms.max(300),
@@ -183,11 +186,6 @@ where
     read_response_json_limited::<T>(response, JSON_BODY_LIMIT_BYTES)
         .await
         .map_err(|error| format!("parse user_service model runtime failed: {error}"))
-}
-
-fn user_service_client() -> &'static Client {
-    static CLIENT: OnceLock<Client> = OnceLock::new();
-    CLIENT.get_or_init(Client::new)
 }
 
 fn required_owner_user_id(owner_user_id: &str) -> Result<&str, String> {

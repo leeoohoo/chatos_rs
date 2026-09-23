@@ -10,6 +10,32 @@ impl InMemoryStore {
         task
     }
 
+    pub(in crate::store) fn save_task_and_set_prerequisites_if_revision(
+        &self,
+        mut task: TaskRecord,
+        prerequisite_task_ids: Vec<String>,
+        expected_revision: i64,
+    ) -> Option<TaskRecord> {
+        let mut data = self.inner.write();
+        if data.dependency_graph_revision != expected_revision {
+            return None;
+        }
+        let task_id = task.id.clone();
+        let items = prerequisite_task_ids
+            .into_iter()
+            .filter(|id| id != &task_id)
+            .collect::<BTreeSet<_>>();
+        task.prerequisite_task_ids = items.iter().cloned().collect();
+        data.tasks.insert(task_id.clone(), task.clone());
+        if items.is_empty() {
+            data.task_prerequisites.remove(&task_id);
+        } else {
+            data.task_prerequisites.insert(task_id, items);
+        }
+        data.dependency_graph_revision += 1;
+        Some(task)
+    }
+
     pub(in crate::store) fn update_task_schedule_if_next_run_at(
         &self,
         task_id: &str,
@@ -83,6 +109,16 @@ impl InMemoryStore {
         } else {
             data.task_prerequisites.insert(task_id.to_string(), items);
         }
+        let effective_ids = data
+            .task_prerequisites
+            .get(task_id)
+            .map(|items| items.iter().cloned().collect())
+            .unwrap_or_default();
+        if let Some(task) = data.tasks.get_mut(task_id) {
+            task.prerequisite_task_ids = effective_ids;
+            task.updated_at = now.clone();
+        }
+        data.dependency_graph_revision += 1;
         data.task_prerequisites
             .get(task_id)
             .into_iter()
@@ -95,11 +131,57 @@ impl InMemoryStore {
             .collect()
     }
 
+    pub(in crate::store) fn dependency_graph_revision(&self) -> i64 {
+        self.inner.read().dependency_graph_revision
+    }
+
+    pub(in crate::store) fn set_task_prerequisites_if_revision(
+        &self,
+        task_id: &str,
+        prerequisite_task_ids: Vec<String>,
+        expected_revision: i64,
+    ) -> Option<Vec<TaskPrerequisiteRecord>> {
+        let now = now_rfc3339();
+        let mut data = self.inner.write();
+        if data.dependency_graph_revision != expected_revision {
+            return None;
+        }
+        let items = prerequisite_task_ids.into_iter().collect::<BTreeSet<_>>();
+        if items.is_empty() {
+            data.task_prerequisites.remove(task_id);
+        } else {
+            data.task_prerequisites.insert(task_id.to_string(), items);
+        }
+        let effective_ids = data
+            .task_prerequisites
+            .get(task_id)
+            .map(|items| items.iter().cloned().collect())
+            .unwrap_or_default();
+        if let Some(task) = data.tasks.get_mut(task_id) {
+            task.prerequisite_task_ids = effective_ids;
+            task.updated_at = now.clone();
+        }
+        data.dependency_graph_revision += 1;
+        Some(
+            data.task_prerequisites
+                .get(task_id)
+                .into_iter()
+                .flat_map(|items| items.iter())
+                .map(|prerequisite_task_id| TaskPrerequisiteRecord {
+                    task_id: task_id.to_string(),
+                    prerequisite_task_id: prerequisite_task_id.clone(),
+                    created_at: now.clone(),
+                })
+                .collect(),
+        )
+    }
+
     pub(in crate::store) fn delete_task(&self, id: &str) -> bool {
         let mut data = self.inner.write();
         let Some(_) = data.tasks.remove(id) else {
             return false;
         };
+        data.dependency_graph_revision += 1;
         data.task_prerequisites.remove(id);
         for prerequisites in data.task_prerequisites.values_mut() {
             prerequisites.remove(id);
@@ -225,6 +307,45 @@ mod tests {
         assert_eq!(
             task.schedule.next_run_at.as_deref(),
             Some("2026-01-01T00:01:00Z")
+        );
+    }
+
+    #[test]
+    fn task_and_prerequisites_share_one_revision_cas() {
+        let store = test_store();
+        let mut target = scheduled_task("2026-09-17T01:00:00Z");
+        target.id = "target".to_string();
+        let mut prerequisite = scheduled_task("2026-09-17T01:00:00Z");
+        prerequisite.id = "prerequisite".to_string();
+        store.save_task(target.clone());
+        store.save_task(prerequisite);
+
+        let revision = store.dependency_graph_revision();
+        target.title = "atomic update".to_string();
+        let saved = store
+            .save_task_and_set_prerequisites_if_revision(
+                target.clone(),
+                vec!["prerequisite".to_string()],
+                revision,
+            )
+            .expect("matching revision");
+        assert_eq!(saved.title, "atomic update");
+        assert_eq!(
+            store
+                .get_task("target")
+                .expect("stored task")
+                .prerequisite_task_ids,
+            vec!["prerequisite".to_string()]
+        );
+
+        let mut stale = target;
+        stale.title = "stale update".to_string();
+        assert!(store
+            .save_task_and_set_prerequisites_if_revision(stale, Vec::new(), revision)
+            .is_none());
+        assert_eq!(
+            store.get_task("target").expect("stored task").title,
+            "atomic update"
         );
     }
 }

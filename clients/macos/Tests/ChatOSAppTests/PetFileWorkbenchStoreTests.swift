@@ -1,4 +1,5 @@
 import ChatOSCore
+import AppKit
 import Foundation
 import Testing
 @testable import ChatOSApp
@@ -105,6 +106,47 @@ struct PetFileWorkbenchStoreTests {
             try await service.writeFile(path: url.path, content: edited)
             #expect(try String(contentsOf: url, encoding: .utf8) == edited)
         }
+    }
+
+    @Test("keeps local image payloads as binary data")
+    func keepsLocalImagePayloadAsData() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("pixel.png")
+        let bitmap = try #require(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 1,
+            pixelsHigh: 1,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let pngData = try #require(bitmap.representation(using: .png, properties: [:]))
+        try pngData.write(to: url)
+
+        let opened = try await NativePetLocalFileService().readFile(path: url.path)
+
+        #expect(opened.isBinary)
+        #expect(opened.content.isEmpty)
+        #expect(opened.binaryData == pngData)
+    }
+
+    @Test("rejects image dimensions above the pixel budget")
+    func rejectsExcessiveImageDimensions() {
+        #expect(NativePetLocalFileService.imageDimensionsAreWithinLimit(
+            width: 8_192,
+            height: 8_192
+        ))
+        #expect(!NativePetLocalFileService.imageDimensionsAreWithinLimit(
+            width: 16_384,
+            height: 16_384
+        ))
     }
 
     @Test("protects a dirty tab when it is closed")

@@ -138,6 +138,8 @@ pub(super) fn bind_runtime_workspace_routes(
         SystemMcpKey::CodeMaintainerRead,
         SystemMcpKey::CodeMaintainerWrite,
         SystemMcpKey::TerminalController,
+        SystemMcpKey::RequirementSurveyRead,
+        SystemMcpKey::RequirementSurveyWrite,
     ]
     .map(|key| chatos_mcp::system_mcp_descriptor(key).resource_id);
     for route in routes
@@ -194,6 +196,8 @@ pub(super) fn validate_runtime_workspace_route_binding(
             SystemMcpKey::CodeMaintainerRead
                 | SystemMcpKey::CodeMaintainerWrite
                 | SystemMcpKey::TerminalController
+                | SystemMcpKey::RequirementSurveyRead
+                | SystemMcpKey::RequirementSurveyWrite
         ) {
             continue;
         }

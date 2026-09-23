@@ -355,7 +355,7 @@ mod tests {
             axum::serve(
                 listener,
                 Router::new()
-                    .route("/chat/completions", post(model_response))
+                    .route("/responses", post(model_response))
                     .with_state(state),
             )
             .await
@@ -368,8 +368,8 @@ mod tests {
         TestResponse {
             status: StatusCode::OK,
             body: format!(
-                "data: {{\"choices\":[{{\"delta\":{{\"content\":{}}}}}]}}\n\ndata: [DONE]\n\n",
-                serde_json::to_string(text).expect("encode response text")
+                "data: {{\"type\":\"response.output_text.delta\",\"delta\":{text}}}\n\ndata: {{\"type\":\"response.completed\",\"response\":{{\"status\":\"completed\",\"output\":[]}}}}\n\n",
+                text = serde_json::to_string(text).expect("encode response text")
             ),
         }
     }

@@ -1,170 +1,77 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use mongodb::bson::{doc, Bson};
-
+use super::{encrypt_connection_for_storage, get_remote_connection_by_id};
 use crate::models::remote_connection::RemoteConnection;
-use crate::repositories::db::{
-    doc_from_pairs, mongo_delete_one_doc, mongo_insert_doc, mongo_update_set_doc, to_doc, with_db,
-};
-
-use super::encrypt_connection_for_storage;
+use crate::repositories::db::{db_error, json, timestamp, with_db};
 
 pub async fn create_remote_connection(connection: &RemoteConnection) -> Result<String, String> {
+    let mut stored = encrypt_connection_for_storage(connection.clone())?;
     let now = crate::core::time::now_rfc3339();
-    let now_mongo = now.clone();
-    let conn_mongo = encrypt_connection_for_storage(connection.clone())?;
-
-    with_db(|db| {
-        let doc = to_doc(doc_from_pairs(vec![
-            ("id", Bson::String(conn_mongo.id.clone())),
-            ("name", Bson::String(conn_mongo.name.clone())),
-            ("host", Bson::String(conn_mongo.host.clone())),
-            ("port", Bson::Int64(conn_mongo.port)),
-            ("username", Bson::String(conn_mongo.username.clone())),
-            ("auth_type", Bson::String(conn_mongo.auth_type.clone())),
-            (
-                "password",
-                crate::core::values::optional_string_bson(conn_mongo.password.clone()),
-            ),
-            (
-                "private_key_path",
-                crate::core::values::optional_string_bson(conn_mongo.private_key_path.clone()),
-            ),
-            (
-                "certificate_path",
-                crate::core::values::optional_string_bson(conn_mongo.certificate_path.clone()),
-            ),
-            (
-                "default_remote_path",
-                crate::core::values::optional_string_bson(conn_mongo.default_remote_path.clone()),
-            ),
-            (
-                "host_key_policy",
-                Bson::String(conn_mongo.host_key_policy.clone()),
-            ),
-            (
-                "local_connector_device_id",
-                Bson::String(conn_mongo.local_connector_device_id.clone()),
-            ),
-            (
-                "local_connector_workspace_id",
-                Bson::String(conn_mongo.local_connector_workspace_id.clone()),
-            ),
-            ("jump_enabled", Bson::Boolean(conn_mongo.jump_enabled)),
-            (
-                "jump_connection_id",
-                crate::core::values::optional_string_bson(conn_mongo.jump_connection_id.clone()),
-            ),
-            (
-                "jump_host",
-                crate::core::values::optional_string_bson(conn_mongo.jump_host.clone()),
-            ),
-            (
-                "jump_port",
-                conn_mongo.jump_port.map(Bson::Int64).unwrap_or(Bson::Null),
-            ),
-            (
-                "jump_username",
-                crate::core::values::optional_string_bson(conn_mongo.jump_username.clone()),
-            ),
-            (
-                "jump_private_key_path",
-                crate::core::values::optional_string_bson(conn_mongo.jump_private_key_path.clone()),
-            ),
-            (
-                "jump_certificate_path",
-                crate::core::values::optional_string_bson(conn_mongo.jump_certificate_path.clone()),
-            ),
-            (
-                "jump_password",
-                crate::core::values::optional_string_bson(conn_mongo.jump_password.clone()),
-            ),
-            (
-                "user_id",
-                crate::core::values::optional_string_bson(conn_mongo.user_id.clone()),
-            ),
-            ("created_at", Bson::String(now_mongo.clone())),
-            ("updated_at", Bson::String(now_mongo.clone())),
-            ("last_active_at", Bson::String(now_mongo.clone())),
-        ]));
-        Box::pin(async move {
-            mongo_insert_doc(db, "remote_connections", doc).await?;
-            Ok(conn_mongo.id.clone())
-        })
-    })
-    .await
+    stored.created_at = now.clone();
+    stored.updated_at = now.clone();
+    stored.last_active_at = now;
+    with_db(|pool|Box::pin(async move{sqlx::query("INSERT INTO remote_connections(id,user_id,host,created_at,updated_at,last_active_at,data) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(&stored.id).bind(&stored.user_id).bind(&stored.host).bind(timestamp(&stored.created_at)?).bind(timestamp(&stored.updated_at)?).bind(timestamp(&stored.last_active_at)?).bind(json(&stored)?).execute(pool).await.map_err(db_error)?;Ok(stored.id)})).await
 }
-
 pub async fn update_remote_connection(id: &str, data: &RemoteConnection) -> Result<(), String> {
-    let now = crate::core::time::now_rfc3339();
-    let now_mongo = now.clone();
-    let id_mongo = id.to_string();
-    let data_mongo = encrypt_connection_for_storage(data.clone())?;
-
-    with_db(|db| {
+    let existing = get_remote_connection_by_id(id)
+        .await?
+        .ok_or_else(|| "remote connection not found".to_string())?;
+    let mut stored = encrypt_connection_for_storage(data.clone())?;
+    stored.id = id.to_string();
+    stored.user_id = existing.user_id;
+    stored.created_at = existing.created_at;
+    stored.last_active_at = existing.last_active_at;
+    stored.updated_at = crate::core::time::now_rfc3339();
+    with_db(|pool| {
         Box::pin(async move {
-            mongo_update_set_doc(
-                db,
-                "remote_connections",
-                doc! { "id": id_mongo },
-                doc! {
-                    "name": data_mongo.name,
-                    "host": data_mongo.host,
-                    "port": data_mongo.port,
-                    "username": data_mongo.username,
-                    "auth_type": data_mongo.auth_type,
-                    "password": data_mongo.password,
-                    "private_key_path": data_mongo.private_key_path,
-                    "certificate_path": data_mongo.certificate_path,
-                    "default_remote_path": data_mongo.default_remote_path,
-                    "host_key_policy": data_mongo.host_key_policy,
-                    "local_connector_device_id": data_mongo.local_connector_device_id,
-                    "local_connector_workspace_id": data_mongo.local_connector_workspace_id,
-                    "jump_enabled": data_mongo.jump_enabled,
-                    "jump_connection_id": data_mongo.jump_connection_id,
-                    "jump_host": data_mongo.jump_host,
-                    "jump_port": data_mongo.jump_port,
-                    "jump_username": data_mongo.jump_username,
-                    "jump_private_key_path": data_mongo.jump_private_key_path,
-                    "jump_certificate_path": data_mongo.jump_certificate_path,
-                    "jump_password": data_mongo.jump_password,
-                    "updated_at": now_mongo,
-                },
-            )
-            .await?;
-            Ok(())
+            sqlx::query("UPDATE remote_connections SET host=$1,updated_at=$2,data=$3 WHERE id=$4")
+                .bind(&stored.host)
+                .bind(timestamp(&stored.updated_at)?)
+                .bind(json(&stored)?)
+                .bind(id)
+                .execute(pool)
+                .await
+                .map(|_| ())
+                .map_err(db_error)
         })
     })
     .await
 }
-
 pub async fn touch_remote_connection(id: &str) -> Result<(), String> {
+    let mut stored = get_remote_connection_by_id(id)
+        .await?
+        .ok_or_else(|| "remote connection not found".to_string())?;
     let now = crate::core::time::now_rfc3339();
-    let now_mongo = now.clone();
-
-    with_db(|db| {
-        let id = id.to_string();
+    stored.updated_at = now.clone();
+    stored.last_active_at = now;
+    let stored = encrypt_connection_for_storage(stored)?;
+    with_db(|pool| {
         Box::pin(async move {
-            mongo_update_set_doc(
-                db,
-                "remote_connections",
-                doc! { "id": id },
-                doc! { "updated_at": now_mongo.clone(), "last_active_at": now_mongo },
+            sqlx::query(
+                "UPDATE remote_connections SET updated_at=$1,last_active_at=$2,data=$3 WHERE id=$4",
             )
-            .await?;
-            Ok(())
+            .bind(timestamp(&stored.updated_at)?)
+            .bind(timestamp(&stored.last_active_at)?)
+            .bind(json(&stored)?)
+            .bind(id)
+            .execute(pool)
+            .await
+            .map(|_| ())
+            .map_err(db_error)
         })
     })
     .await
 }
-
 pub async fn delete_remote_connection(id: &str) -> Result<(), String> {
-    with_db(|db| {
-        let id = id.to_string();
+    with_db(|pool| {
         Box::pin(async move {
-            mongo_delete_one_doc(db, "remote_connections", doc! { "id": &id }).await?;
-            Ok(())
+            sqlx::query("DELETE FROM remote_connections WHERE id=$1")
+                .bind(id)
+                .execute(pool)
+                .await
+                .map(|_| ())
+                .map_err(db_error)
         })
     })
     .await

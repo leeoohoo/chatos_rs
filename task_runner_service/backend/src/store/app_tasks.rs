@@ -7,7 +7,7 @@ impl AppStore {
     pub async fn list_tasks(&self) -> Result<Vec<TaskRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_tasks()),
-            Self::Mongo(store) => store.list_tasks().await,
+            Self::Postgres(store) => store.list_tasks().await,
         }
     }
 
@@ -17,7 +17,7 @@ impl AppStore {
     ) -> Result<Vec<TaskRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_tasks_filtered(filters)),
-            Self::Mongo(store) => store.list_tasks_filtered(filters).await,
+            Self::Postgres(store) => store.list_tasks_filtered(filters).await,
         }
     }
 
@@ -27,21 +27,14 @@ impl AppStore {
     ) -> Result<PaginatedResponse<TaskRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_tasks_page(filters)),
-            Self::Mongo(store) => store.list_tasks_page(filters).await,
+            Self::Postgres(store) => store.list_tasks_page(filters).await,
         }
     }
 
     pub async fn get_task(&self, id: &str) -> Result<Option<TaskRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.get_task(id)),
-            Self::Mongo(store) => store.get_task(id).await,
-        }
-    }
-
-    pub async fn list_task_summaries(&self) -> Result<Vec<TaskSummaryRecord>, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.list_task_summaries()),
-            Self::Mongo(store) => store.list_task_summaries().await,
+            Self::Postgres(store) => store.get_task(id).await,
         }
     }
 
@@ -51,7 +44,7 @@ impl AppStore {
     ) -> Result<Vec<TaskSummaryRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_task_summaries_filtered(filters)),
-            Self::Mongo(store) => store.list_task_summaries_filtered(filters).await,
+            Self::Postgres(store) => store.list_task_summaries_filtered(filters).await,
         }
     }
 
@@ -61,38 +54,92 @@ impl AppStore {
     ) -> Result<Vec<TaskSummaryRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.get_task_summaries_by_ids(ids)),
-            Self::Mongo(store) => store.get_task_summaries_by_ids(ids).await,
+            Self::Postgres(store) => store.get_task_summaries_by_ids(ids).await,
         }
     }
 
     pub async fn list_task_tags(&self) -> Result<Vec<String>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_task_tags()),
-            Self::Mongo(store) => store.list_task_tags().await,
+            Self::Postgres(store) => store.list_task_tags().await,
         }
     }
 
     pub async fn task_stats(&self) -> Result<TaskStatsResponse, String> {
         match self {
             Self::InMemory(store) => Ok(store.task_stats()),
-            Self::Mongo(store) => store.task_stats().await,
+            Self::Postgres(store) => store.task_stats().await,
         }
     }
 
-    pub async fn list_due_scheduled_tasks(
+    pub async fn task_stats_filtered(
+        &self,
+        filters: &TaskListFilters,
+    ) -> Result<TaskStatsResponse, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.task_stats_filtered(filters)),
+            Self::Postgres(store) => store.task_stats_filtered(filters).await,
+        }
+    }
+
+    pub async fn claim_due_scheduled_tasks(
         &self,
         now: DateTime<Utc>,
+        limit: usize,
     ) -> Result<Vec<TaskRecord>, String> {
         match self {
-            Self::InMemory(store) => Ok(store.list_due_scheduled_tasks(now)),
-            Self::Mongo(store) => store.list_due_scheduled_tasks(now).await,
+            Self::InMemory(store) => {
+                let due = store.list_due_scheduled_tasks(now);
+                let mut claimed = Vec::with_capacity(due.len().min(limit));
+                for task in due.into_iter().take(limit) {
+                    let Some(expected_next_run_at) = task.schedule.next_run_at.as_deref() else {
+                        continue;
+                    };
+                    let schedule =
+                        crate::services::advance_task_schedule_after_dispatch(&task.schedule, now)?;
+                    if let Some(task) = store.update_task_schedule_if_next_run_at(
+                        task.id.as_str(),
+                        expected_next_run_at,
+                        schedule,
+                        now_rfc3339().as_str(),
+                    ) {
+                        claimed.push(task);
+                    }
+                }
+                Ok(claimed)
+            }
+            Self::Postgres(store) => store.claim_due_scheduled_tasks(now, limit).await,
         }
     }
 
     pub async fn save_task(&self, task: TaskRecord) -> Result<TaskRecord, String> {
         match self {
             Self::InMemory(store) => Ok(store.save_task(task)),
-            Self::Mongo(store) => store.save_task(task).await,
+            Self::Postgres(store) => store.save_task(task).await,
+        }
+    }
+
+    pub async fn save_task_and_set_prerequisites_if_revision(
+        &self,
+        task: TaskRecord,
+        prerequisite_task_ids: Vec<String>,
+        expected_revision: i64,
+    ) -> Result<Option<TaskRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.save_task_and_set_prerequisites_if_revision(
+                task,
+                prerequisite_task_ids,
+                expected_revision,
+            )),
+            Self::Postgres(store) => {
+                store
+                    .save_task_and_set_prerequisites_if_revision(
+                        task,
+                        prerequisite_task_ids,
+                        expected_revision,
+                    )
+                    .await
+            }
         }
     }
 
@@ -110,7 +157,7 @@ impl AppStore {
                 schedule,
                 updated_at,
             )),
-            Self::Mongo(store) => {
+            Self::Postgres(store) => {
                 store
                     .update_task_schedule_if_next_run_at(
                         task_id,
@@ -129,7 +176,7 @@ impl AppStore {
     ) -> Result<Vec<TaskPrerequisiteRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_task_prerequisites(task_id)),
-            Self::Mongo(store) => store.list_task_prerequisites(task_id).await,
+            Self::Postgres(store) => store.list_task_prerequisites(task_id).await,
         }
     }
 
@@ -139,7 +186,7 @@ impl AppStore {
     ) -> Result<Vec<TaskPrerequisiteRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_task_prerequisites_for_tasks(task_ids)),
-            Self::Mongo(store) => store.list_task_prerequisites_for_tasks(task_ids).await,
+            Self::Postgres(store) => store.list_task_prerequisites_for_tasks(task_ids).await,
         }
     }
 
@@ -149,7 +196,7 @@ impl AppStore {
     ) -> Result<Vec<TaskPrerequisiteRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.list_task_dependents(prerequisite_task_id)),
-            Self::Mongo(store) => store.list_task_dependents(prerequisite_task_id).await,
+            Self::Postgres(store) => store.list_task_dependents(prerequisite_task_id).await,
         }
     }
 
@@ -162,9 +209,40 @@ impl AppStore {
             Self::InMemory(store) => {
                 Ok(store.set_task_prerequisites(task_id, prerequisite_task_ids))
             }
-            Self::Mongo(store) => {
+            Self::Postgres(store) => {
                 store
                     .set_task_prerequisites(task_id, prerequisite_task_ids)
+                    .await
+            }
+        }
+    }
+
+    pub async fn dependency_graph_revision(&self) -> Result<i64, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.dependency_graph_revision()),
+            Self::Postgres(store) => store.dependency_graph_revision().await,
+        }
+    }
+
+    pub async fn set_task_prerequisites_if_revision(
+        &self,
+        task_id: &str,
+        prerequisite_task_ids: Vec<String>,
+        expected_revision: i64,
+    ) -> Result<Option<Vec<TaskPrerequisiteRecord>>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.set_task_prerequisites_if_revision(
+                task_id,
+                prerequisite_task_ids,
+                expected_revision,
+            )),
+            Self::Postgres(store) => {
+                store
+                    .set_task_prerequisites_if_revision(
+                        task_id,
+                        prerequisite_task_ids,
+                        expected_revision,
+                    )
                     .await
             }
         }
@@ -173,7 +251,7 @@ impl AppStore {
     pub async fn delete_task(&self, id: &str) -> Result<bool, String> {
         match self {
             Self::InMemory(store) => Ok(store.delete_task(id)),
-            Self::Mongo(store) => store.delete_task(id).await,
+            Self::Postgres(store) => store.delete_task(id).await,
         }
     }
 }

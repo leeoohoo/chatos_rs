@@ -174,6 +174,29 @@ Do not do this:
 2. Do not abuse terminal commands for a simple file-reading question.
 3. Do not start high-noise, long-hanging local commands unless they are actually needed.
 
+## [builtin_requirement_survey_read]
+
+### Progressive requirement-survey skill entry
+
+Requirement surveys use the same Catalog → Activation → Resource progressive-loading model as Plugin Skills. This catalog contains descriptions only; no Skill body is loaded yet:
+
+- `SKreq-router` = `requirement-survey` [router]: decide when a survey is needed and route to one specialist Skill;
+- `SKreq-read` = `requirement-survey-read-results` [leaf]: read Human answers, notes, prior resolutions, or historical decisions;
+- `SKreq-review` = `requirement-survey-review-execution` [leaf]: compare the formal plan with project task facts.
+
+Call `requirement_survey_read_skill_activate(skill_ref="SKreq-router")` first, then activate only the leaf selected by the Router. When a leaf needs exact arguments or output examples, use `requirement_survey_read_skill_list_resources` and `requirement_survey_read_skill_read_resource` for its declared references. Do not load every Skill or resource. The program binds the project; do not ask the Human for project, Team, or Room IDs.
+
+## [builtin_requirement_survey_write]
+
+### Requirement-survey write scenarios
+
+Write capability adds two leaves to the same Skill Catalog:
+
+- `SKreq-create` = `requirement-survey-create` [leaf]: deduplicate and create one choice-based pending survey;
+- `SKreq-resolve` = `requirement-survey-resolve` [leaf]: turn Human-submitted results into a formal solution and execution plan.
+
+Read capability is supplied with it. Activate the Router first and then the selected leaf instead of inferring its procedure from this section. Creating a pending survey or writing a resolution does not mean the planned implementation is complete.
+
 ## [builtin_remote_connection_controller]
 When these tools exist, they are the only standard entry point for remote SSH and SFTP hosts:
 `remote_connection_controller_test_connection`

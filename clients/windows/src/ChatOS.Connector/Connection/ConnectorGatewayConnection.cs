@@ -14,6 +14,7 @@ public sealed class ConnectorGatewayConnection
     [
         "terminal_exec_request",
         "terminal_session_create_request",
+        "remote_terminal_session_create_request",
         "workspace_directory_list_request",
         "workspace_directory_create_request",
         "workspace_filesystem_request",
@@ -29,6 +30,10 @@ public sealed class ConnectorGatewayConnection
         "terminal_resize",
         "terminal_snapshot_request",
         "terminal_close",
+        "remote_terminal_input",
+        "remote_terminal_resize",
+        "remote_terminal_snapshot_request",
+        "remote_terminal_close",
     ];
 
     private readonly ConnectorConnectionStateMachine _state;
@@ -37,7 +42,6 @@ public sealed class ConnectorGatewayConnection
     private readonly TimeProvider _timeProvider;
     private readonly TimeSpan _heartbeatInterval;
     private readonly ConnectorOutboundEventHub? _outboundEvents;
-    private readonly TerminalSessionManager? _terminalSessions;
     private readonly CommandApprovalCoordinator? _approvals;
     private readonly IPluginRuntimeLifetime? _pluginSessions;
 
@@ -48,7 +52,6 @@ public sealed class ConnectorGatewayConnection
         TimeProvider? timeProvider = null,
         TimeSpan? heartbeatInterval = null,
         ConnectorOutboundEventHub? outboundEvents = null,
-        TerminalSessionManager? terminalSessions = null,
         CommandApprovalCoordinator? approvals = null,
         IPluginRuntimeLifetime? pluginSessions = null)
     {
@@ -58,7 +61,6 @@ public sealed class ConnectorGatewayConnection
         _timeProvider = timeProvider ?? TimeProvider.System;
         _heartbeatInterval = heartbeatInterval ?? TimeSpan.FromSeconds(15);
         _outboundEvents = outboundEvents;
-        _terminalSessions = terminalSessions;
         _approvals = approvals;
         _pluginSessions = pluginSessions;
     }
@@ -107,11 +109,6 @@ public sealed class ConnectorGatewayConnection
                 catch
                 {
                     // The transport is already considered failed; close is best effort.
-                }
-
-                if (_terminalSessions is not null)
-                {
-                    await _terminalSessions.CloseAllAsync(CancellationToken.None).ConfigureAwait(false);
                 }
 
                 if (_approvals is not null)
