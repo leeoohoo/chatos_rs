@@ -65,11 +65,6 @@ internal static class WindowsAppContainerSandbox
                 policy.PermissionProfile,
                 cancellationToken).ConfigureAwait(false);
             TraceNativePreparation("workspace-acl-ready");
-            await EnsureAncestorTraverseAclsAsync(
-                workspaceRoot,
-                sidText,
-                cancellationToken).ConfigureAwait(false);
-            TraceNativePreparation("workspace-ancestors-ready");
             var temporaryDirectory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "ChatOS",
@@ -83,11 +78,6 @@ internal static class WindowsAppContainerSandbox
                 "(OI)(CI)M",
                 cancellationToken).ConfigureAwait(false);
             TraceNativePreparation("temporary-acl-ready");
-            await EnsureAncestorTraverseAclsAsync(
-                temporaryDirectory,
-                sidText,
-                cancellationToken).ConfigureAwait(false);
-            TraceNativePreparation("temporary-ancestors-ready");
             if (profileLease is not null)
             {
                 await profileLease.RegisterAsync(
@@ -289,22 +279,6 @@ internal static class WindowsAppContainerSandbox
         }
     }
 
-    private static async Task EnsureAncestorTraverseAclsAsync(
-        string path,
-        string sid,
-        CancellationToken cancellationToken)
-    {
-        foreach (var ancestor in AncestorDirectories(path))
-        {
-            await EnsurePathAclAsync(
-                ancestor,
-                sid,
-                "(X)",
-                cancellationToken,
-                recursive: false).ConfigureAwait(false);
-        }
-    }
-
     private static async Task<EphemeralProfileLease> AcquireEphemeralProfileAsync(
         string profileName,
         CancellationToken cancellationToken)
@@ -418,14 +392,6 @@ internal static class WindowsAppContainerSandbox
         {
             await RemovePathAclAsync(metadata.WorkspaceRoot, metadata.Sid, CancellationToken.None)
                 .ConfigureAwait(false);
-            await RemoveAncestorTraverseAclsAsync(
-                metadata.WorkspaceRoot,
-                metadata.Sid,
-                CancellationToken.None).ConfigureAwait(false);
-            await RemoveAncestorTraverseAclsAsync(
-                metadata.TemporaryDirectory,
-                metadata.Sid,
-                CancellationToken.None).ConfigureAwait(false);
             PreparedWorkspaceAcls.TryRemove(
                 WorkspaceAclKey(
                     metadata.WorkspaceRoot,
@@ -502,32 +468,6 @@ internal static class WindowsAppContainerSandbox
         {
             throw new InvalidOperationException(
                 $"Windows could not remove the workspace sandbox ACL (icacls {process.ExitCode}): {SafeAclError(error, output)}");
-        }
-    }
-
-    private static async Task RemoveAncestorTraverseAclsAsync(
-        string path,
-        string sid,
-        CancellationToken cancellationToken)
-    {
-        foreach (var ancestor in AncestorDirectories(path).Reverse())
-        {
-            await RemovePathAclAsync(
-                ancestor,
-                sid,
-                cancellationToken,
-                recursive: false).ConfigureAwait(false);
-        }
-    }
-
-    private static IEnumerable<string> AncestorDirectories(string path)
-    {
-        var fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-        var parent = Directory.GetParent(fullPath);
-        while (parent is not null)
-        {
-            yield return parent.FullName;
-            parent = parent.Parent;
         }
     }
 

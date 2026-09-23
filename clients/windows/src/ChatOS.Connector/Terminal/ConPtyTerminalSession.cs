@@ -348,6 +348,22 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
             CancellationToken.None,
             TaskCreationOptions.LongRunning,
             TaskScheduler.Default).ConfigureAwait(false);
+        _input.Dispose();
+        var closePseudoConsoleTask = Task.Factory.StartNew(
+            _pseudoConsole.Dispose,
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        try
+        {
+            await closePseudoConsoleTask.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+            await _outputTask.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            // The process has exited, so no more useful output can be produced. A broken
+            // pipe during the final ConHost frame must not delay exit notification.
+        }
         Volatile.Write(ref _exitCode, exitCode);
         Interlocked.Exchange(ref _exited, 1);
         await ReleaseNetworkLeaseAsync().ConfigureAwait(false);
