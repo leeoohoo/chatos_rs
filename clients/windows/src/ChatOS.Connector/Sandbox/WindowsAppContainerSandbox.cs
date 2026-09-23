@@ -197,6 +197,9 @@ internal static class WindowsAppContainerSandbox
     internal static bool HasPendingProfileCleanup(string profileName) =>
         EphemeralProfiles.ContainsKey(profileName) || File.Exists(ProfileMetadataPath(profileName));
 
+    internal static void TraceProcessToken(string expectedSid, string? actualSid) =>
+        TraceNativePreparation($"process-token:expected={expectedSid};actual={actualSid ?? "none"}");
+
     private static IntPtr CreateOrDeriveProfileSid(string profileName)
     {
         var result = CreateAppContainerProfile(

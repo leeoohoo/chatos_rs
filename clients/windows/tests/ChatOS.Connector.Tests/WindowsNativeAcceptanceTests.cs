@@ -166,14 +166,18 @@ public sealed class WindowsNativeAcceptanceTests
         {
             await Task.Delay(100);
         }
-        await session.WriteAsync("exit\r\n");
 
         var snapshot = session.Snapshot();
         var native = Assert.IsType<ConPtyTerminalSession>(session);
         Assert.True(
             snapshot.Contains(expected, StringComparison.OrdinalIgnoreCase),
-            $"Expected '{expected}'. Exited={native.HasExited}; ExitCode={native.ExitCode}; " +
+            $"Shell='{shell.Executable} {string.Join(' ', shell.Arguments)}'. Expected '{expected}'. " +
+            $"Exited={native.HasExited}; ExitCode={native.ExitCode}; " +
             $"OutputFailure={native.OutputFailure}; Snapshot='{snapshot}'");
+        if (!native.HasExited)
+        {
+            await session.WriteAsync("exit\r\n");
+        }
     }
 
     [Fact]

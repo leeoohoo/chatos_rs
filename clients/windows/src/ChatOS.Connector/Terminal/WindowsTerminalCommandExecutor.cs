@@ -178,6 +178,12 @@ public sealed class WindowsTerminalCommandExecutor(
             using var process = new SafeKernelObjectHandle(processInformation.Process, ownsHandle: true);
             using var thread = new SafeKernelObjectHandle(processInformation.Thread, ownsHandle: true);
             using var job = NativeConPty.CreateKillOnCloseJob();
+            if (sandbox is not null)
+            {
+                WindowsAppContainerSandbox.TraceProcessToken(
+                    sandbox.AppContainerSid,
+                    NativeTerminalProcess.AppContainerSid(process));
+            }
             var assignedToJob = false;
             try
             {
@@ -503,6 +509,8 @@ internal static class NativeTerminalProcess
     internal const uint StartfUseStdHandles = 0x0000_0100;
     internal const uint CreateNoWindow = 0x0800_0000;
     private const uint HandleFlagInherit = 0x0000_0001;
+    private const uint TokenQuery = 0x0000_0008;
+    private const int TokenAppContainerSid = 31;
 
     internal static void CreatePipe(
         out SafeFileHandle parentEnd,
@@ -545,5 +553,66 @@ internal static class NativeTerminalProcess
             _ = TerminateProcessNative(process, exitCode);
         }
     }
+
+    internal static string? AppContainerSid(SafeKernelObjectHandle process)
+    {
+        if (!OpenProcessToken(process, TokenQuery, out var token))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        using (token)
+        {
+            _ = GetTokenInformation(token, TokenAppContainerSid, IntPtr.Zero, 0, out var bytes);
+            if (bytes == 0)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            var buffer = Marshal.AllocHGlobal(checked((int)bytes));
+            try
+            {
+                NativeConPty.ThrowIfFalse(GetTokenInformation(
+                    token,
+                    TokenAppContainerSid,
+                    buffer,
+                    bytes,
+                    out _));
+                var sid = Marshal.ReadIntPtr(buffer);
+                if (sid == IntPtr.Zero) return null;
+                NativeConPty.ThrowIfFalse(ConvertSidToStringSid(sid, out var value));
+                try
+                {
+                    return Marshal.PtrToStringUni(value);
+                }
+                finally
+                {
+                    _ = LocalFree(value);
+                }
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+    }
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool OpenProcessToken(
+        SafeKernelObjectHandle process,
+        uint desiredAccess,
+        out SafeKernelObjectHandle token);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool GetTokenInformation(
+        SafeKernelObjectHandle token,
+        int informationClass,
+        IntPtr information,
+        uint informationLength,
+        out uint returnLength);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool ConvertSidToStringSid(IntPtr sid, out IntPtr value);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr LocalFree(IntPtr memory);
 
 }
