@@ -602,6 +602,24 @@ internal sealed record NativeConPtyProcess(
             {
                 await networkLease.DisposeAsync().ConfigureAwait(false);
             }
+            if (job is not null && process is not null)
+            {
+                NativeConPty.TerminateJob(job, 1);
+                var processToWait = process;
+                var waitForExitTask = Task.Factory.StartNew(
+                    () => NativeConPty.WaitForExit(processToWait),
+                    CancellationToken.None,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default);
+                try
+                {
+                    await waitForExitTask.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    // Handle disposal below remains the final kill-on-close backstop.
+                }
+            }
             thread?.Dispose();
             process?.Dispose();
             job?.Dispose();
