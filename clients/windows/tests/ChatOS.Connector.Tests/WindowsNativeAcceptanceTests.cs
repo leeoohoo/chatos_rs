@@ -137,6 +137,7 @@ public sealed class WindowsNativeAcceptanceTests
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763)) return;
 
         using var workspace = TemporaryDirectory.Create();
+        var shell = WindowsShellResolver.Resolve();
         await using ITerminalSession session = ConPtyTerminalSession.Start(
             new TerminalSessionIdentity(
                 "native-conpty",
@@ -144,12 +145,12 @@ public sealed class WindowsNativeAcceptanceTests
                 workspace.Path,
                 workspace.Path),
             new TerminalSize(100, 30),
-            CommandInterpreter(),
-            ["/d", "/q", "/k", "ver > nul"],
+            shell.Executable,
+            shell.Arguments,
             sandbox: null);
         var architecture = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE") ?? "UNKNOWN";
         var expected = $"CHATOS_{architecture}_CONPTY_OK";
-        await session.WriteAsync("echo CHATOS_%PROCESSOR_ARCHITECTURE%_CONPTY_OK\r\n");
+        await session.WriteAsync($"echo {expected}\r\n");
         var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
         while (!session.Snapshot().Contains(expected, StringComparison.OrdinalIgnoreCase) &&
                DateTimeOffset.UtcNow < deadline)
@@ -518,6 +519,28 @@ public sealed class WindowsNativeAcceptanceTests
                 "NativeTests",
                 $"chatos-native-{Guid.NewGuid():N}");
             Directory.CreateDirectory(path);
+            if (OperatingSystem.IsWindows())
+            {
+                var start = new ProcessStartInfo
+                {
+                    FileName = System.IO.Path.Combine(Environment.SystemDirectory, "icacls.exe"),
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                start.ArgumentList.Add(path);
+                start.ArgumentList.Add("/setintegritylevel");
+                start.ArgumentList.Add("(OI)(CI)L");
+                start.ArgumentList.Add("/C");
+                start.ArgumentList.Add("/Q");
+                using var process = Process.Start(start)
+                    ?? throw new InvalidOperationException("Unable to prepare native test workspace integrity.");
+                process.WaitForExit();
+                if (process.ExitCode != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Unable to prepare native test workspace integrity (icacls {process.ExitCode}).");
+                }
+            }
             return new TemporaryDirectory(path);
         }
 
