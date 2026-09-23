@@ -549,9 +549,17 @@ internal static partial class WindowsAppContainerSandbox
     private static IEnumerable<string> AncestorDirectories(string path)
     {
         var fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        var volumeRoot = Path.TrimEndingDirectorySeparator(Path.GetPathRoot(fullPath) ?? string.Empty);
         var parent = Directory.GetParent(fullPath);
         while (parent is not null)
         {
+            if (string.Equals(
+                    Path.TrimEndingDirectorySeparator(parent.FullName),
+                    volumeRoot,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                yield break;
+            }
             yield return parent.FullName;
             parent = parent.Parent;
         }
