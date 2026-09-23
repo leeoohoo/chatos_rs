@@ -145,7 +145,6 @@ internal sealed class WindowsAppContainerLaunchContext : IDisposable, IAsyncDisp
 }
 
 [StructLayout(LayoutKind.Sequential)]
-[StructLayout(LayoutKind.Sequential)]
 internal readonly struct SecurityCapabilities
 {
     public SecurityCapabilities(
