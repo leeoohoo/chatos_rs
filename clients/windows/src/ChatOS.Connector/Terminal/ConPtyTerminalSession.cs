@@ -489,7 +489,6 @@ internal sealed record NativeConPtyProcess(
         SafeKernelObjectHandle? thread = null;
         NetworkGuardLeaseLifetime? networkLease = null;
         IntPtr attributeList = IntPtr.Zero;
-        IntPtr pseudoConsolePointer = IntPtr.Zero;
         try
         {
             NativeConPty.CreatePipePair(out inputWriter, out pseudoInput, parentReads: false);
@@ -508,13 +507,11 @@ internal sealed record NativeConPtyProcess(
                 sandbox is null ? 1 : 2,
                 0,
                 ref attributeBytes));
-            pseudoConsolePointer = Marshal.AllocHGlobal(IntPtr.Size);
-            Marshal.WriteIntPtr(pseudoConsolePointer, pseudoConsole.DangerousGetHandle());
             NativeConPty.ThrowIfFalse(NativeConPty.UpdateProcThreadAttribute(
                 attributeList,
                 0,
                 NativeConPty.ProcThreadAttributePseudoConsole,
-                pseudoConsolePointer,
+                pseudoConsole.DangerousGetHandle(),
                 (nuint)IntPtr.Size,
                 IntPtr.Zero,
                 IntPtr.Zero));
@@ -609,11 +606,6 @@ internal sealed record NativeConPtyProcess(
             {
                 NativeConPty.DeleteProcThreadAttributeList(attributeList);
                 Marshal.FreeHGlobal(attributeList);
-            }
-
-            if (pseudoConsolePointer != IntPtr.Zero)
-            {
-                Marshal.FreeHGlobal(pseudoConsolePointer);
             }
         }
     }

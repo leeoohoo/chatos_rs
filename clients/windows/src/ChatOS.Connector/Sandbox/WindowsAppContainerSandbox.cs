@@ -514,19 +514,9 @@ internal static class WindowsAppContainerSandbox
     private static IEnumerable<string> AncestorDirectories(string path)
     {
         var fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-        var volumeRoot = Path.TrimEndingDirectorySeparator(Path.GetPathRoot(fullPath) ?? string.Empty);
         var parent = Directory.GetParent(fullPath);
         while (parent is not null)
         {
-            // Volume roots are normally traversable already and changing their DACL can
-            // require elevation or stall on managed build volumes.
-            if (string.Equals(
-                    Path.TrimEndingDirectorySeparator(parent.FullName),
-                    volumeRoot,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                yield break;
-            }
             yield return parent.FullName;
             parent = parent.Parent;
         }

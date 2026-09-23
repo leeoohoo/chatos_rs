@@ -86,7 +86,10 @@ public sealed class WindowsNativeAcceptanceTests
         var inside = await executor.ExecuteAsync(Request(writeInsideScript, workspace.Path, "sandbox-write"));
         var outsideResult = await executor.ExecuteAsync(Request(writeOutsideScript, workspace.Path, "sandbox-boundary"));
 
-        Assert.True(inside.Success, inside.Error ?? inside.StandardError);
+        Assert.True(
+            inside.Success,
+            $"ExitCode={inside.ExitCode}; Error={inside.Error}; Stderr={inside.StandardError}; " +
+            $"Stdout={inside.StandardOutput}");
         Assert.True(File.Exists(insideFile));
         Assert.False(outsideResult.Success);
         Assert.False(File.Exists(outsideFile), outsideResult.Error ?? outsideResult.StandardError);
@@ -202,7 +205,10 @@ public sealed class WindowsNativeAcceptanceTests
             15_000,
             policy));
 
-        Assert.True(result.Success, result.Error ?? result.StandardError);
+        Assert.True(
+            result.Success,
+            $"ExitCode={result.ExitCode}; Error={result.Error}; Stderr={result.StandardError}; " +
+            $"Stdout={result.StandardOutput}");
         Assert.True(guard.MarkerWasAbsentAtAcquire);
         Assert.Equal(1, guard.AcquireCount);
         Assert.Equal(1, guard.ReleaseCount);
