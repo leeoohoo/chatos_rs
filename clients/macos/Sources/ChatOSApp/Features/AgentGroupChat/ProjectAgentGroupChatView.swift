@@ -153,7 +153,8 @@ struct ProjectAgentGroupChatView: View {
         case .tasks:
             TeamTodoBoardView(
                 todos: viewModel.teamTodos,
-                profilesByID: viewModel.profilesByID
+                profilesByID: viewModel.profilesByID,
+                runsByTodoID: todoRunsByTodoID
             )
         case .research:
             ProjectRequirementSurveysView(
@@ -196,6 +197,18 @@ struct ProjectAgentGroupChatView: View {
                 onInspect: { inspectingRun = $0 }
             )
         }
+    }
+
+    private var todoRunsByTodoID: [String: LocalAgentGroupChatRun] {
+        var result: [String: LocalAgentGroupChatRun] = [:]
+        for run in viewModel.recentRuns {
+            guard let delivery = viewModel.recentRunDeliveries[run.id],
+                  delivery.triggerKind == .todo,
+                  delivery.deduplicationKey.hasPrefix("todo:") else { continue }
+            let todoID = String(delivery.deduplicationKey.dropFirst("todo:".count))
+            if result[todoID] == nil { result[todoID] = run }
+        }
+        return result
     }
 
     private var pendingProposals: some View {

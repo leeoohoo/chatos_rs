@@ -76,12 +76,26 @@ extension SQLiteAgentGroupChatStore {
                 agentID: agentID,
                 preparedStatement: recordPreparedStatement
             )
-            let ready = try AgentTodoRepository.nextReady(
+            let outstanding = try AgentDeliveryRepository.outstandingCount(
                 database,
                 ownerUserID: ownerUserID,
-                agentID: agentID,
+                targetAgentID: agentID,
+                triggerKind: .todo,
                 preparedStatement: recordPreparedStatement
             )
+            // Match startNextReadyAgentTodo exactly: a Todo is only advertised as ready when
+            // the executor lane can actually start it. This prevents manager cycles from being
+            // trapped between `ready_todo_requires_start` and `no_ready_todo`.
+            let ready: LocalAgentTodo? = if running == nil, outstanding == 0 {
+                try AgentTodoRepository.nextReady(
+                    database,
+                    ownerUserID: ownerUserID,
+                    agentID: agentID,
+                    preparedStatement: recordPreparedStatement
+                )
+            } else {
+                nil
+            }
             return .init(runningTodo: running, readyTodo: ready)
         }
     }

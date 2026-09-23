@@ -2079,6 +2079,66 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         XCTAssertEqual(retriedTodo?.status, .inProgress)
     }
 
+    func testScheduleStateNeverAdvertisesTodoThatExecutorLaneCannotStart() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let agent = try await makeAgent(store, name: "执行者")
+        let room = try await makeRoom(store, projectID: "todo-schedule-consistency")
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id,
+            draft: .init(role: "执行者")
+        )
+        let todo = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            requestKey: "outstanding-pending-todo",
+            draft: .init(title: "已有执行占位的任务", teamRoomID: room.id),
+            nowUnixMs: 100
+        )
+        let pendingDelivery = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 101
+        )
+        _ = try XCTUnwrap(pendingDelivery)
+        let claimedDelivery = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 102
+        )
+        _ = try XCTUnwrap(claimedDelivery)
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id,
+            update: .init(status: .blocked, blockedReason: "等待处理"),
+            nowUnixMs: 103
+        )
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id,
+            update: .init(status: .pending, blockedReason: ""),
+            nowUnixMs: 104
+        )
+
+        let state = try await store.agentTodoScheduleState(
+            ownerUserID: "alice",
+            agentID: agent.id
+        )
+        XCTAssertNil(state.runningTodo)
+        XCTAssertNil(state.readyTodo)
+        let started = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 105
+        )
+        XCTAssertNil(started)
+    }
+
     func testTodoEventRecipientsPersistOncePerEventAndRecipient() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
@@ -2966,6 +3026,16 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
                         .init(id: "windows", label: "Windows"),
                     ]
                 ),
+                .init(
+                    id: "priorities",
+                    prompt: "请排列迁移目标的优先级。",
+                    kind: .ranking,
+                    options: [
+                        .init(id: "quality", label: "质量"),
+                        .init(id: "speed", label: "速度"),
+                        .init(id: "cost", label: "成本"),
+                    ]
+                ),
             ]
         )
         let survey = try await store.createRequirementSurvey(
@@ -3033,6 +3103,10 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             answers: [
                 .init(questionID: "compatibility", selectedOptionIDs: ["two_releases"]),
                 .init(questionID: "release_targets", selectedOptionIDs: ["macos", "windows"]),
+                .init(
+                    questionID: "priorities",
+                    selectedOptionIDs: ["speed", "quality", "cost"]
+                ),
             ],
             notes: "Windows 需要晚一周灰度。"
         )
@@ -3052,6 +3126,11 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         )
         XCTAssertEqual(submitted, repeatedSubmission)
         XCTAssertEqual(submitted.submission?.notes, "Windows 需要晚一周灰度。")
+        XCTAssertEqual(
+            submitted.submission?.answers.first { $0.questionID == "priorities" }?
+                .selectedOptionIDs,
+            ["speed", "quality", "cost"]
+        )
         XCTAssertEqual(try sqliteInt(
             url,
             sql: "SELECT COUNT(*) FROM project_agent_deliveries WHERE deduplication_key = 'requirement-survey-submitted:\(survey.id)'"

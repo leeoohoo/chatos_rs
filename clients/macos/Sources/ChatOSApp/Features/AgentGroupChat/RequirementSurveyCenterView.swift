@@ -89,7 +89,7 @@ private final class RequirementSurveyCenterViewModel: ObservableObject {
 
     func submit(
         survey: LocalAgentRequirementSurvey,
-        selections: [String: Set<String>],
+        selections: [String: [String]],
         notes: String
     ) async -> Bool {
         guard submittingSurveyIDs.insert(survey.id).inserted else { return false }
@@ -100,7 +100,7 @@ private final class RequirementSurveyCenterViewModel: ObservableObject {
                 guard !selected.isEmpty else { return nil }
                 return .init(
                     questionID: question.id,
-                    selectedOptionIDs: question.options.map(\.id).filter(selected.contains)
+                    selectedOptionIDs: selected
                 )
             }
             let store = try await service.store()

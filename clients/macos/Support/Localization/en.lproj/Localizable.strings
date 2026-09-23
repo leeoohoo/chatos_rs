@@ -633,3 +633,9 @@
 "调研问卷" = "Questionnaire";
 "方案与执行" = "Solution and Execution";
 "提交调研后，解决方案和执行计划会显示在这里" = "The solution and execution plan will appear here after the survey is submitted.";
+"“交付”按运行记录中成功提交的项目文件统计；计划交付、授权工具和执行总结不会被当作实际项目产出。" = "Deliveries count project files successfully committed in Run records. Planned deliverables, authorized tools, and execution summaries are not counted as actual project output.";
+"如果选项没有覆盖完整情况，可以在这里统一补充。" = "Add any details here that are not fully covered by the options.";
+"补充说明" = "Additional Notes";
+"请完成所有必填题" = "Complete all required questions";
+"请按优先级排序，1 表示最高优先级" = "Rank by priority, where 1 is the highest priority";
+"请选择所有符合的选项" = "Select all options that apply";

@@ -58,6 +58,66 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         XCTAssertTrue(requests.dropFirst().allSatisfy { $0.url.query?.contains("thread_id=") == true })
     }
 
+    func testStableManagerThreadCanFlushRecordsCreatedByAnEarlierRun() async throws {
+        let agentID = "manager-agent"
+        let earlier = try AgentMemoryScope(
+            tenantID: "user/a?&b",
+            agentID: agentID,
+            projectID: "project-a",
+            runID: UUID(),
+            runtimeScope: "manager:earlier"
+        )
+        let current = try AgentMemoryScope(
+            tenantID: "user/a?&b",
+            agentID: agentID,
+            projectID: "project-b",
+            runID: UUID(),
+            runtimeScope: "manager:current"
+        )
+        XCTAssertEqual(earlier.threadID, current.threadID)
+        let transport = MemoryTransport(
+            scope: current,
+            refreshToken: false,
+            foreignTenant: false,
+            statusCode: 200,
+            summaryError: nil
+        )
+        let client = ChatOSAPIClient(
+            configuration: .init(baseURL: URL(string: "https://app.example/prefix/api/chatos")!),
+            accessToken: "user-token",
+            transport: transport
+        )
+        let service = try await ChatOSMemoryEngineService(client: client, scope: current)
+
+        try await service.sync(records(earlier), reconciling: false)
+
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertTrue(requests[0].url.path.hasSuffix("/records/batch-sync"))
+    }
+
+    func testRunScopedThreadRejectsRecordsCreatedByAnotherRun() async throws {
+        let (scope, transport, client) = try fixture()
+        let other = try AgentMemoryScope(
+            tenantID: scope.tenantID,
+            profile: "story",
+            projectID: UUID(),
+            runID: UUID(),
+            runtimeScope: scope.runtimeScope
+        )
+        let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
+
+        do {
+            try await service.sync(records(other), reconciling: false)
+            XCTFail("Run-scoped Memory must reject records from another run")
+        } catch AgentContextError.invalidHistory {
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        let requests = await transport.requests
+        XCTAssertTrue(requests.isEmpty)
+    }
+
     func testIncompleteOrChangedReconciliationDoesNotWrite() async throws {
         let (scope, transport, client) = try fixture()
         let service = try await ChatOSMemoryEngineService(client: client, scope: scope)

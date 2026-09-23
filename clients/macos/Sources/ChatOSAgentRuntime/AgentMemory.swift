@@ -84,6 +84,15 @@ public struct AgentMemoryScope: Codable, Equatable, Sendable {
 
     public func recordID(at index: Int) -> String { "client-agent:\(runID):message:\(index)" }
 
+    /// Returns whether an immutable record can be written through a Memory service bound to this
+    /// thread. Manager and Todo identities intentionally reuse one thread across separate runs,
+    /// so their durable outbox may contain records created by an earlier run. Run-scoped story
+    /// and approval services must continue to reject those foreign records.
+    public func acceptsRecord(id: String, index: Int) -> Bool {
+        guard let location = recordLocation(for: id), location.index == index else { return false }
+        return location.runID == runID || allowsCrossRunHistory
+    }
+
     /// Story and approval threads belong to one run. Manager and Todo threads are stable for their
     /// respective identity, so compose may return records written by earlier runs of that same
     /// manager or Todo. The legacy group-chat prefix remains accepted for bound pre-migration runs.

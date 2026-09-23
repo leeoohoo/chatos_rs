@@ -13,7 +13,7 @@ metadata:
 
 1. 处理刚提交的调研时调用 `requirement_survey_list(status="submitted")`；回顾历史决定时可不传 status。
 2. 根据标题、purpose 和任务边界选择候选，再调用 `requirement_survey_get`；不要凭标题直接下结论。
-3. 逐项读取 status、问题、选项、selected、selected_option_keys 和独立的 notes，再读取 resolution 的 summary、solution_markdown、execution_steps、风险与相关资料。
+3. 逐项读取 status、问题、题型、选项、selected、selected_option_keys 和独立的 notes，再读取 resolution 的 summary、solution_markdown、execution_steps、风险与相关资料。`single_choice` 和 `multiple_choice` 可按选中集合解释；`ranking` 必须按 `selected_option_keys` 的数组顺序解释，第一项为最高优先级，不得按原始 options 顺序或无序集合转述。
 4. `pending` 只表示仍待 Human 提交；`submitted` 且 resolution 为空表示 Human 决策已具备但正式方案尚未形成；resolution 非空时分开描述 Human 决策和 Agent 方案。
 5. 输出 Human 已确认、备注补充、既有方案与执行步骤、尚未确认或冲突，以及使用的调研标题和状态。
 

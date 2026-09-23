@@ -146,23 +146,12 @@ extension NativeLocalConnectorService {
             }
         }
         if NativeMCPCodeWriteStore.toolNames.contains(name) {
-            if name == "commit_edit_session" {
-                let decision = await approvalDecision(
-                    requestID: callID,
-                    command: "agent_project_file_commit",
-                    arguments: ["提交当前 Agent 暂存的项目文件修改"],
-                    cwd: projectRoot,
-                    projectRoot: projectRoot,
-                    source: "local-agent-builtin-mcp",
-                    risk: .init(level: "medium", reason: "Agent 将修改当前项目中的文件。"),
-                    approvalScopeKey: "agent-project-files",
-                    workspaceID: resolvedProject.workspace.id
-                )
-                guard case .approve = decision else {
-                    throw NativePluginRuntimeError.invalidRequest("用户未批准 Agent 修改项目文件")
-                }
-                try Task.checkCancellation()
-            }
+            // Reaching this branch already proves that this is a Todo executor whose immutable
+            // execution plan selected `project_write`: the capability broker is only assembled
+            // for executor runs and NativeAgentBuiltinToolProvider checks the selected capability
+            // again before dispatch. Asking the global command-approval system here would be a
+            // second, unrelated authorization that can strand an otherwise approved Todo at the
+            // final commit step.
             try Task.checkCancellation()
             return try await mcpCodeWriteStore.call(
                 name: name,

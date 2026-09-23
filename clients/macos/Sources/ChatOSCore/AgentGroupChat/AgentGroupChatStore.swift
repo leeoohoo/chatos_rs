@@ -341,6 +341,11 @@ public protocol AgentGroupChatStore: Sendable {
         update: LocalAgentTodoUpdate,
         nowUnixMs: Int64
     ) async throws -> LocalAgentTodo
+    func agentTodoRequiresHumanRetry(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String
+    ) async throws -> Bool
     func reorderAgentTodos(
         ownerUserID: String,
         agentID: String,

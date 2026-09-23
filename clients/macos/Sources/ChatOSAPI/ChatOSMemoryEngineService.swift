@@ -28,7 +28,9 @@ public struct ChatOSMemoryEngineService: AgentMemoryServicing {
 
     public func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {
         guard !entries.isEmpty, entries.count <= 32, Set(entries.map(\.id)).count == entries.count,
-              entries.allSatisfy({ $0.index >= 0 && $0.id == scope.recordID(at: $0.index) }) else { throw AgentContextError.invalidHistory }
+              entries.allSatisfy({ $0.index >= 0 && scope.acceptsRecord(id: $0.id, index: $0.index) }) else {
+            throw AgentContextError.invalidHistory
+        }
         let records = try entries.map(record)
         if reconciling {
             // Existing batch-sync overwrites summary_status, even for identical IDs. Never blindly

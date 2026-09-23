@@ -171,7 +171,7 @@ fn requirement_survey_write_catalog() -> Vec<Value> {
                     "questions":{"type":"array","minItems":1,"maxItems":12,"items":{"type":"object","properties":{
                         "key":{"type":"string","minLength":1,"maxLength":120},
                         "prompt":{"type":"string","minLength":1,"maxLength":1000},
-                        "kind":{"type":"string","enum":["single_choice","multiple_choice"]},
+                        "kind":{"type":"string","enum":["single_choice","multiple_choice","ranking"]},
                         "required":{"type":"boolean"},
                         "options":{"type":"array","minItems":2,"maxItems":12,"items":{"type":"object","properties":{"key":{"type":"string","minLength":1,"maxLength":120},"label":{"type":"string","minLength":1,"maxLength":500}},"required":["key","label"],"additionalProperties":false}}
                     },"required":["key","prompt","kind","options"],"additionalProperties":false}}
@@ -505,5 +505,23 @@ mod tests {
         assert!(!names
             .iter()
             .any(|name| name == "requirement_survey_skill_get"));
+    }
+
+    #[test]
+    fn requirement_survey_create_supports_ranking_questions() {
+        let tools = builtin_tool_catalog(BuiltinMcpKind::RequirementSurveyWrite)
+            .expect("requirement survey write catalog");
+        let create = tools
+            .iter()
+            .find(|tool| {
+                tool.get("name").and_then(Value::as_str) == Some("requirement_survey_create")
+            })
+            .expect("requirement_survey_create tool");
+        let kinds = create
+            .pointer("/inputSchema/properties/questions/items/properties/kind/enum")
+            .and_then(Value::as_array)
+            .expect("question kind enum");
+
+        assert!(kinds.iter().any(|kind| kind.as_str() == Some("ranking")));
     }
 }

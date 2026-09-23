@@ -56,6 +56,12 @@ public struct AgentRuntime: Sendable {
             try await emit("needs_review", "上次副作用工具执行结果不明，需要核实原任务，不能自动重放。")
             return snapshot(state)
         }
+        // A paused checkpoint has already consumed its previous no-progress window. Invoking
+        // `run` again is the resume boundary, so grant a fresh progress window while preserving
+        // the elapsed run deadline, model/tool history, receipts, and durable side-effect guards.
+        if state.status == .paused {
+            state.noProgressRounds = 0
+        }
         state.status = .running
         state.stopReason = nil
         try await emit("started", "Agent 运行开始 / 恢复")

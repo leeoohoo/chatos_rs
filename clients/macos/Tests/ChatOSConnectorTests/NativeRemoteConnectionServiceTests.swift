@@ -152,6 +152,99 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         XCTAssertTrue(config.contains("ControlPath \"/tmp/chatos-control-test\""))
     }
 
+    func testMFAAskpassWaitsForCodeFromTheExistingSSHSession() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-askpass-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let scriptURL = root.appendingPathComponent("askpass.sh")
+        let promptLogURL = root.appendingPathComponent("prompts.log")
+        let responseURL = root.appendingPathComponent("verification-response")
+        try NativeSSHConnectionTester.askpassScript.write(
+            to: scriptURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: scriptURL.path
+        )
+
+        let output = Pipe()
+        let process = Process()
+        process.executableURL = scriptURL
+        process.arguments = ["(user@bastion.example.com) Please Input Mfa Code (SMS):"]
+        process.standardOutput = output
+        var environment = ProcessInfo.processInfo.environment
+        environment["CHATOS_SSH_PROMPT_LOG"] = promptLogURL.path
+        environment["CHATOS_SSH_VERIFICATION_CODE"] = ""
+        environment["CHATOS_SSH_VERIFICATION_FILE"] = responseURL.path
+        process.environment = environment
+        try process.run()
+
+        let promptDeadline = Date().addingTimeInterval(2)
+        while !FileManager.default.fileExists(atPath: promptLogURL.path),
+              Date() < promptDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(process.isRunning)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: promptLogURL.path))
+
+        try "614207".write(to: responseURL, atomically: true, encoding: .utf8)
+        let completionDeadline = Date().addingTimeInterval(2)
+        while process.isRunning, Date() < completionDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        if process.isRunning {
+            process.terminate()
+        }
+        process.waitUntilExit()
+
+        let submittedCode = String(
+            decoding: output.fileHandleForReading.readDataToEndOfFile(),
+            as: UTF8.self
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(process.terminationStatus, 0)
+        XCTAssertEqual(submittedCode, "614207")
+    }
+
+    func testConnectionTestAcceptsOpenSSHAuthenticationBeforeBastionSessionExits() {
+        var draft = Self.passwordDraft
+        draft.host = "mwpxljyjsn-public.bastionhost.aliyuncs.com"
+        draft.port = 60_022
+        let diagnosticLog = """
+        debug1: Authentication succeeded (keyboard-interactive).
+        Authenticated to mwpxljyjsn-public.bastionhost.aliyuncs.com ([10.0.0.8]:60022) using "keyboard-interactive".
+        debug1: Entering interactive session.
+        """
+
+        XCTAssertTrue(
+            NativeSSHConnectionTester.diagnosticShowsAuthenticatedTarget(
+                diagnosticLog,
+                draft: draft
+            )
+        )
+    }
+
+    func testConnectionTestDoesNotMistakeJumpHostAuthenticationForTarget() {
+        var draft = Self.passwordDraft
+        draft.host = "target.example.com"
+        draft.port = 22
+        draft.jumpEnabled = true
+        draft.jumpHost = "jump.example.com"
+        let diagnosticLog = """
+        Authenticated to jump.example.com ([10.0.0.7]:22) using "publickey".
+        """
+
+        XCTAssertFalse(
+            NativeSSHConnectionTester.diagnosticShowsAuthenticatedTarget(
+                diagnosticLog,
+                draft: draft
+            )
+        )
+    }
+
     func testPersistentSSHControlPathFitsMacOSUnixSocketLimit() throws {
         let path = try NativeOpenSSHClient.persistentControlPath(for: Self.passwordDraft).path
 

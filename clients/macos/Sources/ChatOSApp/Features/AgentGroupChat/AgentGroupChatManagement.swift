@@ -151,7 +151,7 @@ extension AgentGroupChatViewModel {
 
     func submitRequirementSurvey(
         _ survey: LocalAgentRequirementSurvey,
-        selections: [String: Set<String>],
+        selections: [String: [String]],
         notes: String
     ) async -> Bool {
         guard let room, survey.projectID == projectID,
@@ -161,8 +161,7 @@ extension AgentGroupChatViewModel {
             let answers = survey.draft.questions.compactMap { question -> LocalAgentRequirementSurveyAnswer? in
                 let selected = selections[question.id] ?? []
                 guard !selected.isEmpty else { return nil }
-                let ordered = question.options.map(\.id).filter(selected.contains)
-                return .init(questionID: question.id, selectedOptionIDs: ordered)
+                return .init(questionID: question.id, selectedOptionIDs: selected)
             }
             let normalizedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
             let store = try await resolveStore()

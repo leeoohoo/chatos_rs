@@ -354,6 +354,16 @@ extension LocalAgentGroupChatScheduler {
             }
         }
         _ = try await session.finish(checkpoint: finalCheckpoint)
+        if finalCheckpoint.status == .needsReview,
+           currentDelivery?.status == .running {
+            try await suspendTodoForReview(
+                store: store,
+                ownerUserID: ownerUserID,
+                delivery: delivery,
+                runID: context.runID,
+                detail: finalCheckpoint.stopReason ?? "执行中断，需要检查副作用后再决定是否重试。"
+            )
+        }
 
         switch finalCheckpoint.status {
         case .completed:
@@ -389,6 +399,73 @@ extension LocalAgentGroupChatScheduler {
                 detail: detail
             )
         }
+    }
+
+    /// A write/billable interruption is a real task blocker, not an actively running Todo.
+    /// Keep the delivery and Run resumable, but make the shared task board and manager wake-up
+    /// reflect that Human review is required.
+    func suspendTodoForReview(
+        store: SQLiteAgentGroupChatStore,
+        ownerUserID: String,
+        delivery: ProjectAgentDelivery,
+        runID: String?,
+        detail: String
+    ) async throws {
+        guard delivery.triggerKind == .todo,
+              let todo = try await store.todoForDelivery(
+                ownerUserID: ownerUserID,
+                deliveryID: delivery.id
+              ) else { return }
+        let timestamp = now()
+        var currentTodo = try await store.agentTodo(
+            ownerUserID: ownerUserID,
+            agentID: delivery.targetAgentID,
+            todoID: todo.id
+        )
+        guard currentTodo?.status == .inProgress || currentTodo?.status == .pending else { return }
+        do {
+            currentTodo = try await store.updateAgentTodo(
+                ownerUserID: ownerUserID,
+                agentID: delivery.targetAgentID,
+                todoID: todo.id,
+                update: .init(
+                    status: .blocked,
+                    blockedReason: "执行中断，需检查后重试：\(detail)"
+                ),
+                nowUnixMs: timestamp
+            )
+        } catch AgentGroupChatError.conflict {
+            currentTodo = try await store.agentTodo(
+                ownerUserID: ownerUserID,
+                agentID: delivery.targetAgentID,
+                todoID: todo.id
+            )
+        }
+        guard currentTodo?.status == .blocked else { return }
+        _ = try await store.appendAgentTodoProgress(
+            ownerUserID: ownerUserID,
+            agentID: delivery.targetAgentID,
+            todoID: todo.id,
+            kind: .blocked,
+            runID: runID,
+            stage: "needs_review",
+            detail: detail,
+            assetUpdateSuggestions: [],
+            nowUnixMs: timestamp
+        )
+        _ = try await store.enqueueAgentTodoStatus(
+            ownerUserID: ownerUserID,
+            agentID: delivery.targetAgentID,
+            todoID: todo.id,
+            excludingAgentID: nil,
+            nowUnixMs: timestamp
+        )
+        await service.publishChange(.init(
+            ownerUserID: ownerUserID,
+            roomID: todo.teamRoomID,
+            agentID: delivery.targetAgentID,
+            kind: .roomUpdated
+        ))
     }
 
     func failDeliveryAndNotifyManager(

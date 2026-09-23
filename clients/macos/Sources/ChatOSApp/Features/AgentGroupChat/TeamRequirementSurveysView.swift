@@ -118,139 +118,62 @@ struct RequirementSurveyDetailView: View {
     let onBack: () -> Void
     let onSubmit: (
         LocalAgentRequirementSurvey,
-        [String: Set<String>],
+        [String: [String]],
         String
     ) async -> Bool
     @State private var selectedTab: RequirementSurveyDetailTab = .questionnaire
 
     var body: some View {
         ZStack {
+            Color(nsColor: .windowBackgroundColor)
+                .ignoresSafeArea()
             LinearGradient(
                 colors: [
-                    Color(nsColor: .windowBackgroundColor),
-                    AppPalette.ai.opacity(0.035),
+                    AppPalette.ai.opacity(0.075),
+                    AppPalette.ai.opacity(0.025),
                 ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+                startPoint: .top,
+                endPoint: .bottom
             )
             .ignoresSafeArea()
 
-            VStack(spacing: 16) {
-                VStack(spacing: 16) {
-                    HStack {
-                        Button(action: onBack) {
-                            Label("返回调研列表", systemImage: "chevron.left")
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        Spacer()
-                    }
-                    RequirementSurveyStageBar(survey: survey)
-
-                    HStack {
-                        Picker("调研内容", selection: $selectedTab) {
-                            ForEach(RequirementSurveyDetailTab.allCases) { tab in
-                                Text(tab.rawValue).tag(tab)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(maxWidth: 460)
-                        Spacer()
-                    }
-                }
-                .padding(.horizontal, 24)
-                .padding(.top, 24)
-                .frame(maxWidth: 1560)
-                .frame(maxWidth: .infinity)
-
+            VStack(spacing: 0) {
                 ScrollView {
                     RequirementSurveyCard(
                         survey: survey,
                         creatorName: creatorName,
                         projectName: projectName,
                         isSubmitting: isSubmitting,
-                        selectedTab: selectedTab,
+                        selectedTab: $selectedTab,
                         onSubmit: onSubmit
                     )
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 24)
-                    .frame(maxWidth: 1560)
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 30)
+                    .frame(maxWidth: 820)
                     .frame(maxWidth: .infinity)
                 }
-                .id(selectedTab)
-            }
-        }
-    }
-}
-
-private struct RequirementSurveyStageBar: View {
-    let survey: LocalAgentRequirementSurvey
-
-    var body: some View {
-        HStack(spacing: 0) {
-            stage(number: 1, title: "调研已发起", state: .complete)
-            connector(completed: survey.status != .pending)
-            stage(
-                number: 2,
-                title: survey.status == .pending ? "等待填写" : "答案已提交",
-                state: survey.status == .pending ? .active : .complete
-            )
-            connector(completed: survey.resolution != nil)
-            stage(
-                number: 3,
-                title: survey.resolution == nil ? "形成方案" : "方案已完成",
-                state: survey.resolution == nil && survey.status != .pending ? .active
-                    : (survey.resolution == nil ? .upcoming : .complete)
-            )
-        }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 16)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(AppPalette.ai.opacity(0.12), lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.03), radius: 8, y: 3)
-    }
-
-    private enum StageState {
-        case complete
-        case active
-        case upcoming
-    }
-
-    private func stage(number: Int, title: String, state: StageState) -> some View {
-        let color: Color = state == .upcoming ? .secondary : AppPalette.ai
-        return HStack(spacing: 8) {
-            ZStack {
-                Circle()
-                    .fill(state == .complete ? AppPalette.ai : color.opacity(0.11))
-                if state == .complete {
-                    Image(systemName: "checkmark")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.white)
-                } else {
-                    Text("\(number)")
-                        .appFont(.caption.weight(.bold))
-                        .foregroundStyle(color)
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    HStack {
+                        Button(action: onBack) {
+                            Label("返回调研列表", systemImage: "chevron.left")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                        Spacer()
+                    }
+                    .appFont(.subheadline.weight(.medium))
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 14)
+                    .frame(maxWidth: 820)
+                    .frame(maxWidth: .infinity)
+                    .background(.ultraThinMaterial)
+                    .overlay(alignment: .bottom) {
+                        Divider().opacity(0.45)
+                    }
                 }
             }
-            .frame(width: 28, height: 28)
-
-            Text(title)
-                .appFont(.caption.weight(state == .active ? .semibold : .medium))
-                .foregroundStyle(state == .upcoming ? .secondary : .primary)
-                .fixedSize()
         }
-    }
-
-    private func connector(completed: Bool) -> some View {
-        Capsule()
-            .fill(completed ? AppPalette.ai : AppPalette.border)
-            .frame(maxWidth: .infinity)
-            .frame(height: 2)
-            .padding(.horizontal, 10)
     }
 }
 
@@ -259,14 +182,14 @@ private struct RequirementSurveyCard: View {
     let creatorName: String
     let projectName: String?
     let isSubmitting: Bool
-    let selectedTab: RequirementSurveyDetailTab
+    @Binding var selectedTab: RequirementSurveyDetailTab
     let onSubmit: (
         LocalAgentRequirementSurvey,
-        [String: Set<String>],
+        [String: [String]],
         String
     ) async -> Bool
 
-    @State private var selections: [String: Set<String>]
+    @State private var selections: [String: [String]]
     @State private var notes: String
 
     init(
@@ -274,10 +197,10 @@ private struct RequirementSurveyCard: View {
         creatorName: String,
         projectName: String?,
         isSubmitting: Bool,
-        selectedTab: RequirementSurveyDetailTab,
+        selectedTab: Binding<RequirementSurveyDetailTab>,
         onSubmit: @escaping (
             LocalAgentRequirementSurvey,
-            [String: Set<String>],
+            [String: [String]],
             String
         ) async -> Bool
     ) {
@@ -285,81 +208,37 @@ private struct RequirementSurveyCard: View {
         self.creatorName = creatorName
         self.projectName = projectName
         self.isSubmitting = isSubmitting
-        self.selectedTab = selectedTab
+        _selectedTab = selectedTab
         self.onSubmit = onSubmit
-        _selections = State(initialValue: Dictionary(
+        let submittedAnswers = Dictionary(
             uniqueKeysWithValues: (survey.submission?.answers ?? []).map {
-                ($0.questionID, Set($0.selectedOptionIDs))
+                ($0.questionID, $0.selectedOptionIDs)
+            }
+        )
+        _selections = State(initialValue: Dictionary(
+            uniqueKeysWithValues: survey.draft.questions.map { question in
+                if let submitted = submittedAnswers[question.id] {
+                    return (question.id, submitted)
+                }
+                if survey.status == .pending,
+                   question.kind == .ranking,
+                   question.isRequired {
+                    return (question.id, question.options.map(\.id))
+                }
+                return (question.id, [])
             }
         ))
         _notes = State(initialValue: survey.submission?.notes ?? "")
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .top, spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(AppPalette.ai.opacity(0.1))
-                    Image(systemName: "doc.questionmark.fill")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(AppPalette.ai)
-                }
-                .frame(width: 46, height: 46)
-
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(survey.draft.title)
-                        .appFont(.title3.weight(.bold))
-                    Text(survey.draft.purpose)
-                        .appFont(.body)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("由 \(creatorName) 发起")
-                        .appFont(.caption2)
-                        .foregroundStyle(.tertiary)
-                    if let projectName {
-                        Label(projectName, systemImage: "folder.fill")
-                            .appFont(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
-                Text(statusTitle)
-                    .appFont(.caption)
-                    .foregroundStyle(survey.status == .pending ? AppPalette.ai : .secondary)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(
-                        (survey.status == .pending ? AppPalette.aiSoft : AppPalette.inputSurface),
-                        in: Capsule()
-                    )
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            surveyHeader
+            contentTabs
+                .padding(.top, 24)
+                .padding(.bottom, 40)
 
             if selectedTab == .questionnaire {
-                if survey.status == .pending {
-                    let answered = survey.draft.questions.filter {
-                        !(selections[$0.id] ?? []).isEmpty
-                    }.count
-                    VStack(alignment: .leading, spacing: 7) {
-                        HStack {
-                            Text("填写进度")
-                                .appFont(.caption.weight(.semibold))
-                            Spacer()
-                            Text("\(answered) / \(survey.draft.questions.count)")
-                                .appFont(.caption.weight(.semibold))
-                                .monospacedDigit()
-                                .foregroundStyle(AppPalette.ai)
-                        }
-                        ProgressView(
-                            value: Double(answered),
-                            total: Double(max(1, survey.draft.questions.count))
-                        )
-                        .tint(AppPalette.ai)
-                    }
-                    .padding(12)
-                    .background(AppPalette.ai.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-                }
-
                 questionnaireContent
             } else if let resolution = survey.resolution {
                 resolutionView(resolution)
@@ -379,101 +258,178 @@ private struct RequirementSurveyCard: View {
                     .background(AppPalette.inputSurface, in: RoundedRectangle(cornerRadius: 10))
             }
         }
-        .padding(22)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(AppPalette.ai.opacity(0.13), lineWidth: 1)
+    }
+
+    private var surveyHeader: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(alignment: .center, spacing: 10) {
+                Label("需求调研", systemImage: "list.clipboard")
+                    .appFont(.caption.weight(.semibold))
+                    .foregroundStyle(AppPalette.ai)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(AppPalette.ai.opacity(0.1), in: Capsule())
+
+                Text(statusTitle)
+                    .appFont(.caption.weight(.medium))
+                    .foregroundStyle(statusColor)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(statusColor.opacity(0.1), in: Capsule())
+            }
+
+            Text(survey.draft.title)
+                .appFont(.title2.weight(.bold))
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(survey.draft.purpose)
+                .appFont(.body)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 12) {
+                Label("由 \(creatorName) 发起", systemImage: "person")
+                if let projectName {
+                    Label(projectName, systemImage: "folder")
+                }
+                if survey.status == .pending {
+                    Text("已完成 \(answeredQuestionCount)/\(survey.draft.questions.count)")
+                        .monospacedDigit()
+                }
+            }
+            .appFont(.caption)
+            .foregroundStyle(.tertiary)
         }
-        .shadow(color: .black.opacity(0.04), radius: 12, y: 5)
+    }
+
+    private var contentTabs: some View {
+        HStack(spacing: 6) {
+            ForEach(RequirementSurveyDetailTab.allCases) { tab in
+                Button {
+                    selectedTabBinding(tab)
+                } label: {
+                    Text(tab.rawValue)
+                        .appFont(.subheadline.weight(.medium))
+                        .foregroundStyle(selectedTab == tab ? .white : .secondary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(
+                            selectedTab == tab ? AppPalette.ai : Color.clear,
+                            in: Capsule()
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .background(AppPalette.inputSurface.opacity(0.7), in: Capsule())
+        .overlay {
+            Capsule().stroke(AppPalette.border.opacity(0.65), lineWidth: 1)
+        }
+        .fixedSize()
+    }
+
+    private func selectedTabBinding(_ tab: RequirementSurveyDetailTab) {
+        withAnimation(.easeOut(duration: 0.16)) {
+            selectedTab = tab
+        }
     }
 
     private var questionnaireContent: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 42) {
             ForEach(Array(survey.draft.questions.enumerated()), id: \.element.id) { index, question in
-                VStack(alignment: .leading, spacing: 9) {
-                    HStack(alignment: .top, spacing: 9) {
-                        Text("\(index + 1)")
-                            .appFont(.caption.weight(.bold))
-                            .foregroundStyle(AppPalette.ai)
-                            .frame(width: 24, height: 24)
-                            .background(AppPalette.ai.opacity(0.1), in: Circle())
+                VStack(alignment: .leading, spacing: 13) {
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text("\(index + 1).")
                         Text(question.prompt)
-                            .appFont(.subheadline)
                             .fontWeight(.medium)
-                            .padding(.top, 2)
                         if question.isRequired {
                             Text("*")
-                                .foregroundStyle(.red)
-                                .padding(.top, 2)
-                        }
-                        Spacer(minLength: 8)
-                        if question.kind == .multipleChoice {
-                            Text("可多选")
-                                .appFont(.caption2)
-                                .foregroundStyle(AppPalette.ai)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(AppPalette.ai.opacity(0.08), in: Capsule())
+                                .appFont(.caption2.weight(.bold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 16, height: 16)
+                                .background(.primary.opacity(0.08), in: Circle())
                         }
                     }
-                    SurveyOptionFlowLayout(minItemWidth: 230, spacing: 9) {
-                        ForEach(question.options) { option in
-                            optionButton(option, question: question)
+                    .appFont(.title3)
+
+                    if question.kind == .multipleChoice {
+                        Text("请选择所有符合的选项")
+                            .appFont(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if question.kind == .ranking {
+                        Text("请按优先级排序，1 表示最高优先级")
+                            .appFont(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        if question.kind == .ranking {
+                            ForEach(Array(rankedOptions(for: question).enumerated()), id: \.element.id) { optionIndex, option in
+                                rankingOptionRow(
+                                    option,
+                                    rank: optionIndex,
+                                    question: question
+                                )
+                            }
+                        } else {
+                            ForEach(Array(question.options.enumerated()), id: \.element.id) { optionIndex, option in
+                                optionButton(option, optionIndex: optionIndex, question: question)
+                            }
                         }
                     }
-                }
-                .padding(14)
-                .background(
-                    AppPalette.surfaceSubtle.opacity(0.72),
-                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(AppPalette.border.opacity(0.7), lineWidth: 1)
+                    .padding(.top, 1)
                 }
             }
 
             notesContent
 
             if survey.status == .pending {
-                HStack {
-                    Spacer()
+                HStack(alignment: .center, spacing: 16) {
+                    if !canSubmit {
+                        Label("请完成所有必填题", systemImage: "asterisk")
+                            .appFont(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
                     Button {
                         Task { _ = await onSubmit(survey, selections, notes) }
                     } label: {
                         if isSubmitting {
                             ProgressView().controlSize(.small)
                         } else {
-                            Text("提交调研")
+                            Label("提交调研", systemImage: "arrow.right")
                         }
                     }
                     .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .tint(AppPalette.ai)
                     .disabled(isSubmitting || !canSubmit)
                 }
+                .padding(.top, 4)
             }
         }
     }
 
     private var notesContent: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Label("备注", systemImage: "text.alignleft")
-                .appFont(.subheadline.weight(.semibold))
-                .foregroundStyle(AppPalette.ai)
-            Text("如果选项没有覆盖完整情况，可在这里统一补充。")
+        VStack(alignment: .leading, spacing: 12) {
+            Text("补充说明")
+                .appFont(.title3.weight(.medium))
+            Text("如果选项没有覆盖完整情况，可以在这里统一补充。")
                 .appFont(.caption)
                 .foregroundStyle(.secondary)
             if survey.status == .pending {
                 TextEditor(text: $notes)
                     .scrollContentBackground(.hidden)
                     .appFont(.body)
-                    .frame(minHeight: 90)
-                    .padding(8)
-                    .background(AppPalette.inputSurface, in: RoundedRectangle(cornerRadius: 10))
+                    .frame(minHeight: 112)
+                    .padding(10)
+                    .background(AppPalette.inputSurface.opacity(0.92), in: RoundedRectangle(cornerRadius: 9))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(AppPalette.border, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 9)
+                            .stroke(AppPalette.border.opacity(0.9), lineWidth: 1)
                     }
+                    .shadow(color: .black.opacity(0.035), radius: 2, y: 1)
             } else {
                 Text(notes.isEmpty ? "无" : notes)
                     .appFont(.body)
@@ -483,12 +439,10 @@ private struct RequirementSurveyCard: View {
                     .background(AppPalette.inputSurface, in: RoundedRectangle(cornerRadius: 10))
             }
         }
-        .padding(14)
-        .background(AppPalette.ai.opacity(0.045), in: RoundedRectangle(cornerRadius: 12))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(AppPalette.ai.opacity(0.13), lineWidth: 1)
-        }
+    }
+
+    private var answeredQuestionCount: Int {
+        survey.draft.questions.filter { !(selections[$0.id] ?? []).isEmpty }.count
     }
 
     private var canSubmit: Bool {
@@ -502,32 +456,36 @@ private struct RequirementSurveyCard: View {
         return survey.resolution == nil ? "形成方案中" : "已形成方案"
     }
 
+    private var statusColor: Color {
+        if survey.status == .pending { return AppPalette.ai }
+        return survey.resolution == nil ? .orange : .green
+    }
+
     private func resolutionView(
         _ resolution: LocalAgentRequirementSurveyResolution
     ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Divider()
+        VStack(alignment: .leading, spacing: 30) {
             Label("处理结果", systemImage: "checkmark.seal.fill")
-                .appFont(.headline)
+                .appFont(.title3.weight(.semibold))
                 .foregroundStyle(AppPalette.ai)
 
-            VStack(alignment: .leading, spacing: 5) {
-                Text("结论摘要").appFont(.subheadline).fontWeight(.semibold)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("结论摘要").appFont(.headline).fontWeight(.semibold)
                 Text(resolution.summary)
                     .appFont(.body)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            VStack(alignment: .leading, spacing: 7) {
-                Text("解决方案").appFont(.subheadline).fontWeight(.semibold)
+            VStack(alignment: .leading, spacing: 10) {
+                Text("解决方案").appFont(.headline).fontWeight(.semibold)
                 MarkdownDocumentView(
                     markdown: resolution.solutionMarkdown,
                     allowsTextSelection: true
                 )
             }
 
-            VStack(alignment: .leading, spacing: 9) {
-                Text("执行计划").appFont(.subheadline).fontWeight(.semibold)
+            VStack(alignment: .leading, spacing: 11) {
+                Text("执行计划").appFont(.headline).fontWeight(.semibold)
                 ForEach(Array(resolution.executionSteps.enumerated()), id: \.element.id) { index, step in
                     VStack(alignment: .leading, spacing: 5) {
                         Text("\(index + 1). \(step.title)")
@@ -546,9 +504,13 @@ private struct RequirementSurveyCard: View {
                             Text("验收标准：\(step.acceptanceCriteria)").appFont(.caption)
                         }
                     }
-                    .padding(10)
+                    .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AppPalette.inputSurface, in: RoundedRectangle(cornerRadius: 10))
+                    .background(AppPalette.inputSurface.opacity(0.85), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(AppPalette.border.opacity(0.65), lineWidth: 1)
+                    }
                 }
             }
 
@@ -575,6 +537,7 @@ private struct RequirementSurveyCard: View {
 
     private func optionButton(
         _ option: LocalAgentRequirementSurveyOption,
+        optionIndex: Int,
         question: LocalAgentRequirementSurveyQuestion
     ) -> some View {
         let selected = selections[question.id, default: []].contains(option.id)
@@ -583,34 +546,151 @@ private struct RequirementSurveyCard: View {
             if question.kind == .singleChoice {
                 selections[question.id] = [option.id]
             } else if selected {
-                selections[question.id, default: []].remove(option.id)
+                selections[question.id, default: []].removeAll { $0 == option.id }
             } else {
-                selections[question.id, default: []].insert(option.id)
+                let updated = Set(selections[question.id, default: []] + [option.id])
+                selections[question.id] = question.options.map(\.id).filter(updated.contains)
             }
         } label: {
-            HStack(spacing: 9) {
-                Image(systemName: question.kind == .multipleChoice
-                      ? (selected ? "checkmark.square.fill" : "square")
-                      : (selected ? "circle.inset.filled" : "circle"))
-                    .foregroundStyle(selected ? AppPalette.ai : .secondary)
-                Text(option.label)
-                    .appFont(.subheadline)
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .background(
-                selected ? AppPalette.ai.opacity(0.08) : AppPalette.inputSurface,
-                in: RoundedRectangle(cornerRadius: 10)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(selected ? AppPalette.ai.opacity(0.5) : AppPalette.border, lineWidth: 1)
+            if question.kind == .multipleChoice {
+                HStack(spacing: 10) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(selected ? AppPalette.ai : AppPalette.inputSurface)
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(selected ? AppPalette.ai : AppPalette.border, lineWidth: 1)
+                        if selected {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                    .frame(width: 19, height: 19)
+
+                    Text(option.label)
+                        .appFont(.body)
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 3)
+                .contentShape(Rectangle())
+            } else {
+                HStack(spacing: 10) {
+                    Text(optionLetter(optionIndex))
+                        .appFont(.caption2.weight(.bold))
+                        .foregroundStyle(selected ? .white : .secondary)
+                        .frame(width: 19, height: 19)
+                        .background(
+                            selected ? AppPalette.ai.opacity(0.72) : Color.primary.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: 4)
+                        )
+                    Text(option.label)
+                        .appFont(.body)
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(AppPalette.inputSurface.opacity(0.92), in: RoundedRectangle(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(selected ? AppPalette.ai.opacity(0.72) : AppPalette.border, lineWidth: selected ? 2 : 1)
+                }
+                .shadow(color: .black.opacity(0.045), radius: 2, y: 1)
             }
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .disabled(survey.status == .submitted)
+    }
+
+    private func rankedOptions(
+        for question: LocalAgentRequirementSurveyQuestion
+    ) -> [LocalAgentRequirementSurveyOption] {
+        let optionsByID = Dictionary(uniqueKeysWithValues: question.options.map { ($0.id, $0) })
+        let rankedIDs = selections[question.id] ?? []
+        let ranked = rankedIDs.compactMap { optionsByID[$0] }
+        let rankedIDSet = Set(rankedIDs)
+        return ranked + question.options.filter { !rankedIDSet.contains($0.id) }
+    }
+
+    private func rankingOptionRow(
+        _ option: LocalAgentRequirementSurveyOption,
+        rank: Int,
+        question: LocalAgentRequirementSurveyQuestion
+    ) -> some View {
+        HStack(spacing: 10) {
+            Text("\(rank + 1)")
+                .appFont(.caption.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 21, height: 21)
+                .background(AppPalette.ai.opacity(0.72), in: RoundedRectangle(cornerRadius: 4))
+
+            Text(option.label)
+                .appFont(.body)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 10)
+
+            HStack(spacing: 2) {
+                rankingMoveButton(
+                    systemImage: "chevron.up",
+                    help: "上移",
+                    disabled: rank == 0,
+                    action: { moveRankingOption(at: rank, offset: -1, question: question) }
+                )
+                rankingMoveButton(
+                    systemImage: "chevron.down",
+                    help: "下移",
+                    disabled: rank == question.options.count - 1,
+                    action: { moveRankingOption(at: rank, offset: 1, question: question) }
+                )
+            }
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .padding(.vertical, 7)
+        .background(AppPalette.inputSurface.opacity(0.92), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(AppPalette.border, lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
+    }
+
+    private func rankingMoveButton(
+        systemImage: String,
+        help: String,
+        disabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 10, weight: .semibold))
+                .frame(width: 24, height: 24)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(disabled ? Color.secondary.opacity(0.35) : AppPalette.ai)
+        .contentShape(Rectangle())
+        .disabled(disabled || survey.status == .submitted)
+        .help(help)
+    }
+
+    private func moveRankingOption(
+        at index: Int,
+        offset: Int,
+        question: LocalAgentRequirementSurveyQuestion
+    ) {
+        guard survey.status == .pending else { return }
+        var ordered = rankedOptions(for: question).map(\.id)
+        let destination = index + offset
+        guard ordered.indices.contains(index), ordered.indices.contains(destination) else { return }
+        ordered.swapAt(index, destination)
+        selections[question.id] = ordered
+    }
+
+    private func optionLetter(_ index: Int) -> String {
+        guard index >= 0, index < 26 else { return "\(index + 1)" }
+        return String(UnicodeScalar(65 + index)!)
     }
 }

@@ -121,11 +121,46 @@ extension LocalAgentGroupChatScheduler {
         savedRun.checkpoint.inFlightCallID = nil
         savedRun.checkpoint.status = .paused
         savedRun.checkpoint.stopReason = nil
+        // The interrupted attempt may have consumed the complete run budget while waiting for
+        // its side effect. An explicit Human retry is a new attempt and needs a fresh deadline;
+        // model/tool history remains intact for reconciliation.
+        savedRun.checkpoint.elapsedSeconds = 0
         savedRun.events.append(.init(
             kind: "retry_authorized",
             detail: "Human 已明确重试中断步骤：\(inFlightCallID)",
             modelCalls: savedRun.checkpoint.modelCalls
         ))
+        if delivery.triggerKind == .todo,
+           let todo = try await store.todoForDelivery(
+            ownerUserID: ownerUserID,
+            deliveryID: deliveryID
+           ), todo.status == .blocked {
+            _ = try await store.updateAgentTodoAfterHumanReview(
+                ownerUserID: ownerUserID,
+                agentID: todo.agentID,
+                todoID: todo.id,
+                update: .init(status: .pending, blockedReason: ""),
+                nowUnixMs: now()
+            )
+            _ = try await store.updateAgentTodo(
+                ownerUserID: ownerUserID,
+                agentID: todo.agentID,
+                todoID: todo.id,
+                update: .init(status: .inProgress, blockedReason: ""),
+                nowUnixMs: now()
+            )
+            _ = try await store.appendAgentTodoProgress(
+                ownerUserID: ownerUserID,
+                agentID: todo.agentID,
+                todoID: todo.id,
+                kind: .progress,
+                runID: savedRun.context.runID,
+                stage: "retry_authorized",
+                detail: "Human 已确认重试中断步骤，Todo 已恢复执行。",
+                assetUpdateSuggestions: [],
+                nowUnixMs: now()
+            )
+        }
         savedRun.updatedAtUnixMs = max(now(), savedRun.updatedAtUnixMs)
         try await store.saveRun(savedRun)
         await service.publishChange(.init(

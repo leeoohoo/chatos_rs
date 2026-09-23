@@ -79,6 +79,115 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         }
     }
 
+    func testRequirementSurveyCreateSchemaSupportsRankingQuestions() throws {
+        let create = try XCTUnwrap(
+            NativeMCPRequirementSurveyTools.writeToolDefinitions.first {
+                $0.jsonObject?["name"]?.jsonString == "requirement_survey_create"
+            }
+        )
+        let kinds = create.jsonObject?["inputSchema"]?.jsonObject?["properties"]?
+            .jsonObject?["questions"]?.jsonObject?["items"]?.jsonObject?["properties"]?
+            .jsonObject?["kind"]?.jsonObject?["enum"]?.jsonArray?
+            .compactMap(\.jsonString)
+
+        XCTAssertEqual(kinds, ["single_choice", "multiple_choice", "ranking"])
+    }
+
+    func testTodoProjectWriteCommitUsesExecutionPlanAuthorizationWithoutSecondApproval() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("todo-project-write-\(UUID().uuidString)", isDirectory: true)
+        let project = root.appendingPathComponent("project", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let stateURL = root.appendingPathComponent("connector-state.json")
+        var state = NativeConnectorPersistentState.empty
+        state.user = .init(id: "alice", username: "alice", displayName: nil, role: "user")
+        state.deviceID = "device-1"
+        state.workspaces = [.init(
+            id: "workspace-1",
+            alias: "test",
+            absoluteRoot: root.path,
+            fingerprint: "test"
+        )]
+        try JSONEncoder().encode(state).write(to: stateURL)
+
+        let service = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
+                stateURL: stateURL
+            ),
+            ticketProvider: AgentPluginTestTicketProvider()
+        )
+        let context = try LocalAgentChatRunContext(
+            ownerUserID: "alice",
+            projectID: "project-1",
+            roomID: "room-1",
+            agentID: "agent-1",
+            deliveryID: "delivery-1",
+            triggerMessageID: "message-1",
+            rootMessageID: "message-1",
+            runID: "run-1",
+            hopCount: 0,
+            lane: .executor
+        )
+        let resolvedProject = try await service.resolveProjectPath(project.path)
+        let provider = NativeAgentBuiltinToolProvider(
+            service: service,
+            runContext: context,
+            resolvedProject: resolvedProject,
+            allowedCapabilities: [.projectWrite]
+        )
+
+        let opened = try await provider.execute(.init(
+            id: "open-1",
+            name: "open_edit_session",
+            arguments: #"{"purpose":"test"}"#
+        ))
+        XCTAssertFalse(opened.isError)
+        let openedValue = try JSONDecoder().decode(
+            NativeJSONValue.self,
+            from: Data(opened.content.utf8)
+        )
+        let sessionID = try XCTUnwrap(
+            openedValue.jsonObject?["result"]?.jsonObject?["session_id"]?.jsonString
+        )
+        let staged = try await provider.execute(.init(
+            id: "stage-1",
+            name: "stage_edit_batch",
+            arguments: NativeJSONValue.object([
+                "session_id": .string(sessionID),
+                "operations": .array([.object([
+                    "kind": .string("write"),
+                    "path": .string("docs/delivered.md"),
+                    "content": .string("delivered\n"),
+                    "expected_sha256": .null,
+                ])]),
+            ]).canonicalJSONString
+        ))
+        XCTAssertFalse(staged.isError)
+
+        let committed = try await provider.execute(.init(
+            id: "commit-1",
+            name: "commit_edit_session",
+            arguments: NativeJSONValue.object([
+                "session_id": .string(sessionID),
+            ]).canonicalJSONString
+        ))
+
+        XCTAssertFalse(committed.isError)
+        XCTAssertTrue(committed.content.contains("docs/delivered.md"))
+        XCTAssertEqual(
+            try String(
+                contentsOf: project.appendingPathComponent("docs/delivered.md"),
+                encoding: .utf8
+            ),
+            "delivered\n"
+        )
+        let pendingApprovals = try await service.fetchPendingApprovals()
+        XCTAssertTrue(pendingApprovals.isEmpty)
+    }
+
     func testInstalledPluginRunsDirectlyWithoutRelayRequest() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("agent-plugin-provider-\(UUID().uuidString)")

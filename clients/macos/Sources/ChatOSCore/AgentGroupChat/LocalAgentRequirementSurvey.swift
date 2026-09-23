@@ -8,6 +8,7 @@ public enum LocalAgentRequirementSurveyStatus: String, Codable, Sendable, CaseIt
 public enum LocalAgentRequirementSurveyQuestionKind: String, Codable, Sendable, CaseIterable {
     case singleChoice = "single_choice"
     case multipleChoice = "multiple_choice"
+    case ranking
 }
 
 public struct LocalAgentRequirementSurveyOption: Codable, Sendable, Equatable, Identifiable {
@@ -59,6 +60,9 @@ public struct LocalAgentRequirementSurveyQuestion: Codable, Sendable, Equatable,
         )
         guard (2...12).contains(options.count),
               Set(options.map(\.id)).count == options.count else {
+            throw AgentGroupChatError.invalidField("requirementSurveyOptions")
+        }
+        if kind == .ranking, options.count > 10 {
             throw AgentGroupChatError.invalidField("requirementSurveyOptions")
         }
         for option in options { try option.validate() }
@@ -337,6 +341,10 @@ public struct LocalAgentRequirementSurvey: Codable, Sendable, Equatable, Identif
                 }
             case .multipleChoice:
                 break
+            case .ranking:
+                guard selected.isEmpty || selected.count == question.options.count else {
+                    throw AgentGroupChatError.invalidField("requirementSurveyAnswers")
+                }
             }
         }
     }

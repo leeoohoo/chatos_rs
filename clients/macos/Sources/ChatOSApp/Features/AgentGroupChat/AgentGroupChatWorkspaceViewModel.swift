@@ -35,6 +35,7 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
     private var modelLoadTask: Task<LocalAgentBuilderResources, Error>?
     private var hasLoadedModels = false
     private var changeObservationTask: Task<Void, Never>?
+    private var triggerRunsReloadRequested = false
 
     init(
         ownerUserID: String,
@@ -65,12 +66,19 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
             let changes = await service.changes(ownerUserID: ownerUserID)
             for await change in changes {
                 guard !Task.isCancelled else { break }
-                guard change.kind == .roomUpdated || change.kind == .deliveryClaimed else {
+                guard change.kind == .roomUpdated
+                        || change.kind == .deliveryClaimed
+                        || change.kind == .runUpdated else {
                     continue
                 }
                 try? await Task.sleep(for: .milliseconds(120))
                 guard !Task.isCancelled else { break }
-                await self?.load()
+                if change.kind == .runUpdated {
+                    await self?.loadTriggerRuns()
+                } else {
+                    await self?.load()
+                    await self?.loadTriggerRuns()
+                }
             }
         }
     }
@@ -244,45 +252,54 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
     }
 
     func loadTriggerRuns() async {
-        guard let selectedAgentID, !isLoadingTriggerRuns else { return }
+        guard selectedAgentID != nil else { return }
+        if isLoadingTriggerRuns {
+            triggerRunsReloadRequested = true
+            return
+        }
         isLoadingTriggerRuns = true
         defer { isLoadingTriggerRuns = false }
-        do {
-            let store = try await resolveStore()
-            let runs = try await store.listAgentRuns(
-                ownerUserID: ownerUserID,
-                agentID: selectedAgentID,
-                limit: 100
-            )
-            let deliveriesByID = try await store.deliveries(
-                ownerUserID: ownerUserID,
-                deliveryIDs: runs.map(\.context.deliveryID)
-            )
-            let messagesByID = try await store.messages(
-                ownerUserID: ownerUserID,
-                messageIDs: runs.map(\.context.triggerMessageID)
-            )
-            let roomsByID = Dictionary(uniqueKeysWithValues:
-                (rooms + directConversations).map { ($0.id, $0) }
-            )
-            let presentations = runs.map { run in
-                TriggerRunPresentation(
-                    run: run,
-                    delivery: deliveriesByID[run.context.deliveryID],
-                    room: roomsByID[run.context.roomID],
-                    triggerMessage: messagesByID[run.context.triggerMessageID]
+        repeat {
+            triggerRunsReloadRequested = false
+            guard let selectedAgentID else { return }
+            do {
+                let store = try await resolveStore()
+                let runs = try await store.listAgentRuns(
+                    ownerUserID: ownerUserID,
+                    agentID: selectedAgentID,
+                    limit: 100
                 )
+                let deliveriesByID = try await store.deliveries(
+                    ownerUserID: ownerUserID,
+                    deliveryIDs: runs.map(\.context.deliveryID)
+                )
+                let messagesByID = try await store.messages(
+                    ownerUserID: ownerUserID,
+                    messageIDs: runs.map(\.context.triggerMessageID)
+                )
+                let roomsByID = Dictionary(uniqueKeysWithValues:
+                    (rooms + directConversations).map { ($0.id, $0) }
+                )
+                let presentations = runs.map { run in
+                    TriggerRunPresentation(
+                        run: run,
+                        delivery: deliveriesByID[run.context.deliveryID],
+                        room: roomsByID[run.context.roomID],
+                        triggerMessage: messagesByID[run.context.triggerMessageID]
+                    )
+                }
+                guard self.selectedAgentID == selectedAgentID else { continue }
+                triggerRuns = presentations
+            } catch {
+                errorMessage = error.localizedDescription
             }
-            guard self.selectedAgentID == selectedAgentID else { return }
-            triggerRuns = presentations
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        } while triggerRunsReloadRequested
     }
 
     func resumeRun(deliveryID: String, projectID: String) async {
-        guard runActionDeliveryIDs.insert(deliveryID).inserted else { return }
-        defer { runActionDeliveryIDs.remove(deliveryID) }
+        guard !runActionDeliveryIDs.contains(deliveryID) else { return }
+        runActionDeliveryIDs = runActionDeliveryIDs.union([deliveryID])
+        defer { runActionDeliveryIDs = runActionDeliveryIDs.subtracting([deliveryID]) }
         do {
             let result = try await scheduler.resumeDelivery(
                 ownerUserID: ownerUserID,
@@ -300,8 +317,9 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
     }
 
     func retryInterruptedRun(deliveryID: String, projectID: String) async {
-        guard runActionDeliveryIDs.insert(deliveryID).inserted else { return }
-        defer { runActionDeliveryIDs.remove(deliveryID) }
+        guard !runActionDeliveryIDs.contains(deliveryID) else { return }
+        runActionDeliveryIDs = runActionDeliveryIDs.union([deliveryID])
+        defer { runActionDeliveryIDs = runActionDeliveryIDs.subtracting([deliveryID]) }
         do {
             let result = try await scheduler.retryInterruptedDelivery(
                 ownerUserID: ownerUserID,

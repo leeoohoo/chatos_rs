@@ -88,7 +88,7 @@ struct NativeMCPRequirementSurveyTools: Sendable {
         [
             definition(
                 name: "requirement_survey_create",
-                description: "在当前任务绑定项目创建需求调研单。调用前必须先 list/get 排除重复。只能创建单选或多选题；客户端页面会统一提供备注框。",
+                description: "在当前任务绑定项目创建需求调研单。调用前必须先 list/get 排除重复。支持单选、多选和排序题；客户端页面会统一提供备注框。",
                 properties: [
                     "request_key": stringSchema(maximum: 512),
                     "title": stringSchema(maximum: 240),
@@ -107,6 +107,7 @@ struct NativeMCPRequirementSurveyTools: Sendable {
                                     "enum": .array([
                                         .string("single_choice"),
                                         .string("multiple_choice"),
+                                        .string("ranking"),
                                     ]),
                                 ]),
                                 "required": .object(["type": .string("boolean")]),

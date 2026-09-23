@@ -47,6 +47,20 @@ extension LocalAgentChatToolProvider {
                 retryable: true
             )
         }
+        if status == .pending,
+           existingTodo.status == .blocked,
+           try await store.agentTodoRequiresHumanRetry(
+            ownerUserID: context.ownerUserID,
+            agentID: authority.agentID,
+            todoID: authority.todoID
+           ) {
+            return Self.structuredFailure(
+                code: "human_retry_required",
+                field: "status",
+                message: "该 Todo 的写入或计费步骤执行结果不明，只有 Human 能在运行详情中点击“重试中断步骤”；项目经理 Agent 不能把它改回 pending。",
+                retryable: false
+            )
+        }
         let sourceReferences = try Self.optionalStringArray(
             arguments,
             key: "source_message_refs"

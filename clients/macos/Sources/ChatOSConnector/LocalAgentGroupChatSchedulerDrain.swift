@@ -236,8 +236,8 @@ extension LocalAgentGroupChatScheduler {
     /// live communication work that intentionally runs beside a long executor task. Any remaining
     /// durable `running` checkpoint was left behind by an app exit or interrupted provider request.
     /// Resuming is safe even with an in-flight write marker because AgentRuntime converts that
-    /// checkpoint to `needsReview` before any replay. User pauses, limits, and review states remain
-    /// untouched.
+    /// checkpoint to `needsReview` before any replay. Review states are never replayed
+    /// automatically, but are reconciled onto the shared Todo board as a visible blocker.
     func recoverInterruptedRuns(
         store: SQLiteAgentGroupChatStore,
         ownerUserID: String,
@@ -252,11 +252,22 @@ extension LocalAgentGroupChatScheduler {
                 limit: 20
             )
             for run in runs where results.count < maximumRuns {
-                guard Self.isAutomaticTriggerRecoveryEligible(run.checkpoint),
-                      let delivery = try await store.delivery(
+                guard let delivery = try await store.delivery(
                         ownerUserID: ownerUserID,
                         deliveryID: run.context.deliveryID
                       ), delivery.status == .running else { continue }
+                if run.checkpoint.status == .needsReview {
+                    try await suspendTodoForReview(
+                        store: store,
+                        ownerUserID: ownerUserID,
+                        delivery: delivery,
+                        runID: run.context.runID,
+                        detail: run.checkpoint.stopReason
+                            ?? "执行中断，需要检查副作用后再决定是否重试。"
+                    )
+                    continue
+                }
+                guard Self.isAutomaticTriggerRecoveryEligible(run.checkpoint) else { continue }
                 guard !(await activeDeliveryRegistry.contains(deliveryID: delivery.id)) else {
                     continue
                 }

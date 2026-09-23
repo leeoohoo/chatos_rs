@@ -230,6 +230,59 @@ extension SQLiteAgentGroupChatStore {
         update: LocalAgentTodoUpdate,
         nowUnixMs: Int64
     ) throws -> LocalAgentTodo {
+        try updateAgentTodo(
+            ownerUserID: ownerUserID,
+            agentID: agentID,
+            todoID: todoID,
+            update: update,
+            nowUnixMs: nowUnixMs,
+            allowsInterruptedReviewRetry: false
+        )
+    }
+
+    public func agentTodoRequiresHumanRetry(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String
+    ) throws -> Bool {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        try AgentGroupChatValidation.identifier(todoID, field: "todoID")
+        return try hasInterruptedRunRequiringHumanRetry(
+            ownerUserID: ownerUserID,
+            agentID: agentID,
+            todoID: todoID
+        )
+    }
+
+    /// The scheduler calls this only after an explicit Human retry has cleared the Run's
+    /// `needsReview` checkpoint in memory. Ordinary Agent tools must use `updateAgentTodo`,
+    /// which cannot reopen a Todo while its durable Run still requires Human review.
+    func updateAgentTodoAfterHumanReview(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String,
+        update: LocalAgentTodoUpdate,
+        nowUnixMs: Int64
+    ) throws -> LocalAgentTodo {
+        try updateAgentTodo(
+            ownerUserID: ownerUserID,
+            agentID: agentID,
+            todoID: todoID,
+            update: update,
+            nowUnixMs: nowUnixMs,
+            allowsInterruptedReviewRetry: true
+        )
+    }
+
+    private func updateAgentTodo(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String,
+        update: LocalAgentTodoUpdate,
+        nowUnixMs: Int64,
+        allowsInterruptedReviewRetry: Bool
+    ) throws -> LocalAgentTodo {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         try AgentGroupChatValidation.identifier(agentID, field: "agentID")
         try AgentGroupChatValidation.identifier(todoID, field: "todoID")
@@ -247,6 +300,17 @@ extension SQLiteAgentGroupChatStore {
             let blockedReason = update.blockedReason ?? existing.blockedReason
             let result = update.result ?? existing.result
             let executionContract = update.executionContract ?? existing.executionContract
+            if existing.status == .blocked,
+               status == .pending,
+               !allowsInterruptedReviewRetry {
+                guard try !hasInterruptedRunRequiringHumanRetry(
+                    ownerUserID: ownerUserID,
+                    agentID: agentID,
+                    todoID: todoID
+                ) else {
+                    throw AgentGroupChatError.conflict
+                }
+            }
             let revised = LocalAgentTodo(
                 id: existing.id,
                 ownerUserID: existing.ownerUserID,
@@ -272,7 +336,7 @@ extension SQLiteAgentGroupChatStore {
                 transitionAllowed = true
             } else {
                 transitionAllowed = switch (existing.status, status) {
-                case (.pending, .inProgress), (.pending, .cancelled),
+                case (.pending, .inProgress), (.pending, .blocked), (.pending, .cancelled),
                      (.inProgress, .completed), (.inProgress, .blocked), (.inProgress, .cancelled),
                      (.blocked, .pending), (.blocked, .cancelled),
                      (.completed, .pending), (.cancelled, .pending):
@@ -319,6 +383,32 @@ extension SQLiteAgentGroupChatStore {
             }
             return revised
         }
+    }
+
+    private func hasInterruptedRunRequiringHumanRetry(
+        ownerUserID: String,
+        agentID: String,
+        todoID: String
+    ) throws -> Bool {
+        try scalarInt64(
+            """
+            SELECT COUNT(*)
+            FROM project_agent_deliveries delivery
+            JOIN local_agent_group_chat_runs run
+              ON run.owner_user_id = delivery.owner_user_id
+             AND run.delivery_id = delivery.id
+            WHERE delivery.owner_user_id = ?
+              AND delivery.target_agent_id = ?
+              AND delivery.deduplication_key = ?
+              AND delivery.trigger_kind = 'todo'
+              AND delivery.status = 'running'
+              AND run.status = ?
+            """,
+            [
+                .text(ownerUserID), .text(agentID), .text("todo:\(todoID)"),
+                .text(AgentRunCheckpoint.Status.needsReview.rawValue),
+            ]
+        ) > 0
     }
 
     public func reorderAgentTodos(

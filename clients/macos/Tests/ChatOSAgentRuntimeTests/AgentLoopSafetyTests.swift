@@ -189,6 +189,36 @@ final class AgentLoopSafetyTests: XCTestCase {
         XCTAssertEqual(result.modelCalls, 3)
     }
 
+    func testResumingPausedRunGetsFreshNoProgressWindowWithoutResettingElapsedTime() async throws {
+        var checkpoint = base
+        checkpoint.status = .paused
+        checkpoint.stopReason = "连续无进展，已暂停。请检查工具错误或调整设置后继续。"
+        checkpoint.noProgressRounds = 2
+        checkpoint.elapsedSeconds = 37
+        var policy = AgentRunPolicy()
+        policy.maximumNoProgressRounds = 2
+        let model = ScriptModel([
+            .init(
+                role: .assistant,
+                toolCalls: [.init(id: "finish-after-resume", name: "finish", arguments: "{}")]
+            ),
+        ])
+
+        let result = try await AgentRuntime().run(
+            checkpoint: checkpoint,
+            scope: checkpoint.scope,
+            policy: policy,
+            model: model,
+            tools: runtimeTestTools,
+            execute: { _ in .init("resumed") }
+        )
+
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(result.noProgressRounds, 0)
+        XCTAssertGreaterThanOrEqual(result.elapsedSeconds, 37)
+        XCTAssertLessThan(result.elapsedSeconds, 38)
+    }
+
     func testPauseDoesNotCallModel() async throws {
         let model = ScriptModel([])
         let result = try await AgentRuntime().run(checkpoint: base, scope: base.scope, policy: .init(), model: model,

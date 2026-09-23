@@ -12,7 +12,7 @@ struct ProjectRequirementSurveysView: View {
     var explanation = "项目经理可在新需求、重大变更或任何信息不足的节点发起调研。选择答案后，页面末尾可统一补充备注。"
     let onSubmit: (
         LocalAgentRequirementSurvey,
-        [String: Set<String>],
+        [String: [String]],
         String
     ) async -> Bool
     @State private var selectedSurveyID: String?
