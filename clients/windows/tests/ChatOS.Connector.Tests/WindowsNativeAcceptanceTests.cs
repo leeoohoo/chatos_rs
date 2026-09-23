@@ -145,7 +145,7 @@ public sealed class WindowsNativeAcceptanceTests
                 workspace.Path),
             new TerminalSize(100, 30),
             CommandInterpreter(),
-            [],
+            ["/d", "/q", "/k", "ver > nul"],
             sandbox: null);
         var architecture = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE") ?? "UNKNOWN";
         var expected = $"CHATOS_{architecture}_CONPTY_OK";
