@@ -26,6 +26,7 @@ export async function apiRequest<T>(options: {
   method?: HttpMethod
   data?: WechatMiniprogram.IAnyObject | string | ArrayBuffer
   authenticated?: boolean
+  clearSessionOnUnauthorized?: boolean
   headers?: Record<string, string>
 }): Promise<T> {
   const authenticated = options.authenticated !== false
@@ -60,7 +61,7 @@ export async function apiRequest<T>(options: {
           resolve(response.data as T)
           return
         }
-        if (status === 401) {
+        if (status === 401 && options.clearSessionOnUnauthorized !== false) {
           sessionStore.clear()
           wx.reLaunch({ url: '/pages/bind/index' })
         }
