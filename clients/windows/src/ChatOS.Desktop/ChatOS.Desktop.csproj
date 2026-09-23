@@ -8,6 +8,14 @@
     <Platforms>x64;ARM64</Platforms>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <UseWinUI>true</UseWinUI>
+    <!--
+      The out-of-process XamlCompiler.exe bundled with Windows App SDK 1.7 has
+      broken error resources on non-English Windows installations. It exits
+      with code 1 and hides the actual diagnostic. The SDK's in-process task
+      uses the same compiler and works with dotnet/MSBuild without depending on
+      the machine UI language or a Visual Studio installation.
+    -->
+    <UseXamlCompilerExecutable>false</UseXamlCompilerExecutable>
     <EnableMsixTooling>true</EnableMsixTooling>
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
