@@ -13,10 +13,15 @@ namespace ChatOS.Connector.Tests;
 
 public sealed class SandboxSettingsViewModelTests
 {
+    private static ConnectorSandboxSettings RestrictedSettings { get; } = new(
+        true,
+        ConnectorSandboxPermissionProfile.WorkspaceWrite,
+        ConnectorSandboxNetworkAccess.Disabled);
+
     [Fact]
     public async Task LoadsAndSavesRealSandboxPolicy()
     {
-        var store = new MemoryStore(ConnectorSandboxSettings.Default);
+        var store = new MemoryStore(RestrictedSettings);
         var viewModel = Create(store);
         await viewModel.OpenAsync();
         viewModel.PermissionProfile = ConnectorSandboxPermissionProfile.ReadOnly;
@@ -33,7 +38,7 @@ public sealed class SandboxSettingsViewModelTests
     [Fact]
     public async Task FullAccessRequiresExplicitConfirmation()
     {
-        var store = new MemoryStore(ConnectorSandboxSettings.Default);
+        var store = new MemoryStore(RestrictedSettings);
         var viewModel = Create(store);
         await viewModel.OpenAsync();
         viewModel.IsEnabled = false;
@@ -42,7 +47,7 @@ public sealed class SandboxSettingsViewModelTests
         await viewModel.SaveAsync(fullAccessConfirmed: false);
 
         Assert.NotNull(viewModel.ErrorMessage);
-        Assert.Equal(ConnectorSandboxSettings.Default, store.Settings);
+        Assert.Equal(RestrictedSettings, store.Settings);
         await viewModel.SaveAsync(fullAccessConfirmed: true);
         Assert.False(store.Settings.Enabled);
         Assert.Equal(ConnectorSandboxNetworkAccess.Host, store.Settings.NetworkAccess);
@@ -51,7 +56,7 @@ public sealed class SandboxSettingsViewModelTests
     [Fact]
     public async Task ControlledNetworkIsAvailableAndSavableOnlyWhenGuardIsReady()
     {
-        var store = new MemoryStore(ConnectorSandboxSettings.Default);
+        var store = new MemoryStore(RestrictedSettings);
         var viewModel = Create(store, new ReadyGuardClient());
         await viewModel.OpenAsync();
         viewModel.NetworkAccess = ConnectorSandboxNetworkAccess.Controlled;
@@ -66,7 +71,7 @@ public sealed class SandboxSettingsViewModelTests
     [Fact]
     public async Task ControlledNetworkCannotBeSelectedWithoutServerManagedAllowlist()
     {
-        var store = new MemoryStore(ConnectorSandboxSettings.Default);
+        var store = new MemoryStore(RestrictedSettings);
         var viewModel = Create(
             store,
             new ReadyGuardClient(),
