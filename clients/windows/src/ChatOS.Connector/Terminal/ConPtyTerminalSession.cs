@@ -605,11 +605,27 @@ internal sealed record NativeConPtyProcess(
             thread?.Dispose();
             process?.Dispose();
             job?.Dispose();
-            pseudoConsole?.Dispose();
             pseudoInput?.Dispose();
             inputWriter?.Dispose();
             outputReader?.Dispose();
             pseudoOutput?.Dispose();
+            if (pseudoConsole is not null)
+            {
+                var closeTask = Task.Factory.StartNew(
+                    pseudoConsole.Dispose,
+                    CancellationToken.None,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default);
+                try
+                {
+                    await closeTask.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    // The process and every pipe are already closed. Do not let a stuck
+                    // ConHost cleanup mask the original launch failure indefinitely.
+                }
+            }
             throw;
         }
         finally
