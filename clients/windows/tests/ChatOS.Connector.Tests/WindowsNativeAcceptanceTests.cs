@@ -526,53 +526,9 @@ public sealed class WindowsNativeAcceptanceTests
         public static TemporaryDirectory Create()
         {
             var path = System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ChatOS",
-                "WindowsClient",
-                "NativeTests",
+                System.IO.Path.GetTempPath(),
                 $"chatos-native-{Guid.NewGuid():N}");
             Directory.CreateDirectory(path);
-            if (OperatingSystem.IsWindows())
-            {
-                var start = new ProcessStartInfo
-                {
-                    FileName = System.IO.Path.Combine(Environment.SystemDirectory, "icacls.exe"),
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                };
-                start.ArgumentList.Add(path);
-                start.ArgumentList.Add("/setintegritylevel");
-                start.ArgumentList.Add("(OI)(CI)L");
-                start.ArgumentList.Add("/C");
-                start.ArgumentList.Add("/Q");
-                using var process = Process.Start(start)
-                    ?? throw new InvalidOperationException("Unable to prepare native test workspace integrity.");
-                process.WaitForExit();
-                if (process.ExitCode != 0)
-                {
-                    throw new InvalidOperationException(
-                        $"Unable to prepare native test workspace integrity (icacls {process.ExitCode}).");
-                }
-                var grant = new ProcessStartInfo
-                {
-                    FileName = System.IO.Path.Combine(Environment.SystemDirectory, "icacls.exe"),
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                };
-                grant.ArgumentList.Add(path);
-                grant.ArgumentList.Add("/grant:r");
-                grant.ArgumentList.Add("*S-1-15-2-1:(OI)(CI)F");
-                grant.ArgumentList.Add("/C");
-                grant.ArgumentList.Add("/Q");
-                using var grantProcess = Process.Start(grant)
-                    ?? throw new InvalidOperationException("Unable to grant native test package access.");
-                grantProcess.WaitForExit();
-                if (grantProcess.ExitCode != 0)
-                {
-                    throw new InvalidOperationException(
-                        $"Unable to grant native test package access (icacls {grantProcess.ExitCode}).");
-                }
-            }
             return new TemporaryDirectory(path);
         }
 
