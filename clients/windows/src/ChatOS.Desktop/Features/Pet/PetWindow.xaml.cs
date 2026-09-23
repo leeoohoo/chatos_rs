@@ -52,6 +52,7 @@ public sealed partial class PetWindow : Window
         _approvals = approvals;
         _placementStore = placementStore;
         InitializeComponent();
+        WindowRoot.DataContext = this;
         ConfigureNativeWindow();
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
         ViewModel.Activities.CollectionChanged += (_, _) => UpdateVisualState();

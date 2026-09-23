@@ -232,7 +232,7 @@
                                 Padding="12"
                                 Background="{StaticResource ChatOSProcessBackgroundBrush}"
                                 CornerRadius="10"
-                                Visibility="{x:Bind ViewModel.HasActivePrompt, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                Visibility="{Binding ViewModel.HasActivePrompt, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <StackPanel Spacing="9">
                                     <TextBlock Text="{x:Bind ViewModel.ActivePrompt.Message, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
                                     <ItemsControl ItemsSource="{x:Bind ViewModel.ActivePrompt.Fields, Mode=OneWay}">
@@ -259,10 +259,10 @@
                                         DisplayMemberPath="Label"
                                         ItemsSource="{x:Bind ViewModel.ActivePrompt.Options, Mode=OneWay}"
                                         SelectedItem="{x:Bind ViewModel.ActivePrompt.SelectedSingleOption, Mode=TwoWay}"
-                                        Visibility="{x:Bind ViewModel.ActivePrompt.IsSingleChoice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        Visibility="{Binding ViewModel.ActivePrompt.IsSingleChoice, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                     <ItemsControl
                                         ItemsSource="{x:Bind ViewModel.ActivePrompt.Options, Mode=OneWay}"
-                                        Visibility="{x:Bind ViewModel.ActivePrompt.AllowsMultiple, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        Visibility="{Binding ViewModel.ActivePrompt.AllowsMultiple, Converter={StaticResource BooleanToVisibilityConverter}}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate x:DataType="chat:AskUserChoiceOptionViewModel">
                                                 <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" Content="{Binding Label}" />
@@ -294,7 +294,7 @@
                                     Click="OnCancelTaskClicked"
                                     Content="{x:Bind ViewModel.CancelTaskLabel, Mode=OneWay}"
                                     Style="{StaticResource ChatOSPrimaryButtonStyle}"
-                                    Visibility="{x:Bind ViewModel.CanCancelSelected, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                    Visibility="{Binding ViewModel.CanCancelSelected, Converter={StaticResource BooleanToVisibilityConverter}}" />
                             </Grid>
                         </StackPanel>
                     </ScrollViewer>
@@ -451,7 +451,7 @@
                                     PlaceholderText="{x:Bind QuickChat.ComposerPlaceholder, Mode=OneWay}"
                                     Text="{x:Bind QuickChat.Conversation.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                     TextWrapping="Wrap" />
-                                <Button AutomationProperties.AutomationId="ChatOS.Pet.QuickChat.Stop" Grid.Column="1" Command="{x:Bind QuickChat.Conversation.StopCommand}" Content="{x:Bind QuickChat.CancelLabel, Mode=OneWay}" Visibility="{x:Bind QuickChat.Conversation.IsRunning, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                <Button AutomationProperties.AutomationId="ChatOS.Pet.QuickChat.Stop" Grid.Column="1" Command="{x:Bind QuickChat.Conversation.StopCommand}" Content="{x:Bind QuickChat.CancelLabel, Mode=OneWay}" Visibility="{Binding QuickChat.Conversation.IsRunning, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                 <Button AutomationProperties.AutomationId="ChatOS.Pet.QuickChat.Send" Grid.Column="2" Command="{x:Bind QuickChat.Conversation.SendCommand}" Content="{x:Bind QuickChat.SendLabel, Mode=OneWay}" IsEnabled="{x:Bind QuickChat.Conversation.CanSendDraft, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
                             </Grid>
                         </StackPanel>
