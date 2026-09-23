@@ -145,11 +145,36 @@ internal sealed class WindowsAppContainerLaunchContext : IDisposable, IAsyncDisp
 }
 
 [StructLayout(LayoutKind.Sequential)]
-internal readonly record struct SecurityCapabilities(
-    IntPtr AppContainerSid,
-    IntPtr Capabilities,
-    uint CapabilityCount,
-    uint Reserved);
+[StructLayout(LayoutKind.Sequential)]
+internal readonly struct SecurityCapabilities
+{
+    public SecurityCapabilities(
+        IntPtr appContainerSid,
+        IntPtr capabilities,
+        uint capabilityCount,
+        uint reserved)
+    {
+        AppContainerSid = appContainerSid;
+        Capabilities = capabilities;
+        CapabilityCount = capabilityCount;
+        Reserved = reserved;
+    }
+
+    public readonly IntPtr AppContainerSid;
+    public readonly IntPtr Capabilities;
+    public readonly uint CapabilityCount;
+    public readonly uint Reserved;
+}
 
 [StructLayout(LayoutKind.Sequential)]
-internal readonly record struct SidAndAttributes(IntPtr Sid, uint Attributes);
+internal readonly struct SidAndAttributes
+{
+    public SidAndAttributes(IntPtr sid, uint attributes)
+    {
+        Sid = sid;
+        Attributes = attributes;
+    }
+
+    public readonly IntPtr Sid;
+    public readonly uint Attributes;
+}
