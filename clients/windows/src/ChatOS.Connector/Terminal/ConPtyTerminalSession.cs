@@ -569,8 +569,11 @@ internal sealed record NativeConPtyProcess(
                 AttributeList = attributeList,
             };
             var commandLine = new StringBuilder(CommandLine(executable, arguments));
-            var creationFlags = NativeConPty.ExtendedStartupInfoPresent |
-                NativeConPty.CreateSuspended;
+            var creationFlags = NativeConPty.ExtendedStartupInfoPresent;
+            if (beforeResume is not null)
+            {
+                creationFlags |= NativeConPty.CreateSuspended;
+            }
             if (sandbox is not null)
             {
                 creationFlags |= NativeConPty.CreateUnicodeEnvironment;
@@ -598,7 +601,7 @@ internal sealed record NativeConPtyProcess(
                 networkLease = await beforeResume(processInformation.ProcessId, job)
                     .ConfigureAwait(false);
             }
-            if (NativeConPty.ResumeThread(thread) == uint.MaxValue)
+            if (beforeResume is not null && NativeConPty.ResumeThread(thread) == uint.MaxValue)
             {
                 throw new Win32Exception(Marshal.GetLastWin32Error());
             }
