@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::response::Response;
 use axum::{Extension, Json};
 use serde::Deserialize;
@@ -27,6 +27,21 @@ pub(super) struct ResolveCompanionResourceRequest {
 #[derive(Debug, Deserialize)]
 pub(super) struct ResolveCompanionApprovalRequest {
     decision: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct CompanionAgentMessagesQuery {
+    before_message_id: Option<String>,
+    after_message_id: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SendCompanionAgentMessageRequest {
+    content: Option<String>,
+    #[serde(default)]
+    mentioned_agent_ids: Vec<String>,
+    client_message_id: Option<String>,
 }
 
 pub(super) async fn list_companion_resources(
@@ -67,6 +82,143 @@ pub(super) async fn resolve_companion_resource(
         json!({ "resource_id": resource_id }),
     )
     .await
+}
+
+pub(super) async fn get_companion_agent_workspace(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path(device_id): Path<String>,
+) -> Result<Response, ApiError> {
+    companion_relay(
+        &state,
+        &user,
+        device_id,
+        "companion_agent_workspace_request",
+        "/companion/agent-workspace",
+        "GET",
+        Value::Null,
+    )
+    .await
+}
+
+pub(super) async fn get_companion_agent_conversation(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path((device_id, conversation_id)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let room_id = required_path_value(conversation_id, "conversation_id")?;
+    let relay_path = format!("/companion/agent-conversations/{room_id}");
+    companion_relay(
+        &state,
+        &user,
+        device_id,
+        "companion_agent_conversation_request",
+        relay_path.as_str(),
+        "GET",
+        json!({ "room_id": room_id }),
+    )
+    .await
+}
+
+pub(super) async fn list_companion_agent_messages(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path((device_id, conversation_id)): Path<(String, String)>,
+    Query(query): Query<CompanionAgentMessagesQuery>,
+) -> Result<Response, ApiError> {
+    let room_id = required_path_value(conversation_id, "conversation_id")?;
+    if query.before_message_id.is_some() && query.after_message_id.is_some() {
+        return Err(ApiError::bad_request(
+            "before_message_id and after_message_id are mutually exclusive",
+        ));
+    }
+    let relay_path = format!("/companion/agent-conversations/{room_id}/messages");
+    companion_relay(
+        &state,
+        &user,
+        device_id,
+        "companion_agent_messages_request",
+        relay_path.as_str(),
+        "GET",
+        json!({
+            "room_id": room_id,
+            "before_message_id": query.before_message_id,
+            "after_message_id": query.after_message_id,
+            "limit": query.limit.unwrap_or(40).clamp(1, 100),
+        }),
+    )
+    .await
+}
+
+pub(super) async fn send_companion_agent_message(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path((device_id, conversation_id)): Path<(String, String)>,
+    Json(body): Json<SendCompanionAgentMessageRequest>,
+) -> Result<Response, ApiError> {
+    let room_id = required_path_value(conversation_id, "conversation_id")?;
+    let content = body
+        .content
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::bad_request("content is required"))?;
+    let client_message_id = body
+        .client_message_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value.len() <= 128)
+        .ok_or_else(|| ApiError::bad_request("client_message_id is required"))?;
+    if body.mentioned_agent_ids.len() > 32
+        || body
+            .mentioned_agent_ids
+            .iter()
+            .any(|value| value.trim().is_empty() || value.trim() != value)
+    {
+        return Err(ApiError::bad_request("mentioned_agent_ids is invalid"));
+    }
+    let relay_path = format!("/companion/agent-conversations/{room_id}/messages");
+    companion_relay(
+        &state,
+        &user,
+        device_id,
+        "companion_agent_send_message_request",
+        relay_path.as_str(),
+        "POST",
+        json!({
+            "room_id": room_id,
+            "content": content,
+            "mentioned_agent_ids": body.mentioned_agent_ids,
+            "client_message_id": client_message_id,
+        }),
+    )
+    .await
+}
+
+pub(super) async fn open_companion_agent_direct_conversation(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path((device_id, agent_id)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let agent_id = required_path_value(agent_id, "agent_id")?;
+    let relay_path = format!("/companion/agents/{agent_id}/direct-conversation");
+    companion_relay(
+        &state,
+        &user,
+        device_id,
+        "companion_agent_open_direct_request",
+        relay_path.as_str(),
+        "POST",
+        json!({ "agent_id": agent_id }),
+    )
+    .await
+}
+
+fn required_path_value(value: String, field: &str) -> Result<String, ApiError> {
+    let value = value.trim().to_string();
+    if value.is_empty() {
+        Err(ApiError::bad_request(format!("{field} is required")))
+    } else {
+        Ok(value)
+    }
 }
 
 pub(super) async fn list_companion_approvals(

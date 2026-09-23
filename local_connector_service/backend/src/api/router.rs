@@ -71,6 +71,23 @@ fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
             post(super::companion::resolve_companion_resource),
         )
         .route(
+            "/api/local-connectors/companion/devices/{device_id}/agent-workspace",
+            get(super::companion::get_companion_agent_workspace),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/agent-conversations/{conversation_id}",
+            get(super::companion::get_companion_agent_conversation),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/agent-conversations/{conversation_id}/messages",
+            get(super::companion::list_companion_agent_messages)
+                .post(super::companion::send_companion_agent_message),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/agents/{agent_id}/direct-conversation",
+            post(super::companion::open_companion_agent_direct_conversation),
+        )
+        .route(
             "/api/local-connectors/companion/devices/{device_id}/approvals",
             get(super::companion::list_companion_approvals),
         )
