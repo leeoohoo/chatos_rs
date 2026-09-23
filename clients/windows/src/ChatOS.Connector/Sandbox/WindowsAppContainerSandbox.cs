@@ -13,6 +13,10 @@ internal static class WindowsAppContainerSandbox
     internal const uint SeGroupEnabled = 0x0000_0004;
     internal const nuint ProcThreadAttributeSecurityCapabilities = 0x0002_0009;
     private const int ErrorAlreadyExistsHResult = unchecked((int)0x800700B7);
+    private const uint DaclSecurityInformation = 0x0000_0004;
+    private const uint FileTraverse = 0x0000_0020;
+    private const uint SetAccess = 2;
+    private const uint RevokeAccess = 4;
     private const string InternetClientSid = "S-1-15-3-1";
     private const string PrivateNetworkClientServerSid = "S-1-15-3-3";
     private static readonly ConcurrentDictionary<string, Lazy<Task>> PreparedWorkspaceAcls =
@@ -287,20 +291,17 @@ internal static class WindowsAppContainerSandbox
         }
     }
 
-    private static async Task EnsureAncestorTraverseAclsAsync(
+    private static Task EnsureAncestorTraverseAclsAsync(
         string path,
         string sid,
         CancellationToken cancellationToken)
     {
         foreach (var ancestor in AncestorDirectories(path))
         {
-            await EnsurePathAclAsync(
-                ancestor,
-                sid,
-                "(X)",
-                cancellationToken,
-                recursive: false).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            UpdateTraverseAcl(ancestor, sid, remove: false);
         }
+        return Task.CompletedTask;
     }
 
     private static async Task<EphemeralProfileLease> AcquireEphemeralProfileAsync(
@@ -502,18 +503,81 @@ internal static class WindowsAppContainerSandbox
         }
     }
 
-    private static async Task RemoveAncestorTraverseAclsAsync(
+    private static Task RemoveAncestorTraverseAclsAsync(
         string path,
         string sid,
         CancellationToken cancellationToken)
     {
         foreach (var ancestor in AncestorDirectories(path).Reverse())
         {
-            await RemovePathAclAsync(
-                ancestor,
-                sid,
-                cancellationToken,
-                recursive: false).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Directory.Exists(ancestor))
+            {
+                UpdateTraverseAcl(ancestor, sid, remove: true);
+            }
+        }
+        return Task.CompletedTask;
+    }
+
+    private static void UpdateTraverseAcl(string path, string sid, bool remove)
+    {
+        var result = GetNamedSecurityInfo(
+            path,
+            SeObjectType.FileObject,
+            DaclSecurityInformation,
+            out _,
+            out _,
+            out var currentAcl,
+            out _,
+            out var securityDescriptor);
+        if (result != 0)
+        {
+            throw new Win32Exception(checked((int)result));
+        }
+
+        IntPtr sidPointer = IntPtr.Zero;
+        IntPtr updatedAcl = IntPtr.Zero;
+        try
+        {
+            if (!ConvertStringSidToSid(sid, out sidPointer))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            var entry = new ExplicitAccess
+            {
+                AccessPermissions = FileTraverse,
+                AccessMode = remove ? RevokeAccess : SetAccess,
+                Inheritance = 0,
+                Trustee = new Trustee
+                {
+                    TrusteeForm = TrusteeForm.Sid,
+                    TrusteeType = TrusteeType.Unknown,
+                    Name = sidPointer,
+                },
+            };
+            result = SetEntriesInAcl(1, ref entry, currentAcl, out updatedAcl);
+            if (result != 0)
+            {
+                throw new Win32Exception(checked((int)result));
+            }
+            result = SetNamedSecurityInfo(
+                path,
+                SeObjectType.FileObject,
+                DaclSecurityInformation,
+                IntPtr.Zero,
+                IntPtr.Zero,
+                updatedAcl,
+                IntPtr.Zero);
+            if (result != 0)
+            {
+                throw new Win32Exception(checked((int)result));
+            }
+        }
+        finally
+        {
+            if (updatedAcl != IntPtr.Zero) _ = LocalFree(updatedAcl);
+            if (sidPointer != IntPtr.Zero) _ = LocalFree(sidPointer);
+            if (securityDescriptor != IntPtr.Zero) _ = LocalFree(securityDescriptor);
         }
     }
 
@@ -769,11 +833,73 @@ internal static class WindowsAppContainerSandbox
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool ConvertSidToStringSid(IntPtr sid, out IntPtr stringSid);
 
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint GetNamedSecurityInfo(
+        string objectName,
+        SeObjectType objectType,
+        uint securityInformation,
+        out IntPtr owner,
+        out IntPtr group,
+        out IntPtr dacl,
+        out IntPtr sacl,
+        out IntPtr securityDescriptor);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint SetNamedSecurityInfo(
+        string objectName,
+        SeObjectType objectType,
+        uint securityInformation,
+        IntPtr owner,
+        IntPtr group,
+        IntPtr dacl,
+        IntPtr sacl);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint SetEntriesInAcl(
+        uint entryCount,
+        ref ExplicitAccess explicitEntry,
+        IntPtr oldAcl,
+        out IntPtr newAcl);
+
     [DllImport("kernel32.dll")]
     private static extern IntPtr LocalFree(IntPtr memory);
 
     [DllImport("advapi32.dll")]
     internal static extern IntPtr FreeSid(IntPtr sid);
+
+    private enum SeObjectType
+    {
+        FileObject = 1,
+    }
+
+    private enum TrusteeForm
+    {
+        Sid = 0,
+    }
+
+    private enum TrusteeType
+    {
+        Unknown = 0,
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Trustee
+    {
+        public IntPtr MultipleTrustee;
+        public int MultipleTrusteeOperation;
+        public TrusteeForm TrusteeForm;
+        public TrusteeType TrusteeType;
+        public IntPtr Name;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ExplicitAccess
+    {
+        public uint AccessPermissions;
+        public uint AccessMode;
+        public uint Inheritance;
+        public Trustee Trustee;
+    }
 
     private sealed class EphemeralProfileState
     {
