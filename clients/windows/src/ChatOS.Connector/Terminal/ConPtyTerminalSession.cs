@@ -77,6 +77,8 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
     private readonly CancellationTokenSource _lifetime = new();
     private readonly FileStream _input;
     private readonly FileStream _output;
+    private readonly SafeFileHandle _pseudoInput;
+    private readonly SafeFileHandle _pseudoOutput;
     private readonly SafePseudoConsoleHandle _pseudoConsole;
     private readonly SafeKernelObjectHandle _job;
     private readonly SafeKernelObjectHandle _process;
@@ -96,6 +98,8 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
         Identity = identity;
         _input = native.Input;
         _output = native.Output;
+        _pseudoInput = native.PseudoInput;
+        _pseudoOutput = native.PseudoOutput;
         _pseudoConsole = native.PseudoConsole;
         _job = native.Job;
         _process = native.Process;
@@ -244,6 +248,8 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
         _input.Dispose();
         _output.Dispose();
         _pseudoConsole.Dispose();
+        _pseudoInput.Dispose();
+        _pseudoOutput.Dispose();
         await ReleaseNetworkLeaseAsync().ConfigureAwait(false);
         _job.Dispose();
         _process.Dispose();
@@ -441,6 +447,8 @@ internal static class WindowsShellResolver
 internal sealed record NativeConPtyProcess(
     FileStream Input,
     FileStream Output,
+    SafeFileHandle PseudoInput,
+    SafeFileHandle PseudoOutput,
     SafePseudoConsoleHandle PseudoConsole,
     SafeKernelObjectHandle Job,
     SafeKernelObjectHandle Process,
@@ -487,12 +495,6 @@ internal sealed record NativeConPtyProcess(
             NativeConPty.CreatePipePair(out inputWriter, out pseudoInput, parentReads: false);
             NativeConPty.CreatePipePair(out outputReader, out pseudoOutput, parentReads: true);
             pseudoConsole = NativeConPty.CreatePseudoConsole(size, pseudoInput, pseudoOutput);
-            // CreatePseudoConsole duplicates both handles. Retaining these copies can
-            // keep a direction open after its real owner has completed.
-            pseudoInput.Dispose();
-            pseudoInput = null;
-            pseudoOutput.Dispose();
-            pseudoOutput = null;
 
             nuint attributeBytes = 0;
             _ = NativeConPty.InitializeProcThreadAttributeList(
@@ -577,6 +579,8 @@ internal sealed record NativeConPtyProcess(
             return new NativeConPtyProcess(
                 input,
                 output,
+                pseudoInput,
+                pseudoOutput,
                 pseudoConsole,
                 job,
                 process,
