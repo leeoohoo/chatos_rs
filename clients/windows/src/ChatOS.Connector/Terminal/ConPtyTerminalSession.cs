@@ -604,7 +604,10 @@ internal sealed record NativeConPtyProcess(
             }
             if (job is not null && process is not null)
             {
-                NativeConPty.TerminateJob(job, 1);
+                // beforeResume failures happen while the initial process is still
+                // suspended and therefore cannot have spawned descendants. Terminating
+                // that process directly avoids TerminateJobObject blocking on ConPTY.
+                NativeTerminalProcess.TerminateProcess(process, 1);
                 var processToWait = process;
                 var waitForExitTask = Task.Factory.StartNew(
                     () => NativeConPty.WaitForExit(processToWait),
