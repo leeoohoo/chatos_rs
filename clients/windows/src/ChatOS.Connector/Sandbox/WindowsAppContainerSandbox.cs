@@ -14,6 +14,7 @@ internal static partial class WindowsAppContainerSandbox
     internal const nuint ProcThreadAttributeSecurityCapabilities = 0x0002_0009;
     private const int ErrorAlreadyExistsHResult = unchecked((int)0x800700B7);
     private const uint DaclSecurityInformation = 0x0000_0004;
+    private const uint ProtectedDaclSecurityInformation = 0x8000_0000;
     private const uint FileTraverse = 0x0000_0020;
     private const uint GrantAccess = 1;
     private const uint RevokeAccess = 4;
@@ -528,7 +529,7 @@ internal static partial class WindowsAppContainerSandbox
             result = SetNamedSecurityInfo(
                 path,
                 SeObjectType.FileObject,
-                DaclSecurityInformation,
+                DaclSecurityInformation | (IsVolumeRoot(path) ? ProtectedDaclSecurityInformation : 0),
                 IntPtr.Zero,
                 IntPtr.Zero,
                 updatedAcl,
@@ -549,21 +550,18 @@ internal static partial class WindowsAppContainerSandbox
     private static IEnumerable<string> AncestorDirectories(string path)
     {
         var fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-        var volumeRoot = Path.TrimEndingDirectorySeparator(Path.GetPathRoot(fullPath) ?? string.Empty);
         var parent = Directory.GetParent(fullPath);
         while (parent is not null)
         {
-            if (string.Equals(
-                    Path.TrimEndingDirectorySeparator(parent.FullName),
-                    volumeRoot,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                yield break;
-            }
             yield return parent.FullName;
             parent = parent.Parent;
         }
     }
+
+    private static bool IsVolumeRoot(string path) => string.Equals(
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)),
+        Path.TrimEndingDirectorySeparator(Path.GetPathRoot(Path.GetFullPath(path)) ?? string.Empty),
+        StringComparison.OrdinalIgnoreCase);
 
     private static async Task DeleteDirectoryWithRetriesAsync(string path)
     {
