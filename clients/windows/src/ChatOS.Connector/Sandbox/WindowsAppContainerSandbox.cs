@@ -153,6 +153,7 @@ internal static class WindowsAppContainerSandbox
                 RedirectStandardError = true,
             };
             start.ArgumentList.Add(path);
+            start.ArgumentList.Add("/T");
             using var process = Process.Start(start);
             if (process is null) return;
             var output = process.StandardOutput.ReadToEnd();
