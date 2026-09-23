@@ -23,7 +23,7 @@ chrono = { version = "0.4", features = ["clock", "serde"] }
 futures = "0.3"
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "postgres", "chrono", "json", "migrate"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
-redis = { version = "0.27", features = ["connection-manager", "tokio-comp"] }
+redis = { version = "1.7", features = ["connection-manager", "tokio-comp"] }
 base64 = "0.22"
 hex = "0.4"
 ring = "0.17"
