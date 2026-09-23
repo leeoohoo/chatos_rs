@@ -61,8 +61,8 @@ internal static class WindowsAppContainerSandbox
         try
         {
             appContainerSid = CreateOrDeriveProfileSid(profileName);
-            TraceNativePreparation("profile-sid-ready");
             var sidText = SidToString(appContainerSid);
+            TraceNativePreparation($"profile-sid-ready:{sidText}");
             await EnsureWorkspaceAclAsync(
                 workspaceRoot,
                 sidText,
@@ -87,6 +87,7 @@ internal static class WindowsAppContainerSandbox
                 "(OI)(CI)M",
                 cancellationToken).ConfigureAwait(false);
             TraceNativePreparation("temporary-acl-ready");
+            TraceNativeAcl(workspaceRoot);
             if (profileLease is not null)
             {
                 await profileLease.RegisterAsync(
@@ -133,6 +134,35 @@ internal static class WindowsAppContainerSandbox
             File.AppendAllText(path, $"{DateTimeOffset.UtcNow:O} prepare:{stage}{Environment.NewLine}");
         }
         catch (IOException)
+        {
+        }
+    }
+
+    private static void TraceNativeAcl(string path)
+    {
+        var tracePath = Environment.GetEnvironmentVariable("CHATOS_WINDOWS_NATIVE_TRACE");
+        if (string.IsNullOrWhiteSpace(tracePath)) return;
+        try
+        {
+            var start = new ProcessStartInfo
+            {
+                FileName = Path.Combine(Environment.SystemDirectory, "icacls.exe"),
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            start.ArgumentList.Add(path);
+            using var process = Process.Start(start);
+            if (process is null) return;
+            var output = process.StandardOutput.ReadToEnd();
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit(10_000);
+            File.AppendAllText(
+                tracePath,
+                $"{DateTimeOffset.UtcNow:O} acl:{path}{Environment.NewLine}{output}{error}{Environment.NewLine}");
+        }
+        catch
         {
         }
     }
