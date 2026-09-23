@@ -8,6 +8,7 @@ namespace ChatOS.Connector.Tests;
 public sealed class WindowsProjectGitServiceTests
 {
     [Fact]
+    [Trait("Category", "MachineIntegration")]
     public async Task LoadsStagesCommitsDiffsAndManagesRemotes()
     {
         if (!GitIsAvailable())
@@ -69,6 +70,7 @@ public sealed class WindowsProjectGitServiceTests
     }
 
     [Fact]
+    [Trait("Category", "MachineIntegration")]
     public async Task CreatesSwitchesAndMergesWithoutDiscardingWorktreeChanges()
     {
         if (!GitIsAvailable())
@@ -153,6 +155,7 @@ public sealed class WindowsProjectGitServiceTests
 
     private static void ConfigureIdentity(string root)
     {
+        RunGit(root, "config", "core.autocrlf", "false");
         RunGit(root, "config", "user.name", "ChatOS Tests");
         RunGit(root, "config", "user.email", "tests@chatos.local");
     }

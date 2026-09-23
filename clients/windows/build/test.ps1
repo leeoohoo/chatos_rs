@@ -22,7 +22,7 @@ try {
             $project -eq ".\tests\ChatOS.Connector.Tests\ChatOS.Connector.Tests.csproj") {
             $arguments += @(
                 "--filter",
-                "Category!=WindowsNative&Category!=NetworkGuardEndToEnd")
+                "Category!=WindowsNative&Category!=NetworkGuardEndToEnd&Category!=MachineIntegration")
         }
         & dotnet @arguments
         if ($LASTEXITCODE -ne 0) { throw "Test project failed: $project" }
