@@ -240,11 +240,13 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
         {
         }
 
-        _lifetime.Cancel();
         _input.Dispose();
         // Closing ConPTY first releases its duplicated output writer, allowing the
-        // synchronous reader thread to observe EOF before its stream is disposed.
+        // synchronous reader thread to drain the final frame and observe EOF. Do not
+        // cancel that reader until ClosePseudoConsole has finished or ConHost can block
+        // while flushing its remaining output.
         _pseudoConsole.Dispose();
+        _lifetime.Cancel();
         _output.Dispose();
         await ReleaseNetworkLeaseAsync().ConfigureAwait(false);
         _job.Dispose();
