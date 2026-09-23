@@ -211,9 +211,46 @@ public sealed class WindowsProjectGitServiceTests
 
         public void Dispose()
         {
-            if (Directory.Exists(Root))
+            for (var attempt = 0; attempt < 5 && Directory.Exists(Root); attempt++)
             {
-                Directory.Delete(Root, recursive: true);
+                try
+                {
+                    ClearReadOnlyAttributes(Root);
+                    Directory.Delete(Root, recursive: true);
+                }
+                catch (Exception exception) when (
+                    exception is IOException or UnauthorizedAccessException)
+                {
+                    if (attempt < 4)
+                    {
+                        Thread.Sleep(100 * (attempt + 1));
+                    }
+                }
+            }
+        }
+
+        private static void ClearReadOnlyAttributes(string root)
+        {
+            try
+            {
+                foreach (var path in Directory.EnumerateFileSystemEntries(
+                             root,
+                             "*",
+                             SearchOption.AllDirectories))
+                {
+                    try
+                    {
+                        File.SetAttributes(path, File.GetAttributes(path) & ~FileAttributes.ReadOnly);
+                    }
+                    catch (Exception exception) when (
+                        exception is IOException or UnauthorizedAccessException)
+                    {
+                    }
+                }
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException)
+            {
             }
         }
     }
