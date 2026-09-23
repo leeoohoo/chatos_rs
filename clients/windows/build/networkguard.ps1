@@ -103,7 +103,8 @@ try {
             sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
         }
     }
-    $manifest | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $output "manifest.json") -Encoding utf8
+    ConvertTo-Json -InputObject @($manifest) -Depth 4 |
+        Set-Content (Join-Path $output "manifest.json") -Encoding utf8
     $buildReport = [ordered]@{
         schema_version = 2
         passed = $true

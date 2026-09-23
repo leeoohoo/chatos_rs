@@ -10,7 +10,8 @@ $null = New-Item -ItemType Directory -Path (Join-Path $packageRoot "service") -F
 
 function Write-Manifest {
     param([object[]]$Entries)
-    $Entries | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $packageRoot "manifest.json") -Encoding utf8
+    ConvertTo-Json -InputObject @($Entries) -Depth 6 |
+        Set-Content (Join-Path $packageRoot "manifest.json") -Encoding utf8
 }
 
 try {
