@@ -83,6 +83,15 @@ public sealed class WindowsNativeAcceptanceTests
             ConnectorSandboxPermissionProfile.WorkspaceWrite,
             ConnectorSandboxNetworkAccess.Disabled);
         var executor = Executor(writePolicy);
+        var identity = await executor.ExecuteAsync(new TerminalCommandRequest(
+            System.IO.Path.Combine(Environment.SystemDirectory, "whoami.exe"),
+            ["/all"],
+            workspace.Path,
+            workspace.Path,
+            "sandbox-identity",
+            15_000));
+        TraceNativeFailure(
+            $"identity:success={identity.Success};exit={identity.ExitCode};stdout={identity.StandardOutput};stderr={identity.StandardError}");
         var inside = await executor.ExecuteAsync(Request(writeInsideScript, workspace.Path, "sandbox-write"));
         var outsideResult = await executor.ExecuteAsync(Request(writeOutsideScript, workspace.Path, "sandbox-boundary"));
 
