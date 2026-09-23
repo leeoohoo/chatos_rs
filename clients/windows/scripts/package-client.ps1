@@ -14,6 +14,8 @@ param(
 
     [switch]$SkipTests,
 
+    [switch]$IncludeMachineAcceptanceTests,
+
     [switch]$SkipToolInstall,
 
     [switch]$Install,
@@ -180,7 +182,11 @@ Push-Location $repoRoot
 try {
     if (-not $SkipTests) {
         Write-Host "Running ChatOS Windows tests..."
-        & (Join-Path $repoRoot "build\test.ps1") -Configuration Release
+        $testParameters = @{ Configuration = "Release" }
+        if (-not $IncludeMachineAcceptanceTests) {
+            $testParameters.SkipMachineAcceptance = $true
+        }
+        & (Join-Path $repoRoot "build\test.ps1") @testParameters
         if ($LASTEXITCODE -ne 0) {
             throw "ChatOS Windows tests failed with exit code $LASTEXITCODE."
         }

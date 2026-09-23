@@ -28,7 +28,7 @@ public sealed class PluginManifestLoaderTests : IDisposable
             "owner-1",
             "device-1");
 
-        Assert.Equal(Path.Combine(installation, "bin", "test-plugin"), launch.ExecutablePath);
+        Assert.Equal(Path.Combine(installation, "bin", TestPluginExecutableName), launch.ExecutablePath);
         Assert.Equal("main", launch.ComponentKey);
         Assert.False(launch.Environment.ContainsKey("CHATOS_WORKSPACE"));
         Assert.True(Directory.Exists(launch.ArtifactPath));
@@ -323,16 +323,21 @@ public sealed class PluginManifestLoaderTests : IDisposable
     private string CreateInstallation()
     {
         var installation = Path.Combine(_directory, "installed");
+        var executableName = TestPluginExecutableName;
         Directory.CreateDirectory(Path.Combine(installation, "bin"));
         File.WriteAllText(
             Path.Combine(installation, "package.json"),
-            """{"name":"test-plugin","version":"1.0.0","bin":{"test-plugin":"bin/test-plugin"}}""");
+            """{"name":"test-plugin","version":"1.0.0","bin":{"test-plugin":"bin/__EXECUTABLE__"}}"""
+                .Replace("__EXECUTABLE__", executableName, StringComparison.Ordinal));
         File.WriteAllText(
             Path.Combine(installation, "chatos.plugin.json"),
             """{"schemaVersion":3,"name":"test-plugin","version":"1.0.0","interface":{"displayName":"Test Plugin"},"mcpServers":{"main":{"type":"stdio","bin":"test-plugin","args":["serve"]}},"permissions":[{"permission":"process.spawn","required":true,"components":["main"]},{"permission":"workspace.read","required":true,"components":["main"]}]}""");
-        File.WriteAllText(Path.Combine(installation, "bin", "test-plugin"), "native executable");
+        File.WriteAllText(Path.Combine(installation, "bin", executableName), "native executable");
         return installation;
     }
+
+    private static string TestPluginExecutableName =>
+        OperatingSystem.IsWindows() ? "test-plugin.exe" : "test-plugin";
 
     private static InstalledPluginRecord Record(string installation) => new(
         "plugin-1",

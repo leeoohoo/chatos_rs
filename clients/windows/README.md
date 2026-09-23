@@ -56,7 +56,9 @@ $env:CHATOS_API_BASE_URL = "https://example.com/api/chatos"
 .\scripts\install-windows-client.cmd
 ```
 
-该命令会自动识别 x64/ARM64、安装当前用户缺少的 .NET 8 SDK 与 Inno Setup、运行测试、生成自包含 EXE 安装包、安装到当前电脑并启动 ChatOS。生成的安装包同时保留在 `clients\windows\BundleArtifacts\installer-<架构>`，可以继续分发给其他相同架构的 Windows 电脑。整个流程不需要管理员权限；正式对外发布时仍应对安装包进行代码签名。
+该命令会自动识别 x64/ARM64、安装当前用户缺少的 .NET 8 SDK 与 Inno Setup、运行不依赖特定机器配置的测试、生成自包含 EXE 安装包、安装到当前电脑并启动 ChatOS。生成的安装包同时保留在 `clients\windows\BundleArtifacts\installer-<架构>`，可以继续分发给其他相同架构的 Windows 电脑。整个流程不需要管理员权限；正式对外发布时仍应对安装包进行代码签名。
+
+普通安装不会把 AppContainer、ConPTY、WFP/NetworkGuard 等依赖 Windows 版本、策略和驱动状态的真机验收作为打包前置条件。开发或发布验收机器可额外传入 `-IncludeMachineAcceptanceTests` 执行这些测试。
 
 将整个目录复制或拉取到 Windows 11 电脑后，直接双击：
 
@@ -108,6 +110,9 @@ clients\windows\BundleArtifacts\installer-x64\ChatOS-Setup-x64.exe
 ```powershell
 # Windows on ARM
 .\scripts\package-client.cmd -Platform ARM64
+
+# 同时运行 Windows 原生能力与 NetworkGuard 真机验收
+.\scripts\package-client.cmd -IncludeMachineAcceptanceTests
 
 # 快速重新打包，跳过自动化测试
 .\scripts\package-client.cmd -SkipTests

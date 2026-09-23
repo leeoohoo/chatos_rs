@@ -60,10 +60,14 @@ public sealed class SshNetRemoteTerminalCommandService : IRemoteTerminalCommandS
 
     internal static RemoteTerminalCommandResult Parse(string response, string transportError, string marker, string fallbackDirectory)
     {
-        var output = Section(response, marker + "OUT\n", marker + "ERR\n");
-        var error = Section(response, marker + "ERR\n", marker + "CWD\n");
-        var cwd = Section(response, marker + "CWD\n", marker + "STATUS\n").Trim();
-        var statusText = After(response, marker + "STATUS\n").Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        var normalizedResponse = response.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n');
+        var output = Section(normalizedResponse, marker + "OUT\n", marker + "ERR\n");
+        var error = Section(normalizedResponse, marker + "ERR\n", marker + "CWD\n");
+        var cwd = Section(normalizedResponse, marker + "CWD\n", marker + "STATUS\n").Trim();
+        var statusText = After(normalizedResponse, marker + "STATUS\n")
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault();
         var status = int.TryParse(statusText, out var value) ? value : -1;
         if (!string.IsNullOrWhiteSpace(transportError)) error = string.IsNullOrWhiteSpace(error) ? transportError.Trim() : error + "\n" + transportError.Trim();
         return new RemoteTerminalCommandResult(TrimLimit(output), TrimLimit(error), status, string.IsNullOrWhiteSpace(cwd) ? fallbackDirectory : cwd);

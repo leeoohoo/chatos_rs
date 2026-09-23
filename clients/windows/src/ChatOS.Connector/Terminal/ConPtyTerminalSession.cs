@@ -542,9 +542,9 @@ internal sealed record NativeConPtyProcess(
             pseudoOutput = null;
             thread.Dispose();
             thread = null;
-            var input = new FileStream(inputWriter, FileAccess.Write, 16 * 1024, isAsync: true);
+            var input = new FileStream(inputWriter, FileAccess.Write, 16 * 1024, isAsync: false);
             inputWriter = null;
-            var output = new FileStream(outputReader, FileAccess.Read, 16 * 1024, isAsync: true);
+            var output = new FileStream(outputReader, FileAccess.Read, 16 * 1024, isAsync: false);
             outputReader = null;
             return new NativeConPtyProcess(
                 input,
