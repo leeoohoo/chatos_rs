@@ -9,6 +9,7 @@ internal static class NativeConPty
     internal const uint ExtendedStartupInfoPresent = 0x0008_0000;
     internal const uint CreateUnicodeEnvironment = 0x0000_0400;
     internal const uint CreateSuspended = 0x0000_0004;
+    internal const uint StartfUseStdHandles = 0x0000_0100;
     internal const nuint ProcThreadAttributePseudoConsole = 0x0002_0016;
     internal const nuint ProcThreadAttributeHandleList = 0x0002_0002;
     private const uint JobObjectExtendedLimitInformation = 9;

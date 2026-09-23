@@ -565,7 +565,11 @@ internal sealed record NativeConPtyProcess(
 
             var startup = new StartupInfoEx
             {
-                StartupInfo = new StartupInfo { Size = (uint)Marshal.SizeOf<StartupInfoEx>() },
+                StartupInfo = new StartupInfo
+                {
+                    Size = (uint)Marshal.SizeOf<StartupInfoEx>(),
+                    Flags = NativeConPty.StartfUseStdHandles,
+                },
                 AttributeList = attributeList,
             };
             var commandLine = new StringBuilder(CommandLine(executable, arguments));
@@ -579,7 +583,7 @@ internal sealed record NativeConPtyProcess(
                 creationFlags |= NativeConPty.CreateUnicodeEnvironment;
             }
             NativeConPty.ThrowIfFalse(NativeConPty.CreateProcess(
-                executable,
+                null,
                 commandLine,
                 IntPtr.Zero,
                 IntPtr.Zero,
