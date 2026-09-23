@@ -95,7 +95,7 @@
 - 当前未发现 CP-20260922-001 范围内仍可由本地代码关闭的差距；未编号的 session-bound SSH MFA 工作区变化另列上方观察，等待来源提交和登记。
 - 2026-09-23 复核：自上一轮自动化后没有新的 macOS 提交；在保留两处外部 macOS SSH 工作区修改的前提下，Windows 关闭 Todo 依赖释放的无界读取与 N+1，并保持 Agent/调研登记为“待真机验收”。此前独立补齐的 SSH.NET session-bound MFA continuation 不伪造同步编号；Windows 自动化总数增至 502 项。
 - Windows 真机要求：代码差距关闭后，验证 Agent/团队编辑与提案对话框、团队切换、附件/多模态、项目调研中心、模型工具、真实插件进程、Artifact、命令审批、崩溃恢复和长对话内存占用。
-- 当前状态：`待真机验收`；Windows solution 502 项测试通过，Windows 本轮源码均低于 800 行；全仓源码体积检查仅被未由本批修改的 macOS `TeamRequirementSurveysView.swift` 867 行阻塞。
+- 当前状态：`待真机验收`；Windows solution 502 项测试通过；macOS 需求调研大文件已按列表/详情职责拆分，全仓生产源码均低于 800 行且体积门禁通过。
 - 关闭条件：在 Windows x64/ARM64 编译，x64 完成 UI/模型/Plugin/终端/崩溃恢复 smoke 后，两端登记改为 `已同步`。
 
 ## 新记录模板
