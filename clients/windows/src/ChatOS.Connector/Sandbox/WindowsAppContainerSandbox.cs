@@ -8,7 +8,7 @@ using System.Text.Json;
 
 namespace ChatOS.Connector.Sandbox;
 
-internal static class WindowsAppContainerSandbox
+internal static partial class WindowsAppContainerSandbox
 {
     internal const uint SeGroupEnabled = 0x0000_0004;
     internal const nuint ProcThreadAttributeSecurityCapabilities = 0x0002_0009;
@@ -55,7 +55,6 @@ internal static class WindowsAppContainerSandbox
             _ = CleanupStaleControlledProfilesOnceAsync();
             profileLease = await AcquireEphemeralProfileAsync(profileName, cancellationToken)
                 .ConfigureAwait(false);
-            TraceNativePreparation("profile-lease-acquired");
         }
         IntPtr appContainerSid = IntPtr.Zero;
         var capabilitySids = new List<IntPtr>();
@@ -63,18 +62,15 @@ internal static class WindowsAppContainerSandbox
         {
             appContainerSid = CreateOrDeriveProfileSid(profileName);
             var sidText = SidToString(appContainerSid);
-            TraceNativePreparation($"profile-sid-ready:{sidText}");
             await EnsureWorkspaceAclAsync(
                 workspaceRoot,
                 sidText,
                 policy.PermissionProfile,
                 cancellationToken).ConfigureAwait(false);
-            TraceNativePreparation("workspace-acl-ready");
             await EnsureAncestorTraverseAclsAsync(
                 workspaceRoot,
                 sidText,
                 cancellationToken).ConfigureAwait(false);
-            TraceNativePreparation("workspace-ancestors-ready");
             var temporaryDirectory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "ChatOS",
@@ -87,8 +83,6 @@ internal static class WindowsAppContainerSandbox
                 sidText,
                 "(OI)(CI)M",
                 cancellationToken).ConfigureAwait(false);
-            TraceNativePreparation("temporary-acl-ready");
-            TraceNativeAcl(workspaceRoot);
             if (profileLease is not null)
             {
                 await profileLease.RegisterAsync(
@@ -96,7 +90,6 @@ internal static class WindowsAppContainerSandbox
                     sidText,
                     temporaryDirectory,
                     cancellationToken).ConfigureAwait(false);
-                TraceNativePreparation("profile-lease-registered");
             }
             if (policy.GrantInternetCapabilities)
             {
@@ -117,7 +110,6 @@ internal static class WindowsAppContainerSandbox
         }
         catch
         {
-            TraceNativePreparation("prepare-catch");
             if (appContainerSid != IntPtr.Zero)
             {
                 _ = FreeSid(appContainerSid);
@@ -128,54 +120,9 @@ internal static class WindowsAppContainerSandbox
             }
             if (profileLease is not null)
             {
-                TraceNativePreparation("failed-profile-release-start");
                 await profileLease.DisposeAsync().ConfigureAwait(false);
-                TraceNativePreparation("failed-profile-release-complete");
             }
             throw;
-        }
-    }
-
-    private static void TraceNativePreparation(string stage)
-    {
-        var path = Environment.GetEnvironmentVariable("CHATOS_WINDOWS_NATIVE_TRACE");
-        if (string.IsNullOrWhiteSpace(path)) return;
-        try
-        {
-            File.AppendAllText(path, $"{DateTimeOffset.UtcNow:O} prepare:{stage}{Environment.NewLine}");
-        }
-        catch (IOException)
-        {
-        }
-    }
-
-    private static void TraceNativeAcl(string path)
-    {
-        var tracePath = Environment.GetEnvironmentVariable("CHATOS_WINDOWS_NATIVE_TRACE");
-        if (string.IsNullOrWhiteSpace(tracePath)) return;
-        try
-        {
-            var start = new ProcessStartInfo
-            {
-                FileName = Path.Combine(Environment.SystemDirectory, "icacls.exe"),
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            start.ArgumentList.Add(path);
-            start.ArgumentList.Add("/T");
-            using var process = Process.Start(start);
-            if (process is null) return;
-            var output = process.StandardOutput.ReadToEnd();
-            var error = process.StandardError.ReadToEnd();
-            process.WaitForExit(10_000);
-            File.AppendAllText(
-                tracePath,
-                $"{DateTimeOffset.UtcNow:O} acl:{path}{Environment.NewLine}{output}{error}{Environment.NewLine}");
-        }
-        catch
-        {
         }
     }
 
@@ -207,35 +154,6 @@ internal static class WindowsAppContainerSandbox
 
     internal static bool HasPendingProfileCleanup(string profileName) =>
         EphemeralProfiles.ContainsKey(profileName) || File.Exists(ProfileMetadataPath(profileName));
-
-    internal static void TraceProcessToken(string expectedSid, string? actualSid) =>
-        TraceNativePreparation($"process-token:expected={expectedSid};actual={actualSid ?? "none"}");
-
-    private static IntPtr CreateOrDeriveProfileSid(string profileName)
-    {
-        var result = CreateAppContainerProfile(
-            profileName,
-            "ChatOS Windows command sandbox",
-            "Isolated command execution for the ChatOS Windows client.",
-            IntPtr.Zero,
-            0,
-            out var sid);
-        if (result == 0)
-        {
-            return sid;
-        }
-        if (result != ErrorAlreadyExistsHResult)
-        {
-            Marshal.ThrowExceptionForHR(result);
-        }
-
-        result = DeriveAppContainerSidFromAppContainerName(profileName, out sid);
-        if (result != 0)
-        {
-            Marshal.ThrowExceptionForHR(result);
-        }
-        return sid;
-    }
 
     private static async Task EnsureWorkspaceAclAsync(
         string workspaceRoot,
@@ -631,17 +549,9 @@ internal static class WindowsAppContainerSandbox
     private static IEnumerable<string> AncestorDirectories(string path)
     {
         var fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-        var volumeRoot = Path.TrimEndingDirectorySeparator(Path.GetPathRoot(fullPath) ?? string.Empty);
         var parent = Directory.GetParent(fullPath);
         while (parent is not null)
         {
-            if (string.Equals(
-                    Path.TrimEndingDirectorySeparator(parent.FullName),
-                    volumeRoot,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                yield break;
-            }
             yield return parent.FullName;
             parent = parent.Parent;
         }
@@ -825,132 +735,6 @@ internal static class WindowsAppContainerSandbox
         string sid,
         ConnectorSandboxPermissionProfile profile) =>
         string.Join('\0', Path.GetFullPath(workspaceRoot), sid, profile);
-
-    private static string SafeAclError(string error, string output)
-    {
-        var value = string.IsNullOrWhiteSpace(error) ? output : error;
-        value = new string(value.Where(value => !char.IsControl(value) || value == ' ').Take(500).ToArray());
-        return string.IsNullOrWhiteSpace(value) ? "ACL update failed" : value;
-    }
-
-    private static IntPtr CapabilitySid(string value)
-    {
-        if (!ConvertStringSidToSid(value, out var sid))
-        {
-            throw new Win32Exception(Marshal.GetLastWin32Error());
-        }
-        return sid;
-    }
-
-    private static string SidToString(IntPtr sid)
-    {
-        if (!ConvertSidToStringSid(sid, out var value))
-        {
-            throw new Win32Exception(Marshal.GetLastWin32Error());
-        }
-        try
-        {
-            return Marshal.PtrToStringUni(value)
-                ?? throw new InvalidOperationException("Windows returned an empty AppContainer SID.");
-        }
-        finally
-        {
-            _ = LocalFree(value);
-        }
-    }
-
-    [DllImport("userenv.dll", CharSet = CharSet.Unicode)]
-    private static extern int CreateAppContainerProfile(
-        string appContainerName,
-        string displayName,
-        string description,
-        IntPtr capabilities,
-        uint capabilityCount,
-        out IntPtr appContainerSid);
-
-    [DllImport("userenv.dll", CharSet = CharSet.Unicode)]
-    private static extern int DeriveAppContainerSidFromAppContainerName(
-        string appContainerName,
-        out IntPtr appContainerSid);
-
-    [DllImport("userenv.dll", CharSet = CharSet.Unicode)]
-    private static extern int DeleteAppContainerProfile(string appContainerName);
-
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern bool ConvertStringSidToSid(string stringSid, out IntPtr sid);
-
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern bool ConvertSidToStringSid(IntPtr sid, out IntPtr stringSid);
-
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
-    private static extern uint GetNamedSecurityInfo(
-        string objectName,
-        SeObjectType objectType,
-        uint securityInformation,
-        out IntPtr owner,
-        out IntPtr group,
-        out IntPtr dacl,
-        out IntPtr sacl,
-        out IntPtr securityDescriptor);
-
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
-    private static extern uint SetNamedSecurityInfo(
-        string objectName,
-        SeObjectType objectType,
-        uint securityInformation,
-        IntPtr owner,
-        IntPtr group,
-        IntPtr dacl,
-        IntPtr sacl);
-
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
-    private static extern uint SetEntriesInAcl(
-        uint entryCount,
-        ref ExplicitAccess explicitEntry,
-        IntPtr oldAcl,
-        out IntPtr newAcl);
-
-    [DllImport("kernel32.dll")]
-    private static extern IntPtr LocalFree(IntPtr memory);
-
-    internal static IntPtr FreeLocalMemory(IntPtr memory) => LocalFree(memory);
-
-    [DllImport("advapi32.dll")]
-    internal static extern IntPtr FreeSid(IntPtr sid);
-
-    private enum SeObjectType
-    {
-        FileObject = 1,
-    }
-
-    private enum TrusteeForm
-    {
-        Sid = 0,
-    }
-
-    private enum TrusteeType
-    {
-        Unknown = 0,
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct Trustee
-    {
-        public IntPtr MultipleTrustee;
-        public int MultipleTrusteeOperation;
-        public TrusteeForm TrusteeForm;
-        public TrusteeType TrusteeType;
-        public IntPtr Name;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct ExplicitAccess
-    {
-        public uint AccessPermissions;
-        public uint AccessMode;
-        public uint Inheritance;
-        public Trustee Trustee;
-    }
 
     private sealed class EphemeralProfileState
     {

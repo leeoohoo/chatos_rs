@@ -130,6 +130,7 @@ internal sealed class WindowsAppContainerLaunchContext : IDisposable, IAsyncDisp
             ["CHATOS_SANDBOX_NETWORK"] = policy.NetworkAccess.ToString(),
             ["CHATOS_SANDBOX_PROFILE"] = policy.PermissionProfile.ToString(),
             ["ComSpec"] = Environment.ExpandEnvironmentVariables(commandInterpreter),
+            ["LOCALAPPDATA"] = temporaryDirectory,
             ["PATH"] = path,
             ["PATHEXT"] = Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD",
             ["PROCESSOR_ARCHITECTURE"] = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE") ?? string.Empty,
