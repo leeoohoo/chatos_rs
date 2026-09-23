@@ -463,7 +463,7 @@ public sealed partial class PetWindow : Window
 
     private async void OnCancelTaskClicked(object sender, RoutedEventArgs e) => await ViewModel.CancelSelectedAsync();
 
-    private static void OnAskUserSecretChanged(object sender, RoutedEventArgs e)
+    private void OnAskUserSecretChanged(object sender, RoutedEventArgs e)
     {
         if (sender is PasswordBox { DataContext: AskUserFieldInputViewModel field } passwordBox)
         {

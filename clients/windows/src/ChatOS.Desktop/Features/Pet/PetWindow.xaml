@@ -246,11 +246,11 @@
                                                         PlaceholderText="{x:Bind Placeholder}"
                                                         Text="{x:Bind Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                         TextWrapping="Wrap"
-                                                        Visibility="{x:Bind IsSecret, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
+                                                        Visibility="{Binding IsSecret, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
                                                     <PasswordBox
                                                         PasswordChanged="OnAskUserSecretChanged"
                                                         PlaceholderText="{x:Bind Placeholder}"
-                                                        Visibility="{x:Bind IsSecret, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                        Visibility="{Binding IsSecret, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                                 </StackPanel>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
@@ -425,7 +425,7 @@
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
-                                        <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind IsRunning, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{Binding IsRunning, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <ProgressRing Width="14" Height="14" IsActive="True" />
                                             <TextBlock Text="{Binding Replying, Source={StaticResource ChatOSLocalization}}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                         </StackPanel>
