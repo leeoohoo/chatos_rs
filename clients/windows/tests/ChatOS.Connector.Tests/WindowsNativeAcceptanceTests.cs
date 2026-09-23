@@ -146,7 +146,7 @@ public sealed class WindowsNativeAcceptanceTests
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763)) return;
 
         using var workspace = TemporaryDirectory.Create();
-        var shell = WindowsShellResolver.Resolve();
+        var inputProbe = System.IO.Path.Combine(Environment.SystemDirectory, "more.com");
         await using ITerminalSession session = ConPtyTerminalSession.Start(
             new TerminalSessionIdentity(
                 "native-conpty",
@@ -154,8 +154,8 @@ public sealed class WindowsNativeAcceptanceTests
                 workspace.Path,
                 workspace.Path),
             new TerminalSize(100, 30),
-            shell.Executable,
-            shell.Arguments,
+            inputProbe,
+            [],
             sandbox: null);
         var architecture = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE") ?? "UNKNOWN";
         var expected = $"CHATOS_{architecture}_CONPTY_OK";
@@ -171,7 +171,7 @@ public sealed class WindowsNativeAcceptanceTests
         var native = Assert.IsType<ConPtyTerminalSession>(session);
         Assert.True(
             snapshot.Contains(expected, StringComparison.OrdinalIgnoreCase),
-            $"Shell='{shell.Executable} {string.Join(' ', shell.Arguments)}'. Expected '{expected}'. " +
+            $"Probe='{inputProbe}'. Expected '{expected}'. " +
             $"Exited={native.HasExited}; ExitCode={native.ExitCode}; " +
             $"OutputFailure={native.OutputFailure}; Snapshot='{snapshot}'");
         if (!native.HasExited)

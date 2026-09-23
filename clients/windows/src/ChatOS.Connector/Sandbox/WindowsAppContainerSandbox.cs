@@ -245,7 +245,7 @@ internal static class WindowsAppContainerSandbox
                 () => EnsurePathAclAsync(
                     root,
                     sid,
-                    profile is ConnectorSandboxPermissionProfile.ReadOnly ? "(OI)(CI)RX" : "(OI)(CI)M",
+                    profile is ConnectorSandboxPermissionProfile.ReadOnly ? "(OI)(CI)RX" : "(OI)(CI)F",
                     cancellationToken),
                 LazyThreadSafetyMode.ExecutionAndPublication));
         try
