@@ -1138,6 +1138,28 @@ async fn workspace_filesystem_responses_complete_pending_relay_requests() {
 #[tokio::test]
 async fn unknown_relay_response_types_are_rejected_instead_of_acknowledged() {
     let relay = ConnectorRelay::default();
+    for response_type in [
+        "companion_agent_workspace_response",
+        "companion_agent_conversation_response",
+        "companion_agent_messages_response",
+        "companion_agent_send_message_response",
+        "companion_agent_open_direct_response",
+    ] {
+        assert!(!relay
+            .handle_inbound_text(
+                serde_json::json!({
+                    "type": response_type,
+                    "request_id": format!("{response_type}-request"),
+                    "status": 200,
+                    "body": {},
+                })
+                .to_string()
+                .as_str(),
+            )
+            .await
+            .expect("known Companion Agent response"));
+    }
+
     let error = relay
         .handle_inbound_text(
             r#"{"type":"workspace_future_response","request_id":"request-1","status":200}"#,

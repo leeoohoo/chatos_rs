@@ -18,6 +18,21 @@ struct NativeConnectorReconnectPolicyTests {
     }
 
     @Test
+    func requestScopedGatewayErrorsDoNotDropTheControlChannel() {
+        for code in [
+            "plugin_installation_status_rejected",
+            "plugin_oauth_status_rejected",
+            "invalid_relay_response",
+        ] {
+            #expect(NativeLocalConnectorService.isRecoverableGatewayProtocolError(code))
+        }
+        #expect(!NativeLocalConnectorService.isRecoverableGatewayProtocolError(
+            "connector_session_lease_lost"
+        ))
+        #expect(!NativeLocalConnectorService.isRecoverableGatewayProtocolError(nil))
+    }
+
+    @Test
     func connectorCredentialRefreshIsRateLimited() {
         let now = Date(timeIntervalSince1970: 10_000)
 

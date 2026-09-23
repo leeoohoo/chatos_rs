@@ -111,6 +111,12 @@ extension NativeLocalConnectorService {
                         case "pong":
                             lastGatewayPongAt = Date()
                         case "error":
+                            if Self.isRecoverableGatewayProtocolError(envelope.code) {
+                                Self.logger.warning(
+                                    "网关拒绝了一条控制消息但连接保持：\((envelope.message ?? envelope.code ?? "unknown"), privacy: .public)"
+                                )
+                                continue
+                            }
                             throw NativeConnectorError.server(
                                 status: 503,
                                 message: envelope.message
@@ -267,6 +273,17 @@ extension NativeLocalConnectorService {
     }
 
     static let transientGatewayFailureTerminatesPluginSessions = false
+
+    static func isRecoverableGatewayProtocolError(_ code: String?) -> Bool {
+        switch code {
+        case "plugin_installation_status_rejected",
+             "plugin_oauth_status_rejected",
+             "invalid_relay_response":
+            true
+        default:
+            false
+        }
+    }
 
     func scheduleGatewayReconnect() {
         guard shouldMaintainGatewayConnection,
