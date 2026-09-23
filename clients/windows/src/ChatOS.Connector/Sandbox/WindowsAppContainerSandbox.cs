@@ -15,7 +15,7 @@ internal static partial class WindowsAppContainerSandbox
     private const int ErrorAlreadyExistsHResult = unchecked((int)0x800700B7);
     private const uint DaclSecurityInformation = 0x0000_0004;
     private const uint FileTraverse = 0x0000_0020;
-    private const uint SetAccess = 2;
+    private const uint GrantAccess = 1;
     private const uint RevokeAccess = 4;
     private const string InternetClientSid = "S-1-15-3-1";
     private const string PrivateNetworkClientServerSid = "S-1-15-3-3";
@@ -67,7 +67,6 @@ internal static partial class WindowsAppContainerSandbox
                 sidText,
                 policy.PermissionProfile,
                 cancellationToken).ConfigureAwait(false);
-            await EnsureVolumeTraverseAclAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
             await EnsureAncestorTraverseAclsAsync(
                 workspaceRoot,
                 sidText,
@@ -512,7 +511,7 @@ internal static partial class WindowsAppContainerSandbox
             var entry = new ExplicitAccess
             {
                 AccessPermissions = FileTraverse,
-                AccessMode = remove ? RevokeAccess : SetAccess,
+                AccessMode = remove ? RevokeAccess : GrantAccess,
                 Inheritance = 0,
                 Trustee = new Trustee
                 {
@@ -550,17 +549,9 @@ internal static partial class WindowsAppContainerSandbox
     private static IEnumerable<string> AncestorDirectories(string path)
     {
         var fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-        var volumeRoot = Path.TrimEndingDirectorySeparator(Path.GetPathRoot(fullPath) ?? string.Empty);
         var parent = Directory.GetParent(fullPath);
         while (parent is not null)
         {
-            if (string.Equals(
-                    Path.TrimEndingDirectorySeparator(parent.FullName),
-                    volumeRoot,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                yield break;
-            }
             yield return parent.FullName;
             parent = parent.Parent;
         }
