@@ -22,20 +22,56 @@ extension AppModel {
         let service = agentGroupChatService
         let scheduler = agentGroupChatScheduler
         agentCommunicationTask = Task { [weak self] in
-            while !Task.isCancelled {
-                do {
-                    let results = try await scheduler.drainCommunications(
-                        ownerUserID: ownerUserID
-                    )
-                    guard !Task.isCancelled, self?.authenticatedUserID == ownerUserID else {
-                        return
+            let batchSize = 64
+            let changes = await service.changes(ownerUserID: ownerUserID)
+            let wakeups = AsyncStream<Void>(bufferingPolicy: .bufferingNewest(1)) { continuation in
+                // Subscribe before the startup wake so a write racing with recovery remains buffered.
+                continuation.yield()
+                let changeTask = Task {
+                    for await change in changes {
+                        guard !Task.isCancelled else { break }
+                        switch change.kind {
+                        case .roomUpdated, .runUpdated:
+                            continuation.yield()
+                        case .deliveryClaimed:
+                            break
+                        }
                     }
-                    try await Task.sleep(for: results.isEmpty ? .seconds(2) : .milliseconds(100))
-                } catch is CancellationError {
-                    return
-                } catch {
-                    guard !Task.isCancelled else { return }
-                    try? await Task.sleep(for: .seconds(5))
+                }
+                let fallbackTask = Task {
+                    while !Task.isCancelled {
+                        do {
+                            try await Task.sleep(for: .seconds(300))
+                        } catch {
+                            break
+                        }
+                        guard !Task.isCancelled else { break }
+                        continuation.yield()
+                    }
+                }
+                continuation.onTermination = { _ in
+                    changeTask.cancel()
+                    fallbackTask.cancel()
+                }
+            }
+            for await _ in wakeups {
+                guard !Task.isCancelled, self?.authenticatedUserID == ownerUserID else { return }
+                var shouldContinue = true
+                while shouldContinue, !Task.isCancelled {
+                    do {
+                        let results = try await scheduler.drainCommunications(
+                            ownerUserID: ownerUserID,
+                            maximumRuns: batchSize
+                        )
+                        // A full batch may leave more durable work behind; drain it without waiting
+                        // for another event. An empty/partial batch returns to the wake stream.
+                        shouldContinue = results.count == batchSize
+                    } catch is CancellationError {
+                        return
+                    } catch {
+                        guard !Task.isCancelled else { return }
+                        try? await Task.sleep(for: .seconds(10))
+                    }
                 }
             }
         }
