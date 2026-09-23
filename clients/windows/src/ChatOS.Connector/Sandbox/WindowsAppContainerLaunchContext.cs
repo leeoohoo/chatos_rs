@@ -130,10 +130,6 @@ internal sealed class WindowsAppContainerLaunchContext : IDisposable, IAsyncDisp
             ["CHATOS_SANDBOX_NETWORK"] = policy.NetworkAccess.ToString(),
             ["CHATOS_SANDBOX_PROFILE"] = policy.PermissionProfile.ToString(),
             ["ComSpec"] = Environment.ExpandEnvironmentVariables(commandInterpreter),
-            // AppContainer process creation requires LOCALAPPDATA to be present. Point it at
-            // the per-profile directory that already carries the container ACL instead of
-            // exposing the host user's profile.
-            ["LOCALAPPDATA"] = temporaryDirectory,
             ["PATH"] = path,
             ["PATHEXT"] = Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD",
             ["PROCESSOR_ARCHITECTURE"] = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE") ?? string.Empty,
