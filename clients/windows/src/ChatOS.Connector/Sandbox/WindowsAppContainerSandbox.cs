@@ -65,6 +65,11 @@ internal static class WindowsAppContainerSandbox
                 policy.PermissionProfile,
                 cancellationToken).ConfigureAwait(false);
             TraceNativePreparation("workspace-acl-ready");
+            await EnsureAncestorTraverseAclsAsync(
+                workspaceRoot,
+                sidText,
+                cancellationToken).ConfigureAwait(false);
+            TraceNativePreparation("workspace-ancestors-ready");
             var temporaryDirectory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "ChatOS",
@@ -246,7 +251,10 @@ internal static class WindowsAppContainerSandbox
             start.ArgumentList.Add("/T");
         }
         start.ArgumentList.Add("/C");
-        start.ArgumentList.Add("/L");
+        if (recursive)
+        {
+            start.ArgumentList.Add("/L");
+        }
         start.ArgumentList.Add("/Q");
         using var process = Process.Start(start)
             ?? throw new InvalidOperationException("Unable to start Windows ACL preparation.");
@@ -276,6 +284,22 @@ internal static class WindowsAppContainerSandbox
         {
             throw new InvalidOperationException(
                 $"Windows could not prepare the workspace sandbox ACL (icacls {process.ExitCode}): {SafeAclError(error, output)}");
+        }
+    }
+
+    private static async Task EnsureAncestorTraverseAclsAsync(
+        string path,
+        string sid,
+        CancellationToken cancellationToken)
+    {
+        foreach (var ancestor in AncestorDirectories(path))
+        {
+            await EnsurePathAclAsync(
+                ancestor,
+                sid,
+                "(X)",
+                cancellationToken,
+                recursive: false).ConfigureAwait(false);
         }
     }
 
@@ -392,6 +416,10 @@ internal static class WindowsAppContainerSandbox
         {
             await RemovePathAclAsync(metadata.WorkspaceRoot, metadata.Sid, CancellationToken.None)
                 .ConfigureAwait(false);
+            await RemoveAncestorTraverseAclsAsync(
+                metadata.WorkspaceRoot,
+                metadata.Sid,
+                CancellationToken.None).ConfigureAwait(false);
             PreparedWorkspaceAcls.TryRemove(
                 WorkspaceAclKey(
                     metadata.WorkspaceRoot,
@@ -439,7 +467,10 @@ internal static class WindowsAppContainerSandbox
             start.ArgumentList.Add("/T");
         }
         start.ArgumentList.Add("/C");
-        start.ArgumentList.Add("/L");
+        if (recursive)
+        {
+            start.ArgumentList.Add("/L");
+        }
         start.ArgumentList.Add("/Q");
         using var process = Process.Start(start)
             ?? throw new InvalidOperationException("Unable to start Windows ACL cleanup.");
@@ -468,6 +499,40 @@ internal static class WindowsAppContainerSandbox
         {
             throw new InvalidOperationException(
                 $"Windows could not remove the workspace sandbox ACL (icacls {process.ExitCode}): {SafeAclError(error, output)}");
+        }
+    }
+
+    private static async Task RemoveAncestorTraverseAclsAsync(
+        string path,
+        string sid,
+        CancellationToken cancellationToken)
+    {
+        foreach (var ancestor in AncestorDirectories(path).Reverse())
+        {
+            await RemovePathAclAsync(
+                ancestor,
+                sid,
+                cancellationToken,
+                recursive: false).ConfigureAwait(false);
+        }
+    }
+
+    private static IEnumerable<string> AncestorDirectories(string path)
+    {
+        var fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        var volumeRoot = Path.TrimEndingDirectorySeparator(Path.GetPathRoot(fullPath) ?? string.Empty);
+        var parent = Directory.GetParent(fullPath);
+        while (parent is not null)
+        {
+            if (string.Equals(
+                    Path.TrimEndingDirectorySeparator(parent.FullName),
+                    volumeRoot,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                yield break;
+            }
+            yield return parent.FullName;
+            parent = parent.Parent;
         }
     }
 

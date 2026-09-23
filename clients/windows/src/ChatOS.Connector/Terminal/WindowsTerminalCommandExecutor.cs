@@ -533,7 +533,7 @@ internal static class NativeTerminalProcess
         uint mask,
         uint flags);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", EntryPoint = "TerminateProcess", SetLastError = true)]
     private static extern bool TerminateProcessNative(
         SafeKernelObjectHandle process,
         uint exitCode);

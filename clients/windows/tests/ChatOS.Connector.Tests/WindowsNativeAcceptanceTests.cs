@@ -149,13 +149,14 @@ public sealed class WindowsNativeAcceptanceTests
             sandbox: null);
         var architecture = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE") ?? "UNKNOWN";
         var expected = $"CHATOS_{architecture}_CONPTY_OK";
-        await session.WriteAsync("echo CHATOS_%PROCESSOR_ARCHITECTURE%_CONPTY_OK\r\nexit\r\n");
+        await session.WriteAsync("echo CHATOS_%PROCESSOR_ARCHITECTURE%_CONPTY_OK\r\n");
         var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
         while (!session.Snapshot().Contains(expected, StringComparison.OrdinalIgnoreCase) &&
                DateTimeOffset.UtcNow < deadline)
         {
             await Task.Delay(100);
         }
+        await session.WriteAsync("exit\r\n");
 
         var snapshot = session.Snapshot();
         var native = Assert.IsType<ConPtyTerminalSession>(session);
