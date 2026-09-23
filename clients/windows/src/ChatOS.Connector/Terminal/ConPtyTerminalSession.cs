@@ -76,6 +76,7 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
     private readonly FileStream _input;
+    private readonly SafeFileHandle _pseudoInput;
     private readonly FileStream _output;
     private readonly SafePseudoConsoleHandle _pseudoConsole;
     private readonly SafeKernelObjectHandle _job;
@@ -95,6 +96,7 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
     {
         Identity = identity;
         _input = native.Input;
+        _pseudoInput = native.PseudoInput;
         _output = native.Output;
         _pseudoConsole = native.PseudoConsole;
         _job = native.Job;
@@ -259,6 +261,7 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
             // A broken output reader forces ConHost to abandon any final frame and lets
             // ClosePseudoConsole return instead of hanging application shutdown.
         }
+        _pseudoInput.Dispose();
         _lifetime.Cancel();
         _output.Dispose();
         await ReleaseNetworkLeaseAsync().ConfigureAwait(false);
@@ -357,6 +360,7 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
         try
         {
             await closePseudoConsoleTask.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+            _pseudoInput.Dispose();
             await _outputTask.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
         }
         catch (TimeoutException)
@@ -474,6 +478,7 @@ internal static class WindowsShellResolver
 
 internal sealed record NativeConPtyProcess(
     FileStream Input,
+    SafeFileHandle PseudoInput,
     FileStream Output,
     SafePseudoConsoleHandle PseudoConsole,
     SafeKernelObjectHandle Job,
@@ -593,18 +598,19 @@ internal sealed record NativeConPtyProcess(
                 throw new Win32Exception(Marshal.GetLastWin32Error());
             }
 
-            pseudoInput.Dispose();
-            pseudoInput = null;
             pseudoOutput.Dispose();
             pseudoOutput = null;
             thread.Dispose();
             thread = null;
             var input = new FileStream(inputWriter, FileAccess.Write, 16 * 1024, isAsync: false);
             inputWriter = null;
+            var retainedPseudoInput = pseudoInput;
+            pseudoInput = null;
             var output = new FileStream(outputReader, FileAccess.Read, 16 * 1024, isAsync: false);
             outputReader = null;
             return new NativeConPtyProcess(
                 input,
+                retainedPseudoInput,
                 output,
                 pseudoConsole,
                 job,
