@@ -307,7 +307,16 @@ jobs:
 
       - name: Verify native platform contracts
         shell: bash
+        env:
+          CHATOS_WINDOWS_NATIVE_TRACE: ${{ runner.temp }}/chatos-windows-native-trace.log
         run: bash scripts/verify-repository.sh native-platform
+
+      - name: Print Windows native failure trace
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $trace = Join-Path $env:RUNNER_TEMP "chatos-windows-native-trace.log"
+          if (Test-Path $trace) { Get-Content $trace }
 
   browser-plugin:
     name: Browser plugin (Rust)

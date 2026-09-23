@@ -275,6 +275,7 @@ public sealed class WindowsNativeAcceptanceTests
     {
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763)) return;
 
+        TraceNativeFailure("test-start");
         using var workspace = TemporaryDirectory.Create();
         var marker = System.IO.Path.Combine(workspace.Path, "must-not-run.txt");
         var guard = new AcceptanceNetworkGuardClient(marker) { ThrowOnAcquire = true };
@@ -285,29 +286,48 @@ public sealed class WindowsNativeAcceptanceTests
             ConnectorSandboxPermissionProfile.WorkspaceWrite,
             ConnectorSandboxNetworkAccess.Controlled));
 
-        await using var sandbox = await WindowsAppContainerSandbox.PrepareAsync(
+        var sandbox = await WindowsAppContainerSandbox.PrepareAsync(
             workspace.Path,
             sandboxPolicy,
             policy.PolicyRevision,
             CancellationToken.None);
-        await Assert.ThrowsAsync<IOException>(() => ConPtyTerminalSession.StartAsync(
-            new TerminalSessionIdentity(
-                "native-controlled-conpty-failure",
-                policy.WorkspaceId,
-                workspace.Path,
-                workspace.Path,
-                policy),
-            new TerminalSize(100, 30),
-            CommandInterpreter(),
-            ["/d", "/s", "/c", $"echo escaped>\"{marker}\""],
-            sandbox,
-            coordinator,
-            CancellationToken.None));
+        TraceNativeFailure("sandbox-prepared");
+        try
+        {
+            await Assert.ThrowsAsync<IOException>(() => ConPtyTerminalSession.StartAsync(
+                new TerminalSessionIdentity(
+                    "native-controlled-conpty-failure",
+                    policy.WorkspaceId,
+                    workspace.Path,
+                    workspace.Path,
+                    policy),
+                new TerminalSize(100, 30),
+                CommandInterpreter(),
+                ["/d", "/s", "/c", $"echo escaped>\"{marker}\""],
+                sandbox,
+                coordinator,
+                CancellationToken.None));
+            TraceNativeFailure("start-failed-as-expected");
 
-        await Task.Delay(500);
-        Assert.False(File.Exists(marker), "The suspended process ran after lease acquisition failed.");
-        Assert.Equal(1, guard.AcquireCount);
-        Assert.Equal(0, guard.ReleaseCount);
+            await Task.Delay(500);
+            Assert.False(File.Exists(marker), "The suspended process ran after lease acquisition failed.");
+            Assert.Equal(1, guard.AcquireCount);
+            Assert.Equal(0, guard.ReleaseCount);
+            TraceNativeFailure("assertions-complete");
+        }
+        finally
+        {
+            TraceNativeFailure("sandbox-dispose-start");
+            await sandbox.DisposeAsync();
+            TraceNativeFailure("sandbox-dispose-complete");
+        }
+    }
+
+    private static void TraceNativeFailure(string stage)
+    {
+        var path = Environment.GetEnvironmentVariable("CHATOS_WINDOWS_NATIVE_TRACE");
+        if (string.IsNullOrWhiteSpace(path)) return;
+        File.AppendAllText(path, $"{DateTimeOffset.UtcNow:O} {stage}{Environment.NewLine}");
     }
 
     [Fact]
