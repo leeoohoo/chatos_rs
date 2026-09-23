@@ -67,6 +67,7 @@ internal static partial class WindowsAppContainerSandbox
                 sidText,
                 policy.PermissionProfile,
                 cancellationToken).ConfigureAwait(false);
+            await EnsureVolumeTraverseAclAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
             await EnsureAncestorTraverseAclsAsync(
                 workspaceRoot,
                 sidText,
