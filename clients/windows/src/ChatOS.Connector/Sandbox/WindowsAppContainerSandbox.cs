@@ -53,21 +53,25 @@ internal static class WindowsAppContainerSandbox
             _ = CleanupStaleControlledProfilesOnceAsync();
             profileLease = await AcquireEphemeralProfileAsync(profileName, cancellationToken)
                 .ConfigureAwait(false);
+            TraceNativePreparation("profile-lease-acquired");
         }
         IntPtr appContainerSid = IntPtr.Zero;
         try
         {
             appContainerSid = CreateOrDeriveProfileSid(profileName);
+            TraceNativePreparation("profile-sid-ready");
             var sidText = SidToString(appContainerSid);
             await EnsureWorkspaceAclAsync(
                 workspaceRoot,
                 sidText,
                 policy.PermissionProfile,
                 cancellationToken).ConfigureAwait(false);
+            TraceNativePreparation("workspace-acl-ready");
             await EnsureAncestorTraverseAclsAsync(
                 workspaceRoot,
                 sidText,
                 cancellationToken).ConfigureAwait(false);
+            TraceNativePreparation("workspace-ancestors-ready");
             var temporaryDirectory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "ChatOS",
@@ -80,10 +84,12 @@ internal static class WindowsAppContainerSandbox
                 sidText,
                 "(OI)(CI)M",
                 cancellationToken).ConfigureAwait(false);
+            TraceNativePreparation("temporary-acl-ready");
             await EnsureAncestorTraverseAclsAsync(
                 temporaryDirectory,
                 sidText,
                 cancellationToken).ConfigureAwait(false);
+            TraceNativePreparation("temporary-ancestors-ready");
             if (profileLease is not null)
             {
                 await profileLease.RegisterAsync(
@@ -91,6 +97,7 @@ internal static class WindowsAppContainerSandbox
                     sidText,
                     temporaryDirectory,
                     cancellationToken).ConfigureAwait(false);
+                TraceNativePreparation("profile-lease-registered");
             }
             var capabilities = policy.GrantInternetCapabilities
                 ? new[] { CapabilitySid(InternetClientSid), CapabilitySid(PrivateNetworkClientServerSid) }
@@ -105,15 +112,31 @@ internal static class WindowsAppContainerSandbox
         }
         catch
         {
+            TraceNativePreparation("prepare-catch");
             if (appContainerSid != IntPtr.Zero)
             {
                 _ = FreeSid(appContainerSid);
             }
             if (profileLease is not null)
             {
+                TraceNativePreparation("failed-profile-release-start");
                 await profileLease.DisposeAsync().ConfigureAwait(false);
+                TraceNativePreparation("failed-profile-release-complete");
             }
             throw;
+        }
+    }
+
+    private static void TraceNativePreparation(string stage)
+    {
+        var path = Environment.GetEnvironmentVariable("CHATOS_WINDOWS_NATIVE_TRACE");
+        if (string.IsNullOrWhiteSpace(path)) return;
+        try
+        {
+            File.AppendAllText(path, $"{DateTimeOffset.UtcNow:O} prepare:{stage}{Environment.NewLine}");
+        }
+        catch (IOException)
+        {
         }
     }
 

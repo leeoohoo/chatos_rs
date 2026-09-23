@@ -327,7 +327,13 @@ public sealed class WindowsNativeAcceptanceTests
     {
         var path = Environment.GetEnvironmentVariable("CHATOS_WINDOWS_NATIVE_TRACE");
         if (string.IsNullOrWhiteSpace(path)) return;
-        File.AppendAllText(path, $"{DateTimeOffset.UtcNow:O} {stage}{Environment.NewLine}");
+        try
+        {
+            File.AppendAllText(path, $"{DateTimeOffset.UtcNow:O} {stage}{Environment.NewLine}");
+        }
+        catch (IOException)
+        {
+        }
     }
 
     [Fact]
