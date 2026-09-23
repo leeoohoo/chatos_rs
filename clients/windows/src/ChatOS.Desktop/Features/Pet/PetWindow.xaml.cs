@@ -3,7 +3,6 @@ using System.Runtime.InteropServices;
 using ChatOS.Connector.Approval;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
-using ChatOS.Presentation.Chat;
 using ChatOS.Presentation.Pet;
 using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
@@ -462,14 +461,6 @@ public sealed partial class PetWindow : Window
     }
 
     private async void OnCancelTaskClicked(object sender, RoutedEventArgs e) => await ViewModel.CancelSelectedAsync();
-
-    private void OnAskUserSecretChanged(object sender, RoutedEventArgs e)
-    {
-        if (sender is PasswordBox { DataContext: AskUserFieldInputViewModel field } passwordBox)
-        {
-            field.Value = passwordBox.Password;
-        }
-    }
 
     private async void OnDeclineApproval(object sender, RoutedEventArgs e) =>
         await ResolveApprovalAsync(ConnectorApprovalAction.Decline);
