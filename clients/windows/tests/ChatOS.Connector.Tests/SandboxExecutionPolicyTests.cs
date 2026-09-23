@@ -40,6 +40,7 @@ public sealed class SandboxExecutionPolicyTests
 
         Assert.Equal("1", environment["CHATOS_SANDBOX"]);
         Assert.Equal("C:\\sandbox-temp", environment["TEMP"]);
+        Assert.Equal("C:\\sandbox-temp", environment["LOCALAPPDATA"]);
         Assert.DoesNotContain("OPENAI_API_KEY", environment.Keys, StringComparer.OrdinalIgnoreCase);
         Assert.DoesNotContain("CHATOS_API_TOKEN", environment.Keys, StringComparer.OrdinalIgnoreCase);
         Assert.DoesNotContain("USERPROFILE", environment.Keys, StringComparer.OrdinalIgnoreCase);

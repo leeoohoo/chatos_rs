@@ -525,7 +525,7 @@ internal sealed record NativeConPtyProcess(
                 creationFlags |= NativeConPty.CreateUnicodeEnvironment;
             }
             NativeConPty.ThrowIfFalse(NativeConPty.CreateProcess(
-                null,
+                executable,
                 commandLine,
                 IntPtr.Zero,
                 IntPtr.Zero,
