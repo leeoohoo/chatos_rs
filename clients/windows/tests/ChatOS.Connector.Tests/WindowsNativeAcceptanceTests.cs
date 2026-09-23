@@ -497,7 +497,10 @@ public sealed class WindowsNativeAcceptanceTests
         public static TemporaryDirectory Create()
         {
             var path = System.IO.Path.Combine(
-                System.IO.Path.GetTempPath(),
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "ChatOS",
+                "WindowsClient",
+                "NativeTests",
                 $"chatos-native-{Guid.NewGuid():N}");
             Directory.CreateDirectory(path);
             return new TemporaryDirectory(path);
