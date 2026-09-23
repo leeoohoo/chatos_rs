@@ -568,10 +568,6 @@ internal sealed record NativeConPtyProcess(
                 throw new Win32Exception(Marshal.GetLastWin32Error());
             }
 
-            pseudoInput.Dispose();
-            pseudoInput = null;
-            pseudoOutput.Dispose();
-            pseudoOutput = null;
             thread.Dispose();
             thread = null;
             var input = new FileStream(inputWriter, FileAccess.Write, 16 * 1024, isAsync: false);
