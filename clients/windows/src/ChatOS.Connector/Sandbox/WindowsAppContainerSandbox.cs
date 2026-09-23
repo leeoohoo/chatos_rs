@@ -62,6 +62,10 @@ internal static class WindowsAppContainerSandbox
                 sidText,
                 policy.PermissionProfile,
                 cancellationToken).ConfigureAwait(false);
+            await EnsureAncestorTraverseAclsAsync(
+                workspaceRoot,
+                sidText,
+                cancellationToken).ConfigureAwait(false);
             var temporaryDirectory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "ChatOS",
@@ -73,6 +77,10 @@ internal static class WindowsAppContainerSandbox
                 temporaryDirectory,
                 sidText,
                 "(OI)(CI)M",
+                cancellationToken).ConfigureAwait(false);
+            await EnsureAncestorTraverseAclsAsync(
+                temporaryDirectory,
+                sidText,
                 cancellationToken).ConfigureAwait(false);
             if (profileLease is not null)
             {
@@ -199,7 +207,8 @@ internal static class WindowsAppContainerSandbox
         string root,
         string sid,
         string access,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool recursive = true)
     {
         var systemDirectory = Environment.GetFolderPath(Environment.SpecialFolder.System);
         var icacls = Path.Combine(systemDirectory, "icacls.exe");
@@ -219,7 +228,10 @@ internal static class WindowsAppContainerSandbox
         start.ArgumentList.Add(root);
         start.ArgumentList.Add("/grant:r");
         start.ArgumentList.Add($"*{sid}:{access}");
-        start.ArgumentList.Add("/T");
+        if (recursive)
+        {
+            start.ArgumentList.Add("/T");
+        }
         start.ArgumentList.Add("/C");
         start.ArgumentList.Add("/L");
         start.ArgumentList.Add("/Q");
@@ -250,6 +262,22 @@ internal static class WindowsAppContainerSandbox
         {
             throw new InvalidOperationException(
                 $"Windows could not prepare the workspace sandbox ACL (icacls {process.ExitCode}): {SafeAclError(error, output)}");
+        }
+    }
+
+    private static async Task EnsureAncestorTraverseAclsAsync(
+        string path,
+        string sid,
+        CancellationToken cancellationToken)
+    {
+        foreach (var ancestor in AncestorDirectories(path))
+        {
+            await EnsurePathAclAsync(
+                ancestor,
+                sid,
+                "(X)",
+                cancellationToken,
+                recursive: false).ConfigureAwait(false);
         }
     }
 
@@ -366,6 +394,14 @@ internal static class WindowsAppContainerSandbox
         {
             await RemovePathAclAsync(metadata.WorkspaceRoot, metadata.Sid, CancellationToken.None)
                 .ConfigureAwait(false);
+            await RemoveAncestorTraverseAclsAsync(
+                metadata.WorkspaceRoot,
+                metadata.Sid,
+                CancellationToken.None).ConfigureAwait(false);
+            await RemoveAncestorTraverseAclsAsync(
+                metadata.TemporaryDirectory,
+                metadata.Sid,
+                CancellationToken.None).ConfigureAwait(false);
             PreparedWorkspaceAcls.TryRemove(
                 WorkspaceAclKey(
                     metadata.WorkspaceRoot,
@@ -384,7 +420,8 @@ internal static class WindowsAppContainerSandbox
     private static async Task RemovePathAclAsync(
         string root,
         string sid,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool recursive = true)
     {
         if (!Directory.Exists(root))
         {
@@ -407,7 +444,10 @@ internal static class WindowsAppContainerSandbox
         start.ArgumentList.Add(root);
         start.ArgumentList.Add("/remove:g");
         start.ArgumentList.Add($"*{sid}");
-        start.ArgumentList.Add("/T");
+        if (recursive)
+        {
+            start.ArgumentList.Add("/T");
+        }
         start.ArgumentList.Add("/C");
         start.ArgumentList.Add("/L");
         start.ArgumentList.Add("/Q");
@@ -437,6 +477,31 @@ internal static class WindowsAppContainerSandbox
         {
             throw new InvalidOperationException(
                 $"Windows could not remove the workspace sandbox ACL (icacls {process.ExitCode}): {SafeAclError(error, output)}");
+        }
+    }
+
+    private static async Task RemoveAncestorTraverseAclsAsync(
+        string path,
+        string sid,
+        CancellationToken cancellationToken)
+    {
+        foreach (var ancestor in AncestorDirectories(path).Reverse())
+        {
+            await RemovePathAclAsync(
+                ancestor,
+                sid,
+                cancellationToken,
+                recursive: false).ConfigureAwait(false);
+        }
+    }
+
+    private static IEnumerable<string> AncestorDirectories(string path)
+    {
+        var parent = Directory.GetParent(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)));
+        while (parent is not null)
+        {
+            yield return parent.FullName;
+            parent = parent.Parent;
         }
     }
 

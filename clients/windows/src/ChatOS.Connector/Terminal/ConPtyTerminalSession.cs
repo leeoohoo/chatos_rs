@@ -84,6 +84,8 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
     private readonly Task _outputTask;
     private readonly Task _waitTask;
     private NetworkGuardLeaseLifetime? _networkLease;
+    private int _exitCode = int.MinValue;
+    private string? _outputFailure;
     private int _exited;
     private int _disposed;
 
@@ -110,6 +112,12 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
     public TerminalSessionIdentity Identity { get; }
 
     public bool HasExited => Volatile.Read(ref _exited) != 0;
+
+    internal int? ExitCode => Volatile.Read(ref _exitCode) is var value && value != int.MinValue
+        ? value
+        : null;
+
+    internal string? OutputFailure => Volatile.Read(ref _outputFailure);
 
     public bool IsBusy => false;
 
@@ -307,6 +315,7 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
         }
         catch (Exception exception)
         {
+            Volatile.Write(ref _outputFailure, exception.Message);
             Publish(new TerminalEvent(
                 TerminalEventKind.Error,
                 Identity.SessionId,
@@ -321,6 +330,7 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
             CancellationToken.None,
             TaskCreationOptions.LongRunning,
             TaskScheduler.Default).ConfigureAwait(false);
+        Volatile.Write(ref _exitCode, exitCode);
         Interlocked.Exchange(ref _exited, 1);
         await ReleaseNetworkLeaseAsync().ConfigureAwait(false);
         await ReleaseSandboxProfileAsync().ConfigureAwait(false);
@@ -477,6 +487,12 @@ internal sealed record NativeConPtyProcess(
             NativeConPty.CreatePipePair(out inputWriter, out pseudoInput, parentReads: false);
             NativeConPty.CreatePipePair(out outputReader, out pseudoOutput, parentReads: true);
             pseudoConsole = NativeConPty.CreatePseudoConsole(size, pseudoInput, pseudoOutput);
+            // CreatePseudoConsole duplicates both handles. Retaining these copies can
+            // keep a direction open after its real owner has completed.
+            pseudoInput.Dispose();
+            pseudoInput = null;
+            pseudoOutput.Dispose();
+            pseudoOutput = null;
 
             nuint attributeBytes = 0;
             _ = NativeConPty.InitializeProcThreadAttributeList(

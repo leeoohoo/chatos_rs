@@ -3,6 +3,7 @@ using ChatOS.Connector.Persistence;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
 using ChatOS.Core.State;
+using Microsoft.Data.Sqlite;
 
 namespace ChatOS.Connector.Tests;
 
@@ -22,6 +23,8 @@ public sealed class SqliteProjectRegistryTests : IAsyncLifetime
 
     public Task DisposeAsync()
     {
+        // Disposed connections remain pooled and keep the database file open on Windows.
+        SqliteConnection.ClearAllPools();
         if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true);
         return Task.CompletedTask;
     }
