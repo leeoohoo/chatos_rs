@@ -245,7 +245,20 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
         // synchronous reader thread to drain the final frame and observe EOF. Do not
         // cancel that reader until ClosePseudoConsole has finished or ConHost can block
         // while flushing its remaining output.
-        _pseudoConsole.Dispose();
+        var closePseudoConsoleTask = Task.Factory.StartNew(
+            _pseudoConsole.Dispose,
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        try
+        {
+            await closePseudoConsoleTask.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            // A broken output reader forces ConHost to abandon any final frame and lets
+            // ClosePseudoConsole return instead of hanging application shutdown.
+        }
         _lifetime.Cancel();
         _output.Dispose();
         await ReleaseNetworkLeaseAsync().ConfigureAwait(false);
@@ -254,7 +267,8 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
         await ReleaseSandboxProfileAsync().ConfigureAwait(false);
         try
         {
-            await Task.WhenAll(_outputTask, _waitTask).WaitAsync(TimeSpan.FromSeconds(1))
+            await Task.WhenAll(_outputTask, _waitTask, closePseudoConsoleTask)
+                .WaitAsync(TimeSpan.FromSeconds(1))
                 .ConfigureAwait(false);
         }
         catch
