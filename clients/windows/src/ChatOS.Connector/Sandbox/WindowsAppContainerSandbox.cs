@@ -125,9 +125,12 @@ internal static class WindowsAppContainerSandbox
         {
             return $"ChatOS.Sandbox.{permission}.v2.{digest}";
         }
+        // CreateAppContainerProfile accepts names of at most 64 characters.
+        // Keep independent 64-bit workspace and policy digests while preserving
+        // the prefix used by stale-profile cleanup.
         var isolationDigest = Convert.ToHexString(SHA256.HashData(
-            Encoding.UTF8.GetBytes(isolationKey.Trim()))).ToLowerInvariant()[..24];
-        return $"ChatOS.Sandbox.{permission}.controlled.v1.{digest}.{isolationDigest}";
+            Encoding.UTF8.GetBytes(isolationKey.Trim()))).ToLowerInvariant()[..16];
+        return $"ChatOS.Sandbox.{permission}.controlled.v1.{digest[..16]}.{isolationDigest}";
     }
 
     internal static bool HasPendingProfileCleanup(string profileName) =>

@@ -337,16 +337,21 @@ public sealed class PluginRelayHandlerTests : IDisposable
     private string CreateInstallation()
     {
         var installation = Path.Combine(_directory, "installed");
+        var executableName = TestPluginExecutableName;
         Directory.CreateDirectory(Path.Combine(installation, "bin"));
         File.WriteAllText(
             Path.Combine(installation, "package.json"),
-            """{"name":"test-plugin","version":"1.0.0","bin":{"test-plugin":"bin/test-plugin"}}""");
+            """{"name":"test-plugin","version":"1.0.0","bin":{"test-plugin":"bin/__EXECUTABLE__"}}"""
+                .Replace("__EXECUTABLE__", executableName, StringComparison.Ordinal));
         File.WriteAllText(
             Path.Combine(installation, "chatos.plugin.json"),
             """{"schemaVersion":3,"name":"test-plugin","version":"1.0.0","mcpServers":{"main":{"type":"stdio","bin":"test-plugin"}},"permissions":[{"permission":"process.spawn","required":true,"components":["main"]},{"permission":"workspace.read","required":true,"components":["main"]}]}""");
-        File.WriteAllText(Path.Combine(installation, "bin", "test-plugin"), "native executable");
+        File.WriteAllText(Path.Combine(installation, "bin", executableName), "native executable");
         return installation;
     }
+
+    private static string TestPluginExecutableName =>
+        OperatingSystem.IsWindows() ? "test-plugin.exe" : "test-plugin";
 
     private string CreateHttpInstallation()
     {

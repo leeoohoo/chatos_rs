@@ -152,7 +152,11 @@ public sealed class WindowsProjectGitService : IProjectGitService
     {
         var project = _paths.Resolve(projectRoot);
         _ = await RunAsync(
-            ["init", "-b", "main"],
+            ["init"],
+            project.AbsolutePath,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        _ = await RunAsync(
+            ["symbolic-ref", "HEAD", "refs/heads/main"],
             project.AbsolutePath,
             cancellationToken: cancellationToken).ConfigureAwait(false);
     }
@@ -215,7 +219,7 @@ public sealed class WindowsProjectGitService : IProjectGitService
             GitExitCodes.SuccessOrNotFound,
             cancellationToken).ConfigureAwait(false);
         var arguments = head.ExitCode == 0
-            ? new List<string> { "restore", "--staged", "--" }
+            ? new List<string> { "reset", "HEAD", "--" }
             : new List<string> { "rm", "--cached", "--" };
         arguments.AddRange(paths);
         _ = await RunAsync(arguments, repository.Root, cancellationToken: cancellationToken)
@@ -251,7 +255,7 @@ public sealed class WindowsProjectGitService : IProjectGitService
         var repository = await RequiredRepositoryAsync(projectRoot, cancellationToken).ConfigureAwait(false);
         await ValidateBranchAsync(branch, repository.Root, cancellationToken).ConfigureAwait(false);
         _ = await RunAsync(
-            ["switch", branch],
+            ["checkout", branch],
             repository.Root,
             cancellationToken: cancellationToken).ConfigureAwait(false);
     }
@@ -266,7 +270,7 @@ public sealed class WindowsProjectGitService : IProjectGitService
         var repository = await RequiredRepositoryAsync(projectRoot, cancellationToken).ConfigureAwait(false);
         await ValidateBranchAsync(name, repository.Root, cancellationToken).ConfigureAwait(false);
         var arguments = switchToBranch
-            ? new[] { "switch", "-c", name }
+            ? new[] { "checkout", "-b", name }
             : new[] { "branch", name };
         _ = await RunAsync(arguments, repository.Root, cancellationToken: cancellationToken)
             .ConfigureAwait(false);

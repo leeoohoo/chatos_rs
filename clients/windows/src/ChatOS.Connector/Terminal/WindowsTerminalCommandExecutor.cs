@@ -210,13 +210,13 @@ public sealed class WindowsTerminalCommandExecutor(
                     standardOutputRead,
                     FileAccess.Read,
                     bufferSize: 16 * 1_024,
-                    isAsync: true);
+                    isAsync: false);
                 standardOutputRead = null;
                 await using var stderrStream = new FileStream(
                     standardErrorRead,
                     FileAccess.Read,
                     bufferSize: 16 * 1_024,
-                    isAsync: true);
+                    isAsync: false);
                 standardErrorRead = null;
 
                 if (NativeConPty.ResumeThread(thread) == uint.MaxValue)

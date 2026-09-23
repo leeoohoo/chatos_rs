@@ -104,5 +104,6 @@ public sealed class SandboxExecutionPolicyTests
         Assert.Equal(first, repeated);
         Assert.NotEqual(first, second);
         Assert.Contains(".controlled.v1.", first, StringComparison.Ordinal);
+        Assert.True(first.Length <= 64);
     }
 }
