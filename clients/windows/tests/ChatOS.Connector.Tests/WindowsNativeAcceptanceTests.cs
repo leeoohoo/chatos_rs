@@ -553,6 +553,25 @@ public sealed class WindowsNativeAcceptanceTests
                     throw new InvalidOperationException(
                         $"Unable to prepare native test workspace integrity (icacls {process.ExitCode}).");
                 }
+                var grant = new ProcessStartInfo
+                {
+                    FileName = System.IO.Path.Combine(Environment.SystemDirectory, "icacls.exe"),
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                grant.ArgumentList.Add(path);
+                grant.ArgumentList.Add("/grant:r");
+                grant.ArgumentList.Add("*S-1-15-2-1:(OI)(CI)F");
+                grant.ArgumentList.Add("/C");
+                grant.ArgumentList.Add("/Q");
+                using var grantProcess = Process.Start(grant)
+                    ?? throw new InvalidOperationException("Unable to grant native test package access.");
+                grantProcess.WaitForExit();
+                if (grantProcess.ExitCode != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Unable to grant native test package access (icacls {grantProcess.ExitCode}).");
+                }
             }
             return new TemporaryDirectory(path);
         }

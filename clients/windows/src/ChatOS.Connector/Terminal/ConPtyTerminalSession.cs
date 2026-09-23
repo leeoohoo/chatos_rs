@@ -75,7 +75,7 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
     private readonly TerminalOutputBuffer _outputBuffer = new();
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
-    private readonly FileStream _input;
+    private readonly SafeFileHandle _input;
     private readonly FileStream _output;
     private readonly SafePseudoConsoleHandle _pseudoConsole;
     private readonly SafeKernelObjectHandle _job;
@@ -181,8 +181,7 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            _input.Write(bytes);
-            _input.Flush();
+            NativeConPty.Write(_input, bytes);
         }
         finally
         {
@@ -473,7 +472,7 @@ internal static class WindowsShellResolver
 }
 
 internal sealed record NativeConPtyProcess(
-    FileStream Input,
+    SafeFileHandle Input,
     FileStream Output,
     SafePseudoConsoleHandle PseudoConsole,
     SafeKernelObjectHandle Job,
@@ -599,7 +598,7 @@ internal sealed record NativeConPtyProcess(
             pseudoOutput = null;
             thread.Dispose();
             thread = null;
-            var input = new FileStream(inputWriter, FileAccess.Write, 16 * 1024, isAsync: false);
+            var input = inputWriter;
             inputWriter = null;
             var output = new FileStream(outputReader, FileAccess.Read, 16 * 1024, isAsync: false);
             outputReader = null;

@@ -71,6 +71,27 @@ internal static class NativeConPty
         }
     }
 
+    public static void Write(SafeFileHandle handle, byte[] bytes)
+    {
+        var offset = 0;
+        while (offset < bytes.Length)
+        {
+            var remaining = bytes.Length - offset;
+            var chunk = offset == 0 ? bytes : bytes[offset..];
+            ThrowIfFalse(WriteFile(
+                handle,
+                chunk,
+                checked((uint)remaining),
+                out var written,
+                IntPtr.Zero));
+            if (written == 0)
+            {
+                throw new IOException("Windows terminal input pipe accepted zero bytes.");
+            }
+            offset += checked((int)written);
+        }
+    }
+
     public static SafeKernelObjectHandle CreateKillOnCloseJob()
     {
         var job = CreateJobObject(IntPtr.Zero, null);
@@ -228,6 +249,14 @@ internal static class NativeConPty
 
     [DllImport("kernel32.dll")]
     internal static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool WriteFile(
+        SafeFileHandle handle,
+        byte[] buffer,
+        uint bytesToWrite,
+        out uint bytesWritten,
+        IntPtr overlapped);
 }
 
 internal sealed class SafePseudoConsoleHandle : SafeHandleZeroOrMinusOneIsInvalid
