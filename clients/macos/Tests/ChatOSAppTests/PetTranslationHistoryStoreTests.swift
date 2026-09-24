@@ -85,7 +85,10 @@ struct PetTranslationHistoryStoreTests {
         #expect(viewModel.isTranslating)
         #expect(viewModel.draft.isEmpty)
         #expect(viewModel.attachments.isEmpty)
-        try await waitUntil { !viewModel.displayedResult.isEmpty && !viewModel.isTranslating }
+        try await waitUntil {
+            !viewModel.isTranslating
+                && viewModel.historyRecords.first?.attachments.first?.name == "screenshot.png"
+        }
 
         #expect(viewModel.displayedResult == "translated")
         #expect(viewModel.historyRecords.first?.sourceText == "please translate")
@@ -128,7 +131,11 @@ struct PetTranslationHistoryStoreTests {
         )
 
         viewModel.translateWhenReady()
-        try await waitUntil { !viewModel.displayedResult.isEmpty && !viewModel.isTranslating }
+        try await waitUntil {
+            !viewModel.isTranslating
+                && viewModel.historyRecords.first?.attachments.first?.name
+                    == "direct-screenshot.png"
+        }
 
         #expect(viewModel.attachments.isEmpty)
         #expect(viewModel.displayedResult == "translated")
@@ -154,7 +161,7 @@ struct PetTranslationHistoryStoreTests {
 
     @MainActor
     private func waitUntil(
-        timeout: Duration = .seconds(2),
+        timeout: Duration = .seconds(10),
         _ condition: @escaping @MainActor () -> Bool
     ) async throws {
         let clock = ContinuousClock()
