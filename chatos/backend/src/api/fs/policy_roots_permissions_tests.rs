@@ -162,6 +162,39 @@ fn private_permissions_reject_replaced_leaf_without_chmod_target() {
 
 #[cfg(unix)]
 #[test]
+fn private_permissions_reject_replaced_ancestors_without_chmod_target() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    for ancestor in ["users", "users/user", "users/user/workspaces"] {
+        let fixture = Fixture::new();
+        let checked = fixture.0.join("users/user/workspaces/nested");
+        fs::create_dir_all(checked.parent().unwrap()).unwrap();
+        let checked = super::ensure_child_directory(checked.parent().unwrap(), "nested").unwrap();
+        let original = fixture.0.join(ancestor);
+        let moved = fixture.0.join("moved");
+        fs::rename(&original, &moved).unwrap();
+        let target = moved.join(checked.strip_prefix(&original).unwrap());
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o750)).unwrap();
+        fs::write(target.join("sentinel"), "unchanged").unwrap();
+        let before = fs::metadata(&target).unwrap().permissions();
+        // Substitute a validated ancestor before chmod, without timing a race.
+        symlink(&moved, &original).unwrap();
+        let result = super::set_private_dir_permissions(&checked);
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions(),
+            before,
+            "replaced ancestor {ancestor} must not redirect chmod"
+        );
+        assert!(result.is_err(), "ancestor symlinks must fail closed");
+        assert_eq!(
+            fs::read_to_string(target.join("sentinel")).unwrap(),
+            "unchanged"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn private_permissions_only_accept_existing_real_directories() {
     use std::os::unix::fs::{symlink, PermissionsExt};
 
