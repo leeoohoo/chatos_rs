@@ -97,14 +97,6 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
 
     public func definitions() async throws -> [AgentToolDefinition] {
         var definitions = Self.toolDefinitions
-        if !(await progressiveSkills.hasSkills) {
-            let skillTools = Set([
-                Self.agentSkillActivateToolName,
-                Self.agentSkillListResourcesToolName,
-                Self.agentSkillReadResourceToolName,
-            ])
-            definitions.removeAll { skillTools.contains($0.name) }
-        }
         guard let delivery = try await store.delivery(
             ownerUserID: context.ownerUserID,
             deliveryID: context.deliveryID
@@ -169,6 +161,9 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     }
 
     public func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        if let failure = try await productSkillGateFailure(for: call.name) {
+            return failure
+        }
         switch call.name {
         case Self.bootstrapToolName:
             return try await bootstrap(call)
@@ -316,6 +311,28 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             )
         }
         return result
+    }
+
+    private func productSkillGateFailure(
+        for toolName: String
+    ) async throws -> AgentToolOutcome? {
+        guard let bindingID = Self.skillBindingID(for: toolName),
+              await productSkills.isRegistered(
+                providerID: ProductToolProviderID.localAgentChat,
+                skillBindingID: bindingID
+              ) else { return nil }
+        let missing = try await productSkills.missingSkills(
+            providerID: ProductToolProviderID.localAgentChat,
+            skillBindingID: bindingID
+        )
+        guard !missing.isEmpty else { return nil }
+        let references = missing.map {
+            ProductToolSkillSession.referencePrefix + $0
+        }
+        return .failure(
+            "调用 \(toolName) 前必须先用 agent_skill_activate 激活 Skill："
+                + references.joined(separator: ", ")
+        )
     }
 
     private static func skillBindingID(for toolName: String) -> String? {

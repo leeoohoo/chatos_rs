@@ -38,6 +38,7 @@ public actor ProductToolSkillSession {
     public static let referencePrefix = "product-skill:"
 
     private let catalog: ToolSkillCoverageCatalog
+    private var registeredBindingKeys: Set<String> = []
     private var documentsByReference: [String: BundledAgentSkillDocument] = [:]
     private var activatedReferences: Set<String> = []
     private var systemRequiredReferences: Set<String> = []
@@ -71,6 +72,17 @@ public actor ProductToolSkillSession {
                 onDemandReferences.insert(reference)
             }
         }
+        registeredBindingKeys.insert(Self.bindingKey(
+            providerID: providerID,
+            skillBindingID: skillBindingID
+        ))
+    }
+
+    public func isRegistered(providerID: String, skillBindingID: String) -> Bool {
+        registeredBindingKeys.contains(Self.bindingKey(
+            providerID: providerID,
+            skillBindingID: skillBindingID
+        ))
     }
 
     public func routerMarkdown() -> String {
@@ -192,5 +204,12 @@ public actor ProductToolSkillSession {
 
     private nonisolated static func reference(for skillName: String) -> String {
         referencePrefix + skillName
+    }
+
+    private nonisolated static func bindingKey(
+        providerID: String,
+        skillBindingID: String
+    ) -> String {
+        providerID + "\u{0}" + skillBindingID
     }
 }
