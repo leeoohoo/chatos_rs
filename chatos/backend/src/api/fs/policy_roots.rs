@@ -212,21 +212,29 @@ fn push_root(roots: &mut Vec<FsAllowedRoot>, candidate: PathBuf, kind: FsAllowed
         return;
     };
     let normalized = normalize_path_for_compare(canonical.as_path());
-    if roots
-        .iter()
-        .any(|root| normalize_path_for_compare(root.path.as_path()) == normalized)
+    if let Some(root) = roots
+        .iter_mut()
+        .find(|root| normalize_path_for_compare(root.path.as_path()) == normalized)
     {
+        // Preserve navigation identity, but never discard a read-only restriction
+        // when the same canonical root is discovered through another source.
+        root.can_write &= kind.can_write();
         return;
     }
     roots.push(FsAllowedRoot {
         path: canonical,
         kind,
+        can_write: kind.can_write(),
     });
 }
 
 #[cfg(test)]
 #[path = "policy_roots_isolation_tests.rs"]
 mod isolation_tests;
+
+#[cfg(test)]
+#[path = "policy_roots_permissions_tests.rs"]
+mod permissions_tests;
 
 #[cfg(test)]
 mod tests {

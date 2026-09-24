@@ -21,6 +21,7 @@ pub(crate) const WRITE_NOT_ALLOWED: &str = "当前目录不允许写入";
 pub(super) struct FsAllowedRoot {
     path: PathBuf,
     kind: FsAllowedRootKind,
+    can_write: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -224,7 +225,7 @@ impl FsPathPolicy {
             .ok_or_else(|| FsPolicyError::Forbidden(PATH_OUTSIDE_ALLOWED_ROOTS.to_string()))?;
         Ok(AuthorizedPath {
             path,
-            can_write: root.kind.can_write(),
+            can_write: root.can_write,
         })
     }
 

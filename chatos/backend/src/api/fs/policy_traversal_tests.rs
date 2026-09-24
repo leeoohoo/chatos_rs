@@ -24,7 +24,11 @@ fn fixture() -> (Fixture, FsPathPolicy) {
         let path = fixture.0.join(name);
         fs::create_dir_all(path.join("nested")).unwrap();
         fs::write(path.join("note.txt"), "unchanged").unwrap();
-        roots.push(FsAllowedRoot { path, kind });
+        roots.push(FsAllowedRoot {
+            path,
+            kind,
+            can_write: kind.can_write(),
+        });
     }
     (fixture, FsPathPolicy { roots })
 }
