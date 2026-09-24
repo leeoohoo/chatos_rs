@@ -101,7 +101,7 @@ final class MarkdownRenderCache: @unchecked Sendable {
                 for row in rows {
                     for cell in row { _ = attributedInline(for: cell) }
                 }
-            case .code, .divider:
+            case .image, .code, .divider:
                 break
             }
         }
@@ -504,9 +504,11 @@ private final class MarkdownScrollContainerView: NSScrollView {
 
 @MainActor
 private final class MarkdownLayoutTextView: NSTextView {
+    private static let imageCache = NSCache<NSString, NSImage>()
     private var source = ""
     private var measuredHeights: [UInt64: CGFloat] = [:]
     private var measuredWidths: [UInt64: CGFloat] = [:]
+    private var imageLoadTask: Task<Void, Never>?
 
     init() {
         let storage = NSTextStorage()
@@ -538,6 +540,10 @@ private final class MarkdownLayoutTextView: NSTextView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        imageLoadTask?.cancel()
+    }
+
     func setDocument(
         source nextSource: String,
         blocks: [MarkdownBlock],
@@ -545,11 +551,39 @@ private final class MarkdownLayoutTextView: NSTextView {
     ) {
         isSelectable = allowsTextSelection
         guard source != nextSource else { return }
+        imageLoadTask?.cancel()
         source = nextSource
         textStorage?.setAttributedString(MarkdownAttributedRenderer.render(blocks))
-        measuredHeights.removeAll(keepingCapacity: true)
-        measuredWidths.removeAll(keepingCapacity: true)
-        invalidateIntrinsicContentSize()
+        invalidateMeasurements()
+
+        let imageBlocks = blocks.compactMap { block -> (String, URL)? in
+            guard case let .image(_, rawURL) = block,
+                  let url = MarkdownRemoteImageLoader.allowedURL(from: rawURL) else { return nil }
+            return (rawURL, url)
+        }
+        guard !imageBlocks.isEmpty else { return }
+        imageLoadTask = Task { [weak self] in
+            guard let self else { return }
+            var images: [String: NSImage] = [:]
+            for (rawURL, url) in imageBlocks {
+                guard !Task.isCancelled else { return }
+                if let cached = Self.imageCache.object(forKey: rawURL as NSString) {
+                    images[rawURL] = cached
+                    continue
+                }
+                guard let data = await MarkdownRemoteImageLoader.load(url),
+                      !Task.isCancelled,
+                      let image = NSImage(data: data) else { continue }
+                Self.imageCache.setObject(image, forKey: rawURL as NSString, cost: data.count)
+                images[rawURL] = image
+            }
+            guard !Task.isCancelled, source == nextSource, !images.isEmpty else { return }
+            textStorage?.setAttributedString(
+                MarkdownAttributedRenderer.render(blocks, loadedImages: images)
+            )
+            invalidateMeasurements()
+            enclosingScrollView?.needsLayout = true
+        }
     }
 
     func height(fittingWidth width: CGFloat) -> CGFloat {
@@ -584,22 +618,71 @@ private final class MarkdownLayoutTextView: NSTextView {
         measuredWidths[widthKey] = result
         return result
     }
+
+    private func invalidateMeasurements() {
+        measuredHeights.removeAll(keepingCapacity: true)
+        measuredWidths.removeAll(keepingCapacity: true)
+        invalidateIntrinsicContentSize()
+        needsDisplay = true
+    }
+}
+
+private enum MarkdownRemoteImageLoader {
+    static let maximumBytes = 10 * 1_024 * 1_024
+
+    static func allowedURL(from rawValue: String) -> URL? {
+        guard let url = URL(string: rawValue),
+              matchesAllowedScheme(url.scheme),
+              isChatOSAttachmentPath(url.path),
+              URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.contains(where: { $0.name == "token" && !($0.value ?? "").isEmpty }) == true
+        else { return nil }
+        return url
+    }
+
+    static func load(_ url: URL) async -> Data? {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              !data.isEmpty,
+              data.count <= maximumBytes,
+              let response = response as? HTTPURLResponse,
+              (200..<300).contains(response.statusCode),
+              response.mimeType?.hasPrefix("image/") == true else { return nil }
+        return data
+    }
+
+    private static func matchesAllowedScheme(_ scheme: String?) -> Bool {
+        scheme?.lowercased() == "https" || scheme?.lowercased() == "http"
+    }
+
+    private static func isChatOSAttachmentPath(_ path: String) -> Bool {
+        path == "/api/attachments/object"
+            || path.hasSuffix("/attachments/object")
+    }
 }
 
 @MainActor
-private enum MarkdownAttributedRenderer {
+enum MarkdownAttributedRenderer {
     private static let inlineIntentKey = NSAttributedString.Key("NSInlinePresentationIntent")
 
-    static func render(_ blocks: [MarkdownBlock]) -> NSAttributedString {
+    static func render(
+        _ blocks: [MarkdownBlock],
+        loadedImages: [String: NSImage] = [:]
+    ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         for (index, block) in blocks.enumerated() {
             if index > 0 { result.append(NSAttributedString(string: "\n\n")) }
-            append(block, to: result)
+            append(block, loadedImages: loadedImages, to: result)
         }
         return result
     }
 
-    private static func append(_ block: MarkdownBlock, to result: NSMutableAttributedString) {
+    private static func append(
+        _ block: MarkdownBlock,
+        loadedImages: [String: NSImage],
+        to result: NSMutableAttributedString
+    ) {
         switch block {
         case let .heading(level, text):
             let size: CGFloat = switch level {
@@ -638,6 +721,46 @@ private enum MarkdownAttributedRenderer {
                 color: .secondaryLabelColor
             ))
 
+        case let .image(altText, url):
+            if let image = loadedImages[url] {
+                let attachment = NSTextAttachment()
+                attachment.image = image
+                let maximumSize = NSSize(width: 520, height: 420)
+                let naturalSize = image.size
+                let scale = min(
+                    1,
+                    min(
+                        maximumSize.width / max(naturalSize.width, 1),
+                        maximumSize.height / max(naturalSize.height, 1)
+                    )
+                )
+                attachment.bounds = NSRect(
+                    origin: .zero,
+                    size: NSSize(
+                        width: max(1, naturalSize.width * scale),
+                        height: max(1, naturalSize.height * scale)
+                    )
+                )
+                result.append(NSAttributedString(attachment: attachment))
+            } else {
+                let label = altText.isEmpty ? "图片" : altText
+                let placeholder = NSMutableAttributedString(
+                    string: "🖼 \(label)",
+                    attributes: baseAttributes(
+                        font: .systemFont(ofSize: 13, weight: .medium),
+                        color: .secondaryLabelColor
+                    )
+                )
+                if let link = URL(string: url) {
+                    placeholder.addAttribute(
+                        .link,
+                        value: link,
+                        range: NSRange(location: 0, length: placeholder.length)
+                    )
+                }
+                result.append(placeholder)
+            }
+
         case let .code(language, content):
             if let language, !language.isEmpty {
                 result.append(NSAttributedString(
@@ -669,29 +792,79 @@ private enum MarkdownAttributedRenderer {
             ))
 
         case let .table(headers, rows):
-            let values = [headers] + rows
-            for (index, row) in values.enumerated() {
-                if index > 0 { result.append(NSAttributedString(string: "\n")) }
-                result.append(NSAttributedString(
-                    string: row.joined(separator: "  │  "),
-                    attributes: baseAttributes(
-                        font: .monospacedSystemFont(
-                            ofSize: 12,
-                            weight: index == 0 ? .semibold : .regular
-                        )
-                    )
-                ))
-                if index == 0 {
-                    result.append(NSAttributedString(
-                        string: "\n" + String(repeating: "─", count: max(row.count * 10, 10)),
-                        attributes: baseAttributes(
-                            font: .monospacedSystemFont(ofSize: 12, weight: .regular),
-                            color: .separatorColor
-                        )
-                    ))
+            appendTable(headers: headers, rows: rows, to: result)
+        }
+    }
+
+    private static func appendTable(
+        headers: [String],
+        rows: [[String]],
+        to result: NSMutableAttributedString
+    ) {
+        let columnCount = max(1, headers.count)
+        let table = NSTextTable()
+        table.numberOfColumns = columnCount
+        table.layoutAlgorithm = .fixed
+        table.collapsesBorders = true
+        table.hidesEmptyCells = false
+        table.setContentWidth(100, type: .percentage)
+
+        let values = [headers] + rows
+        for (rowIndex, rawRow) in values.enumerated() {
+            let row = normalizedTableRow(rawRow, columnCount: columnCount)
+            for columnIndex in 0..<columnCount {
+                let block = NSTextTableBlock(
+                    table: table,
+                    startingRow: rowIndex,
+                    rowSpan: 1,
+                    startingColumn: columnIndex,
+                    columnSpan: 1
+                )
+                block.verticalAlignment = .top
+                block.setWidth(6, type: .absolute, for: .padding)
+                block.setWidth(0.5, type: .absolute, for: .border)
+                block.setBorderColor(NSColor.separatorColor.withAlphaComponent(0.7))
+                if rowIndex == 0 {
+                    block.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.82)
+                } else if rowIndex.isMultiple(of: 2) {
+                    block.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.28)
                 }
+
+                let paragraph = NSMutableParagraphStyle()
+                paragraph.textBlocks = [block]
+                paragraph.lineSpacing = 2
+                paragraph.paragraphSpacing = 0
+                let font = NSFont.systemFont(
+                    ofSize: 12,
+                    weight: rowIndex == 0 ? .semibold : .regular
+                )
+                let cell = NSMutableAttributedString(
+                    attributedString: inline(row[columnIndex], font: font)
+                )
+                if cell.length == 0 {
+                    cell.append(NSAttributedString(string: " "))
+                }
+                cell.append(NSAttributedString(string: "\n"))
+                cell.addAttribute(
+                    .paragraphStyle,
+                    value: paragraph,
+                    range: NSRange(location: 0, length: cell.length)
+                )
+                result.append(cell)
             }
         }
+    }
+
+    private static func normalizedTableRow(
+        _ row: [String],
+        columnCount: Int
+    ) -> [String] {
+        if row.count == columnCount { return row }
+        if row.count < columnCount {
+            return row + Array(repeating: "", count: columnCount - row.count)
+        }
+        return Array(row.prefix(columnCount - 1))
+            + [row.dropFirst(columnCount - 1).joined(separator: " | ")]
     }
 
     private static func inline(

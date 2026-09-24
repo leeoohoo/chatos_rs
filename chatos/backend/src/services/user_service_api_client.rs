@@ -22,6 +22,7 @@ pub use types::{
 const CHATOS_INTERNAL_CALLER: &str = "chatos-backend";
 const USER_SERVICE_INTERNAL_AUDIENCE: &str = "user-service";
 const MODEL_RUNTIME_READ_SCOPE: &str = "model-runtime.read";
+const MODEL_SETTINGS_READ_SCOPE: &str = "model-settings.read";
 
 pub fn response_status_from_error(error: &str) -> Option<u16> {
     error
@@ -340,6 +341,116 @@ pub async fn get_internal_model_runtime_config(
     }
     serde_json::from_slice(&body)
         .map_err(|error| format!("decode user service internal model runtime failed: {error}"))
+}
+
+pub async fn list_internal_model_runtime_configs(
+    client: &reqwest::Client,
+    base_url: &str,
+    internal_secret: &str,
+    user_id: &str,
+) -> Result<Vec<UserServiceInternalModelRuntimeRecord>, String> {
+    let internal_secret = internal_secret.trim();
+    if internal_secret.is_empty() {
+        return Err("chatos user service internal secret is required".to_string());
+    }
+    let token = chatos_service_runtime::issue_internal_service_token(
+        internal_secret,
+        CHATOS_INTERNAL_CALLER,
+        USER_SERVICE_INTERNAL_AUDIENCE,
+        MODEL_RUNTIME_READ_SCOPE,
+        60,
+    )?;
+    let url = format!(
+        "{}/api/internal/users/{}/model-configs/runtime",
+        base_url.trim_end_matches('/'),
+        urlencoding::encode(user_id.trim()),
+    );
+    let response = client
+        .get(url)
+        .header("X-User-Service-Caller", CHATOS_INTERNAL_CALLER)
+        .header("X-User-Service-Internal-Token", token)
+        .send()
+        .await
+        .map_err(|error| format!("user service internal request failed: {error}"))?;
+    let status = response.status();
+    let body = response
+        .bytes()
+        .await
+        .map_err(|error| format!("read user service internal response failed: {error}"))?;
+    if !status.is_success() {
+        let detail = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("error")
+                    .or_else(|| value.get("message"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned)
+            })
+            .unwrap_or_else(|| String::from_utf8_lossy(&body).into_owned());
+        return Err(format!(
+            "user service internal request failed: {} {}",
+            status.as_u16(),
+            detail.trim()
+        ));
+    }
+    serde_json::from_slice(&body)
+        .map_err(|error| format!("decode user service internal model runtime list failed: {error}"))
+}
+
+pub async fn get_internal_user_model_settings(
+    client: &reqwest::Client,
+    base_url: &str,
+    internal_secret: &str,
+    user_id: &str,
+) -> Result<UserServiceModelSettingsRecord, String> {
+    let internal_secret = internal_secret.trim();
+    if internal_secret.is_empty() {
+        return Err("chatos user service internal secret is required".to_string());
+    }
+    let token = chatos_service_runtime::issue_internal_service_token(
+        internal_secret,
+        CHATOS_INTERNAL_CALLER,
+        USER_SERVICE_INTERNAL_AUDIENCE,
+        MODEL_SETTINGS_READ_SCOPE,
+        60,
+    )?;
+    let url = format!(
+        "{}/api/internal/users/{}/model-settings",
+        base_url.trim_end_matches('/'),
+        urlencoding::encode(user_id.trim()),
+    );
+    let response = client
+        .get(url)
+        .header("X-User-Service-Caller", CHATOS_INTERNAL_CALLER)
+        .header("X-User-Service-Internal-Token", token)
+        .send()
+        .await
+        .map_err(|error| format!("user service internal request failed: {error}"))?;
+    let status = response.status();
+    let body = response
+        .bytes()
+        .await
+        .map_err(|error| format!("read user service internal response failed: {error}"))?;
+    if !status.is_success() {
+        let detail = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("error")
+                    .or_else(|| value.get("message"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned)
+            })
+            .unwrap_or_else(|| String::from_utf8_lossy(&body).into_owned());
+        return Err(format!(
+            "user service internal request failed: {} {}",
+            status.as_u16(),
+            detail.trim()
+        ));
+    }
+    serde_json::from_slice(&body)
+        .map_err(|error| format!("decode user service internal model settings failed: {error}"))
 }
 
 pub async fn get_model_provider(

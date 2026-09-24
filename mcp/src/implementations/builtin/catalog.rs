@@ -335,7 +335,7 @@ impl NotepadStore for SchemaOnlyStore {
     async fn create_note(&self, _params: Value) -> Result<Value, String> {
         Err(schema_only_error())
     }
-    async fn read_note(&self, _id: &str) -> Result<Value, String> {
+    async fn read_note(&self, _id: &str, _image_offset: usize) -> Result<Value, String> {
         Err(schema_only_error())
     }
     async fn update_note(&self, _params: Value) -> Result<Value, String> {
@@ -523,5 +523,27 @@ mod tests {
             .expect("question kind enum");
 
         assert!(kinds.iter().any(|kind| kind.as_str() == Some("ranking")));
+    }
+
+    #[test]
+    fn notepad_read_note_supports_image_pagination() {
+        let tools = builtin_tool_catalog(BuiltinMcpKind::Notepad).expect("notepad catalog");
+        let read_note = tools
+            .iter()
+            .find(|tool| tool.get("name").and_then(Value::as_str) == Some("read_note"))
+            .expect("read_note tool");
+
+        assert_eq!(
+            read_note
+                .pointer("/inputSchema/properties/imageOffset/type")
+                .and_then(Value::as_str),
+            Some("integer")
+        );
+        assert_eq!(
+            read_note
+                .pointer("/inputSchema/properties/imageOffset/minimum")
+                .and_then(Value::as_u64),
+            Some(0)
+        );
     }
 }

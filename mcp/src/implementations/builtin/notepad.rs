@@ -17,7 +17,7 @@ pub trait NotepadStore: Send + Sync {
     async fn delete_folder(&self, folder: &str, recursive: bool) -> Result<Value, String>;
     async fn list_notes(&self, params: Value) -> Result<Value, String>;
     async fn create_note(&self, params: Value) -> Result<Value, String>;
-    async fn read_note(&self, id: &str) -> Result<Value, String>;
+    async fn read_note(&self, id: &str, image_offset: usize) -> Result<Value, String>;
     async fn update_note(&self, params: Value) -> Result<Value, String>;
     async fn delete_note(&self, id: &str) -> Result<Value, String>;
     async fn list_tags(&self) -> Result<Value, String>;
@@ -238,10 +238,17 @@ impl NotepadBuiltinService {
         );
         self.register_tool(
             "read_note",
-            "Read a note by id.",
+            "Read a note by id. Up to two ChatOS Markdown images are supplied as visual input per call. When imagePage.hasMore is true, call again with imageOffset set to imagePage.nextOffset.",
             json!({
                 "type": "object",
-                "properties": { "id": {"type": "string"} },
+                "properties": {
+                    "id": {"type": "string"},
+                    "imageOffset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Zero-based image offset for reading the next image batch. Defaults to 0."
+                    }
+                },
                 "required": ["id"],
                 "additionalProperties": false
             }),
@@ -249,7 +256,13 @@ impl NotepadBuiltinService {
                 let store = store.clone();
                 Arc::new(move |args| {
                     let id = required_string(&args, "id")?;
-                    block_on_result(store.inner().read_note(id.as_str())).map(text_result)
+                    let image_offset = args
+                        .get("imageOffset")
+                        .and_then(Value::as_u64)
+                        .and_then(|value| usize::try_from(value).ok())
+                        .unwrap_or(0);
+                    block_on_result(store.inner().read_note(id.as_str(), image_offset))
+                        .map(note_read_result)
                 })
             },
         );
@@ -345,6 +358,39 @@ impl NotepadBuiltinService {
     }
 }
 
+fn note_read_result(mut payload: Value) -> Value {
+    let images = payload
+        .as_object_mut()
+        .and_then(|object| object.remove("_mcp_images"))
+        .and_then(|value| value.as_array().cloned())
+        .unwrap_or_default();
+    let mut result = text_result(payload);
+    let Some(content) = result.get_mut("content").and_then(Value::as_array_mut) else {
+        return result;
+    };
+    for image in images.into_iter().take(2) {
+        let Some(mime_type) = image.get("mimeType").and_then(Value::as_str) else {
+            continue;
+        };
+        if !matches!(mime_type, "image/png" | "image/jpeg" | "image/webp") {
+            continue;
+        }
+        let Some(data) = image
+            .get("data")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        content.push(json!({
+            "type": "image",
+            "mimeType": mime_type,
+            "data": data,
+        }));
+    }
+    result
+}
+
 fn optional_string(args: &Value, key: &str) -> String {
     args.get(key)
         .and_then(Value::as_str)
@@ -389,4 +435,35 @@ fn optional_string_array_field(value: Option<&Value>) -> Option<Vec<String>> {
     value
         .and_then(Value::as_array)
         .map(|_| parse_string_array(value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::note_read_result;
+    use serde_json::json;
+
+    #[test]
+    fn read_note_promotes_private_images_to_mcp_image_blocks() {
+        let result = note_read_result(json!({
+            "content": "![diagram](https://example.test/image)",
+            "imagePage": {
+                "offset": 0,
+                "limit": 2,
+                "returned": 1,
+                "total": 3,
+                "hasMore": true,
+                "nextOffset": 2
+            },
+            "_mcp_images": [{
+                "mimeType": "image/png",
+                "data": "aGVsbG8="
+            }]
+        }));
+        let content = result["content"].as_array().expect("content blocks");
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content[1]["mimeType"], "image/png");
+        assert!(result["_structured_result"].get("_mcp_images").is_none());
+        assert_eq!(result["_structured_result"]["imagePage"]["nextOffset"], 2);
+    }
 }

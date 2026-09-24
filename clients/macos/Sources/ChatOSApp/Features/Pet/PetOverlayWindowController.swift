@@ -1,4 +1,5 @@
 @preconcurrency import AppKit
+import ChatOSConnector
 import ChatOSCore
 import Combine
 import SwiftUI
@@ -14,6 +15,8 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
     private let runningActivityPanel: NSPanel
     private let fileWorkbenchPanel: NSPanel
     private let fileWorkbenchStore: PetFileWorkbenchStore
+    private let translationViewModel: PetTranslationViewModel
+    private let notepadViewModel: NotepadViewModel
     private let interactionState = PetOverlayInteractionState()
     private let activityInteractionState = PetOverlayInteractionState()
     private let runningActivityInteractionState = PetOverlayInteractionState()
@@ -59,6 +62,19 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         )
         let fileWorkbenchStore = PetFileWorkbenchStore(service: model.projectFilesystemService)
         self.fileWorkbenchStore = fileWorkbenchStore
+        self.translationViewModel = PetTranslationViewModel(
+            agent: PetTranslationAgent(services: model.agentServices),
+            historyStore: PetTranslationHistoryStore(
+                fileURL: RuntimeConfiguration.nativeConnectorStateURL
+                    .deletingLastPathComponent()
+                    .appendingPathComponent("PetTranslationHistory.json")
+            ),
+            modelProvider: { [weak model] in
+                guard let model else { throw CancellationError() }
+                return try await model.localConnectorControl.availableTaskModels()
+            }
+        )
+        self.notepadViewModel = NotepadViewModel(service: model.notepadService)
         self.fileWorkbenchPanel = PetOverlayPanelFactory.makeFileWorkbenchPanel(size: PetOverlayLayout.fileWorkbenchSize)
         super.init(window: petPanel)
 
@@ -84,6 +100,8 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
                 model: model,
                 content: PetQuickChatView(
                     interactionState: interactionState,
+                    translationViewModel: translationViewModel,
+                    notepadViewModel: notepadViewModel,
                     onInspectTaskReply: { [weak self] selection, service in
                         self?.presentTaskInspector(selection: selection, service: service)
                     }
@@ -190,6 +208,13 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func bindAnimationActivity() {
+        translationViewModel.$petAnimationState
+            .receive(on: RunLoop.main)
+            .sink { [weak self] state in
+                self?.interactionState.translationAnimationState = state
+            }
+            .store(in: &cancellables)
+
         NSWorkspace.shared.notificationCenter.publisher(
             for: NSWorkspace.screensDidSleepNotification
         )
@@ -214,12 +239,37 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
 
     func openFile(_ request: PetFileOpenRequest) {
         interactionState.isQuickChatPresented = false
+        interactionState.isTranslationPresented = false
+        interactionState.isNotepadPresented = false
+        translationViewModel.cancel()
         dismissTaskInspector()
         fileWorkbenchStore.open(request)
         updateMessageVisibility()
         updateFileWorkbenchVisibility()
         updateRunningActivityVisibility()
         updateActivityVisibility()
+    }
+
+    func openTranslationImage(data: Data, suggestedName: String) {
+        fileWorkbenchStore.requestDismiss()
+        dismissTaskInspector()
+        translationViewModel.cancel()
+        translationViewModel.selectHistoryRecord(nil)
+        translationViewModel.addPastedImage(
+            data: data,
+            mimeType: "image/png",
+            suggestedName: suggestedName
+        )
+        interactionState.selectedQuickChatResourceID = nil
+        interactionState.isNotepadPresented = false
+        interactionState.isTranslationPresented = true
+        interactionState.isQuickChatPresented = true
+        applyQuickChatSize(preferredQuickChatMessageSize())
+        updateMessageVisibility()
+        updateFileWorkbenchVisibility()
+        updateRunningActivityVisibility()
+        updateActivityVisibility()
+        translationViewModel.translateWhenReady()
     }
 
     func windowDidMove(_ notification: Notification) {
@@ -323,6 +373,30 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
             .store(in: &cancellables)
 
         interactionState.$selectedQuickChatResourceID
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self, self.interactionState.isQuickChatPresented else { return }
+                self.dismissTaskInspector()
+                self.applyQuickChatSize(self.preferredQuickChatMessageSize())
+                self.updateRunningActivityVisibility()
+                self.updateActivityVisibility()
+            }
+            .store(in: &cancellables)
+
+        interactionState.$isTranslationPresented
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self, self.interactionState.isQuickChatPresented else { return }
+                self.dismissTaskInspector()
+                self.applyQuickChatSize(self.preferredQuickChatMessageSize())
+                self.updateRunningActivityVisibility()
+                self.updateActivityVisibility()
+            }
+            .store(in: &cancellables)
+
+        interactionState.$isNotepadPresented
             .removeDuplicates()
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
@@ -637,6 +711,8 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
     private func preferredQuickChatMessageSize() -> NSSize {
         PetOverlaySizing.quickChatMessageSize(
             selectedResourceID: interactionState.selectedQuickChatResourceID,
+            isTranslationPresented: interactionState.isTranslationPresented,
+            isNotepadPresented: interactionState.isNotepadPresented,
             resources: model?.petQuickChatResources ?? []
         )
     }
@@ -660,6 +736,9 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
             interactionState.isQuickChatPresented.toggle()
             if !interactionState.isQuickChatPresented {
                 interactionState.selectedQuickChatResourceID = nil
+                interactionState.isTranslationPresented = false
+                interactionState.isNotepadPresented = false
+                translationViewModel.cancel()
             }
         }
         updateMessageVisibility()

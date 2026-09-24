@@ -10,7 +10,7 @@ page {
 .page {
   box-sizing: border-box;
   min-height: 100vh;
-  padding: 24rpx 24rpx calc(40rpx + env(safe-area-inset-bottom));
+  padding: 24rpx 24rpx calc(136rpx + env(safe-area-inset-bottom));
 }
 
 .page-header {

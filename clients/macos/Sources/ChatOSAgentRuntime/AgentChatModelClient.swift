@@ -97,12 +97,14 @@ public struct AgentChatModelClient: AgentModelClient {
                 }
                 return value
             },
-            "tools": try tools.map { tool in
+        ]
+        if !tools.isEmpty {
+            payload["tools"] = try tools.map { tool in
                 ["type": "function", "function": ["name": tool.name, "description": tool.description,
                     "parameters": try JSONSerialization.jsonObject(with: tool.schema)]]
-            },
-            "tool_choice": "auto",
-        ]
+            }
+            payload["tool_choice"] = "auto"
+        }
         if let thinking { payload["thinking_level"] = thinking }
         if let maximumOutputTokens { payload["max_tokens"] = maximumOutputTokens }
         if let temperature { payload["temperature"] = temperature }

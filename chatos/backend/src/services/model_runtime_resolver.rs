@@ -170,6 +170,27 @@ async fn list_user_service_model_configs(
     cfg: &Config,
     user_id: &str,
 ) -> Result<Vec<AiModelConfig>, String> {
+    if access_token_scope::prefer_internal_memory_service_auth() {
+        let internal_secret = cfg
+            .user_service_internal_api_secret
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "chatos user service internal secret is required".to_string())?;
+        return user_service_api_client::list_internal_model_runtime_configs(
+            &cfg.user_service_internal_http_client,
+            cfg.user_service_internal_base_url.as_str(),
+            internal_secret,
+            user_id,
+        )
+        .await
+        .map(|items| {
+            items
+                .into_iter()
+                .map(from_internal_user_service_model_runtime)
+                .collect()
+        });
+    }
     let base_url = configured_user_service_base_url(cfg)
         .ok_or_else(|| "user_service is not configured".to_string())?;
     let access_token = access_token_scope::get_current_access_token()
@@ -194,20 +215,38 @@ pub(crate) async fn resolve_model_request_max_retries(
     let Some(user_id) = user_id else {
         return chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
     };
-    let Some(base_url) = configured_user_service_base_url(cfg) else {
-        return chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
+    let settings = if access_token_scope::prefer_internal_memory_service_auth() {
+        let Some(internal_secret) = cfg
+            .user_service_internal_api_secret
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
+        };
+        user_service_api_client::get_internal_user_model_settings(
+            &cfg.user_service_internal_http_client,
+            cfg.user_service_internal_base_url.as_str(),
+            internal_secret,
+            user_id,
+        )
+        .await
+    } else {
+        let Some(base_url) = configured_user_service_base_url(cfg) else {
+            return chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
+        };
+        let Some(access_token) = access_token_scope::get_current_access_token() else {
+            return chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
+        };
+        user_service_api_client::get_model_settings(
+            base_url.as_str(),
+            access_token.as_str(),
+            Some(user_id),
+            cfg.user_service_request_timeout_ms,
+        )
+        .await
     };
-    let Some(access_token) = access_token_scope::get_current_access_token() else {
-        return chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES;
-    };
-    match user_service_api_client::get_model_settings(
-        base_url.as_str(),
-        access_token.as_str(),
-        Some(user_id),
-        cfg.user_service_request_timeout_ms,
-    )
-    .await
-    {
+    match settings {
         Ok(settings) => usize::try_from(settings.model_request_max_retries)
             .unwrap_or(chatos_ai_runtime::DEFAULT_MODEL_REQUEST_MAX_RETRIES),
         Err(err) => {

@@ -116,6 +116,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let projectGitService: NativeProjectGitService
     let projectRunService: NativeProjectRunService
     let agentGroupChatService: NativeAgentGroupChatService
+    let agentServices: any AgentServiceProviding
     let agentSkillLibrary: LocalAgentSkillLibrary
     let agentGroupChatScheduler: LocalAgentGroupChatScheduler
     let agentGroupChatBuilderService: LocalAgentBuilderService
@@ -196,6 +197,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             // app startup recoverable if the local cache file needs repair.
             agentServices = remoteAgentServices
         }
+        self.agentServices = agentServices
         self.mediaStudio = MediaStudioViewModel(
             service: ChatOSMediaGenerationService(client: apiClient),
             storyPlanner: remoteAgentServices

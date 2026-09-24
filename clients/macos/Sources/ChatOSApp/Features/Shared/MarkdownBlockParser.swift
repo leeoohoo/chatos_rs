@@ -5,6 +5,7 @@ enum MarkdownBlock: Equatable, Sendable {
     case paragraph(String)
     case list([MarkdownListItem])
     case quote(String)
+    case image(altText: String, url: String)
     case code(language: String?, content: String)
     case divider
     case table(headers: [String], rows: [[String]])
@@ -71,6 +72,13 @@ enum MarkdownBlockParser {
                 continue
             }
 
+            if let image = markdownImage(trimmed) {
+                flushTextBlocks()
+                blocks.append(.image(altText: image.altText, url: image.url))
+                index += 1
+                continue
+            }
+
             if let heading = heading(line) {
                 flushTextBlocks()
                 blocks.append(.heading(level: heading.level, text: heading.text))
@@ -85,15 +93,19 @@ enum MarkdownBlockParser {
                 continue
             }
 
-            if index + 1 < lines.count,
-               let headers = tableRow(line),
-               isTableSeparator(lines[index + 1], expectedColumns: headers.count) {
+            if let headers = tableRow(line),
+               let tableStart = tableBodyStart(
+                lines: lines,
+                headerIndex: index,
+                expectedColumns: headers.count
+               ) {
                 flushTextBlocks()
                 var rows: [[String]] = []
-                index += 2
+                index = tableStart
                 while index < lines.count,
                       !lines[index].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      let row = tableRow(lines[index]) {
+                      let row = tableRow(lines[index]),
+                      row.count == headers.count {
                     rows.append(row)
                     index += 1
                 }
@@ -143,6 +155,21 @@ enum MarkdownBlockParser {
         return trimmed.hasPrefix("```")
     }
 
+    private static func markdownImage(_ line: String) -> (altText: String, url: String)? {
+        guard line.hasPrefix("!["), line.hasSuffix(")"),
+              let separator = line.range(of: "](") else { return nil }
+        let altStart = line.index(line.startIndex, offsetBy: 2)
+        let altText = String(line[altStart..<separator.lowerBound])
+        var url = String(line[separator.upperBound..<line.index(before: line.endIndex)])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if url.hasPrefix("<"), url.hasSuffix(">"), url.count >= 2 {
+            url.removeFirst()
+            url.removeLast()
+        }
+        guard !url.isEmpty else { return nil }
+        return (altText, url)
+    }
+
     private static func codeFenceLanguage(_ line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         return String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces).nilIfEmpty
@@ -182,12 +209,65 @@ enum MarkdownBlockParser {
 
     private static func tableRow(_ line: String) -> [String]? {
         guard line.contains("|") else { return nil }
-        var value = line.trimmingCharacters(in: .whitespaces)
-        if value.hasPrefix("|") { value.removeFirst() }
-        if value.hasSuffix("|") { value.removeLast() }
-        let cells = value.split(separator: "|", omittingEmptySubsequences: false)
-            .map { String($0).trimmingCharacters(in: .whitespaces) }
+        let value = line.trimmingCharacters(in: .whitespaces)
+        var cells: [String] = []
+        var current = ""
+        var isEscaped = false
+        var isInsideCode = false
+        var delimiterCount = 0
+
+        for character in value {
+            if isEscaped {
+                current.append(character)
+                isEscaped = false
+                continue
+            }
+            if character == "\\" {
+                current.append(character)
+                isEscaped = true
+                continue
+            }
+            if character == "`" {
+                isInsideCode.toggle()
+                current.append(character)
+                continue
+            }
+            if character == "|", !isInsideCode {
+                cells.append(current.trimmingCharacters(in: .whitespaces))
+                current = ""
+                delimiterCount += 1
+            } else {
+                current.append(character)
+            }
+        }
+        cells.append(current.trimmingCharacters(in: .whitespaces))
+        guard delimiterCount > 0 else { return nil }
+        if value.hasPrefix("|"), cells.first?.isEmpty == true { cells.removeFirst() }
+        if value.hasSuffix("|"), cells.last?.isEmpty == true { cells.removeLast() }
         return cells.count >= 2 ? cells : nil
+    }
+
+    private static func tableBodyStart(
+        lines: [String],
+        headerIndex: Int,
+        expectedColumns: Int
+    ) -> Int? {
+        let separatorIndex = headerIndex + 1
+        guard separatorIndex < lines.count else { return nil }
+        if isTableSeparator(lines[separatorIndex], expectedColumns: expectedColumns) {
+            return separatorIndex + 1
+        }
+
+        // Some models emit visually obvious pipe tables without the Markdown delimiter row.
+        // Accept them only when at least two following rows have the same shape, avoiding a
+        // false positive for ordinary prose that happens to contain a vertical bar.
+        let secondRowIndex = headerIndex + 2
+        guard secondRowIndex < lines.count,
+              tableRow(lines[separatorIndex])?.count == expectedColumns,
+              tableRow(lines[secondRowIndex])?.count == expectedColumns else {
+            return nil
+        }
+        return separatorIndex
     }
 
     private static func isTableSeparator(_ line: String, expectedColumns: Int) -> Bool {

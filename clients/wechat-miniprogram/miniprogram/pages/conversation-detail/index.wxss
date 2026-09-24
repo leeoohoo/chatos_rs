@@ -69,11 +69,11 @@
 .prompt-submit { background: #0a84ff; color: #fff; }
 
 .timeline-bottom { height: 2rpx; }
-.composer-shell { z-index: 3; padding: 9rpx 14rpx; border-top: 1rpx solid rgba(60,60,67,.10); background: rgba(249,249,251,.97); }
-.composer { display: flex; padding: 7rpx 7rpx 7rpx 17rpx; align-items: flex-end; border: 1rpx solid #d2d2d7; border-radius: 22rpx; background: #fff; }
-.composer-input { min-height: 45rpx; max-height: 180rpx; padding: 7rpx 7rpx 4rpx 0; flex: 1; font-size: 25rpx; line-height: 1.4; }
-.send-button { display: flex; width: 54rpx; height: 54rpx; margin: 0; padding: 0; align-items: center; justify-content: center; border-radius: 50%; background: #0a84ff; color: #fff; font-size: 29rpx; font-weight: 700; line-height: 54rpx; }
-.send-button[disabled] { background: #c7c7cc; color: #fff; }
+.composer-shell { z-index: 3; padding: 12rpx 16rpx; border-top: 1rpx solid rgba(60,60,67,.10); background: rgba(249,249,251,.97); }
+.composer { display: flex; align-items: flex-end; gap: 12rpx; }
+.composer-input { box-sizing: border-box; width: 0; min-width: 0; min-height: 62rpx; max-height: 190rpx; padding: 13rpx 18rpx; flex: 1 1 0; border: 1rpx solid #d1d1d6; border-radius: 31rpx; background: #fff; font-size: 25rpx; line-height: 36rpx; }
+.send-button { display: flex; width: 62rpx; min-width: 62rpx; max-width: 62rpx; height: 62rpx; margin: 0; padding: 0; flex: 0 0 62rpx; align-items: center; justify-content: center; border-radius: 50%; background: #0a84ff; color: #fff; font-size: 29rpx; font-weight: 700; line-height: 62rpx; box-shadow: 0 3rpx 9rpx rgba(10,132,255,.20); }
+.send-button[disabled] { background: #d1d1d6; color: #fff; box-shadow: none; }
 .action-error { margin: 0 6rpx 8rpx; color: #d70015; font-size: 20rpx; text-align: center; }
 
 .task-sheet-backdrop { position: fixed; z-index: 20; inset: 0; display: flex; align-items: flex-end; background: rgba(0,0,0,.30); }

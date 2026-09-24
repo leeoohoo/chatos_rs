@@ -1,6 +1,7 @@
 import type { ClientSession } from '../../models/api'
 import { authService } from '../../services/auth-service'
 import { clientSessionService } from '../../services/client-session-service'
+import { finishTabSwitch } from '../../services/tab-navigation'
 import { sessionStore } from '../../stores/session-store'
 import { relativeTime } from '../../utils/presentation'
 
@@ -31,6 +32,7 @@ Page({
   revokingIds: [] as string[],
 
   async onShow() {
+    finishTabSwitch(this, 3)
     await getApp<IAppOption>().authReady
     if (!sessionStore.hasToken()) {
       wx.reLaunch({ url: '/pages/bind/index' })

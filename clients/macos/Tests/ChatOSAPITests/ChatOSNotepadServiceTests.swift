@@ -71,13 +71,39 @@ final class ChatOSNotepadServiceTests: XCTestCase {
         XCTAssertEqual(deleteQuery.first(where: { $0.name == "recursive" })?.value, "true")
     }
 
+    func testUploadsPastedNotepadImageThroughMediaStorage() async throws {
+        let transport = NotepadTransport()
+        let service = makeService(transport: transport)
+        let bytes = Data([0x89, 0x50, 0x4e, 0x47])
+
+        let asset = try await service.uploadImage(
+            .init(data: bytes, mimeType: "image/png", name: "pasted.png"),
+            noteID: "note/1"
+        )
+
+        XCTAssertEqual(
+            asset.url.absoluteString,
+            "https://example.com/api/chatos/attachments/object?token=signed"
+        )
+        XCTAssertEqual(asset.mimeType, "image/png")
+        let requests = await transport.recordedRequests()
+        XCTAssertTrue(requests.contains(where: {
+            $0.method == "POST" && $0.url.path.hasSuffix("/media/uploads")
+        }))
+        XCTAssertTrue(requests.contains(where: {
+            $0.method == "PUT" && $0.url.host == "uploads.example.test"
+                && $0.body == bytes
+        }))
+    }
+
     private func makeService(transport: NotepadTransport) -> ChatOSNotepadService {
         ChatOSNotepadService(
             client: ChatOSAPIClient(
                 configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
                 accessToken: "token",
                 transport: transport
-            )
+            ),
+            uploadTransport: transport
         )
     }
 }
@@ -98,6 +124,10 @@ private actor NotepadTransport: HTTPTransport {
             body = #"{"ok":true,"notes":[{"id":"note/1","title":"架构草稿","folder":"项目/设计","tags":["架构"],"created_at":"2026-08-27T01:00:00Z","updated_at":"2026-08-27T02:00:00Z","file":"notes/项目/设计/note-1.md"}]}"#
         case ("POST", let path) where path.hasSuffix("/notepad/notes"):
             body = noteDetailJSON(content: "# 初稿")
+        case ("POST", let path) where path.hasSuffix("/media/uploads"):
+            body = #"{"uploads":[{"name":"pasted.png","mimeType":"image/png","size":4,"uploadURL":"https://uploads.example.test/object","uploadHeaders":{},"viewURL":"/api/attachments/object?token=signed"}]}"#
+        case ("PUT", let path) where path == "/object":
+            body = ""
         case ("PATCH", let path) where path.contains("/notepad/notes/"):
             body = noteDetailJSON(title: "架构方案", content: "# 定稿")
         default:

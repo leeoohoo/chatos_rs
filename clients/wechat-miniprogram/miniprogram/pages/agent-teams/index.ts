@@ -1,12 +1,14 @@
 import type {
   CompanionAgentConversationSummary,
   CompanionAgentSummary,
+  CompanionAgentWorkspace,
   DeviceSummary,
 } from '../../models/api'
 import { agentTeamService } from '../../services/agent-team-service'
 import { ApiError } from '../../services/api-client'
 import { companionListCache } from '../../services/companion-list-cache'
 import { deviceService } from '../../services/device-service'
+import { finishTabSwitch } from '../../services/tab-navigation'
 import { deviceSelectionStore } from '../../stores/device-selection-store'
 import { sessionStore } from '../../stores/session-store'
 
@@ -72,6 +74,15 @@ function workspaceViews(workspace: {
   }
 }
 
+function sameDevice(left: DeviceSummary | undefined, right: DeviceSummary | undefined): boolean {
+  if (!left || !right) return left === right
+  return left.id === right.id
+    && left.display_name === right.display_name
+    && left.is_online === right.is_online
+    && left.status === right.status
+    && left.updated_at === right.updated_at
+}
+
 Page({
   data: {
     section: 'conversations' as 'conversations' | 'agents',
@@ -89,16 +100,30 @@ Page({
   retryTimer: undefined as ReturnType<typeof setTimeout> | undefined,
   requestInFlight: false,
   retryAttempt: 0,
+  renderedWorkspace: undefined as CompanionAgentWorkspace | undefined,
 
   onShow() {
     this.pageVisible = true
-    const cachedDevice = deviceSelectionStore.snapshot()
+    finishTabSwitch(this, 2)
+    if (!sessionStore.hasToken()) {
+      void this.activate()
+      return
+    }
+    const cachedDevice = deviceSelectionStore.staleSnapshot()
     if (cachedDevice) {
       const cachedWorkspace = companionListCache.peekWorkspace(cachedDevice.id)
-      this.setData({
-        device: cachedDevice,
-        ...(cachedWorkspace ? { ...workspaceViews(cachedWorkspace), loading: false } : {}),
-      })
+      const deviceChanged = !sameDevice(this.data.device, cachedDevice)
+      const workspaceChanged = Boolean(cachedWorkspace && cachedWorkspace !== this.renderedWorkspace)
+      if (deviceChanged || workspaceChanged || (cachedWorkspace && this.data.loading)) {
+        if (cachedWorkspace) this.renderedWorkspace = cachedWorkspace
+        else if (this.data.device?.id !== cachedDevice.id) this.renderedWorkspace = undefined
+        this.setData({
+          ...(deviceChanged ? { device: cachedDevice } : {}),
+          ...(workspaceChanged ? workspaceViews(cachedWorkspace!) : {}),
+          ...(deviceChanged && !cachedWorkspace ? { teams: [], directs: [], agents: [], loading: true } : {}),
+          ...(cachedWorkspace && this.data.loading ? { loading: false } : {}),
+        })
+      }
     }
     void this.activate()
   },
@@ -156,13 +181,15 @@ Page({
     if (this.requestInFlight) return
     this.requestInFlight = true
     const hasContent = this.data.teams.length + this.data.directs.length + this.data.agents.length > 0
-    this.setData({ loading: !hasContent, error: '' })
+    const loading = !hasContent
+    if (this.data.loading !== loading || this.data.error) this.setData({ loading, error: '' })
     try {
       const cachedDevice = deviceSelectionStore.snapshot()
       const device = cachedDevice ?? await this.selectedDevice()
       const refreshedDevice = cachedDevice ? this.selectedDevice().catch(() => undefined) : undefined
       if (!this.pageVisible) return
       if (!device) {
+        this.renderedWorkspace = undefined
         this.setData({ device: undefined, teams: [], directs: [], agents: [], loading: false })
         return
       }
@@ -174,16 +201,21 @@ Page({
       if (!this.pageVisible) return
       this.retryAttempt = 0
       this.stopRetry()
-      this.setData({
-        device,
-        ...workspaceViews(workspace),
-        loading: false,
-      })
+      const workspaceChanged = workspace !== this.renderedWorkspace
+      if (workspaceChanged) this.renderedWorkspace = workspace
+      if (workspaceChanged || !sameDevice(this.data.device, device) || this.data.loading || this.data.error) {
+        this.setData({
+          ...(workspaceChanged ? workspaceViews(workspace) : {}),
+          ...(!sameDevice(this.data.device, device) ? { device } : {}),
+          ...(this.data.loading ? { loading: false } : {}),
+          ...(this.data.error ? { error: '' } : {}),
+        })
+      }
       if (refreshedDevice) {
         void refreshedDevice.then((latest) => {
           if (!this.pageVisible || !latest) return
           if (latest.id !== device.id) void this.loadWorkspace(true)
-          else this.setData({ device: latest })
+          else if (!sameDevice(this.data.device, latest)) this.setData({ device: latest })
         })
       }
     } catch (error) {
@@ -242,6 +274,7 @@ Page({
     this.setData({ openingId: agentId, error: '' })
     try {
       const detail = await agentTeamService.openDirect(deviceId, agentId)
+      companionListCache.invalidateWorkspace(deviceId)
       wx.navigateTo({
         url: `/pages/agent-conversation-detail/index?id=${encodeURIComponent(detail.conversation.id)}`,
       })

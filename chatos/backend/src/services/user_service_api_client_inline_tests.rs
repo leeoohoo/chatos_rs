@@ -1,8 +1,9 @@
 #[cfg(test)]
 mod tests {
     use super::{
-        create_agent_account, get_internal_model_runtime_config, get_me, list_agent_accounts,
-        login, response_status_from_error, CreateUserServiceAgentAccountRequest,
+        create_agent_account, get_internal_model_runtime_config, get_internal_user_model_settings,
+        get_me, list_agent_accounts, list_internal_model_runtime_configs, login,
+        response_status_from_error, CreateUserServiceAgentAccountRequest,
     };
     use axum::{
         extract::Path,
@@ -271,6 +272,92 @@ mod tests {
         assert_eq!(record.id, "model-1");
         assert_eq!(record.owner_user_id, "user-1");
         assert_eq!(record.model, "gpt-5.6-sol");
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn internal_model_catalog_and_settings_use_chatos_signed_service_identity() {
+        let secret = "a-long-chatos-user-service-secret";
+        let catalog_secret = secret;
+        let settings_secret = secret;
+        let app = Router::new()
+            .route(
+                "/api/internal/users/{user_id}/model-configs/runtime",
+                get(move |Path(user_id): Path<String>, headers: HeaderMap| async move {
+                    assert_eq!(user_id, "user-1");
+                    let token = headers
+                        .get("x-user-service-internal-token")
+                        .and_then(|value| value.to_str().ok())
+                        .expect("signed internal token");
+                    chatos_service_runtime::verify_internal_service_token(
+                        token,
+                        catalog_secret,
+                        "chatos-backend",
+                        "user-service",
+                        "model-runtime.read",
+                    )
+                    .expect("valid model runtime service identity");
+                    Json(json!([{
+                        "id": "model-1",
+                        "owner_user_id": "user-1",
+                        "name": "Primary",
+                        "provider": "openai",
+                        "base_url": "https://api.openai.com/v1",
+                        "api_key": "secret-key",
+                        "model": "gpt-5.6-sol",
+                        "thinking_level": "high",
+                        "temperature": 0.2,
+                        "max_output_tokens": 4096,
+                        "supports_images": true,
+                        "supports_reasoning": true,
+                        "supports_responses": true
+                    }]))
+                }),
+            )
+            .route(
+                "/api/internal/users/{user_id}/model-settings",
+                get(move |Path(user_id): Path<String>, headers: HeaderMap| async move {
+                    assert_eq!(user_id, "user-1");
+                    let token = headers
+                        .get("x-user-service-internal-token")
+                        .and_then(|value| value.to_str().ok())
+                        .expect("signed internal token");
+                    chatos_service_runtime::verify_internal_service_token(
+                        token,
+                        settings_secret,
+                        "chatos-backend",
+                        "user-service",
+                        "model-settings.read",
+                    )
+                    .expect("valid model settings service identity");
+                    Json(json!({
+                        "user_id": "user-1",
+                        "model_request_max_retries": 7,
+                        "memory_summary_model_config_id": null,
+                        "memory_summary_thinking_level": null,
+                        "updated_at": "2026-09-24T00:00:00Z"
+                    }))
+                }),
+            );
+        let (base_url, handle) = start_test_server(app).await;
+        let client = reqwest::Client::new();
+
+        let catalog = list_internal_model_runtime_configs(
+            &client,
+            base_url.as_str(),
+            secret,
+            "user-1",
+        )
+        .await
+        .expect("internal model runtime catalog");
+        let settings =
+            get_internal_user_model_settings(&client, base_url.as_str(), secret, "user-1")
+                .await
+                .expect("internal model settings");
+
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].id, "model-1");
+        assert_eq!(settings.model_request_max_retries, 7);
         handle.abort();
     }
 }

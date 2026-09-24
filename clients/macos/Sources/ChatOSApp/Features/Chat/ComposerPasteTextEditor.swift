@@ -40,11 +40,11 @@ struct ComposerPasteTextEditor: View {
             onPasteContent: onPasteContent,
             onCommand: onCommand
         )
-        .frame(
-            minHeight: Layout.minimumHeight,
-            idealHeight: measuredHeight,
-            maxHeight: Layout.maximumHeight
-        )
+        // An ideal height is only a preference. Flexible parent stacks can still
+        // stretch the editor to its maximum height, which made empty compact
+        // composers look like a large blank card. The measured height is already
+        // clamped, so use it as the actual height and grow only with real content.
+        .frame(height: measuredHeight)
     }
 }
 
@@ -118,7 +118,9 @@ private struct NativeComposerTextEditor: NSViewRepresentable {
         configureTransparentBackground(scrollView: scrollView, textView: textView)
         configure(textView, coordinator: context.coordinator)
 
-        if textView.string != text {
+        // Never replace AppKit's storage while an input method owns a marked
+        // range. Doing so removes the live Pinyin preedit before it can render.
+        if !textView.hasMarkedText(), textView.string != text {
             let selection = textView.selectedRange()
             textView.string = text
             textView.setSelectedRange(
@@ -151,9 +153,22 @@ private struct NativeComposerTextEditor: NSViewRepresentable {
         let font = NSFont.systemFont(ofSize: fontSize)
         if textView.font != font {
             textView.font = font
-            textView.typingAttributes[.font] = font
             textView.needsDisplay = true
         }
+        textView.textColor = .labelColor
+        textView.typingAttributes[.font] = font
+        textView.typingAttributes[.foregroundColor] = NSColor.labelColor
+        textView.markedTextAttributes = [
+            .font: font,
+            .foregroundColor: NSColor.labelColor,
+            .backgroundColor: NSColor.controlAccentColor.withAlphaComponent(0.12),
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+            .underlineColor: NSColor.controlAccentColor,
+        ]
+        textView.selectedTextAttributes = [
+            .foregroundColor: NSColor.selectedTextColor,
+            .backgroundColor: NSColor.selectedTextBackgroundColor,
+        ]
         textView.onSubmit = onSubmit
         textView.onCommand = onCommand
         textView.onPaste = { pasteboard in
@@ -181,7 +196,12 @@ private struct NativeComposerTextEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
-            parent.text = textView.string
+            // Marked text belongs to the input method and is not committed
+            // draft content yet. It remains visible in NSTextView until the IME
+            // commits it, at which point a normal textDidChange synchronizes it.
+            if !textView.hasMarkedText() {
+                parent.text = textView.string
+            }
             scheduleHeightMeasurement()
         }
 
@@ -241,6 +261,13 @@ private final class ComposerNativeTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
+        // Let the active input method consume Return, arrows, Tab and Escape.
+        // Intercepting these first can hide the preedit or send an unfinished
+        // Pinyin sequence as a message.
+        if hasMarkedText() {
+            super.keyDown(with: event)
+            return
+        }
         let command: ComposerTextCommand? = switch event.keyCode {
         case 126: .moveUp
         case 125: .moveDown
@@ -253,9 +280,7 @@ private final class ComposerNativeTextView: NSTextView {
         if let command, onCommand?(command) == true { return }
 
         let isReturn = event.keyCode == 36 || event.keyCode == 76
-        if isReturn,
-           !event.modifierFlags.contains(.shift),
-           !hasMarkedText() {
+        if isReturn, !event.modifierFlags.contains(.shift) {
             onSubmit?()
             return
         }
