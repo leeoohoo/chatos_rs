@@ -195,9 +195,13 @@ fn host_fs_roots_enabled() -> bool {
 }
 
 fn env_bool_override(key: &str) -> Option<bool> {
-    env::var(key)
-        .ok()
-        .map(|value| matches_env_bool(value.trim()))
+    match env::var(key) {
+        Ok(value) => Some(matches_env_bool(value.trim())),
+        Err(env::VarError::NotPresent) => None,
+        // A present but malformed primary switch must not fall back to an
+        // enabled legacy alias. Only absence permits that fallback.
+        Err(env::VarError::NotUnicode(_)) => Some(false),
+    }
 }
 
 fn matches_env_bool(value: &str) -> bool {
@@ -326,7 +330,7 @@ mod tests {
             Some("staging"),
             Some("prodution"),
         ] {
-            for (primary, legacy, expected) in [
+            let cases = [
                 (None, None, false),
                 (Some("true"), None, true),
                 (None, Some("true"), true),
@@ -341,7 +345,33 @@ mod tests {
                 (None, Some("on"), true),
                 (None, Some("yes"), true),
                 (None, Some("0"), false),
-            ] {
+            ]
+            .map(|(primary, legacy, expected)| {
+                (
+                    primary.map(std::ffi::OsStr::new),
+                    legacy.map(std::ffi::OsStr::new),
+                    expected,
+                )
+            });
+            #[cfg(unix)]
+            let cases = {
+                use std::ffi::OsStr;
+                use std::os::unix::ffi::OsStrExt;
+
+                let invalid = OsStr::from_bytes(b"\xfftrue");
+                [
+                    &cases[..],
+                    &[
+                        (Some(invalid), Some(OsStr::new("true")), false),
+                        (Some(invalid), None, false),
+                        (None, Some(invalid), false),
+                        (Some(OsStr::new("true")), Some(invalid), true),
+                        (Some(OsStr::new("false")), Some(invalid), false),
+                    ],
+                ]
+                .concat()
+            };
+            for (primary, legacy, expected) in cases {
                 let mut command = std::process::Command::new(std::env::current_exe().unwrap());
                 let module = module_path!().split_once("::").unwrap().1;
                 command
@@ -350,7 +380,7 @@ mod tests {
                     .arg("--nocapture")
                     .env(EXPECTED, expected.to_string());
                 for (key, value) in [
-                    ("NODE_ENV", node_env),
+                    ("NODE_ENV", node_env.map(std::ffi::OsStr::new)),
                     ("CHATOS_ENABLE_HOST_FS_ROOTS", primary),
                     ("FS_ENABLE_HOST_ROOTS", legacy),
                 ] {
