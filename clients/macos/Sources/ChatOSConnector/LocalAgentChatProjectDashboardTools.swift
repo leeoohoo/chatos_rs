@@ -164,14 +164,14 @@ extension LocalAgentChatToolProvider {
             ownerUserID: context.ownerUserID,
             teamRoomID: team.id
         )
-        let dashboardResponse = dashboard.map {
-            dashboardResponse($0, todoRefsByID: todoRefsByID)
+        let currentDashboardResponse: DashboardRecordResponse? = dashboard.map { dashboard in
+            self.dashboardResponse(dashboard, todoRefsByID: todoRefsByID)
         }
         return try Self.outcome(ProjectDashboardResponse(
             teamRef: await references.teamReference(teamID: team.id),
             teamName: team.draft.name,
             teamGoal: team.draft.goal,
-            dashboard: dashboardResponse,
+            dashboard: currentDashboardResponse,
             facts: .init(
                 totalTodos: todos.count,
                 pendingTodos: todos.filter { $0.status == .pending }.count,
