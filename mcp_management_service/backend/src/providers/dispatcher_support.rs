@@ -9,7 +9,9 @@ impl ProviderDispatcher {
     pub fn supports(&self, route: &ResolvedMcpRoute) -> bool {
         match route.provider_kind {
             McpProviderKind::InternalService => {
-                self.task_runner.supports(route) || self.chatos.supports(route)
+                super::product_skills::supports(route)
+                    || self.task_runner.supports(route)
+                    || self.chatos.supports(route)
             }
             McpProviderKind::LocalConnector => self.local_connector.supports(route),
             McpProviderKind::Embedded => false,
@@ -20,7 +22,7 @@ impl ProviderDispatcher {
 
     pub fn supports_cancellation(&self, route: &ResolvedMcpRoute) -> bool {
         match route.provider_kind {
-            McpProviderKind::InternalService => {
+            McpProviderKind::InternalService if !super::product_skills::supports(route) => {
                 self.task_runner.supports(route) || self.chatos.supports(route)
             }
             McpProviderKind::LocalConnector => self.local_connector.supports(route),

@@ -43,6 +43,7 @@ pub(super) struct McpManagementGateway {
     effective_mcp_ids: Vec<String>,
     provider_skills_prompt: Option<String>,
     plugin_instruction_items: Vec<serde_json::Value>,
+    protected_skill_instruction_items: Vec<serde_json::Value>,
     mcp_command_queue: String,
     runtime_session: McpManagementRuntimeSessionHandle,
 }
@@ -55,6 +56,7 @@ impl McpManagementGateway {
         Vec<String>,
         Option<String>,
         Vec<serde_json::Value>,
+        Vec<serde_json::Value>,
         String,
         McpManagementRuntimeSessionHandle,
     ) {
@@ -63,6 +65,7 @@ impl McpManagementGateway {
             self.effective_mcp_ids,
             self.provider_skills_prompt,
             self.plugin_instruction_items,
+            self.protected_skill_instruction_items,
             self.mcp_command_queue,
             self.runtime_session,
         )
@@ -257,6 +260,7 @@ async fn build_resolved_gateway(
         effective_mcp_ids: resolved.effective_mcp_ids,
         provider_skills_prompt: resolved.provider_skills_prompt,
         plugin_instruction_items: resolved.plugin_instruction_items,
+        protected_skill_instruction_items: resolved.protected_skill_instruction_items,
         mcp_command_queue,
         runtime_session,
     })

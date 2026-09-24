@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 
+use chatos_mcp::product_skill_document;
 use chatos_mcp_management_sdk::{RuntimeToolDescriptor, RuntimeToolSkillBinding};
 use chatos_plugin_management_sdk::ResolvedAgentCapabilities;
 use serde_json::{json, Value};
@@ -70,7 +71,7 @@ pub(super) fn resolve_runtime_session_prompt_metadata(
     effective_mcp_ids.sort();
     effective_mcp_ids.dedup();
     let provider_skills_prompt = capabilities.compose_provider_skills_prompt_for_task_profile(
-        effective_mcp_ids.iter().map(String::as_str),
+        provider_guidance_mcp_ids(tools),
         normalized_provider_prompt_locale(locale),
         task_profile,
     );
@@ -80,45 +81,104 @@ pub(super) fn resolve_runtime_session_prompt_metadata(
     }
 }
 
+fn provider_guidance_mcp_ids(tools: &[RuntimeToolDescriptor]) -> std::collections::BTreeSet<&str> {
+    tools
+        .iter()
+        .filter(|tool| tool.skill_binding.is_none())
+        .map(|tool| tool.resource_id.as_str())
+        .collect()
+}
+
 pub(super) fn protected_product_skill_instruction_items(
     tools: &[RuntimeToolDescriptor],
-    provider_skills_prompt: Option<&str>,
-) -> Vec<Value> {
-    let Some(prompt) = provider_skills_prompt
-        .map(str::trim)
-        .filter(|prompt| !prompt.is_empty())
-    else {
-        return Vec::new();
-    };
-    let bindings = tools
-        .iter()
-        .filter_map(|tool| tool.skill_binding.as_ref())
-        .fold(
-            BTreeMap::<String, RuntimeToolSkillBinding>::new(),
-            |mut out, binding| {
-                out.entry(binding.binding_id.clone())
-                    .or_insert_with(|| binding.clone());
-                out
-            },
-        );
-    if bindings.is_empty() {
-        return Vec::new();
-    }
-    let binding_values = bindings.into_values().collect::<Vec<_>>();
-    let activation_material = serde_json::to_vec(&(prompt, &binding_values)).unwrap_or_default();
-    let activation_ref = format!(
-        "PS-{}",
-        hex::encode(Sha256::digest(activation_material))[..32].to_string()
-    );
-    vec![json!({
-        "type": "message",
-        "role": "system",
-        "content": [{"type": "input_text", "text": prompt}],
-        "_meta": {
-            "chatos/protectedSkillActivationRef": activation_ref,
-            "chatos/productSkillBindings": binding_values,
+) -> Result<Vec<Value>, String> {
+    let mut bindings_by_skill =
+        BTreeMap::<String, BTreeMap<String, RuntimeToolSkillBinding>>::new();
+    for binding in tools.iter().filter_map(|tool| tool.skill_binding.as_ref()) {
+        for skill_name in &binding.required_skills {
+            let skill_name = skill_name.trim();
+            if skill_name.is_empty() {
+                return Err(format!(
+                    "product Skill binding {} contains an empty required Skill",
+                    binding.binding_id
+                ));
+            }
+            bindings_by_skill
+                .entry(skill_name.to_string())
+                .or_default()
+                .entry(binding.binding_id.clone())
+                .or_insert_with(|| binding.clone());
         }
-    })]
+    }
+
+    bindings_by_skill
+        .into_iter()
+        .map(|(skill_name, bindings)| {
+            let document = product_skill_document(skill_name.as_str()).ok_or_else(|| {
+                format!(
+                    "product Skill binding references unavailable central Skill: {skill_name}"
+                )
+            })?;
+            let instructions_sha256 = document.instructions_sha256();
+            let skill_ref = document.skill_ref();
+            let resource_manifest = document
+                .resources
+                .iter()
+                .map(|resource| {
+                    json!({
+                        "relativePath": resource.relative_path,
+                        "uri": format!("{skill_ref}/{}", resource.relative_path),
+                        "contentSha256": resource.content_sha256(),
+                        "sizeBytes": resource.size_bytes(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let binding_values = bindings.into_values().collect::<Vec<_>>();
+            let activation_material = serde_json::to_vec(&(
+                document.name,
+                &skill_ref,
+                &instructions_sha256,
+                &resource_manifest,
+                &binding_values,
+            ))
+            .map_err(|error| format!("serialize product Skill activation failed: {error}"))?;
+            let activation_ref = format!(
+                "PS-{}",
+                &hex::encode(Sha256::digest(activation_material))[..32]
+            );
+            let resource_guidance = if document.resources.is_empty() {
+                "This Skill has no supporting resources.".to_string()
+            } else {
+                format!(
+                    "Supporting resources are disclosed progressively. When the current decision needs one, call `product_skill_list_resources` with skill_ref `{skill_ref}`, then call `product_skill_read_resource` with the exact returned path and content hash."
+                )
+            };
+            let text = format!(
+                "[Protected Product Skill Context]\n<skill_activation name=\"{}\" skill_ref=\"{}\" activation_ref=\"{}\" />\nThis Skill is bound to the current Run. It provides operating instructions only and never expands tool, project, workspace, or data permissions. {}\n\n<skill_content name=\"{}\">\n{}\n</skill_content>",
+                document.name,
+                skill_ref,
+                activation_ref,
+                resource_guidance,
+                document.name,
+                document.instructions.trim(),
+            );
+            Ok(json!({
+                "type": "message",
+                "role": "system",
+                "content": [{"type": "input_text", "text": text}],
+                "_meta": {
+                    "chatos/protectedSkillActivationRef": activation_ref,
+                    "chatos/productSkillBindings": binding_values,
+                    "chatos/productSkill": {
+                        "name": document.name,
+                        "skillRef": skill_ref,
+                        "instructionsSha256": instructions_sha256,
+                        "resources": resource_manifest,
+                    },
+                }
+            }))
+        })
+        .collect()
 }
 
 fn normalized_provider_prompt_locale(value: Option<&str>) -> Option<&str> {
@@ -195,6 +255,40 @@ mod tests {
     }
 
     #[test]
+    fn product_bound_tools_are_excluded_from_legacy_provider_guidance_scope() {
+        let unbound = RuntimeToolDescriptor {
+            exposed_name: "external_search".to_string(),
+            original_name: "search".to_string(),
+            resource_id: "external-provider".to_string(),
+            definition: json!({"name": "external_search"}),
+            skill_binding: None,
+        };
+        let bound = RuntimeToolDescriptor {
+            exposed_name: "terminal_execute_command".to_string(),
+            original_name: "execute_command".to_string(),
+            resource_id: "builtin_terminal_controller".to_string(),
+            definition: json!({"name": "terminal_execute_command"}),
+            skill_binding: Some(RuntimeToolSkillBinding {
+                binding_id: "terminal.command-execution".to_string(),
+                primary_skill: "chatos-terminal-command-execution".to_string(),
+                required_skills: vec![
+                    "chatos-terminal".to_string(),
+                    "chatos-terminal-command-execution".to_string(),
+                ],
+                activation_policy: RuntimeToolSkillActivationPolicy::RunBound,
+                coverage_revision: 1,
+            }),
+        };
+        let tools = [unbound, bound];
+        let provider_guidance_mcp_ids = provider_guidance_mcp_ids(&tools);
+
+        assert_eq!(
+            provider_guidance_mcp_ids,
+            std::collections::BTreeSet::from(["external-provider"])
+        );
+    }
+
+    #[test]
     fn run_bound_product_skills_become_protected_instruction_items() {
         let tools = [RuntimeToolDescriptor {
             exposed_name: "remote_connection_run_command".to_string(),
@@ -210,16 +304,15 @@ mod tests {
             }),
         }];
 
-        let items = protected_product_skill_instruction_items(
-            &tools,
-            Some("# Tool Usage Instructions\n\nUse the bound remote connection."),
-        );
+        let items = protected_product_skill_instruction_items(&tools).expect("protected items");
 
         assert_eq!(items.len(), 1);
-        assert_eq!(
-            items[0].pointer("/content/0/text").and_then(Value::as_str),
-            Some("# Tool Usage Instructions\n\nUse the bound remote connection.")
-        );
+        let text = items[0]
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .expect("protected Skill text");
+        assert!(text.contains("<skill_activation name=\"chatos-remote-connection\""));
+        assert!(text.contains("# Remote connection"));
         assert!(items[0]
             .pointer("/_meta/chatos~1protectedSkillActivationRef")
             .and_then(Value::as_str)
@@ -229,6 +322,91 @@ mod tests {
                 .pointer("/_meta/chatos~1productSkillBindings/0/primary_skill")
                 .and_then(Value::as_str),
             Some("chatos-remote-connection")
+        );
+        assert_eq!(
+            items[0]
+                .pointer("/_meta/chatos~1productSkill/name")
+                .and_then(Value::as_str),
+            Some("chatos-remote-connection")
+        );
+        assert_eq!(
+            items[0]
+                .pointer("/_meta/chatos~1productSkill/resources/0/relativePath")
+                .and_then(Value::as_str),
+            Some("references/commands-and-transfers.md")
+        );
+        assert_eq!(
+            items[0]
+                .pointer("/_meta/chatos~1productSkill/instructionsSha256")
+                .and_then(Value::as_str)
+                .map(str::len),
+            Some(64)
+        );
+    }
+
+    #[test]
+    fn protected_product_skills_are_deduplicated_by_skill_and_binding() {
+        let binding = RuntimeToolSkillBinding {
+            binding_id: "project-files.read".to_string(),
+            primary_skill: "chatos-project-read".to_string(),
+            required_skills: vec![
+                "chatos-project-files".to_string(),
+                "chatos-project-read".to_string(),
+            ],
+            activation_policy: RuntimeToolSkillActivationPolicy::RunBound,
+            coverage_revision: 1,
+        };
+        let tools = ["read_file", "list_dir"].map(|name| RuntimeToolDescriptor {
+            exposed_name: format!("code_maintainer_{name}"),
+            original_name: name.to_string(),
+            resource_id: "builtin_code_maintainer_read".to_string(),
+            definition: json!({"name": name}),
+            skill_binding: Some(binding.clone()),
+        });
+
+        let items = protected_product_skill_instruction_items(&tools).expect("protected items");
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(
+            items[0]
+                .pointer("/_meta/chatos~1productSkill/name")
+                .and_then(Value::as_str),
+            Some("chatos-project-files")
+        );
+        assert_eq!(
+            items[1]
+                .pointer("/_meta/chatos~1productSkill/name")
+                .and_then(Value::as_str),
+            Some("chatos-project-read")
+        );
+        assert_eq!(
+            items[1]
+                .pointer("/_meta/chatos~1productSkillBindings")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn unavailable_product_skill_fails_closed() {
+        let tools = [RuntimeToolDescriptor {
+            exposed_name: "example".to_string(),
+            original_name: "example".to_string(),
+            resource_id: "example".to_string(),
+            definition: json!({"name": "example"}),
+            skill_binding: Some(RuntimeToolSkillBinding {
+                binding_id: "missing".to_string(),
+                primary_skill: "missing-product-skill".to_string(),
+                required_skills: vec!["missing-product-skill".to_string()],
+                activation_policy: RuntimeToolSkillActivationPolicy::RunBound,
+                coverage_revision: 1,
+            }),
+        }];
+
+        assert_eq!(
+            protected_product_skill_instruction_items(&tools).unwrap_err(),
+            "product Skill binding references unavailable central Skill: missing-product-skill"
         );
     }
 

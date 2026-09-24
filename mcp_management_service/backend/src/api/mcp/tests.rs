@@ -15,6 +15,8 @@ use chatos_mcp_management_sdk::{
 use chatos_mcp_service::{McpToolCallCommandItem, METHOD_TOOLS_CALL};
 use tokio::sync::{mpsc, Notify};
 
+use crate::capabilities::product_skill_binding_for_route;
+
 fn snapshot() -> RuntimeSessionSnapshot {
     let expires_at_unix = chrono::Utc::now().timestamp() + 3_600;
     RuntimeSessionSnapshot {
@@ -116,7 +118,19 @@ fn ask_user_snapshot() -> RuntimeSessionSnapshot {
         }),
         skill_binding: None,
     }];
+    bind_product_skill_bindings(&mut snapshot);
     snapshot
+}
+
+fn bind_product_skill_bindings(snapshot: &mut RuntimeSessionSnapshot) {
+    for tool in &mut snapshot.tools {
+        let route = snapshot
+            .routes
+            .iter()
+            .find(|route| route.resource_id == tool.resource_id)
+            .expect("test tool route");
+        tool.skill_binding = product_skill_binding_for_route(route, tool.original_name.as_str());
+    }
 }
 
 #[test]
@@ -347,6 +361,7 @@ async fn single_tool_command_dispatches_and_returns_one_result() {
         }),
         skill_binding: None,
     }];
+    bind_product_skill_bindings(&mut snapshot);
     persist_runtime_session(&state, &snapshot).await;
     let command = tool_call_command(
         &state,
@@ -442,6 +457,7 @@ async fn duplicate_ready_delivery_returns_the_durable_result_without_executing_t
         }),
         skill_binding: None,
     }];
+    bind_product_skill_bindings(&mut snapshot);
     persist_runtime_session(&state, &snapshot).await;
     let command = tool_call_command(
         &state,
@@ -541,6 +557,7 @@ async fn tool_batch_executes_one_run_in_model_order() {
         }),
         skill_binding: None,
     }];
+    bind_product_skill_bindings(&mut snapshot);
     persist_runtime_session(&state, &snapshot).await;
 
     let command = tool_call_command(
@@ -674,7 +691,8 @@ async fn unknown_tool_fails_only_its_item_and_valid_call_still_executes() {
     snapshot.routes[0].provider_ref = Some("task_runner_service".to_string());
     snapshot.routes[0].allow_writes = true;
     snapshot.tools[0].resource_id = "system_mcp_chatos_task_runner".to_string();
-    snapshot.tools[0].original_name = "search".to_string();
+    snapshot.tools[0].original_name = "list_tasks".to_string();
+    bind_product_skill_bindings(&mut snapshot);
     persist_runtime_session(&state, &snapshot).await;
     let command = tool_call_command(
         &state,
@@ -745,7 +763,8 @@ async fn invalid_arguments_fail_only_their_item_and_valid_call_still_executes() 
     snapshot.routes[0].provider_ref = Some("task_runner_service".to_string());
     snapshot.routes[0].allow_writes = true;
     snapshot.tools[0].resource_id = "system_mcp_chatos_task_runner".to_string();
-    snapshot.tools[0].original_name = "search".to_string();
+    snapshot.tools[0].original_name = "list_tasks".to_string();
+    bind_product_skill_bindings(&mut snapshot);
     persist_runtime_session(&state, &snapshot).await;
     let command = tool_call_command(
         &state,
@@ -825,7 +844,8 @@ async fn provider_failure_does_not_prevent_the_next_call_from_executing() {
     snapshot.routes[0].provider_ref = Some("task_runner_service".to_string());
     snapshot.routes[0].allow_writes = true;
     snapshot.tools[0].resource_id = "system_mcp_chatos_task_runner".to_string();
-    snapshot.tools[0].original_name = "search".to_string();
+    snapshot.tools[0].original_name = "list_tasks".to_string();
+    bind_product_skill_bindings(&mut snapshot);
     persist_runtime_session(&state, &snapshot).await;
     let command = tool_call_command(
         &state,
@@ -1059,6 +1079,7 @@ async fn cancelled_notification_stops_the_active_call_and_propagates_the_interna
         }),
         skill_binding: None,
     }];
+    bind_product_skill_bindings(&mut snapshot);
     persist_runtime_session(&state, &snapshot).await;
     let snapshot = Arc::new(snapshot);
     let call_state = state.clone();

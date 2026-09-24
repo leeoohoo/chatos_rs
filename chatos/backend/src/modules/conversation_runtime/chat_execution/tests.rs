@@ -75,6 +75,7 @@ fn runtime_context() -> ResolvedConversationRuntimeContext {
         agent_system_prompt: Some("agent prompt".to_string()),
         contact_system_prompt: None,
         builtin_mcp_system_prompt: None,
+        protected_skill_instruction_items: Vec::new(),
         plugin_instruction_items: Vec::new(),
         selected_commands_for_snapshot: Arc::new(Mutex::new(Vec::new())),
         plugin_command_invocations_for_snapshot: Vec::new(),
@@ -160,6 +161,11 @@ fn project_context_prompt_contains_only_dynamic_project_facts() {
 #[test]
 fn plugin_instruction_items_are_injected_once_before_other_runtime_context() {
     let mut context = runtime_context();
+    context.protected_skill_instruction_items = vec![json!({
+        "type": "message",
+        "role": "system",
+        "content": [{"type": "input_text", "text": "protected product skill"}],
+    })];
     context.plugin_instruction_items = vec![json!({
         "type": "message",
         "role": "system",
@@ -169,9 +175,13 @@ fn plugin_instruction_items_are_injected_once_before_other_runtime_context() {
 
     let items = runtime_prefixed_input_items(&context);
 
-    assert_eq!(items.len(), 3);
+    assert_eq!(items.len(), 4);
     assert_eq!(
         items[0].pointer("/content/0/text").and_then(Value::as_str),
+        Some("protected product skill")
+    );
+    assert_eq!(
+        items[1].pointer("/content/0/text").and_then(Value::as_str),
         Some("signed plugin command")
     );
     assert_eq!(
@@ -185,7 +195,7 @@ fn plugin_instruction_items_are_injected_once_before_other_runtime_context() {
         1
     );
     assert_eq!(
-        items[1].pointer("/content/0/text").and_then(Value::as_str),
+        items[2].pointer("/content/0/text").and_then(Value::as_str),
         Some("contact instructions")
     );
 }

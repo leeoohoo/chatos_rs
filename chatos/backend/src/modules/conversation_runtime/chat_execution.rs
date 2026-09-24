@@ -213,7 +213,8 @@ pub async fn prepare_mcp_execution(
 fn runtime_prefixed_input_items(
     runtime_context: &ResolvedConversationRuntimeContext,
 ) -> Vec<Value> {
-    let mut prefixed_input_items = runtime_context.plugin_instruction_items.clone();
+    let mut prefixed_input_items = runtime_context.protected_skill_instruction_items.clone();
+    prefixed_input_items.extend(runtime_context.plugin_instruction_items.clone());
     push_optional_system_prompt(
         &mut prefixed_input_items,
         runtime_context.contact_system_prompt.as_deref(),

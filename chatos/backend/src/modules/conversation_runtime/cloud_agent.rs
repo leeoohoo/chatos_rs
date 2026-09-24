@@ -567,6 +567,7 @@ fn reconstructed_runtime_context(
         agent_system_prompt: input.agent_system_prompt.clone(),
         contact_system_prompt: input.contact_system_prompt.clone(),
         builtin_mcp_system_prompt: input.builtin_mcp_system_prompt.clone(),
+        protected_skill_instruction_items: Vec::new(),
         plugin_instruction_items: Vec::new(),
         selected_commands_for_snapshot: Arc::new(Mutex::new(Vec::new())),
         plugin_command_invocations_for_snapshot: input

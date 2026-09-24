@@ -21,8 +21,8 @@ use uuid::Uuid;
 
 use crate::auth::require_internal_request_identity;
 use crate::capabilities::{
-    materialize_mcp_candidates, materialize_runtime_tools_with_plugin_components,
-    runtime_route_revision,
+    append_product_skill_control_plane, materialize_mcp_candidates,
+    materialize_runtime_tools_with_plugin_components, runtime_route_revision,
 };
 use crate::error::ApiError;
 use crate::runtime::{RuntimeGrantClaims, RuntimeSessionSnapshot};
@@ -256,7 +256,7 @@ pub(super) async fn resolve_runtime_session(
         for route in &mut route_response.routes {
             route.cancel_supported &= state.providers.supports_cancellation(route);
         }
-        let tool_result = materialize_runtime_tools_with_plugin_components(
+        let mut tool_result = materialize_runtime_tools_with_plugin_components(
             &capabilities,
             route_response.routes.as_slice(),
             &materialized.plugin_bindings,
@@ -265,6 +265,8 @@ pub(super) async fn resolve_runtime_session(
             &plugin_component_tool_snapshots,
         )
         .map_err(ApiError::conflict)?;
+        append_product_skill_control_plane(&mut route_response.routes, &mut tool_result.tools)
+            .map_err(ApiError::conflict)?;
         let route_revision = runtime_route_revision(
             route_response.route_revision.as_str(),
             capabilities.policy_revision.as_str(),
@@ -407,6 +409,9 @@ pub(super) async fn resolve_runtime_session(
             &plugin_local_tool_component_bindings,
             route_response.routes.as_slice(),
         );
+        let protected_skill_instruction_items =
+            protected_product_skill_instruction_items(tool_result.tools.as_slice())
+                .map_err(ApiError::internal)?;
         let mut snapshot = RuntimeSessionSnapshot {
             session_id: session_id.clone(),
             caller_service,
@@ -527,6 +532,7 @@ pub(super) async fn resolve_runtime_session(
             effective_mcp_ids: prompt_metadata.effective_mcp_ids,
             provider_skills_prompt: prompt_metadata.provider_skills_prompt,
             plugin_instruction_items,
+            protected_skill_instruction_items,
             unavailable_required_mcps,
         }))
     }
@@ -664,10 +670,9 @@ pub(super) async fn runtime_session_routes(
     }
     record_runtime_session_audit(&identity.caller, trace_id, &snapshot, "read", "succeeded");
     let mut response = snapshot.routes_response();
-    let mut protected_skill_instruction_items = protected_product_skill_instruction_items(
-        response.tools.as_slice(),
-        response.provider_skills_prompt.as_deref(),
-    );
+    let mut protected_skill_instruction_items =
+        protected_product_skill_instruction_items(response.tools.as_slice())
+            .map_err(ApiError::internal)?;
     protected_skill_instruction_items.extend(
         state
             .skill_attestations

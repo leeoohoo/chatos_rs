@@ -103,8 +103,12 @@ pub(super) async fn prepare_model_execution(
     }
     let gateway_provider_skills_prompt = mcp_management_gateway.provider_skills_prompt.clone();
     let gateway_plugin_instruction_items = mcp_management_gateway.plugin_instruction_items.clone();
+    let gateway_protected_skill_instruction_items = mcp_management_gateway
+        .protected_skill_instruction_items
+        .clone();
     let mut prefixed_input_items =
         mcp_provider_skills_prefixed_input_items(gateway_provider_skills_prompt);
+    prefixed_input_items.extend(gateway_protected_skill_instruction_items);
     prefixed_input_items.extend(gateway_plugin_instruction_items);
     let mut run_spec = build_run_spec(
         &agent,
