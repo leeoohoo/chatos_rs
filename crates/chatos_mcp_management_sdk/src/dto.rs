@@ -349,11 +349,31 @@ pub struct RuntimeInvocationResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeToolSkillActivationPolicy {
+    RunBound,
+    ModelOrUser,
+    PluginDeclared,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeToolSkillBinding {
+    pub binding_id: String,
+    pub primary_skill: String,
+    #[serde(default)]
+    pub required_skills: Vec<String>,
+    pub activation_policy: RuntimeToolSkillActivationPolicy,
+    pub coverage_revision: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeToolDescriptor {
     pub exposed_name: String,
     pub original_name: String,
     pub resource_id: String,
     pub definition: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill_binding: Option<RuntimeToolSkillBinding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

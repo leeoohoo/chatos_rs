@@ -14,7 +14,7 @@ extension LocalAgentGroupChatScheduler {
         builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>,
         triggerMessage: ProjectAgentMessage,
         triggerAttachments: [ProjectAgentMessageAttachmentPayload]
-    ) -> [AgentMessage] {
+    ) throws -> [AgentMessage] {
         let conversationRole: String
         let conversationContext: String
         switch room.conversationKind {
@@ -103,9 +103,9 @@ extension LocalAgentGroupChatScheduler {
                     : member.draft.responsibility,
                 "role_prompt": profile.draft.rolePrompt,
                 "conversation_context": conversationContext,
-                "capability_discovery_skill": LocalAgentPromptCatalog.render(
-                    .capabilityDiscoverySkill
-                ),
+                "capability_discovery_skill": try BundledAgentSkillLoader.load(
+                    named: "chatos-capability-discovery"
+                ).instructions,
                 "staffing_instructions": staffingInstructions,
                 "project_instructions": projectInstructions,
                 "requirement_survey_skill": requirementSurveySkill,

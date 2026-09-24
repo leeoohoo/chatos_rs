@@ -273,43 +273,11 @@ impl PluginLocalProvider {
                     "Plugin MCP tool has an invalid chatos/skillGate declaration: {error}"
                 ))
             })?;
-        if gate.all_of.is_empty() && gate.select_by_argument.is_none() {
-            return Err(ProviderCallError::invalid_response(
-                "Plugin MCP skill gate must declare at least one required Skill",
-            ));
-        }
-        arguments.as_object().ok_or_else(|| {
-            ProviderCallError::invalid_response(
-                "Plugin MCP tool arguments must be an object when a Skill gate is declared",
-            )
-        })?;
-        let mut required = gate
-            .all_of
-            .iter()
-            .map(|name| name.trim().to_string())
-            .filter(|name| !name.is_empty())
+        let required = gate
+            .required_skill_names(&arguments)
+            .map_err(|error| ProviderCallError::invalid_response(error.to_string()))?
+            .into_iter()
             .collect::<HashSet<_>>();
-        if let Some(selector) = gate.select_by_argument {
-            let selected = arguments
-                .pointer(selector.pointer.as_str())
-                .ok_or_else(|| {
-                    ProviderCallError::invalid_response(format!(
-                        "Plugin Skill gate selector argument is missing: {}",
-                        selector.pointer
-                    ))
-                })?;
-            let selected = selected.as_str().ok_or_else(|| {
-                ProviderCallError::invalid_response(
-                    "Plugin Skill gate selector value must be a string",
-                )
-            })?;
-            let skill_name = selector.map.get(selected).ok_or_else(|| {
-                ProviderCallError::invalid_response(format!(
-                    "Plugin Skill gate has no mapping for selector value {selected}"
-                ))
-            })?;
-            required.insert(skill_name.clone());
-        }
         let mut activated_names = HashSet::new();
         for activation in self
             .skill_attestations

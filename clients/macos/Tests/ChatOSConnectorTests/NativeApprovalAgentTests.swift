@@ -5,6 +5,15 @@ import XCTest
 @testable import ChatOSConnector
 
 final class NativeApprovalAgentTests: XCTestCase {
+    func testEveryApprovalToolHasRunBoundSkillCoverage() throws {
+        let report = try NativeApprovalAgent.skillCoverageReport()
+
+        XCTAssertEqual(report.totalTools, 5)
+        XCTAssertEqual(report.coveredTools, 5)
+        XCTAssertTrue(report.isComplete)
+        XCTAssertTrue(report.issues.isEmpty)
+    }
+
     func testSharedLoopCanInspectBeyondEightRoundsBeforeDeciding() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("approval-agent-tests-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -42,7 +51,8 @@ final class NativeApprovalAgentTests: XCTestCase {
         XCTAssertEqual(result, .approve(reason: "checked", rememberAllow: false))
         let messages = await memory.entries.map(\.message)
         XCTAssertEqual(messages.map(\.role), [.system, .user, .assistant, .tool, .assistant, .tool])
-        XCTAssertEqual(messages.first?.content, "managed approval prompt")
+        XCTAssertTrue(messages.first?.content.contains("managed approval prompt") == true)
+        XCTAssertTrue(messages.first?.content.contains("# Command approval") == true)
         XCTAssertEqual(messages[2].toolCalls.first?.id, "read-1")
         XCTAssertEqual(messages[3].toolCallID, "read-1")
         XCTAssertEqual(messages[4].toolCalls.first?.id, "decision")

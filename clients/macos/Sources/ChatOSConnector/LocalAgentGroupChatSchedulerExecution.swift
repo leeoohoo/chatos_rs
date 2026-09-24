@@ -114,7 +114,7 @@ extension LocalAgentGroupChatScheduler {
             }
             var initial = AgentRunCheckpoint(
                 scope: scope,
-                messages: Self.initialMessages(
+                messages: try Self.initialMessages(
                     profile: profile,
                     member: member,
                     room: room,
@@ -281,18 +281,36 @@ extension LocalAgentGroupChatScheduler {
             )
         }
 
+        let productSkillSession = ProductToolSkillSession()
         let chatProvider = try await relayMCP.connect(
             context: context,
             professions: try await professionCatalogProvider(ownerUserID),
             progressiveSkillSnapshot: run.progressiveSkillSnapshot,
             todoPluginOptions: context.lane == .manager
                 ? try await todoPluginCatalogProvider(ownerUserID)
-                : []
+                : [],
+            productSkillSession: productSkillSession
         )
-        let extraProviders = try await additionalToolProviders(profile, member, context)
+        let extraProviders = try await additionalToolProviders(
+            profile,
+            member,
+            context,
+            productSkillSession
+        )
         let toolRegistry = try await AgentToolProviderRegistry(
             providers: [chatProvider] + extraProviders
         )
+        let productSkillRouter = await productSkillSession.routerMarkdown()
+        if !productSkillRouter.isEmpty {
+            let marker = "<!-- chatos-product-skill-router -->"
+            if let index = checkpoint.messages.firstIndex(where: {
+                $0.role == .system && $0.content.hasPrefix(marker)
+            }) {
+                checkpoint.messages[index].content = productSkillRouter
+            } else {
+                checkpoint.messages.append(.init(role: .system, content: productSkillRouter))
+            }
+        }
         let model = try await services.makeAgentModel(
             configID: run.modelConfigID,
             policy: policy,

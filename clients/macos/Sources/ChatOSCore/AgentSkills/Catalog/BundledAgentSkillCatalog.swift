@@ -26,6 +26,108 @@ public enum BundledAgentSkillCatalog {
             requiresFrontmatter: false
         ),
         .init(
+            name: "chatos-skill-runtime",
+            role: .policy,
+            relativeDirectory: "chatos-skill-runtime",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-capability-discovery",
+            role: .specialist,
+            relativeDirectory: "chatos-capability-discovery",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-relay-context",
+            role: .specialist,
+            relativeDirectory: "chatos-relay-context",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-collaboration-messaging",
+            role: .specialist,
+            relativeDirectory: "chatos-collaboration-messaging",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-agent-staffing",
+            role: .specialist,
+            relativeDirectory: "chatos-agent-staffing",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-todo-planning",
+            role: .specialist,
+            relativeDirectory: "chatos-todo-planning",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-todo-execution",
+            role: .specialist,
+            relativeDirectory: "chatos-todo-execution",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-team-knowledge",
+            role: .specialist,
+            relativeDirectory: "chatos-team-knowledge",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-project-dashboard",
+            role: .specialist,
+            relativeDirectory: "chatos-project-dashboard",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-agent-builder",
+            role: .specialist,
+            relativeDirectory: "chatos-agent-builder",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-command-approval",
+            role: .specialist,
+            relativeDirectory: "chatos-command-approval",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-remote-connection",
+            role: .specialist,
+            relativeDirectory: "chatos-remote-connection",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-user-clarification",
+            role: .specialist,
+            relativeDirectory: "chatos-user-clarification",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-notepad",
+            role: .specialist,
+            relativeDirectory: "chatos-notepad",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-memory-context",
+            role: .specialist,
+            relativeDirectory: "chatos-memory-context",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-async-task-orchestration",
+            role: .specialist,
+            relativeDirectory: "chatos-async-task-orchestration",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-task-progress",
+            role: .specialist,
+            relativeDirectory: "chatos-task-progress",
+            requiresFrontmatter: true
+        ),
+        .init(
             name: "requirement-survey",
             role: .router,
             relativeDirectory: "requirement-survey",
@@ -77,6 +179,12 @@ public enum BundledAgentSkillCatalog {
             name: "chatos-project-write",
             role: .specialist,
             relativeDirectory: "chatos-project-write",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-project-team-setup",
+            role: .specialist,
+            relativeDirectory: "chatos-project-team-setup",
             requiresFrontmatter: true
         ),
         .init(

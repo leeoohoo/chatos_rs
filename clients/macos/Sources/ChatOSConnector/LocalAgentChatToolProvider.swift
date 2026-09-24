@@ -58,12 +58,14 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     let todoCancellationHandler: @Sendable (String) async -> Void
     let roomChangeHandler: @Sendable (String) async -> Void
     let progressiveSkills: LocalAgentProgressiveSkillSession
+    let productSkills: ProductToolSkillSession
 
     public init(
         store: any AgentGroupChatStore,
         context: LocalAgentChatRunContext,
         professions: [LocalAgentProfessionDefinition] = LocalAgentSkillCatalog.professions,
         progressiveSkillSnapshot: LocalAgentProgressiveSkillSnapshot? = nil,
+        productSkillSession: ProductToolSkillSession = .init(),
         todoPluginOptions: [LocalAgentTodoPluginOption] = [],
         limits: AgentGroupChatRoutingLimits = .init(),
         todoCancellationHandler: @escaping @Sendable (String) async -> Void = { _ in },
@@ -80,6 +82,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         self.progressiveSkills = LocalAgentProgressiveSkillSession(
             snapshot: progressiveSkillSnapshot
         )
+        self.productSkills = productSkillSession
         self.limits = limits
         self.now = now
         self.references = LocalAgentRunReferenceVault(
@@ -94,14 +97,6 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
 
     public func definitions() async throws -> [AgentToolDefinition] {
         var definitions = Self.toolDefinitions
-        if !(await progressiveSkills.hasSkills) {
-            let skillTools = Set([
-                Self.agentSkillActivateToolName,
-                Self.agentSkillListResourcesToolName,
-                Self.agentSkillReadResourceToolName,
-            ])
-            definitions.removeAll { skillTools.contains($0.name) }
-        }
         guard let delivery = try await store.delivery(
             ownerUserID: context.ownerUserID,
             deliveryID: context.deliveryID
@@ -118,7 +113,9 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 Self.agentSkillListResourcesToolName,
                 Self.agentSkillReadResourceToolName,
             ]
-            return definitions.filter { executorTools.contains($0.name) }
+            return try await skillBoundDefinitions(
+                definitions.filter { executorTools.contains($0.name) }
+            )
         }
         let executorOnly: Set<String> = [
             Self.todoGetContextToolName,
@@ -160,10 +157,13 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             ]
             definitions.removeAll { projectManagerOnly.contains($0.name) }
         }
-        return definitions
+        return try await skillBoundDefinitions(definitions)
     }
 
     public func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        if let failure = try await productSkillGateFailure(for: call.name) {
+            return failure
+        }
         switch call.name {
         case Self.bootstrapToolName:
             return try await bootstrap(call)
@@ -287,5 +287,94 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             schema: try JSONSerialization.data(withJSONObject: schema, options: [.sortedKeys]),
             effect: .write
         )
+    }
+
+    private func skillBoundDefinitions(
+        _ definitions: [AgentToolDefinition]
+    ) async throws -> [AgentToolDefinition] {
+        var result: [AgentToolDefinition] = []
+        var registeredBindingIDs = Set<String>()
+        for var definition in definitions {
+            guard let bindingID = Self.skillBindingID(for: definition.name) else {
+                result.append(definition)
+                continue
+            }
+            definition.providerID = ProductToolProviderID.localAgentChat
+            definition.skillBindingID = bindingID
+            result.append(definition)
+            registeredBindingIDs.insert(bindingID)
+        }
+        for bindingID in registeredBindingIDs.sorted() {
+            try await productSkills.register(
+                providerID: ProductToolProviderID.localAgentChat,
+                skillBindingID: bindingID
+            )
+        }
+        return result
+    }
+
+    private func productSkillGateFailure(
+        for toolName: String
+    ) async throws -> AgentToolOutcome? {
+        guard let bindingID = Self.skillBindingID(for: toolName),
+              await productSkills.isRegistered(
+                providerID: ProductToolProviderID.localAgentChat,
+                skillBindingID: bindingID
+              ) else { return nil }
+        let missing = try await productSkills.missingSkills(
+            providerID: ProductToolProviderID.localAgentChat,
+            skillBindingID: bindingID
+        )
+        guard !missing.isEmpty else { return nil }
+        let references = missing.map {
+            ProductToolSkillSession.referencePrefix + $0
+        }
+        return .failure(
+            "调用 \(toolName) 前必须先用 agent_skill_activate 激活 Skill："
+                + references.joined(separator: ", ")
+        )
+    }
+
+    private static func skillBindingID(for toolName: String) -> String? {
+        switch toolName {
+        case agentSkillActivateToolName, agentSkillListResourcesToolName,
+             agentSkillReadResourceToolName:
+            ProductToolSkillBindingID.agentSkillControlPlane
+        case bootstrapToolName, workspaceSnapshotToolName, getTriggerToolName,
+             listMembersToolName, readUnreadToolName, readAllUnreadToolName,
+             readMessagesToolName, readAttachmentToolName:
+            ProductToolSkillBindingID.relayContext
+        case inboxSendToolName, createDocumentToolName, markReadToolName,
+             openDirectToolName, sendDirectToolName, sendTeamToolName,
+             sendMessageToolName, completeHeartbeatToolName, completeManagerCycleToolName:
+            ProductToolSkillBindingID.collaborationMessaging
+        case proposeMemberToolName, proposeExistingMemberToolName,
+             proposeMemberRemovalToolName:
+            ProductToolSkillBindingID.agentStaffing
+        case todoListToolName, todoScheduleStateToolName, todoStartNextToolName,
+             todoAddToolName, todoUpdateToolName, todoReorderToolName,
+             todoExecutionOptionsToolName, todoDependencyOptionsToolName:
+            ProductToolSkillBindingID.todoPlanning
+        case todoGetContextToolName, todoProgressAppendToolName, todoReadProgressToolName,
+             todoCompleteToolName, todoBlockToolName:
+            ProductToolSkillBindingID.todoExecution
+        case teamAssetListToolName, teamAssetGetToolName, teamAssetCreateToolName,
+             teamAssetUpdateToolName, teamAssetArchiveToolName:
+            ProductToolSkillBindingID.teamKnowledge
+        case projectDashboardGetToolName, projectDashboardUpdateToolName:
+            ProductToolSkillBindingID.projectDashboard
+        default:
+            nil
+        }
+    }
+
+    public static func skillCoverageReport() -> ToolSkillCoverageReport {
+        ToolSkillCoverageCatalog.product.audit(Self.toolDefinitions.map {
+            .init(
+                providerID: ProductToolProviderID.localAgentChat,
+                toolName: $0.name,
+                skillBindingID: skillBindingID(for: $0.name)
+            )
+        })
     }
 }

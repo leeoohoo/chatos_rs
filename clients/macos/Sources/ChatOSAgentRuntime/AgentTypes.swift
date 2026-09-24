@@ -96,13 +96,17 @@ public struct AgentToolDefinition: Sendable {
     /// Stable indirection into the centralized Skill coverage catalog. Providers declare the
     /// binding identity; they do not own Skill prose, paths, or activation policy.
     public var skillBindingID: String?
+    /// Immutable Plugin-declared `_meta.chatos/skillGate` JSON. This metadata is retained for
+    /// local runtime enforcement and is never serialized into the model tool schema.
+    public var pluginSkillGate: Data?
     public init(
         name: String,
         description: String,
         schema: Data,
         effect: Effect = .readOnly,
         providerID: String? = nil,
-        skillBindingID: String? = nil
+        skillBindingID: String? = nil,
+        pluginSkillGate: Data? = nil
     ) {
         self.name = name
         self.description = description
@@ -110,6 +114,7 @@ public struct AgentToolDefinition: Sendable {
         self.effect = effect
         self.providerID = providerID
         self.skillBindingID = skillBindingID
+        self.pluginSkillGate = pluginSkillGate
     }
 }
 

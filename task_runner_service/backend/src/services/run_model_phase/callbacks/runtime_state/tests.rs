@@ -360,6 +360,16 @@ fn protected_skill_context_is_reinjected_only_when_activation_is_absent() {
         &item,
         "tool result activation_ref SA-router"
     ));
+    let initial_input = json!([{
+        "type": "message",
+        "role": "system",
+        "content": [{"type": "input_text", "text": "router rules"}]
+    }])
+    .to_string();
+    assert!(protected_skill_item_is_already_present(
+        &item,
+        initial_input.as_str()
+    ));
 }
 
 #[test]

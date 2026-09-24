@@ -285,7 +285,7 @@ fn tool_name(tool: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod plugin_routing_tests {
-    use super::task_plugin_routing_description;
+    use super::*;
 
     #[test]
     fn distinguishes_native_apps_from_browser_pages() {
@@ -296,5 +296,24 @@ mod plugin_routing_tests {
         let browser = task_plugin_routing_description("chatos-browser-cdp", "Browser control.");
         assert!(browser.contains("only for websites"));
         assert!(browser.contains("Do not select it for native desktop applications"));
+    }
+
+    #[test]
+    fn every_async_planner_tool_has_a_central_product_skill_binding() {
+        let mut tools = tasks::task_tool_definitions();
+        tools.extend(runs::run_tool_definitions());
+        tools.extend(prompts::prompt_tool_definitions());
+        let planner_tools = tool_names_for_profile(&tools, McpToolProfile::ChatosAsyncPlanner);
+        assert!(!planner_tools.is_empty());
+        for tool_name in planner_tools {
+            assert!(
+                chatos_mcp::system_mcp_product_skill_binding(
+                    chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService,
+                    tool_name.as_str(),
+                )
+                .is_some(),
+                "Task Runner planner tool {tool_name} has no central product Skill binding"
+            );
+        }
     }
 }

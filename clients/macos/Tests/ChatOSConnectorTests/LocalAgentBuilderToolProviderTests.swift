@@ -46,6 +46,15 @@ final class LocalAgentBuilderToolProviderTests: XCTestCase {
             definitions.first(where: { $0.name == "agent_draft" })?.effect,
             .terminal
         )
+        let coverage = ToolSkillCoverageCatalog.product.audit(definitions.map {
+            .init(
+                providerID: $0.providerID,
+                toolName: $0.name,
+                skillBindingID: $0.skillBindingID
+            )
+        })
+        XCTAssertEqual(coverage.coveredTools, 4)
+        XCTAssertTrue(coverage.isComplete)
         let project = try await provider.execute(
             .init(id: "project", name: "project_inspect", arguments: "{}")
         )

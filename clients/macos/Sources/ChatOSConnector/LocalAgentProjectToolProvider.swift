@@ -16,6 +16,7 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
     private let projectTypes: [LocalProjectTypeDefinition]
     private let projectsService: NativeLocalProjectsService?
     private let context: LocalAgentChatRunContext
+    private let productSkills: ProductToolSkillSession
     private let now: @Sendable () -> Int64
 
     public init(
@@ -24,6 +25,7 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
         projectTypes: [LocalProjectTypeDefinition] = LocalAgentSkillCatalog.projectTypes,
         projectsService: NativeLocalProjectsService? = nil,
         context: LocalAgentChatRunContext,
+        productSkillSession: ProductToolSkillSession = .init(),
         now: @escaping @Sendable () -> Int64 = {
             Int64(Date().timeIntervalSince1970 * 1_000)
         }
@@ -36,11 +38,13 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
         self.projectTypes = projectTypes
         self.projectsService = projectsService
         self.context = context
+        self.productSkills = productSkillSession
         self.now = now
     }
 
     public func definitions() async throws -> [AgentToolDefinition] {
         guard try await canAccessLocalProjects() else { return [] }
+        try await registerSkillBindings()
         let options = try await existingProjectOptions()
         let labels = options.map { "\($0.token)=\($0.label)" }.joined(separator: "；")
         let teamProperties: [String: Any] = [
@@ -106,8 +110,10 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
         var definitions: [AgentToolDefinition] = [
             .init(
                 name: Self.catalogToolName,
-                description: "读取当前账户的全部活跃本地项目概况，返回准确总数、项目显示名称、是否已有活跃团队，以及可用于 team_propose_existing 的本轮临时选项。拥有‘查看本地项目并创建团队’权限即可调用，不要求当前 Agent 是项目经理或任何团队成员。不会返回真实项目 ID 或路径。回答项目总数、项目清单或哪些项目尚未建团队前必须调用。",
-                schema: emptyObjectSchema
+                description: "读取当前账户的全部活跃本地项目概况，返回准确总数、项目显示名称、是否已有活跃团队、可用于 team_propose_existing 的本轮临时选项，以及提交任何团队提案前必须激活的 Skill 目录。拥有‘查看本地项目并创建团队’权限即可调用，不要求当前 Agent 是项目经理或任何团队成员。不会返回真实项目 ID 或路径。回答项目总数、项目清单或哪些项目尚未建团队前必须调用。",
+                schema: emptyObjectSchema,
+                providerID: ProductToolProviderID.localProjectTeam,
+                skillBindingID: ProductToolSkillBindingID.projectTeamCatalog
             ),
         ]
         if !options.isEmpty {
@@ -118,7 +124,9 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
                     withJSONObject: existingSchema,
                     options: [.sortedKeys]
                 ),
-                effect: .write
+                effect: .write,
+                providerID: ProductToolProviderID.localProjectTeam,
+                skillBindingID: ProductToolSkillBindingID.projectTeamProposal
             ))
         }
         definitions.append(.init(
@@ -128,7 +136,9 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
                 withJSONObject: newProjectSchema,
                 options: [.sortedKeys]
             ),
-            effect: .write
+            effect: .write,
+            providerID: ProductToolProviderID.localProjectTeam,
+            skillBindingID: ProductToolSkillBindingID.projectTeamProposal
         ))
         if projectsService != nil {
             definitions.append(.init(
@@ -138,7 +148,9 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
                     withJSONObject: importDirectorySchema,
                     options: [.sortedKeys]
                 ),
-                effect: .write
+                effect: .write,
+                providerID: ProductToolProviderID.localProjectTeam,
+                skillBindingID: ProductToolSkillBindingID.projectTeamProposal
             ))
         }
         return definitions
@@ -148,8 +160,19 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
         guard try await canAccessLocalProjects() else {
             throw AgentGroupChatError.permissionDenied
         }
+        try await registerSkillBindings()
         if call.name == Self.catalogToolName {
             return try outcome(try await projectCatalog())
+        }
+        let missingSkills = try await productSkills.missingSkills(
+            providerID: ProductToolProviderID.localProjectTeam,
+            skillBindingID: ProductToolSkillBindingID.projectTeamProposal
+        )
+        guard missingSkills.isEmpty else {
+            return .failure(
+                "提交项目团队提案前必须先调用 project_catalog，并用 agent_skill_activate 激活其返回的 Skill："
+                    + missingSkills.joined(separator: ", ")
+            )
         }
         let draft: LocalAgentTeamCreationProposalDraft
         let projectLabel: String
@@ -286,6 +309,7 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
         let totalProjectCount: Int
         let availableForTeamCount: Int
         let projects: [ProjectCatalogEntry]
+        let requiredSkills: [ProductToolSkillDescriptor]
     }
 
     private struct ProjectCatalogEntry: Encodable {
@@ -321,7 +345,22 @@ public struct LocalAgentProjectToolProvider: AgentToolProvider, Sendable {
                     hasActiveTeam: occupied.contains($0.id),
                     projectOption: optionByProjectID[$0.id]
                 )
-            }
+            },
+            requiredSkills: try await productSkills.descriptors(
+                providerID: ProductToolProviderID.localProjectTeam,
+                skillBindingID: ProductToolSkillBindingID.projectTeamProposal
+            )
+        )
+    }
+
+    private func registerSkillBindings() async throws {
+        try await productSkills.register(
+            providerID: ProductToolProviderID.localProjectTeam,
+            skillBindingID: ProductToolSkillBindingID.projectTeamCatalog
+        )
+        try await productSkills.register(
+            providerID: ProductToolProviderID.localProjectTeam,
+            skillBindingID: ProductToolSkillBindingID.projectTeamProposal
         )
     }
 

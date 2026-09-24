@@ -37,5 +37,8 @@
     <PackageReference Include="coverlet.collector">
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <None Include="..\..\..\..\crates\chatos_plugin_management_sdk\fixtures\plugin_skill_gate_v1.json"
+          Link="Fixtures\plugin_skill_gate_v1.json"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

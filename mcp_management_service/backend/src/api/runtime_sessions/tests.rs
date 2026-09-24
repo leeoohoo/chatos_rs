@@ -3,8 +3,8 @@
 
 use super::*;
 use chatos_mcp_management_sdk::{
-    ProjectExecutionContext, RuntimeRemoteConnectionRouteTarget, RuntimeWorkspaceRouteTarget,
-    WorkspaceExecutionTarget, WorkspaceProviderKind,
+    ProjectExecutionContext, RuntimeRemoteConnectionRouteTarget, RuntimeToolSkillActivationPolicy,
+    RuntimeWorkspaceRouteTarget, WorkspaceExecutionTarget, WorkspaceProviderKind,
 };
 use chatos_plugin_management_sdk::{
     AgentBindingRecord, BindingConditions, McpRecord, McpRuntime, ResolvedAgentCapabilities,
@@ -507,6 +507,13 @@ fn bound_remote_connection_materializes_its_tool_catalog() {
         .iter()
         .any(|tool| tool.original_name == "run_command"));
     for tool in &tools.tools {
+        let binding = tool.skill_binding.as_ref().expect("product Skill binding");
+        assert_eq!(binding.binding_id, "remote-connection");
+        assert_eq!(binding.primary_skill, "chatos-remote-connection");
+        assert_eq!(
+            binding.activation_policy,
+            RuntimeToolSkillActivationPolicy::RunBound
+        );
         assert!(tool
             .definition
             .pointer("/inputSchema/properties/connection_id")
@@ -523,6 +530,14 @@ fn bound_remote_connection_materializes_its_tool_catalog() {
             .unwrap_or_default()
             .contains("connection_id"));
     }
+    let mut tampered = tools.tools[0].clone();
+    tampered.skill_binding = None;
+    let route = route_response
+        .routes
+        .iter()
+        .find(|route| route.resource_id == tampered.resource_id)
+        .expect("remote route");
+    assert!(crate::capabilities::validate_product_skill_binding(route, &tampered).is_err());
 }
 
 #[test]

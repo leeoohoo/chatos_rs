@@ -137,6 +137,10 @@ pub(crate) async fn register_tool_call_command(
             ));
             continue;
         }
+        if let Err(error) = validate_product_skill_binding(&route, &tool) {
+            results[call_index] = Some(failed_command_item(call, MCP_ERROR_AUTH_REQUIRED, error));
+            continue;
+        }
         if route.provider_kind == McpProviderKind::Unavailable {
             results[call_index] = Some(failed_command_item(
                 call,

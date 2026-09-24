@@ -16,6 +16,30 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         return try XCTUnwrap(String(data: data, encoding: .utf8))
     }
 
+    private func activateProductSkill(
+        _ skillName: String,
+        on provider: LocalAgentChatToolProvider
+    ) async throws {
+        _ = try await provider.definitions()
+        let result = try await provider.execute(.init(
+            id: "activate-\(skillName)",
+            name: LocalAgentChatToolProvider.agentSkillActivateToolName,
+            arguments: try toolArguments([
+                "skill_ref": ProductToolSkillSession.referencePrefix + skillName,
+            ])
+        ))
+        XCTAssertFalse(result.isError, result.content)
+    }
+
+    func testAllChatToolsHaveCentralSkillCoverage() {
+        let report = LocalAgentChatToolProvider.skillCoverageReport()
+
+        XCTAssertEqual(report.totalTools, 43)
+        XCTAssertEqual(report.coveredTools, 43)
+        XCTAssertTrue(report.isComplete)
+        XCTAssertTrue(report.issues.isEmpty)
+    }
+
     func testBoundProgressiveSkillsRequireActivationAndRejectIdentitySwitching() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
@@ -69,6 +93,11 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             projectType: project,
             language: .simplifiedChinese
         )
+        let productSkillSession = ProductToolSkillSession()
+        try await productSkillSession.register(
+            providerID: ProductToolProviderID.localProjectTeam,
+            skillBindingID: ProductToolSkillBindingID.projectTeamProposal
+        )
         let provider = try await LocalAgentRelayMCPServer(service: service).connect(
             context: try .init(
                 ownerUserID: "alice",
@@ -81,12 +110,39 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 runID: "progressive-skill-run",
                 hopCount: 0
             ),
-            progressiveSkillSnapshot: snapshot
+            progressiveSkillSnapshot: snapshot,
+            productSkillSession: productSkillSession
         )
         let definitions = Set(try await provider.definitions().map(\.name))
         XCTAssertTrue(definitions.contains("agent_skill_activate"))
         XCTAssertTrue(definitions.contains("agent_skill_list_resources"))
         XCTAssertTrue(definitions.contains("agent_skill_read_resource"))
+        let gatedTodoList = try await provider.execute(.init(
+            id: "todo-list-before-product-skill",
+            name: LocalAgentChatToolProvider.todoListToolName,
+            arguments: "{}"
+        ))
+        XCTAssertTrue(gatedTodoList.isError)
+        XCTAssertTrue(gatedTodoList.content.contains(
+            "product-skill:chatos-todo-planning"
+        ))
+        try await activateProductSkill("chatos-todo-planning", on: provider)
+        let activatedTodoList = try await provider.execute(.init(
+            id: "todo-list-after-product-skill",
+            name: LocalAgentChatToolProvider.todoListToolName,
+            arguments: "{}"
+        ))
+        XCTAssertFalse(activatedTodoList.isError)
+        let liveDefinitions = try await provider.definitions()
+        let coverage = ToolSkillCoverageCatalog.product.audit(liveDefinitions.map {
+            .init(
+                providerID: $0.providerID,
+                toolName: $0.name,
+                skillBindingID: $0.skillBindingID
+            )
+        })
+        XCTAssertTrue(coverage.isComplete)
+        XCTAssertEqual(coverage.coveredTools, liveDefinitions.count)
 
         let professionRef = snapshot.skills[0].skillRef
         do {
@@ -134,6 +190,27 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         } catch {
             XCTAssertTrue(error.localizedDescription.contains("skill_ref"))
         }
+
+        let productRef = "product-skill:chatos-project-team-setup"
+        let productActivation = try await provider.execute(.init(
+            id: "activate-product-skill",
+            name: "agent_skill_activate",
+            arguments: try toolArguments(["skill_ref": productRef])
+        ))
+        XCTAssertTrue(productActivation.content.contains("team_propose_import_directory"))
+        XCTAssertTrue(productActivation.content.contains("references/modes-and-failures.md"))
+
+        let productPage = try await provider.execute(.init(
+            id: "read-product-skill-page",
+            name: "agent_skill_read_resource",
+            arguments: try toolArguments([
+                "skill_ref": productRef,
+                "relative_path": "references/modes-and-failures.md",
+                "max_chars": 100,
+            ])
+        ))
+        XCTAssertTrue(productPage.content.contains(#""truncated":true"#))
+        XCTAssertTrue(productPage.content.contains("Project team setup modes"))
     }
 
     func testProviderReadsScopedContextAndCompletesDeliveryBySendingMessage() async throws {
@@ -219,6 +296,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertEqual(
             Set(definitions.map(\.name)),
             [
+                "agent_skill_activate", "agent_skill_list_resources",
+                "agent_skill_read_resource",
                 "relay_bootstrap", "agent_workspace_snapshot", "chat_get_trigger",
                 "chat_list_members", "chat_read_unread",
                 "chat_read_messages", "chat_read_attachment", "chat_document_create",
@@ -234,6 +313,10 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 "project_dashboard_get", "project_dashboard_update",
             ]
         )
+        try await activateProductSkill("chatos-agent-staffing", on: provider)
+        try await activateProductSkill("chatos-todo-planning", on: provider)
+        try await activateProductSkill("chatos-team-knowledge", on: provider)
+        try await activateProductSkill("chatos-project-dashboard", on: provider)
         let descriptions = Dictionary(uniqueKeysWithValues: definitions.map {
             ($0.name, $0.description)
         })
@@ -941,6 +1024,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             context: context,
             todoPluginOptions: pluginOptions
         )
+        try await activateProductSkill("chatos-todo-planning", on: provider)
 
         let inbox = try await provider.execute(.init(
             id: "read-all",
@@ -1065,6 +1149,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             context: context,
             todoPluginOptions: pluginOptions
         )
+        try await activateProductSkill("chatos-todo-planning", on: resumedProvider)
         let emptyAfterResume = try await resumedProvider.execute(.init(
             id: "read-all-after-resume",
             name: LocalAgentChatToolProvider.readAllUnreadToolName,
@@ -1086,6 +1171,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             ),
             todoPluginOptions: pluginOptions
         )
+        try await activateProductSkill("chatos-todo-planning", on: foreignRunProvider)
         let crossRunReference = try await foreignRunProvider.execute(.init(
             id: "todo-cross-run-reference",
             name: LocalAgentChatToolProvider.todoAddToolName,
@@ -1275,6 +1361,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             runID: "manager-team-board-run",
             hopCount: 0
         ))
+        try await activateProductSkill("chatos-todo-planning", on: provider)
         let inbox = try await provider.execute(.init(
             id: "team-board-inbox",
             name: LocalAgentChatToolProvider.readAllUnreadToolName,
@@ -1425,6 +1512,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             )
         )
         let workerTools = Set(try await workerProvider.definitions().map(\.name))
+        try await activateProductSkill("chatos-todo-planning", on: workerProvider)
+        try await activateProductSkill("chatos-project-dashboard", on: workerProvider)
         XCTAssertTrue(workerTools.contains(LocalAgentChatToolProvider.todoListToolName))
         XCTAssertTrue(workerTools.contains(LocalAgentChatToolProvider.projectDashboardGetToolName))
         XCTAssertFalse(workerTools.contains(LocalAgentChatToolProvider.projectDashboardUpdateToolName))
@@ -1563,6 +1652,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertEqual(Set(executorDefinitions.map(\.name)), Set([
             "todo_get_context", "todo_progress_append", "todo_complete", "todo_block",
             "team_asset_list", "team_asset_get",
+            "agent_skill_activate", "agent_skill_list_resources", "agent_skill_read_resource",
         ]))
         _ = try await store.appendAgentTodoProgress(
             ownerUserID: "alice",
@@ -1683,6 +1773,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             lane: .manager
         ))
         let managerDefinitions = Set(try await manager.definitions().map(\.name))
+        try await activateProductSkill("chatos-todo-planning", on: manager)
         XCTAssertTrue(managerDefinitions.contains("agent_cycle_complete"))
         XCTAssertTrue(managerDefinitions.contains("todo_read_progress"))
         XCTAssertFalse(managerDefinitions.contains("todo_progress_append"))
@@ -1809,6 +1900,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             runID: "private-source-routing-run",
             hopCount: delivery.hopCount
         ))
+        try await activateProductSkill("chatos-todo-planning", on: provider)
 
         let listed = try await provider.execute(.init(
             id: "list-private-source-todo",

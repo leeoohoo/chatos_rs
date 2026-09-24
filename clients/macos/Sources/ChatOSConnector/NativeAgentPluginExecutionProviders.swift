@@ -395,11 +395,14 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
     private let identity: NativePluginRuntimeStore.Identity
     private let nativeToolsByName: [String: NativeJSONValue]
     private let agentDefinitions: [AgentToolDefinition]
+    private let pluginSkillGatesByName: [String: PluginToolSkillGate]
     private let ownerUserID: String
     private let projectRootURL: URL
     private let workspaceID: String
     private let permissionSnapshot: Set<String>
     private let lease: NativeAgentPluginSessionLease
+    let pluginSkillSnapshot: PluginSkillSnapshot
+    let pluginSkillSession: PluginToolSkillSession
 
     init(
         service: NativeLocalConnectorService,
@@ -410,7 +413,9 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
         ownerUserID: String,
         projectRootURL: URL,
         workspaceID: String,
-        permissionSnapshot: Set<String>
+        permissionSnapshot: Set<String>,
+        pluginSkillSnapshot: PluginSkillSnapshot,
+        pluginSkillSession: PluginToolSkillSession
     ) throws {
         self.service = service
         self.runtimeStore = runtimeStore
@@ -419,9 +424,12 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
         self.projectRootURL = projectRootURL
         self.workspaceID = workspaceID
         self.permissionSnapshot = permissionSnapshot
+        self.pluginSkillSnapshot = pluginSkillSnapshot
+        self.pluginSkillSession = pluginSkillSession
         self.lease = .init(runtimeStore: runtimeStore, adapterSessionID: identity.adapterSessionID)
 
         var nativeToolsByName: [String: NativeJSONValue] = [:]
+        var pluginSkillGatesByName: [String: PluginToolSkillGate] = [:]
         var definitions: [AgentToolDefinition] = []
         for tool in tools {
             guard let object = tool.jsonObject,
@@ -435,6 +443,23 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
             }
             let description = object["description"]?.jsonString?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            let pluginSkillGate: Data?
+            if let rawGate = object["_meta"]?.jsonObject?["chatos/skillGate"] {
+                let data = try JSONEncoder().encode(rawGate)
+                let gate = try PluginToolSkillGate.decode(data)
+                let unknown = Set(gate.catalogSkillNames)
+                    .subtracting(pluginSkillSnapshot.skillNames)
+                guard unknown.isEmpty else {
+                    throw NativePluginRuntimeError.invalidMCPResponse(
+                        "Plugin MCP 工具引用了不在固定快照中的 Skill："
+                            + unknown.sorted().joined(separator: ", ")
+                    )
+                }
+                pluginSkillGatesByName[name] = gate
+                pluginSkillGate = data
+            } else {
+                pluginSkillGate = nil
+            }
             nativeToolsByName[name] = tool
             definitions.append(.init(
                 name: name,
@@ -442,10 +467,12 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
                     ? description!
                     : "本地已安装 Plugin 提供的工具"),
                 schema: schema,
-                effect: Self.effect(for: tool)
+                effect: Self.effect(for: tool),
+                pluginSkillGate: pluginSkillGate
             ))
         }
         self.nativeToolsByName = nativeToolsByName
+        self.pluginSkillGatesByName = pluginSkillGatesByName
         self.agentDefinitions = definitions
     }
 
@@ -463,6 +490,18 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
         var arguments = try JSONDecoder().decode(NativeJSONValue.self, from: data)
         guard arguments.jsonObject != nil else {
             return .failure("Plugin 工具参数必须是 JSON 对象。")
+        }
+        if let gate = pluginSkillGatesByName[call.name] {
+            let missing = try await pluginSkillSession.missingSkills(
+                for: gate,
+                arguments: data
+            )
+            guard missing.isEmpty else {
+                return .failure(
+                    "调用此 Plugin 工具前必须先激活 Skill："
+                        + missing.joined(separator: ", ")
+                )
+            }
         }
         let policy = NativeLocalConnectorService.toolPolicy(
             definition,

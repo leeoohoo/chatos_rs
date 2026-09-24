@@ -5,9 +5,12 @@ use std::collections::{HashMap, HashSet};
 
 use chatos_mcp::{
     system_mcp_descriptor_by_resource_id, system_mcp_descriptor_for_record,
-    system_mcp_tool_catalog, SystemMcpKey, SystemMcpToolCatalog,
+    system_mcp_product_skill_binding, system_mcp_tool_catalog, SystemMcpKey, SystemMcpToolCatalog,
 };
-use chatos_mcp_management_sdk::{ResolvedMcpRoute, RuntimeToolDescriptor};
+use chatos_mcp_management_sdk::{
+    ResolvedMcpRoute, RuntimeToolDescriptor, RuntimeToolSkillActivationPolicy,
+    RuntimeToolSkillBinding,
+};
 use chatos_plugin_management_sdk::{AgentBindingRecord, ResolvedAgentCapabilities, ResolvedMcp};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -102,12 +105,15 @@ pub fn materialize_runtime_tools_with_plugin_components(
                 bind_remote_connection_tool_definition(object, original_name)?;
             }
             object.insert("name".to_string(), Value::String(exposed_name.clone()));
-            tools.push(RuntimeToolDescriptor {
+            let tool = RuntimeToolDescriptor {
                 exposed_name,
                 original_name: original_name.to_string(),
                 resource_id: resolved.resource.id.clone(),
                 definition: exposed_definition,
-            });
+                skill_binding: product_skill_binding_for_route(route, original_name),
+            };
+            validate_product_skill_binding(route, &tool)?;
+            tools.push(tool);
         }
         if tools.len() == exposed_before && resolved.binding.required {
             missing_required_tool_schemas.push(resolved.resource.id.clone());
@@ -158,6 +164,7 @@ pub fn materialize_runtime_tools_with_plugin_components(
                     original_name: original_name.to_string(),
                     resource_id: binding.resource_id.clone(),
                     definition: exposed_definition,
+                    skill_binding: None,
                 });
             }
         }
@@ -207,6 +214,7 @@ pub fn materialize_runtime_tools_with_plugin_components(
                     original_name: original_name.to_string(),
                     resource_id: binding.resource_id.clone(),
                     definition: exposed_definition,
+                    skill_binding: None,
                 });
             }
         }
@@ -227,6 +235,54 @@ fn is_bound_remote_connection_route(route: &ResolvedMcpRoute) -> bool {
     route.is_available()
         && system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
             .is_some_and(|descriptor| descriptor.key == SystemMcpKey::RemoteConnectionController)
+}
+
+pub(crate) fn product_skill_binding_for_route(
+    route: &ResolvedMcpRoute,
+    tool_name: &str,
+) -> Option<RuntimeToolSkillBinding> {
+    let descriptor = system_mcp_descriptor_by_resource_id(route.resource_id.as_str())?;
+    if !route.is_available() {
+        return None;
+    }
+    let binding = system_mcp_product_skill_binding(descriptor.key, tool_name)?;
+    Some(RuntimeToolSkillBinding {
+        binding_id: binding.binding_id.to_string(),
+        primary_skill: binding.primary_skill.to_string(),
+        required_skills: binding
+            .required_skills
+            .iter()
+            .map(|skill| (*skill).to_string())
+            .collect(),
+        activation_policy: RuntimeToolSkillActivationPolicy::RunBound,
+        coverage_revision: binding.coverage_revision,
+    })
+}
+
+pub(crate) fn validate_product_skill_binding(
+    route: &ResolvedMcpRoute,
+    tool: &RuntimeToolDescriptor,
+) -> Result<(), String> {
+    let expected = product_skill_binding_for_route(route, tool.original_name.as_str());
+    if route_requires_product_skill_binding(route) && expected.is_none() {
+        return Err(format!(
+            "system tool {} has no registered product Skill binding",
+            tool.exposed_name
+        ));
+    }
+    if tool.skill_binding != expected {
+        return Err(format!(
+            "tool {} does not match its immutable product Skill binding",
+            tool.exposed_name
+        ));
+    }
+    Ok(())
+}
+
+fn route_requires_product_skill_binding(route: &ResolvedMcpRoute) -> bool {
+    route.is_available()
+        && system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
+            .is_some_and(|descriptor| descriptor.key != SystemMcpKey::TaskManager)
 }
 
 fn bind_remote_connection_tool_definition(
@@ -669,6 +725,7 @@ mod tests {
                 "name": "demo_search",
                 "inputSchema": {"type": "object"}
             }),
+            skill_binding: None,
         }];
         let second = vec![RuntimeToolDescriptor {
             definition: json!({
@@ -714,4 +771,7 @@ mod tests {
             runtime_route_revision("base-route", "policy-1", &[another], &[]).unwrap()
         );
     }
+
+    #[path = "product_skill_tests.rs"]
+    mod product_skill_tests;
 }

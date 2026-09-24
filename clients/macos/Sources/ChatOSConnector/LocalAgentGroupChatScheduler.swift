@@ -164,7 +164,8 @@ public struct LocalAgentGroupChatScheduler: Sendable {
     public typealias AdditionalToolProviderFactory = @Sendable (
         _ profile: LocalAgentProfile,
         _ member: ProjectAgentRoomMember,
-        _ context: LocalAgentChatRunContext
+        _ context: LocalAgentChatRunContext,
+        _ productSkillSession: ProductToolSkillSession
     ) async throws -> [any AgentToolProvider]
     public typealias ProjectTypeKeyProvider = @Sendable (
         _ ownerUserID: String,
@@ -224,7 +225,7 @@ public struct LocalAgentGroupChatScheduler: Sendable {
         },
         todoPluginCatalogProvider: @escaping TodoPluginCatalogProvider = { _ in [] },
         contextLanguageProvider: @escaping ContextLanguageProvider = { _ in .simplifiedChinese },
-        additionalToolProviders: @escaping AdditionalToolProviderFactory = { _, _, _ in [] },
+        additionalToolProviders: @escaping AdditionalToolProviderFactory = { _, _, _, _ in [] },
         now: @escaping @Sendable () -> Int64 = {
             Int64(Date().timeIntervalSince1970 * 1_000)
         }
