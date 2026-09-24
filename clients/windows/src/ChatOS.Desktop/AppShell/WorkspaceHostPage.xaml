@@ -14,11 +14,21 @@
         PaneDisplayMode="Top"
         SelectionChanged="OnSelectionChanged">
         <NavigationView.MenuItems>
-            <NavigationViewItem x:Name="ChatItem" AutomationProperties.AutomationId="ChatOS.Workspace.Chat" Content="{x:Bind Localization.Chat, Mode=OneWay}" Icon="Message" Tag="chat" />
-            <NavigationViewItem x:Name="FilesItem" AutomationProperties.AutomationId="ChatOS.Workspace.Files" Content="{x:Bind Localization.Files, Mode=OneWay}" Icon="Folder" Tag="files" />
-            <NavigationViewItem x:Name="GitItem" AutomationProperties.AutomationId="ChatOS.Workspace.Git" Content="{x:Bind Localization.Git, Mode=OneWay}" Icon="Code" Tag="git" />
-            <NavigationViewItem x:Name="RunItem" AutomationProperties.AutomationId="ChatOS.Workspace.Run" Content="{x:Bind Localization.Run, Mode=OneWay}" Icon="Play" Tag="run" />
-            <NavigationViewItem x:Name="AgentTeamItem" AutomationProperties.AutomationId="ChatOS.Workspace.AgentTeam" Content="Agent 团队" Icon="People" Tag="agent-team" />
+            <NavigationViewItem x:Name="ChatItem" AutomationProperties.AutomationId="ChatOS.Workspace.Chat" Content="{x:Bind Localization.Chat, Mode=OneWay}" Tag="chat">
+                <NavigationViewItem.Icon><SymbolIcon Symbol="Message" /></NavigationViewItem.Icon>
+            </NavigationViewItem>
+            <NavigationViewItem x:Name="FilesItem" AutomationProperties.AutomationId="ChatOS.Workspace.Files" Content="{x:Bind Localization.Files, Mode=OneWay}" Tag="files">
+                <NavigationViewItem.Icon><SymbolIcon Symbol="Folder" /></NavigationViewItem.Icon>
+            </NavigationViewItem>
+            <NavigationViewItem x:Name="GitItem" AutomationProperties.AutomationId="ChatOS.Workspace.Git" Content="{x:Bind Localization.Git, Mode=OneWay}" Tag="git">
+                <NavigationViewItem.Icon><FontIcon Glyph="&#xE943;" /></NavigationViewItem.Icon>
+            </NavigationViewItem>
+            <NavigationViewItem x:Name="RunItem" AutomationProperties.AutomationId="ChatOS.Workspace.Run" Content="{x:Bind Localization.Run, Mode=OneWay}" Tag="run">
+                <NavigationViewItem.Icon><SymbolIcon Symbol="Play" /></NavigationViewItem.Icon>
+            </NavigationViewItem>
+            <NavigationViewItem x:Name="AgentTeamItem" AutomationProperties.AutomationId="ChatOS.Workspace.AgentTeam" Content="Agent 团队" Tag="agent-team">
+                <NavigationViewItem.Icon><SymbolIcon Symbol="People" /></NavigationViewItem.Icon>
+            </NavigationViewItem>
             <NavigationViewItem x:Name="RequirementSurveysItem" AutomationProperties.AutomationId="ChatOS.Workspace.RequirementSurveys" Content="需求调研" Tag="requirement-surveys">
                 <NavigationViewItem.Icon><FontIcon Glyph="&#xE9D5;" /></NavigationViewItem.Icon>
             </NavigationViewItem>
