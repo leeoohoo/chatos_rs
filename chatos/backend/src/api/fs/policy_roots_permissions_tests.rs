@@ -195,6 +195,70 @@ fn private_permissions_reject_replaced_ancestors_without_chmod_target() {
 
 #[cfg(unix)]
 #[test]
+fn child_creation_rejects_replaced_ancestors_without_creating_in_target() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    for ancestor in ["users", "users/user", "users/user/workspaces"] {
+        let fixture = Fixture::new();
+        let mut parent = fixture.0.clone();
+        for name in ["users", "user", "workspaces"] {
+            parent = super::ensure_child_directory(&parent, name).unwrap();
+        }
+        let original = fixture.0.join(ancestor);
+        let moved = fixture.0.join("moved");
+        fs::rename(&original, &moved).unwrap();
+        let target = moved.join(parent.strip_prefix(&original).unwrap());
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o750)).unwrap();
+        fs::write(target.join("sentinel"), "unchanged").unwrap();
+        let before = fs::metadata(&target).unwrap().permissions();
+        // Replace an already validated ancestor before creating a descendant.
+        symlink(&moved, &original).unwrap();
+        let result = super::ensure_child_directory(&parent, "nested");
+        assert!(
+            !target.join("nested").exists(),
+            "replaced ancestor {ancestor} must not redirect directory creation"
+        );
+        assert!(result.is_err(), "ancestor symlinks must fail closed");
+        assert_eq!(fs::metadata(&target).unwrap().permissions(), before);
+        assert_eq!(fs::read_dir(&target).unwrap().count(), 1);
+        assert_eq!(
+            fs::read_to_string(target.join("sentinel")).unwrap(),
+            "unchanged"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn child_creation_requires_a_single_normal_name() {
+    let fixture = Fixture::new();
+    let parent = fixture.0.join("parent");
+    fs::create_dir(&parent).unwrap();
+    let absolute = fixture.0.join("absolute");
+    for name in [
+        "",
+        ".",
+        "..",
+        "../escape",
+        "nested/child",
+        "child/",
+        absolute.to_str().unwrap(),
+        "nul\0child",
+    ] {
+        assert!(super::ensure_child_directory(&parent, name).is_err());
+        assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 2);
+    }
+    let child = super::ensure_child_directory(&parent, "child").unwrap();
+    assert_eq!(child, parent.join("child"));
+    assert_eq!(
+        super::ensure_child_directory(&parent, "child").unwrap(),
+        child
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn private_permissions_only_accept_existing_real_directories() {
     use std::os::unix::fs::{symlink, PermissionsExt};
 

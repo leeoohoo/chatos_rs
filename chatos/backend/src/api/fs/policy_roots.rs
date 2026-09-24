@@ -115,13 +115,32 @@ fn ensure_user_scoped_roots(auth: &AuthUser) -> Option<UserScopedRoots> {
 }
 
 fn ensure_child_directory(parent: &Path, name: &str) -> std::io::Result<PathBuf> {
+    // Descriptor-relative creation must receive exactly one child name.
+    if !matches!(Path::new(name).components().next(), Some(std::path::Component::Normal(component)) if component == name)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "expected a single normal directory component",
+        ));
+    }
     let path = parent.join(name);
     #[cfg(unix)]
     let created = {
-        use std::os::unix::fs::DirBuilderExt;
-        // Restrict access at creation, including when a later component fails
-        // before the final permissions pass can run.
-        fs::DirBuilder::new().mode(0o700).create(&path)
+        use std::ffi::CString;
+        use std::os::fd::AsRawFd;
+
+        // Reject redirected ancestors before any mutation, and keep the parent
+        // open so replacement after the walk cannot redirect mkdir.
+        let directory = open_directory_without_symlinks(parent)?;
+        let name = CString::new(name)?;
+        // SAFETY: directory owns a live descriptor and name is a NUL-terminated
+        // single child component. Private mode applies at creation, before chmod.
+        let result = unsafe { libc::mkdirat(directory.as_raw_fd(), name.as_ptr(), 0o700) };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
     };
     #[cfg(not(unix))]
     let created = fs::create_dir(&path);
