@@ -677,10 +677,10 @@ enum MarkdownAttributedRenderer {
         let columnCount = max(1, headers.count)
         let table = NSTextTable()
         table.numberOfColumns = columnCount
-        table.layoutAlgorithm = .fixed
+        table.layoutAlgorithm = .fixedLayoutAlgorithm
         table.collapsesBorders = true
         table.hidesEmptyCells = false
-        table.setContentWidth(100, type: .percentage)
+        table.setContentWidth(100, type: .percentageValueType)
 
         let values = [headers] + rows
         for (rowIndex, rawRow) in values.enumerated() {
@@ -693,9 +693,9 @@ enum MarkdownAttributedRenderer {
                     startingColumn: columnIndex,
                     columnSpan: 1
                 )
-                block.verticalAlignment = .top
-                block.setWidth(6, type: .absolute, for: .padding)
-                block.setWidth(0.5, type: .absolute, for: .border)
+                block.verticalAlignment = .topAlignment
+                block.setWidth(6, type: .absoluteValueType, for: .padding)
+                block.setWidth(0.5, type: .absoluteValueType, for: .border)
                 block.setBorderColor(NSColor.separatorColor.withAlphaComponent(0.7))
                 if rowIndex == 0 {
                     block.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.82)
