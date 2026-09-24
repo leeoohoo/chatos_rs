@@ -315,7 +315,9 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
                 projectRoot: project.path
             ),
             executionPlan: .init(
-                builtinCapabilities: [.projectRead, .projectWrite, .terminal],
+                builtinCapabilities: [
+                    .projectRead, .projectWrite, .terminal, .requirementSurveyRead,
+                ],
                 plugins: [.init(pluginID: "plugin-1", displayName: "test-agent-plugin")]
             )
         )
@@ -373,6 +375,23 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         XCTAssertEqual(
             processList["required_skills"]?.jsonArray?.compactMap(\.jsonString),
             ["chatos-terminal", "chatos-terminal-process-observation"]
+        )
+        let listDirectory = try XCTUnwrap(builtinTools.first {
+            $0.jsonObject?["name"]?.jsonString == "list_dir"
+        }?.jsonObject)
+        XCTAssertEqual(
+            listDirectory["required_skills"]?.jsonArray?.compactMap(\.jsonString),
+            ["chatos-project-files", "chatos-project-read"]
+        )
+        XCTAssertNil(builtinTools.first {
+            $0.jsonObject?["name"]?.jsonString == "skill_activate"
+        })
+        let surveyRead = try XCTUnwrap(builtinTools.first {
+            $0.jsonObject?["name"]?.jsonString == "requirement_survey_get"
+        }?.jsonObject)
+        XCTAssertEqual(
+            surveyRead["required_skills"]?.jsonArray?.compactMap(\.jsonString),
+            ["requirement-survey", "requirement-survey-read-results"]
         )
 
         let gated = try await broker.execute(.init(

@@ -12,6 +12,8 @@ public enum ToolSkillActivationPolicy: String, Codable, Sendable {
     case onDemand = "on_demand"
     /// Bind the Skill to the run before any covered tool is exposed.
     case runBound = "run_bound"
+    /// Skill discovery/activation/resource tools cannot require their own prior activation.
+    case controlPlane = "control_plane"
 }
 
 /// A stable mapping from a provider-owned binding ID to centrally owned Skill content.

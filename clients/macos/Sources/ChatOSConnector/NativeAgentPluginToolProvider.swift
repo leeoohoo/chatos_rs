@@ -472,7 +472,10 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             let registry = try await registry(for: option)
             var names: [String: String] = [:]
             var requiredSkillNames = Set<String>()
-            let tools = try registry.definitions.enumerated().map { offset, definition in
+            let visibleDefinitions = registry.definitions.filter {
+                skillBinding(for: $0)?.activationPolicy != .controlPlane
+            }
+            let tools = try visibleDefinitions.enumerated().map { offset, definition in
                 let token = "tool_\(offset + 1)"
                 names[token] = definition.name
                 let toolSkills = requiredSkills(for: definition)
@@ -613,13 +616,18 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     }
 
     private func requiredSkills(for definition: AgentToolDefinition) -> [String] {
-        guard let providerID = definition.providerID,
-              let bindingID = definition.skillBindingID,
-              let binding = ToolSkillCoverageCatalog.product.binding(
-                providerID: providerID,
-                skillBindingID: bindingID
-              ) else { return [] }
+        guard let binding = skillBinding(for: definition),
+              binding.activationPolicy != .controlPlane else { return [] }
         return binding.requiredSkillNames
+    }
+
+    private func skillBinding(for definition: AgentToolDefinition) -> ToolSkillBinding? {
+        guard let providerID = definition.providerID,
+              let bindingID = definition.skillBindingID else { return nil }
+        return ToolSkillCoverageCatalog.product.binding(
+            providerID: providerID,
+            skillBindingID: bindingID
+        )
     }
 
     private func decode<Value: Decodable>(_ type: Value.Type, from json: String) throws -> Value {

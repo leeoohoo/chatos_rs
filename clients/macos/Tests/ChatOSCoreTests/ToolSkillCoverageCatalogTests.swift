@@ -7,6 +7,7 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
 
         let names = Set(BundledAgentSkillCatalog.skills.map(\.name))
         XCTAssertTrue(names.contains("chatos-terminal"))
+        XCTAssertTrue(names.contains("chatos-project-files"))
         XCTAssertTrue(names.contains("chatos-compact-communication"))
         XCTAssertTrue(names.contains("requirement-survey"))
 
@@ -37,6 +38,13 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             named: "chatos-terminal-process-control"
         )
         XCTAssertTrue(control.instructions.contains("process_kill"))
+
+        let projectWrite = try BundledAgentSkillLoader.load(named: "chatos-project-write")
+        XCTAssertEqual(
+            projectWrite.resourcePaths,
+            ["references/transactions-and-conflicts.md"]
+        )
+        XCTAssertTrue(projectWrite.instructions.contains("commit_edit_session"))
     }
 
     func testTerminalBindingsCoverEveryDeclaredToolExactlyOnce() {
@@ -59,6 +67,22 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         XCTAssertEqual(report.coveredTools, 9)
         XCTAssertTrue(report.isComplete)
         XCTAssertTrue(report.issues.isEmpty)
+    }
+
+    func testProductCatalogCoversAllNativeBuiltinFamiliesWithoutToolOverlap() {
+        let bindings = ToolSkillCoverageCatalog.product.bindings
+        let providerTools = bindings.flatMap { binding in
+            binding.toolNames.map { binding.providerID + ":" + $0 }
+        }
+
+        XCTAssertEqual(providerTools.count, 28)
+        XCTAssertEqual(Set(providerTools).count, 28)
+        XCTAssertEqual(
+            bindings.first {
+                $0.id == ProductToolSkillBindingID.requirementSurveyControlPlane
+            }?.activationPolicy,
+            .controlPlane
+        )
     }
 
     func testAuditDiagnosesMissingUnknownAndMismatchedBindingsWithoutEnforcement() {

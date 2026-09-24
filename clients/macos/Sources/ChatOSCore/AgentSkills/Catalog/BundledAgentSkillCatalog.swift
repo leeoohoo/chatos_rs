@@ -62,6 +62,24 @@ public enum BundledAgentSkillCatalog {
             requiresFrontmatter: true
         ),
         .init(
+            name: "chatos-project-files",
+            role: .router,
+            relativeDirectory: "chatos-project-files",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-project-read",
+            role: .specialist,
+            relativeDirectory: "chatos-project-read",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-project-write",
+            role: .specialist,
+            relativeDirectory: "chatos-project-write",
+            requiresFrontmatter: true
+        ),
+        .init(
             name: "chatos-terminal-command-execution",
             role: .specialist,
             relativeDirectory: "chatos-terminal-command-execution",

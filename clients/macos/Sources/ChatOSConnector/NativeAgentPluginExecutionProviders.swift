@@ -128,12 +128,28 @@ struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
 
     private static func skillBindingID(for toolName: String) -> String? {
         switch toolName {
+        case "read_file_raw", "read_file_range", "list_dir", "search_text", "read_file",
+             "search_files", "open_file_in_pet":
+            ProductToolSkillBindingID.projectRead
+        case "open_edit_session", "stage_edit_batch", "commit_edit_session",
+             "abort_edit_session":
+            ProductToolSkillBindingID.projectWrite
         case "execute_command":
             ProductToolSkillBindingID.terminalCommandExecution
         case "get_recent_logs", "process_list", "process_poll", "process_log", "process_wait":
             ProductToolSkillBindingID.terminalProcessObservation
         case "process_write", "process_kill", "process":
             ProductToolSkillBindingID.terminalProcessControl
+        case "skill_activate", "skill_list_resources", "skill_read_resource":
+            ProductToolSkillBindingID.requirementSurveyControlPlane
+        case "requirement_survey_create":
+            ProductToolSkillBindingID.requirementSurveyCreate
+        case "requirement_survey_list", "requirement_survey_get":
+            ProductToolSkillBindingID.requirementSurveyReadResults
+        case "requirement_survey_resolve":
+            ProductToolSkillBindingID.requirementSurveyResolve
+        case "requirement_survey_project_tasks":
+            ProductToolSkillBindingID.requirementSurveyReviewExecution
         default:
             nil
         }
