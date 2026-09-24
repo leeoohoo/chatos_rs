@@ -617,19 +617,31 @@ where
 {
     let client = build_harness_client_with_timeout(state.config.harness_request_timeout_ms)
         .map_err(HarnessRequestError::from_error)?;
+    let request = build_harness_request(&client, method, endpoint, bearer_token, body);
+    let response = send_harness_request(request).await?;
+    decode_harness_response(response).await
+}
+
+fn build_harness_request<TBody: Serialize + ?Sized>(
+    client: &reqwest::Client,
+    method: Method,
+    endpoint: &str,
+    bearer_token: Option<&str>,
+    body: Option<&TBody>,
+) -> reqwest::RequestBuilder {
     let mut request = client.request(method, endpoint);
     if let Some(token) = bearer_token
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        request = request.header("Authorization", format!("Bearer {token}"));
+        // Mark the header sensitive so request/header diagnostics redact the token.
+        request = request.bearer_auth(token);
     }
     if let Some(body) = body {
         request = request.json(body);
     }
 
-    let response = send_harness_request(request).await?;
-    decode_harness_response(response).await
+    request
 }
 
 async fn send_harness_request(

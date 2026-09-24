@@ -116,9 +116,21 @@ async fn assert_redirect_blocked(status: StatusCode, same_origin: bool, body: Op
     // Harness, database, process environment changes or production secrets.
     let client = build_harness_client_with_timeout(2000).unwrap();
     let request = if let Some(body) = &body {
-        client.post(format!("{}/api", source.url)).json(body)
+        build_harness_request(
+            &client,
+            Method::POST,
+            &format!("{}/api", source.url),
+            None,
+            Some(body),
+        )
     } else {
-        client.get(format!("{}/api", source.url)).bearer_auth(TOKEN)
+        build_harness_request::<()>(
+            &client,
+            Method::GET,
+            &format!("{}/api", source.url),
+            Some(TOKEN),
+            None,
+        )
     };
     let response = send_harness_request(request).await.unwrap();
     {

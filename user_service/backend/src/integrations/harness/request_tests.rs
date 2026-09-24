@@ -82,3 +82,92 @@ async fn timeout_does_not_expose_url_secrets() {
     let error = send_harness_request(request).await.unwrap_err();
     assert_safe_send_failure(&error);
 }
+
+#[test]
+fn harness_authorization_is_redacted_in_request_diagnostics() {
+    let client = build_harness_client_with_timeout(2000).unwrap();
+    for token in [TOKEN.to_string(), format!("  {TOKEN}  ")] {
+        let builder = build_harness_request::<()>(
+            &client,
+            Method::GET,
+            "https://example.invalid/api/v1/user",
+            Some(&token),
+            None,
+        );
+        let builder_debug = format!("{builder:?}");
+        // Trace injection is the final transformation before the production send.
+        let request = builder.with_internal_trace_context().build().unwrap();
+        for output in [
+            builder_debug,
+            format!("{request:?}"),
+            format!("{request:#?}"),
+            format!("{:?}", request.headers()),
+        ] {
+            assert!(
+                !output.contains(TOKEN),
+                "Harness authorization escaped diagnostics"
+            );
+        }
+        let authorization = &request.headers()[reqwest::header::AUTHORIZATION];
+        assert!(authorization.is_sensitive());
+        assert_eq!(authorization, format!("Bearer {TOKEN}").as_str());
+        assert_eq!(request.method(), Method::GET);
+        assert!(request.body().is_none());
+    }
+}
+
+#[test]
+fn harness_request_preserves_optional_auth_and_json_body() {
+    let client = build_harness_client_with_timeout(2000).unwrap();
+    let body = HarnessRegisterRequest {
+        uid: "test-user",
+        email: "test@example.invalid",
+        display_name: "test",
+        password: PASSWORD,
+    };
+    for token in [None, Some(""), Some(" \t ")] {
+        let request = build_harness_request(
+            &client,
+            Method::POST,
+            "https://example.invalid/api/v1/register",
+            token,
+            Some(&body),
+        )
+        .with_internal_trace_context()
+        .build()
+        .unwrap();
+        assert!(!request
+            .headers()
+            .contains_key(reqwest::header::AUTHORIZATION));
+        assert_eq!(request.method(), Method::POST);
+        assert_eq!(
+            request.headers()[reqwest::header::CONTENT_TYPE],
+            "application/json"
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(request.body().unwrap().as_bytes().unwrap()).unwrap(),
+            serde_json::to_value(&body).unwrap()
+        );
+    }
+}
+
+#[tokio::test]
+async fn harness_invalid_authorization_fails_without_exposing_token() {
+    let client = build_harness_client_with_timeout(2000).unwrap();
+    for token in [format!("{TOKEN}\r\nX-Injected: true"), format!("{TOKEN}\0")] {
+        let request = || {
+            build_harness_request::<()>(
+                &client,
+                Method::GET,
+                "https://example.invalid/api/v1/user",
+                Some(&token),
+                None,
+            )
+        };
+        // Failed builders cannot be cloned; construct twice to check both
+        // the build boundary and the production send error without network I/O.
+        assert!(request().build().is_err());
+        let error = send_harness_request(request()).await.unwrap_err();
+        assert_safe_send_failure(&error);
+    }
+}
