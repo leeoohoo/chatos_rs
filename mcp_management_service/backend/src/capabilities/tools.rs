@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use chatos_mcp::{
     system_mcp_descriptor_by_resource_id, system_mcp_descriptor_for_record,
-    system_mcp_tool_catalog, SystemMcpKey, SystemMcpToolCatalog,
+    system_mcp_product_skill_binding, system_mcp_tool_catalog, SystemMcpKey, SystemMcpToolCatalog,
 };
 use chatos_mcp_management_sdk::{
     ResolvedMcpRoute, RuntimeToolDescriptor, RuntimeToolSkillActivationPolicy,
@@ -239,25 +239,21 @@ pub(crate) fn product_skill_binding_for_route(
     route: &ResolvedMcpRoute,
     tool_name: &str,
 ) -> Option<RuntimeToolSkillBinding> {
-    if !is_bound_remote_connection_route(route)
-        || !matches!(
-            tool_name,
-            "test_connection"
-                | "run_command"
-                | "list_directory"
-                | "read_file"
-                | "download_file"
-                | "upload_file"
-        )
-    {
+    let descriptor = system_mcp_descriptor_by_resource_id(route.resource_id.as_str())?;
+    if !route.is_available() {
         return None;
     }
+    let binding = system_mcp_product_skill_binding(descriptor.key, tool_name)?;
     Some(RuntimeToolSkillBinding {
-        binding_id: "remote-connection".to_string(),
-        primary_skill: "chatos-remote-connection".to_string(),
-        required_skills: vec!["chatos-remote-connection".to_string()],
+        binding_id: binding.binding_id.to_string(),
+        primary_skill: binding.primary_skill.to_string(),
+        required_skills: binding
+            .required_skills
+            .iter()
+            .map(|skill| (*skill).to_string())
+            .collect(),
         activation_policy: RuntimeToolSkillActivationPolicy::RunBound,
-        coverage_revision: 1,
+        coverage_revision: binding.coverage_revision,
     })
 }
 
@@ -582,6 +578,21 @@ mod tests {
         }
     }
 
+    fn system_route(key: SystemMcpKey) -> ResolvedMcpRoute {
+        let descriptor = chatos_mcp::system_mcp_descriptor(key);
+        ResolvedMcpRoute {
+            resource_id: descriptor.resource_id.to_string(),
+            server_name: descriptor.server_name.to_string(),
+            provider_kind: McpProviderKind::LocalConnector,
+            provider_ref: Some(format!("system:{}", key.as_str())),
+            tool_namespace: descriptor.server_name.to_string(),
+            allow_writes: descriptor.allow_writes,
+            retry_class: McpRetryClass::NoRetry,
+            cancel_supported: true,
+            reason: "test".to_string(),
+        }
+    }
+
     #[test]
     fn external_snapshot_tools_receive_stable_server_namespace() {
         let capabilities = capabilities_with_mcp(resolved_external_mcp());
@@ -596,6 +607,29 @@ mod tests {
             Some("demo_search")
         );
         assert!(materialized.missing_required_tool_schemas.is_empty());
+    }
+
+    #[test]
+    fn system_routes_use_the_central_product_skill_catalog() {
+        let terminal = system_route(SystemMcpKey::TerminalController);
+        let command = product_skill_binding_for_route(&terminal, "execute_command")
+            .expect("terminal command binding");
+        assert_eq!(command.binding_id, "terminal.command-execution");
+        assert_eq!(
+            command.required_skills,
+            ["chatos-terminal", "chatos-terminal-command-execution"]
+        );
+
+        let observation = product_skill_binding_for_route(&terminal, "process_wait")
+            .expect("terminal observation binding");
+        assert_eq!(observation.binding_id, "terminal.process-observation");
+
+        let survey = system_route(SystemMcpKey::RequirementSurveyRead);
+        let survey_read = product_skill_binding_for_route(&survey, "requirement_survey_get")
+            .expect("requirement survey binding");
+        assert_eq!(survey_read.primary_skill, "requirement-survey-read-results");
+
+        assert!(product_skill_binding_for_route(&terminal, "future_unreviewed_tool").is_none());
     }
 
     #[test]
