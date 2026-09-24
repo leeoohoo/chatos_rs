@@ -95,13 +95,16 @@ struct UserScopedRoots {
 
 fn ensure_user_scoped_roots(auth: &AuthUser) -> Option<UserScopedRoots> {
     let base = PathBuf::from(resolve_workspace_dir(None));
+    // The configured base may be a deployment-managed symlink. Below that
+    // boundary every component must be a real directory, never a redirect to
+    // another user's directory or a host path.
+    fs::create_dir_all(&base).ok()?;
+    let base = canonicalize_existing_dir(&base).ok()?;
+    let users_root = ensure_child_directory(&base, "users").ok()?;
     let user_component = user_path_component(auth.user_id.as_str());
-    let user_root = base.join("users").join(user_component);
-    let workspaces_root = user_root.join("workspaces");
-    let public_root = user_root.join("public");
-    fs::create_dir_all(user_root.as_path()).ok()?;
-    fs::create_dir_all(workspaces_root.as_path()).ok()?;
-    fs::create_dir_all(public_root.as_path()).ok()?;
+    let user_root = ensure_child_directory(&users_root, &user_component).ok()?;
+    let workspaces_root = ensure_child_directory(&user_root, "workspaces").ok()?;
+    let public_root = ensure_child_directory(&user_root, "public").ok()?;
     set_private_dir_permissions(user_root.as_path()).ok()?;
     set_private_dir_permissions(workspaces_root.as_path()).ok()?;
     set_private_dir_permissions(public_root.as_path()).ok()?;
@@ -109,6 +112,31 @@ fn ensure_user_scoped_roots(auth: &AuthUser) -> Option<UserScopedRoots> {
         workspaces_root,
         public_root,
     })
+}
+
+fn ensure_child_directory(parent: &Path, name: &str) -> std::io::Result<PathBuf> {
+    let path = parent.join(name);
+    match fs::create_dir(&path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(err) => return Err(err),
+    }
+    // Do not follow existing symlinks, including dangling ones. Check before
+    // creating descendants or changing permissions on an existing directory.
+    if !fs::symlink_metadata(&path)?.file_type().is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "user root component is not a real directory",
+        ));
+    }
+    let canonical = canonicalize_existing_dir(&path)?;
+    if normalize_path_for_compare(&canonical) != normalize_path_for_compare(&path) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "user root component redirects outside its expected path",
+        ));
+    }
+    Ok(canonical)
 }
 
 fn set_private_dir_permissions(_path: &Path) -> std::io::Result<()> {
@@ -195,6 +223,10 @@ fn push_root(roots: &mut Vec<FsAllowedRoot>, candidate: PathBuf, kind: FsAllowed
         kind,
     });
 }
+
+#[cfg(test)]
+#[path = "policy_roots_isolation_tests.rs"]
+mod isolation_tests;
 
 #[cfg(test)]
 mod tests {
