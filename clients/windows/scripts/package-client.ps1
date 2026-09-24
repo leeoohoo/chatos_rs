@@ -401,7 +401,8 @@ Local Connector: $normalizedConnectorBaseUrl
                 throw "ChatOS did not show a window within 30 seconds. See $startupLog"
             }
 
-            $stabilityDeadline = [DateTime]::UtcNow.AddSeconds(5)
+            Write-Host "Verifying that the ChatOS window remains responsive..."
+            $stabilityDeadline = [DateTime]::UtcNow.AddSeconds(20)
             while ([DateTime]::UtcNow -lt $stabilityDeadline) {
                 Start-Sleep -Milliseconds 250
                 if ($process.HasExited) {
@@ -411,7 +412,20 @@ Local Connector: $normalizedConnectorBaseUrl
                     throw "ChatOS exited immediately after opening with code $($process.ExitCode). See $startupLog"
                 }
             }
-            Write-StartupDiagnostic "Startup stability check passed. PID=$($process.Id)"
+            $process.Refresh()
+            if ($process.HasExited) {
+                Write-StartupDiagnostic `
+                    "Process exited at the end of the startup stability check. PID=$($process.Id); ExitCode=$($process.ExitCode)"
+                Write-RecentChatOSCrashEvents -Since $launchStartedAt
+                throw "ChatOS exited immediately after opening with code $($process.ExitCode). See $startupLog"
+            }
+            $isResponding = $process.Responding
+            if (-not $isResponding) {
+                Write-StartupDiagnostic "Main window stopped responding during the 20-second stability check. PID=$($process.Id)"
+                Write-RecentChatOSCrashEvents -Since $launchStartedAt
+                throw "ChatOS opened but stopped responding. See $startupLog"
+            }
+            Write-StartupDiagnostic "Startup stability check passed after 20 seconds. PID=$($process.Id); Responding=$isResponding"
             Write-Host "ChatOS started successfully (PID $($process.Id))."
         }
     }
