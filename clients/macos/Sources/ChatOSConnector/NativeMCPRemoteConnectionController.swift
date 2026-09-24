@@ -2,6 +2,9 @@ import ChatOSCore
 import Foundation
 
 struct NativeMCPRemoteConnectionController: Sendable {
+    static let providerID = ProductToolProviderID.remoteConnection
+    static let skillBindingID = ProductToolSkillBindingID.remoteConnection
+
     static let toolNames: Set<String> = [
         "test_connection", "run_command", "list_directory",
         "read_file", "download_file", "upload_file",
@@ -59,6 +62,20 @@ struct NativeMCPRemoteConnectionController: Sendable {
             required: ["path", "content"]
         ),
     ]
+
+    static func skillCoverageReport() throws -> ToolSkillCoverageReport {
+        let tools = try toolDefinitions.map { definition -> ToolSkillCoverageInput in
+            guard let name = definition.jsonObject?["name"]?.jsonString else {
+                throw NativeMCPRemoteConnectionError.invalidToolDefinition
+            }
+            return .init(
+                providerID: providerID,
+                toolName: name,
+                skillBindingID: skillBindingID
+            )
+        }
+        return ToolSkillCoverageCatalog.product.audit(tools)
+    }
 
     let provider: any NativeRemoteConnectionRuntimeProviding
     let ssh: any NativeRemoteSSHExecuting
@@ -272,6 +289,7 @@ struct NativeMCPRemoteConnectionController: Sendable {
 
 private enum NativeMCPRemoteConnectionError: LocalizedError {
     case unsupportedTool(String)
+    case invalidToolDefinition
     case invalidArguments(String)
     case dangerousCommand
     case binaryRequiresBase64
@@ -279,6 +297,7 @@ private enum NativeMCPRemoteConnectionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case let .unsupportedTool(name): "不支持的远程连接工具：\(name)"
+        case .invalidToolDefinition: "远程连接工具定义缺少名称"
         case let .invalidArguments(message): message
         case .dangerousCommand: "该远程命令风险较高，需要明确设置 allow_dangerous=true"
         case .binaryRequiresBase64: "远程文件不是 UTF-8 文本，请使用 base64 编码下载"

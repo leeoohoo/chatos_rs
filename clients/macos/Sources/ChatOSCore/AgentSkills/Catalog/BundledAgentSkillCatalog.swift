@@ -86,6 +86,12 @@ public enum BundledAgentSkillCatalog {
             requiresFrontmatter: true
         ),
         .init(
+            name: "chatos-remote-connection",
+            role: .specialist,
+            relativeDirectory: "chatos-remote-connection",
+            requiresFrontmatter: true
+        ),
+        .init(
             name: "requirement-survey",
             role: .router,
             relativeDirectory: "requirement-survey",

@@ -11,6 +11,7 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         XCTAssertTrue(names.contains("chatos-project-team-setup"))
         XCTAssertTrue(names.contains("chatos-agent-builder"))
         XCTAssertTrue(names.contains("chatos-command-approval"))
+        XCTAssertTrue(names.contains("chatos-remote-connection"))
         XCTAssertTrue(names.contains("chatos-compact-communication"))
         XCTAssertTrue(names.contains("requirement-survey"))
 
@@ -48,6 +49,15 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             ["references/transactions-and-conflicts.md"]
         )
         XCTAssertTrue(projectWrite.instructions.contains("commit_edit_session"))
+
+        let remoteConnection = try BundledAgentSkillLoader.load(
+            named: "chatos-remote-connection"
+        )
+        XCTAssertEqual(
+            remoteConnection.resourcePaths,
+            ["references/commands-and-transfers.md"]
+        )
+        XCTAssertTrue(remoteConnection.instructions.contains("program-bound"))
     }
 
     func testTerminalBindingsCoverEveryDeclaredToolExactlyOnce() {
@@ -85,9 +95,9 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             $0.providerID == ProductToolProviderID.localAgentChat
         }.flatMap(\.toolNames)
 
-        XCTAssertEqual(providerTools.count, 84)
-        XCTAssertEqual(Set(providerTools).count, 84)
-        XCTAssertEqual(nativeBuiltinTools.count, 28)
+        XCTAssertEqual(providerTools.count, 90)
+        XCTAssertEqual(Set(providerTools).count, 90)
+        XCTAssertEqual(nativeBuiltinTools.count, 34)
         XCTAssertEqual(localAgentChatTools.count, 43)
         XCTAssertEqual(Set(localAgentChatTools).count, 43)
         XCTAssertEqual(
@@ -95,6 +105,12 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
                 $0.id == ProductToolSkillBindingID.requirementSurveyControlPlane
             }?.activationPolicy,
             .controlPlane
+        )
+        XCTAssertEqual(
+            bindings.first {
+                $0.id == ProductToolSkillBindingID.remoteConnection
+            }?.activationPolicy,
+            .runBound
         )
     }
 
@@ -143,9 +159,14 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             providerID: ProductToolProviderID.localAgentChat,
             skillBindingID: ProductToolSkillBindingID.agentStaffing
         )
+        try await session.register(
+            providerID: ProductToolProviderID.remoteConnection,
+            skillBindingID: ProductToolSkillBindingID.remoteConnection
+        )
 
         let router = await session.routerMarkdown()
         XCTAssertTrue(router.contains("# Relay context"))
+        XCTAssertTrue(router.contains("# Remote connection"))
         XCTAssertTrue(router.contains("product-skill:chatos-agent-staffing"))
         XCTAssertTrue(router.contains("Propose creating, inviting, or removing"))
         XCTAssertFalse(router.contains("# Agent staffing proposals"))

@@ -7,6 +7,7 @@ public enum ProductToolProviderID {
     public static let localProjectTeam = "chatos.local.project-team"
     public static let projectRead = "chatos.builtin.project-read"
     public static let projectWrite = "chatos.builtin.project-write"
+    public static let remoteConnection = "chatos.builtin.remote-connection"
     public static let terminal = "chatos.builtin.terminal"
     public static let requirementSurvey = "chatos.builtin.requirement-survey"
 }
@@ -26,6 +27,7 @@ public enum ProductToolSkillBindingID {
     public static let projectTeamProposal = "project-team.proposal"
     public static let projectRead = "project-files.read"
     public static let projectWrite = "project-files.write"
+    public static let remoteConnection = "remote-connection.operations"
     public static let terminalCommandExecution = "terminal.command-execution"
     public static let terminalProcessObservation = "terminal.process-observation"
     public static let terminalProcessControl = "terminal.process-control"
@@ -59,6 +61,17 @@ public extension ToolSkillCoverageCatalog {
                     ],
                     routerSkillName: "chatos-command-approval",
                     specialistSkillName: "chatos-command-approval",
+                    activationPolicy: .runBound
+                ),
+                .init(
+                    id: ProductToolSkillBindingID.remoteConnection,
+                    providerID: ProductToolProviderID.remoteConnection,
+                    toolNames: [
+                        "test_connection", "run_command", "list_directory", "read_file",
+                        "download_file", "upload_file",
+                    ],
+                    routerSkillName: "chatos-remote-connection",
+                    specialistSkillName: "chatos-remote-connection",
                     activationPolicy: .runBound
                 ),
                 .init(

@@ -5,6 +5,22 @@ import Testing
 
 struct NativeMCPRemoteConnectionControllerTests {
     @Test
+    func everyRemoteConnectionToolHasRunBoundSkillCoverage() throws {
+        let definitionNames = Set(
+            NativeMCPRemoteConnectionController.toolDefinitions.compactMap {
+                $0.jsonObject?["name"]?.jsonString
+            }
+        )
+        let report = try NativeMCPRemoteConnectionController.skillCoverageReport()
+
+        #expect(definitionNames == NativeMCPRemoteConnectionController.toolNames)
+        #expect(report.totalTools == 6)
+        #expect(report.coveredTools == 6)
+        #expect(report.isComplete)
+        #expect(report.issues.isEmpty)
+    }
+
+    @Test
     func hidesConnectionDiscoveryAndInternalIDsFromToolDefinitions() {
         let serialized = NativeJSONValue.array(
             NativeMCPRemoteConnectionController.toolDefinitions
