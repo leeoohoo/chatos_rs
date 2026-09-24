@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react"
 import {
   transformerNotationDiff,
   transformerNotationFocus,
+  transformerNotationHighlight,
 } from "@shikijs/transformers"
 import { FileIcon } from "lucide-react"
 import { useTheme } from "next-themes"
@@ -52,9 +53,6 @@ export function CodeComparison({
     async function highlightCode() {
       try {
         const { codeToHtml } = await import("shiki")
-        const { transformerNotationHighlight } =
-          await import("@shikijs/transformers")
-
         const before = await codeToHtml(beforeCode, {
           lang: language,
           theme: selectedTheme,
