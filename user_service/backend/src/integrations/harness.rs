@@ -605,12 +605,23 @@ where
         request = request.json(body);
     }
 
-    let response = request
+    let response = send_harness_request(request).await?;
+    decode_harness_response(response).await
+}
+
+async fn send_harness_request(
+    request: reqwest::RequestBuilder,
+) -> Result<reqwest::Response, HarnessRequestError> {
+    request
         .with_internal_trace_context()
         .send()
         .await
-        .map_err(|err| HarnessRequestError::from_error(err.to_string()))?;
-    decode_harness_response(response).await
+        .map_err(|_| {
+            // Transport diagnostics may include credential-bearing URLs or
+            // source errors. They must not reach logs, last_error, or influence
+            // the existing-account fallback via untrusted diagnostic text.
+            HarnessRequestError::from_error("send harness request failed")
+        })
 }
 
 async fn decode_harness_response<TResp: serde::de::DeserializeOwned>(
@@ -642,3 +653,7 @@ async fn decode_harness_response<TResp: serde::de::DeserializeOwned>(
 #[cfg(test)]
 #[path = "harness/response_tests.rs"]
 mod response_tests;
+
+#[cfg(test)]
+#[path = "harness/request_tests.rs"]
+mod request_tests;
