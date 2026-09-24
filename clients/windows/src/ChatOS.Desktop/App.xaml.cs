@@ -138,7 +138,6 @@ public partial class App : Application
 
             _powerState = _host.Services.GetRequiredService<ConnectorPowerStateCoordinator>();
             PowerManager.SystemSuspendStatusChanged += OnSystemSuspendStatusChanged;
-            ApplySystemSuspendStatus();
 
             _window = _host.Services.GetRequiredService<MainWindow>();
             _window.Closed += OnMainWindowClosed;
@@ -187,16 +186,16 @@ public partial class App : Application
         }
     }
 
-    private void OnSystemSuspendStatusChanged(object? sender, object args) => ApplySystemSuspendStatus();
-
-    private void ApplySystemSuspendStatus()
+    private void OnSystemSuspendStatusChanged(object? sender, object args)
     {
         if (_powerState is null) return;
-        if (PowerManager.SystemSuspendStatus == SystemSuspendStatus.Entering)
+        // Windows only permits reading SystemSuspendStatus from inside this callback.
+        var status = PowerManager.SystemSuspendStatus;
+        if (status == SystemSuspendStatus.Entering)
         {
             _powerState.Suspend();
         }
-        else if (PowerManager.SystemSuspendStatus is SystemSuspendStatus.AutoResume or SystemSuspendStatus.ManualResume)
+        else if (status is SystemSuspendStatus.AutoResume or SystemSuspendStatus.ManualResume)
         {
             _powerState.Resume();
         }
