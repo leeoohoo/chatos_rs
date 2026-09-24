@@ -1443,11 +1443,22 @@ private struct SchedulerTestServices: AgentServiceProviding {
     }
 }
 
-private struct SchedulerTestMemory: AgentMemoryServicing {
+private actor SchedulerTestMemory: AgentMemoryServicing {
+    private var records: [Int: AgentMemoryContextRecord] = [:]
+
     func ensureThread() async throws {}
-    func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {}
+
+    func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {
+        for entry in entries {
+            records[entry.index] = .init(id: entry.id, message: entry.message)
+        }
+    }
+
     func compose() async throws -> AgentMemoryContext {
-        .init(blocks: [], recentRecords: [])
+        .init(
+            blocks: [],
+            recentRecords: records.keys.sorted().compactMap { records[$0] }
+        )
     }
 }
 
