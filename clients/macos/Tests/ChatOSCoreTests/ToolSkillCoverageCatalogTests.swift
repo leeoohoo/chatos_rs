@@ -25,6 +25,13 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             named: "chatos-terminal-process-observation"
         )
         XCTAssertTrue(observation.instructions.contains("process_poll"))
+        let observationScenario = try BundledAgentSkillLoader.readResource(
+            skillName: observation.descriptor.name,
+            relativePath: "references/scenarios.md",
+            maximumCharacters: 200
+        )
+        XCTAssertTrue(observationScenario.content.contains("Process observation scenarios"))
+        XCTAssertTrue(observationScenario.truncated)
 
         let control = try BundledAgentSkillLoader.load(
             named: "chatos-terminal-process-control"

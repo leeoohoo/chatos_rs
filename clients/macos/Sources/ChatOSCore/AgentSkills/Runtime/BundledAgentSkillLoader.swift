@@ -2,6 +2,7 @@ import Foundation
 
 public struct BundledAgentSkillDocument: Sendable, Equatable {
     public let descriptor: BundledAgentSkillDescriptor
+    public let description: String
     public let instructions: String
     public let resourcePaths: [String]
 }
@@ -47,8 +48,34 @@ public enum BundledAgentSkillLoader {
         }
         return .init(
             descriptor: descriptor,
+            description: frontmatterValue("description", in: instructions) ?? "",
             instructions: instructions,
             resourcePaths: try resourcePaths(in: directory, beneath: root)
+        )
+    }
+
+    public static func readResource(
+        skillName: String,
+        relativePath: String,
+        offset: Int = 0,
+        maximumCharacters: Int = 12_000
+    ) throws -> ProgressiveSkillFileLoader.TextPage {
+        let document = try load(named: skillName)
+        let normalized = try ProgressiveSkillFileLoader.normalizedRelativePath(relativePath)
+        guard document.resourcePaths.contains(normalized) else {
+            throw LoaderError.invalidEntrypoint(skillName + ":" + normalized)
+        }
+        let root = try skillsRoot()
+        let directory = root.appendingPathComponent(
+            document.descriptor.relativeDirectory,
+            isDirectory: true
+        )
+        return try ProgressiveSkillFileLoader.readTextPage(
+            directory.appendingPathComponent(normalized),
+            beneath: root,
+            maximumBytes: 1_024 * 1_024,
+            offset: offset,
+            maximumCharacters: maximumCharacters
         )
     }
 
@@ -75,12 +102,19 @@ public enum BundledAgentSkillLoader {
     }
 
     private static func hasExpectedName(_ markdown: String, expectedName: String) -> Bool {
+        frontmatterValue("name", in: markdown) == expectedName
+    }
+
+    private static func frontmatterValue(_ key: String, in markdown: String) -> String? {
         guard markdown.hasPrefix("---\n"),
-              let end = markdown.dropFirst(4).range(of: "\n---") else { return false }
-        let frontmatter = markdown[..<end.upperBound]
-        return frontmatter.split(separator: "\n").contains { line in
-            line.trimmingCharacters(in: .whitespaces) == "name: \(expectedName)"
-        }
+              let end = markdown.dropFirst(4).range(of: "\n---") else { return nil }
+        let prefix = key + ":"
+        return markdown[..<end.lowerBound].split(separator: "\n").compactMap { line in
+            let value = line.trimmingCharacters(in: .whitespaces)
+            guard value.hasPrefix(prefix) else { return nil }
+            return String(value.dropFirst(prefix.count))
+                .trimmingCharacters(in: .whitespaces)
+        }.first
     }
 
     private static func resourcePaths(in directory: URL, beneath root: URL) throws -> [String] {
