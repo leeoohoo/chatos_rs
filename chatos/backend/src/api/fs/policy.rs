@@ -165,6 +165,11 @@ impl FsPathPolicy {
         }
 
         if let Some(resolved) = self.resolve_user_visible_path(trimmed) {
+            // Virtual paths map backslashes to separators, which can introduce
+            // parent components that were not components of the native input.
+            if contains_parent_dir(&resolved) {
+                return Err(FsPolicyError::Forbidden(PATH_TRAVERSAL_BLOCKED.to_string()));
+            }
             return Ok(resolved);
         }
 
@@ -235,3 +240,7 @@ fn contains_parent_dir(path: &Path) -> bool {
     path.components()
         .any(|component| matches!(component, Component::ParentDir))
 }
+
+#[cfg(test)]
+#[path = "policy_traversal_tests.rs"]
+mod traversal_tests;
