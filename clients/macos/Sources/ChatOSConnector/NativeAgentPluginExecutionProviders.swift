@@ -47,7 +47,9 @@ struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
                 name: name,
                 description: description,
                 schema: try JSONEncoder().encode(schema),
-                effect: effect
+                effect: effect,
+                providerID: Self.providerID(for: name),
+                skillBindingID: Self.skillBindingID(for: name)
             )
         }
     }
@@ -93,6 +95,49 @@ struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
         + NativeMCPTerminalStore.toolDefinitions
         + NativeMCPRequirementSurveyTools.readToolDefinitions
         + NativeMCPRequirementSurveyTools.writeToolDefinitions
+
+    /// Enumerates every native model-visible builtin through the same metadata path used by the
+    /// live provider. Migration remains audit-only until the report is complete for all families.
+    static func skillCoverageReport() throws -> ToolSkillCoverageReport {
+        let tools = try nativeDefinitions.map { value -> ToolSkillCoverageInput in
+            guard let name = value.jsonObject?["name"]?.jsonString else {
+                throw NativePluginRuntimeError.invalidMCPResponse("内置 MCP 工具定义缺少名称")
+            }
+            return .init(
+                providerID: providerID(for: name),
+                toolName: name,
+                skillBindingID: skillBindingID(for: name)
+            )
+        }
+        return ToolSkillCoverageCatalog.product.audit(tools)
+    }
+
+    private static func providerID(for toolName: String) -> String {
+        if NativeMCPCodeWriteStore.toolNames.contains(toolName) {
+            return ProductToolProviderID.projectWrite
+        }
+        if NativeMCPTerminalStore.toolNames.contains(toolName) {
+            return ProductToolProviderID.terminal
+        }
+        if NativeMCPRequirementSurveyTools.readToolNames.contains(toolName)
+            || NativeMCPRequirementSurveyTools.writeToolNames.contains(toolName) {
+            return ProductToolProviderID.requirementSurvey
+        }
+        return ProductToolProviderID.projectRead
+    }
+
+    private static func skillBindingID(for toolName: String) -> String? {
+        switch toolName {
+        case "execute_command":
+            ProductToolSkillBindingID.terminalCommandExecution
+        case "get_recent_logs", "process_list", "process_poll", "process_log", "process_wait":
+            ProductToolSkillBindingID.terminalProcessObservation
+        case "process_write", "process_kill", "process":
+            ProductToolSkillBindingID.terminalProcessControl
+        default:
+            nil
+        }
+    }
 
     private static func capability(for toolName: String) -> LocalAgentTodoBuiltinCapability {
         if NativeMCPCodeWriteStore.toolNames.contains(toolName) { return .projectWrite }

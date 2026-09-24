@@ -90,8 +90,26 @@ public struct AgentToolDefinition: Sendable {
     public var description: String
     public var schema: Data
     public var effect: Effect
-    public init(name: String, description: String, schema: Data, effect: Effect = .readOnly) {
-        self.name = name; self.description = description; self.schema = schema; self.effect = effect
+    /// Stable product-owned provider identity used only for Skill coverage and diagnostics.
+    /// It is never serialized into the model tool schema.
+    public var providerID: String?
+    /// Stable indirection into the centralized Skill coverage catalog. Providers declare the
+    /// binding identity; they do not own Skill prose, paths, or activation policy.
+    public var skillBindingID: String?
+    public init(
+        name: String,
+        description: String,
+        schema: Data,
+        effect: Effect = .readOnly,
+        providerID: String? = nil,
+        skillBindingID: String? = nil
+    ) {
+        self.name = name
+        self.description = description
+        self.schema = schema
+        self.effect = effect
+        self.providerID = providerID
+        self.skillBindingID = skillBindingID
     }
 }
 

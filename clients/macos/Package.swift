@@ -30,7 +30,9 @@ let package = Package(
             name: "ChatOSCore",
             resources: [
                 .process("Resources"),
-                .copy("Skills"),
+                .copy("AgentSkills/Skills"),
+                .copy("AgentSkills/Prompts"),
+                .copy("AgentSkills/Catalog/ChatOSSkillCatalog.json"),
             ]
         ),
         .target(
