@@ -4,6 +4,10 @@ import ChatOSCore
 import SwiftUI
 
 extension ProjectAgentGroupChatView {
+    private var pagedActiveMembers: [AgentGroupChatViewModel.MemberPresentation] {
+        viewModel.activeMembers.agentPage(index: memberPage, size: memberPageSize)
+    }
+
     var memberSidebar: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -31,7 +35,7 @@ extension ProjectAgentGroupChatView {
                     .appFont(.caption)
                     .foregroundStyle(.orange)
             }
-            ForEach(viewModel.activeMembers) { item in
+            ForEach(pagedActiveMembers) { item in
                 HStack(spacing: 8) {
                     Button {
                         selectedRunAgentID = item.member.agentID
@@ -99,6 +103,15 @@ extension ProjectAgentGroupChatView {
                             lineWidth: 1
                         )
                 }
+            }
+            if !viewModel.activeMembers.isEmpty {
+                AgentListPaginationBar(
+                    totalCount: viewModel.activeMembers.count,
+                    page: $memberPage,
+                    pageSize: $memberPageSize,
+                    pageSizeOptions: [5, 10, 20],
+                    compact: true
+                )
             }
             Spacer()
             Button {

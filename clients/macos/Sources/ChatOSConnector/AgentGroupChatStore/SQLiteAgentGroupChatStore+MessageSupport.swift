@@ -31,7 +31,7 @@ extension SQLiteAgentGroupChatStore {
 
         let messageID = UUID().uuidString.lowercased()
         let content = """
-        你已被明确指定为“\(room.draft.name)”的项目经理。请读取 Human 消息、团队目标、成员和 Todo 状态，主动维护真实的团队共享资产。信息充分时建立或更新“项目概览”和“当前进度”；信息不足时创建一个选择 requirement_survey_write 的 Todo（程序会自动加入 requirement_survey_read）来完成需求调研，不要在通讯层直接调用调研工具，也不要写空模板或臆测内容。完成本轮实际处理后再结束通讯周期。
+        你已被明确指定为“\(room.draft.name)”的项目经理。请先调用 project_dashboard_get 读取系统事实，再用 project_dashboard_update 建立或更新结构化项目总览、里程碑、风险、下一步和需要 Human 处理的事项。项目背景、技术栈、架构与长期决策仍通过 team_asset_* 维护。信息不足时创建一个选择 requirement_survey_write 的 Todo（程序会自动加入 requirement_survey_read）来完成需求调研；不要写空模板、臆测进度或用总结文字冒充已验收交付。完成本轮实际处理后再结束通讯周期。
         """
         try execute(
             """

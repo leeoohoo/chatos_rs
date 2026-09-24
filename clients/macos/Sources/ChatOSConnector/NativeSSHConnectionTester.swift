@@ -9,6 +9,7 @@ protocol NativeRemoteConnectionTesting: Sendable {
 }
 
 struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
+    private static let interactiveVerificationTimeoutSeconds = 5 * 60
     private let coordinator: Coordinator
 
     init(timeout: TimeInterval = 15) {
@@ -104,7 +105,17 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
             let stderrURL = temporaryDirectory.appendingPathComponent("ssh-stderr.log")
             let verificationResponseURL = temporaryDirectory
                 .appendingPathComponent("verification-response")
-            try NativeSSHConnectionTester.sshConfig(for: draft)
+            // ProxyJump performs jump-host authentication before the target can
+            // exchange its SSH banner. Keep the target-side connection timeout
+            // open while a person retrieves and enters an SMS/MFA code. The
+            // jump host itself still uses the normal short network timeout.
+            let targetConnectTimeoutSeconds = draft.jumpEnabled
+                ? NativeSSHConnectionTester.interactiveVerificationTimeoutSeconds
+                : 10
+            try NativeSSHConnectionTester.sshConfig(
+                for: draft,
+                targetConnectTimeoutSeconds: targetConnectTimeoutSeconds
+            )
                 .write(to: configURL, atomically: true, encoding: .utf8)
             try NativeSSHConnectionTester.askpassScript
                 .write(to: askpassURL, atomically: true, encoding: .utf8)
@@ -284,7 +295,9 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
 
         private func scheduleExpiration(for sessionID: UUID) {
             Task { [weak self] in
-                try? await Task.sleep(for: .seconds(5 * 60))
+                try? await Task.sleep(
+                    for: .seconds(NativeSSHConnectionTester.interactiveVerificationTimeoutSeconds)
+                )
                 await self?.discard(sessionID: sessionID)
             }
         }
@@ -339,7 +352,8 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
 
     static func sshConfig(
         for draft: RemoteConnectionDraft,
-        controlPath: String? = nil
+        controlPath: String? = nil,
+        targetConnectTimeoutSeconds: Int = 10
     ) throws -> String {
         var blocks: [String] = []
         var target = commonHostBlock(
@@ -347,7 +361,8 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
             host: draft.host,
             port: draft.port,
             username: draft.username,
-            policy: draft.hostKeyPolicy
+            policy: draft.hostKeyPolicy,
+            connectTimeoutSeconds: targetConnectTimeoutSeconds
         )
         target.append(contentsOf: authenticationLines(
             type: draft.authenticationType,
@@ -370,7 +385,8 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
                 host: jumpHost,
                 port: draft.jumpPort ?? 22,
                 username: jumpUsername,
-                policy: draft.hostKeyPolicy
+                policy: draft.hostKeyPolicy,
+                connectTimeoutSeconds: 10
             )
             let jumpType: RemoteAuthenticationType = draft.jumpPrivateKeyPath?.trimmedNonEmpty == nil
                 ? .password
@@ -393,14 +409,15 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
         host: String,
         port: Int,
         username: String,
-        policy: RemoteHostKeyPolicy
+        policy: RemoteHostKeyPolicy,
+        connectTimeoutSeconds: Int
     ) -> [String] {
         [
             "Host \(alias)",
             "  HostName \(sshConfigValue(host))",
             "  Port \(port)",
             "  User \(sshConfigValue(username))",
-            "  ConnectTimeout 10",
+            "  ConnectTimeout \(max(connectTimeoutSeconds, 1))",
             "  ConnectionAttempts 1",
             "  ServerAliveInterval 5",
             "  ServerAliveCountMax 1",

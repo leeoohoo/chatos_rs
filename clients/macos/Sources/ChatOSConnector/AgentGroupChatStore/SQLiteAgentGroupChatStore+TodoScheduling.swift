@@ -474,7 +474,7 @@ extension SQLiteAgentGroupChatStore {
             let suggestionNotice = suggestionCount > 0
                 ? "\n共享资产更新建议：\(suggestionCount) 条，请用 todo_read_progress 审核后决定是否落库。"
                 : ""
-            let content = "Todo 状态已更新：\(todo.title)\n状态：\(todo.status.rawValue)\n\(summary)\(suggestionNotice)"
+            let content = "Todo 状态已更新：\(todo.title)\n状态：\(todo.status.rawValue)\n\(summary)\(suggestionNotice)\n如果你是该团队项目经理，请调用 project_dashboard_get 核对实时事实，并在阶段、里程碑、风险或 Human 待办发生变化时使用 project_dashboard_update 更新总览。"
             let eventKey = "status:\(todo.id):\(todo.status.rawValue):\(todo.updatedAtUnixMs)"
             var deliveries: [ProjectAgentDelivery] = []
             for recipientID in recipientIDs {

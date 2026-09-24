@@ -59,9 +59,13 @@ export const conversationService = {
 
   tasks(messageId: string, taskId?: string): Promise<CompanionTaskListResponse> {
     const query = taskId ? `?task_id=${encodeURIComponent(taskId)}` : ''
+    // APISIX normalizes encoded colons before the backend verifies the device proof.
+    // Keep colons literal so the signed target matches the path seen by ChatOS.
+    const encodedMessageId = encodeURIComponent(messageId).replace(/%3A/gi, ':')
     return apiRequest({
       surface: 'chatos',
-      path: `/companion/messages/${encodeURIComponent(messageId)}/tasks${query}`,
+      path: `/companion/messages/${encodedMessageId}/tasks${query}`,
+      clearSessionOnUnauthorized: false,
     })
   },
 

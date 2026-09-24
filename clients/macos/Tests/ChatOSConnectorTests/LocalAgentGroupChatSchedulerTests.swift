@@ -132,7 +132,14 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         let run = try XCTUnwrap(storedRun)
         let system = run.checkpoint.messages.first?.content ?? ""
         XCTAssertTrue(system.contains(#"name="chatos-profession-research-specialist""#))
-        XCTAssertTrue(system.contains("Account-specific research role"))
+        XCTAssertFalse(system.contains("Account-specific research role"))
+        XCTAssertEqual(run.progressiveSkillSnapshot?.skills.count, 1)
+        XCTAssertTrue(
+            run.progressiveSkillSnapshot?.skills.first?.instructions.contains(
+                "Account-specific research role"
+            ) == true
+        )
+        XCTAssertTrue(system.contains("agent_skill_activate"))
         XCTAssertFalse(system.contains("当前账户自定义职业规则"))
         XCTAssertFalse(system.contains("chatos-project-type-"))
         XCTAssertTrue(system.contains(#"name="chatos-compact-communication""#))
@@ -224,7 +231,14 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         XCTAssertFalse(savedRun?.events.contains(where: { $0.kind == "memory_unavailable" }) == true)
         let system = savedRun?.checkpoint.messages.first?.content ?? ""
         XCTAssertTrue(system.contains(#"name="chatos-profession-desktop-engineer""#))
-        XCTAssertTrue(system.contains(#"name="chatos-project-type-desktop-application""#))
+        XCTAssertTrue(system.contains("AS-project_type-desktop_application"))
+        XCTAssertEqual(
+            savedRun?.progressiveSkillSnapshot?.skills.map(\.name),
+            [
+                "chatos-profession-desktop-engineer",
+                "chatos-project-type-desktop-application",
+            ]
+        )
         XCTAssertTrue(system.contains("Desktop Application Playbook") || system.contains("桌面"))
         XCTAssertTrue(system.contains(#"name="chatos-compact-communication""#))
         XCTAssertEqual(

@@ -93,6 +93,30 @@ struct NativeMCPTerminalStoreTests {
     }
 
     @Test
+    func foregroundExecutionTimesOutWithActionableFailureAndStopsLateSideEffect() async throws {
+        let fixture = try TerminalFixture()
+        defer { fixture.dispose() }
+        let store = NativeMCPTerminalStore()
+        let marker = fixture.root.appendingPathComponent("foreground-timeout-late.txt")
+
+        let result = try await store.execute(
+            command: "/bin/sh -c 'sleep 2; printf late > foreground-timeout-late.txt'",
+            cwd: fixture.root,
+            projectRoot: fixture.root,
+            background: false,
+            timeoutMilliseconds: 1_000,
+            ownerRunID: "executor-run-timeout"
+        )
+
+        #expect(try result.bool("timed_out"))
+        #expect(!(try result.bool("success")))
+        #expect(try result.string("finished_by") == "timeout")
+        #expect(try result.string("error").contains("background=true"))
+        try await Task.sleep(for: .milliseconds(1_200))
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+    }
+
+    @Test
     func cancellingExecutorRunTerminatesItsBackgroundProcesses() async throws {
         let fixture = try TerminalFixture()
         defer { fixture.dispose() }

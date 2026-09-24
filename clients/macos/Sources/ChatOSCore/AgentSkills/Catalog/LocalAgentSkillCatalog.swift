@@ -130,6 +130,10 @@ public enum LocalAgentSkillCatalog {
     private static let payload: Payload = {
         guard let url = Bundle.module.url(
             forResource: "ChatOSSkillCatalog",
+            withExtension: "json",
+            subdirectory: "Catalog"
+        ) ?? Bundle.module.url(
+            forResource: "ChatOSSkillCatalog",
             withExtension: "json"
         ), let data = try? Data(contentsOf: url),
            let value = try? JSONDecoder().decode(Payload.self, from: data),

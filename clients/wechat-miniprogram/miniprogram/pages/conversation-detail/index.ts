@@ -5,6 +5,7 @@ import type {
   Conversation,
   ConversationMessage,
 } from '../../models/api'
+import { parseMarkdown } from '../../components/markdown-view/index'
 import { ApiError } from '../../services/api-client'
 import { approvalService } from '../../services/approval-service'
 import { askUserService } from '../../services/ask-user-service'
@@ -15,8 +16,11 @@ import { deviceSelectionStore } from '../../stores/device-selection-store'
 import { promptView, type AskUserPromptView } from '../../utils/ask-user'
 import { messageText } from '../../utils/presentation'
 
+type MarkdownNode = ReturnType<typeof parseMarkdown>[number]
+
 type MessageView = ConversationMessage & {
   text: string
+  markdownNodes: MarkdownNode[]
   isUser: boolean
   isAssistant: boolean
   pending?: boolean
@@ -27,6 +31,7 @@ type TaskProcessView = {
   id: string
   title: string
   detail: string
+  detailNodes: MarkdownNode[]
   occurredAt: string
   status: string
   statusLabel: string
@@ -36,6 +41,10 @@ type TaskView = CompanionTask & {
   statusLabel: string
   resultText: string
   reportText: string
+  objectiveNodes: MarkdownNode[]
+  descriptionNodes: MarkdownNode[]
+  resultNodes: MarkdownNode[]
+  reportNodes: MarkdownNode[]
   timeline: TaskProcessView[]
 }
 
@@ -54,9 +63,11 @@ type DatasetEvent = WechatMiniprogram.TouchEvent
 const INTERVENTION_POLL_INTERVAL_MS = 10_000
 
 function messageView(message: ConversationMessage): MessageView {
+  const text = messageText(message.content)
   return {
     ...message,
-    text: messageText(message.content),
+    text,
+    markdownNodes: parseMarkdown(text),
     isUser: message.role === 'user',
     isAssistant: message.role === 'assistant',
     canInspectTask:
@@ -117,6 +128,7 @@ function taskTimeline(task: CompanionTask): TaskProcessView[] {
     return {
       id: `${task.id}-process-${index}`,
       ...entry,
+      detailNodes: parseMarkdown(entry.detail),
       status,
       statusLabel: taskStatusLabel(status),
     }
@@ -124,11 +136,17 @@ function taskTimeline(task: CompanionTask): TaskProcessView[] {
 }
 
 function taskView(task: CompanionTask): TaskView {
+  const result = task.result_summary || task.last_run?.result_summary || task.last_run?.error_message || ''
+  const report = reportText(task.last_run?.report)
   return {
     ...task,
     statusLabel: taskStatusLabel(task.status),
-    resultText: task.result_summary || task.last_run?.result_summary || task.last_run?.error_message || '',
-    reportText: reportText(task.last_run?.report),
+    resultText: result,
+    reportText: report,
+    objectiveNodes: parseMarkdown(task.objective || ''),
+    descriptionNodes: parseMarkdown(task.description || ''),
+    resultNodes: parseMarkdown(result),
+    reportNodes: parseMarkdown(report),
     timeline: taskTimeline(task),
   }
 }
@@ -503,6 +521,7 @@ Page({
       role: 'user',
       content,
       text: content,
+      markdownNodes: parseMarkdown(content),
       isUser: true,
       isAssistant: false,
       pending: true,

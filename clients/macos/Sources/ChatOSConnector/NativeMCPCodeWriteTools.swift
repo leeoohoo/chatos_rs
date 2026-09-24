@@ -9,6 +9,7 @@ struct NativeMCPCodeWriteScope: Hashable, Sendable {
 
 actor NativeMCPCodeWriteStore {
     private static let maximumWriteBytes = 2 * 1_024 * 1_024
+    private static let editSessionTTL: TimeInterval = 6 * 60 * 60
 
     private var sessions: [String: EditSession] = [:]
     private var sessionByScope: [NativeMCPCodeWriteScope: String] = [:]
@@ -113,6 +114,7 @@ actor NativeMCPCodeWriteStore {
         scope: NativeMCPCodeWriteScope,
         projectRoot: URL
     ) -> NativeJSONValue {
+        pruneExpiredSessions(now: Date())
         let fresh = arguments.bool("fresh") ?? false
         if !fresh,
            let existingID = sessionByScope[scope],
@@ -507,6 +509,13 @@ actor NativeMCPCodeWriteStore {
         if sessionByScope[session.scope] == session.id {
             sessionByScope.removeValue(forKey: session.scope)
         }
+    }
+
+    private func pruneExpiredSessions(now: Date) {
+        let expired = sessions.values.filter {
+            now.timeIntervalSince($0.openedAt) >= Self.editSessionTTL
+        }
+        for session in expired { removeSession(session) }
     }
 
     private func sessionResult(_ session: EditSession, reused: Bool) -> NativeJSONValue {

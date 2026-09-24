@@ -58,19 +58,21 @@ public struct AgentChatModelClient: AgentModelClient {
     public func stream(messages: [AgentMessage], tools: [AgentToolDefinition], timeout: TimeInterval,
                        onEvent: @escaping @Sendable (AgentModelStreamEvent) async -> Void) async throws -> AgentMessage {
         let response = try await streamTransport(try request(messages: messages, tools: tools, timeout: timeout, stream: true))
+        await onEvent(.responseCreated)
         if !(200..<300).contains(response.statusCode) {
             var body = Data()
             for try await chunk in response.body {
+                await onEvent(.activity(bytes: chunk.count))
                 guard body.count + chunk.count <= 2 * 1_024 * 1_024 else { throw AgentRuntimeError.invalidResponse }
                 body.append(chunk)
             }
             try Self.validate(status: response.statusCode, errorBody: body)
         }
 
-        await onEvent(.responseCreated)
         var parser = ChatCompletionsSSEParser()
         for try await chunk in response.body {
             try Task.checkCancellation()
+            await onEvent(.activity(bytes: chunk.count))
             for event in try parser.append(chunk) { await onEvent(event) }
         }
         let message = try parser.finish()

@@ -78,11 +78,45 @@ function Write-ChatOSAsset {
     }
 }
 
+function Write-PngIcon {
+    param(
+        [Parameter(Mandatory)] [string]$PngPath,
+        [Parameter(Mandatory)] [string]$IconPath
+    )
+
+    $pngBytes = [IO.File]::ReadAllBytes($PngPath)
+    $stream = [IO.File]::Open($IconPath, [IO.FileMode]::Create, [IO.FileAccess]::Write)
+    $writer = [IO.BinaryWriter]::new($stream)
+    try {
+        # ICO header followed by one 256x256 PNG-backed image directory entry.
+        $writer.Write([uint16]0)
+        $writer.Write([uint16]1)
+        $writer.Write([uint16]1)
+        $writer.Write([byte]0)
+        $writer.Write([byte]0)
+        $writer.Write([byte]0)
+        $writer.Write([byte]0)
+        $writer.Write([uint16]1)
+        $writer.Write([uint16]32)
+        $writer.Write([uint32]$pngBytes.Length)
+        $writer.Write([uint32]22)
+        $writer.Write($pngBytes)
+    }
+    finally {
+        $writer.Dispose()
+        $stream.Dispose()
+    }
+}
+
 Write-ChatOSAsset -Name "StoreLogo.png" -Width 50 -Height 50 -Transparent
 Write-ChatOSAsset -Name "Square44x44Logo.png" -Width 44 -Height 44 -Transparent
 Write-ChatOSAsset -Name "Square150x150Logo.png" -Width 150 -Height 150
 Write-ChatOSAsset -Name "Wide310x150Logo.png" -Width 310 -Height 150
 Write-ChatOSAsset -Name "Square310x310Logo.png" -Width 310 -Height 310
 Write-ChatOSAsset -Name "SplashScreen.png" -Width 620 -Height 300
+Write-ChatOSAsset -Name "ChatOSIcon.png" -Width 256 -Height 256 -Transparent
+Write-PngIcon `
+    -PngPath (Join-Path $assetRoot "ChatOSIcon.png") `
+    -IconPath (Join-Path $assetRoot "ChatOS.ico")
 
 Write-Host "Package assets are ready in $assetRoot"

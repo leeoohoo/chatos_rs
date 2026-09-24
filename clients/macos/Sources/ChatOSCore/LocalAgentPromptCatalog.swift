@@ -87,6 +87,10 @@ public enum LocalAgentPromptCatalog {
         for template in LocalAgentPromptTemplate.allCases {
             guard let url = Bundle.module.url(
                 forResource: template.rawValue,
+                withExtension: "md",
+                subdirectory: template.rawValue.contains(".Skill.") ? "Prompts" : nil
+            ) ?? Bundle.module.url(
+                forResource: template.rawValue,
                 withExtension: "md"
             ), let text = try? String(contentsOf: url, encoding: .utf8) else {
                 fatalError("Bundled Agent prompt template is missing: \(template.rawValue)")

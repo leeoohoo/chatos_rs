@@ -149,6 +149,8 @@ struct InviteExistingAgentSheet: View {
     @ObservedObject var viewModel: AgentGroupChatViewModel
     @State private var selectedAgentID = ""
     @State private var isSaving = false
+    @State private var page = 0
+    @State private var pageSize = 10
 
     private var availableAgents: [LocalAgentProfile] {
         let memberIDs = Set(viewModel.members.map(\.agentID))
@@ -172,13 +174,18 @@ struct InviteExistingAgentSheet: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        ForEach(availableAgents) { agent in
+                        ForEach(availableAgents.agentPage(index: page, size: pageSize)) { agent in
                             agentRow(agent)
                         }
                     }
                     .padding(1)
                 }
                 .frame(height: min(CGFloat(availableAgents.count) * 86, 360))
+                AgentListPaginationBar(
+                    totalCount: availableAgents.count,
+                    page: $page,
+                    pageSize: $pageSize
+                )
             }
 
             HStack {

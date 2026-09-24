@@ -204,6 +204,32 @@ extension LocalAgentChatToolProvider {
             effect: .write
         ),
         .init(
+            name: projectDashboardGetToolName,
+            description: "读取项目总览、里程碑、项目经理登记的问题，以及团队 Todo 的实时状态。通讯线程在团队群可省略 team_ref；私聊中先用 agent_workspace_snapshot 取得 team_ref。返回的事实由程序生成，项目经理更新看板前必须先调用本工具。",
+            schema: Data(#"{"type":"object","properties":{"team_ref":{"type":"string","minLength":1,"maxLength":600}} ,"additionalProperties":false}"#.utf8)
+        ),
+        .init(
+            name: projectDashboardUpdateToolName,
+            description: "仅供目标团队明确指定的项目经理更新结构化项目总览。必须先调用 project_dashboard_get，并把当前 revision 作为 expected_revision；首次创建时省略 expected_revision。Todo 只能使用同一轮返回的 todo_ref。进度和健康判断必须基于真实任务、Run、调研或 Human 消息，不得用总结文字冒充已验收交付。",
+            schema: Data(#"{"type":"object","properties":{"team_ref":{"type":"string","minLength":1,"maxLength":600},"expected_revision":{"type":"integer","minimum":1},"phase":{"type":"string","minLength":1,"maxLength":240},"health":{"type":"string","enum":["on_track","at_risk","blocked","completed"]},"summary":{"type":"string","minLength":1,"maxLength":16000},"next_steps":{"type":"array","items":{"type":"string","minLength":1,"maxLength":2000},"maxItems":32},"milestones":{"type":"array","maxItems":64,"items":{"type":"object","properties":{"id":{"type":"string","minLength":1,"maxLength":512},"title":{"type":"string","minLength":1,"maxLength":240},"detail":{"type":"string","maxLength":8000},"status":{"type":"string","enum":["pending","in_progress","blocked","completed"]},"progress_percent":{"type":"integer","minimum":0,"maximum":100},"acceptance_criteria":{"type":"array","items":{"type":"string","minLength":1,"maxLength":2000},"maxItems":32},"todo_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":128,"uniqueItems":true},"target_at_unix_ms":{"type":"integer","minimum":0}},"required":["id","title","status","progress_percent"],"additionalProperties":false}},"issues":{"type":"array","maxItems":64,"items":{"type":"object","properties":{"id":{"type":"string","minLength":1,"maxLength":512},"title":{"type":"string","minLength":1,"maxLength":240},"detail":{"type":"string","maxLength":8000},"requested_action":{"type":"string","minLength":1,"maxLength":4000},"severity":{"type":"string","enum":["info","warning","critical"]},"owner":{"type":"string","enum":["human","agent","external"]},"todo_ref":{"type":"string","minLength":1,"maxLength":600}},"required":["id","title","requested_action","severity","owner"],"additionalProperties":false}}},"required":["team_ref","phase","health","summary"],"additionalProperties":false}"#.utf8),
+            effect: .write
+        ),
+        .init(
+            name: agentSkillActivateToolName,
+            description: "激活系统提示中列出的当前绑定职业或项目类型 Skill，返回完整主说明和按需参考目录。只能使用 Router 给出的 skill_ref，不能切换身份。 Activate one bound profession or project-type Skill listed by the Router; unlisted identities are rejected.",
+            schema: Data(#"{"type":"object","properties":{"skill_ref":{"type":"string","minLength":1,"maxLength":240}},"required":["skill_ref"],"additionalProperties":false}"#.utf8)
+        ),
+        .init(
+            name: agentSkillListResourcesToolName,
+            description: "列出已激活 Skill 的详细参考资料；必须先调用 agent_skill_activate。 List detailed references for an activated bound Skill.",
+            schema: Data(#"{"type":"object","properties":{"skill_ref":{"type":"string","minLength":1,"maxLength":240}},"required":["skill_ref"],"additionalProperties":false}"#.utf8)
+        ),
+        .init(
+            name: agentSkillReadResourceToolName,
+            description: "分页读取已激活 Skill 的一项参考资料，只在当前决策需要时读取。 Read one activated Skill reference on demand with character pagination.",
+            schema: Data(#"{"type":"object","properties":{"skill_ref":{"type":"string","minLength":1,"maxLength":240},"relative_path":{"type":"string","minLength":1,"maxLength":1000},"offset":{"type":"integer","minimum":0},"max_chars":{"type":"integer","minimum":1,"maximum":64000}},"required":["skill_ref","relative_path"],"additionalProperties":false}"#.utf8)
+        ),
+        .init(
             name: todoGetContextToolName,
             description: "仅用于 Todo 执行线程：读取当前 delivery 绑定的任务、可信能力计划和来源消息，不接受任何 ID 参数。",
             schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8)

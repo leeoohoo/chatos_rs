@@ -16,6 +16,12 @@ struct ProjectRequirementSurveysView: View {
         String
     ) async -> Bool
     @State private var selectedSurveyID: String?
+    @State private var page = 0
+    @State private var pageSize = 20
+
+    private var pagedSurveys: [LocalAgentRequirementSurvey] {
+        surveys.agentPage(index: page, size: pageSize)
+    }
 
     var body: some View {
         if let selectedSurvey = surveys.first(where: { $0.id == selectedSurveyID }) {
@@ -57,11 +63,11 @@ struct ProjectRequirementSurveysView: View {
                         .frame(maxWidth: .infinity, minHeight: 320)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
                     } else {
-                        let pending = surveys.filter { $0.status == .pending }
-                        let awaitingResolution = surveys.filter {
+                        let pending = pagedSurveys.filter { $0.status == .pending }
+                        let awaitingResolution = pagedSurveys.filter {
                             $0.status == .submitted && $0.resolution == nil
                         }
-                        let resolved = surveys.filter { $0.resolution != nil }
+                        let resolved = pagedSurveys.filter { $0.resolution != nil }
                         if !pending.isEmpty {
                             sectionTitle("待填写", count: pending.count)
                             surveyGrid(pending)
@@ -76,6 +82,11 @@ struct ProjectRequirementSurveysView: View {
                                 .padding(.top, pending.isEmpty && awaitingResolution.isEmpty ? 0 : 8)
                             surveyGrid(resolved)
                         }
+                        AgentListPaginationBar(
+                            totalCount: surveys.count,
+                            page: $page,
+                            pageSize: $pageSize
+                        )
                     }
                 }
                 .padding(24)

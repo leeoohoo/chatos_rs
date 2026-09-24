@@ -3,6 +3,12 @@ import ChatOSCore
 import Combine
 import SwiftUI
 
+enum PetAnimationActivityPolicy {
+    static func isActive(isPetVisible: Bool, isScreenAwake: Bool) -> Bool {
+        isPetVisible && isScreenAwake
+    }
+}
+
 struct PetStackedPanelPlacement {
     static func origin(
         size: NSSize,

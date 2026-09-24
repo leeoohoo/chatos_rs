@@ -24,6 +24,122 @@ final class LocalAgentSkillCatalogTests: XCTestCase {
             .filter(\.canCreateTasks)
             .map(\.key)
         XCTAssertEqual(taskCreators, ["project_manager"])
+
+        let projectManager = try XCTUnwrap(
+            LocalAgentSkillCatalog.profession(key: "project_manager")
+        )
+        for requiredInstruction in [
+            "project_dashboard_get",
+            "project_dashboard_update",
+            "expected_revision",
+            "todo_ref",
+            "不得在看板中复制或伪造系统统计",
+            "只有当前团队明确绑定的项目经理",
+        ] {
+            XCTAssertTrue(
+                projectManager.skillMarkdown.contains(requiredInstruction),
+                requiredInstruction
+            )
+        }
+        XCTAssertTrue(projectManager.skillMarkdownEN.contains("project_dashboard_get"))
+        XCTAssertTrue(projectManager.skillMarkdownEN.contains("system-owned"))
+        XCTAssertTrue(projectManager.skillMarkdownEN.contains("explicitly bound Project Manager"))
+    }
+
+    func testEveryProfessionAndProjectTypeHasDetailedProgressiveDisclosureResources() throws {
+        let expectedPaths = [
+            "references/collaboration-and-escalation.md",
+            "references/deliverables-and-evidence.md",
+            "references/quality-gates-and-risks.md",
+            "references/worked-examples-and-counterexamples.md",
+            "references/workflow.md",
+        ]
+        for language in ChatOSLanguage.allCases {
+            for profession in LocalAgentSkillCatalog.professions {
+                let skill = LocalAgentProgressiveSkillCatalog.boundProfessionSkill(
+                    profession,
+                    language: language
+                )
+                XCTAssertEqual(skill.kind, .profession, profession.key)
+                XCTAssertGreaterThan(skill.instructions.count, 500, profession.key)
+                XCTAssertEqual(skill.resources.map(\.relativePath).sorted(), expectedPaths)
+                XCTAssertEqual(Set(skill.resources.map(\.contentSHA256)).count, 5)
+                for resource in skill.resources {
+                    XCTAssertGreaterThan(resource.markdown.count, 450, "\(profession.key): \(resource.relativePath)")
+                    XCTAssertTrue(resource.markdown.contains(skill.label))
+                    XCTAssertEqual(resource.contentSHA256.count, 64)
+                }
+                let examples = try XCTUnwrap(skill.resources.first {
+                    $0.relativePath == "references/worked-examples-and-counterexamples.md"
+                })
+                XCTAssertTrue(examples.markdown.contains(
+                    language == .english ? "## Good example" : "## 正确示例"
+                ), profession.key)
+                XCTAssertTrue(examples.markdown.contains(
+                    language == .english ? "## Critical counterexample" : "## 关键反例"
+                ), profession.key)
+                XCTAssertFalse(examples.markdown.contains("missing worked example"), profession.key)
+                XCTAssertFalse(examples.markdown.contains("缺少专属示例"), profession.key)
+            }
+            for projectType in LocalAgentSkillCatalog.projectTypes {
+                let skill = LocalAgentProgressiveSkillCatalog.boundProjectTypeSkill(
+                    projectType,
+                    language: language
+                )
+                XCTAssertEqual(skill.kind, .projectType, projectType.key)
+                XCTAssertGreaterThan(skill.instructions.count, 500, projectType.key)
+                XCTAssertEqual(skill.resources.map(\.relativePath).sorted(), expectedPaths)
+                for resource in skill.resources {
+                    XCTAssertGreaterThan(resource.markdown.count, 450, "\(projectType.key): \(resource.relativePath)")
+                    XCTAssertTrue(resource.markdown.contains(skill.label))
+                }
+                let examples = try XCTUnwrap(skill.resources.first {
+                    $0.relativePath == "references/worked-examples-and-counterexamples.md"
+                })
+                XCTAssertTrue(examples.markdown.contains(
+                    language == .english ? "## Good example" : "## 正确示例"
+                ), projectType.key)
+                XCTAssertTrue(examples.markdown.contains(
+                    language == .english ? "## Critical counterexample" : "## 关键反例"
+                ), projectType.key)
+                XCTAssertFalse(examples.markdown.contains("missing worked example"), projectType.key)
+                XCTAssertFalse(examples.markdown.contains("缺少专属示例"), projectType.key)
+            }
+        }
+    }
+
+    func testProgressiveSnapshotRouterIsCompactBoundAndHashStable() throws {
+        let profession = try XCTUnwrap(
+            LocalAgentSkillCatalog.profession(key: "backend_engineer")
+        )
+        let project = try XCTUnwrap(
+            LocalAgentSkillCatalog.projectType(key: "web_application")
+        )
+        let first = LocalAgentProgressiveSkillCatalog.boundSnapshot(
+            profession: profession,
+            projectType: project,
+            language: .simplifiedChinese
+        )
+        let second = LocalAgentProgressiveSkillCatalog.boundSnapshot(
+            profession: profession,
+            projectType: project,
+            language: .simplifiedChinese
+        )
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.skills.count, 2)
+        XCTAssertTrue(first.routerMarkdown.contains("agent_skill_activate"))
+        XCTAssertTrue(first.routerMarkdown.contains(first.skills[0].skillRef))
+        XCTAssertTrue(first.routerMarkdown.contains(first.skills[1].skillRef))
+        XCTAssertFalse(first.routerMarkdown.contains("工具与插件"))
+        XCTAssertLessThan(first.routerMarkdown.count, 1_500)
+
+        let direct = LocalAgentProgressiveSkillCatalog.boundSnapshot(
+            profession: profession,
+            projectType: nil,
+            language: .english
+        )
+        XCTAssertEqual(direct.skills.map(\.kind), [.profession])
+        XCTAssertTrue(direct.routerMarkdown.contains("unlisted Skill"))
     }
 
     func testDraftsRejectKeysOutsideProgramOwnedCatalog() {

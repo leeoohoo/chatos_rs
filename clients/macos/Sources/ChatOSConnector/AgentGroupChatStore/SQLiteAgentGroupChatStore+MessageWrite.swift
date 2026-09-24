@@ -4,7 +4,46 @@ import CryptoKit
 import Foundation
 import SQLite3
 
+public struct AgentGroupChatIdempotentPostResult: Sendable {
+    public let message: ProjectAgentMessage
+    public let deliveries: [ProjectAgentDelivery]
+    public let deduplicated: Bool
+}
+
 extension SQLiteAgentGroupChatStore {
+    public func postMessageIdempotently(
+        ownerUserID: String,
+        roomID: String,
+        draft: ProjectAgentMessageDraft,
+        limits: AgentGroupChatRoutingLimits = .init()
+    ) throws -> AgentGroupChatIdempotentPostResult {
+        guard let causationID = draft.causationID else {
+            throw AgentGroupChatError.invalidField("causationID")
+        }
+        try AgentGroupChatValidation.identifier(causationID, field: "causationID")
+        if let existing = try AgentMessageRepository.findByCausationID(
+            database,
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            causationID: causationID,
+            preparedStatement: recordPreparedStatement,
+            row: readMessage
+        ) {
+            return .init(message: existing, deliveries: [], deduplicated: true)
+        }
+        let result = try postMessage(
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            draft: draft,
+            limits: limits
+        )
+        return .init(
+            message: result.message,
+            deliveries: result.deliveries,
+            deduplicated: false
+        )
+    }
+
     public func postMessage(
         ownerUserID: String,
         roomID: String,

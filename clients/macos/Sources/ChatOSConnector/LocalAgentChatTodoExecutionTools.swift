@@ -81,6 +81,12 @@ extension LocalAgentChatToolProvider {
                 updatedAtUnixMs: asset.capturedAtUnixMs
             ))
         }
+        let progress = try await store.listAgentTodoProgress(
+            ownerUserID: context.ownerUserID,
+            agentID: todo.agentID,
+            todoID: todo.id,
+            limit: 50
+        ).map(TodoProgressResponse.init(progress:))
         return try Self.outcome(TodoExecutionContextResponse(
             title: todo.title,
             detail: todo.detail,
@@ -94,7 +100,8 @@ extension LocalAgentChatToolProvider {
             plugins: todo.executionPlan.plugins.map(\.displayName),
             sourceMessages: sourceMessages,
             prerequisites: prerequisites,
-            teamAssets: teamAssets
+            teamAssets: teamAssets,
+            progress: progress
         ))
     }
 
@@ -149,6 +156,9 @@ extension LocalAgentChatToolProvider {
         let arguments = try Self.arguments(call)
         let summary = try Self.requiredString(arguments, key: "summary")
         let suggestions = try Self.assetUpdateSuggestions(arguments)
+        if let evidenceFailure = try await projectWriteCompletionEvidenceFailure() {
+            return evidenceFailure
+        }
         return try await finishExecutionTodo(
             status: .completed,
             progressKind: .completed,
@@ -157,6 +167,43 @@ extension LocalAgentChatToolProvider {
             result: summary,
             assetUpdateSuggestions: suggestions
         )
+    }
+
+    /// A free-form summary is not proof that a project mutation happened. Project-write Todos
+    /// must have program-owned receipts for a transactional commit and a later file readback in
+    /// the same run before they can unlock dependants or be reported as completed.
+    private func projectWriteCompletionEvidenceFailure() async throws -> AgentToolOutcome? {
+        guard let todo = try await currentExecutionTodo(),
+              todo.executionPlan.builtinCapabilities.contains(.projectWrite) else {
+            return nil
+        }
+        let progress = try await store.listAgentTodoProgress(
+            ownerUserID: context.ownerUserID,
+            agentID: context.agentID,
+            todoID: todo.id,
+            limit: 500
+        ).filter { $0.runID == context.runID }
+        guard let commit = progress.last(where: { $0.stage == "builtin.edit_committed" }) else {
+            return Self.structuredFailure(
+                code: "project_write_commit_evidence_missing",
+                field: "summary",
+                message: "当前运行没有事务编辑提交回执。请先调用 commit_edit_session；仅在总结里声称已写入不能完成 Todo。",
+                retryable: true,
+                nextTool: "commit_edit_session"
+            )
+        }
+        guard progress.contains(where: {
+            $0.stage == "builtin.file_read" && $0.sequence > commit.sequence
+        }) else {
+            return Self.structuredFailure(
+                code: "project_write_readback_evidence_missing",
+                field: "summary",
+                message: "事务编辑已经提交，但当前运行缺少提交后的文件读取回执。请重新读取至少一个提交文件并核对结果。",
+                retryable: true,
+                nextTool: "read_file_raw"
+            )
+        }
+        return nil
     }
 
     func blockTodo(_ call: AgentToolCall) async throws -> AgentToolOutcome {

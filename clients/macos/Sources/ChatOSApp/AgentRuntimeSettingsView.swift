@@ -19,7 +19,7 @@ struct AgentRuntimeSettingsView: View {
             case .approval: ("审批调用上限（留空继承）", "Approval call limit (blank inherits)")
             case .story: ("剧情调用上限（留空继承）", "Story call limit (blank inherits)")
             case .retries: ("单次请求重试次数", "Retries per request")
-            case .requestTimeout: ("单次请求超时（秒）", "Request timeout (seconds)")
+            case .requestTimeout: ("流式静默超时（秒）", "Stream inactivity timeout (seconds)")
             case .runTimeout: ("整次运行时限（秒）", "Run timeout (seconds)")
             case .noProgress: ("连续无进展暂停阈值", "No-progress round limit")
             case .window: ("模型窗口预算", "Model context window budget")
@@ -42,7 +42,7 @@ struct AgentRuntimeSettingsView: View {
     var body: some View {
         SettingsGroupedPage {
             LocalConnectorCard(model.localized("Agent 运行", english: "Agent Runtime"),
-                subtitle: model.localized("保存于这台 Mac，修改对下一次运行生效。默认最多调用模型 600 次；单次请求默认重试 5 次，并采用 1、2、4、8、16 秒指数退避。重试也计入调用次数。", english: "Stored on this Mac; changes apply to the next run. The defaults are 600 model calls and five retries per request with 1, 2, 4, 8, and 16-second exponential backoff. Retries count as model calls."),
+                subtitle: model.localized("保存于这台 Mac，修改对下一次运行生效。流式静默超时只限制首包或相邻数据块的等待时间，整次运行时限仍是绝对上限。默认最多调用模型 600 次；单次请求默认重试 2 次，并采用 1、2 秒退避。重试也计入调用次数。", english: "Stored on this Mac; changes apply to the next run. The stream inactivity timeout limits only the wait for the first or next body chunk; the run timeout remains the absolute deadline. The defaults are 600 model calls and two retries per request with 1- and 2-second backoff. Retries count as model calls."),
                 systemImage: "arrow.triangle.2.circlepath") {
                 VStack(spacing: 12) {
                     ForEach([Field.calls, .approval, .story, .retries, .requestTimeout, .runTimeout, .noProgress], id: \.self) { field in row(field) }

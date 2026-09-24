@@ -315,14 +315,19 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
                 projectRoot: project.path
             ),
             executionPlan: .init(
-                builtinCapabilities: [.projectRead, .projectWrite, .terminal],
+                builtinCapabilities: [
+                    .projectRead, .projectWrite, .terminal, .requirementSurveyRead,
+                ],
                 plugins: [.init(pluginID: "plugin-1", displayName: "test-agent-plugin")]
             )
         )
         let brokerDefinitions = try await broker.definitions()
         XCTAssertEqual(
             Set(brokerDefinitions.map(\.name)),
-            ["capability_search", "capability_describe", "capability_invoke"]
+            [
+                "capability_search", "capability_describe", "capability_skill_activate",
+                "capability_skill_read_resource", "capability_invoke",
+            ]
         )
 
         let search = try await broker.execute(.init(
@@ -352,6 +357,82 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         XCTAssertTrue(invoked.content.contains("local-plugin-ok"))
         XCTAssertFalse(invoked.content.contains("project-1"))
         XCTAssertTrue(invoked.content.contains("[internal-project]"))
+
+        let builtinDescription = try await broker.execute(.init(
+            id: "describe-builtin",
+            name: "capability_describe",
+            arguments: #"{"plugin_option":"builtin_1"}"#
+        ))
+        let builtinObject = try JSONDecoder().decode(
+            NativeJSONValue.self,
+            from: Data(builtinDescription.content.utf8)
+        ).jsonObject
+        let builtinTools = try XCTUnwrap(builtinObject?["tools"]?.jsonArray)
+        let processList = try XCTUnwrap(builtinTools.first {
+            $0.jsonObject?["name"]?.jsonString == "process_list"
+        }?.jsonObject)
+        let processListOption = try XCTUnwrap(processList["tool_option"]?.jsonString)
+        XCTAssertEqual(
+            processList["required_skills"]?.jsonArray?.compactMap(\.jsonString),
+            ["chatos-terminal", "chatos-terminal-process-observation"]
+        )
+        let listDirectory = try XCTUnwrap(builtinTools.first {
+            $0.jsonObject?["name"]?.jsonString == "list_dir"
+        }?.jsonObject)
+        XCTAssertEqual(
+            listDirectory["required_skills"]?.jsonArray?.compactMap(\.jsonString),
+            ["chatos-project-files", "chatos-project-read"]
+        )
+        XCTAssertNil(builtinTools.first {
+            $0.jsonObject?["name"]?.jsonString == "skill_activate"
+        })
+        let surveyRead = try XCTUnwrap(builtinTools.first {
+            $0.jsonObject?["name"]?.jsonString == "requirement_survey_get"
+        }?.jsonObject)
+        XCTAssertEqual(
+            surveyRead["required_skills"]?.jsonArray?.compactMap(\.jsonString),
+            ["requirement-survey", "requirement-survey-read-results"]
+        )
+
+        let gated = try await broker.execute(.init(
+            id: "invoke-gated",
+            name: "capability_invoke",
+            arguments: """
+            {"plugin_option":"builtin_1","tool_option":"\(processListOption)","arguments":{}}
+            """
+        ))
+        XCTAssertTrue(gated.isError)
+        XCTAssertTrue(gated.content.contains("chatos-terminal"))
+
+        for skillName in ["chatos-terminal", "chatos-terminal-process-observation"] {
+            let activated = try await broker.execute(.init(
+                id: "activate-\(skillName)",
+                name: "capability_skill_activate",
+                arguments: """
+                {"plugin_option":"builtin_1","skill_name":"\(skillName)"}
+                """
+            ))
+            XCTAssertFalse(activated.isError)
+            XCTAssertTrue(activated.content.contains(skillName))
+        }
+
+        let reference = try await broker.execute(.init(
+            id: "read-terminal-reference",
+            name: "capability_skill_read_resource",
+            arguments: #"{"plugin_option":"builtin_1","skill_name":"chatos-terminal-process-observation","relative_path":"references/scenarios.md","limit":2000}"#
+        ))
+        XCTAssertFalse(reference.isError)
+        XCTAssertTrue(reference.content.contains("Background build"))
+
+        let observed = try await broker.execute(.init(
+            id: "invoke-observed",
+            name: "capability_invoke",
+            arguments: """
+            {"plugin_option":"builtin_1","tool_option":"\(processListOption)","arguments":{}}
+            """
+        ))
+        XCTAssertFalse(observed.isError)
+        XCTAssertTrue(observed.content.contains("process_count"))
     }
 }
 

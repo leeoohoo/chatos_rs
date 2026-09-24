@@ -24,6 +24,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
     private var isDraggingPet = false
     private var lastDragOriginX: CGFloat?
     private var isPetRequestedVisible = false
+    private var isScreenAwake = true
 
     init(
         model: AppModel,
@@ -189,14 +190,6 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func bindAnimationActivity() {
-        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
-            .merge(with: NotificationCenter.default.publisher(
-                for: NSApplication.didResignActiveNotification
-            ))
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.updateAnimationActivity() }
-            .store(in: &cancellables)
-
         NSWorkspace.shared.notificationCenter.publisher(
             for: NSWorkspace.screensDidSleepNotification
         )
@@ -206,17 +199,17 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         .receive(on: RunLoop.main)
         .sink { [weak self] notification in
             guard let self else { return }
-            if notification.name == NSWorkspace.screensDidSleepNotification {
-                interactionState.isAnimationActive = false
-            } else {
-                updateAnimationActivity()
-            }
+            isScreenAwake = notification.name == NSWorkspace.screensDidWakeNotification
+            updateAnimationActivity()
         }
         .store(in: &cancellables)
     }
 
     private func updateAnimationActivity() {
-        interactionState.isAnimationActive = isPetRequestedVisible && NSApp.isActive
+        interactionState.isAnimationActive = PetAnimationActivityPolicy.isActive(
+            isPetVisible: isPetRequestedVisible,
+            isScreenAwake: isScreenAwake
+        )
     }
 
     func openFile(_ request: PetFileOpenRequest) {

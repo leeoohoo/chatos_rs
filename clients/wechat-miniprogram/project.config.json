@@ -3,6 +3,7 @@
   "projectname": "chatos-wechat-companion",
   "description": "ChatOS Companion",
   "compileType": "miniprogram",
+  "libVersion": "3.16.3",
   "miniprogramRoot": "miniprogram/",
   "setting": {
     "useCompilerPlugins": [
@@ -25,6 +26,7 @@
     "localPlugins": false,
     "disableUseStrict": false,
     "condition": false,
+    "compileHotReLoad": false,
     "babelSetting": {
       "ignore": [],
       "disablePlugins": [],

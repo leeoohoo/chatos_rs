@@ -18,6 +18,22 @@ public actor NativeRemoteFileService: RemoteFileServicing {
         self.ssh = ssh
     }
 
+    public func authenticate(
+        connectionID: String,
+        verificationCode: String?
+    ) async throws {
+        let draft = try await runtime.resolvedDraft(id: connectionID)
+        if let verificationCode = verificationCode?.trimmedNonEmpty {
+            try await ssh.prepareAuthenticatedConnection(
+                draft: draft,
+                verificationCode: verificationCode
+            )
+            return
+        }
+        if await ssh.hasReusableConnection(draft: draft) { return }
+        _ = try await runtime.testSaved(id: connectionID, verificationCode: nil)
+    }
+
     public func initialDirectory(connectionID: String) async throws -> String {
         let draft = try await runtime.resolvedDraft(id: connectionID)
         return try await ssh.resolveDirectory(

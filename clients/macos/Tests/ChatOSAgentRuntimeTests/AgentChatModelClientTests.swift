@@ -94,6 +94,10 @@ final class AgentChatModelClientTests: XCTestCase {
         let captured = await events.values
         XCTAssertEqual(captured.first, .responseCreated)
         XCTAssertEqual(captured.last, .completed)
+        XCTAssertTrue(captured.contains { event in
+            if case let .activity(bytes) = event { return bytes > 0 }
+            return false
+        })
         XCTAssertTrue(captured.contains(.textDelta("checking")))
     }
 

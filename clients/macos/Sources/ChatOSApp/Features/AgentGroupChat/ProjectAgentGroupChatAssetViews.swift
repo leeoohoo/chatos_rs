@@ -12,6 +12,8 @@ struct TeamAssetsView: View {
     let onArchive: (LocalAgentTeamAsset) -> Void
 
     @State private var expandedAssetIDs: Set<String> = []
+    @State private var page = 0
+    @State private var pageSize = 20
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,8 +41,15 @@ struct TeamAssetsView: View {
                         )
                         .padding(.top, 60)
                     }
-                    ForEach(assets) { asset in
+                    ForEach(assets.agentPage(index: page, size: pageSize)) { asset in
                         assetCard(asset)
+                    }
+                    if !assets.isEmpty {
+                        AgentListPaginationBar(
+                            totalCount: assets.count,
+                            page: $page,
+                            pageSize: $pageSize
+                        )
                     }
                 }
                 .padding(18)
@@ -122,6 +131,8 @@ struct TeamAssetHistorySheet: View {
     @ObservedObject var viewModel: AgentGroupChatViewModel
     let asset: LocalAgentTeamAsset
     @State private var selectedRevision: Int?
+    @State private var page = 0
+    @State private var pageSize = 20
 
     private var revisions: [LocalAgentTeamAssetRevision] {
         viewModel.teamAssetRevisions[asset.id] ?? []
@@ -133,6 +144,10 @@ struct TeamAssetHistorySheet: View {
             return revision
         }
         return revisions.first
+    }
+
+    private var pagedRevisions: [LocalAgentTeamAssetRevision] {
+        revisions.agentPage(index: page, size: pageSize)
     }
 
     var body: some View {
@@ -159,28 +174,37 @@ struct TeamAssetHistorySheet: View {
                 )
             } else {
                 HStack(spacing: 0) {
-                    List(revisions, selection: $selectedRevision) { revision in
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack {
-                                Text("r\(revision.revision)")
-                                    .appFont(.body.monospacedDigit().weight(.semibold))
-                                if revision.revision == asset.revision {
-                                    Text("当前")
-                                        .appFont(.caption2.weight(.semibold))
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(Color.accentColor.opacity(0.14), in: Capsule())
+                    VStack(spacing: 0) {
+                        List(pagedRevisions, selection: $selectedRevision) { revision in
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack {
+                                    Text("r\(revision.revision)")
+                                        .appFont(.body.monospacedDigit().weight(.semibold))
+                                    if revision.revision == asset.revision {
+                                        Text("当前")
+                                            .appFont(.caption2.weight(.semibold))
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.accentColor.opacity(0.14), in: Capsule())
+                                    }
                                 }
+                                Text(revision.title).appFont(.caption).lineLimit(2)
+                                Text(Self.timestamp(revision.createdAtUnixMs))
+                                    .appFont(.caption2)
+                                    .foregroundStyle(.secondary)
                             }
-                            Text(revision.title).appFont(.caption).lineLimit(2)
-                            Text(Self.timestamp(revision.createdAtUnixMs))
-                                .appFont(.caption2)
-                                .foregroundStyle(.secondary)
+                            .padding(.vertical, 4)
+                            .tag(Optional(revision.revision))
                         }
-                        .padding(.vertical, 4)
-                        .tag(Optional(revision.revision))
+                        AgentListPaginationBar(
+                            totalCount: revisions.count,
+                            page: $page,
+                            pageSize: $pageSize,
+                            compact: true
+                        )
+                        .padding(10)
                     }
-                    .frame(width: 250)
+                    .frame(width: 270)
                     Divider()
                     if let selected {
                         VStack(alignment: .leading, spacing: 0) {
@@ -215,6 +239,9 @@ struct TeamAssetHistorySheet: View {
             } else {
                 selectedRevision = values.first
             }
+        }
+        .onChange(of: page) { _, _ in
+            selectedRevision = pagedRevisions.first?.revision
         }
     }
 

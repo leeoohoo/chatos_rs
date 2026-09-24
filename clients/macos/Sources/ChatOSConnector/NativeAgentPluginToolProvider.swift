@@ -271,6 +271,8 @@ extension NativeLocalConnectorService {
 private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     static let searchToolName = "capability_search"
     static let describeToolName = "capability_describe"
+    static let activateSkillToolName = "capability_skill_activate"
+    static let readSkillResourceToolName = "capability_skill_read_resource"
     static let invokeToolName = "capability_invoke"
 
     private enum CapabilityKind: Sendable {
@@ -299,6 +301,19 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         let arguments: NativeJSONValue
     }
 
+    private struct SkillActivationArguments: Decodable {
+        let pluginOption: String
+        let skillName: String
+    }
+
+    private struct SkillResourceArguments: Decodable {
+        let pluginOption: String
+        let skillName: String
+        let relativePath: String
+        let offset: Int?
+        let limit: Int?
+    }
+
     private struct PluginSummary: Encodable {
         let pluginOption: String
         let name: String
@@ -315,12 +330,37 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         let description: String
         let inputSchema: NativeJSONValue
         let effect: String
+        let requiredSkills: [String]
+    }
+
+    private struct SkillSummary: Encodable {
+        let name: String
+        let role: String
+        let description: String
     }
 
     private struct DescribeResponse: Encodable {
         let pluginOption: String
         let name: String
         let tools: [ToolSummary]
+        let skills: [SkillSummary]
+    }
+
+    private struct SkillActivationResponse: Encodable {
+        let pluginOption: String
+        let skillName: String
+        let instructions: String
+        let resources: [String]
+    }
+
+    private struct SkillResourceResponse: Encodable {
+        let pluginOption: String
+        let skillName: String
+        let relativePath: String
+        let content: String
+        let offset: Int
+        let nextOffset: Int?
+        let truncated: Bool
     }
 
     private let service: NativeLocalConnectorService
@@ -332,6 +372,7 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     private let options: [CapabilityOption]
     private var registries: [String: AgentToolProviderRegistry] = [:]
     private var toolNamesByOption: [String: [String: String]] = [:]
+    private var activatedSkillNamesByOption: [String: Set<String>] = [:]
 
     init(
         service: NativeLocalConnectorService,
@@ -375,12 +416,22 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             ),
             .init(
                 name: Self.describeToolName,
-                description: "按 capability_search 返回的临时 plugin_option，惰性启动一个 Plugin，并读取它在本轮可用的工具说明。",
+                description: "按 capability_search 返回的临时 plugin_option，惰性启动一个能力，并读取本轮工具 schema、所需 Skill Router 和叶子目录。调用带 required_skills 的工具前必须逐个激活。",
                 schema: Data(#"{"type":"object","properties":{"plugin_option":{"type":"string","minLength":1,"maxLength":80}},"required":["plugin_option"],"additionalProperties":false}"#.utf8)
             ),
             .init(
+                name: Self.activateSkillToolName,
+                description: "激活 capability_describe 为该能力列出的一个产品 Skill，返回完整 SKILL.md 和可按需读取的资源路径。只能激活当前能力真实工具所引用的 Skill。",
+                schema: Data(#"{"type":"object","properties":{"plugin_option":{"type":"string","minLength":1,"maxLength":80},"skill_name":{"type":"string","minLength":1,"maxLength":120}},"required":["plugin_option","skill_name"],"additionalProperties":false}"#.utf8)
+            ),
+            .init(
+                name: Self.readSkillResourceToolName,
+                description: "分页读取已经激活的产品 Skill 参考资料。只在当前决策需要对应场景、正反例或恢复细节时读取。",
+                schema: Data(#"{"type":"object","properties":{"plugin_option":{"type":"string","minLength":1,"maxLength":80},"skill_name":{"type":"string","minLength":1,"maxLength":120},"relative_path":{"type":"string","minLength":1,"maxLength":500},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":64000}},"required":["plugin_option","skill_name","relative_path"],"additionalProperties":false}"#.utf8)
+            ),
+            .init(
                 name: Self.invokeToolName,
-                description: "调用已经通过 capability_describe 展开的一个工具。plugin_option 和 tool_option 都必须使用本轮临时选项；真实 Plugin、项目和路径上下文由客户端内部绑定。",
+                description: "调用已经通过 capability_describe 展开的一个工具。若工具声明 required_skills，必须先逐个 capability_skill_activate；plugin_option 和 tool_option 使用本轮临时选项。",
                 schema: Data(#"{"type":"object","properties":{"plugin_option":{"type":"string","minLength":1,"maxLength":80},"tool_option":{"type":"string","minLength":1,"maxLength":80},"arguments":{"type":"object"}},"required":["plugin_option","tool_option","arguments"],"additionalProperties":false}"#.utf8),
                 effect: .write
             ),
@@ -420,9 +471,15 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             }
             let registry = try await registry(for: option)
             var names: [String: String] = [:]
-            let tools = try registry.definitions.enumerated().map { offset, definition in
+            var requiredSkillNames = Set<String>()
+            let visibleDefinitions = registry.definitions.filter {
+                skillBinding(for: $0)?.activationPolicy != .controlPlane
+            }
+            let tools = try visibleDefinitions.enumerated().map { offset, definition in
                 let token = "tool_\(offset + 1)"
                 names[token] = definition.name
+                let toolSkills = requiredSkills(for: definition)
+                requiredSkillNames.formUnion(toolSkills)
                 let schemaText = redact(String(decoding: definition.schema, as: UTF8.self))
                 let schema = try JSONDecoder().decode(NativeJSONValue.self, from: Data(schemaText.utf8))
                 return ToolSummary(
@@ -430,14 +487,67 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                     name: definition.name,
                     description: redact(definition.description),
                     inputSchema: schema,
-                    effect: definition.effect.rawValue
+                    effect: definition.effect.rawValue,
+                    requiredSkills: toolSkills
                 )
             }
             toolNamesByOption[option.token] = names
+            let skills = try requiredSkillNames.sorted().map { name in
+                let document = try BundledAgentSkillLoader.load(named: name)
+                return SkillSummary(
+                    name: name,
+                    role: document.descriptor.role.rawValue,
+                    description: document.description
+                )
+            }
             return try outcome(DescribeResponse(
                 pluginOption: option.token,
                 name: option.name,
-                tools: tools
+                tools: tools,
+                skills: skills
+            ))
+
+        case Self.activateSkillToolName:
+            let arguments = try decode(SkillActivationArguments.self, from: call.arguments)
+            guard let option = options.first(where: { $0.token == arguments.pluginOption }) else {
+                return .failure("能力选项无效或已经过期，请重新搜索。")
+            }
+            let registry = try await registry(for: option)
+            let available = Set(registry.definitions.flatMap(requiredSkills(for:)))
+            guard available.contains(arguments.skillName) else {
+                return .failure("这个 Skill 不属于当前能力或当前可信执行计划。")
+            }
+            let document = try BundledAgentSkillLoader.load(named: arguments.skillName)
+            activatedSkillNamesByOption[option.token, default: []].insert(arguments.skillName)
+            return try outcome(SkillActivationResponse(
+                pluginOption: option.token,
+                skillName: arguments.skillName,
+                instructions: document.instructions,
+                resources: document.resourcePaths
+            ))
+
+        case Self.readSkillResourceToolName:
+            let arguments = try decode(SkillResourceArguments.self, from: call.arguments)
+            guard options.contains(where: { $0.token == arguments.pluginOption }),
+                  activatedSkillNamesByOption[arguments.pluginOption]?.contains(
+                    arguments.skillName
+                  ) == true else {
+                return .failure("请先激活当前能力列出的 Skill，再读取它的参考资料。")
+            }
+            let page = try BundledAgentSkillLoader.readResource(
+                skillName: arguments.skillName,
+                relativePath: arguments.relativePath,
+                offset: arguments.offset ?? 0,
+                maximumCharacters: arguments.limit ?? 12_000
+            )
+            return try outcome(SkillResourceResponse(
+                pluginOption: arguments.pluginOption,
+                skillName: arguments.skillName,
+                relativePath: arguments.relativePath,
+                content: page.content,
+                offset: page.offset,
+                nextOffset: page.nextOffset,
+                truncated: page.truncated
             ))
 
         case Self.invokeToolName:
@@ -451,6 +561,19 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 return .failure("能力工具参数必须是 JSON 对象。")
             }
             let registry = try await registry(for: option)
+            guard let definition = registry.definitions.first(where: {
+                $0.name == toolName
+            }) else {
+                return .failure("能力工具定义已经失效，请重新查看该能力。")
+            }
+            let required = Set(requiredSkills(for: definition))
+            let activated = activatedSkillNamesByOption[option.token] ?? []
+            let missing = required.subtracting(activated).sorted()
+            guard missing.isEmpty else {
+                return .failure(
+                    "调用此工具前必须先激活 Skill：\(missing.joined(separator: ", "))。"
+                )
+            }
             let result = try await registry.execute(.init(
                 id: call.id,
                 name: toolName,
@@ -490,6 +613,21 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         let registry = try await AgentToolProviderRegistry(providers: providers)
         registries[option.token] = registry
         return registry
+    }
+
+    private func requiredSkills(for definition: AgentToolDefinition) -> [String] {
+        guard let binding = skillBinding(for: definition),
+              binding.activationPolicy != .controlPlane else { return [] }
+        return binding.requiredSkillNames
+    }
+
+    private func skillBinding(for definition: AgentToolDefinition) -> ToolSkillBinding? {
+        guard let providerID = definition.providerID,
+              let bindingID = definition.skillBindingID else { return nil }
+        return ToolSkillCoverageCatalog.product.binding(
+            providerID: providerID,
+            skillBindingID: bindingID
+        )
     }
 
     private func decode<Value: Decodable>(_ type: Value.Type, from json: String) throws -> Value {

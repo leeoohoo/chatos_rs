@@ -72,6 +72,41 @@ final class AgentLoopSafetyTests: XCTestCase {
         XCTAssertEqual(result.stopReason, "write 执行中断：database schema is unavailable")
     }
 
+    func testWriteToolRunDeadlineReportsToolSpecificTimeout() async throws {
+        let model = ScriptModel([
+            .init(role: .assistant, toolCalls: [
+                .init(id: "slow-write", name: "write", arguments: "{}"),
+            ]),
+        ])
+        var checkpoint = base
+        checkpoint.elapsedSeconds = 9.9
+        var policy = AgentRunPolicy()
+        policy.runTimeoutSeconds = 10
+
+        let result = try await AgentRuntime().run(
+            checkpoint: checkpoint,
+            scope: checkpoint.scope,
+            policy: policy,
+            model: model,
+            tools: [
+                .init(
+                    name: "write",
+                    description: "write",
+                    schema: Data(#"{"type":"object","additionalProperties":false}"#.utf8),
+                    effect: .write
+                ),
+            ],
+            execute: { _ in
+                try await Task.sleep(for: .seconds(10))
+                return .init("late")
+            }
+        )
+
+        XCTAssertEqual(result.status, .needsReview)
+        XCTAssertTrue(result.stopReason?.contains("工具在 Agent 剩余运行时限内没有返回") == true)
+        XCTAssertTrue(result.stopReason?.contains("总时限为 10 秒") == true)
+    }
+
     func testExplicitCancellationOfWriteToolPausesWithoutNeedsReview() async throws {
         let model = ScriptModel([
             .init(role: .assistant, toolCalls: [
@@ -108,7 +143,7 @@ final class AgentLoopSafetyTests: XCTestCase {
         XCTAssertEqual(result.status, .limitReached)
     }
 
-    func testTransientFailuresUseFiveVisibleExponentiallySpacedRetries() async throws {
+    func testTransientFailuresUseTwoVisibleExponentiallySpacedRetries() async throws {
         let delays = DelayRecorder()
         let eventRecorder = EventRecorder()
         let model = FailingModel()
@@ -119,15 +154,15 @@ final class AgentLoopSafetyTests: XCTestCase {
             model: model, tools: runtimeTestTools, execute: { _ in .init("unused") },
             record: { _, event in await eventRecorder.append(event) }
         )
-        XCTAssertEqual(result.modelCalls, 6, "Initial request plus five retries")
+        XCTAssertEqual(result.modelCalls, 3, "Initial request plus two retries")
         XCTAssertEqual(result.status, .failed)
         let recordedDelays = await delays.values
-        XCTAssertEqual(recordedDelays, [.seconds(1), .seconds(2), .seconds(4), .seconds(8), .seconds(16)])
+        XCTAssertEqual(recordedDelays, [.seconds(1), .seconds(2)])
         let events = await eventRecorder.values
         let retryEvents = events.filter { $0.kind == "model_retry" }
-        XCTAssertEqual(retryEvents.count, 5)
-        XCTAssertTrue(retryEvents.last?.detail.contains("5 / 5") == true)
-        XCTAssertTrue(retryEvents.last?.detail.contains("16 秒") == true)
+        XCTAssertEqual(retryEvents.count, 2)
+        XCTAssertTrue(retryEvents.last?.detail.contains("2 / 2") == true)
+        XCTAssertTrue(retryEvents.last?.detail.contains("2 秒") == true)
     }
 
     func testRequestTimeoutIsRetriedWithinTheSameRun() async throws {
@@ -248,6 +283,35 @@ final class AgentLoopSafetyTests: XCTestCase {
                 }
             }
             XCTFail("Expected timeout")
+        } catch AgentRuntimeError.timeout {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.4)
+    }
+
+    func testActiveStreamCanOutliveInactivityTimeout() async throws {
+        let started = Date()
+        let value = try await withAgentInactivityTimeout(seconds: 0.06) { markActivity in
+            for _ in 0..<5 {
+                try await Task.sleep(for: .milliseconds(35))
+                markActivity()
+            }
+            return "complete"
+        }
+        XCTAssertEqual(value, "complete")
+        XCTAssertGreaterThan(Date().timeIntervalSince(started), 0.15)
+    }
+
+    func testSilentStreamHitsInactivityTimeout() async throws {
+        let started = Date()
+        do {
+            _ = try await withAgentInactivityTimeout(seconds: 0.05) { _ in
+                try await Task.sleep(for: .seconds(1))
+                return "late"
+            }
+            XCTFail("Expected inactivity timeout")
         } catch AgentRuntimeError.timeout {
             // Expected.
         } catch {

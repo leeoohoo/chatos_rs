@@ -7,6 +7,7 @@ public struct LocalAgentGroupChatRun: Codable, Sendable, Equatable, Identifiable
     public let context: LocalAgentChatRunContext
     public let modelConfigID: String
     public let policy: AgentRunPolicy
+    public let progressiveSkillSnapshot: LocalAgentProgressiveSkillSnapshot?
     public var checkpoint: AgentRunCheckpoint
     public var events: [AgentRunEvent]
     public let createdAtUnixMs: Int64
@@ -17,6 +18,7 @@ public struct LocalAgentGroupChatRun: Codable, Sendable, Equatable, Identifiable
         context: LocalAgentChatRunContext,
         modelConfigID: String,
         policy: AgentRunPolicy,
+        progressiveSkillSnapshot: LocalAgentProgressiveSkillSnapshot? = nil,
         checkpoint: AgentRunCheckpoint,
         events: [AgentRunEvent] = [],
         createdAtUnixMs: Int64,
@@ -26,6 +28,7 @@ public struct LocalAgentGroupChatRun: Codable, Sendable, Equatable, Identifiable
         self.context = context
         self.modelConfigID = modelConfigID
         self.policy = policy
+        self.progressiveSkillSnapshot = progressiveSkillSnapshot
         self.checkpoint = checkpoint
         self.events = events
         self.createdAtUnixMs = createdAtUnixMs

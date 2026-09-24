@@ -88,9 +88,11 @@ public actor AgentResponsesModelClient: AgentModelClient {
         let response = try await streamTransport(
             try request(messages: messages, tools: tools, timeout: timeout, stream: true)
         )
+        await onEvent(.responseCreated)
         if !(200..<300).contains(response.statusCode) {
             var body = Data()
             for try await chunk in response.body {
+                await onEvent(.activity(bytes: chunk.count))
                 guard body.count + chunk.count <= 2 * 1_024 * 1_024 else {
                     throw AgentRuntimeError.invalidResponse
                 }
@@ -103,10 +105,10 @@ public actor AgentResponsesModelClient: AgentModelClient {
             throw AgentRuntimeError.responsesStreamUnexpectedContentType
         }
 
-        await onEvent(.responseCreated)
         var parser = ResponsesSSEParser()
         for try await chunk in response.body {
             try Task.checkCancellation()
+            await onEvent(.activity(bytes: chunk.count))
             for event in try parser.append(chunk) { await onEvent(event) }
         }
         let parsed = try parser.finish()

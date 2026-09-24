@@ -17,13 +17,20 @@ SIGNING_IDENTITY=${CHATOS_CODESIGN_IDENTITY:-}
 SWIFT_BUILD_SYSTEM=${CHATOS_SWIFT_BUILD_SYSTEM:-native}
 SWIFT_SCRATCH_PATH=${CHATOS_SWIFT_SCRATCH_PATH:-"$PROJECT_DIR/.build-native"}
 
+# The native build path is intentionally retained because SwiftBuild currently links
+# this AppKit executable with an obsolete SDK load command. SwiftPM also prints a
+# deprecation notice for that required workaround; filter only that known notice.
+swiftpm() {
+  command swift "$@" 2> >(sed '/warning: .--build-system native. has been deprecated and will be removed in a future release/d' >&2)
+}
+
 cd "$PROJECT_DIR"
 "$PROJECT_DIR/scripts/audit-interface-localization.sh"
-swift build \
+swiftpm build \
   --build-system "$SWIFT_BUILD_SYSTEM" \
   --scratch-path "$SWIFT_SCRATCH_PATH" \
   --product ChatOSSwift
-BIN_DIR=$(swift build \
+BIN_DIR=$(swiftpm build \
   --build-system "$SWIFT_BUILD_SYSTEM" \
   --scratch-path "$SWIFT_SCRATCH_PATH" \
   --show-bin-path)

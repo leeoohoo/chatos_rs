@@ -9,8 +9,7 @@ extension LocalAgentGroupChatScheduler {
         room: ProjectAgentRoom,
         delivery: ProjectAgentDelivery,
         profession: LocalAgentProfessionDefinition,
-        projectType: LocalProjectTypeDefinition?,
-        contextLanguage: ChatOSLanguage,
+        progressiveSkillSnapshot: LocalAgentProgressiveSkillSnapshot,
         communicationSkill: LocalAgentCommunicationSkillSnapshot,
         builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>,
         triggerMessage: ProjectAgentMessage,
@@ -87,26 +86,12 @@ extension LocalAgentGroupChatScheduler {
             values: [
                 "skill_name": profession.chatOSSkillName,
                 "profession_key": profession.key,
-                "skill_markdown": contextLanguage == .english
-                    ? profession.skillMarkdownEN
-                    : profession.skillMarkdown,
+                "skill_markdown": progressiveSkillSnapshot.routerMarkdown,
             ]
         )
-        let projectSkill: String
-        if let projectType {
-            projectSkill = LocalAgentPromptCatalog.render(
-                .projectSkill,
-                values: [
-                    "skill_name": projectType.skillName,
-                    "project_type_key": projectType.key,
-                    "rule_markdown": contextLanguage == .english
-                        ? projectType.ruleMarkdownEN
-                        : projectType.ruleMarkdown,
-                ]
-            )
-        } else {
-            projectSkill = ""
-        }
+        // The project-type entry lives in the same bound Router catalog. Keeping one catalog
+        // avoids injecting either complete leaf twice and makes activation order explicit.
+        let projectSkill = ""
         let system = LocalAgentPromptCatalog.render(
             .groupChatSystem,
             values: [

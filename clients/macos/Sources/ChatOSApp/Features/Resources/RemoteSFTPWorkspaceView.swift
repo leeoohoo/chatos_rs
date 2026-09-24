@@ -36,6 +36,9 @@ struct RemoteSFTPWorkspaceView: View {
         .onChange(of: model.interfaceLanguage) { _, language in
             viewModel.interfaceLanguage = language
         }
+        .sheet(isPresented: verificationPresented) {
+            verificationSheet
+        }
         .alert("新建远端目录", isPresented: $showingCreateDirectory) {
             TextField("目录名称", text: $newDirectoryName)
             Button("取消", role: .cancel) {}
@@ -79,6 +82,45 @@ struct RemoteSFTPWorkspaceView: View {
         } message: {
             Text("此操作会直接删除服务器上的文件或目录。")
         }
+    }
+
+    private var verificationPresented: Binding<Bool> {
+        Binding(
+            get: { viewModel.verificationPrompt != nil },
+            set: { if !$0 { viewModel.cancelVerification() } }
+        )
+    }
+
+    private var verificationSheet: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(model.localized("SSH 二次验证", english: "SSH Verification"))
+                .appFont(.title3.weight(.semibold))
+            Text(viewModel.verificationPrompt
+                 ?? model.localized("请输入服务器要求的验证码。", english: "Enter the verification code requested by the server."))
+                .appFont(.body)
+                .foregroundStyle(.secondary)
+            TextField(
+                model.localized("验证码", english: "Verification code"),
+                text: $viewModel.verificationCode
+            )
+            .textFieldStyle(.roundedBorder)
+            if let errorMessage = viewModel.errorMessage {
+                Text(errorMessage).appFont(.caption).foregroundStyle(.orange)
+            }
+            HStack {
+                Spacer()
+                Button(model.localized("取消", english: "Cancel")) {
+                    viewModel.cancelVerification()
+                }
+                Button(model.localized("验证", english: "Verify")) {
+                    Task { await viewModel.submitVerification() }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(viewModel.isLoadingRemote)
+            }
+        }
+        .padding(22)
+        .frame(width: 440)
     }
 
     private var workspaceToolbar: some View {

@@ -218,3 +218,76 @@ export type RealtimeEnvelope = {
   payload?: unknown
   [key: string]: unknown
 }
+
+export type CompanionAgentSummary = {
+  id: string
+  name: string
+  description: string
+  profession_key: string
+  status: string
+  heartbeat_enabled: boolean
+  last_heartbeat_at_unix_ms?: number
+  updated_at_unix_ms: number
+}
+
+export type CompanionAgentAttachment = {
+  id: string
+  name: string
+  mime_type: string
+  size: number
+  kind: string
+}
+
+export type CompanionAgentMessage = {
+  id: string
+  room_id: string
+  sender_kind: 'human' | 'agent' | 'system'
+  sender_id: string
+  content: string
+  mentioned_agent_ids: string[]
+  reply_to_message_id?: string
+  created_at_unix_ms: number
+  attachments: CompanionAgentAttachment[]
+}
+
+export type CompanionAgentConversationSummary = {
+  id: string
+  kind: 'project_team' | 'human_agent_direct' | 'agent_agent_direct'
+  title: string
+  goal: string
+  project_id: string
+  default_agent_id?: string
+  member_count: number
+  can_send: boolean
+  updated_at_unix_ms: number
+  last_message?: CompanionAgentMessage
+}
+
+export type CompanionAgentMemberSummary = {
+  agent: CompanionAgentSummary
+  role: string
+  responsibility: string
+}
+
+export type CompanionAgentConversationDetail = {
+  conversation: CompanionAgentConversationSummary
+  members: CompanionAgentMemberSummary[]
+}
+
+export type CompanionAgentWorkspace = {
+  teams: CompanionAgentConversationSummary[]
+  direct_conversations: CompanionAgentConversationSummary[]
+  agents: CompanionAgentSummary[]
+}
+
+export type CompanionAgentMessagePage = {
+  messages: CompanionAgentMessage[]
+  next_cursor_message_id?: string
+  has_more: boolean
+}
+
+export type CompanionAgentSendResponse = {
+  accepted: boolean
+  message: CompanionAgentMessage
+  deduplicated: boolean
+}

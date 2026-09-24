@@ -222,7 +222,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         )
         self.agentGroupChatService = agentGroupChatService
         self.agentSkillLibrary = agentSkillLibrary
-        self.agentGroupChatScheduler = LocalAgentGroupChatScheduler(
+        let agentGroupChatScheduler = LocalAgentGroupChatScheduler(
             service: agentGroupChatService,
             services: agentServices,
             projectTypeKeyProvider: { ownerUserID, projectID in
@@ -299,6 +299,8 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 return providers
             }
         )
+        self.agentGroupChatScheduler = agentGroupChatScheduler
+        Task { await localConnectorService.setAgentGroupChatScheduler(agentGroupChatScheduler) }
         self.agentGroupChatBuilderService = LocalAgentBuilderService(
             groupChatService: agentGroupChatService,
             projectsService: localProjectsService,

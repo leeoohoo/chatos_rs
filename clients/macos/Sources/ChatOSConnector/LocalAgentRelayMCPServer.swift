@@ -114,6 +114,7 @@ public actor LocalAgentRelayMCPServer {
     public func connect(
         context: LocalAgentChatRunContext,
         professions: [LocalAgentProfessionDefinition] = LocalAgentSkillCatalog.professions,
+        progressiveSkillSnapshot: LocalAgentProgressiveSkillSnapshot? = nil,
         todoPluginOptions: [LocalAgentTodoPluginOption] = []
     ) async throws -> LocalAgentChatToolProvider {
         let store = try await service.store()
@@ -122,6 +123,7 @@ public actor LocalAgentRelayMCPServer {
             store: store,
             context: context,
             professions: professions,
+            progressiveSkillSnapshot: progressiveSkillSnapshot,
             todoPluginOptions: todoPluginOptions,
             limits: limits,
             todoCancellationHandler: todoCancellationHandler,

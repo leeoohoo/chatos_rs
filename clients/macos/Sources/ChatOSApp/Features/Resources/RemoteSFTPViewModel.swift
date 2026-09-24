@@ -18,6 +18,8 @@ final class RemoteSFTPViewModel: ObservableObject {
     @Published private(set) var transferLabel: String?
     @Published var notice: String?
     @Published var errorMessage: String?
+    @Published var verificationPrompt: String?
+    @Published var verificationCode = ""
     var interfaceLanguage: ChatOSLanguage = .simplifiedChinese
 
     let connectionID: String
@@ -69,11 +71,58 @@ final class RemoteSFTPViewModel: ObservableObject {
         notice = nil
         errorMessage = nil
         await reloadLocal()
+        await authenticateAndLoad(verificationCode: nil, isRetry: false)
+    }
+
+    func submitVerification() async {
+        let code = verificationCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !code.isEmpty else {
+            errorMessage = localized(
+                "请输入验证码。",
+                english: "Enter the verification code."
+            )
+            return
+        }
+        await authenticateAndLoad(verificationCode: code, isRetry: true)
+    }
+
+    func cancelVerification() {
+        verificationPrompt = nil
+        verificationCode = ""
+        errorMessage = localized(
+            "SSH 二次验证已取消。",
+            english: "SSH verification was cancelled."
+        )
+    }
+
+    private func authenticateAndLoad(
+        verificationCode: String?,
+        isRetry: Bool
+    ) async {
         do {
             isLoadingRemote = true
+            try await service.authenticate(
+                connectionID: connectionID,
+                verificationCode: verificationCode
+            )
             let initial = try await service.initialDirectory(connectionID: connectionID)
             await loadRemote(path: initial)
             hasLoaded = errorMessage == nil
+            if hasLoaded {
+                verificationPrompt = nil
+                self.verificationCode = ""
+            }
+        } catch let challenge as RemoteVerificationChallenge {
+            isLoadingRemote = false
+            hasLoaded = false
+            verificationPrompt = challenge.prompt
+            self.verificationCode = ""
+            if isRetry {
+                errorMessage = localized(
+                    "验证码未通过，请重新输入。",
+                    english: "The verification code was rejected. Try again."
+                )
+            }
         } catch {
             isLoadingRemote = false
             hasLoaded = false

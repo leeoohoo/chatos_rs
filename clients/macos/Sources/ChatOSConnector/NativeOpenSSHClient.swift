@@ -4,6 +4,13 @@ import Darwin
 import Foundation
 
 protocol NativeRemoteSSHExecuting: Sendable {
+    func hasReusableConnection(draft: RemoteConnectionDraft) async -> Bool
+
+    func prepareAuthenticatedConnection(
+        draft: RemoteConnectionDraft,
+        verificationCode: String
+    ) async throws
+
     func runCommand(
         draft: RemoteConnectionDraft,
         command: String,
@@ -81,6 +88,52 @@ struct NativeRemoteDirectoryEntry: Sendable {
 }
 
 struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
+    func hasReusableConnection(draft: RemoteConnectionDraft) async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            (try? Self.withRuntime(draft: draft) { runtime in
+                let captured = try Self.run(
+                    executable: "/usr/bin/ssh",
+                    arguments: ["-O", "check", "-F", runtime.config.path, "chatos-target"],
+                    environment: runtime.environment,
+                    input: nil,
+                    timeout: 5,
+                    maximumCapturedBytes: 64 * 1_024
+                )
+                return captured.exitCode == 0 && !captured.timedOut
+            }) ?? false
+        }.value
+    }
+
+    func prepareAuthenticatedConnection(
+        draft: RemoteConnectionDraft,
+        verificationCode: String
+    ) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            try Self.withRuntime(
+                draft: draft,
+                verificationCode: verificationCode
+            ) { runtime in
+                let captured = try Self.run(
+                    executable: "/usr/bin/ssh",
+                    arguments: ["-F", runtime.config.path, "chatos-target", "true"],
+                    environment: runtime.environment,
+                    input: nil,
+                    timeout: 30,
+                    maximumCapturedBytes: 256 * 1_024
+                )
+                guard captured.exitCode == 0, !captured.timedOut else {
+                    throw NativeOpenSSHError.remoteFailure(Self.failureMessage(captured))
+                }
+                let controlPath = try Self.persistentControlPath(for: draft)
+                guard FileManager.default.fileExists(atPath: controlPath.path) else {
+                    throw NativeOpenSSHError.remoteFailure(
+                        "SSH 已通过验证，但未能建立可复用连接。"
+                    )
+                }
+            }
+        }.value
+    }
+
     func runCommand(
         draft: RemoteConnectionDraft,
         command: String,
@@ -418,6 +471,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
 
     private static func withRuntime<T>(
         draft: RemoteConnectionDraft,
+        verificationCode: String? = nil,
         operation: (SSHRuntime) throws -> T
     ) throws -> T {
         let directory = FileManager.default.temporaryDirectory
@@ -443,7 +497,7 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         environment["CHATOS_SSH_JUMP_PASSWORD"] = draft.jumpPassword ?? ""
         environment["CHATOS_SSH_JUMP_HOST"] = draft.jumpHost ?? ""
         environment["CHATOS_SSH_JUMP_USER"] = draft.jumpUsername ?? ""
-        environment["CHATOS_SSH_VERIFICATION_CODE"] = ""
+        environment["CHATOS_SSH_VERIFICATION_CODE"] = verificationCode ?? ""
         return try operation(.init(config: config, environment: environment))
     }
 

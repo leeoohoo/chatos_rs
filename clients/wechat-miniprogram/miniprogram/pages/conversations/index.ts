@@ -1,4 +1,5 @@
 import type { CompanionResource, DeviceSummary } from '../../models/api'
+import { companionListCache } from '../../services/companion-list-cache'
 import { conversationService } from '../../services/conversation-service'
 import { deviceService } from '../../services/device-service'
 import { deviceSelectionStore } from '../../stores/device-selection-store'
@@ -12,6 +13,16 @@ type ResourceView = CompanionResource & {
   kindLabel: string
 }
 
+function resourceViews(rawResources: CompanionResource[]): ResourceView[] {
+  return rawResources.map((resource) => ({
+    ...resource,
+    updatedLabel: resource.updated_at ? relativeTime(resource.updated_at) : '尚未开始',
+    messageLabel: resource.message_count > 0 ? `${resource.message_count} 条消息` : '暂无消息',
+    initial: resource.title.trim().slice(0, 1).toUpperCase() || 'C',
+    kindLabel: resource.kind === 'contact' ? '联系人' : '项目',
+  }))
+}
+
 Page({
   data: {
     resources: [] as ResourceView[],
@@ -22,9 +33,22 @@ Page({
   },
 
   pageVisible: false,
+  requestInFlight: false,
 
-  async onShow() {
+  onShow() {
     this.pageVisible = true
+    const cachedDevice = deviceSelectionStore.snapshot()
+    if (cachedDevice) {
+      const cachedResources = companionListCache.peekResources(cachedDevice.id)
+      this.setData({
+        device: cachedDevice,
+        ...(cachedResources ? { resources: resourceViews(cachedResources), loading: false } : {}),
+      })
+    }
+    void this.activate()
+  },
+
+  async activate() {
     await getApp<IAppOption>().authReady
     if (!this.pageVisible) return
     if (!sessionStore.hasToken()) {
@@ -43,7 +67,7 @@ Page({
   },
 
   onPullDownRefresh() {
-    void this.loadResources().finally(() => wx.stopPullDownRefresh())
+    void this.loadResources(true).finally(() => wx.stopPullDownRefresh())
   },
 
   async selectedDevice(): Promise<DeviceSummary | undefined> {
@@ -56,14 +80,14 @@ Page({
     return selected
   },
 
-  async loadResources() {
+  async loadResources(force = false) {
+    if (this.requestInFlight) return
+    this.requestInFlight = true
     this.setData({ loading: this.data.resources.length === 0, error: '' })
     try {
       const cachedDevice = deviceSelectionStore.snapshot()
-      const cachedResources = cachedDevice?.is_online
-        ? conversationService.resources(cachedDevice.id).catch(() => undefined)
-        : undefined
-      const device = await this.selectedDevice()
+      const device = cachedDevice ?? await this.selectedDevice()
+      const refreshedDevice = cachedDevice ? this.selectedDevice().catch(() => undefined) : undefined
       if (!device) {
         this.setData({ resources: [], device: undefined, loading: false })
         return
@@ -72,23 +96,24 @@ Page({
         this.setData({ resources: [], device, loading: false, error: '所选电脑当前离线' })
         return
       }
-      const prefetchedResources = cachedResources && cachedDevice?.id === device.id
-        ? await cachedResources
-        : undefined
-      const rawResources = prefetchedResources ?? await conversationService.resources(device.id)
-      const resources = rawResources.map((resource) => ({
-        ...resource,
-        updatedLabel: resource.updated_at ? relativeTime(resource.updated_at) : '尚未开始',
-        messageLabel: resource.message_count > 0 ? `${resource.message_count} 条消息` : '暂无消息',
-        initial: resource.title.trim().slice(0, 1).toUpperCase() || 'C',
-        kindLabel: resource.kind === 'contact' ? '联系人' : '项目',
-      }))
+      const rawResources = await companionListCache.resources(device.id, force)
+      if (!this.pageVisible) return
+      const resources = resourceViews(rawResources)
       this.setData({ resources, device, loading: false })
+      if (refreshedDevice) {
+        void refreshedDevice.then((latest) => {
+          if (!this.pageVisible || !latest) return
+          if (latest.id !== device.id) void this.loadResources(true)
+          else this.setData({ device: latest })
+        })
+      }
     } catch (error) {
       this.setData({
         loading: false,
         error: error instanceof Error ? error.message : '读取电脑会话失败',
       })
+    } finally {
+      this.requestInFlight = false
     }
   },
 

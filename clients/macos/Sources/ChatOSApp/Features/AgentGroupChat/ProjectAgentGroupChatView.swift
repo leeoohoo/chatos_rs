@@ -4,6 +4,7 @@ import ChatOSCore
 import SwiftUI
 
 enum AgentTeamSection: String, CaseIterable, Identifiable {
+    case overview = "总览"
     case chat = "聊天"
     case tasks = "任务"
     case research = "需求调研"
@@ -23,12 +24,20 @@ struct ProjectAgentGroupChatView: View {
     @State private var showsStopAllConfirmation = false
     @State var editingMember: AgentGroupChatViewModel.MemberPresentation?
     @State var preparingMemberEditorAgentID: String?
-    @State var selectedSection: AgentTeamSection = .chat
+    @State var selectedSection: AgentTeamSection = .overview
     @State var selectedRunAgentID: String?
     @State private var editingAsset: LocalAgentTeamAsset?
     @State private var historyAsset: LocalAgentTeamAsset?
     @State private var inspectingRun: LocalAgentGroupChatRun?
+    @State private var focusedTodoID: String?
     @State private var showsAssetEditor = false
+    @State var memberPage = 0
+    @State var memberPageSize = 10
+    @State private var creationProposalPage = 0
+    @State private var removalProposalPage = 0
+    @State private var membershipProposalPage = 0
+    @State private var teamProposalPage = 0
+    @State private var proposalPageSize = 5
 
     init(
         projectID: String,
@@ -83,7 +92,17 @@ struct ProjectAgentGroupChatView: View {
             TeamRunInspectorSheet(
                 run: run,
                 delivery: viewModel.recentRunDeliveries[run.id],
-                agentName: viewModel.profilesByID[run.context.agentID]?.draft.name ?? "Agent"
+                agentName: viewModel.profilesByID[run.context.agentID]?.draft.name ?? "Agent",
+                isActionPending: viewModel.recentRunDeliveries[run.id].map {
+                    viewModel.runActionDeliveryIDs.contains($0.id)
+                } ?? false,
+                onRetryInterrupted: run.checkpoint.status == .needsReview
+                    ? {
+                        guard let deliveryID = viewModel.recentRunDeliveries[run.id]?.id else { return }
+                        await viewModel.retryInterruptedRun(deliveryID: deliveryID)
+                        inspectingRun = nil
+                    }
+                    : nil
             )
         }
         .alert(
@@ -139,6 +158,28 @@ struct ProjectAgentGroupChatView: View {
     @ViewBuilder
     private var workspaceContent: some View {
         switch selectedSection {
+        case .overview:
+            ProjectAgentDashboardView(
+                room: viewModel.room,
+                dashboard: viewModel.projectDashboard,
+                todos: viewModel.teamTodos,
+                surveys: viewModel.requirementSurveys,
+                runs: viewModel.recentRuns,
+                deliveriesByRunID: viewModel.recentRunDeliveries,
+                profilesByID: viewModel.profilesByID,
+                pendingApprovalCount: viewModel.pendingProposals.count
+                    + viewModel.pendingRemovalProposals.count
+                    + viewModel.pendingTeamProposals.count
+                    + viewModel.pendingMembershipProposals.count,
+                onOpen: { selectedSection = $0 },
+                onOpenTodo: { todo in
+                    focusedTodoID = todo.id
+                    selectedSection = .tasks
+                },
+                onInspectRun: { run in
+                    inspectingRun = run
+                }
+            )
         case .chat:
             if !viewModel.pendingProposals.isEmpty
                 || !viewModel.pendingRemovalProposals.isEmpty
@@ -154,7 +195,12 @@ struct ProjectAgentGroupChatView: View {
             TeamTodoBoardView(
                 todos: viewModel.teamTodos,
                 profilesByID: viewModel.profilesByID,
-                runsByTodoID: todoRunsByTodoID
+                runsByTodoID: todoRunsByTodoID,
+                focusedTodoID: focusedTodoID,
+                onResolveBlocked: { todo, note in
+                    await viewModel.resolveBlockedTodo(todo, resolution: note)
+                },
+                onInspectRun: { run in inspectingRun = run }
             )
         case .research:
             ProjectRequirementSurveysView(
@@ -216,7 +262,12 @@ struct ProjectAgentGroupChatView: View {
             Label("Agent 提交了待确认提案", systemImage: "checklist")
                 .appFont(.caption)
                 .fontWeight(.semibold)
-            ForEach(viewModel.pendingProposals) { proposal in
+            ForEach(
+                viewModel.pendingProposals.agentPage(
+                    index: creationProposalPage,
+                    size: proposalPageSize
+                )
+            ) { proposal in
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("\(proposal.draft.name) · \(proposal.draft.role)")
@@ -257,7 +308,16 @@ struct ProjectAgentGroupChatView: View {
                 .padding(10)
                 .background(.background.opacity(0.7), in: RoundedRectangle(cornerRadius: 9))
             }
-            ForEach(viewModel.pendingRemovalProposals) { proposal in
+            proposalPagination(
+                totalCount: viewModel.pendingProposals.count,
+                page: $creationProposalPage
+            )
+            ForEach(
+                viewModel.pendingRemovalProposals.agentPage(
+                    index: removalProposalPage,
+                    size: proposalPageSize
+                )
+            ) { proposal in
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("移出团队 · \(viewModel.profilesByID[proposal.draft.targetAgentID]?.draft.name ?? proposal.draft.targetAgentID)")
@@ -296,7 +356,16 @@ struct ProjectAgentGroupChatView: View {
                 .padding(10)
                 .background(.background.opacity(0.7), in: RoundedRectangle(cornerRadius: 9))
             }
-            ForEach(viewModel.pendingMembershipProposals) { proposal in
+            proposalPagination(
+                totalCount: viewModel.pendingRemovalProposals.count,
+                page: $removalProposalPage
+            )
+            ForEach(
+                viewModel.pendingMembershipProposals.agentPage(
+                    index: membershipProposalPage,
+                    size: proposalPageSize
+                )
+            ) { proposal in
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
                         let agentName = viewModel.profilesByID[
@@ -340,7 +409,16 @@ struct ProjectAgentGroupChatView: View {
                 .padding(10)
                 .background(.background.opacity(0.7), in: RoundedRectangle(cornerRadius: 9))
             }
-            ForEach(viewModel.pendingTeamProposals) { proposal in
+            proposalPagination(
+                totalCount: viewModel.pendingMembershipProposals.count,
+                page: $membershipProposalPage
+            )
+            ForEach(
+                viewModel.pendingTeamProposals.agentPage(
+                    index: teamProposalPage,
+                    size: proposalPageSize
+                )
+            ) { proposal in
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(proposal.draft.importedProjectDraft != nil
@@ -414,10 +492,26 @@ struct ProjectAgentGroupChatView: View {
                 .padding(10)
                 .background(.background.opacity(0.7), in: RoundedRectangle(cornerRadius: 9))
             }
+            proposalPagination(
+                totalCount: viewModel.pendingTeamProposals.count,
+                page: $teamProposalPage
+            )
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(Color.accentColor.opacity(0.07))
+    }
+
+    @ViewBuilder
+    private func proposalPagination(totalCount: Int, page: Binding<Int>) -> some View {
+        if totalCount > proposalPageSize {
+            AgentListPaginationBar(
+                totalCount: totalCount,
+                page: page,
+                pageSize: $proposalPageSize,
+                compact: true
+            )
+        }
     }
 
     func profession(_ key: String) -> LocalAgentProfessionDefinition? {
@@ -501,6 +595,7 @@ struct ProjectAgentGroupChatView: View {
 private extension AgentTeamSection {
     var iconName: String {
         switch self {
+        case .overview: "rectangle.3.group"
         case .chat: "bubble.left.and.bubble.right"
         case .tasks: "checklist"
         case .research: "list.clipboard"

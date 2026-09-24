@@ -187,6 +187,8 @@ private final class RequirementSurveyCenterViewModel: ObservableObject {
 struct RequirementSurveyCenterView: View {
     let projects: [ResourceItem]
     @StateObject private var viewModel: RequirementSurveyCenterViewModel
+    @State private var projectPage = 0
+    @State private var projectPageSize = 20
 
     init(
         ownerUserID: String,
@@ -241,13 +243,18 @@ struct RequirementSurveyCenterView: View {
                                 columns: [GridItem(.adaptive(minimum: 310, maximum: 480), spacing: 16)],
                                 spacing: 16
                             ) {
-                                ForEach(projects) { project in
+                                ForEach(projects.agentPage(index: projectPage, size: projectPageSize)) { project in
                                     NavigationLink(value: project.id) {
                                         projectCard(project)
                                     }
                                     .buttonStyle(.plain)
                                 }
                             }
+                            AgentListPaginationBar(
+                                totalCount: projects.count,
+                                page: $projectPage,
+                                pageSize: $projectPageSize
+                            )
                         }
                     }
                     .padding(26)

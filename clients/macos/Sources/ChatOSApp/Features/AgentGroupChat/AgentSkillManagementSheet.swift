@@ -31,6 +31,22 @@ private enum AgentSkillContentMode: String, CaseIterable, Identifiable {
     }
 }
 
+private enum AgentSkillDisclosureLayer: String, CaseIterable, Identifiable {
+    case overview
+    case instructions
+    case references
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .overview: "概要"
+        case .instructions: "完整说明"
+        case .references: "参考资料"
+        }
+    }
+}
+
 @MainActor
 private final class AgentSkillManagementViewModel: ObservableObject {
     @Published var kind: AgentSkillManagementKind = .profession
@@ -103,6 +119,27 @@ private final class AgentSkillManagementViewModel: ObservableObject {
 
     var displayedContent: String {
         language == .english ? contentEN : content
+    }
+
+    var selectedProgressiveSkill: LocalAgentBoundProgressiveSkill? {
+        switch kind {
+        case .profession:
+            guard let item = professions.first(where: { $0.key == selectedKey }) else {
+                return nil
+            }
+            return LocalAgentProgressiveSkillCatalog.boundProfessionSkill(
+                item,
+                language: language
+            )
+        case .projectType:
+            guard let item = projectTypes.first(where: { $0.key == selectedKey }) else {
+                return nil
+            }
+            return LocalAgentProgressiveSkillCatalog.boundProjectTypeSkill(
+                item,
+                language: language
+            )
+        }
     }
 
     func displayLabel(_ item: LocalAgentProfessionDefinition) -> String {
@@ -253,6 +290,8 @@ struct AgentSkillManagementSheet: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: AgentSkillManagementViewModel
     @State private var contentMode: AgentSkillContentMode = .preview
+    @State private var disclosureLayer: AgentSkillDisclosureLayer = .overview
+    @State private var selectedResourcePath = "references/workflow.md"
     private let onLanguageChange: (ChatOSLanguage) -> Void
 
     init(
@@ -426,10 +465,136 @@ struct AgentSkillManagementSheet: View {
                             .lineLimit(2...4)
                             .textFieldStyle(.roundedBorder)
                     }
-                    markdownContent
+                    disclosurePicker
+                    switch disclosureLayer {
+                    case .overview:
+                        progressiveOverview
+                    case .instructions:
+                        markdownContent
+                    case .references:
+                        progressiveReferences
+                    }
                 }
                 .padding(18)
             }
+        }
+    }
+
+    private var disclosurePicker: some View {
+        Picker("渐进披露层级", selection: $disclosureLayer) {
+            ForEach(AgentSkillDisclosureLayer.allCases) { layer in
+                Text(layer.title).tag(layer)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 420)
+    }
+
+    @ViewBuilder
+    private var progressiveOverview: some View {
+        if let skill = viewModel.selectedProgressiveSkill {
+            VStack(alignment: .leading, spacing: 16) {
+                Label("渐进披露结构", systemImage: "point.3.connected.trianglepath.dotted")
+                    .font(.headline)
+                HStack(alignment: .top, spacing: 12) {
+                    disclosureCard(
+                        step: "1",
+                        title: "Router 概要",
+                        detail: "Run 启动时只注入名称、用途与绑定引用，避免完整正文长期占用上下文。"
+                    )
+                    disclosureCard(
+                        step: "2",
+                        title: "按需激活",
+                        detail: "Agent 通过 agent_skill_activate 读取完整说明，且只能激活当前身份绑定的 Skill。"
+                    )
+                    disclosureCard(
+                        step: "3",
+                        title: "章节资料",
+                        detail: "工作流、证据、质量风险和协作边界通过资源工具按需分页读取。"
+                    )
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("运行时 Router 预览")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text("`\(skill.skillRef)` · **\(skill.label)**：\(skill.description)")
+                        .font(.callout)
+                        .textSelection(.enabled)
+                    Text("正文 SHA-256：\(skill.instructionsSHA256)")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
+                }
+                .padding(14)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                Text("此 Skill 包含 1 份可编辑完整说明和 \(skill.resources.count) 份详细参考资料。自定义正文会固定到新 Run 的快照中；参考资料仍受当前职业/项目类型绑定约束，不会扩大真实工具权限。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func disclosureCard(step: String, title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(step)
+                .font(.caption.bold())
+                .foregroundStyle(Color.accentColor)
+            Text(title).font(.subheadline.weight(.semibold))
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 130, alignment: .topLeading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private var progressiveReferences: some View {
+        if let skill = viewModel.selectedProgressiveSkill {
+            HSplitView {
+                List(skill.resources, selection: $selectedResourcePath) { resource in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(resource.title).font(.body.weight(.medium))
+                        Text(resource.summary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                        Text(resource.relativePath)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.vertical, 5)
+                    .tag(resource.relativePath)
+                }
+                .frame(minWidth: 280, idealWidth: 320)
+
+                if let resource = skill.resources.first(where: {
+                    $0.relativePath == selectedResourcePath
+                }) ?? skill.resources.first {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text(resource.title).font(.headline)
+                            Spacer()
+                            Text("\(resource.sizeBytes) bytes")
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.tertiary)
+                        }
+                        MarkdownReaderView(markdown: resource.markdown)
+                            .padding(18)
+                            .frame(maxWidth: .infinity, minHeight: 500, alignment: .topLeading)
+                            .background(Color(nsColor: .textBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 9))
+                    }
+                    .frame(minWidth: 440)
+                }
+            }
+            .frame(minHeight: 560)
         }
     }
 

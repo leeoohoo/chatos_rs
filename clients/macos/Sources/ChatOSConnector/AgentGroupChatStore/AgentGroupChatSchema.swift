@@ -497,6 +497,20 @@ enum AgentGroupChatSchema {
                 REFERENCES local_agent_team_assets(owner_user_id, id)
         );
 
+        CREATE TABLE IF NOT EXISTS local_agent_project_dashboards (
+            owner_user_id TEXT NOT NULL,
+            team_room_id TEXT NOT NULL,
+            dashboard_json TEXT NOT NULL,
+            revision INTEGER NOT NULL CHECK(revision > 0),
+            updated_by_agent_id TEXT NOT NULL,
+            updated_at_unix_ms INTEGER NOT NULL,
+            PRIMARY KEY(owner_user_id, team_room_id),
+            FOREIGN KEY(owner_user_id, team_room_id)
+                REFERENCES project_agent_rooms(owner_user_id, id) ON DELETE CASCADE,
+            FOREIGN KEY(owner_user_id, updated_by_agent_id)
+                REFERENCES local_agent_profiles(owner_user_id, id)
+        );
+
         CREATE TABLE IF NOT EXISTS local_agent_group_chat_runs (
             owner_user_id TEXT NOT NULL,
             id TEXT NOT NULL,

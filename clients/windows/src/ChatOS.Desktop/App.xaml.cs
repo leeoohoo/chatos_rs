@@ -39,85 +39,129 @@ public partial class App : Application
 
     public App()
     {
-        InitializeComponent();
+        StartupDiagnostics.Initialize();
+        UnhandledException += OnUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException += OnAppDomainUnhandledException;
 
-        var builder = Host.CreateApplicationBuilder();
-        var apiBaseUrl = Environment.GetEnvironmentVariable("CHATOS_API_BASE_URL");
-        if (!string.IsNullOrWhiteSpace(apiBaseUrl))
+        try
         {
-            builder.Configuration["ChatOS:Api:BaseUrl"] = apiBaseUrl;
-        }
+            InitializeComponent();
 
-        builder.Services
-            .AddChatOSApi(builder.Configuration)
-            .AddChatOSConnector()
-            .AddChatOSPresentation();
-        builder.Services.AddSingleton<IUiDispatcher>(_ => new DispatcherQueueUiDispatcher(
-            DispatcherQueue.GetForCurrentThread()
-            ?? throw new InvalidOperationException("ChatOS must be launched on a UI thread.")));
-        builder.Services.AddSingleton<MainWindowViewModel>();
-        builder.Services.AddSingleton<ConversationPage>();
-        builder.Services.AddSingleton<ProjectFilesPage>();
-        builder.Services.AddSingleton<ProjectGitPage>();
-        builder.Services.AddSingleton<ProjectRunPage>();
-        builder.Services.AddSingleton<AgentTeamPage>();
-        builder.Services.AddSingleton<ProjectRequirementSurveysPage>();
-        builder.Services.AddSingleton<SettingsPage>();
-        builder.Services.AddSingleton<PluginSettingsViewModel>();
-        builder.Services.AddSingleton<ApprovalSettingsViewModel>();
-        builder.Services.AddSingleton<ModelSettingsViewModel>();
-        builder.Services.AddSingleton<SandboxSettingsViewModel>();
-        builder.Services.AddSingleton<NotepadPage>();
-        builder.Services.AddSingleton<RemoteConnectionsPage>();
-        builder.Services.AddSingleton<RemoteSftpPage>();
-        builder.Services.AddSingleton<RemoteTerminalPage>();
-        builder.Services.AddSingleton<LocalTerminalPage>();
-        builder.Services.AddSingleton<PetWindow>();
-        builder.Services.AddSingleton<PetWindowController>();
-        builder.Services.AddSingleton<PetQuickChatViewModel>();
-        builder.Services.AddSingleton<PluginVisualSessionsViewModel>();
-        builder.Services.AddSingleton<PluginArtifactsViewModel>();
-        builder.Services.AddSingleton<IPluginArtifactUserInteraction, WindowsPluginArtifactUserInteraction>();
-        builder.Services.AddSingleton<PluginArtifactsWindow>();
-        builder.Services.AddSingleton<PluginApplicationsPage>();
-        builder.Services.AddSingleton<PluginVisualSessionWindow>();
-        builder.Services.AddSingleton<PluginVisualSessionController>();
-        builder.Services.AddSingleton<WindowsClipboardHistoryMonitor>();
-        builder.Services.AddSingleton<ClipboardHistoryViewModel>();
-        builder.Services.AddSingleton<ClipboardHistoryWindow>();
-        builder.Services.AddSingleton<IQuickSearchProvider, BuiltInQuickSearchProvider>();
-        builder.Services.AddSingleton<IQuickSearchProvider, ChatOSQuickSearchProvider>();
-        builder.Services.AddSingleton<IQuickSearchProvider, WindowsApplicationSearchProvider>();
-        builder.Services.AddSingleton<IQuickSearchProvider, WindowsFileSearchProvider>();
-        builder.Services.AddSingleton<QuickSearchViewModel>();
-        builder.Services.AddSingleton<WindowsScreenRecordingCoordinator>();
-        builder.Services.AddSingleton<QuickSearchActionRouter>();
-        builder.Services.AddSingleton<QuickSearchWindow>();
-        builder.Services.AddSingleton<WindowsGlobalHotKeyService>();
-        builder.Services.AddSingleton<QuickSearchCoordinator>();
-        builder.Services.AddSingleton<WorkspaceHostPage>();
-        builder.Services.AddSingleton<MainWindow>();
-        _host = builder.Build();
+            var builder = Host.CreateApplicationBuilder();
+            var packagedSettings = DesktopRuntimeSettings.Load();
+            var apiBaseUrl = Environment.GetEnvironmentVariable("CHATOS_API_BASE_URL")
+                ?? packagedSettings.ApiBaseUrl;
+            if (!string.IsNullOrWhiteSpace(apiBaseUrl))
+            {
+                builder.Configuration["ChatOS:Api:BaseUrl"] = apiBaseUrl;
+            }
+
+            var connectorBaseUrl = Environment.GetEnvironmentVariable(
+                "CHATOS_LOCAL_CONNECTOR_CLOUD_BASE_URL")
+                ?? packagedSettings.LocalConnectorCloudBaseUrl;
+            if (!string.IsNullOrWhiteSpace(connectorBaseUrl))
+            {
+                Environment.SetEnvironmentVariable(
+                    "CHATOS_LOCAL_CONNECTOR_CLOUD_BASE_URL",
+                    connectorBaseUrl,
+                    EnvironmentVariableTarget.Process);
+            }
+
+            builder.Services
+                .AddChatOSApi(builder.Configuration)
+                .AddChatOSConnector()
+                .AddChatOSPresentation();
+            builder.Services.AddSingleton<IUiDispatcher>(_ => new DispatcherQueueUiDispatcher(
+                DispatcherQueue.GetForCurrentThread()
+                ?? throw new InvalidOperationException("ChatOS must be launched on a UI thread.")));
+            builder.Services.AddSingleton<MainWindowViewModel>();
+            builder.Services.AddSingleton<ConversationPage>();
+            builder.Services.AddSingleton<ProjectFilesPage>();
+            builder.Services.AddSingleton<ProjectGitPage>();
+            builder.Services.AddSingleton<ProjectRunPage>();
+            builder.Services.AddSingleton<AgentTeamPage>();
+            builder.Services.AddSingleton<ProjectRequirementSurveysPage>();
+            builder.Services.AddSingleton<SettingsPage>();
+            builder.Services.AddSingleton<PluginSettingsViewModel>();
+            builder.Services.AddSingleton<ApprovalSettingsViewModel>();
+            builder.Services.AddSingleton<ModelSettingsViewModel>();
+            builder.Services.AddSingleton<SandboxSettingsViewModel>();
+            builder.Services.AddSingleton<NotepadPage>();
+            builder.Services.AddSingleton<RemoteConnectionsPage>();
+            builder.Services.AddSingleton<RemoteSftpPage>();
+            builder.Services.AddSingleton<RemoteTerminalPage>();
+            builder.Services.AddSingleton<LocalTerminalPage>();
+            builder.Services.AddSingleton<PetWindow>();
+            builder.Services.AddSingleton<PetWindowController>();
+            builder.Services.AddSingleton<PetQuickChatViewModel>();
+            builder.Services.AddSingleton<PluginVisualSessionsViewModel>();
+            builder.Services.AddSingleton<PluginArtifactsViewModel>();
+            builder.Services.AddSingleton<IPluginArtifactUserInteraction, WindowsPluginArtifactUserInteraction>();
+            builder.Services.AddSingleton<PluginArtifactsWindow>();
+            builder.Services.AddSingleton<PluginApplicationsPage>();
+            builder.Services.AddSingleton<PluginVisualSessionWindow>();
+            builder.Services.AddSingleton<PluginVisualSessionController>();
+            builder.Services.AddSingleton<WindowsClipboardHistoryMonitor>();
+            builder.Services.AddSingleton<ClipboardHistoryViewModel>();
+            builder.Services.AddSingleton<ClipboardHistoryWindow>();
+            builder.Services.AddSingleton<IQuickSearchProvider, BuiltInQuickSearchProvider>();
+            builder.Services.AddSingleton<IQuickSearchProvider, ChatOSQuickSearchProvider>();
+            builder.Services.AddSingleton<IQuickSearchProvider, WindowsApplicationSearchProvider>();
+            builder.Services.AddSingleton<IQuickSearchProvider, WindowsFileSearchProvider>();
+            builder.Services.AddSingleton<QuickSearchViewModel>();
+            builder.Services.AddSingleton<WindowsScreenRecordingCoordinator>();
+            builder.Services.AddSingleton<QuickSearchActionRouter>();
+            builder.Services.AddSingleton<QuickSearchWindow>();
+            builder.Services.AddSingleton<WindowsGlobalHotKeyService>();
+            builder.Services.AddSingleton<QuickSearchCoordinator>();
+            builder.Services.AddSingleton<WorkspaceHostPage>();
+            builder.Services.AddSingleton<MainWindow>();
+            _host = builder.Build();
+        }
+        catch (Exception exception)
+        {
+            StartupDiagnostics.ReportFatal("application construction", exception);
+            throw;
+        }
     }
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
-        await _host.Services.GetRequiredService<LocalStateDatabase>().InitializeAsync();
-        await _host.Services.GetRequiredService<AppPreferencesManager>().InitializeAsync();
-        await _host.Services.GetRequiredService<PetFavoriteProjectsManager>().InitializeAsync();
-        Resources["ChatOSLocalization"] = _host.Services.GetRequiredService<LocalizationViewModel>();
-        await _host.StartAsync();
-        await _host.Services.GetRequiredService<WindowsClipboardHistoryMonitor>().StartAsync();
+        try
+        {
+            await _host.Services.GetRequiredService<LocalStateDatabase>().InitializeAsync();
+            await _host.Services.GetRequiredService<AppPreferencesManager>().InitializeAsync();
+            await _host.Services.GetRequiredService<PetFavoriteProjectsManager>().InitializeAsync();
+            Resources["ChatOSLocalization"] = _host.Services.GetRequiredService<LocalizationViewModel>();
+            await _host.StartAsync();
+            await _host.Services.GetRequiredService<WindowsClipboardHistoryMonitor>().StartAsync();
 
-        _powerState = _host.Services.GetRequiredService<ConnectorPowerStateCoordinator>();
-        PowerManager.SystemSuspendStatusChanged += OnSystemSuspendStatusChanged;
-        ApplySystemSuspendStatus();
+            _powerState = _host.Services.GetRequiredService<ConnectorPowerStateCoordinator>();
+            PowerManager.SystemSuspendStatusChanged += OnSystemSuspendStatusChanged;
+            ApplySystemSuspendStatus();
 
-        _window = _host.Services.GetRequiredService<MainWindow>();
-        _window.Closed += OnMainWindowClosed;
-        _window.Activate();
-        _host.Services.GetRequiredService<QuickSearchCoordinator>().Initialize((MainWindow)_window);
+            _window = _host.Services.GetRequiredService<MainWindow>();
+            _window.Closed += OnMainWindowClosed;
+            _window.Activate();
+            _host.Services.GetRequiredService<QuickSearchCoordinator>().Initialize((MainWindow)_window);
+        }
+        catch (Exception exception)
+        {
+            StartupDiagnostics.ReportFatal("application launch", exception);
+            Exit();
+        }
     }
+
+    private static void OnAppDomainUnhandledException(object sender, System.UnhandledExceptionEventArgs args)
+    {
+        if (args.ExceptionObject is Exception exception)
+        {
+            StartupDiagnostics.RecordUnhandled("AppDomain", exception);
+        }
+    }
+
+    private static void OnUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs args) =>
+        StartupDiagnostics.ReportFatal("WinUI", args.Exception);
 
     private void OnMainWindowClosed(object sender, WindowEventArgs args)
     {

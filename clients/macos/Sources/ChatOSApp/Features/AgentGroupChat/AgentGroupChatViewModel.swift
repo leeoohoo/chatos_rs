@@ -89,6 +89,7 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published var teams: [ProjectAgentRoom] = []
     @Published var teamTodos: [LocalAgentTodo] = []
     @Published var teamAssets: [LocalAgentTeamAsset] = []
+    @Published var projectDashboard: LocalAgentProjectDashboard?
     @Published var requirementSurveys: [LocalAgentRequirementSurvey] = []
     @Published var submittingRequirementSurveyIDs: Set<String> = []
     @Published var teamAssetRevisions: [String: [LocalAgentTeamAssetRevision]] = [:]
@@ -109,6 +110,7 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published var isPausingAgents = false
     @Published var isStoppingAgents = false
     @Published var runActionDeliveryIDs: Set<String> = []
+    @Published var blockedTodoActionIDs: Set<String> = []
     @Published var proposalActionIDs: Set<String> = []
     @Published var removalProposalActionIDs: Set<String> = []
     @Published var teamProposalActionIDs: Set<String> = []
@@ -296,6 +298,7 @@ final class AgentGroupChatViewModel: ObservableObject {
             pendingMembershipProposals = []
             teamTodos = []
             teamAssets = []
+            projectDashboard = nil
             requirementSurveys = []
             recentRuns = []
             recentRunDeliveries = [:]
@@ -339,6 +342,10 @@ final class AgentGroupChatViewModel: ObservableObject {
                     ownerUserID: ownerUserID,
                     teamRoomID: room.id,
                     includeArchived: false
+                )
+                let projectDashboard = try await store.projectDashboard(
+                    ownerUserID: ownerUserID,
+                    teamRoomID: room.id
                 )
                 let requirementSurveys = try await store.listRequirementSurveys(
                     ownerUserID: ownerUserID,
@@ -393,6 +400,7 @@ final class AgentGroupChatViewModel: ObservableObject {
                 self.pendingMembershipProposals = pendingMembershipProposals
                 self.teamTodos = teamTodos
                 self.teamAssets = teamAssets
+                self.projectDashboard = projectDashboard
                 self.requirementSurveys = requirementSurveys
                 let activeAssetIDs = Set(teamAssets.map(\.id))
                 teamAssetRevisions = teamAssetRevisions.filter { activeAssetIDs.contains($0.key) }

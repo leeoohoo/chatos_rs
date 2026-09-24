@@ -47,7 +47,9 @@ struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
                 name: name,
                 description: description,
                 schema: try JSONEncoder().encode(schema),
-                effect: effect
+                effect: effect,
+                providerID: Self.providerID(for: name),
+                skillBindingID: Self.skillBindingID(for: name)
             )
         }
     }
@@ -73,7 +75,14 @@ struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
                 resolvedProject: resolvedProject
             )
             try Task.checkCancellation()
-            return .init(result.canonicalJSONString)
+            let content = result.canonicalJSONString
+            if call.name == "execute_command",
+               let values = result.jsonObject,
+               values["timed_out"]?.jsonBool == true
+                || values["success"]?.jsonBool == false {
+                return .failure(content)
+            }
+            return .init(content)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -86,6 +95,65 @@ struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
         + NativeMCPTerminalStore.toolDefinitions
         + NativeMCPRequirementSurveyTools.readToolDefinitions
         + NativeMCPRequirementSurveyTools.writeToolDefinitions
+
+    /// Enumerates every native model-visible builtin through the same metadata path used by the
+    /// live provider. Migration remains audit-only until the report is complete for all families.
+    static func skillCoverageReport() throws -> ToolSkillCoverageReport {
+        let tools = try nativeDefinitions.map { value -> ToolSkillCoverageInput in
+            guard let name = value.jsonObject?["name"]?.jsonString else {
+                throw NativePluginRuntimeError.invalidMCPResponse("内置 MCP 工具定义缺少名称")
+            }
+            return .init(
+                providerID: providerID(for: name),
+                toolName: name,
+                skillBindingID: skillBindingID(for: name)
+            )
+        }
+        return ToolSkillCoverageCatalog.product.audit(tools)
+    }
+
+    private static func providerID(for toolName: String) -> String {
+        if NativeMCPCodeWriteStore.toolNames.contains(toolName) {
+            return ProductToolProviderID.projectWrite
+        }
+        if NativeMCPTerminalStore.toolNames.contains(toolName) {
+            return ProductToolProviderID.terminal
+        }
+        if NativeMCPRequirementSurveyTools.readToolNames.contains(toolName)
+            || NativeMCPRequirementSurveyTools.writeToolNames.contains(toolName) {
+            return ProductToolProviderID.requirementSurvey
+        }
+        return ProductToolProviderID.projectRead
+    }
+
+    private static func skillBindingID(for toolName: String) -> String? {
+        switch toolName {
+        case "read_file_raw", "read_file_range", "list_dir", "search_text", "read_file",
+             "search_files", "open_file_in_pet":
+            ProductToolSkillBindingID.projectRead
+        case "open_edit_session", "stage_edit_batch", "commit_edit_session",
+             "abort_edit_session":
+            ProductToolSkillBindingID.projectWrite
+        case "execute_command":
+            ProductToolSkillBindingID.terminalCommandExecution
+        case "get_recent_logs", "process_list", "process_poll", "process_log", "process_wait":
+            ProductToolSkillBindingID.terminalProcessObservation
+        case "process_write", "process_kill", "process":
+            ProductToolSkillBindingID.terminalProcessControl
+        case "skill_activate", "skill_list_resources", "skill_read_resource":
+            ProductToolSkillBindingID.requirementSurveyControlPlane
+        case "requirement_survey_create":
+            ProductToolSkillBindingID.requirementSurveyCreate
+        case "requirement_survey_list", "requirement_survey_get":
+            ProductToolSkillBindingID.requirementSurveyReadResults
+        case "requirement_survey_resolve":
+            ProductToolSkillBindingID.requirementSurveyResolve
+        case "requirement_survey_project_tasks":
+            ProductToolSkillBindingID.requirementSurveyReviewExecution
+        default:
+            nil
+        }
+    }
 
     private static func capability(for toolName: String) -> LocalAgentTodoBuiltinCapability {
         if NativeMCPCodeWriteStore.toolNames.contains(toolName) { return .projectWrite }
@@ -139,11 +207,18 @@ extension NativeLocalConnectorService {
                     defaultToolRoot: nil
                 ).call(name: name, arguments: arguments)
             }
-            return try await withTaskCancellationHandler {
+            let result = try await withTaskCancellationHandler {
                 try await readTask.value
             } onCancel: {
                 readTask.cancel()
             }
+            try await appendAgentBuiltinAudit(
+                name: name,
+                arguments: arguments,
+                result: result,
+                runContext: runContext
+            )
+            return result
         }
         if NativeMCPCodeWriteStore.toolNames.contains(name) {
             // Reaching this branch already proves that this is a Todo executor whose immutable
@@ -153,7 +228,7 @@ extension NativeLocalConnectorService {
             // second, unrelated authorization that can strand an otherwise approved Todo at the
             // final commit step.
             try Task.checkCancellation()
-            return try await mcpCodeWriteStore.call(
+            let result = try await mcpCodeWriteStore.call(
                 name: name,
                 arguments: arguments,
                 scope: .init(
@@ -163,6 +238,13 @@ extension NativeLocalConnectorService {
                 ),
                 projectRoot: projectRoot
             )
+            try await appendAgentBuiltinAudit(
+                name: name,
+                arguments: arguments,
+                result: result,
+                runContext: runContext
+            )
+            return result
         }
         guard NativeMCPTerminalStore.toolNames.contains(name) else {
             throw NativePluginRuntimeError.invalidRequest("当前项目没有这个内置 MCP 工具")
@@ -210,12 +292,80 @@ extension NativeLocalConnectorService {
             cwd: cwd,
             projectRoot: projectRoot,
             background: arguments["background"]?.jsonBool ?? false,
+            timeoutMilliseconds: arguments["timeout_ms"]?.jsonNumber.map { Int($0) }
+                ?? arguments["timeout"]?.jsonNumber.map { Int($0 * 1_000) },
             ownerRunID: runContext.runID
+        )
+    }
+
+    private func appendAgentBuiltinAudit(
+        name: String,
+        arguments: [String: NativeJSONValue],
+        result: NativeJSONValue,
+        runContext: LocalAgentChatRunContext
+    ) async throws {
+        guard runContext.lane == .executor, let agentGroupChatService else { return }
+        let store = try await agentGroupChatService.store()
+        guard let todo = try await store.todoForDelivery(
+            ownerUserID: runContext.ownerUserID,
+            deliveryID: runContext.deliveryID
+        ), todo.agentID == runContext.agentID else { return }
+
+        let audit: (stage: String, detail: String)?
+        let object = result.jsonObject ?? [:]
+        let resultObject = object["result"]?.jsonObject ?? [:]
+        switch name {
+        case "read_file_raw", "read_file_range", "read_file":
+            let path = object["path"]?.jsonString ?? arguments["path"]?.jsonString ?? "(unknown)"
+            let hash = object["sha256"]?.jsonString.map { "，sha256=\($0)" } ?? ""
+            audit = ("builtin.file_read", "已通过 \(name) 读取项目文件：\(path)\(hash)")
+        case "list_dir":
+            let path = arguments["path"]?.jsonString ?? "."
+            audit = ("builtin.directory_list", "已通过 list_dir 列出项目目录：\(path)")
+        case "search_text", "search_files":
+            let path = arguments["path"]?.jsonString ?? "."
+            audit = ("builtin.project_search", "已通过 \(name) 搜索项目范围：\(path)")
+        case "open_edit_session":
+            let sessionID = resultObject["session_id"]?.jsonString ?? "(unknown)"
+            audit = ("builtin.edit_opened", "已打开事务编辑会话：\(sessionID)")
+        case "stage_edit_batch":
+            let paths = resultObject["batch_changed_paths"]?.jsonArray?
+                .compactMap(\.jsonString) ?? []
+            audit = (
+                "builtin.edit_staged",
+                "已暂存项目文件修改：\(paths.isEmpty ? "无实际变化" : paths.joined(separator: ", "))"
+            )
+        case "commit_edit_session":
+            let paths = resultObject["committed_paths"]?.jsonArray?
+                .compactMap(\.jsonString) ?? []
+            audit = (
+                "builtin.edit_committed",
+                "已提交事务编辑：\(paths.isEmpty ? "无实际变化" : paths.joined(separator: ", "))"
+            )
+        case "abort_edit_session":
+            audit = ("builtin.edit_aborted", "已放弃当前事务编辑会话。")
+        default:
+            audit = nil
+        }
+        guard let audit else { return }
+        _ = try await store.appendAgentTodoProgress(
+            ownerUserID: runContext.ownerUserID,
+            agentID: runContext.agentID,
+            todoID: todo.id,
+            kind: .progress,
+            runID: runContext.runID,
+            stage: audit.stage,
+            detail: String(audit.detail.prefix(16_000)),
+            assetUpdateSuggestions: [],
+            nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
         )
     }
 
     func cancelAgentBuiltinTools(runID: String) async {
         _ = await mcpTerminalStore.cancel(ownerRunID: runID)
+    }
+
+    func discardAgentBuiltinEdits(runID: String) async {
         _ = await mcpCodeWriteStore.discard(runID: runID)
     }
 }
@@ -232,6 +382,9 @@ private final class NativeAgentBuiltinRunLease: @unchecked Sendable {
     deinit {
         let service = service
         let runID = runID
+        // A provider lease ends after every scheduler attempt, including a resumable model
+        // timeout. Stop live terminal processes, but keep the run-scoped transactional edit
+        // session so the same run can resume, inspect, commit, or explicitly abort it.
         Task { await service.cancelAgentBuiltinTools(runID: runID) }
     }
 }
