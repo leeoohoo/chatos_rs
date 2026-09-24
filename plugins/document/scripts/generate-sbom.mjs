@@ -16,6 +16,10 @@ function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+function normalizeText(text) {
+  return text.replace(/\r\n?/g, '\n').trim();
+}
+
 function npmName(packagePath) {
   const marker = 'node_modules/';
   const index = packagePath.lastIndexOf(marker);
@@ -242,7 +246,7 @@ for (const row of [...packageRows].sort((left, right) => left.purl.localeCompare
   const directory = path.join(projectRoot, row.packagePath);
   const licenseFile = (await readdir(directory)).find((name) => /^(?:licen[cs]e|copying|notice)(?:[._-].*)?$/i.test(name));
   if (!licenseFile) throw new Error(`No license file was found for ${row.name}@${row.details.version}`);
-  const licenseText = (await readFile(path.join(directory, licenseFile), 'utf8')).trim();
+  const licenseText = normalizeText(await readFile(path.join(directory, licenseFile), 'utf8'));
   licenseSections.push([
     `COMPONENT: ${row.name}@${row.details.version}`,
     `DECLARED LICENSE: ${row.details.license}`,
@@ -272,7 +276,7 @@ for (const item of [
     note: 'The Apache-2.0 portion of the upstream license is reproduced in the OfficeCLI section above.'
   }
 ]) {
-  const licenseText = (await readFile(item.file, 'utf8')).trim();
+  const licenseText = normalizeText(await readFile(item.file, 'utf8'));
   licenseSections.push([
     `COMPONENT: ${item.component}`,
     `DECLARED LICENSE: ${item.license}`,
@@ -287,7 +291,9 @@ const pdfiumNoticeSections = [];
 for (const component of pdfiumThirdParty.components) {
   const assetSections = [];
   for (const asset of component.licenseAssets) {
-    const licenseText = (await readFile(path.join(projectRoot, 'vendor', asset.target), 'utf8')).trim();
+    const licenseText = normalizeText(
+      await readFile(path.join(projectRoot, 'vendor', asset.target), 'utf8')
+    );
     licenseSections.push([
       `COMPONENT: ${component.name}@${component.version}`,
       `DECLARED LICENSE: ${component.license}`,

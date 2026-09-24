@@ -118,6 +118,8 @@ public enum BundledAgentSkillLoader {
     }
 
     private static func resourcePaths(in directory: URL, beneath root: URL) throws -> [String] {
+        let resolvedDirectory = directory.resolvingSymlinksInPath().standardizedFileURL
+        let resolvedDirectoryPrefix = resolvedDirectory.path + "/"
         guard let enumerator = FileManager.default.enumerator(
             at: directory,
             includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
@@ -132,7 +134,11 @@ public enum BundledAgentSkillLoader {
                 beneath: root,
                 maximumBytes: 1_024 * 1_024
             )
-            paths.append(String(url.path.dropFirst(directory.path.count + 1)))
+            let resolvedPath = url.resolvingSymlinksInPath().standardizedFileURL.path
+            guard resolvedPath.hasPrefix(resolvedDirectoryPrefix) else {
+                throw LoaderError.invalidEntrypoint(url.path)
+            }
+            paths.append(String(resolvedPath.dropFirst(resolvedDirectoryPrefix.count)))
         }
         return paths.sorted()
     }
