@@ -21,6 +21,10 @@ internal static class StartupDiagnostics
             $"OS={Environment.OSVersion}; ProcessArchitecture={RuntimeInformation.ProcessArchitecture}");
     }
 
+    public static void RecordStage(string stage) => WriteLine($"Startup stage completed: {stage}");
+
+    public static void RecordLifecycle(string message) => WriteLine($"Lifecycle: {message}");
+
     public static void RecordUnhandled(string phase, Exception exception) =>
         WriteLine($"Unhandled exception during {phase}:{Environment.NewLine}{exception}");
 
