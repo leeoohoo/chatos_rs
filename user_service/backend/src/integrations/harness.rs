@@ -89,20 +89,26 @@ struct HarnessAuthenticatedUser {
 struct HarnessRequestError {
     status: Option<StatusCode>,
     message: String,
+    already_exists: bool,
 }
 
 impl HarnessRequestError {
     fn from_error(message: impl Into<String>) -> Self {
+        let message = message.into();
         Self {
             status: None,
-            message: message.into(),
+            already_exists: Self::message_indicates_already_exists(&message),
+            message,
         }
     }
 
     fn is_already_exists(&self) -> bool {
-        let message = self.message.to_ascii_lowercase();
-        self.status == Some(StatusCode::CONFLICT)
-            || message.contains("already")
+        self.status == Some(StatusCode::CONFLICT) || self.already_exists
+    }
+
+    fn message_indicates_already_exists(message: &str) -> bool {
+        let message = message.to_ascii_lowercase();
+        message.contains("already")
             || message.contains("exist")
             || message.contains("duplicate")
             || message.contains("unique")
@@ -604,6 +610,12 @@ where
         .send()
         .await
         .map_err(|err| HarnessRequestError::from_error(err.to_string()))?;
+    decode_harness_response(response).await
+}
+
+async fn decode_harness_response<TResp: serde::de::DeserializeOwned>(
+    response: reqwest::Response,
+) -> Result<TResp, HarnessRequestError> {
     let status = response.status();
     if !status.is_success() {
         let body_text =
@@ -611,12 +623,22 @@ where
                 .await;
         return Err(HarnessRequestError {
             status: Some(status),
-            message: extract_error_message(body_text.as_str()),
+            // Keep only the fallback decision. Downstream bodies may echo
+            // credentials and must never reach logs or persisted last_error.
+            already_exists: HarnessRequestError::message_indicates_already_exists(
+                &extract_error_message(body_text.as_str()),
+            ),
+            message: "harness request rejected".to_string(),
         });
     }
     read_response_json_limited::<TResp>(response, JSON_BODY_LIMIT_BYTES)
         .await
-        .map_err(|err| {
-            HarnessRequestError::from_error(format!("decode harness response failed: {err}"))
+        .map_err(|_| {
+            // Serde diagnostics can quote response values on type mismatches.
+            HarnessRequestError::from_error("decode harness response failed")
         })
 }
+
+#[cfg(test)]
+#[path = "harness/response_tests.rs"]
+mod response_tests;
