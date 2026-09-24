@@ -42,13 +42,17 @@ public partial class App : Application
         StartupDiagnostics.Initialize();
         UnhandledException += OnUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnAppDomainUnhandledException;
+        AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
+        TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
 
         try
         {
             InitializeComponent();
+            StartupDiagnostics.RecordStage("application resources initialized");
 
             var builder = Host.CreateApplicationBuilder();
             var packagedSettings = DesktopRuntimeSettings.Load();
+            StartupDiagnostics.RecordStage("runtime settings loaded");
             var apiBaseUrl = Environment.GetEnvironmentVariable("CHATOS_API_BASE_URL")
                 ?? packagedSettings.ApiBaseUrl;
             if (!string.IsNullOrWhiteSpace(apiBaseUrl))
@@ -117,6 +121,7 @@ public partial class App : Application
             builder.Services.AddSingleton<WorkspaceHostPage>();
             builder.Services.AddSingleton<MainWindow>();
             _host = builder.Build();
+            StartupDiagnostics.RecordStage("dependency injection host built");
         }
         catch (Exception exception)
         {
@@ -130,19 +135,29 @@ public partial class App : Application
         try
         {
             await _host.Services.GetRequiredService<LocalStateDatabase>().InitializeAsync();
+            StartupDiagnostics.RecordStage("local state database initialized");
             await _host.Services.GetRequiredService<AppPreferencesManager>().InitializeAsync();
+            StartupDiagnostics.RecordStage("application preferences initialized");
             await _host.Services.GetRequiredService<PetFavoriteProjectsManager>().InitializeAsync();
+            StartupDiagnostics.RecordStage("pet favorites initialized");
             Resources["ChatOSLocalization"] = _host.Services.GetRequiredService<LocalizationViewModel>();
+            StartupDiagnostics.RecordStage("localization registered");
             await _host.StartAsync();
+            StartupDiagnostics.RecordStage("background services started");
             await _host.Services.GetRequiredService<WindowsClipboardHistoryMonitor>().StartAsync();
+            StartupDiagnostics.RecordStage("clipboard monitor started");
 
             _powerState = _host.Services.GetRequiredService<ConnectorPowerStateCoordinator>();
             PowerManager.SystemSuspendStatusChanged += OnSystemSuspendStatusChanged;
+            StartupDiagnostics.RecordStage("power callbacks registered");
 
             _window = _host.Services.GetRequiredService<MainWindow>();
+            StartupDiagnostics.RecordStage("main window constructed");
             _window.Closed += OnMainWindowClosed;
             _window.Activate();
+            StartupDiagnostics.RecordStage("main window activated");
             _host.Services.GetRequiredService<QuickSearchCoordinator>().Initialize((MainWindow)_window);
+            StartupDiagnostics.RecordStage("quick search initialized; startup complete");
         }
         catch (Exception exception)
         {
@@ -159,11 +174,18 @@ public partial class App : Application
         }
     }
 
+    private static void OnUnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs args) =>
+        StartupDiagnostics.RecordUnhandled("unobserved task", args.Exception);
+
+    private static void OnProcessExit(object? sender, EventArgs args) =>
+        StartupDiagnostics.RecordLifecycle("process exit requested");
+
     private static void OnUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs args) =>
         StartupDiagnostics.ReportFatal("WinUI", args.Exception);
 
     private void OnMainWindowClosed(object sender, WindowEventArgs args)
     {
+        StartupDiagnostics.RecordLifecycle("main window closed");
         _host.Services.GetRequiredService<WindowsClipboardHistoryMonitor>().Stop();
         _host.Services.GetRequiredService<QuickSearchCoordinator>().Dispose();
         _host.Services.GetRequiredService<WindowsScreenRecordingCoordinator>().Dispose();

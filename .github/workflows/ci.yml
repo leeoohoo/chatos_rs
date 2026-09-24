@@ -294,7 +294,7 @@ jobs:
           - platform: windows-x64
             runner: windows-latest
           - platform: macos-arm64
-            runner: macos-15
+            runner: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -304,6 +304,12 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
+
+      - name: Select current Xcode toolchain
+        if: runner.os == 'macOS'
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.6.app/Contents/Developer
+          swift --version
 
       - name: Verify native platform contracts
         shell: bash
