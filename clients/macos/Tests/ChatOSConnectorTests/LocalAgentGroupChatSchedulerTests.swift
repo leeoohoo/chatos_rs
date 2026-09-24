@@ -1891,7 +1891,10 @@ private actor ActiveCancellationSchedulerTestModel: AgentModelClient {
         tools: [AgentToolDefinition],
         timeout: TimeInterval
     ) async throws -> AgentMessage {
-        if tools.contains(where: { $0.name == LocalAgentChatToolProvider.todoCompleteToolName }) {
+        let isExecutorLane = messages.contains {
+            $0.role == .user && $0.content.contains("- trigger_kind: todo\n")
+        }
+        if isExecutorLane {
             try await Task.sleep(for: .seconds(30))
             return .init(role: .assistant, content: "不应自然结束")
         }
@@ -1899,11 +1902,17 @@ private actor ActiveCancellationSchedulerTestModel: AgentModelClient {
         switch requestCount {
         case 1:
             return .init(role: .assistant, toolCalls: [.init(
+                id: "activate-todo-planning",
+                name: LocalAgentChatToolProvider.agentSkillActivateToolName,
+                arguments: #"{"skill_ref":"product-skill:chatos-todo-planning"}"#
+            )])
+        case 2:
+            return .init(role: .assistant, toolCalls: [.init(
                 id: "list-todos-before-cancel",
                 name: LocalAgentChatToolProvider.todoListToolName,
                 arguments: "{}"
             )])
-        case 2:
+        case 3:
             let toolContent = messages.last(where: { $0.role == .tool })?.content ?? "[]"
             let data = Data(toolContent.utf8)
             let values = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
