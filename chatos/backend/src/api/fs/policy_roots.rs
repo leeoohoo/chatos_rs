@@ -152,24 +152,8 @@ fn safe_path_component(value: &str) -> String {
 }
 
 fn host_fs_roots_enabled() -> bool {
-    if let Some(value) = env_bool_override("CHATOS_ENABLE_HOST_FS_ROOTS")
+    env_bool_override("CHATOS_ENABLE_HOST_FS_ROOTS")
         .or_else(|| env_bool_override("FS_ENABLE_HOST_ROOTS"))
-    {
-        return host_fs_roots_enabled_for(env::var("NODE_ENV").ok().as_deref(), Some(value));
-    }
-    host_fs_roots_enabled_for(env::var("NODE_ENV").ok().as_deref(), None)
-}
-
-fn host_fs_roots_enabled_for(node_env: Option<&str>, override_value: Option<bool>) -> bool {
-    if let Some(value) = override_value {
-        return value;
-    }
-    !is_production_env_value(node_env)
-}
-
-fn is_production_env_value(value: Option<&str>) -> bool {
-    value
-        .map(|value| value.trim().eq_ignore_ascii_case("production"))
         .unwrap_or(false)
 }
 
@@ -205,7 +189,7 @@ fn push_root(roots: &mut Vec<FsAllowedRoot>, candidate: PathBuf, kind: FsAllowed
 
 #[cfg(test)]
 mod tests {
-    use super::{host_fs_roots_enabled_for, user_path_component};
+    use super::{host_fs_roots_enabled, user_path_component};
 
     #[test]
     fn user_path_component_avoids_sanitization_collisions() {
@@ -220,21 +204,68 @@ mod tests {
     }
 
     #[test]
-    fn host_fs_roots_default_to_enabled_outside_production() {
-        assert!(host_fs_roots_enabled_for(None, None));
-        assert!(host_fs_roots_enabled_for(Some("development"), None));
-        assert!(host_fs_roots_enabled_for(Some("test"), None));
-    }
+    fn host_fs_roots_require_explicit_opt_in() {
+        const EXPECTED: &str = "CHATOS_TEST_HOST_FS_ROOTS_EXPECTED";
+        if let Ok(expected) = std::env::var(EXPECTED) {
+            assert_eq!(host_fs_roots_enabled(), expected == "true");
+            return;
+        }
 
-    #[test]
-    fn host_fs_roots_default_to_disabled_in_production() {
-        assert!(!host_fs_roots_enabled_for(Some("production"), None));
-        assert!(!host_fs_roots_enabled_for(Some(" production "), None));
-    }
-
-    #[test]
-    fn host_fs_roots_explicit_env_overrides_default() {
-        assert!(host_fs_roots_enabled_for(Some("production"), Some(true)));
-        assert!(!host_fs_roots_enabled_for(Some("development"), Some(false)));
+        // Isolate environment variables in child processes so parallel tests never
+        // observe a temporary host-filesystem permission change.
+        for node_env in [
+            None,
+            Some(""),
+            Some("development"),
+            Some("test"),
+            Some("production"),
+            Some("PRODUCTION"),
+            Some(" production "),
+            Some("staging"),
+            Some("prodution"),
+        ] {
+            for (primary, legacy, expected) in [
+                (None, None, false),
+                (Some("true"), None, true),
+                (None, Some("true"), true),
+                (Some("false"), Some("true"), false),
+                (Some("true"), Some("false"), true),
+                (Some("false"), Some("false"), false),
+                (Some(""), Some("true"), false),
+                (Some("invalid"), Some("true"), false),
+                (None, Some("invalid"), false),
+                (Some(" TRUE "), None, true),
+                (Some("1"), None, true),
+                (None, Some("on"), true),
+                (None, Some("yes"), true),
+                (None, Some("0"), false),
+            ] {
+                let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+                let module = module_path!().split_once("::").unwrap().1;
+                command
+                    .arg("--exact")
+                    .arg(format!("{module}::host_fs_roots_require_explicit_opt_in"))
+                    .arg("--nocapture")
+                    .env(EXPECTED, expected.to_string());
+                for (key, value) in [
+                    ("NODE_ENV", node_env),
+                    ("CHATOS_ENABLE_HOST_FS_ROOTS", primary),
+                    ("FS_ENABLE_HOST_ROOTS", legacy),
+                ] {
+                    command.env_remove(key);
+                    if let Some(value) = value {
+                        command.env(key, value);
+                    }
+                }
+                let output = command.output().unwrap();
+                assert!(String::from_utf8_lossy(&output.stdout).contains("running 1 test"));
+                assert!(
+                    output.status.success(),
+                    "NODE_ENV={node_env:?}, primary={primary:?}, legacy={legacy:?}:\n{}\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr),
+                );
+            }
+        }
     }
 }
