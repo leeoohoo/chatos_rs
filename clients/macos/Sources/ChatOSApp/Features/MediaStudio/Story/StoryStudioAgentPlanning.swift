@@ -154,6 +154,8 @@ extension StoryStudioViewModel {
     func receiveModelStream(_ event: AgentModelStreamEvent, token: UUID) {
         guard session == token else { return }
         switch event {
+        case .activity:
+            break
         case .responseCreated:
             streamingModelText = ""; streamingToolName = nil
             operation = "文本模型正在流式分析…"

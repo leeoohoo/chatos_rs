@@ -514,6 +514,7 @@ extension LocalAgentChatToolProvider {
         let sourceMessages: [TodoSourceMessageResponse]
         let prerequisites: [TodoDependencyResponse]
         let teamAssets: [TeamAssetSummaryResponse]
+        let progress: [TodoProgressResponse]
 
         enum CodingKeys: String, CodingKey {
             case title, detail, objective, scope, constraints, priority
@@ -523,6 +524,7 @@ extension LocalAgentChatToolProvider {
             case plugins, prerequisites
             case sourceMessages = "source_messages"
             case teamAssets = "team_assets"
+            case progress
         }
     }
 

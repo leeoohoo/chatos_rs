@@ -134,13 +134,19 @@ public struct AgentRuntime: Sendable {
                             outcome = try await withAgentTimeout(seconds: remainingTime()) { try await execute(call) }
                         } catch {
                             if error is CancellationError { throw error }
+                            let interruption = if let runtimeError = error as? AgentRuntimeError,
+                                                  case .timeout = runtimeError {
+                                "工具在 Agent 剩余运行时限内没有返回（本次 Agent 总时限为 \(policy.runTimeoutSeconds) 秒）。工具结果可能不完整；请检查副作用后再重试。"
+                            } else {
+                                error.localizedDescription
+                            }
                             if definition.effect == .billable || definition.effect == .write {
                                 state.status = .needsReview
-                                state.stopReason = "\(call.name) 执行中断：\(error.localizedDescription)"
-                                try await emit("needs_review", state.stopReason ?? error.localizedDescription)
+                                state.stopReason = "\(call.name) 执行中断：\(interruption)"
+                                try await emit("needs_review", state.stopReason ?? interruption)
                                 return snapshot(state)
                             }
-                            outcome = .failure(error.localizedDescription)
+                            outcome = .failure(interruption)
                         }
                     } else { outcome = .failure("工具不可用：\(call.name)。请选择本次提供的工具。") }
 
@@ -193,21 +199,40 @@ public struct AgentRuntime: Sendable {
                     state.modelCalls += 1
                     try await emit("model_request", "模型调用 \(state.modelCalls) / \(policy.maximumModelCalls)")
                     let requestMessages = messages
-                    let timeout = min(Double(policy.requestTimeoutSeconds), remainingTime())
+                    let inactivityTimeout = min(Double(policy.requestTimeoutSeconds), remainingTime())
+                    let telemetry = AgentModelAttemptTelemetry()
                     do {
-                        response = try await withAgentTimeout(seconds: timeout) {
-                            try await model.stream(messages: requestMessages, tools: tools, timeout: timeout,
-                                                   onEvent: onModelStreamEvent)
+                        response = try await withAgentTimeout(seconds: remainingTime()) {
+                            try await withAgentInactivityTimeout(seconds: inactivityTimeout) { markActivity in
+                                try await model.stream(
+                                    messages: requestMessages,
+                                    tools: tools,
+                                    timeout: inactivityTimeout,
+                                    onEvent: { event in
+                                        telemetry.record(event)
+                                        markActivity()
+                                        await onModelStreamEvent(event)
+                                    }
+                                )
+                            }
                         }
+                        try await emit("model_stream_completed", telemetry.detail)
                         break
                     } catch {
-                        guard attempt < policy.maximumRequestRetries, AgentRuntimeError.isTransient(error) else { throw error }
+                        let telemetryDetail = telemetry.detail
+                        guard attempt < policy.maximumRequestRetries, AgentRuntimeError.isTransient(error) else {
+                            try await emit(
+                                "model_request_failed",
+                                "模型请求失败（\(telemetryDetail)）：\(error.localizedDescription)"
+                            )
+                            throw error
+                        }
                         let retryNumber = attempt + 1
                         let delaySeconds = Self.retryDelaySeconds(forRetry: retryNumber)
                         guard remainingTime() > Double(delaySeconds) else { throw AgentRuntimeError.timeout }
                         try await emit(
                             "model_retry",
-                            "暂时性模型请求失败；第 \(retryNumber) / \(policy.maximumRequestRetries) 次重试将在 \(delaySeconds) 秒后开始"
+                            "暂时性模型请求失败（\(telemetryDetail)）；第 \(retryNumber) / \(policy.maximumRequestRetries) 次重试将在 \(delaySeconds) 秒后开始"
                         )
                         try await retrySleeper(.seconds(delaySeconds))
                     }
@@ -257,6 +282,156 @@ public struct AgentRuntime: Sendable {
     static func retryDelaySeconds(forRetry retryNumber: Int) -> Int {
         guard retryNumber > 0 else { return 1 }
         return min(16, 1 << min(retryNumber - 1, 4))
+    }
+}
+
+/// Applies an inactivity timeout which is renewed whenever the stream reports transport
+/// activity. The enclosing run deadline remains a separate absolute timeout.
+func withAgentInactivityTimeout<T: Sendable>(
+    seconds: Double,
+    operation: @escaping @Sendable (@escaping @Sendable () -> Void) async throws -> T
+) async throws -> T {
+    guard seconds > 0 else { throw AgentRuntimeError.timeout }
+    let race = AgentInactivityTimeoutRace<T>(seconds: seconds)
+    return try await race.run(operation)
+}
+
+private final class AgentInactivityTimeoutRace<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private let seconds: Double
+    private var continuation: CheckedContinuation<Value, Error>?
+    private var pendingResult: Result<Value, Error>?
+    private var operationTask: Task<Void, Never>?
+    private var timerTask: Task<Void, Never>?
+    private var timerGeneration = 0
+    private var isResolved = false
+
+    init(seconds: Double) { self.seconds = seconds }
+
+    func run(
+        _ operation: @escaping @Sendable (@escaping @Sendable () -> Void) async throws -> Value
+    ) async throws -> Value {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                install(continuation)
+                touch()
+                let task = Task { [self] in
+                    do {
+                        let value = try await operation { self.touch() }
+                        self.resolve(.success(value))
+                    } catch {
+                        self.resolve(.failure(error))
+                    }
+                }
+                installOperation(task)
+            }
+        } onCancel: {
+            resolve(.failure(CancellationError()))
+        }
+    }
+
+    private func install(_ value: CheckedContinuation<Value, Error>) {
+        lock.lock()
+        if let pendingResult {
+            self.pendingResult = nil
+            lock.unlock()
+            value.resume(with: pendingResult)
+        } else {
+            continuation = value
+            lock.unlock()
+        }
+    }
+
+    private func installOperation(_ task: Task<Void, Never>) {
+        lock.lock()
+        if isResolved {
+            lock.unlock()
+            task.cancel()
+        } else {
+            operationTask = task
+            lock.unlock()
+        }
+    }
+
+    private func touch() {
+        lock.lock()
+        guard !isResolved else { lock.unlock(); return }
+        timerGeneration += 1
+        let generation = timerGeneration
+        let previous = timerTask
+        let seconds = seconds
+        timerTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(seconds))
+                self?.timeout(generation: generation)
+            } catch {
+                // Replaced by a later activity timer.
+            }
+        }
+        lock.unlock()
+        previous?.cancel()
+    }
+
+    private func timeout(generation: Int) {
+        lock.lock()
+        guard !isResolved, generation == timerGeneration else { lock.unlock(); return }
+        lock.unlock()
+        resolve(.failure(AgentRuntimeError.timeout))
+    }
+
+    private func resolve(_ result: Result<Value, Error>) {
+        lock.lock()
+        guard !isResolved else { lock.unlock(); return }
+        isResolved = true
+        let continuation = continuation
+        self.continuation = nil
+        if continuation == nil { pendingResult = result }
+        let operationTask = operationTask
+        let timerTask = timerTask
+        self.operationTask = nil
+        self.timerTask = nil
+        lock.unlock()
+        operationTask?.cancel()
+        timerTask?.cancel()
+        continuation?.resume(with: result)
+    }
+}
+
+private final class AgentModelAttemptTelemetry: @unchecked Sendable {
+    private let lock = NSLock()
+    private let startedAt = Date()
+    private var headersReceived = false
+    private var firstActivityAt: Date?
+    private var lastActivityAt: Date?
+    private var activityEvents = 0
+    private var activityBytes = 0
+    private var completionObserved = false
+
+    func record(_ event: AgentModelStreamEvent) {
+        let now = Date()
+        lock.lock()
+        firstActivityAt = firstActivityAt ?? now
+        lastActivityAt = now
+        switch event {
+        case let .activity(bytes):
+            activityEvents += 1
+            activityBytes += max(0, bytes)
+        case .responseCreated:
+            headersReceived = true
+        case .completed:
+            completionObserved = true
+        case .textDelta, .toolCallDelta:
+            break
+        }
+        lock.unlock()
+    }
+
+    var detail: String {
+        lock.lock()
+        defer { lock.unlock() }
+        let first = firstActivityAt.map { String(format: "%.1fs", $0.timeIntervalSince(startedAt)) } ?? "none"
+        let last = lastActivityAt.map { String(format: "%.1fs", $0.timeIntervalSince(startedAt)) } ?? "none"
+        return "headers=\(headersReceived), first=\(first), last=\(last), chunks=\(activityEvents), bytes=\(activityBytes), completed=\(completionObserved)"
     }
 }
 

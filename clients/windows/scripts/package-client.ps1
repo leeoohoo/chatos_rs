@@ -224,6 +224,7 @@ try {
         --output $payloadRoot `
         --nologo
     if ($LASTEXITCODE -ne 0) {
+        & (Join-Path $repoRoot "build\diagnose-xaml-compiler.ps1")
         throw "ChatOS Windows publish failed with exit code $LASTEXITCODE."
     }
 

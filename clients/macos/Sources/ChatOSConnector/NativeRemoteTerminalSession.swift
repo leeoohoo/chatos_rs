@@ -71,7 +71,14 @@ public final class NativeRemoteTerminalSession: LocalProcessDelegate, @unchecked
         let config = directory.appendingPathComponent("ssh_config", isDirectory: false)
         let askpass = directory.appendingPathComponent("askpass.sh", isDirectory: false)
         do {
-            try NativeSSHConnectionTester.sshConfig(for: draft)
+            // The interactive terminal owns the authenticated SSH master. File
+            // browsing and command operations can then reuse it without asking
+            // the jump host for a second SMS code.
+            let controlPath = try NativeOpenSSHClient.persistentControlPath(for: draft)
+            try NativeSSHConnectionTester.sshConfig(
+                for: draft,
+                controlPath: controlPath.path
+            )
                 .write(to: config, atomically: true, encoding: .utf8)
             try NativeSSHConnectionTester.askpassScript
                 .write(to: askpass, atomically: true, encoding: .utf8)

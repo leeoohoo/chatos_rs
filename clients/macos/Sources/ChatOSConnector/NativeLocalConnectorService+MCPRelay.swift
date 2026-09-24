@@ -385,7 +385,9 @@ extension NativeLocalConnectorService {
                 command: command,
                 cwd: cwd,
                 projectRoot: projectRoot,
-                background: call.arguments.bool("background") ?? false
+                background: call.arguments.bool("background") ?? false,
+                timeoutMilliseconds: call.arguments.number("timeout_ms").map { Int($0) }
+                    ?? call.arguments.number("timeout").map { Int($0 * 1_000) }
             )
             if let historyResult = Self.commandHistoryResult(
                 structured: structured,

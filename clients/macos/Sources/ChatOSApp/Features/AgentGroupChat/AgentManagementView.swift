@@ -25,6 +25,18 @@ struct AgentManagementView: View {
     @State private var showsSkillManager = false
     @State private var skillRevision = 0
     @State private var runToAbandon: AgentGroupChatWorkspaceViewModel.TriggerRunPresentation?
+    @State private var agentPage = 0
+    @State private var agentPageSize = 20
+    @State private var runPage = 0
+    @State private var runPageSize = 20
+
+    private var pagedAgents: [LocalAgentProfile] {
+        viewModel.agents.agentPage(index: agentPage, size: agentPageSize)
+    }
+
+    private var pagedTriggerRuns: [AgentGroupChatWorkspaceViewModel.TriggerRunPresentation] {
+        viewModel.triggerRuns.agentPage(index: runPage, size: runPageSize)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -90,13 +102,21 @@ struct AgentManagementView: View {
                             alignment: .leading,
                             spacing: 14
                         ) {
-                            ForEach(viewModel.agents) { agent in
+                            ForEach(pagedAgents) { agent in
                                 agentCard(agent)
                             }
                         }
                         .padding(18)
                     }
                     .frame(maxHeight: viewModel.selectedAgentID == nil ? .infinity : 320)
+
+                    AgentListPaginationBar(
+                        totalCount: viewModel.agents.count,
+                        page: $agentPage,
+                        pageSize: $agentPageSize
+                    )
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 10)
 
                     if viewModel.selectedAgentID != nil {
                         Spacer(minLength: 24)
@@ -130,6 +150,9 @@ struct AgentManagementView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .agentGroupChatRoomsDidChange)) { _ in
             Task { await viewModel.loadTriggerRuns() }
+        }
+        .onChange(of: viewModel.selectedAgentID) { _, _ in
+            runPage = 0
         }
         .confirmationDialog(
             "结束这次运行？",
@@ -309,9 +332,14 @@ struct AgentManagementView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 10) {
-                            ForEach(viewModel.triggerRuns) { item in
+                            ForEach(pagedTriggerRuns) { item in
                                 triggerRunCard(item)
                             }
+                            AgentListPaginationBar(
+                                totalCount: viewModel.triggerRuns.count,
+                                page: $runPage,
+                                pageSize: $runPageSize
+                            )
                         }
                     }
                 }

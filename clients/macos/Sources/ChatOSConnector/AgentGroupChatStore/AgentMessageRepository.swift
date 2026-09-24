@@ -53,6 +53,27 @@ enum AgentMessageRepository {
         ).first
     }
 
+    static func findByCausationID(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        roomID: String,
+        causationID: String,
+        preparedStatement: () -> Void,
+        row: (OpaquePointer) throws -> ProjectAgentMessage
+    ) throws -> ProjectAgentMessage? {
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT \(columns) FROM project_agent_messages
+            WHERE owner_user_id = ? AND room_id = ? AND causation_id = ?
+            ORDER BY created_at_unix_ms, id LIMIT 1
+            """,
+            [.text(ownerUserID), .text(roomID), .text(causationID)],
+            row: row
+        ).first
+    }
+
     static func pageForward(
         _ handle: OpaquePointer?,
         ownerUserID: String,

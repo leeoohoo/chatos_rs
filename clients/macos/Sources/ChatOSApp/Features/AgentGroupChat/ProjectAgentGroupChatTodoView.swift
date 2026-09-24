@@ -8,33 +8,60 @@ struct TeamTodoBoardView: View {
     let todos: [LocalAgentTodo]
     let profilesByID: [String: LocalAgentProfile]
     let runsByTodoID: [String: LocalAgentGroupChatRun]
+    let focusedTodoID: String?
+    let onResolveBlocked: (LocalAgentTodo, String) async -> Bool
+    let onInspectRun: (LocalAgentGroupChatRun) -> Void
 
     @State private var expandedTodoIDs: Set<String> = []
     @State private var resultTodo: LocalAgentTodo?
+    @State private var resolvingTodo: LocalAgentTodo?
+    @State private var page = 0
+    @State private var pageSize = 20
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 12) {
-                if todos.isEmpty {
-                    ContentUnavailableView(
-                        "还没有团队任务",
-                        systemImage: "checklist",
-                        description: Text("项目经理创建的任务会显示在这里。")
-                    )
-                    .padding(.top, 70)
-                } else {
-                    deliveryOverview
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    if todos.isEmpty {
+                        ContentUnavailableView(
+                            "还没有团队任务",
+                            systemImage: "checklist",
+                            description: Text("项目经理创建的任务会显示在这里。")
+                        )
+                        .padding(.top, 70)
+                    } else {
+                        deliveryOverview
+                    }
+                    ForEach(todos.agentPage(index: page, size: pageSize)) { todo in
+                        todoCard(todo)
+                            .id(todo.id)
+                    }
+                    if !todos.isEmpty {
+                        AgentListPaginationBar(
+                            totalCount: todos.count,
+                            page: $page,
+                            pageSize: $pageSize
+                        )
+                        .padding(.top, 4)
+                    }
                 }
-                ForEach(todos) { todo in
-                    todoCard(todo)
-                }
+                .padding(18)
             }
-            .padding(18)
+            .onAppear { focusRequestedTodo(using: proxy) }
+            .onChange(of: focusedTodoID) { _, _ in focusRequestedTodo(using: proxy) }
+            .onChange(of: pageSize) { _, _ in focusRequestedTodo(using: proxy) }
         }
         .sheet(item: $resultTodo) { todo in
             TeamTodoResultDetailView(
                 todo: todo,
                 profile: profilesByID[todo.agentID]
+            )
+        }
+        .sheet(item: $resolvingTodo) { todo in
+            TeamTodoBlockResolutionSheet(
+                todo: todo,
+                profile: profilesByID[todo.agentID],
+                onSubmit: { note in await onResolveBlocked(todo, note) }
             )
         }
     }
@@ -78,14 +105,30 @@ struct TeamTodoBoardView: View {
                 }
             }
 
-            if !todo.blockedReason.isEmpty {
-                Label(todo.blockedReason, systemImage: "exclamationmark.octagon.fill")
+            if todo.status == .blocked {
+                HStack(alignment: .center, spacing: 10) {
+                    Label(
+                        todo.blockedReason.isEmpty ? "任务已阻塞，但未记录原因。" : todo.blockedReason,
+                        systemImage: "exclamationmark.octagon.fill"
+                    )
                     .appFont(.caption)
                     .foregroundStyle(.orange)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+
+                    if let run, run.checkpoint.status == .needsReview {
+                        Button("检查中断步骤") { onInspectRun(run) }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .tint(.orange)
+                    } else {
+                        Button("处理阻塞") { resolvingTodo = todo }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
             }
 
             HStack(spacing: 8) {
@@ -198,6 +241,16 @@ struct TeamTodoBoardView: View {
                 .padding(.leading, 2)
         }
         .shadow(color: .black.opacity(0.035), radius: 3, y: 1)
+    }
+
+    private func focusRequestedTodo(using proxy: ScrollViewProxy) {
+        guard let focusedTodoID,
+              let index = todos.firstIndex(where: { $0.id == focusedTodoID }) else { return }
+        page = index / max(pageSize, 1)
+        expandedTodoIDs.insert(focusedTodoID)
+        DispatchQueue.main.async {
+            withAnimation { proxy.scrollTo(focusedTodoID, anchor: .top) }
+        }
     }
 
     private var deliveryOverview: some View {
@@ -521,6 +574,93 @@ struct TeamTodoBoardView: View {
         case .completed: "checkmark.circle.fill"
         case .cancelled: "xmark.circle.fill"
         }
+    }
+}
+
+private struct TeamTodoBlockResolutionSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let todo: LocalAgentTodo
+    let profile: LocalAgentProfile?
+    let onSubmit: (String) async -> Bool
+
+    @State private var resolution = ""
+    @State private var isSubmitting = false
+
+    private var agentName: String { profile?.draft.name ?? "Agent" }
+    private var trimmedResolution: String {
+        resolution.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "exclamationmark.octagon.fill")
+                    .font(.title2)
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("处理阻塞任务")
+                        .appFont(.title3.weight(.semibold))
+                    Text("\(todo.title) · \(agentName)")
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("阻塞原因")
+                    .appFont(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(todo.blockedReason.isEmpty ? "任务未记录具体阻塞原因。" : todo.blockedReason)
+                    .appFont(.body)
+                    .textSelection(.enabled)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("你的处理说明")
+                    .appFont(.caption.weight(.semibold))
+                Text("写清已经补充的信息、作出的决定，或外部依赖如何解除。下一次执行会把这段内容作为 Human 处理记录读取。")
+                    .appFont(.caption2)
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $resolution)
+                    .appFont(.body)
+                    .frame(minHeight: 130)
+                    .padding(8)
+                    .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 9))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 9)
+                            .stroke(AppPalette.border, lineWidth: 1)
+                    }
+            }
+
+            Label(
+                "提交后会保存处理记录、清除普通阻塞并重新排队。若任务涉及结果不明的写入或计费步骤，系统会拒绝普通重跑并要求进入 Run 检查器。",
+                systemImage: "arrow.trianglehead.2.clockwise.rotate.90"
+            )
+            .appFont(.caption)
+            .foregroundStyle(.secondary)
+
+            HStack {
+                Spacer()
+                Button("取消") { dismiss() }
+                    .disabled(isSubmitting)
+                Button("提交说明并重新执行") {
+                    isSubmitting = true
+                    Task {
+                        if await onSubmit(trimmedResolution) { dismiss() }
+                        isSubmitting = false
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isSubmitting || trimmedResolution.isEmpty || trimmedResolution.count > 16_000)
+            }
+        }
+        .padding(22)
+        .frame(width: 620)
     }
 }
 

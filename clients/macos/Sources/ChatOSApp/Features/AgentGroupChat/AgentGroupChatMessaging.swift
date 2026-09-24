@@ -104,6 +104,84 @@ extension AgentGroupChatViewModel {
         }
     }
 
+    func resolveBlockedTodo(_ todo: LocalAgentTodo, resolution: String) async -> Bool {
+        let note = resolution.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard todo.status == .blocked, !note.isEmpty,
+              blockedTodoActionIDs.insert(todo.id).inserted else { return false }
+        defer { blockedTodoActionIDs.remove(todo.id) }
+        do {
+            let store = try await resolveStore()
+            let requiresHumanRetry = try await store.agentTodoRequiresHumanRetry(
+                ownerUserID: ownerUserID,
+                agentID: todo.agentID,
+                todoID: todo.id
+            )
+            guard !requiresHumanRetry else {
+                throw AgentGroupChatError.conflict
+            }
+            _ = try await store.updateAgentTodo(
+                ownerUserID: ownerUserID,
+                agentID: todo.agentID,
+                todoID: todo.id,
+                update: .init(status: .pending, blockedReason: ""),
+                nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            )
+            _ = try await store.appendAgentTodoProgress(
+                ownerUserID: ownerUserID,
+                agentID: todo.agentID,
+                todoID: todo.id,
+                kind: .progress,
+                runID: nil,
+                stage: "human_resolution",
+                detail: "Human 处理阻塞：\(note)",
+                assetUpdateSuggestions: [],
+                nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+            )
+            if let room {
+                await service.publishChange(.init(
+                    ownerUserID: ownerUserID,
+                    roomID: room.id,
+                    agentID: todo.agentID,
+                    kind: .roomUpdated
+                ))
+            }
+            errorMessage = nil
+            await load()
+            startScheduler()
+            return true
+        } catch AgentGroupChatError.conflict {
+            await load()
+            errorMessage = "这个阻塞涉及结果不明的写入或计费步骤，请先打开 Run 检查器确认后再重试。"
+            return false
+        } catch {
+            await load()
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func retryInterruptedRun(deliveryID: String) async {
+        guard !isRunningAgents, runActionDeliveryIDs.insert(deliveryID).inserted else { return }
+        defer { runActionDeliveryIDs.remove(deliveryID) }
+        do {
+            let result = try await scheduler.retryInterruptedDelivery(
+                ownerUserID: ownerUserID,
+                projectID: projectID,
+                deliveryID: deliveryID
+            )
+            await load()
+            switch result.outcome {
+            case .completed:
+                startScheduler()
+            case .suspended, .failed:
+                errorMessage = result.detail ?? "中断步骤重试后仍未完成。"
+            }
+        } catch {
+            await load()
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func abandonRun(deliveryID: String) async {
         guard !isRunningAgents, runActionDeliveryIDs.insert(deliveryID).inserted else { return }
         defer { runActionDeliveryIDs.remove(deliveryID) }

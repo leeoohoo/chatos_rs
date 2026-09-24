@@ -100,6 +100,15 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
         XCTAssertTrue(rendered.contains("chat_direct_open"))
         XCTAssertTrue(rendered.contains("chat_direct_send"))
         XCTAssertTrue(rendered.contains("Human-Agent 私聊"))
+        XCTAssertTrue(rendered.contains("project_dashboard_get"))
+        XCTAssertTrue(rendered.contains("project_dashboard_update"))
+        XCTAssertTrue(rendered.contains("expected_revision"))
+        XCTAssertTrue(rendered.contains("不得复制或伪造系统统计"))
+
+        let todoStatus = LocalAgentPromptCatalog.render(.todoStatusCycle)
+        XCTAssertTrue(todoStatus.contains("project_dashboard_get"))
+        XCTAssertTrue(todoStatus.contains("project_dashboard_update"))
+        XCTAssertTrue(todoStatus.contains("发生实质变化"))
     }
 
     func testRequirementSurveySkillIsProgressiveAndToolDirected() {

@@ -78,6 +78,11 @@ extension LocalAgentGroupChatScheduler {
                 projectType = nil
             }
             let contextLanguage = await contextLanguageProvider(ownerUserID)
+            let progressiveSkillSnapshot = LocalAgentProgressiveSkillCatalog.boundSnapshot(
+                profession: profession,
+                projectType: projectType,
+                language: contextLanguage
+            )
             let communicationSkill = LocalAgentCompactCommunicationSkill.snapshot(
                 language: contextLanguage,
                 audience: delivery.lane == .manager ? .manager : .executor
@@ -115,8 +120,7 @@ extension LocalAgentGroupChatScheduler {
                     room: room,
                     delivery: delivery,
                     profession: profession,
-                    projectType: projectType,
-                    contextLanguage: contextLanguage,
+                    progressiveSkillSnapshot: progressiveSkillSnapshot,
                     communicationSkill: communicationSkill,
                     builtinCapabilities: builtinCapabilities,
                     triggerMessage: triggerMessage,
@@ -132,13 +136,22 @@ extension LocalAgentGroupChatScheduler {
                     language: communicationSkill.language.rawValue,
                     audience: communicationSkill.audience.rawValue
                 ),
-            ]
+            ] + progressiveSkillSnapshot.skills.map { skill in
+                .init(
+                    name: skill.name,
+                    version: progressiveSkillSnapshot.schemaVersion,
+                    contentSHA256: skill.instructionsSHA256,
+                    language: progressiveSkillSnapshot.language.rawValue,
+                    audience: delivery.lane.rawValue
+                )
+            }
             let createdAt = now()
             run = try LocalAgentGroupChatRun(
                 id: runID,
                 context: context,
                 modelConfigID: profile.draft.modelConfigID,
                 policy: policy,
+                progressiveSkillSnapshot: progressiveSkillSnapshot,
                 checkpoint: initial,
                 createdAtUnixMs: createdAt,
                 updatedAtUnixMs: createdAt
@@ -271,6 +284,7 @@ extension LocalAgentGroupChatScheduler {
         let chatProvider = try await relayMCP.connect(
             context: context,
             professions: try await professionCatalogProvider(ownerUserID),
+            progressiveSkillSnapshot: run.progressiveSkillSnapshot,
             todoPluginOptions: context.lane == .manager
                 ? try await todoPluginCatalogProvider(ownerUserID)
                 : []

@@ -43,6 +43,11 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     public static let teamAssetCreateToolName = "team_asset_create"
     public static let teamAssetUpdateToolName = "team_asset_update"
     public static let teamAssetArchiveToolName = "team_asset_archive"
+    public static let projectDashboardGetToolName = "project_dashboard_get"
+    public static let projectDashboardUpdateToolName = "project_dashboard_update"
+    public static let agentSkillActivateToolName = "agent_skill_activate"
+    public static let agentSkillListResourcesToolName = "agent_skill_list_resources"
+    public static let agentSkillReadResourceToolName = "agent_skill_read_resource"
     let store: any AgentGroupChatStore
     let context: LocalAgentChatRunContext
     let professions: [LocalAgentProfessionDefinition]
@@ -52,11 +57,13 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     let todoPluginOptions: [LocalAgentTodoPluginOption]
     let todoCancellationHandler: @Sendable (String) async -> Void
     let roomChangeHandler: @Sendable (String) async -> Void
+    let progressiveSkills: LocalAgentProgressiveSkillSession
 
     public init(
         store: any AgentGroupChatStore,
         context: LocalAgentChatRunContext,
         professions: [LocalAgentProfessionDefinition] = LocalAgentSkillCatalog.professions,
+        progressiveSkillSnapshot: LocalAgentProgressiveSkillSnapshot? = nil,
         todoPluginOptions: [LocalAgentTodoPluginOption] = [],
         limits: AgentGroupChatRoutingLimits = .init(),
         todoCancellationHandler: @escaping @Sendable (String) async -> Void = { _ in },
@@ -70,6 +77,9 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         self.store = store
         self.context = context
         self.professions = professions
+        self.progressiveSkills = LocalAgentProgressiveSkillSession(
+            snapshot: progressiveSkillSnapshot
+        )
         self.limits = limits
         self.now = now
         self.references = LocalAgentRunReferenceVault(
@@ -84,6 +94,14 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
 
     public func definitions() async throws -> [AgentToolDefinition] {
         var definitions = Self.toolDefinitions
+        if !(await progressiveSkills.hasSkills) {
+            let skillTools = Set([
+                Self.agentSkillActivateToolName,
+                Self.agentSkillListResourcesToolName,
+                Self.agentSkillReadResourceToolName,
+            ])
+            definitions.removeAll { skillTools.contains($0.name) }
+        }
         guard let delivery = try await store.delivery(
             ownerUserID: context.ownerUserID,
             deliveryID: context.deliveryID
@@ -96,6 +114,9 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 Self.todoBlockToolName,
                 Self.teamAssetListToolName,
                 Self.teamAssetGetToolName,
+                Self.agentSkillActivateToolName,
+                Self.agentSkillListResourcesToolName,
+                Self.agentSkillReadResourceToolName,
             ]
             return definitions.filter { executorTools.contains($0.name) }
         }
@@ -135,6 +156,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 Self.teamAssetCreateToolName,
                 Self.teamAssetUpdateToolName,
                 Self.teamAssetArchiveToolName,
+                Self.projectDashboardUpdateToolName,
             ]
             definitions.removeAll { projectManagerOnly.contains($0.name) }
         }
@@ -219,6 +241,16 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             return try await updateTeamAsset(call)
         case Self.teamAssetArchiveToolName:
             return try await archiveTeamAsset(call)
+        case Self.projectDashboardGetToolName:
+            return try await getProjectDashboard(call)
+        case Self.projectDashboardUpdateToolName:
+            return try await updateProjectDashboard(call)
+        case Self.agentSkillActivateToolName:
+            return try await activateAgentSkill(call)
+        case Self.agentSkillListResourcesToolName:
+            return try await listAgentSkillResources(call)
+        case Self.agentSkillReadResourceToolName:
+            return try await readAgentSkillResource(call)
         default:
             return .failure("群聊工具不可用：\(call.name)")
         }

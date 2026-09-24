@@ -1,0 +1,66 @@
+<view class="page">
+  <view class="page-header">
+    <view class="large-title">Agent 团队</view>
+    <view class="page-caption" wx:if="{{device}}">{{device.display_name}} · 本机 Agent 工作区</view>
+    <view class="page-caption" wx:else>选择一台电脑查看 Agent 团队</view>
+  </view>
+
+  <view class="segment">
+    <view class="segment-item {{section === 'conversations' ? 'segment-active' : ''}}" data-section="conversations" bindtap="switchSection">会话</view>
+    <view class="segment-item {{section === 'agents' ? 'segment-active' : ''}}" data-section="agents" bindtap="switchSection">Agent</view>
+  </view>
+
+  <view class="error-text error-card" wx:if="{{error}}" bindtap="loadWorkspace">{{error}}，轻触重试</view>
+  <view class="card skeleton" wx:if="{{loading}}"></view>
+  <empty-state wx:elif="{{!device}}" title="没有已连接设备" description="请先让桌面端保持在线" />
+
+  <block wx:elif="{{section === 'conversations'}}">
+    <empty-state wx:if="{{teams.length === 0 && directs.length === 0}}" title="还没有 Agent 会话" description="在桌面端创建团队，或从 Agent 列表发起私聊" />
+    <block wx:else>
+      <view class="section-title" wx:if="{{teams.length}}">团队会话</view>
+      <view class="list-group" wx:if="{{teams.length}}">
+        <view class="conversation-row" wx:for="{{teams}}" wx:key="id" data-id="{{item.id}}" bindtap="openConversation" hover-class="conversation-row-pressed">
+          <view class="conversation-icon team-icon">{{item.initial}}</view>
+          <view class="conversation-main">
+            <view class="conversation-title">{{item.title}}</view>
+            <view class="conversation-preview">{{item.preview}}</view>
+            <view class="conversation-meta">{{item.kindLabel}} · {{item.updatedLabel}}</view>
+          </view>
+          <view class="chevron">›</view>
+        </view>
+      </view>
+
+      <view class="section-title" wx:if="{{directs.length}}">私聊与协作</view>
+      <view class="list-group" wx:if="{{directs.length}}">
+        <view class="conversation-row" wx:for="{{directs}}" wx:key="id" data-id="{{item.id}}" bindtap="openConversation" hover-class="conversation-row-pressed">
+          <view class="conversation-icon direct-icon">{{item.initial}}</view>
+          <view class="conversation-main">
+            <view class="conversation-title">{{item.title}}</view>
+            <view class="conversation-preview">{{item.preview}}</view>
+            <view class="conversation-meta">{{item.kindLabel}} · {{item.updatedLabel}}</view>
+          </view>
+          <view class="chevron">›</view>
+        </view>
+      </view>
+    </block>
+  </block>
+
+  <block wx:else>
+    <empty-state wx:if="{{agents.length === 0}}" title="还没有 Agent" description="请先在桌面端创建 Agent" />
+    <view class="list-group" wx:else>
+      <view class="agent-row" wx:for="{{agents}}" wx:key="id" data-id="{{item.id}}" bindtap="openAgent" hover-class="conversation-row-pressed">
+        <view class="agent-avatar">{{item.initial}}</view>
+        <view class="conversation-main">
+          <view class="agent-heading">
+            <view class="conversation-title">{{item.name}}</view>
+            <view class="profession-pill">{{item.professionLabel}}</view>
+          </view>
+          <view class="agent-description">{{item.description || '暂无职责说明'}}</view>
+          <view class="conversation-meta">{{item.activityLabel}}</view>
+        </view>
+        <view class="opening" wx:if="{{openingId === item.id}}">•••</view>
+        <view class="chevron" wx:else>›</view>
+      </view>
+    </view>
+  </block>
+</view>

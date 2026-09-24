@@ -1,5 +1,6 @@
 import type { DeviceSummary } from '../../models/api'
 import { deviceService } from '../../services/device-service'
+import { companionListCache } from '../../services/companion-list-cache'
 import { sessionStore } from '../../stores/session-store'
 import { deviceSelectionStore } from '../../stores/device-selection-store'
 import { relativeTime } from '../../utils/presentation'
@@ -19,8 +20,12 @@ Page({
   requestInFlight: false,
   pageVisible: false,
 
-  async onShow() {
+  onShow() {
     this.pageVisible = true
+    void this.activate()
+  },
+
+  async activate() {
     await getApp<IAppOption>().authReady
     if (!this.pageVisible) return
     if (!sessionStore.hasToken()) {
@@ -75,6 +80,8 @@ Page({
         loading: false,
         onlineCount: devices.filter((device) => device.is_online).length,
       })
+      const active = devices.find((device) => device.id === deviceSelectionStore.get())
+      if (active?.is_online) companionListCache.warm(active.id)
     } catch (error) {
       this.setData({
         loading: false,

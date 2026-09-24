@@ -4,6 +4,9 @@ actor NativeMCPTerminalStore {
     private static let maximumLogs = 4_000
     private static let maximumOutputCharacters = 512 * 1_024
     private static let maximumWaitMilliseconds = 2 * 60 * 60 * 1_000
+    private static let defaultForegroundTimeoutMilliseconds = 5 * 60 * 1_000
+    private static let maximumForegroundTimeoutMilliseconds = 15 * 60 * 1_000
+    private static let minimumForegroundTimeoutMilliseconds = 1_000
 
     private var processes: [String: ManagedTerminalProcess] = [:]
 
@@ -18,12 +21,20 @@ actor NativeMCPTerminalStore {
         [
             definition(
                 name: "execute_command",
-                description: "在当前项目中执行命令。长时间运行的命令应使用 background=true。",
+                description: "在当前项目中执行命令。前台默认最多等待 300 秒；长时间运行的命令应使用 background=true，再通过 process_poll 或 process_wait 跟踪。",
                 properties: [
                     "path": .object(["type": .string("string")]),
                     "common": .object(["type": .string("string")]),
                     "command": .object(["type": .string("string")]),
                     "background": .object(["type": .string("boolean"), "default": .bool(false)]),
+                    "timeout_ms": integerSchema(
+                        minimum: Self.minimumForegroundTimeoutMilliseconds,
+                        maximum: Self.maximumForegroundTimeoutMilliseconds
+                    ),
+                    "timeout": integerSchema(
+                        minimum: Self.minimumForegroundTimeoutMilliseconds / 1_000,
+                        maximum: Self.maximumForegroundTimeoutMilliseconds / 1_000
+                    ),
                 ],
                 required: []
             ),
@@ -109,6 +120,7 @@ actor NativeMCPTerminalStore {
         cwd: URL,
         projectRoot: URL,
         background: Bool,
+        timeoutMilliseconds: Int? = nil,
         ownerRunID: String? = nil
     ) async throws -> NativeJSONValue {
         let id = UUID().uuidString
@@ -182,16 +194,35 @@ actor NativeMCPTerminalStore {
             ])
         }
 
+        let foregroundTimeoutMilliseconds = clamp(
+            timeoutMilliseconds ?? Self.defaultForegroundTimeoutMilliseconds,
+            Self.minimumForegroundTimeoutMilliseconds,
+            Self.maximumForegroundTimeoutMilliseconds
+        )
+        let timedOut: Bool
         do {
-            _ = try await waitForExit(id: id, timeoutMilliseconds: Self.maximumWaitMilliseconds)
+            timedOut = try await waitForExit(
+                id: id,
+                timeoutMilliseconds: foregroundTimeoutMilliseconds
+            )
         } catch is CancellationError {
             cancelProcess(id: id, reason: "terminal cancelled with executor run")
             throw CancellationError()
+        }
+        if timedOut {
+            cancelProcess(
+                id: id,
+                reason: "foreground terminal timed out after \(foregroundTimeoutMilliseconds) ms"
+            )
+            _ = try? await waitForExit(id: id, timeoutMilliseconds: 1_000)
         }
         guard let completed = processes[id] else { throw NativeMCPTerminalError.processNotFound }
         let stdout = combinedOutput(completed, kinds: ["stdout"])
         let stderr = combinedOutput(completed, kinds: ["stderr"])
         let combined = combinedOutput(completed, kinds: ["stdout", "stderr"])
+        let timeoutDescription = timedOut
+            ? "前台命令在 \(foregroundTimeoutMilliseconds / 1_000) 秒内未结束，已终止。预计运行更久的命令请使用 background=true，并通过 process_poll 或 process_wait 跟踪。"
+            : nil
         return .object([
             "project_root": .string("."),
             "terminal_id": .string(id),
@@ -201,13 +232,16 @@ actor NativeMCPTerminalStore {
             "common": .string(command),
             "background": .bool(false),
             "busy": .bool(completed.status != "exited"),
-            "success": .bool(completed.exitCode == 0),
+            "success": .bool(!timedOut && completed.exitCode == 0),
+            "timed_out": .bool(timedOut),
+            "timeout_ms": .number(Double(foregroundTimeoutMilliseconds)),
             "stdout": .string(stdout.text),
             "stderr": .string(stderr.text),
             "output": .string(combined.text),
             "output_chars": .number(Double(combined.characters)),
             "truncated": .bool(combined.truncated),
-            "finished_by": .string(completed.status == "exited" ? "exit" : "timeout"),
+            "finished_by": .string(timedOut ? "timeout" : "exit"),
+            "error": timeoutDescription.map(NativeJSONValue.string) ?? .null,
             "exit_code": completed.exitCode.map { .number(Double($0)) } ?? .null,
         ])
     }

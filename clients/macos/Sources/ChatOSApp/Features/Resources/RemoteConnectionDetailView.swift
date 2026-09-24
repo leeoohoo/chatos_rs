@@ -12,7 +12,7 @@ struct RemoteConnectionDetailView: View {
     @State private var errorMessage: String?
     @State private var verificationPrompt: String?
     @State private var verificationCode = ""
-    @State private var selectedTab: RemoteConnectionWorkspaceTab = .terminal
+    @State private var selectedTab: RemoteConnectionWorkspaceTab = .initial
 
     var body: some View {
         Group {
@@ -128,31 +128,55 @@ struct RemoteConnectionDetailView: View {
     }
 
     private func connectionDetails(_ connection: RemoteConnection) -> some View {
-        Grid(alignment: .leading, horizontalSpacing: 26, verticalSpacing: 12) {
-            detailRow(
-                model.localized("认证方式", english: "Authentication"),
-                authenticationLabel(connection.authenticationType)
-            )
-            detailRow(
-                model.localized("主机密钥", english: "Host Key"),
-                connection.hostKeyPolicy == .strict
-                    ? model.localized("严格校验", english: "Strict Verification")
-                    : model.localized("首次接受新密钥", english: "Accept New Key on First Connection")
-            )
-            detailRow(
-                model.localized("默认目录", english: "Default Folder"),
-                connection.defaultRemotePath ?? model.localized("登录目录", english: "Login Folder")
-            )
-            detailRow(
-                model.localized("执行位置", english: "Execution Location"),
-                model.localized("这台 Mac · ChatOS 客户端", english: "This Mac · ChatOS Client")
-            )
-            detailRow(
-                model.localized("跳板机", english: "Jump Host"),
-                connection.jumpEnabled
-                    ? jumpLabel(connection)
-                    : model.localized("未启用", english: "Disabled")
-            )
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 10) {
+                Button {
+                    selectedTab = .terminal
+                } label: {
+                    Label(
+                        model.localized("连接终端", english: "Connect Terminal"),
+                        systemImage: "terminal"
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button {
+                    selectedTab = .files
+                } label: {
+                    Label(
+                        model.localized("打开 SFTP", english: "Open SFTP"),
+                        systemImage: "externaldrive.connected.to.line.below"
+                    )
+                }
+                .buttonStyle(.bordered)
+            }
+
+            Grid(alignment: .leading, horizontalSpacing: 26, verticalSpacing: 12) {
+                detailRow(
+                    model.localized("认证方式", english: "Authentication"),
+                    authenticationLabel(connection.authenticationType)
+                )
+                detailRow(
+                    model.localized("主机密钥", english: "Host Key"),
+                    connection.hostKeyPolicy == .strict
+                        ? model.localized("严格校验", english: "Strict Verification")
+                        : model.localized("首次接受新密钥", english: "Accept New Key on First Connection")
+                )
+                detailRow(
+                    model.localized("默认目录", english: "Default Folder"),
+                    connection.defaultRemotePath ?? model.localized("登录目录", english: "Login Folder")
+                )
+                detailRow(
+                    model.localized("执行位置", english: "Execution Location"),
+                    model.localized("这台 Mac · ChatOS 客户端", english: "This Mac · ChatOS Client")
+                )
+                detailRow(
+                    model.localized("跳板机", english: "Jump Host"),
+                    connection.jumpEnabled
+                        ? jumpLabel(connection)
+                        : model.localized("未启用", english: "Disabled")
+                )
+            }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -257,12 +281,14 @@ struct RemoteConnectionDetailView: View {
     }
 }
 
-private enum RemoteConnectionWorkspaceTab: String, CaseIterable, Identifiable {
+enum RemoteConnectionWorkspaceTab: String, CaseIterable, Identifiable {
     case terminal = "远程终端"
     case files = "SFTP 文件"
     case details = "连接信息"
 
     var id: Self { self }
+
+    static let initial: Self = .details
 
     func title(language: ChatOSLanguage) -> String {
         guard language == .english else { return rawValue }

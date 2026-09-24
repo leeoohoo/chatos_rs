@@ -5,6 +5,32 @@ import Testing
 
 @Suite("Native Remote File Service")
 struct NativeRemoteFileServiceTests {
+    @Test("uses the saved connection test to discover MFA and prepares a shared connection with the code")
+    func authenticatesInteractiveConnections() async throws {
+        let runtime = RemoteFileRuntimeStub()
+        let ssh = RemoteFileSSHSpy()
+        let service = NativeRemoteFileService(runtime: runtime, ssh: ssh)
+
+        try await service.authenticate(connectionID: "server-1", verificationCode: nil)
+        #expect(await runtime.requestCount() == 1)
+        #expect(await runtime.lastVerificationCode() == nil)
+
+        try await service.authenticate(connectionID: "server-1", verificationCode: "614207")
+        #expect(await ssh.lastPreparedVerificationCode() == "614207")
+    }
+
+    @Test("reuses an authenticated terminal connection without starting another MFA probe")
+    func reusesTerminalConnection() async throws {
+        let runtime = RemoteFileRuntimeStub()
+        let ssh = RemoteFileSSHSpy()
+        await ssh.setHasReusableConnection(true)
+        let service = NativeRemoteFileService(runtime: runtime, ssh: ssh)
+
+        try await service.authenticate(connectionID: "server-1", verificationCode: nil)
+
+        #expect(await runtime.requestCount() == 0)
+    }
+
     @Test("resolves the saved default directory and maps remote metadata")
     func listsResolvedDirectory() async throws {
         let runtime = RemoteFileRuntimeStub()
@@ -57,12 +83,20 @@ struct NativeRemoteFileServiceTests {
 }
 
 private actor RemoteFileRuntimeStub: NativeRemoteConnectionRuntimeProviding {
+    private var verificationCode: String?
+    private var testRequestCount = 0
+
     func testSaved(
         id: String,
         verificationCode: String?
     ) async throws -> RemoteConnectionTestResult {
-        .init(success: true, message: nil)
+        self.verificationCode = verificationCode
+        testRequestCount += 1
+        return .init(success: true, message: nil)
     }
+
+    func lastVerificationCode() -> String? { verificationCode }
+    func requestCount() -> Int { testRequestCount }
 
     func resolvedDraft(id: String) async throws -> RemoteConnectionDraft {
         RemoteConnectionDraft(
@@ -99,6 +133,23 @@ private actor RemoteFileSSHSpy: NativeRemoteSSHExecuting {
 
     private var uploadTransfer: Transfer?
     private var downloadTransfer: Transfer?
+    private var preparedVerificationCode: String?
+    private var reusableConnection = false
+
+    func hasReusableConnection(draft: RemoteConnectionDraft) async -> Bool {
+        reusableConnection
+    }
+
+    func setHasReusableConnection(_ value: Bool) {
+        reusableConnection = value
+    }
+
+    func prepareAuthenticatedConnection(
+        draft: RemoteConnectionDraft,
+        verificationCode: String
+    ) async throws {
+        preparedVerificationCode = verificationCode
+    }
 
     func runCommand(
         draft: RemoteConnectionDraft,
@@ -187,4 +238,5 @@ private actor RemoteFileSSHSpy: NativeRemoteSSHExecuting {
 
     func lastUpload() -> Transfer? { uploadTransfer }
     func lastDownload() -> Transfer? { downloadTransfer }
+    func lastPreparedVerificationCode() -> String? { preparedVerificationCode }
 }

@@ -1,0 +1,38 @@
+.markdown { display: block; color: inherit; font-size: inherit; line-height: 1.58; word-break: break-word; }
+.md-paragraph { display: block; margin: 0 0 16rpx; }
+.md-paragraph:last-child { margin-bottom: 0; }
+.md-heading { display: block; margin: 24rpx 0 12rpx; color: inherit; font-weight: 650; line-height: 1.35; }
+.md-heading:first-child { margin-top: 0; }
+.md-h1 { font-size: 1.28em; }
+.md-h2 { font-size: 1.18em; }
+.md-h3, .md-h4 { font-size: 1.08em; }
+.md-strong { font-weight: 650; }
+.md-emphasis { font-style: italic; }
+.md-delete { opacity: .65; text-decoration: line-through; }
+.md-link { color: #0a78e8; text-decoration: underline; text-decoration-color: rgba(10,120,232,.28); }
+.md-inline-code { margin: 0 3rpx; padding: 2rpx 8rpx; border-radius: 8rpx; background: rgba(118,118,128,.12); color: #b4234d; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
+.md-code-block { display: block; overflow-x: auto; margin: 18rpx 0; padding: 18rpx 20rpx; border: 1rpx solid rgba(255,255,255,.08); border-radius: 16rpx; background: #1c1c1e; color: #f2f2f7; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88em; line-height: 1.55; white-space: pre; }
+.md-code-language { display: block; margin-bottom: 10rpx; color: #98989d; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; font-size: 20rpx; text-transform: uppercase; }
+.md-code-content { font-family: inherit; }
+.md-list { display: block; margin: 12rpx 0 18rpx; padding-left: 38rpx; }
+.md-list-item { display: list-item; margin: 5rpx 0; padding-left: 2rpx; }
+.md-unordered { list-style-type: disc; }
+.md-ordered { list-style-type: decimal; }
+.md-task-item { list-style: none; margin-left: -34rpx; }
+.md-check { display: inline-flex; box-sizing: border-box; width: 26rpx; height: 26rpx; margin-right: 10rpx; align-items: center; justify-content: center; border: 2rpx solid #b7b7bd; border-radius: 7rpx; color: #fff; font-size: 18rpx; line-height: 22rpx; vertical-align: -3rpx; }
+.md-check-done { border-color: #0a84ff; background: #0a84ff; }
+.md-quote { display: block; margin: 16rpx 0; padding: 12rpx 18rpx; border-left: 5rpx solid #b8c9dc; border-radius: 0 10rpx 10rpx 0; background: rgba(118,118,128,.08); color: #56565c; }
+.md-rule { display: block; height: 1rpx; margin: 22rpx 0; border: 0; background: rgba(60,60,67,.16); }
+.md-table { width: 100%; margin: 18rpx 0; border-collapse: collapse; table-layout: fixed; font-size: .9em; }
+.md-table-cell { padding: 10rpx 11rpx; border: 1rpx solid rgba(60,60,67,.14); text-align: left; word-break: break-word; }
+.md-table-header-cell { background: rgba(118,118,128,.09); font-weight: 650; }
+.markdown-inverse .md-link { color: #fff; text-decoration-color: rgba(255,255,255,.48); }
+.markdown-inverse .md-inline-code { background: rgba(255,255,255,.18); color: #fff; }
+.markdown-inverse .md-code-block { border-color: rgba(255,255,255,.18); background: rgba(0,0,0,.28); }
+.markdown-inverse .md-quote { border-left-color: rgba(255,255,255,.6); background: rgba(255,255,255,.12); color: #fff; }
+.markdown-inverse .md-rule, .markdown-inverse .md-table-cell { border-color: rgba(255,255,255,.24); }
+.markdown-inverse .md-table-header-cell { background: rgba(255,255,255,.12); }
+.markdown-compact .md-paragraph { margin-bottom: 10rpx; }
+.markdown-compact .md-heading { margin: 16rpx 0 8rpx; }
+.markdown-compact .md-list { margin: 8rpx 0 12rpx; }
+.markdown-compact .md-code-block { margin: 12rpx 0; }

@@ -14,7 +14,11 @@
       <view class="message-row {{item.isUser ? 'user-row' : 'assistant-row'}}" wx:for="{{messages}}" wx:key="id">
         <view class="message-stack {{item.isUser ? 'user-stack' : ''}}">
           <view class="message-bubble {{item.isUser ? 'user-bubble' : 'assistant-bubble'}} {{item.pending ? 'pending-bubble' : ''}}">
-            <markdown-view content="{{item.text}}" variant="{{item.isUser ? 'inverse' : 'default'}}" compact />
+            <rich-text
+              class="markdown markdown-{{item.isUser ? 'inverse' : 'default'}} markdown-compact"
+              nodes="{{item.markdownNodes}}"
+              user-select
+            />
             <view class="pending-label" wx:if="{{item.pending}}">发送中</view>
             <view
               class="task-detail-trigger {{loadingTaskMessageId === item.id ? 'task-detail-loading' : ''}}"
@@ -118,19 +122,19 @@
           </view>
           <view class="task-field" wx:if="{{task.objective}}">
             <view class="task-field-label">目标</view>
-            <markdown-view content="{{task.objective}}" compact />
+            <rich-text class="markdown markdown-default markdown-compact" nodes="{{task.objectiveNodes}}" user-select />
           </view>
           <view class="task-field" wx:if="{{task.description}}">
             <view class="task-field-label">描述</view>
-            <markdown-view content="{{task.description}}" compact />
+            <rich-text class="markdown markdown-default markdown-compact" nodes="{{task.descriptionNodes}}" user-select />
           </view>
           <view class="task-field" wx:if="{{task.reportText}}">
             <view class="task-field-label">模型输出</view>
-            <markdown-view content="{{task.reportText}}" compact />
+            <rich-text class="markdown markdown-default markdown-compact" nodes="{{task.reportNodes}}" user-select />
           </view>
           <view class="task-field" wx:if="{{task.resultText}}">
             <view class="task-field-label">结果摘要</view>
-            <markdown-view content="{{task.resultText}}" compact />
+            <rich-text class="markdown markdown-default markdown-compact" nodes="{{task.resultNodes}}" user-select />
           </view>
           <view class="task-process" wx:if="{{task.timeline.length}}">
             <view class="task-field-label">执行时间线</view>
@@ -145,7 +149,7 @@
                   <view class="process-status">{{step.statusLabel}}</view>
                 </view>
                 <view class="process-time" wx:if="{{step.occurredAt}}">{{step.occurredAt}}</view>
-                <view class="process-detail"><markdown-view content="{{step.detail}}" compact /></view>
+                <view class="process-detail"><rich-text class="markdown markdown-default markdown-compact" nodes="{{step.detailNodes}}" user-select /></view>
               </view>
             </view>
           </view>

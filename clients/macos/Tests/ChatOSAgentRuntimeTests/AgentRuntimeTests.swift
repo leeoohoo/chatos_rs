@@ -7,7 +7,7 @@ final class AgentRuntimeTests: XCTestCase {
         let settings = AgentRuntimePreferences()
         XCTAssertEqual(settings.effective(.story).maximumModelCalls, 600)
         XCTAssertEqual(settings.effective(.approval).maximumModelCalls, 600)
-        XCTAssertEqual(settings.global.maximumRequestRetries, 5)
+        XCTAssertEqual(settings.global.maximumRequestRetries, 2)
         let context = try XCTUnwrap(settings.global.context ?? AgentContextPolicy())
         XCTAssertEqual(context.windowTokens, 250_000)
         XCTAssertEqual(context.outputReserveTokens, 30_000)
@@ -19,7 +19,7 @@ final class AgentRuntimeTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
         var old = AgentRuntimePreferences()
-        old.global.maximumRequestRetries = 2
+        old.global.maximumRequestRetries = 5
         var context = AgentContextPolicy()
         context.windowTokens = 2_000_000
         context.outputReserveTokens = 30_000
@@ -27,13 +27,13 @@ final class AgentRuntimeTests: XCTestCase {
         defaults.set(try JSONEncoder().encode(old), forKey: "chatos.agent-runtime.settings.v1")
 
         let migrated = try AgentSettingsStore(suiteName: name).load()
-        XCTAssertEqual(migrated.global.maximumRequestRetries, 5)
+        XCTAssertEqual(migrated.global.maximumRequestRetries, 2)
         XCTAssertEqual(migrated.global.context?.windowTokens, 2_000_000)
 
         var explicitlyChanged = migrated
-        explicitlyChanged.global.maximumRequestRetries = 2
+        explicitlyChanged.global.maximumRequestRetries = 5
         try AgentSettingsStore(suiteName: name).save(explicitlyChanged)
-        XCTAssertEqual(try AgentSettingsStore(suiteName: name).load().global.maximumRequestRetries, 2)
+        XCTAssertEqual(try AgentSettingsStore(suiteName: name).load().global.maximumRequestRetries, 5)
     }
 
     func testContextEstimateReturnsApproximateTokensRatherThanRawBytes() throws {

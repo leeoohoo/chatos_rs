@@ -16,6 +16,126 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         return try XCTUnwrap(String(data: data, encoding: .utf8))
     }
 
+    func testBoundProgressiveSkillsRequireActivationAndRejectIdentitySwitching() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let service = NativeAgentGroupChatService(databaseURL: url)
+        let store = try await service.store()
+        let agent = try await store.createAgent(
+            ownerUserID: "alice",
+            draft: .init(
+                name: "后端工程师",
+                rolePrompt: "实现服务。",
+                modelConfigID: "model",
+                professionKey: "backend_engineer"
+            )
+        )
+        let room = try await store.createRoom(
+            ownerUserID: "alice",
+            projectID: "progressive-skill-project",
+            draft: .init(name: "Skill 测试团队")
+        )
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id,
+            draft: .init(role: "后端工程师")
+        )
+        let posted = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(
+                senderKind: .human,
+                senderID: "alice",
+                content: "请设计接口",
+                mentionedAgentIDs: [agent.id]
+            ),
+            limits: .init()
+        ).message
+        let claimedDelivery = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: posted.createdAtUnixMs + 1
+        )
+        let delivery = try XCTUnwrap(claimedDelivery)
+        let profession = try XCTUnwrap(
+            LocalAgentSkillCatalog.profession(key: "backend_engineer")
+        )
+        let project = try XCTUnwrap(
+            LocalAgentSkillCatalog.projectType(key: "backend_service")
+        )
+        let snapshot = LocalAgentProgressiveSkillCatalog.boundSnapshot(
+            profession: profession,
+            projectType: project,
+            language: .simplifiedChinese
+        )
+        let provider = try await LocalAgentRelayMCPServer(service: service).connect(
+            context: try .init(
+                ownerUserID: "alice",
+                projectID: room.projectID,
+                roomID: room.id,
+                agentID: agent.id,
+                deliveryID: delivery.id,
+                triggerMessageID: delivery.messageID,
+                rootMessageID: delivery.rootMessageID,
+                runID: "progressive-skill-run",
+                hopCount: 0
+            ),
+            progressiveSkillSnapshot: snapshot
+        )
+        let definitions = Set(try await provider.definitions().map(\.name))
+        XCTAssertTrue(definitions.contains("agent_skill_activate"))
+        XCTAssertTrue(definitions.contains("agent_skill_list_resources"))
+        XCTAssertTrue(definitions.contains("agent_skill_read_resource"))
+
+        let professionRef = snapshot.skills[0].skillRef
+        do {
+            _ = try await provider.execute(.init(
+                id: "list-before-activate",
+                name: "agent_skill_list_resources",
+                arguments: try toolArguments(["skill_ref": professionRef])
+            ))
+            XCTFail("Resources must require activation")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("skill_ref_not_activated"))
+        }
+
+        let activation = try await provider.execute(.init(
+            id: "activate",
+            name: "agent_skill_activate",
+            arguments: try toolArguments(["skill_ref": professionRef])
+        ))
+        XCTAssertTrue(activation.content.contains("工具与插件"))
+        XCTAssertTrue(activation.content.contains("references/workflow.md"))
+
+        let page = try await provider.execute(.init(
+            id: "read-page",
+            name: "agent_skill_read_resource",
+            arguments: try toolArguments([
+                "skill_ref": professionRef,
+                "relative_path": "references/workflow.md",
+                "max_chars": 100,
+            ])
+        ))
+        XCTAssertTrue(page.content.contains(#""truncated":true"#))
+        XCTAssertTrue(page.content.contains(#""next_offset":100"#))
+
+        let unbound = LocalAgentProgressiveSkillCatalog.boundProfessionSkill(
+            try XCTUnwrap(LocalAgentSkillCatalog.profession(key: "security_engineer")),
+            language: .simplifiedChinese
+        )
+        do {
+            _ = try await provider.execute(.init(
+                id: "identity-switch",
+                name: "agent_skill_activate",
+                arguments: try toolArguments(["skill_ref": unbound.skillRef])
+            ))
+            XCTFail("An unbound profession must not be activatable")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("skill_ref"))
+        }
+    }
+
     func testProviderReadsScopedContextAndCompletesDeliveryBySendingMessage() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
@@ -111,6 +231,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 "todo_schedule_state", "todo_start_next", "agent_cycle_complete",
                 "team_asset_list", "team_asset_get", "team_asset_create",
                 "team_asset_update", "team_asset_archive",
+                "project_dashboard_get", "project_dashboard_update",
             ]
         )
         let descriptions = Dictionary(uniqueKeysWithValues: definitions.map {
@@ -250,6 +371,53 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         )
         XCTAssertEqual(updatedAssetJSON["revision"] as? Int, 2)
         XCTAssertEqual(updatedAssetJSON["markdown"] as? String, "# 项目概览\n\n已合并当前进度。")
+
+        let updatedDashboard = try await provider.execute(.init(
+            id: "create-project-dashboard",
+            name: LocalAgentChatToolProvider.projectDashboardUpdateToolName,
+            arguments: try toolArguments([
+                "team_ref": teamReference,
+                "phase": "实现阶段",
+                "health": "on_track",
+                "summary": "核心工作正在按计划推进。",
+                "next_steps": ["完成第一轮联调"],
+                "milestones": [],
+                "issues": [],
+            ])
+        ))
+        XCTAssertFalse(updatedDashboard.isError)
+        XCTAssertFalse(updatedDashboard.content.contains(room.id))
+        XCTAssertEqual(
+            (try JSONSerialization.jsonObject(
+                with: Data(updatedDashboard.content.utf8)
+            ) as? [String: Any])?["revision"] as? Int,
+            1
+        )
+        let dashboard = try await provider.execute(.init(
+            id: "read-project-dashboard",
+            name: LocalAgentChatToolProvider.projectDashboardGetToolName,
+            arguments: try toolArguments(["team_ref": teamReference])
+        ))
+        XCTAssertFalse(dashboard.isError)
+        XCTAssertTrue(dashboard.content.contains("实现阶段"))
+        XCTAssertFalse(dashboard.content.contains(room.id))
+        XCTAssertFalse(dashboard.content.contains(first.id))
+        XCTAssertFalse(dashboard.content.contains(second.id))
+        let staleDashboardUpdate = try await provider.execute(.init(
+            id: "stale-project-dashboard",
+            name: LocalAgentChatToolProvider.projectDashboardUpdateToolName,
+            arguments: try toolArguments([
+                "team_ref": teamReference,
+                "expected_revision": 0,
+                "phase": "错误覆盖",
+                "health": "blocked",
+                "summary": "这个写入应被版本检查拒绝。",
+                "milestones": [],
+                "issues": [],
+            ])
+        ))
+        XCTAssertTrue(staleDashboardUpdate.isError)
+        XCTAssertTrue(staleDashboardUpdate.content.contains("dashboard_revision_changed"))
         let thirdReference = try XCTUnwrap(
             workspaceAgents.first(where: {
                 ($0["is_current_agent"] as? Bool) == false
@@ -1258,6 +1426,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         )
         let workerTools = Set(try await workerProvider.definitions().map(\.name))
         XCTAssertTrue(workerTools.contains(LocalAgentChatToolProvider.todoListToolName))
+        XCTAssertTrue(workerTools.contains(LocalAgentChatToolProvider.projectDashboardGetToolName))
+        XCTAssertFalse(workerTools.contains(LocalAgentChatToolProvider.projectDashboardUpdateToolName))
         XCTAssertFalse(workerTools.contains(LocalAgentChatToolProvider.todoAddToolName))
         XCTAssertFalse(workerTools.contains(LocalAgentChatToolProvider.todoUpdateToolName))
         XCTAssertFalse(workerTools.contains(LocalAgentChatToolProvider.todoReorderToolName))
@@ -1335,7 +1505,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 sourceRoomID: room.id,
                 sourceMessageID: source.id,
                 executionPlan: .init(
-                    builtinCapabilities: [.projectRead]
+                    builtinCapabilities: [.projectWrite]
                 )
             ),
             nowUnixMs: source.createdAtUnixMs + 1
@@ -1394,6 +1564,34 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             "todo_get_context", "todo_progress_append", "todo_complete", "todo_block",
             "team_asset_list", "team_asset_get",
         ]))
+        _ = try await store.appendAgentTodoProgress(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id,
+            kind: .progress,
+            runID: nil,
+            stage: "human_resolution",
+            detail: "Human 处理阻塞：已补充测试账号。",
+            assetUpdateSuggestions: [],
+            nowUnixMs: source.createdAtUnixMs + 4
+        )
+        let executionContext = try await executor.execute(.init(
+            id: "context-with-human-resolution",
+            name: LocalAgentChatToolProvider.todoGetContextToolName,
+            arguments: "{}"
+        ))
+        let executionContextJSON = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(executionContext.content.utf8))
+                as? [String: Any]
+        )
+        let contextProgress = try XCTUnwrap(
+            executionContextJSON["progress"] as? [[String: Any]]
+        )
+        XCTAssertEqual(contextProgress.last?["stage"] as? String, "human_resolution")
+        XCTAssertEqual(
+            contextProgress.last?["detail"] as? String,
+            "Human 处理阻塞：已补充测试账号。"
+        )
         _ = try await executor.execute(.init(
             id: "progress",
             name: LocalAgentChatToolProvider.todoProgressAppendToolName,
@@ -1402,11 +1600,48 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 "detail": "已完成验证。",
             ])
         ))
-        _ = try await executor.execute(.init(
-            id: "complete",
+        let missingCommit = try await executor.execute(.init(
+            id: "complete-without-write-evidence",
             name: LocalAgentChatToolProvider.todoCompleteToolName,
             arguments: try toolArguments(["summary": "任务已经完成并通过验证。"])
         ))
+        XCTAssertTrue(missingCommit.isError)
+        XCTAssertTrue(missingCommit.content.contains("project_write_commit_evidence_missing"))
+        _ = try await store.appendAgentTodoProgress(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id,
+            kind: .progress,
+            runID: "executor-run",
+            stage: "builtin.edit_committed",
+            detail: "已提交事务编辑：Sources/Feature.swift",
+            assetUpdateSuggestions: [],
+            nowUnixMs: source.createdAtUnixMs + 5
+        )
+        let missingReadback = try await executor.execute(.init(
+            id: "complete-without-readback-evidence",
+            name: LocalAgentChatToolProvider.todoCompleteToolName,
+            arguments: try toolArguments(["summary": "任务已经完成并通过验证。"])
+        ))
+        XCTAssertTrue(missingReadback.isError)
+        XCTAssertTrue(missingReadback.content.contains("project_write_readback_evidence_missing"))
+        _ = try await store.appendAgentTodoProgress(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id,
+            kind: .progress,
+            runID: "executor-run",
+            stage: "builtin.file_read",
+            detail: "已读取 Sources/Feature.swift 并核验哈希。",
+            assetUpdateSuggestions: [],
+            nowUnixMs: source.createdAtUnixMs + 6
+        )
+        let completed = try await executor.execute(.init(
+            id: "complete-with-write-evidence",
+            name: LocalAgentChatToolProvider.todoCompleteToolName,
+            arguments: try toolArguments(["summary": "任务已经完成并通过验证。"])
+        ))
+        XCTAssertFalse(completed.isError)
         _ = try await store.failDelivery(
             ownerUserID: "alice",
             deliveryID: concurrentManagerDelivery.id,

@@ -23,6 +23,10 @@ struct AgentGroupChatWorkspaceView: View {
     @StateObject private var viewModel: AgentGroupChatWorkspaceViewModel
     @State private var showsCreateTeam = false
     @State private var destination: AgentGroupChatWorkspaceDestination = .agents
+    @State private var teamPage = 0
+    @State private var teamPageSize = 10
+    @State private var directPage = 0
+    @State private var directPageSize = 10
 
     private let ownerUserID: String
     private let service: NativeAgentGroupChatService
@@ -183,7 +187,7 @@ struct AgentGroupChatWorkspaceView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         } else {
-                            ForEach(viewModel.rooms) { room in
+                            ForEach(viewModel.rooms.agentPage(index: teamPage, size: teamPageSize)) { room in
                                 Label {
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(room.draft.name)
@@ -200,6 +204,13 @@ struct AgentGroupChatWorkspaceView: View {
                                 .padding(.vertical, 4)
                                 .tag(AgentGroupChatWorkspaceDestination.room(room.id))
                             }
+                            AgentListPaginationBar(
+                                totalCount: viewModel.rooms.count,
+                                page: $teamPage,
+                                pageSize: $teamPageSize,
+                                compact: true
+                            )
+                            .listRowSeparator(.hidden)
                         }
                     }
 
@@ -210,7 +221,12 @@ struct AgentGroupChatWorkspaceView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         } else {
-                            ForEach(viewModel.directConversations) { conversation in
+                            ForEach(
+                                viewModel.directConversations.agentPage(
+                                    index: directPage,
+                                    size: directPageSize
+                                )
+                            ) { conversation in
                                 HStack(spacing: 12) {
                                     if conversation.conversationKind == .humanAgentDirect,
                                        let agentID = conversation.defaultAgentID,
@@ -251,6 +267,13 @@ struct AgentGroupChatWorkspaceView: View {
                                 .padding(.vertical, 4)
                                 .tag(AgentGroupChatWorkspaceDestination.direct(conversation.id))
                             }
+                            AgentListPaginationBar(
+                                totalCount: viewModel.directConversations.count,
+                                page: $directPage,
+                                pageSize: $directPageSize,
+                                compact: true
+                            )
+                            .listRowSeparator(.hidden)
                         }
                     }
                 }

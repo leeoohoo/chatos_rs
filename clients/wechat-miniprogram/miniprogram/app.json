@@ -2,6 +2,8 @@
   "pages": [
     "pages/devices/index",
     "pages/conversations/index",
+    "pages/agent-teams/index",
+    "pages/agent-conversation-detail/index",
     "pages/conversation-detail/index",
     "pages/bind/index",
     "pages/settings/index"
@@ -21,10 +23,10 @@
     "list": [
       { "pagePath": "pages/devices/index", "text": "设备" },
       { "pagePath": "pages/conversations/index", "text": "会话" },
+      { "pagePath": "pages/agent-teams/index", "text": "Agent 团队" },
       { "pagePath": "pages/settings/index", "text": "设置" }
     ]
   },
   "style": "v2",
-  "sitemapLocation": "sitemap.json",
-  "lazyCodeLoading": "requiredComponents"
+  "sitemapLocation": "sitemap.json"
 }

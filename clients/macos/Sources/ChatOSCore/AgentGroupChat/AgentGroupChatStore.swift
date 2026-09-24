@@ -248,6 +248,18 @@ public protocol AgentGroupChatStore: Sendable {
         teamRoomID: String,
         includeArchived: Bool
     ) async throws -> [LocalAgentTeamAsset]
+    func projectDashboard(
+        ownerUserID: String,
+        teamRoomID: String
+    ) async throws -> LocalAgentProjectDashboard?
+    func upsertProjectDashboard(
+        ownerUserID: String,
+        teamRoomID: String,
+        editorAgentID: String,
+        expectedRevision: Int?,
+        update: LocalAgentProjectDashboardUpdate,
+        nowUnixMs: Int64
+    ) async throws -> LocalAgentProjectDashboard
     func teamAsset(
         ownerUserID: String,
         teamRoomID: String,

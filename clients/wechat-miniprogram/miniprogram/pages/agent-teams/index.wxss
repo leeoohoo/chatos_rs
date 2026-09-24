@@ -1,0 +1,24 @@
+.segment { display: flex; margin: -8rpx 0 24rpx; padding: 5rpx; border-radius: 17rpx; background: #e5e5ea; }
+.segment-item { display: flex; height: 58rpx; flex: 1; align-items: center; justify-content: center; border-radius: 13rpx; color: #68686e; font-size: 24rpx; font-weight: 600; }
+.segment-active { background: #fff; color: #1c1c1e; box-shadow: 0 2rpx 7rpx rgba(0,0,0,.08); }
+.section-title { margin: 26rpx 9rpx 10rpx; color: #77777d; font-size: 21rpx; font-weight: 650; letter-spacing: .4rpx; }
+.conversation-row { position: relative; display: flex; min-height: 112rpx; padding: 20rpx 17rpx 20rpx 20rpx; align-items: center; }
+.conversation-row + .conversation-row::before, .agent-row + .agent-row::before { position: absolute; top: 0; right: 0; left: 105rpx; height: 1rpx; background: rgba(60,60,67,.12); content: ''; }
+.conversation-row-pressed { background: #ececf1; }
+.conversation-icon, .agent-avatar { display: flex; width: 66rpx; height: 66rpx; margin-right: 19rpx; flex: 0 0 auto; align-items: center; justify-content: center; border-radius: 18rpx; font-size: 27rpx; font-weight: 680; }
+.team-icon { background: #eee9ff; color: #7356d8; }
+.direct-icon { background: #e8f7ee; color: #248a3d; }
+.agent-avatar { border-radius: 50%; background: linear-gradient(145deg,#e9f3ff,#dbeaff); color: #0a78e8; }
+.conversation-main { min-width: 0; flex: 1; }
+.conversation-title { overflow: hidden; font-size: 28rpx; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-preview, .agent-description { overflow: hidden; margin-top: 5rpx; color: #4f4f54; font-size: 22rpx; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-meta { margin-top: 5rpx; color: #8e8e93; font-size: 20rpx; }
+.chevron { margin-left: 12rpx; color: #c4c4c8; font-size: 39rpx; font-weight: 300; }
+.opening { margin-left: 12rpx; color: #8e8e93; font-size: 22rpx; letter-spacing: 2rpx; }
+.agent-row { position: relative; display: flex; min-height: 112rpx; padding: 20rpx 17rpx 20rpx 20rpx; align-items: center; }
+.agent-heading { display: flex; min-width: 0; align-items: center; }
+.agent-heading .conversation-title { min-width: 0; }
+.profession-pill { overflow: hidden; max-width: 190rpx; margin-left: 10rpx; padding: 4rpx 9rpx; border-radius: 999rpx; background: #f0edff; color: #6c50c7; font-size: 17rpx; text-overflow: ellipsis; white-space: nowrap; }
+.error-card { margin-bottom: 18rpx; padding: 20rpx; border-radius: 18rpx; background: #fff; font-size: 23rpx; }
+.skeleton { height: 106rpx; background: linear-gradient(90deg,#fff,#f0f0f3,#fff); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }

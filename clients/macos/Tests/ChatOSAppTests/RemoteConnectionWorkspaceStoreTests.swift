@@ -6,6 +6,11 @@ import Testing
 @Suite("Remote connection workspace store")
 @MainActor
 struct RemoteConnectionWorkspaceStoreTests {
+    @Test("selecting a remote connection starts on details without opening SSH")
+    func remoteConnectionStartsOnDetails() {
+        #expect(RemoteConnectionWorkspaceTab.initial == .details)
+    }
+
     @Test("keeps independent terminal and SFTP state for every connection")
     func cachesWorkspacesByConnectionID() {
         let service = RemoteWorkspaceServiceStub()

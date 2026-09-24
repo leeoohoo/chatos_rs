@@ -152,6 +152,29 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         XCTAssertTrue(config.contains("ControlPath \"/tmp/chatos-control-test\""))
     }
 
+    func testSSHConfigAllowsHumanMFATimeOnTargetWithoutRelaxingJumpTimeout() throws {
+        var draft = Self.passwordDraft
+        draft.jumpEnabled = true
+        draft.jumpHost = "jump.example.com"
+        draft.jumpUsername = "jump-user"
+        draft.jumpPassword = "jump-secret"
+
+        let config = try NativeSSHConnectionTester.sshConfig(
+            for: draft,
+            targetConnectTimeoutSeconds: 300
+        )
+        let targetBlock = try XCTUnwrap(
+            config.components(separatedBy: "Host chatos-target").last
+        )
+        let jumpBlock = try XCTUnwrap(
+            config.components(separatedBy: "Host chatos-target").first
+        )
+
+        XCTAssertTrue(targetBlock.contains("ConnectTimeout 300"))
+        XCTAssertTrue(jumpBlock.contains("ConnectTimeout 10"))
+        XCTAssertFalse(jumpBlock.contains("ConnectTimeout 300"))
+    }
+
     func testMFAAskpassWaitsForCodeFromTheExistingSSHSession() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("chatos-askpass-test-\(UUID().uuidString)", isDirectory: true)
@@ -278,6 +301,13 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         XCTAssertTrue(
             session.launchArguments.last?.contains("cd -- '/srv/app'") == true
         )
+        let configPath = try XCTUnwrap(
+            session.launchArguments.dropFirst().first { $0.hasSuffix("/ssh_config") }
+        )
+        let config = try String(contentsOfFile: configPath, encoding: .utf8)
+        XCTAssertTrue(config.contains("ControlMaster auto"))
+        XCTAssertTrue(config.contains("ControlPersist 120"))
+        XCTAssertTrue(config.contains("ControlPath \"/tmp/chatos-ssh-"))
 
         session.close()
         session.close()

@@ -8,6 +8,13 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUST_TOOLCHAIN_VERSION="${CHATOS_RUST_TOOLCHAIN:-1.94.0}"
 CARGO=(cargo "+${RUST_TOOLCHAIN_VERSION}")
 
+# Xcode 27's SwiftBuild emits a false ownership warning while signing SwiftTerm's
+# executable-free Metal resource bundle. Filter only that exact toolchain diagnostic;
+# compiler and linker warnings remain visible and still fail where configured.
+run_swiftpm() {
+  command swift "$@" 2> >(sed '/warning: missing creator for mutated node:.*SwiftTerm_SwiftTerm\.bundle\/Contents\/MacOS/d' >&2)
+}
+
 FRONTEND_DIRS=(
   "admin_console"
   "official_website_service/frontend"
@@ -115,13 +122,16 @@ run_rust_tests() {
 run_native_platform() {
   case "$(uname -s)" in
     Darwin)
-      swift build --package-path "$ROOT_DIR/clients/macos"
-      swift test --package-path "$ROOT_DIR/clients/macos"
-      swift build --package-path "$ROOT_DIR/plugins/computer-use"
-      swift test --package-path "$ROOT_DIR/plugins/computer-use"
+      run_swiftpm build --package-path "$ROOT_DIR/clients/macos"
+      run_swiftpm test --package-path "$ROOT_DIR/clients/macos"
+      run_swiftpm build --package-path "$ROOT_DIR/plugins/computer-use"
+      run_swiftpm test --package-path "$ROOT_DIR/plugins/computer-use"
       ;;
     MINGW*|MSYS*|CYGWIN*)
-      dotnet build "$ROOT_DIR/clients/windows/ChatOS.Win.sln" --configuration Release
+      if ! dotnet build "$ROOT_DIR/clients/windows/ChatOS.Win.sln" --configuration Release; then
+        pwsh -NoProfile -File "$ROOT_DIR/clients/windows/build/diagnose-xaml-compiler.ps1"
+        return 1
+      fi
       dotnet test "$ROOT_DIR/clients/windows/ChatOS.Win.sln" --configuration Release
       dotnet build "$ROOT_DIR/plugins/computer-use/windows/VisualComputerUse.Windows/VisualComputerUse.Windows.csproj" --configuration Release
       ;;

@@ -110,6 +110,20 @@ public enum ProgressiveSkillFileLoader {
             fileManager: fileManager
         )
         guard let text = String(data: data, encoding: .utf8) else { throw LoaderError.invalidUTF8 }
+        return try textPage(
+            text,
+            offset: offset,
+            maximumCharacters: maximumCharacters
+        )
+    }
+
+    /// Shared character pagination for both bundled filesystem references and immutable
+    /// in-memory run snapshots.
+    public static func textPage(
+        _ text: String,
+        offset: Int,
+        maximumCharacters: Int
+    ) throws -> TextPage {
         let characters = Array(text)
         guard offset >= 0, offset <= characters.count else { throw LoaderError.invalidOffset }
         let limit = min(max(maximumCharacters, 1), 64_000)

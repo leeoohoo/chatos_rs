@@ -107,9 +107,11 @@ public struct AgentToolOutcome: Codable, Equatable, Sendable {
 
 public struct AgentRunPolicy: Codable, Equatable, Sendable {
     public var maximumModelCalls = 600
+    /// Maximum time to wait for the first byte or the next streamed byte. This is an
+    /// inactivity timeout, not a wall-clock limit for the whole streamed response.
     public var requestTimeoutSeconds = 180
     public var runTimeoutSeconds = 7_200
-    public var maximumRequestRetries = 5
+    public var maximumRequestRetries = 2
     public var maximumNoProgressRounds = 8
     public var context: AgentContextPolicy? = nil
     public init() {}
@@ -139,7 +141,7 @@ public struct AgentRuntimePreferences: Codable, Equatable, Sendable {
 public struct AgentSettingsStore: Sendable {
     private let suiteName: String?
     private let key = "chatos.agent-runtime.settings.v1"
-    private let retryDefaultMigrationKey = "chatos.agent-runtime.retry-default.v2"
+    private let retryDefaultMigrationKey = "chatos.agent-runtime.retry-default.v3"
     public init(suiteName: String? = nil) { self.suiteName = suiteName }
     public func load() throws -> AgentRuntimePreferences {
         let defaults = suiteName.flatMap(UserDefaults.init(suiteName:)) ?? .standard
@@ -148,13 +150,13 @@ public struct AgentSettingsStore: Sendable {
             return .init()
         }
         var value = try JSONDecoder().decode(AgentRuntimePreferences.self, from: data)
-        // Version 1 originally persisted the old default (`2`) even when the user only changed
-        // unrelated context settings. Migrate that legacy default once, while preserving every
-        // non-default retry value the user may have selected explicitly.
+        // Version 2 persisted the overly aggressive default (`5`) even when the user only
+        // changed unrelated settings. Migrate that default once. Other values are treated as an
+        // explicit user choice and are preserved.
         var migratedLegacyRetryDefault = false
         if !defaults.bool(forKey: retryDefaultMigrationKey) {
-            if value.global.maximumRequestRetries == 2 {
-                value.global.maximumRequestRetries = 5
+            if value.global.maximumRequestRetries == 5 {
+                value.global.maximumRequestRetries = 2
                 migratedLegacyRetryDefault = true
             }
         }
@@ -237,6 +239,9 @@ public struct AgentRunEvent: Codable, Identifiable, Equatable, Sendable {
 /// Transient transport progress. Only the fully validated message returned by `stream` may be
 /// written to a checkpoint or used to execute tools.
 public enum AgentModelStreamEvent: Equatable, Sendable {
+    /// Raw transport activity. Emitted for every received body chunk, including reasoning or
+    /// provider-specific SSE events that do not map to a semantic delta.
+    case activity(bytes: Int)
     case responseCreated
     case textDelta(String)
     case toolCallDelta(index: Int, id: String?, name: String?, argumentsDelta: String)

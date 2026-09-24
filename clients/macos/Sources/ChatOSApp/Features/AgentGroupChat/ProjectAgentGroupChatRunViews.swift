@@ -11,6 +11,8 @@ struct TeamRunsView: View {
     let selectedAgentID: String?
     let onSelectAgent: (String?) -> Void
     let onInspect: (LocalAgentGroupChatRun) -> Void
+    @State private var page = 0
+    @State private var pageSize = 20
 
     private var visibleRuns: [LocalAgentGroupChatRun] {
         guard let selectedAgentID else { return runs }
@@ -20,6 +22,10 @@ struct TeamRunsView: View {
     private var selectedAgentName: String? {
         guard let selectedAgentID else { return nil }
         return profilesByID[selectedAgentID]?.draft.name ?? "Agent"
+    }
+
+    private var pagedRuns: [LocalAgentGroupChatRun] {
+        visibleRuns.agentPage(index: page, size: pageSize)
     }
 
     var body: some View {
@@ -65,7 +71,7 @@ struct TeamRunsView: View {
                         )
                         .padding(.top, 70)
                     }
-                    ForEach(visibleRuns, id: \.id) { run in
+                    ForEach(pagedRuns, id: \.id) { run in
                         VStack(alignment: .leading, spacing: 7) {
                             HStack {
                                 Text(profilesByID[run.context.agentID]?.draft.name ?? "Agent")
@@ -105,10 +111,18 @@ struct TeamRunsView: View {
                         .contentShape(Rectangle())
                         .onTapGesture { onInspect(run) }
                     }
+                    if !visibleRuns.isEmpty {
+                        AgentListPaginationBar(
+                            totalCount: visibleRuns.count,
+                            page: $page,
+                            pageSize: $pageSize
+                        )
+                    }
                 }
                 .padding(18)
             }
         }
+        .onChange(of: selectedAgentID) { _, _ in page = 0 }
     }
 
     private func laneSummary(_ lane: LocalAgentRunLane) -> some View {
@@ -183,6 +197,12 @@ struct TeamRunInspectorSheet: View {
     let run: LocalAgentGroupChatRun
     let delivery: ProjectAgentDelivery?
     let agentName: String
+    let isActionPending: Bool
+    let onRetryInterrupted: (() async -> Void)?
+    @State private var toolPage = 0
+    @State private var toolPageSize = 10
+    @State private var eventPage = 0
+    @State private var eventPageSize = 20
 
     private struct ToolInspection: Identifiable {
         let id: String
@@ -229,6 +249,16 @@ struct TeamRunInspectorSheet: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                if isActionPending {
+                    ProgressView().controlSize(.small)
+                } else if let onRetryInterrupted {
+                    Button("重试中断步骤") {
+                        Task { await onRetryInterrupted() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .help("仅在确认工具调用可以安全重试后执行")
+                }
                 Button("完成") { dismiss() }.keyboardShortcut(.cancelAction)
             }
             .padding(16)
@@ -242,9 +272,14 @@ struct TeamRunInspectorSheet: View {
                                 .appFont(.caption)
                                 .foregroundStyle(.secondary)
                         } else {
-                            ForEach(toolInspections) { tool in
+                            ForEach(toolInspections.agentPage(index: toolPage, size: toolPageSize)) { tool in
                                 toolInspection(tool)
                             }
+                            AgentListPaginationBar(
+                                totalCount: toolInspections.count,
+                                page: $toolPage,
+                                pageSize: $toolPageSize
+                            )
                         }
                     }
                     inspectorSection("运行事件") {
@@ -253,7 +288,12 @@ struct TeamRunInspectorSheet: View {
                                 .appFont(.caption)
                                 .foregroundStyle(.secondary)
                         } else {
-                            ForEach(run.events.reversed()) { event in
+                            ForEach(
+                                Array(run.events.reversed()).agentPage(
+                                    index: eventPage,
+                                    size: eventPageSize
+                                )
+                            ) { event in
                                 HStack(alignment: .top, spacing: 10) {
                                     Circle()
                                         .fill(eventColor(event.kind))
@@ -275,6 +315,11 @@ struct TeamRunInspectorSheet: View {
                                 }
                                 if event.id != run.events.first?.id { Divider() }
                             }
+                            AgentListPaginationBar(
+                                totalCount: run.events.count,
+                                page: $eventPage,
+                                pageSize: $eventPageSize
+                            )
                         }
                     }
                 }
@@ -303,6 +348,15 @@ struct TeamRunInspectorSheet: View {
                     Text(reason).textSelection(.enabled)
                 }
                 .appFont(.caption)
+            }
+            if run.checkpoint.status == .needsReview {
+                Divider()
+                Label(
+                    "有一个写入或计费工具的结果没有被可靠记录。请先检查下方工具名称、参数和已有结果；确认可安全重试后，再点击“重试中断步骤”。",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .appFont(.caption)
+                .foregroundStyle(.orange)
             }
             if let result = run.checkpoint.result, !result.isEmpty {
                 Divider()

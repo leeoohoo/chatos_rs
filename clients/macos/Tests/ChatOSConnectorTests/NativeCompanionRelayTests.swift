@@ -3,10 +3,38 @@ import ChatOSCore
 import XCTest
 
 final class NativeCompanionRelayTests: XCTestCase {
+    func testCompanionAgentSummaryUsesSanitizedSnakeCaseContract() throws {
+        let summary = LocalConnectorCompanionAgentSummary(
+            id: "agent-1",
+            name: "开发 Agent",
+            description: "负责实现功能",
+            professionKey: "software_engineer",
+            status: "active",
+            heartbeatEnabled: true,
+            lastHeartbeatAtUnixMs: 123,
+            updatedAtUnixMs: 456
+        )
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(summary)) as? [String: Any]
+        )
+
+        XCTAssertEqual(object["profession_key"] as? String, "software_engineer")
+        XCTAssertEqual(object["heartbeat_enabled"] as? Bool, true)
+        XCTAssertEqual(object["updated_at_unix_ms"] as? Int, 456)
+        XCTAssertNil(object["role_prompt"])
+        XCTAssertNil(object["model_config_id"])
+        XCTAssertNil(object["default_plugin_ids"])
+    }
+
     func testGatewayRoutesEveryCompanionRelayRequestType() {
         for messageType in [
             "companion_resources_request",
             "companion_resolve_resource_request",
+            "companion_agent_workspace_request",
+            "companion_agent_conversation_request",
+            "companion_agent_messages_request",
+            "companion_agent_send_message_request",
+            "companion_agent_open_direct_request",
             "companion_approvals_request",
             "companion_resolve_approval_request",
         ] {

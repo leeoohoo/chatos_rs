@@ -160,6 +160,13 @@ private actor RemoteSSHStub: NativeRemoteSSHExecuting {
     private var command: String?
     private var uploadPath: String?
 
+    func hasReusableConnection(draft: RemoteConnectionDraft) async -> Bool { false }
+
+    func prepareAuthenticatedConnection(
+        draft: RemoteConnectionDraft,
+        verificationCode: String
+    ) async throws {}
+
     func runCommand(
         draft: RemoteConnectionDraft,
         command: String,

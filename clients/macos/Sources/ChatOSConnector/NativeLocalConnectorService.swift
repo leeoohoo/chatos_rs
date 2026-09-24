@@ -49,6 +49,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let approvalMemoryProviderFactory: NativeApprovalMemoryProviderFactory?
     weak var companionRuntime: (any LocalConnectorCompanionRuntimeProviding)?
     var agentGroupChatService: NativeAgentGroupChatService?
+    var agentGroupChatScheduler: LocalAgentGroupChatScheduler?
     let secretStore: NativeConnectorSecretStore
     var state: NativeConnectorPersistentState
     var cachedAccessToken: String?
@@ -139,6 +140,10 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
 
     public func setAgentGroupChatService(_ service: NativeAgentGroupChatService) {
         agentGroupChatService = service
+    }
+
+    public func setAgentGroupChatScheduler(_ scheduler: LocalAgentGroupChatScheduler) {
+        agentGroupChatScheduler = scheduler
     }
 
     public func pairWithCurrentChatOSSession(deviceName: String?) async throws -> LocalConnectorStatus {

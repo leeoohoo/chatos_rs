@@ -1,0 +1,52 @@
+<view class="agent-detail-page">
+  <view class="detail-error" wx:if="{{error}}" bindtap="loadInitial">{{error}}，轻触重试</view>
+
+  <view class="conversation-header" wx:if="{{detail}}">
+    <view class="header-copy">
+      <view class="header-title">{{detail.conversation.title}}</view>
+      <view class="header-subtitle">{{detail.conversation.kind === 'project_team' ? detail.conversation.member_count + ' 位 Agent 正在协作' : detail.conversation.kind === 'human_agent_direct' ? 'Agent 私聊' : 'Agent 协作私聊'}}</view>
+    </view>
+    <scroll-view class="member-strip" scroll-x enhanced show-scrollbar="{{false}}" wx:if="{{members.length}}">
+      <view class="member-strip-inner">
+        <view class="member-chip {{item.selected ? 'member-selected' : ''}}" wx:for="{{members}}" wx:key="id" data-id="{{item.agent.id}}" bindtap="toggleMention">
+          <view class="member-avatar">{{item.initial}}</view>
+          <view class="member-name">{{item.agent.name}}</view>
+        </view>
+      </view>
+    </scroll-view>
+    <view class="mention-hint" wx:if="{{detail.conversation.kind === 'project_team'}}">点选成员后发送即可 @ Agent；不选择时交给默认 Agent</view>
+  </view>
+
+  <scroll-view class="agent-timeline" scroll-y scroll-anchoring enhanced show-scrollbar="{{false}}" scroll-into-view="{{scrollTarget}}">
+    <view class="agent-timeline-content">
+      <button class="older-button" wx:if="{{hasMore}}" loading="{{loadingOlder}}" bindtap="loadOlder">加载更早消息</button>
+      <view class="loading-state" wx:if="{{loading}}">正在加载 Agent 会话…</view>
+      <view class="empty-timeline" wx:elif="{{messages.length === 0}}">还没有消息，开始和 Agent 团队协作吧</view>
+
+      <view id="agent-message-{{item.id}}" class="agent-message-row {{item.isHuman ? 'human-row' : ''}}" wx:for="{{messages}}" wx:key="id">
+        <view class="agent-message-stack {{item.isHuman ? 'human-stack' : ''}}">
+          <view class="sender-label">{{item.senderName}} · {{item.timeLabel}}</view>
+          <view class="agent-message-bubble {{item.isHuman ? 'human-bubble' : 'agent-bubble'}}">
+            <rich-text
+              class="markdown markdown-{{item.isHuman ? 'inverse' : 'default'}} markdown-compact"
+              nodes="{{item.markdownNodes}}"
+              user-select
+            />
+            <view class="attachment-list" wx:if="{{item.attachmentLabel}}">附件：{{item.attachmentLabel}}</view>
+          </view>
+        </view>
+      </view>
+      <view id="agent-timeline-bottom" class="timeline-bottom"></view>
+    </view>
+  </scroll-view>
+
+  <view class="read-only-banner" wx:if="{{detail && !detail.conversation.can_send}}">Agent 协作私聊仅供查看</view>
+  <view class="agent-composer-shell" wx:if="{{detail && detail.conversation.can_send}}">
+    <view class="action-error" wx:if="{{actionError}}">{{actionError}}</view>
+    <view class="selected-mentions" wx:if="{{selectedMentionCount}}">已选择 {{selectedMentionCount}} 位 Agent</view>
+    <view class="agent-composer">
+      <textarea class="agent-composer-input" auto-height fixed="{{true}}" maxlength="20000" cursor-spacing="16" value="{{input}}" placeholder="发送消息给 Agent…" bindinput="onInput" bindconfirm="submitMessage" confirm-type="send" />
+      <button class="agent-send-button" loading="{{submitting}}" disabled="{{!canSend || submitting}}" bindtap="submitMessage">↑</button>
+    </view>
+  </view>
+</view>

@@ -48,6 +48,7 @@ public struct RemoteDirectoryListing: Sendable, Equatable {
 }
 
 public protocol RemoteFileServicing: Sendable {
+    func authenticate(connectionID: String, verificationCode: String?) async throws
     func initialDirectory(connectionID: String) async throws -> String
     func listDirectory(connectionID: String, path: String) async throws -> RemoteDirectoryListing
     func uploadFile(
@@ -65,4 +66,8 @@ public protocol RemoteFileServicing: Sendable {
     func createDirectory(connectionID: String, parentPath: String, name: String) async throws
     func renameEntry(connectionID: String, path: String, newName: String) async throws
     func deleteEntry(connectionID: String, path: String, recursively: Bool) async throws
+}
+
+public extension RemoteFileServicing {
+    func authenticate(connectionID: String, verificationCode: String?) async throws {}
 }

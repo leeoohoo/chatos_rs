@@ -1,3 +1,5 @@
+@import "../../components/markdown-view/content.wxss";
+
 .detail-page { display: flex; height: 100vh; flex-direction: column; overflow: hidden; background: #f2f2f7; }
 .state-banner { display: flex; z-index: 2; min-height: 58rpx; padding: 8rpx 20rpx; align-items: center; font-size: 21rpx; }
 .error-banner { justify-content: center; background: #fff0ef; color: #d70015; }

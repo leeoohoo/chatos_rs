@@ -1,0 +1,4 @@
+{
+  "navigationBarTitleText": "Agent 会话",
+  "usingComponents": { "markdown-view": "/components/markdown-view/index" }
+}

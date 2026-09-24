@@ -3,6 +3,29 @@ import ChatOSCore
 import Testing
 @testable import ChatOSApp
 
+@Suite("Pet animation activity policy")
+struct PetAnimationActivityPolicyTests {
+    @Test("keeps a visible pet animated while another app is active")
+    func animatesVisiblePetWithoutApplicationActivation() {
+        #expect(PetAnimationActivityPolicy.isActive(
+            isPetVisible: true,
+            isScreenAwake: true
+        ))
+    }
+
+    @Test("pauses animation when the pet is hidden or the screen sleeps")
+    func pausesWhenNotVisible() {
+        #expect(!PetAnimationActivityPolicy.isActive(
+            isPetVisible: false,
+            isScreenAwake: true
+        ))
+        #expect(!PetAnimationActivityPolicy.isActive(
+            isPetVisible: true,
+            isScreenAwake: false
+        ))
+    }
+}
+
 @Suite("Pet task inspector placement")
 struct PetTaskInspectorPlacementTests {
     @Test("places the inspector to the left and shifts the conversation when needed")
