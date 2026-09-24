@@ -47,6 +47,20 @@ extension NativeLocalConnectorService {
         pluginIDs: [String],
         projectContext: LocalConnectorPluginApplicationContext
     ) async throws -> [any AgentToolProvider] {
+        try await makeAgentPluginSkillToolProviders(
+            ownerUserID: ownerUserID,
+            runContext: runContext,
+            pluginIDs: pluginIDs,
+            projectContext: projectContext
+        ).map { $0 as any AgentToolProvider }
+    }
+
+    func makeAgentPluginSkillToolProviders(
+        ownerUserID: String,
+        runContext: LocalAgentChatRunContext,
+        pluginIDs: [String],
+        projectContext: LocalConnectorPluginApplicationContext
+    ) async throws -> [NativeAgentPluginToolProvider] {
         guard state.user?.id == ownerUserID,
               runContext.ownerUserID == ownerUserID,
               projectContext.projectID == runContext.projectID,
@@ -60,13 +74,22 @@ extension NativeLocalConnectorService {
             throw NativePluginRuntimeError.invalidRequest("本地 Agent 选择的 Plugin 数量无效")
         }
 
-        var providers: [any AgentToolProvider] = []
+        var providers: [NativeAgentPluginToolProvider] = []
         for pluginID in selectedPluginIDs {
             guard state.pluginPreferences[pluginID] ?? true,
                   let record = state.installedPluginRecords?[pluginID] else {
                 throw NativePluginRuntimeError.invalidRequest("Agent 配置的 Plugin 未安装或已停用：\(pluginID)")
             }
             let manifest = try Self.agentPluginManifest(record: record)
+            let installationURL = URL(
+                fileURLWithPath: record.installationPath,
+                isDirectory: true
+            )
+            let skillSnapshot = try PluginSkillSnapshot.load(
+                installationRoot: installationURL,
+                relativeSkillDirectories: manifest.skills.map(\.path)
+            )
+            let skillSession = PluginToolSkillSession(snapshot: skillSnapshot)
             let permissionSnapshot = Set(manifest.permissions.map(\.permission))
             for componentKey in manifest.mcpServers.keys.sorted() {
                 let adapterSessionID = "agent-" + UUID().uuidString.lowercased()
@@ -134,7 +157,9 @@ extension NativeLocalConnectorService {
                             ownerUserID: ownerUserID,
                             projectRootURL: resolvedProject.absoluteURL,
                             workspaceID: resolvedProject.workspace.id,
-                            permissionSnapshot: permissionSnapshot
+                            permissionSnapshot: permissionSnapshot,
+                            pluginSkillSnapshot: skillSnapshot,
+                            pluginSkillSession: skillSession
                         ))
                     } catch {
                         _ = await pluginRuntimeStore.cancel(
@@ -373,6 +398,8 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     private var registries: [String: AgentToolProviderRegistry] = [:]
     private var toolNamesByOption: [String: [String: String]] = [:]
     private var activatedSkillNamesByOption: [String: Set<String>] = [:]
+    private var pluginSkillSnapshotsByOption: [String: PluginSkillSnapshot] = [:]
+    private var pluginSkillSessionsByOption: [String: PluginToolSkillSession] = [:]
 
     init(
         service: NativeLocalConnectorService,
@@ -412,28 +439,38 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             .init(
                 name: Self.searchToolName,
                 description: "按任务关键词搜索本机已安装能力。只返回匹配 Plugin 的本轮临时选项和简介，不启动 Plugin，也不展开全部工具。",
-                schema: Data(#"{"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":200}},"required":["query"],"additionalProperties":false}"#.utf8)
+                schema: Data(#"{"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":200}},"required":["query"],"additionalProperties":false}"#.utf8),
+                providerID: ProductToolProviderID.capabilityBroker,
+                skillBindingID: ProductToolSkillBindingID.capabilityBroker
             ),
             .init(
                 name: Self.describeToolName,
                 description: "按 capability_search 返回的临时 plugin_option，惰性启动一个能力，并读取本轮工具 schema、所需 Skill Router 和叶子目录。调用带 required_skills 的工具前必须逐个激活。",
-                schema: Data(#"{"type":"object","properties":{"plugin_option":{"type":"string","minLength":1,"maxLength":80}},"required":["plugin_option"],"additionalProperties":false}"#.utf8)
+                schema: Data(#"{"type":"object","properties":{"plugin_option":{"type":"string","minLength":1,"maxLength":80}},"required":["plugin_option"],"additionalProperties":false}"#.utf8),
+                providerID: ProductToolProviderID.capabilityBroker,
+                skillBindingID: ProductToolSkillBindingID.capabilityBroker
             ),
             .init(
                 name: Self.activateSkillToolName,
-                description: "激活 capability_describe 为该能力列出的一个产品 Skill，返回完整 SKILL.md 和可按需读取的资源路径。只能激活当前能力真实工具所引用的 Skill。",
-                schema: Data(#"{"type":"object","properties":{"plugin_option":{"type":"string","minLength":1,"maxLength":80},"skill_name":{"type":"string","minLength":1,"maxLength":120}},"required":["plugin_option","skill_name"],"additionalProperties":false}"#.utf8)
+                description: "激活 capability_describe 为该能力列出的一个产品 Skill 或固定 Plugin Skill，返回完整 SKILL.md 和可按需读取的资源路径。只能激活当前能力真实工具所引用的 Skill。",
+                schema: Data(#"{"type":"object","properties":{"plugin_option":{"type":"string","minLength":1,"maxLength":80},"skill_name":{"type":"string","minLength":1,"maxLength":120}},"required":["plugin_option","skill_name"],"additionalProperties":false}"#.utf8),
+                providerID: ProductToolProviderID.capabilityBroker,
+                skillBindingID: ProductToolSkillBindingID.capabilityBroker
             ),
             .init(
                 name: Self.readSkillResourceToolName,
-                description: "分页读取已经激活的产品 Skill 参考资料。只在当前决策需要对应场景、正反例或恢复细节时读取。",
-                schema: Data(#"{"type":"object","properties":{"plugin_option":{"type":"string","minLength":1,"maxLength":80},"skill_name":{"type":"string","minLength":1,"maxLength":120},"relative_path":{"type":"string","minLength":1,"maxLength":500},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":64000}},"required":["plugin_option","skill_name","relative_path"],"additionalProperties":false}"#.utf8)
+                description: "分页读取已经激活的产品或固定 Plugin Skill 参考资料。只在当前决策需要对应场景、正反例或恢复细节时读取。",
+                schema: Data(#"{"type":"object","properties":{"plugin_option":{"type":"string","minLength":1,"maxLength":80},"skill_name":{"type":"string","minLength":1,"maxLength":120},"relative_path":{"type":"string","minLength":1,"maxLength":500},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":64000}},"required":["plugin_option","skill_name","relative_path"],"additionalProperties":false}"#.utf8),
+                providerID: ProductToolProviderID.capabilityBroker,
+                skillBindingID: ProductToolSkillBindingID.capabilityBroker
             ),
             .init(
                 name: Self.invokeToolName,
                 description: "调用已经通过 capability_describe 展开的一个工具。若工具声明 required_skills，必须先逐个 capability_skill_activate；plugin_option 和 tool_option 使用本轮临时选项。",
                 schema: Data(#"{"type":"object","properties":{"plugin_option":{"type":"string","minLength":1,"maxLength":80},"tool_option":{"type":"string","minLength":1,"maxLength":80},"arguments":{"type":"object"}},"required":["plugin_option","tool_option","arguments"],"additionalProperties":false}"#.utf8),
-                effect: .write
+                effect: .write,
+                providerID: ProductToolProviderID.capabilityBroker,
+                skillBindingID: ProductToolSkillBindingID.capabilityBroker
             ),
         ]
     }
@@ -478,7 +515,7 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             let tools = try visibleDefinitions.enumerated().map { offset, definition in
                 let token = "tool_\(offset + 1)"
                 names[token] = definition.name
-                let toolSkills = requiredSkills(for: definition)
+                let toolSkills = try catalogSkillNames(for: definition)
                 requiredSkillNames.formUnion(toolSkills)
                 let schemaText = redact(String(decoding: definition.schema, as: UTF8.self))
                 let schema = try JSONDecoder().decode(NativeJSONValue.self, from: Data(schemaText.utf8))
@@ -492,13 +529,9 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 )
             }
             toolNamesByOption[option.token] = names
-            let skills = try requiredSkillNames.sorted().map { name in
-                let document = try BundledAgentSkillLoader.load(named: name)
-                return SkillSummary(
-                    name: name,
-                    role: document.descriptor.role.rawValue,
-                    description: document.description
-                )
+            var skills: [SkillSummary] = []
+            for name in requiredSkillNames.sorted() {
+                skills.append(try await skillSummary(named: name, for: option))
             }
             return try outcome(DescribeResponse(
                 pluginOption: option.token,
@@ -513,12 +546,14 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 return .failure("能力选项无效或已经过期，请重新搜索。")
             }
             let registry = try await registry(for: option)
-            let available = Set(registry.definitions.flatMap(requiredSkills(for:)))
+            var available: Set<String> = []
+            for definition in registry.definitions {
+                available.formUnion(try catalogSkillNames(for: definition))
+            }
             guard available.contains(arguments.skillName) else {
                 return .failure("这个 Skill 不属于当前能力或当前可信执行计划。")
             }
-            let document = try BundledAgentSkillLoader.load(named: arguments.skillName)
-            activatedSkillNamesByOption[option.token, default: []].insert(arguments.skillName)
+            let document = try await activateSkill(named: arguments.skillName, for: option)
             return try outcome(SkillActivationResponse(
                 pluginOption: option.token,
                 skillName: arguments.skillName,
@@ -528,13 +563,11 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
 
         case Self.readSkillResourceToolName:
             let arguments = try decode(SkillResourceArguments.self, from: call.arguments)
-            guard options.contains(where: { $0.token == arguments.pluginOption }),
-                  activatedSkillNamesByOption[arguments.pluginOption]?.contains(
-                    arguments.skillName
-                  ) == true else {
+            guard let option = options.first(where: { $0.token == arguments.pluginOption }) else {
                 return .failure("请先激活当前能力列出的 Skill，再读取它的参考资料。")
             }
-            let page = try BundledAgentSkillLoader.readResource(
+            let page = try await readSkillResource(
+                for: option,
                 skillName: arguments.skillName,
                 relativePath: arguments.relativePath,
                 offset: arguments.offset ?? 0,
@@ -566,9 +599,12 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             }) else {
                 return .failure("能力工具定义已经失效，请重新查看该能力。")
             }
-            let required = Set(requiredSkills(for: definition))
-            let activated = activatedSkillNamesByOption[option.token] ?? []
-            let missing = required.subtracting(activated).sorted()
+            let argumentData = Data(arguments.arguments.canonicalJSONString.utf8)
+            let missing = try await missingSkills(
+                for: definition,
+                arguments: argumentData,
+                option: option
+            )
             guard missing.isEmpty else {
                 return .failure(
                     "调用此工具前必须先激活 Skill：\(missing.joined(separator: ", "))。"
@@ -603,22 +639,128 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 allowedCapabilities: builtinCapabilities
             )]
         case let .plugin(plugin):
-            providers = try await service.makeAgentPluginToolProviders(
+            let pluginProviders = try await service.makeAgentPluginSkillToolProviders(
                 ownerUserID: ownerUserID,
                 runContext: runContext,
                 pluginIDs: [plugin.id],
                 projectContext: projectContext
             )
+            guard let first = pluginProviders.first else {
+                throw NativePluginRuntimeError.invalidRequest("Plugin 没有可用的 MCP 组件")
+            }
+            pluginSkillSnapshotsByOption[option.token] = first.pluginSkillSnapshot
+            pluginSkillSessionsByOption[option.token] = first.pluginSkillSession
+            providers = pluginProviders.map { $0 as any AgentToolProvider }
         }
         let registry = try await AgentToolProviderRegistry(providers: providers)
         registries[option.token] = registry
         return registry
     }
 
-    private func requiredSkills(for definition: AgentToolDefinition) -> [String] {
+    private func catalogSkillNames(for definition: AgentToolDefinition) throws -> [String] {
         guard let binding = skillBinding(for: definition),
-              binding.activationPolicy != .controlPlane else { return [] }
+              binding.activationPolicy != .controlPlane else {
+            guard let gateData = definition.pluginSkillGate else { return [] }
+            return try PluginToolSkillGate.decode(gateData).catalogSkillNames
+        }
         return binding.requiredSkillNames
+    }
+
+    private func skillSummary(
+        named name: String,
+        for option: CapabilityOption
+    ) async throws -> SkillSummary {
+        switch option.kind {
+        case .builtIn:
+            let document = try BundledAgentSkillLoader.load(named: name)
+            return .init(
+                name: name,
+                role: document.descriptor.role.rawValue,
+                description: document.description
+            )
+        case .plugin:
+            _ = try await registry(for: option)
+            guard let snapshot = pluginSkillSnapshotsByOption[option.token] else {
+                throw NativePluginRuntimeError.invalidRequest("Plugin Skill 固定快照不可用")
+            }
+            let document = try snapshot.document(named: name)
+            return .init(name: name, role: document.role, description: document.description)
+        }
+    }
+
+    private func activateSkill(
+        named name: String,
+        for option: CapabilityOption
+    ) async throws -> (
+        instructions: String,
+        resourcePaths: [String]
+    ) {
+        switch option.kind {
+        case .builtIn:
+            let document = try BundledAgentSkillLoader.load(named: name)
+            activatedSkillNamesByOption[option.token, default: []].insert(name)
+            return (document.instructions, document.resourcePaths)
+        case .plugin:
+            _ = try await registry(for: option)
+            guard let session = pluginSkillSessionsByOption[option.token] else {
+                throw NativePluginRuntimeError.invalidRequest("Plugin Skill 固定快照不可用")
+            }
+            let document = try await session.activate(named: name)
+            return (document.instructions, document.resourcePaths)
+        }
+    }
+
+    private func readSkillResource(
+        for option: CapabilityOption,
+        skillName: String,
+        relativePath: String,
+        offset: Int,
+        maximumCharacters: Int
+    ) async throws -> ProgressiveSkillFileLoader.TextPage {
+        switch option.kind {
+        case .builtIn:
+            guard activatedSkillNamesByOption[option.token]?.contains(skillName) == true else {
+                throw NativePluginRuntimeError.invalidRequest(
+                    "请先激活当前能力列出的 Skill，再读取它的参考资料。"
+                )
+            }
+            return try BundledAgentSkillLoader.readResource(
+                skillName: skillName,
+                relativePath: relativePath,
+                offset: offset,
+                maximumCharacters: maximumCharacters
+            )
+        case .plugin:
+            _ = try await registry(for: option)
+            guard let session = pluginSkillSessionsByOption[option.token] else {
+                throw NativePluginRuntimeError.invalidRequest("Plugin Skill 固定快照不可用")
+            }
+            return try await session.readResource(
+                skillName: skillName,
+                relativePath: relativePath,
+                offset: offset,
+                maximumCharacters: maximumCharacters
+            )
+        }
+    }
+
+    private func missingSkills(
+        for definition: AgentToolDefinition,
+        arguments: Data,
+        option: CapabilityOption
+    ) async throws -> [String] {
+        if let gateData = definition.pluginSkillGate {
+            guard let session = pluginSkillSessionsByOption[option.token] else {
+                throw NativePluginRuntimeError.invalidRequest("Plugin Skill 固定快照不可用")
+            }
+            return try await session.missingSkills(
+                for: PluginToolSkillGate.decode(gateData),
+                arguments: arguments
+            )
+        }
+        let required = Set(try catalogSkillNames(for: definition))
+        let activated = activatedSkillNamesByOption[option.token] ?? []
+        return required.subtracting(activated).sorted()
     }
 
     private func skillBinding(for definition: AgentToolDefinition) -> ToolSkillBinding? {

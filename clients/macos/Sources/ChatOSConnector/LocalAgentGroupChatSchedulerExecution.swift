@@ -114,7 +114,7 @@ extension LocalAgentGroupChatScheduler {
             }
             var initial = AgentRunCheckpoint(
                 scope: scope,
-                messages: Self.initialMessages(
+                messages: try Self.initialMessages(
                     profile: profile,
                     member: member,
                     room: room,

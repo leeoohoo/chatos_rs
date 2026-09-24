@@ -193,8 +193,14 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             .appendingPathComponent("agent-plugin-provider-\(UUID().uuidString)")
         let installation = root.appendingPathComponent("plugin", isDirectory: true)
         let bin = installation.appendingPathComponent("bin", isDirectory: true)
+        let skill = installation.appendingPathComponent(
+            "skills/test-agent-plugin",
+            isDirectory: true
+        )
+        let references = skill.appendingPathComponent("references", isDirectory: true)
         let project = root.appendingPathComponent("project", isDirectory: true)
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: references, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -207,7 +213,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
               printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{},"instructions":"test"}}'
               ;;
             *'"method":"tools/list"'*)
-              printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"local_echo","description":"Echo locally","inputSchema":{"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":false},"annotations":{"readOnlyHint":true}}]}}'
+              printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"local_echo","description":"Echo locally","inputSchema":{"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":false},"annotations":{"readOnlyHint":true},"_meta":{"chatos/skillGate":{"allOf":["test-agent-plugin"]}}}]}}'
               ;;
             *'"method":"tools/call"'*)
               printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"local-plugin-ok project-1"}]}}'
@@ -220,12 +226,31 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             [.posixPermissions: 0o755],
             ofItemAtPath: executable.path
         )
+        let skillMarkdown = #"""
+        ---
+        name: test-agent-plugin
+        description: Use the test Agent Plugin echo tool.
+        metadata:
+          chatos.role: router
+        ---
+
+        # Test Agent Plugin
+
+        Activate this fixed Release Skill before calling `local_echo`.
+
+        Read [references/examples.md](references/examples.md) only when an exact echo example is needed.
+        """#
+        try Data(skillMarkdown.utf8).write(to: skill.appendingPathComponent("SKILL.md"))
+        try Data("Echo a bounded value; never include internal IDs.".utf8).write(
+            to: references.appendingPathComponent("examples.md")
+        )
         let manifest = #"""
         {
           "schemaVersion": 3,
           "name": "test-agent-plugin",
           "version": "1.0.0",
           "description": "test",
+          "skills": [{"path":"skills/test-agent-plugin"}],
           "permissions": [
             {"permission":"process.spawn","required":true,"components":["test-mcp"]}
           ],
@@ -283,7 +308,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         let installed = try await service.installedAgentPlugins(ownerUserID: "alice")
         XCTAssertEqual(installed.map(\.id), ["plugin-1"])
         XCTAssertEqual(installed.first?.displayName, "test-agent-plugin")
-        let providers = try await service.makeAgentPluginToolProviders(
+        let providers = try await service.makeAgentPluginSkillToolProviders(
             ownerUserID: "alice",
             runContext: runContext,
             pluginIDs: ["plugin-1"],
@@ -297,9 +322,18 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         let definitions = try await providers[0].definitions()
         XCTAssertEqual(definitions.map(\.name), ["local_echo"])
         XCTAssertEqual(definitions.first?.effect, .readOnly)
+        XCTAssertNotNil(definitions.first?.pluginSkillGate)
 
-        let outcome = try await providers[0].execute(.init(
+        let blockedDirect = try await providers[0].execute(.init(
             id: "call-1",
+            name: "local_echo",
+            arguments: #"{"value":"hello"}"#
+        ))
+        XCTAssertTrue(blockedDirect.isError)
+        XCTAssertTrue(blockedDirect.content.contains("test-agent-plugin"))
+        _ = try await providers[0].pluginSkillSession.activate(named: "test-agent-plugin")
+        let outcome = try await providers[0].execute(.init(
+            id: "call-2",
             name: "local_echo",
             arguments: #"{"value":"hello"}"#
         ))
@@ -329,6 +363,17 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
                 "capability_skill_read_resource", "capability_invoke",
             ]
         )
+        let brokerCoverage = ToolSkillCoverageCatalog.product.audit(
+            brokerDefinitions.map {
+                .init(
+                    providerID: $0.providerID,
+                    toolName: $0.name,
+                    skillBindingID: $0.skillBindingID
+                )
+            }
+        )
+        XCTAssertEqual(brokerCoverage.coveredTools, 5)
+        XCTAssertTrue(brokerCoverage.isComplete)
 
         let search = try await broker.execute(.init(
             id: "search-1",
@@ -346,12 +391,52 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         ))
         XCTAssertTrue(description.content.contains("tool_1"))
         XCTAssertTrue(description.content.contains("local_echo"))
+        XCTAssertTrue(description.content.contains("test-agent-plugin"))
         XCTAssertFalse(description.content.contains("project-1"))
 
-        let invoked = try await broker.execute(.init(
+        let pluginDescription = try JSONDecoder().decode(
+            NativeJSONValue.self,
+            from: Data(description.content.utf8)
+        ).jsonObject
+        let pluginTools = try XCTUnwrap(pluginDescription?["tools"]?.jsonArray)
+        let echoTool = try XCTUnwrap(pluginTools.first?.jsonObject)
+        let echoToolOption = try XCTUnwrap(echoTool["tool_option"]?.jsonString)
+        XCTAssertEqual(
+            echoTool["required_skills"]?.jsonArray?.compactMap(\.jsonString),
+            ["test-agent-plugin"]
+        )
+
+        let gatedPlugin = try await broker.execute(.init(
             id: "invoke-1",
             name: "capability_invoke",
-            arguments: #"{"plugin_option":"plugin_1","tool_option":"tool_1","arguments":{"value":"hello"}}"#
+            arguments: """
+            {"plugin_option":"plugin_1","tool_option":"\(echoToolOption)","arguments":{"value":"hello"}}
+            """
+        ))
+        XCTAssertTrue(gatedPlugin.isError)
+        XCTAssertTrue(gatedPlugin.content.contains("test-agent-plugin"))
+
+        let pluginActivation = try await broker.execute(.init(
+            id: "activate-plugin-skill",
+            name: "capability_skill_activate",
+            arguments: #"{"plugin_option":"plugin_1","skill_name":"test-agent-plugin"}"#
+        ))
+        XCTAssertFalse(pluginActivation.isError)
+        XCTAssertTrue(pluginActivation.content.contains("Test Agent Plugin"))
+        let pluginReference = try await broker.execute(.init(
+            id: "read-plugin-reference",
+            name: "capability_skill_read_resource",
+            arguments: #"{"plugin_option":"plugin_1","skill_name":"test-agent-plugin","relative_path":"references/examples.md"}"#
+        ))
+        XCTAssertFalse(pluginReference.isError)
+        XCTAssertTrue(pluginReference.content.contains("bounded value"))
+
+        let invoked = try await broker.execute(.init(
+            id: "invoke-2",
+            name: "capability_invoke",
+            arguments: """
+            {"plugin_option":"plugin_1","tool_option":"\(echoToolOption)","arguments":{"value":"hello"}}
+            """
         ))
         XCTAssertFalse(invoked.isError)
         XCTAssertTrue(invoked.content.contains("local-plugin-ok"))

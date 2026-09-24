@@ -3,6 +3,7 @@ import Foundation
 public enum ProductToolProviderID {
     public static let agentBuilder = "chatos.auxiliary.agent-builder"
     public static let commandApproval = "chatos.auxiliary.command-approval"
+    public static let capabilityBroker = "chatos.local.capability-broker"
     public static let localAgentChat = "chatos.local.agent-chat"
     public static let localProjectTeam = "chatos.local.project-team"
     public static let projectRead = "chatos.builtin.project-read"
@@ -15,6 +16,7 @@ public enum ProductToolProviderID {
 public enum ProductToolSkillBindingID {
     public static let agentBuilder = "auxiliary.agent-builder"
     public static let commandApproval = "auxiliary.command-approval"
+    public static let capabilityBroker = "capability-broker.control-plane"
     public static let agentSkillControlPlane = "agent-chat.skill-control-plane"
     public static let relayContext = "agent-chat.relay-context"
     public static let collaborationMessaging = "agent-chat.collaboration-messaging"
@@ -61,6 +63,17 @@ public extension ToolSkillCoverageCatalog {
                     ],
                     routerSkillName: "chatos-command-approval",
                     specialistSkillName: "chatos-command-approval",
+                    activationPolicy: .runBound
+                ),
+                .init(
+                    id: ProductToolSkillBindingID.capabilityBroker,
+                    providerID: ProductToolProviderID.capabilityBroker,
+                    toolNames: [
+                        "capability_search", "capability_describe", "capability_skill_activate",
+                        "capability_skill_read_resource", "capability_invoke",
+                    ],
+                    routerSkillName: "chatos-capability-discovery",
+                    specialistSkillName: "chatos-capability-discovery",
                     activationPolicy: .runBound
                 ),
                 .init(

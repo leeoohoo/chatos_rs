@@ -32,6 +32,12 @@ public enum BundledAgentSkillCatalog {
             requiresFrontmatter: true
         ),
         .init(
+            name: "chatos-capability-discovery",
+            role: .specialist,
+            relativeDirectory: "chatos-capability-discovery",
+            requiresFrontmatter: true
+        ),
+        .init(
             name: "chatos-relay-context",
             role: .specialist,
             relativeDirectory: "chatos-relay-context",

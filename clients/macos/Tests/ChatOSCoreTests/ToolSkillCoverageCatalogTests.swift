@@ -12,6 +12,7 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         XCTAssertTrue(names.contains("chatos-agent-builder"))
         XCTAssertTrue(names.contains("chatos-command-approval"))
         XCTAssertTrue(names.contains("chatos-remote-connection"))
+        XCTAssertTrue(names.contains("chatos-capability-discovery"))
         XCTAssertTrue(names.contains("chatos-compact-communication"))
         XCTAssertTrue(names.contains("requirement-survey"))
 
@@ -95,11 +96,17 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             $0.providerID == ProductToolProviderID.localAgentChat
         }.flatMap(\.toolNames)
 
-        XCTAssertEqual(providerTools.count, 90)
-        XCTAssertEqual(Set(providerTools).count, 90)
+        XCTAssertEqual(providerTools.count, 95)
+        XCTAssertEqual(Set(providerTools).count, 95)
         XCTAssertEqual(nativeBuiltinTools.count, 34)
         XCTAssertEqual(localAgentChatTools.count, 43)
         XCTAssertEqual(Set(localAgentChatTools).count, 43)
+        XCTAssertEqual(
+            bindings.filter {
+                $0.providerID == ProductToolProviderID.capabilityBroker
+            }.flatMap(\.toolNames).count,
+            5
+        )
         XCTAssertEqual(
             bindings.first {
                 $0.id == ProductToolSkillBindingID.requirementSurveyControlPlane

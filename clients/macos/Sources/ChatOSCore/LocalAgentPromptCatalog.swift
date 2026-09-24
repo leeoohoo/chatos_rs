@@ -23,7 +23,6 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
     case todoStatusCycle = "AgentPrompt.Cycle.TodoStatus"
     case professionSkill = "AgentPrompt.Skill.Profession"
     case projectSkill = "AgentPrompt.Skill.Project"
-    case capabilityDiscoverySkill = "AgentPrompt.Skill.CapabilityDiscovery"
     case groupChatSystem = "AgentPrompt.GroupChat.System"
     case actionHeartbeat = "AgentPrompt.Action.Heartbeat"
     case actionTodo = "AgentPrompt.Action.Todo"
@@ -72,7 +71,7 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
              .conversationAgentAgentDirect, .roomGoalUnset,
              .permissionStaffManagement, .permissionLocalProjects,
              .heartbeatDefault,
-             .executorCycle, .todoStatusCycle, .capabilityDiscoverySkill,
+             .executorCycle, .todoStatusCycle,
              .actionHeartbeat, .actionTodo,
              .actionTodoStatus, .actionDefault, .builderSystem, .agentDefaultRole,
              .approvalSystem:
