@@ -163,6 +163,56 @@ fn distinct_backslash_roots_cannot_discard_read_only_permissions() {
 
 #[cfg(unix)]
 #[test]
+fn backslash_child_roots_keep_most_specific_read_only_permissions() {
+    let fixture = Fixture::new();
+    for name in [r"\", r"\\"] {
+        let child = fixture.0.join(name);
+        fs::create_dir(&child).unwrap();
+        fs::write(child.join("note.txt"), "unchanged").unwrap();
+        // Compatibility normalization erases these real Unix components.
+        assert_eq!(
+            super::normalize_path_for_compare(&fixture.0),
+            super::normalize_path_for_compare(&child)
+        );
+        for read_only in [FsAllowedRootKind::Home, FsAllowedRootKind::Ssh] {
+            for writable in [
+                FsAllowedRootKind::Configured,
+                FsAllowedRootKind::Workspace,
+                FsAllowedRootKind::Public,
+                FsAllowedRootKind::CurrentDir,
+                FsAllowedRootKind::RepoParent,
+            ] {
+                for child_first in [true, false] {
+                    let mut roots = Vec::new();
+                    let mut entries = [(child.clone(), read_only), (fixture.0.clone(), writable)];
+                    if !child_first {
+                        entries.reverse();
+                    }
+                    for (path, kind) in entries {
+                        push_root(&mut roots, path, kind);
+                    }
+                    assert_eq!(roots.len(), 2);
+                    let insertion_policy = FsPathPolicy { roots };
+                    let mut policy = insertion_policy.clone();
+                    // Exercise the ordering applied by build_allowed_roots first.
+                    policy.roots.sort_by(|left, right| {
+                        left.kind
+                            .priority()
+                            .cmp(&right.kind.priority())
+                            .then_with(|| left.path.cmp(&right.path))
+                    });
+                    assert_access(&policy, &child, false);
+                    assert_access(&policy, &fixture.0, true);
+                    assert_access(&insertion_policy, &child, false);
+                    assert_access(&insertion_policy, &fixture.0, true);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn private_permissions_reject_replaced_leaf_without_chmod_target() {
     use std::os::unix::fs::{symlink, PermissionsExt};
 

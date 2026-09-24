@@ -233,7 +233,15 @@ impl FsPathPolicy {
         self.roots
             .iter()
             .filter(|root| policy_paths::path_is_within_root(candidate, root.path.as_path()))
-            .max_by_key(|root| policy_paths::normalize_path_for_compare(root.path.as_path()).len())
+            .max_by_key(|root| {
+                if cfg!(unix) {
+                    // Compatibility normalization can erase literal backslash
+                    // components. Native depth preserves the most specific root.
+                    root.path.components().count()
+                } else {
+                    policy_paths::normalize_path_for_compare(root.path.as_path()).len()
+                }
+            })
     }
 }
 
