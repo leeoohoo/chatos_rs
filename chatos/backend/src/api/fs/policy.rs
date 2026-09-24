@@ -8,6 +8,8 @@ mod policy_paths;
 #[path = "policy_roots.rs"]
 mod policy_roots;
 
+pub(crate) use policy_roots::log_host_fs_roots_configuration;
+
 use crate::core::auth::AuthUser;
 use axum::http::StatusCode;
 

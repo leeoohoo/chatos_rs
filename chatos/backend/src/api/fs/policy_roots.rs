@@ -151,6 +151,15 @@ fn safe_path_component(value: &str) -> String {
     }
 }
 
+pub(crate) fn log_host_fs_roots_configuration() {
+    if host_fs_roots_enabled() {
+        tracing::warn!(
+            event = "host_fs_roots_enabled",
+            "Host filesystem roots explicitly enabled"
+        );
+    }
+}
+
 fn host_fs_roots_enabled() -> bool {
     env_bool_override("CHATOS_ENABLE_HOST_FS_ROOTS")
         .or_else(|| env_bool_override("FS_ENABLE_HOST_ROOTS"))
@@ -189,7 +198,23 @@ fn push_root(roots: &mut Vec<FsAllowedRoot>, candidate: PathBuf, kind: FsAllowed
 
 #[cfg(test)]
 mod tests {
-    use super::{host_fs_roots_enabled, user_path_component};
+    use super::{host_fs_roots_enabled, log_host_fs_roots_configuration, user_path_component};
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct LogCapture(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for LogCapture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn user_path_component_avoids_sanitization_collisions() {
@@ -207,7 +232,44 @@ mod tests {
     fn host_fs_roots_require_explicit_opt_in() {
         const EXPECTED: &str = "CHATOS_TEST_HOST_FS_ROOTS_EXPECTED";
         if let Ok(expected) = std::env::var(EXPECTED) {
-            assert_eq!(host_fs_roots_enabled(), expected == "true");
+            let enabled = expected == "true";
+            assert_eq!(host_fs_roots_enabled(), enabled);
+            let capture = LogCapture::default();
+            let writer = capture.clone();
+            let subscriber = tracing_subscriber::fmt()
+                .without_time()
+                .with_ansi(false)
+                .with_target(false)
+                .json()
+                .with_writer(move || writer.clone())
+                .finish();
+            tracing::subscriber::with_default(subscriber, || {
+                log_host_fs_roots_configuration();
+                // Request-time policy checks must not repeat the startup event.
+                assert_eq!(host_fs_roots_enabled(), enabled);
+                assert_eq!(host_fs_roots_enabled(), enabled);
+            });
+            let bytes = capture.0.lock().unwrap().clone();
+            let logs = String::from_utf8(bytes).unwrap();
+            if enabled {
+                let events = logs.lines().collect::<Vec<_>>();
+                assert_eq!(events.len(), 1, "missing or repeated startup audit event");
+                let event: serde_json::Value = serde_json::from_str(events[0]).unwrap();
+                assert_eq!(event["level"], "WARN");
+                assert_eq!(
+                    event["fields"],
+                    serde_json::json!({
+                        "message": "Host filesystem roots explicitly enabled",
+                        "event": "host_fs_roots_enabled",
+                    }),
+                    "audit fields must contain no paths or raw configuration values",
+                );
+            } else {
+                assert!(
+                    logs.is_empty(),
+                    "disabled host roots must not report enablement"
+                );
+            }
             return;
         }
 
