@@ -82,10 +82,10 @@ pub(super) async fn build_allowed_roots(auth: &AuthUser) -> Vec<FsAllowedRoot> {
 struct UserScopedRoots {
     workspaces_root: PathBuf,
     public_root: PathBuf,
-    // Hold the prepared directories until registration, preventing inode reuse
-    // and allowing comparison with the objects now occupying these paths.
+    // Share prepared handles with the policy, preventing inode reuse throughout
+    // its lifetime and allowing identity checks at registration and authorization.
     #[cfg(unix)]
-    directories: [fs::File; 2],
+    directories: [std::sync::Arc<fs::File>; 2],
 }
 
 impl UserScopedRoots {
@@ -101,7 +101,7 @@ impl UserScopedRoots {
             for directory in &directories {
                 directory.set_permissions(fs::Permissions::from_mode(0o700))?;
             }
-            directories
+            directories.map(std::sync::Arc::new)
         };
         Ok(Self {
             workspaces_root,
@@ -148,8 +148,29 @@ fn push_user_scoped_roots(roots: &mut Vec<FsAllowedRoot>, user_roots: &UserScope
             }
         }
         // Register this checked value without another canonicalization.
-        push_canonical_root(roots, canonical, kind);
+        let _root_index = push_canonical_root(roots, canonical, kind);
+        #[cfg(unix)]
+        {
+            roots[_root_index].prepared_directory =
+                Some(std::sync::Arc::clone(&user_roots.directories[_index]));
+        }
     }
+}
+
+#[cfg(unix)]
+pub(super) fn root_directory_matches(root: &FsAllowedRoot) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    let Some(prepared) = &root.prepared_directory else {
+        return true;
+    };
+    let Ok(current) = open_directory_without_symlinks(&root.path) else {
+        return false;
+    };
+    let (Ok(prepared), Ok(current)) = (prepared.metadata(), current.metadata()) else {
+        return false;
+    };
+    (prepared.dev(), prepared.ino()) == (current.dev(), current.ino())
 }
 
 fn ensure_user_scoped_roots(auth: &AuthUser) -> Option<UserScopedRoots> {
@@ -356,9 +377,9 @@ fn push_canonical_root(
     roots: &mut Vec<FsAllowedRoot>,
     canonical: PathBuf,
     kind: FsAllowedRootKind,
-) {
+) -> usize {
     let normalized = normalize_path_for_compare(canonical.as_path());
-    if let Some(root) = roots.iter_mut().find(|root| {
+    if let Some(index) = roots.iter().position(|root| {
         // Unix directory identity must retain native components. Compatibility
         // normalization can alias distinct roots and discard their restrictions.
         (!cfg!(unix) || root.path == canonical)
@@ -366,14 +387,17 @@ fn push_canonical_root(
     }) {
         // Preserve navigation identity, but never discard a read-only restriction
         // when the same canonical root is discovered through another source.
-        root.can_write &= kind.can_write();
-        return;
+        roots[index].can_write &= kind.can_write();
+        return index;
     }
     roots.push(FsAllowedRoot {
         path: canonical,
         kind,
         can_write: kind.can_write(),
+        #[cfg(unix)]
+        prepared_directory: None,
     });
+    roots.len() - 1
 }
 
 #[cfg(test)]
@@ -383,6 +407,10 @@ mod isolation_tests;
 #[cfg(test)]
 #[path = "policy_roots_permissions_tests.rs"]
 mod permissions_tests;
+
+#[cfg(all(test, unix))]
+#[path = "policy_root_lifetime_tests.rs"]
+mod lifetime_tests;
 
 #[cfg(test)]
 mod tests {

@@ -22,6 +22,8 @@ pub(super) struct FsAllowedRoot {
     path: PathBuf,
     kind: FsAllowedRootKind,
     can_write: bool,
+    #[cfg(unix)]
+    prepared_directory: Option<std::sync::Arc<std::fs::File>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -223,6 +225,14 @@ impl FsPathPolicy {
         let root = self
             .find_navigation_root(path.as_path())
             .ok_or_else(|| FsPolicyError::Forbidden(PATH_OUTSIDE_ALLOWED_ROOTS.to_string()))?;
+        // Check after selecting the most specific root: a stale user root must
+        // not fall back to a broader configured root's permissions.
+        #[cfg(unix)]
+        if !policy_roots::root_directory_matches(root) {
+            return Err(FsPolicyError::Forbidden(
+                PATH_OUTSIDE_ALLOWED_ROOTS.to_string(),
+            ));
+        }
         Ok(AuthorizedPath {
             path,
             can_write: root.can_write,

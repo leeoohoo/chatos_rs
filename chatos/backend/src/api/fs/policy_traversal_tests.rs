@@ -28,6 +28,8 @@ fn fixture() -> (Fixture, FsPathPolicy) {
             path,
             kind,
             can_write: kind.can_write(),
+            #[cfg(unix)]
+            prepared_directory: None,
         });
     }
     (fixture, FsPathPolicy { roots })
