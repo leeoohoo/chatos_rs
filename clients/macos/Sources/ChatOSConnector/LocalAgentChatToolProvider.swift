@@ -121,7 +121,9 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 Self.agentSkillListResourcesToolName,
                 Self.agentSkillReadResourceToolName,
             ]
-            return definitions.filter { executorTools.contains($0.name) }
+            return try await skillBoundDefinitions(
+                definitions.filter { executorTools.contains($0.name) }
+            )
         }
         let executorOnly: Set<String> = [
             Self.todoGetContextToolName,
@@ -163,7 +165,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             ]
             definitions.removeAll { projectManagerOnly.contains($0.name) }
         }
-        return definitions
+        return try await skillBoundDefinitions(definitions)
     }
 
     public func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
@@ -290,5 +292,72 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             schema: try JSONSerialization.data(withJSONObject: schema, options: [.sortedKeys]),
             effect: .write
         )
+    }
+
+    private func skillBoundDefinitions(
+        _ definitions: [AgentToolDefinition]
+    ) async throws -> [AgentToolDefinition] {
+        var result: [AgentToolDefinition] = []
+        var registeredBindingIDs = Set<String>()
+        for var definition in definitions {
+            guard let bindingID = Self.skillBindingID(for: definition.name) else {
+                result.append(definition)
+                continue
+            }
+            definition.providerID = ProductToolProviderID.localAgentChat
+            definition.skillBindingID = bindingID
+            result.append(definition)
+            registeredBindingIDs.insert(bindingID)
+        }
+        for bindingID in registeredBindingIDs.sorted() {
+            try await productSkills.register(
+                providerID: ProductToolProviderID.localAgentChat,
+                skillBindingID: bindingID
+            )
+        }
+        return result
+    }
+
+    private static func skillBindingID(for toolName: String) -> String? {
+        switch toolName {
+        case agentSkillActivateToolName, agentSkillListResourcesToolName,
+             agentSkillReadResourceToolName:
+            ProductToolSkillBindingID.agentSkillControlPlane
+        case bootstrapToolName, workspaceSnapshotToolName, getTriggerToolName,
+             listMembersToolName, readUnreadToolName, readAllUnreadToolName,
+             readMessagesToolName, readAttachmentToolName:
+            ProductToolSkillBindingID.relayContext
+        case inboxSendToolName, createDocumentToolName, markReadToolName,
+             openDirectToolName, sendDirectToolName, sendTeamToolName,
+             sendMessageToolName, completeHeartbeatToolName, completeManagerCycleToolName:
+            ProductToolSkillBindingID.collaborationMessaging
+        case proposeMemberToolName, proposeExistingMemberToolName,
+             proposeMemberRemovalToolName:
+            ProductToolSkillBindingID.agentStaffing
+        case todoListToolName, todoScheduleStateToolName, todoStartNextToolName,
+             todoAddToolName, todoUpdateToolName, todoReorderToolName,
+             todoExecutionOptionsToolName, todoDependencyOptionsToolName:
+            ProductToolSkillBindingID.todoPlanning
+        case todoGetContextToolName, todoProgressAppendToolName, todoReadProgressToolName,
+             todoCompleteToolName, todoBlockToolName:
+            ProductToolSkillBindingID.todoExecution
+        case teamAssetListToolName, teamAssetGetToolName, teamAssetCreateToolName,
+             teamAssetUpdateToolName, teamAssetArchiveToolName:
+            ProductToolSkillBindingID.teamKnowledge
+        case projectDashboardGetToolName, projectDashboardUpdateToolName:
+            ProductToolSkillBindingID.projectDashboard
+        default:
+            nil
+        }
+    }
+
+    public static func skillCoverageReport() -> ToolSkillCoverageReport {
+        ToolSkillCoverageCatalog.product.audit(Self.toolDefinitions.map {
+            .init(
+                providerID: ProductToolProviderID.localAgentChat,
+                toolName: $0.name,
+                skillBindingID: skillBindingID(for: $0.name)
+            )
+        })
     }
 }

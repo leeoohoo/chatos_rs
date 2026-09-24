@@ -300,6 +300,17 @@ extension LocalAgentGroupChatScheduler {
         let toolRegistry = try await AgentToolProviderRegistry(
             providers: [chatProvider] + extraProviders
         )
+        let productSkillRouter = await productSkillSession.routerMarkdown()
+        if !productSkillRouter.isEmpty {
+            let marker = "<!-- chatos-product-skill-router -->"
+            if let index = checkpoint.messages.firstIndex(where: {
+                $0.role == .system && $0.content.hasPrefix(marker)
+            }) {
+                checkpoint.messages[index].content = productSkillRouter
+            } else {
+                checkpoint.messages.append(.init(role: .system, content: productSkillRouter))
+            }
+        }
         let model = try await services.makeAgentModel(
             configID: run.modelConfigID,
             policy: policy,

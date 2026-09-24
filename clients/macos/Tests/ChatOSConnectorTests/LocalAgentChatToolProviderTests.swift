@@ -16,6 +16,15 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         return try XCTUnwrap(String(data: data, encoding: .utf8))
     }
 
+    func testAllChatToolsHaveCentralSkillCoverage() {
+        let report = LocalAgentChatToolProvider.skillCoverageReport()
+
+        XCTAssertEqual(report.totalTools, 43)
+        XCTAssertEqual(report.coveredTools, 43)
+        XCTAssertTrue(report.isComplete)
+        XCTAssertTrue(report.issues.isEmpty)
+    }
+
     func testBoundProgressiveSkillsRequireActivationAndRejectIdentitySwitching() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
@@ -93,6 +102,16 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertTrue(definitions.contains("agent_skill_activate"))
         XCTAssertTrue(definitions.contains("agent_skill_list_resources"))
         XCTAssertTrue(definitions.contains("agent_skill_read_resource"))
+        let liveDefinitions = try await provider.definitions()
+        let coverage = ToolSkillCoverageCatalog.product.audit(liveDefinitions.map {
+            .init(
+                providerID: $0.providerID,
+                toolName: $0.name,
+                skillBindingID: $0.skillBindingID
+            )
+        })
+        XCTAssertTrue(coverage.isComplete)
+        XCTAssertEqual(coverage.coveredTools, liveDefinitions.count)
 
         let professionRef = snapshot.skills[0].skillRef
         do {

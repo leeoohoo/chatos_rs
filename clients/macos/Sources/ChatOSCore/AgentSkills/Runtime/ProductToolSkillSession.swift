@@ -40,6 +40,8 @@ public actor ProductToolSkillSession {
     private let catalog: ToolSkillCoverageCatalog
     private var documentsByReference: [String: BundledAgentSkillDocument] = [:]
     private var activatedReferences: Set<String> = []
+    private var systemRequiredReferences: Set<String> = []
+    private var onDemandReferences: Set<String> = []
 
     public init(catalog: ToolSkillCoverageCatalog = .product) {
         self.catalog = catalog
@@ -59,10 +61,46 @@ public actor ProductToolSkillSession {
             if documentsByReference[reference] == nil {
                 documentsByReference[reference] = try BundledAgentSkillLoader.load(named: skillName)
             }
-            if binding.activationPolicy == .runBound {
+            switch binding.activationPolicy {
+            case .runBound:
                 activatedReferences.insert(reference)
+                systemRequiredReferences.insert(reference)
+            case .controlPlane:
+                systemRequiredReferences.insert(reference)
+            case .onDemand:
+                onDemandReferences.insert(reference)
             }
         }
+    }
+
+    public func routerMarkdown() -> String {
+        guard !documentsByReference.isEmpty else { return "" }
+        var sections = [
+            "<!-- chatos-product-skill-router -->",
+            "## ChatOS product operation Skills",
+            "Use only the `skill_ref` values listed here. Skill activation never expands tool or project permissions.",
+        ]
+        let required = systemRequiredReferences.sorted()
+        if !required.isEmpty {
+            sections.append("### System-required instructions")
+            for reference in required {
+                guard let document = documentsByReference[reference] else { continue }
+                sections.append("#### \(document.descriptor.name) (`\(reference)`)")
+                sections.append(document.instructions)
+            }
+        }
+        let onDemand = onDemandReferences.subtracting(systemRequiredReferences).sorted()
+        if !onDemand.isEmpty {
+            sections.append("### On-demand catalog")
+            sections.append("Call `agent_skill_activate` with the relevant `skill_ref` before relying on or invoking that family.")
+            for reference in onDemand {
+                guard let document = documentsByReference[reference] else { continue }
+                sections.append(
+                    "- `\(reference)` = **\(document.descriptor.name)**: \(document.description)"
+                )
+            }
+        }
+        return sections.joined(separator: "\n\n")
     }
 
     public func descriptors(

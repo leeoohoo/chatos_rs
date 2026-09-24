@@ -26,6 +26,54 @@ public enum BundledAgentSkillCatalog {
             requiresFrontmatter: false
         ),
         .init(
+            name: "chatos-skill-runtime",
+            role: .policy,
+            relativeDirectory: "chatos-skill-runtime",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-relay-context",
+            role: .specialist,
+            relativeDirectory: "chatos-relay-context",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-collaboration-messaging",
+            role: .specialist,
+            relativeDirectory: "chatos-collaboration-messaging",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-agent-staffing",
+            role: .specialist,
+            relativeDirectory: "chatos-agent-staffing",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-todo-planning",
+            role: .specialist,
+            relativeDirectory: "chatos-todo-planning",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-todo-execution",
+            role: .specialist,
+            relativeDirectory: "chatos-todo-execution",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-team-knowledge",
+            role: .specialist,
+            relativeDirectory: "chatos-team-knowledge",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-project-dashboard",
+            role: .specialist,
+            relativeDirectory: "chatos-project-dashboard",
+            requiresFrontmatter: true
+        ),
+        .init(
             name: "requirement-survey",
             role: .router,
             relativeDirectory: "requirement-survey",

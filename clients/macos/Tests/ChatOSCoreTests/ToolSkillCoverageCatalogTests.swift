@@ -79,9 +79,15 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             $0.providerID.hasPrefix("chatos.builtin.")
         }.flatMap(\.toolNames)
 
-        XCTAssertEqual(providerTools.count, 32)
-        XCTAssertEqual(Set(providerTools).count, 32)
+        let localAgentChatTools = bindings.filter {
+            $0.providerID == ProductToolProviderID.localAgentChat
+        }.flatMap(\.toolNames)
+
+        XCTAssertEqual(providerTools.count, 75)
+        XCTAssertEqual(Set(providerTools).count, 75)
         XCTAssertEqual(nativeBuiltinTools.count, 28)
+        XCTAssertEqual(localAgentChatTools.count, 43)
+        XCTAssertEqual(Set(localAgentChatTools).count, 43)
         XCTAssertEqual(
             bindings.first {
                 $0.id == ProductToolSkillBindingID.requirementSurveyControlPlane
@@ -123,6 +129,24 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         )
         XCTAssertTrue(page.content.contains("Project team setup modes"))
         XCTAssertTrue(page.truncated)
+    }
+
+    func testProductSkillRouterExpandsRunBoundAndOnlyIndexesOnDemandSkills() async throws {
+        let session = ProductToolSkillSession()
+        try await session.register(
+            providerID: ProductToolProviderID.localAgentChat,
+            skillBindingID: ProductToolSkillBindingID.relayContext
+        )
+        try await session.register(
+            providerID: ProductToolProviderID.localAgentChat,
+            skillBindingID: ProductToolSkillBindingID.agentStaffing
+        )
+
+        let router = await session.routerMarkdown()
+        XCTAssertTrue(router.contains("# Relay context"))
+        XCTAssertTrue(router.contains("product-skill:chatos-agent-staffing"))
+        XCTAssertTrue(router.contains("Propose creating, inviting, or removing"))
+        XCTAssertFalse(router.contains("# Agent staffing proposals"))
     }
 
     func testAuditDiagnosesMissingUnknownAndMismatchedBindingsWithoutEnforcement() {
