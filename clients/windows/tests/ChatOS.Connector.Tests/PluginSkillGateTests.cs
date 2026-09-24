@@ -22,11 +22,11 @@ public sealed class PluginSkillGateTests
                 Assert.False(fixtureCase.TryGetProperty("expected_error", out _), identifier);
                 Assert.Equal(
                     fixtureCase.GetProperty("expected_catalog_skills").EnumerateArray()
-                        .Select(value => value.GetString()).ToArray(),
+                        .Select(value => value.GetString()!).ToArray(),
                     gate.CatalogSkillNames);
                 Assert.Equal(
                     fixtureCase.GetProperty("expected_required_skills").EnumerateArray()
-                        .Select(value => value.GetString()).ToArray(),
+                        .Select(value => value.GetString()!).ToArray(),
                     required);
             }
             catch (PluginSkillGateException exception)

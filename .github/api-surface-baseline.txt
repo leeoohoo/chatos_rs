@@ -1,9 +1,15 @@
 # API Surface Baseline
 
-main_backend_route_count=166
-total_route_count=166
+main_backend_route_count=173
+total_route_count=173
 
 ## chatos/backend/src/api (.route lines)
+chatos/backend/src/api/agent_artifacts.rs: .route(
+chatos/backend/src/api/agent_artifacts.rs: .route(
+chatos/backend/src/api/agent_artifacts.rs: .route(
+chatos/backend/src/api/agent_artifacts.rs: .route(
+chatos/backend/src/api/agent_artifacts.rs: .route(
+chatos/backend/src/api/agent_artifacts.rs: .route("/api/agent-artifacts/uploads", post(create_uploads))
 chatos/backend/src/api/agent_chat.rs: .route(
 chatos/backend/src/api/agent_chat.rs: .route("/api/agent/chat/guidance", post(agent_chat_guidance))
 chatos/backend/src/api/agent_chat.rs: .route("/api/agent/chat/send", post(agent_chat_send))
@@ -26,8 +32,9 @@ chatos/backend/src/api/applications.rs: .route("/", get(list_apps).post(create_a
 chatos/backend/src/api/ask_user_prompts.rs: .route(
 chatos/backend/src/api/ask_user_prompts.rs: .route(
 chatos/backend/src/api/ask_user_prompts.rs: .route("/api/ask-user-prompts", get(list_ask_user_prompts))
+chatos/backend/src/api/attachments.rs: .route("/api/attachments/uploads", post(create_attachment_uploads))
+chatos/backend/src/api/attachments.rs: .route("/api/media/uploads", post(create_media_uploads))
 chatos/backend/src/api/attachments.rs: Router::new().route("/api/attachments/object", get(get_attachment_object))
-chatos/backend/src/api/attachments.rs: Router::new().route("/api/attachments/uploads", post(create_attachment_uploads))
 chatos/backend/src/api/auth.rs: .route(
 chatos/backend/src/api/auth.rs: .route("/api/auth/agent-accounts", get(list_agent_accounts))
 chatos/backend/src/api/auth.rs: .route("/api/auth/bootstrap-defaults", post(bootstrap_defaults))
