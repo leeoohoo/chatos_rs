@@ -51,6 +51,15 @@ function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: stri
   });
 }
 
+async function stopBrowser(child: ChildProcessWithoutNullStreams, timeoutMs = 5_000): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const closed = new Promise<void>((resolve) => {
+    child.once('close', () => resolve());
+  });
+  if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  await withTimeout(closed, timeoutMs, 'Headless browser did not exit after it was stopped.');
+}
+
 export function resolveHeadlessBrowserExecutable(explicit = process.env.WEB_DESIGN_STUDIO_BROWSER): string {
   if (explicit?.trim()) return explicit.trim();
   const candidates = [
@@ -89,7 +98,7 @@ async function startBrowser(browser: string, profileDirectory: string, timeoutMs
   try {
     return { child, port: await withTimeout(endpoint, timeoutMs, 'Headless browser startup timed out.') };
   } catch (error) {
-    child.kill('SIGKILL');
+    await stopBrowser(child).catch(() => undefined);
     throw error;
   }
 }
@@ -247,6 +256,7 @@ export class ChromiumSceneImageRenderer implements SceneImageRenderer {
     let child: ChildProcessWithoutNullStreams | undefined;
     let client: CdpClient | undefined;
     let assetServer: CaptureAssetServer | undefined;
+    let captureFailed = false;
     try {
       const running = await startBrowser(this.browser ?? resolveHeadlessBrowserExecutable(), profile, this.timeoutMs);
       child = running.child;
@@ -279,11 +289,20 @@ export class ChromiumSceneImageRenderer implements SceneImageRenderer {
       const png = Buffer.from(String(screenshot.data), 'base64');
       if (png.byteLength === 0) throw new Error('Headless browser returned an empty Scene image.');
       return { png, width: Math.ceil(clip.width), height: Math.ceil(clip.height), measurements };
+    } catch (error) {
+      captureFailed = true;
+      throw error;
     } finally {
-      client?.close();
-      child?.kill('SIGKILL');
-      await assetServer?.close();
-      await rm(profile, { recursive: true, force: true });
+      let cleanupError: unknown;
+      try { client?.close(); } catch (error) { cleanupError ??= error; }
+      try { if (child) await stopBrowser(child); } catch (error) { cleanupError ??= error; }
+      try { await assetServer?.close(); } catch (error) { cleanupError ??= error; }
+      try {
+        await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      } catch (error) {
+        cleanupError ??= error;
+      }
+      if (!captureFailed && cleanupError) throw cleanupError;
     }
   }
 }

@@ -305,6 +305,12 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
+      - name: Select Xcode with Swift 6.2
+        if: runner.os == 'macOS'
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
+          swift --version
+
       - name: Verify native platform contracts
         shell: bash
         run: bash scripts/verify-repository.sh native-platform
