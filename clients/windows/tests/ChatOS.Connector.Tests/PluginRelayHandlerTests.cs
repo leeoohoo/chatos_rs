@@ -122,8 +122,16 @@ public sealed class PluginRelayHandlerTests : IDisposable
         var skillDirectory = Path.Combine(installation, "skills", "fixture-skill");
         var references = Path.Combine(skillDirectory, "references");
         Directory.CreateDirectory(references);
+        Directory.CreateDirectory(Path.Combine(installation, "bin"));
+        File.WriteAllText(
+            Path.Combine(installation, "package.json"),
+            """{"name":"fixture","version":"1.0.0","bin":{"fixture":"bin/__EXECUTABLE__"}}"""
+                .Replace("__EXECUTABLE__", TestPluginExecutableName, StringComparison.Ordinal));
         File.WriteAllText(Path.Combine(installation, "chatos.plugin.json"),
-            """{"schemaVersion":3,"name":"fixture","version":"1.0.0","skills":["./skills/fixture-skill"],"mcpServers":{}}""");
+            """{"schemaVersion":3,"name":"fixture","version":"1.0.0","skills":["./skills/fixture-skill"],"mcpServers":{"main":{"type":"stdio","bin":"fixture"}},"permissions":[{"permission":"process.spawn","required":true,"components":["main"]},{"permission":"workspace.read","required":true,"components":["main"]}]}""");
+        File.WriteAllText(
+            Path.Combine(installation, "bin", TestPluginExecutableName),
+            "native executable");
         File.WriteAllText(Path.Combine(skillDirectory, "SKILL.md"), """
             ---
             name: fixture-skill
@@ -138,11 +146,12 @@ public sealed class PluginRelayHandlerTests : IDisposable
         Directory.CreateDirectory(Path.Combine(_directory, "workspace-skill"));
         await runtime.InitializeAsync();
         var sessions = new PluginRuntimeSessionStore();
+        var client = new FakeMcpClient("fixture-skill");
         var handler = new PluginRelayHandler(
             new InstalledStore(record),
             new PluginManagement(),
             new PluginManifestLoader(Path.Combine(_directory, "runtime-skill")),
-            new ClientFactory(new FakeMcpClient()),
+            new ClientFactory(client),
             sessions,
             runtime,
             new LocalProjectPathResolver(runtime),
@@ -192,7 +201,7 @@ public sealed class PluginRelayHandlerTests : IDisposable
         });
 
         var prepared = await handler.HandleAsync(Request(
-            "plugin_prepare_request", "prepare-skill", string.Empty, new
+            "plugin_prepare_request", "prepare-skill", "workspace-1", new
             {
                 run_id = "run-skill",
                 plugin_id = "plugin-1",
@@ -207,8 +216,63 @@ public sealed class PluginRelayHandlerTests : IDisposable
         var adapterSessionId = prepared.Body.GetProperty("adapter_session_id").GetString()!;
         Assert.False(prepared.Body.GetProperty("skills")[0].TryGetProperty("instructions", out _));
 
+        var mcpPrepared = await handler.HandleAsync(Request(
+            "plugin_prepare_request", "prepare-gated-mcp", "workspace-1", new
+            {
+                run_id = "run-skill",
+                plugin_id = "plugin-1",
+                release_id = "release-1",
+                artifact_sha256 = new string('a', 64),
+                component_key = "main",
+                permission_snapshot = new[] { "process.spawn", "workspace.read" },
+                tool_allowlist = new[] { "echo" },
+                tool_blocklist = Array.Empty<string>(),
+            }), CancellationToken.None);
+        var mcpAdapterSessionId = mcpPrepared.Body.GetProperty("adapter_session_id").GetString()!;
+        var otherRunSkill = await handler.HandleAsync(Request(
+            "plugin_prepare_request", "prepare-other-run-skill", "workspace-1", new
+            {
+                run_id = "run-other",
+                plugin_id = "plugin-1",
+                release_id = "release-1",
+                artifact_sha256 = new string('a', 64),
+                component_key = "fixture-skill",
+                permission_snapshot = Array.Empty<string>(),
+                skill_runtime_protocol = 2,
+                skill_keys = new[] { "fixture-skill" },
+                skill_snapshot = expectedSnapshot,
+            }), CancellationToken.None);
+        await handler.HandleAsync(Request(
+            "plugin_execute_request", "activate-other-run-skill", "workspace-1", new
+            {
+                plugin_id = "plugin-1",
+                release_id = "release-1",
+                artifact_sha256 = new string('a', 64),
+                component_key = "fixture-skill",
+                adapter_session_id = otherRunSkill.Body.GetProperty("adapter_session_id").GetString(),
+                invocation_id = "other-run-activation",
+                operation = "skill_activate",
+            }), CancellationToken.None);
+        var missingActivation = await Assert.ThrowsAsync<RelayRequestException>(() =>
+            handler.HandleAsync(Request(
+                "plugin_execute_request", "execute-before-activation", "workspace-1", new
+                {
+                    plugin_id = "plugin-1",
+                    release_id = "release-1",
+                    artifact_sha256 = new string('a', 64),
+                    component_key = "main",
+                    adapter_session_id = mcpAdapterSessionId,
+                    invocation_id = "gated-before-activation",
+                    operation = "mcp_tools_call",
+                    tool_name = "echo",
+                    arguments = new { value = "blocked" },
+                }), CancellationToken.None));
+        Assert.Equal(400, missingActivation.StatusCode);
+        Assert.Contains("[missing_activation]", missingActivation.Message);
+        Assert.Null(client.LastToolName);
+
         var activated = await handler.HandleAsync(Request(
-            "plugin_execute_request", "activate-skill", string.Empty, new
+            "plugin_execute_request", "activate-skill", "workspace-1", new
             {
                 plugin_id = "plugin-1",
                 release_id = "release-1",
@@ -221,8 +285,24 @@ public sealed class PluginRelayHandlerTests : IDisposable
         Assert.Contains("# Fixture Skill",
             activated.Body.GetProperty("result").GetProperty("instructions").GetString());
 
+        var gatedExecution = await handler.HandleAsync(Request(
+            "plugin_execute_request", "execute-after-activation", "workspace-1", new
+            {
+                plugin_id = "plugin-1",
+                release_id = "release-1",
+                artifact_sha256 = new string('a', 64),
+                component_key = "main",
+                adapter_session_id = mcpAdapterSessionId,
+                invocation_id = "gated-after-activation",
+                operation = "mcp_tools_call",
+                tool_name = "echo",
+                arguments = new { value = "allowed" },
+            }), CancellationToken.None);
+        Assert.Equal("allowed",
+            gatedExecution.Body.GetProperty("result").GetProperty("echo").GetString());
+
         var resourceRead = await handler.HandleAsync(Request(
-            "plugin_execute_request", "read-skill", string.Empty, new
+            "plugin_execute_request", "read-skill", "workspace-1", new
             {
                 plugin_id = "plugin-1",
                 release_id = "release-1",
@@ -398,7 +478,7 @@ public sealed class PluginRelayHandlerTests : IDisposable
     private static string Sha256(byte[] value) =>
         Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant();
 
-    private sealed class FakeMcpClient : IPluginMcpClient
+    private sealed class FakeMcpClient(string? requiredSkillName = null) : IPluginMcpClient
     {
         public bool Started { get; private set; }
         public bool Terminated { get; private set; }
@@ -410,19 +490,26 @@ public sealed class PluginRelayHandlerTests : IDisposable
             return Task.CompletedTask;
         }
 
-        public Task<PluginMcpInitialization> InitializeAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(new PluginMcpInitialization(
+        public Task<PluginMcpInitialization> InitializeAsync(CancellationToken cancellationToken = default)
+        {
+            var metadata = new Dictionary<string, object>
+            {
+                ["chatos/requiredPermissions"] = new[] { "workspace.read" },
+                ["chatos/timeoutMs"] = 1_000,
+            };
+            if (requiredSkillName is not null)
+            {
+                metadata["chatos/skillGate"] = new { allOf = new[] { requiredSkillName } };
+            }
+            return Task.FromResult(new PluginMcpInitialization(
                 "Use safely",
                 [JsonSerializer.SerializeToElement(new
                 {
                     name = "echo",
                     inputSchema = new { type = "object" },
-                    _meta = new Dictionary<string, object>
-                    {
-                        ["chatos/requiredPermissions"] = new[] { "workspace.read" },
-                        ["chatos/timeoutMs"] = 1_000,
-                    },
+                    _meta = metadata,
                 })]));
+        }
 
         public Task<JsonElement> CallToolAsync(
             string name,
