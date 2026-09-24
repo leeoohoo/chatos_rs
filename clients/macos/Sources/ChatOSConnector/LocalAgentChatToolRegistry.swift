@@ -216,17 +216,17 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: agentSkillActivateToolName,
-            description: "激活系统提示中列出的当前绑定职业或项目类型 Skill，返回完整主说明和按需参考目录。只能使用 Router 给出的 skill_ref，不能切换身份。 Activate one bound profession or project-type Skill listed by the Router; unlisted identities are rejected.",
+            description: "激活系统提示或产品工具目录返回的当前 Run Skill，返回完整主说明和按需参考目录。只能使用当次返回的 skill_ref；身份 Skill 不能切换，产品 Skill 不能扩大权限。 Activate one run-scoped identity or product Skill returned by its Router; unlisted Skills are rejected.",
             schema: Data(#"{"type":"object","properties":{"skill_ref":{"type":"string","minLength":1,"maxLength":240}},"required":["skill_ref"],"additionalProperties":false}"#.utf8)
         ),
         .init(
             name: agentSkillListResourcesToolName,
-            description: "列出已激活 Skill 的详细参考资料；必须先调用 agent_skill_activate。 List detailed references for an activated bound Skill.",
+            description: "列出已激活身份或产品 Skill 的详细参考资料；必须先调用 agent_skill_activate。 List detailed references for an activated run-scoped Skill.",
             schema: Data(#"{"type":"object","properties":{"skill_ref":{"type":"string","minLength":1,"maxLength":240}},"required":["skill_ref"],"additionalProperties":false}"#.utf8)
         ),
         .init(
             name: agentSkillReadResourceToolName,
-            description: "分页读取已激活 Skill 的一项参考资料，只在当前决策需要时读取。 Read one activated Skill reference on demand with character pagination.",
+            description: "分页读取已激活身份或产品 Skill 的一项参考资料，只在当前决策需要时读取。 Read one activated Skill reference on demand with character pagination.",
             schema: Data(#"{"type":"object","properties":{"skill_ref":{"type":"string","minLength":1,"maxLength":240},"relative_path":{"type":"string","minLength":1,"maxLength":1000},"offset":{"type":"integer","minimum":0},"max_chars":{"type":"integer","minimum":1,"maximum":64000}},"required":["skill_ref","relative_path"],"additionalProperties":false}"#.utf8)
         ),
         .init(

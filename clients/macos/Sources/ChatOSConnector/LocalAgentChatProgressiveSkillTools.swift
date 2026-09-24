@@ -75,6 +75,50 @@ struct SkillResourcePage: Sendable {
 }
 
 extension LocalAgentChatToolProvider {
+    struct ProductSkillActivationResponse: Encodable {
+        let activated = true
+        let skillRef: String
+        let kind = "operational"
+        let name: String
+        let role: String
+        let description: String
+        let instructions: String
+        let resources: [String]
+
+        enum CodingKeys: String, CodingKey {
+            case activated
+            case skillRef = "skill_ref"
+            case kind, name, role, description, instructions, resources
+        }
+    }
+
+    struct ProductSkillResourceListResponse: Encodable {
+        let skillRef: String
+        let resources: [String]
+
+        enum CodingKeys: String, CodingKey {
+            case skillRef = "skill_ref"
+            case resources
+        }
+    }
+
+    struct ProductSkillResourcePageResponse: Encodable {
+        let skillRef: String
+        let relativePath: String
+        let content: String
+        let offset: Int
+        let nextOffset: Int?
+        let truncated: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case skillRef = "skill_ref"
+            case relativePath = "relative_path"
+            case content, offset
+            case nextOffset = "next_offset"
+            case truncated
+        }
+    }
+
     struct ProgressiveSkillResourceResponse: Encodable {
         let relativePath: String
         let title: String
@@ -149,9 +193,19 @@ extension LocalAgentChatToolProvider {
 
     func activateAgentSkill(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         let arguments = try Self.arguments(call)
-        let skill = try await progressiveSkills.activate(
-            skillRef: Self.requiredString(arguments, key: "skill_ref")
-        )
+        let skillRef = try Self.requiredString(arguments, key: "skill_ref")
+        if ProductToolSkillSession.recognizes(skillRef: skillRef) {
+            let activation = try await productSkills.activate(skillRef: skillRef)
+            return try Self.outcome(ProductSkillActivationResponse(
+                skillRef: activation.skillRef,
+                name: activation.document.descriptor.name,
+                role: activation.document.descriptor.role.rawValue,
+                description: activation.document.description,
+                instructions: activation.document.instructions,
+                resources: activation.document.resourcePaths
+            ))
+        }
+        let skill = try await progressiveSkills.activate(skillRef: skillRef)
         return try Self.outcome(ProgressiveSkillActivationResponse(
             skillRef: skill.skillRef,
             kind: skill.kind.rawValue,
@@ -168,6 +222,13 @@ extension LocalAgentChatToolProvider {
     func listAgentSkillResources(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         let arguments = try Self.arguments(call)
         let skillRef = try Self.requiredString(arguments, key: "skill_ref")
+        if ProductToolSkillSession.recognizes(skillRef: skillRef) {
+            let resources = try await productSkills.resourcePaths(skillRef: skillRef)
+            return try Self.outcome(ProductSkillResourceListResponse(
+                skillRef: skillRef,
+                resources: resources
+            ))
+        }
         let resources = try await progressiveSkills.resources(skillRef: skillRef)
         return try Self.outcome(ProgressiveSkillResourceListResponse(
             skillRef: skillRef,
@@ -181,6 +242,22 @@ extension LocalAgentChatToolProvider {
         let path = try Self.requiredString(arguments, key: "relative_path")
         let offset = Int(try Self.optionalInteger(arguments, key: "offset") ?? 0)
         let maxChars = Int(try Self.optionalInteger(arguments, key: "max_chars") ?? 32_000)
+        if ProductToolSkillSession.recognizes(skillRef: skillRef) {
+            let page = try await productSkills.readResource(
+                skillRef: skillRef,
+                relativePath: path,
+                offset: offset,
+                maximumCharacters: maxChars
+            )
+            return try Self.outcome(ProductSkillResourcePageResponse(
+                skillRef: skillRef,
+                relativePath: path,
+                content: page.content,
+                offset: page.offset,
+                nextOffset: page.nextOffset,
+                truncated: page.truncated
+            ))
+        }
         let page = try await progressiveSkills.read(
             skillRef: skillRef,
             relativePath: path,

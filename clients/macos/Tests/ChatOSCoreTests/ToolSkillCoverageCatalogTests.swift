@@ -8,6 +8,7 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         let names = Set(BundledAgentSkillCatalog.skills.map(\.name))
         XCTAssertTrue(names.contains("chatos-terminal"))
         XCTAssertTrue(names.contains("chatos-project-files"))
+        XCTAssertTrue(names.contains("chatos-project-team-setup"))
         XCTAssertTrue(names.contains("chatos-compact-communication"))
         XCTAssertTrue(names.contains("requirement-survey"))
 
@@ -69,20 +70,59 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         XCTAssertTrue(report.issues.isEmpty)
     }
 
-    func testProductCatalogCoversAllNativeBuiltinFamiliesWithoutToolOverlap() {
+    func testProductCatalogCoversRegisteredFamiliesWithoutToolOverlap() {
         let bindings = ToolSkillCoverageCatalog.product.bindings
         let providerTools = bindings.flatMap { binding in
             binding.toolNames.map { binding.providerID + ":" + $0 }
         }
+        let nativeBuiltinTools = bindings.filter {
+            $0.providerID.hasPrefix("chatos.builtin.")
+        }.flatMap(\.toolNames)
 
-        XCTAssertEqual(providerTools.count, 28)
-        XCTAssertEqual(Set(providerTools).count, 28)
+        XCTAssertEqual(providerTools.count, 32)
+        XCTAssertEqual(Set(providerTools).count, 32)
+        XCTAssertEqual(nativeBuiltinTools.count, 28)
         XCTAssertEqual(
             bindings.first {
                 $0.id == ProductToolSkillBindingID.requirementSurveyControlPlane
             }?.activationPolicy,
             .controlPlane
         )
+    }
+
+    func testProductSkillSessionRestrictsDiscoveryAndRequiresActivation() async throws {
+        let session = ProductToolSkillSession()
+        try await session.register(
+            providerID: ProductToolProviderID.localProjectTeam,
+            skillBindingID: ProductToolSkillBindingID.projectTeamProposal
+        )
+
+        let descriptors = try await session.descriptors(
+            providerID: ProductToolProviderID.localProjectTeam,
+            skillBindingID: ProductToolSkillBindingID.projectTeamProposal
+        )
+        let descriptor = try XCTUnwrap(descriptors.first)
+        XCTAssertEqual(descriptor.name, "chatos-project-team-setup")
+        let missingBeforeActivation = try await session.missingSkills(
+            providerID: ProductToolProviderID.localProjectTeam,
+            skillBindingID: ProductToolSkillBindingID.projectTeamProposal
+        )
+        XCTAssertEqual(missingBeforeActivation, ["chatos-project-team-setup"])
+
+        let activation = try await session.activate(skillRef: descriptor.skillRef)
+        XCTAssertTrue(activation.document.instructions.contains("team_propose_existing"))
+        let missingAfterActivation = try await session.missingSkills(
+            providerID: ProductToolProviderID.localProjectTeam,
+            skillBindingID: ProductToolSkillBindingID.projectTeamProposal
+        )
+        XCTAssertEqual(missingAfterActivation, [])
+        let page = try await session.readResource(
+            skillRef: descriptor.skillRef,
+            relativePath: "references/modes-and-failures.md",
+            maximumCharacters: 120
+        )
+        XCTAssertTrue(page.content.contains("Project team setup modes"))
+        XCTAssertTrue(page.truncated)
     }
 
     func testAuditDiagnosesMissingUnknownAndMismatchedBindingsWithoutEnforcement() {

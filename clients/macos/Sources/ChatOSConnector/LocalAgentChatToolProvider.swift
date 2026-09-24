@@ -58,12 +58,14 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     let todoCancellationHandler: @Sendable (String) async -> Void
     let roomChangeHandler: @Sendable (String) async -> Void
     let progressiveSkills: LocalAgentProgressiveSkillSession
+    let productSkills: ProductToolSkillSession
 
     public init(
         store: any AgentGroupChatStore,
         context: LocalAgentChatRunContext,
         professions: [LocalAgentProfessionDefinition] = LocalAgentSkillCatalog.professions,
         progressiveSkillSnapshot: LocalAgentProgressiveSkillSnapshot? = nil,
+        productSkillSession: ProductToolSkillSession = .init(),
         todoPluginOptions: [LocalAgentTodoPluginOption] = [],
         limits: AgentGroupChatRoutingLimits = .init(),
         todoCancellationHandler: @escaping @Sendable (String) async -> Void = { _ in },
@@ -80,6 +82,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
         self.progressiveSkills = LocalAgentProgressiveSkillSession(
             snapshot: progressiveSkillSnapshot
         )
+        self.productSkills = productSkillSession
         self.limits = limits
         self.now = now
         self.references = LocalAgentRunReferenceVault(

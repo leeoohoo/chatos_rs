@@ -281,15 +281,22 @@ extension LocalAgentGroupChatScheduler {
             )
         }
 
+        let productSkillSession = ProductToolSkillSession()
         let chatProvider = try await relayMCP.connect(
             context: context,
             professions: try await professionCatalogProvider(ownerUserID),
             progressiveSkillSnapshot: run.progressiveSkillSnapshot,
             todoPluginOptions: context.lane == .manager
                 ? try await todoPluginCatalogProvider(ownerUserID)
-                : []
+                : [],
+            productSkillSession: productSkillSession
         )
-        let extraProviders = try await additionalToolProviders(profile, member, context)
+        let extraProviders = try await additionalToolProviders(
+            profile,
+            member,
+            context,
+            productSkillSession
+        )
         let toolRegistry = try await AgentToolProviderRegistry(
             providers: [chatProvider] + extraProviders
         )

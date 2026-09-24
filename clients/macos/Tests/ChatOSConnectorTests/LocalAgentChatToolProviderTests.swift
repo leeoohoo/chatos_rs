@@ -69,6 +69,11 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             projectType: project,
             language: .simplifiedChinese
         )
+        let productSkillSession = ProductToolSkillSession()
+        try await productSkillSession.register(
+            providerID: ProductToolProviderID.localProjectTeam,
+            skillBindingID: ProductToolSkillBindingID.projectTeamProposal
+        )
         let provider = try await LocalAgentRelayMCPServer(service: service).connect(
             context: try .init(
                 ownerUserID: "alice",
@@ -81,7 +86,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
                 runID: "progressive-skill-run",
                 hopCount: 0
             ),
-            progressiveSkillSnapshot: snapshot
+            progressiveSkillSnapshot: snapshot,
+            productSkillSession: productSkillSession
         )
         let definitions = Set(try await provider.definitions().map(\.name))
         XCTAssertTrue(definitions.contains("agent_skill_activate"))
@@ -134,6 +140,27 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         } catch {
             XCTAssertTrue(error.localizedDescription.contains("skill_ref"))
         }
+
+        let productRef = "product-skill:chatos-project-team-setup"
+        let productActivation = try await provider.execute(.init(
+            id: "activate-product-skill",
+            name: "agent_skill_activate",
+            arguments: try toolArguments(["skill_ref": productRef])
+        ))
+        XCTAssertTrue(productActivation.content.contains("team_propose_import_directory"))
+        XCTAssertTrue(productActivation.content.contains("references/modes-and-failures.md"))
+
+        let productPage = try await provider.execute(.init(
+            id: "read-product-skill-page",
+            name: "agent_skill_read_resource",
+            arguments: try toolArguments([
+                "skill_ref": productRef,
+                "relative_path": "references/modes-and-failures.md",
+                "max_chars": 100,
+            ])
+        ))
+        XCTAssertTrue(productPage.content.contains(#""truncated":true"#))
+        XCTAssertTrue(productPage.content.contains("Project team setup modes"))
     }
 
     func testProviderReadsScopedContextAndCompletesDeliveryBySendingMessage() async throws {

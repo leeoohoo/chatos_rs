@@ -1,6 +1,7 @@
 import Foundation
 
 public enum ProductToolProviderID {
+    public static let localProjectTeam = "chatos.local.project-team"
     public static let projectRead = "chatos.builtin.project-read"
     public static let projectWrite = "chatos.builtin.project-write"
     public static let terminal = "chatos.builtin.terminal"
@@ -8,6 +9,8 @@ public enum ProductToolProviderID {
 }
 
 public enum ProductToolSkillBindingID {
+    public static let projectTeamCatalog = "project-team.catalog"
+    public static let projectTeamProposal = "project-team.proposal"
     public static let projectRead = "project-files.read"
     public static let projectWrite = "project-files.write"
     public static let terminalCommandExecution = "terminal.command-execution"
@@ -24,6 +27,24 @@ public extension ToolSkillCoverageCatalog {
     static let product: ToolSkillCoverageCatalog = {
         do {
             return try .init(bindings: [
+                .init(
+                    id: ProductToolSkillBindingID.projectTeamCatalog,
+                    providerID: ProductToolProviderID.localProjectTeam,
+                    toolNames: ["project_catalog"],
+                    routerSkillName: "chatos-project-team-setup",
+                    specialistSkillName: "chatos-project-team-setup",
+                    activationPolicy: .controlPlane
+                ),
+                .init(
+                    id: ProductToolSkillBindingID.projectTeamProposal,
+                    providerID: ProductToolProviderID.localProjectTeam,
+                    toolNames: [
+                        "team_propose_existing", "team_propose_new_project",
+                        "team_propose_import_directory",
+                    ],
+                    routerSkillName: "chatos-project-team-setup",
+                    specialistSkillName: "chatos-project-team-setup"
+                ),
                 .init(
                     id: ProductToolSkillBindingID.projectRead,
                     providerID: ProductToolProviderID.projectRead,

@@ -256,7 +256,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                     forKey: "ChatOS.internalContextLanguage"
                 ))
             },
-            additionalToolProviders: { profile, member, runContext in
+            additionalToolProviders: { profile, member, runContext, productSkillSession in
                 var providers: [any AgentToolProvider] = []
                 if LocalAgentPermission.canAccessLocalProjects(profile.draft.defaultSkillIDs) {
                     let store = try await agentGroupChatService.store()
@@ -272,7 +272,8 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                             ownerUserID: runContext.ownerUserID
                         ),
                         projectsService: localProjectsService,
-                        context: runContext
+                        context: runContext,
+                        productSkillSession: productSkillSession
                     ))
                 }
                 if runContext.lane == .executor {

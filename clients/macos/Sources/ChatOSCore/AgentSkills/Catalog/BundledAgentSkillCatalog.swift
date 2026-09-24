@@ -80,6 +80,12 @@ public enum BundledAgentSkillCatalog {
             requiresFrontmatter: true
         ),
         .init(
+            name: "chatos-project-team-setup",
+            role: .specialist,
+            relativeDirectory: "chatos-project-team-setup",
+            requiresFrontmatter: true
+        ),
+        .init(
             name: "chatos-terminal-command-execution",
             role: .specialist,
             relativeDirectory: "chatos-terminal-command-execution",

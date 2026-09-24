@@ -1175,11 +1175,13 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             createdAtUnixMs: 1,
             updatedAtUnixMs: 1
         )
+        let productSkillSession = ProductToolSkillSession()
         let provider = LocalAgentProjectToolProvider(
             store: store,
             projects: [target],
             projectsService: projectsService,
             context: context,
+            productSkillSession: productSkillSession,
             now: { post.message.createdAtUnixMs + 2 }
         )
         let definitions = try await provider.definitions()
@@ -1189,6 +1191,15 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             "team_propose_new_project",
             "team_propose_import_directory",
         ])
+        let coverage = ToolSkillCoverageCatalog.product.audit(definitions.map {
+            .init(
+                providerID: $0.providerID,
+                toolName: $0.name,
+                skillBindingID: $0.skillBindingID
+            )
+        })
+        XCTAssertTrue(coverage.isComplete)
+        XCTAssertEqual(coverage.coveredTools, 4)
         XCTAssertFalse(definitions.map(\.name).contains("team_propose"))
         for definition in definitions {
             XCTAssertTrue(
@@ -1204,6 +1215,17 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         ))
         XCTAssertTrue(catalog.content.contains(#""total_project_count":1"#))
         XCTAssertTrue(catalog.content.contains(#""available_for_team_count":1"#))
+        XCTAssertTrue(catalog.content.contains("product-skill:chatos-project-team-setup"))
+        let gatedProposal = try await provider.execute(.init(
+            id: "proposal-before-skill-activation",
+            name: "team_propose_new_project",
+            arguments: #"{"project_name":"不应创建","project_type":"software_development","team_name":"未激活"}"#
+        ))
+        XCTAssertTrue(gatedProposal.isError)
+        XCTAssertTrue(gatedProposal.content.contains("agent_skill_activate"))
+        _ = try await productSkillSession.activate(
+            skillRef: "product-skill:chatos-project-team-setup"
+        )
         let teamDefinition = try XCTUnwrap(definitions.first {
             $0.name == LocalAgentProjectToolProvider.proposeExistingTeamToolName
         })

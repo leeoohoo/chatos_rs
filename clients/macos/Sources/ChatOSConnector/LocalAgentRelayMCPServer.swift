@@ -115,7 +115,8 @@ public actor LocalAgentRelayMCPServer {
         context: LocalAgentChatRunContext,
         professions: [LocalAgentProfessionDefinition] = LocalAgentSkillCatalog.professions,
         progressiveSkillSnapshot: LocalAgentProgressiveSkillSnapshot? = nil,
-        todoPluginOptions: [LocalAgentTodoPluginOption] = []
+        todoPluginOptions: [LocalAgentTodoPluginOption] = [],
+        productSkillSession: ProductToolSkillSession = .init()
     ) async throws -> LocalAgentChatToolProvider {
         let store = try await service.store()
         let documentDraftDirectoryURL = try await store.createAgentDocumentDraftDirectory()
@@ -124,6 +125,7 @@ public actor LocalAgentRelayMCPServer {
             context: context,
             professions: professions,
             progressiveSkillSnapshot: progressiveSkillSnapshot,
+            productSkillSession: productSkillSession,
             todoPluginOptions: todoPluginOptions,
             limits: limits,
             todoCancellationHandler: todoCancellationHandler,
