@@ -309,6 +309,10 @@ jobs:
         shell: bash
         run: bash scripts/verify-repository.sh native-platform
 
+      - name: Audit Computer Use Plugin Skill gates
+        if: runner.os == 'macOS'
+        run: npm --prefix plugins/computer-use run audit:skill-gates
+
   browser-plugin:
     name: Browser plugin (Rust)
     runs-on: ubuntu-latest
@@ -323,6 +327,12 @@ jobs:
 
       - name: Verify Browser plugin
         run: cargo +1.94.0 test --manifest-path plugins/browser/Cargo.toml --workspace --no-fail-fast
+
+      - name: Build Browser plugin launcher
+        run: cargo +1.94.0 build --manifest-path plugins/browser/Cargo.toml -p browser-cdp-cli
+
+      - name: Audit Browser Plugin Skill gates
+        run: node scripts/audit-plugin-skill-gates.mjs --manifest plugins/browser/npm/chatos.plugin.json --cwd plugins/browser -- ../../target-shared/debug/chatos-browser-cdp mcp
 
   document-plugin:
     name: Document plugin (Node)
@@ -347,6 +357,9 @@ jobs:
       - name: Verify Document plugin
         run: npm --prefix plugins/document test
 
+      - name: Audit Document Plugin Skill gates
+        run: npm --prefix plugins/document run audit:skill-gates
+
   diagram-studio-plugin:
     name: Diagram Studio plugin (Node)
     runs-on: ubuntu-latest
@@ -366,6 +379,46 @@ jobs:
 
       - name: Verify Diagram Studio plugin
         run: npm --prefix plugins/diagram-studio run pack:verify
+
+  solution-studio-plugin:
+    name: Solution Studio plugin (Node)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: plugins/solution-studio/package-lock.json
+
+      - name: Install dependencies
+        run: npm --prefix plugins/solution-studio ci
+
+      - name: Verify Solution Studio plugin
+        run: npm --prefix plugins/solution-studio run pack:verify
+
+  web-design-studio-plugin:
+    name: Web Design Studio plugin (Node)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: plugins/web-design-studio/package-lock.json
+
+      - name: Install dependencies
+        run: npm --prefix plugins/web-design-studio ci
+
+      - name: Verify Web Design Studio plugin
+        run: npm --prefix plugins/web-design-studio run pack:verify
 
   service-frontends:
     name: ${{ matrix.directory }} (TypeScript)

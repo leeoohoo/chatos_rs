@@ -29,7 +29,9 @@
     "studio:dev": "npm run build && npm run studio",
     "mcp": "node dist/mcp-server.mjs mcp",
     "typecheck": "tsc --noEmit",
+    "audit:skill-gates": "node ../../scripts/audit-plugin-skill-gates.mjs --manifest chatos.plugin.json --cwd . -- node bin/chatos-solution-studio mcp",
     "test": "npm run build && node --test test/*.test.mjs",
+    "prepack": "node ../../scripts/run-plugin-prepack.mjs build audit:skill-gates",
     "pack:verify": "npm run test && npm pack --dry-run"
   },
   "dependencies": {

@@ -1,6 +1,10 @@
 ---
 name: solution-validation
 description: Validate a Solution Studio workspace for completeness, traceability, revision freshness, and dependency-DAG integrity. Use before review, approval, export, handoff, or when a plan appears blocked or inconsistent.
+metadata:
+  chatos.role: leaf
+  chatos.activation-policy: model-or-user
+  chatos.context-mode: inline
 ---
 
 # Solution Validation

@@ -1,6 +1,10 @@
 ---
 name: solution-studio
 description: Turn an existing codebase or a greenfield product idea into traceable requirements, a solution design, and a dependency-aware execution plan. Use for end-to-end planning requests; do not use it to execute implementation tasks.
+metadata:
+  chatos.role: router
+  chatos.activation-policy: model-or-user
+  chatos.context-mode: inline
 ---
 
 # Solution Studio

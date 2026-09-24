@@ -1,6 +1,10 @@
 ---
 name: solution-execution-plan
 description: Turn a solution design into an executable task DAG with explicit prerequisites, deliverables, acceptance criteria, and requirement-to-design traceability. Use when a user asks for an implementation roadmap, task breakdown, dependency plan, critical ordering, or ready-to-start work.
+metadata:
+  chatos.role: leaf
+  chatos.activation-policy: model-or-user
+  chatos.context-mode: inline
 ---
 
 # Solution Execution Plan

@@ -40,6 +40,12 @@ const policy = {
   'chatos/toolResultMaxChars': 80_000
 };
 
+const diagramRouterSkillGate = {
+  'chatos/skillGate': {
+    allOf: ['diagram-studio']
+  }
+};
+
 const diagramSkillGate = {
   'chatos/skillGate': {
     allOf: ['diagram-studio'],
@@ -136,13 +142,13 @@ const TOOL_DEFINITIONS = [
     name: 'diagram_list_documents',
     description: 'List all diagram documents in the current injected ChatOS user and project or public scope. This tool does not accept a projectId and cannot switch scope.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    _meta: policy
+    _meta: { ...policy, ...diagramRouterSkillGate }
   },
   {
     name: 'diagram_list_projects',
     description: 'List Diagram Studio UI classification projects inside the current injected ChatOS scope. These projects cannot switch the outer ChatOS user, project, workspace, or public scope.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    _meta: policy
+    _meta: { ...policy, ...diagramRouterSkillGate }
   },
   {
     name: 'diagram_create_project',
@@ -156,7 +162,7 @@ const TOOL_DEFINITIONS = [
       required: ['name'],
       additionalProperties: false
     },
-    _meta: policy
+    _meta: { ...policy, ...diagramRouterSkillGate }
   },
   {
     name: 'diagram_get_project',
@@ -167,7 +173,7 @@ const TOOL_DEFINITIONS = [
       required: ['projectId'],
       additionalProperties: false
     },
-    _meta: policy
+    _meta: { ...policy, ...diagramRouterSkillGate }
   },
   {
     name: 'diagram_update_project',
@@ -182,7 +188,7 @@ const TOOL_DEFINITIONS = [
       required: ['projectId'],
       additionalProperties: false
     },
-    _meta: policy
+    _meta: { ...policy, ...diagramRouterSkillGate }
   },
   {
     name: 'diagram_delete_project',
@@ -196,7 +202,7 @@ const TOOL_DEFINITIONS = [
       required: ['projectId'],
       additionalProperties: false
     },
-    _meta: policy
+    _meta: { ...policy, ...diagramRouterSkillGate }
   },
   {
     name: 'diagram_create_document',
@@ -213,7 +219,7 @@ const TOOL_DEFINITIONS = [
       required: ['kind'],
       additionalProperties: false
     },
-    _meta: policy
+    _meta: { ...policy, ...diagramSkillGate }
   },
   {
     name: 'diagram_import_plantuml',
@@ -239,7 +245,7 @@ const TOOL_DEFINITIONS = [
       required: ['documentId', 'targetProjectId'],
       additionalProperties: false
     },
-    _meta: policy
+    _meta: { ...policy, ...diagramRouterSkillGate }
   },
   {
     name: 'diagram_delete_document',
@@ -250,7 +256,7 @@ const TOOL_DEFINITIONS = [
       required: ['documentId'],
       additionalProperties: false
     },
-    _meta: policy
+    _meta: { ...policy, ...diagramRouterSkillGate }
   },
   {
     name: 'diagram_get_document',
@@ -261,7 +267,7 @@ const TOOL_DEFINITIONS = [
       required: ['documentId'],
       additionalProperties: false
     },
-    _meta: policy
+    _meta: { ...policy, ...diagramRouterSkillGate }
   },
   {
     name: 'diagram_replace_document',
@@ -275,7 +281,7 @@ const TOOL_DEFINITIONS = [
       required: ['expectedRevision', 'document'],
       additionalProperties: false
     },
-    _meta: policy
+    _meta: { ...policy, ...diagramRouterSkillGate }
   },
   {
     name: 'diagram_apply_patch',
@@ -305,7 +311,7 @@ const TOOL_DEFINITIONS = [
       required: ['documentId', 'expectedRevision', 'operations'],
       additionalProperties: false
     },
-    _meta: policy
+    _meta: { ...policy, ...diagramRouterSkillGate }
   },
   {
     name: 'diagram_auto_layout',
@@ -320,7 +326,7 @@ const TOOL_DEFINITIONS = [
       required: ['documentId', 'expectedRevision'],
       additionalProperties: false
     },
-    _meta: policy
+    _meta: { ...policy, ...diagramRouterSkillGate }
   },
   {
     name: 'diagram_validate',
@@ -335,7 +341,7 @@ const TOOL_DEFINITIONS = [
       required: ['documentId'],
       additionalProperties: false
     },
-    _meta: policy
+    _meta: { ...policy, ...diagramRouterSkillGate }
   },
   {
     name: 'diagram_export',
@@ -351,6 +357,7 @@ const TOOL_DEFINITIONS = [
     },
     _meta: {
       ...policy,
+      ...diagramRouterSkillGate,
       'chatos/requiredPermissions': ['artifact.create']
     }
   }

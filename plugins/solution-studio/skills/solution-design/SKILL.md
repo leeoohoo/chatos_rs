@@ -1,6 +1,10 @@
 ---
 name: solution-design
 description: Create or revise a traceable product and technical design from structured requirements, including text, code-generated architecture diagrams, flowcharts, and SVG interface designs. Use before implementation planning.
+metadata:
+  chatos.role: leaf
+  chatos.activation-policy: model-or-user
+  chatos.context-mode: inline
 ---
 
 # Solution Design

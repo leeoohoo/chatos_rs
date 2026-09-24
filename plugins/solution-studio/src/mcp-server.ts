@@ -46,13 +46,13 @@ const TOOL_DEFINITIONS = [
     name: 'solution_get_active_context',
     description: 'Read the injected project context and its single current project plan. Use this before creating or revising planning artifacts.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    _meta: policy
+    _meta: gate()
   },
   {
     name: 'solution_get_workspace',
     description: 'Read the current project plan, optionally checking it by workspaceId or legacy artifactKey.',
     inputSchema: { type: 'object', properties: { workspaceId: { type: 'string' }, artifactKey: { type: 'string' } }, additionalProperties: false },
-    _meta: policy
+    _meta: gate()
   },
   {
     name: 'solution_upsert_requirements',

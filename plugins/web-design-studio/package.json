@@ -37,6 +37,7 @@
     "studio:dev": "npm run build && npm run studio",
     "mcp": "node dist/mcp-server.mjs mcp",
     "typecheck": "tsc --noEmit",
+    "audit:skill-gates": "node ../../scripts/audit-plugin-skill-gates.mjs --manifest chatos.plugin.json --cwd . -- node bin/chatos-web-design-studio mcp",
     "baseline:v2": "npm run build && node --test test/v2-phase0-baseline.test.mjs",
     "baseline:seed": "npm run build && node scripts/seed-v2-legacy-baseline.mjs",
     "baseline:preview": "npm run build && node scripts/serve-v2-baseline-preview.mjs",
@@ -47,6 +48,7 @@
     "phase2:capture": "npm run build && node scripts/capture-v2-baseline.mjs --manifest .web-design-studio-baselines/phase2-current-run.json --output .web-design-studio-baselines",
     "phase2:report": "node scripts/report-v2-phase2.mjs",
     "test": "npm run build && node --test test/*.test.mjs",
+    "prepack": "node ../../scripts/run-plugin-prepack.mjs build audit:skill-gates",
     "pack:verify": "npm run test && npm pack --dry-run"
   },
   "dependencies": {

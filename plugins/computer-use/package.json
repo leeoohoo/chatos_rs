@@ -8,8 +8,9 @@
   },
   "scripts": {
     "test": "swift test",
+    "audit:skill-gates": "node ../../scripts/audit-plugin-skill-gates.mjs --manifest chatos.plugin.json --cwd . -- swift run visual-computer-use-mcp",
     "build:app": "./scripts/build-macos-app.sh",
-    "pack:chatos": "node ./scripts/build-chatos-package.mjs"
+    "pack:chatos": "npm run audit:skill-gates && node ./scripts/build-chatos-package.mjs"
   },
   "files": [
     "bin/",
