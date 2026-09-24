@@ -14,6 +14,17 @@ public struct PluginToolSkillGate: Decodable, Sendable, Equatable {
         case invalidSelectorValue(String)
         case unmappedSelectorValue(String)
 
+        public var code: String {
+            switch self {
+            case .invalidDeclaration: "invalid_declaration"
+            case .invalidSkillName: "invalid_skill_name"
+            case .invalidArguments: "invalid_arguments"
+            case .missingSelector: "missing_selector"
+            case .invalidSelectorValue: "invalid_selector_value"
+            case .unmappedSelectorValue: "unmapped_selector_value"
+            }
+        }
+
         public var errorDescription: String? {
             switch self {
             case .invalidDeclaration: "Plugin Skill gate 声明无效"
@@ -43,9 +54,25 @@ public struct PluginToolSkillGate: Decodable, Sendable, Equatable {
     }
 
     public static func decode(_ data: Data) throws -> Self {
-        let gate = try JSONDecoder().decode(Self.self, from: data)
-        try gate.validate()
-        return gate
+        do {
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  Set(object.keys).isSubset(of: ["allOf", "selectByArgument"]) else {
+                throw GateError.invalidDeclaration
+            }
+            if let selector = object["selectByArgument"] {
+                guard let selector = selector as? [String: Any],
+                      Set(selector.keys).isSubset(of: ["pointer", "map"]) else {
+                    throw GateError.invalidDeclaration
+                }
+            }
+            let gate = try JSONDecoder().decode(Self.self, from: data)
+            try gate.validate()
+            return gate
+        } catch let error as GateError {
+            throw error
+        } catch {
+            throw GateError.invalidDeclaration
+        }
     }
 
     public var catalogSkillNames: [String] {
@@ -81,7 +108,7 @@ public struct PluginToolSkillGate: Decodable, Sendable, Equatable {
             throw GateError.invalidSkillName(name)
         }
         if let selector = selectByArgument {
-            guard selector.pointer.hasPrefix("/"), !selector.map.isEmpty,
+            guard Self.isValidJSONPointer(selector.pointer), !selector.map.isEmpty,
                   selector.map.keys.allSatisfy({ !$0.trimmingCharacters(in: .whitespaces).isEmpty }) else {
                 throw GateError.invalidDeclaration
             }
@@ -94,6 +121,22 @@ public struct PluginToolSkillGate: Decodable, Sendable, Equatable {
                 ($0 >= 97 && $0 <= 122) || ($0 >= 48 && $0 <= 57) || $0 == 45
             }
             && !value.hasPrefix("-") && !value.hasSuffix("-") && !value.contains("--")
+    }
+
+    private static func isValidJSONPointer(_ value: String) -> Bool {
+        guard value.hasPrefix("/") else { return false }
+        let bytes = Array(value.utf8)
+        var index = 0
+        while index < bytes.count {
+            if bytes[index] == 126 {
+                index += 1
+                guard index < bytes.count, bytes[index] == 48 || bytes[index] == 49 else {
+                    return false
+                }
+            }
+            index += 1
+        }
+        return true
     }
 
     private static func value(at pointer: String, in root: Any) -> Any? {

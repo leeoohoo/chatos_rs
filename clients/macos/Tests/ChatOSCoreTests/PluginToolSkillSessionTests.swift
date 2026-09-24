@@ -2,6 +2,53 @@ import ChatOSCore
 import XCTest
 
 final class PluginToolSkillSessionTests: XCTestCase {
+    func testSharedPluginSkillGateFixtureMatchesSwiftRuntime() throws {
+        var repositoryRoot = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 { repositoryRoot.deleteLastPathComponent() }
+        let fixtureURL = repositoryRoot.appendingPathComponent(
+            "crates/chatos_plugin_management_sdk/fixtures/plugin_skill_gate_v1.json"
+        )
+        let fixture = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL))
+                as? [String: Any]
+        )
+        XCTAssertEqual(fixture["schema_version"] as? Int, 1)
+        let cases = try XCTUnwrap(fixture["cases"] as? [[String: Any]])
+
+        for fixtureCase in cases {
+            let identifier = try XCTUnwrap(fixtureCase["id"] as? String)
+            do {
+                let gate = try PluginToolSkillGate.decode(
+                    JSONSerialization.data(withJSONObject: try XCTUnwrap(fixtureCase["gate"]))
+                )
+                let required = try gate.requiredSkillNames(
+                    arguments: JSONSerialization.data(
+                        withJSONObject: try XCTUnwrap(fixtureCase["arguments"]),
+                        options: [.fragmentsAllowed]
+                    )
+                )
+                if let expectedError = fixtureCase["expected_error"] as? String {
+                    XCTFail("Fixture \(identifier) expected \(expectedError)")
+                } else {
+                    XCTAssertEqual(
+                        gate.catalogSkillNames,
+                        fixtureCase["expected_catalog_skills"] as? [String],
+                        identifier
+                    )
+                    XCTAssertEqual(
+                        required,
+                        fixtureCase["expected_required_skills"] as? [String],
+                        identifier
+                    )
+                }
+            } catch {
+                let code = (error as? PluginToolSkillGate.GateError)?.code
+                    ?? PluginToolSkillGate.GateError.invalidDeclaration.code
+                XCTAssertEqual(code, fixtureCase["expected_error"] as? String, identifier)
+            }
+        }
+    }
+
     func testSnapshotAndDynamicGateStayRunScopedAndProgressive() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("plugin-skill-session-\(UUID().uuidString)")

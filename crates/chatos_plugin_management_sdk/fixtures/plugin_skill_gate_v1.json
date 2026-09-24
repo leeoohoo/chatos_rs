@@ -1,0 +1,215 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "all-of-deduplicates-and-sorts",
+      "gate": {
+        "allOf": ["demo-write", "demo-router", "demo-write"]
+      },
+      "arguments": {},
+      "expected_catalog_skills": ["demo-router", "demo-write"],
+      "expected_required_skills": ["demo-router", "demo-write"]
+    },
+    {
+      "id": "selector-adds-leaf",
+      "gate": {
+        "allOf": ["demo-router"],
+        "selectByArgument": {
+          "pointer": "/mode",
+          "map": {
+            "read": "demo-read",
+            "write": "demo-write"
+          }
+        }
+      },
+      "arguments": {
+        "mode": "read"
+      },
+      "expected_catalog_skills": ["demo-read", "demo-router", "demo-write"],
+      "expected_required_skills": ["demo-read", "demo-router"]
+    },
+    {
+      "id": "selector-supports-array-and-escaped-pointer",
+      "gate": {
+        "selectByArgument": {
+          "pointer": "/routes/0/a~1b~0c",
+          "map": {
+            "inspect": "demo-read"
+          }
+        }
+      },
+      "arguments": {
+        "routes": [
+          {
+            "a/b~c": "inspect"
+          }
+        ]
+      },
+      "expected_catalog_skills": ["demo-read"],
+      "expected_required_skills": ["demo-read"]
+    },
+    {
+      "id": "empty-gate",
+      "gate": {},
+      "arguments": {},
+      "expected_error": "invalid_declaration"
+    },
+    {
+      "id": "unknown-gate-field",
+      "gate": {
+        "allOf": ["demo-read"],
+        "anyOf": ["demo-write"]
+      },
+      "arguments": {},
+      "expected_error": "invalid_declaration"
+    },
+    {
+      "id": "unknown-selector-field",
+      "gate": {
+        "selectByArgument": {
+          "pointer": "/mode",
+          "map": {
+            "read": "demo-read"
+          },
+          "default": "demo-read"
+        }
+      },
+      "arguments": {
+        "mode": "read"
+      },
+      "expected_error": "invalid_declaration"
+    },
+    {
+      "id": "invalid-skill-name",
+      "gate": {
+        "allOf": ["Demo Read"]
+      },
+      "arguments": {},
+      "expected_error": "invalid_skill_name"
+    },
+    {
+      "id": "invalid-selector-skill-name",
+      "gate": {
+        "selectByArgument": {
+          "pointer": "/mode",
+          "map": {
+            "read": "demo--read"
+          }
+        }
+      },
+      "arguments": {
+        "mode": "read"
+      },
+      "expected_error": "invalid_skill_name"
+    },
+    {
+      "id": "invalid-pointer-prefix",
+      "gate": {
+        "selectByArgument": {
+          "pointer": "mode",
+          "map": {
+            "read": "demo-read"
+          }
+        }
+      },
+      "arguments": {
+        "mode": "read"
+      },
+      "expected_error": "invalid_declaration"
+    },
+    {
+      "id": "invalid-pointer-escape",
+      "gate": {
+        "selectByArgument": {
+          "pointer": "/mode~2name",
+          "map": {
+            "read": "demo-read"
+          }
+        }
+      },
+      "arguments": {
+        "mode~2name": "read"
+      },
+      "expected_error": "invalid_declaration"
+    },
+    {
+      "id": "empty-selector-map",
+      "gate": {
+        "selectByArgument": {
+          "pointer": "/mode",
+          "map": {}
+        }
+      },
+      "arguments": {
+        "mode": "read"
+      },
+      "expected_error": "invalid_declaration"
+    },
+    {
+      "id": "blank-selector-value",
+      "gate": {
+        "selectByArgument": {
+          "pointer": "/mode",
+          "map": {
+            "  ": "demo-read"
+          }
+        }
+      },
+      "arguments": {
+        "mode": "  "
+      },
+      "expected_error": "invalid_declaration"
+    },
+    {
+      "id": "arguments-must-be-object",
+      "gate": {
+        "allOf": ["demo-read"]
+      },
+      "arguments": [],
+      "expected_error": "invalid_arguments"
+    },
+    {
+      "id": "missing-selector",
+      "gate": {
+        "selectByArgument": {
+          "pointer": "/mode",
+          "map": {
+            "read": "demo-read"
+          }
+        }
+      },
+      "arguments": {},
+      "expected_error": "missing_selector"
+    },
+    {
+      "id": "selector-must-be-string",
+      "gate": {
+        "selectByArgument": {
+          "pointer": "/mode",
+          "map": {
+            "read": "demo-read"
+          }
+        }
+      },
+      "arguments": {
+        "mode": 1
+      },
+      "expected_error": "invalid_selector_value"
+    },
+    {
+      "id": "selector-must-be-mapped",
+      "gate": {
+        "selectByArgument": {
+          "pointer": "/mode",
+          "map": {
+            "read": "demo-read"
+          }
+        }
+      },
+      "arguments": {
+        "mode": "write"
+      },
+      "expected_error": "unmapped_selector_value"
+    }
+  ]
+}

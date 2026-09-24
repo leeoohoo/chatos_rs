@@ -186,16 +186,7 @@ fn validate_tool_snapshot(tools: &[Value], expected_sha256: &str) -> Result<(), 
                     ))
                 },
             )?;
-            if (gate.all_of.is_empty() && gate.select_by_argument.is_none())
-                || gate.all_of.iter().any(|skill| skill.trim().is_empty())
-                || gate.select_by_argument.as_ref().is_some_and(|selector| {
-                    !selector.pointer.starts_with('/')
-                        || selector.map.is_empty()
-                        || selector.map.iter().any(|(value, skill)| {
-                            value.trim().is_empty() || skill.trim().is_empty()
-                        })
-                })
-            {
+            if gate.validate().is_err() {
                 return Err(ProviderCallError::invalid_response(format!(
                     "Plugin MCP tool {name} has an incomplete chatos/skillGate declaration"
                 )));
