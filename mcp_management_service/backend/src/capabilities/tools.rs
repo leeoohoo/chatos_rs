@@ -4,8 +4,10 @@
 use std::collections::{HashMap, HashSet};
 
 use chatos_mcp::{
-    system_mcp_descriptor_by_resource_id, system_mcp_descriptor_for_record,
-    system_mcp_product_skill_binding, system_mcp_tool_catalog, SystemMcpKey, SystemMcpToolCatalog,
+    product_skill_runtime_binding, system_mcp_descriptor_by_resource_id,
+    system_mcp_descriptor_for_record, system_mcp_product_skill_binding, system_mcp_tool_catalog,
+    SystemMcpKey, SystemMcpProductSkillBinding, SystemMcpToolCatalog,
+    PRODUCT_SKILL_RUNTIME_RESOURCE_ID,
 };
 use chatos_mcp_management_sdk::{
     ResolvedMcpRoute, RuntimeToolDescriptor, RuntimeToolSkillActivationPolicy,
@@ -241,12 +243,21 @@ pub(crate) fn product_skill_binding_for_route(
     route: &ResolvedMcpRoute,
     tool_name: &str,
 ) -> Option<RuntimeToolSkillBinding> {
+    if route.resource_id == PRODUCT_SKILL_RUNTIME_RESOURCE_ID {
+        return product_skill_runtime_binding(tool_name).map(runtime_product_skill_binding);
+    }
     let descriptor = system_mcp_descriptor_by_resource_id(route.resource_id.as_str())?;
     if !route.is_available() {
         return None;
     }
     let binding = system_mcp_product_skill_binding(descriptor.key, tool_name)?;
-    Some(RuntimeToolSkillBinding {
+    Some(runtime_product_skill_binding(binding))
+}
+
+pub(super) fn runtime_product_skill_binding(
+    binding: SystemMcpProductSkillBinding,
+) -> RuntimeToolSkillBinding {
+    RuntimeToolSkillBinding {
         binding_id: binding.binding_id.to_string(),
         primary_skill: binding.primary_skill.to_string(),
         required_skills: binding
@@ -256,7 +267,7 @@ pub(crate) fn product_skill_binding_for_route(
             .collect(),
         activation_policy: RuntimeToolSkillActivationPolicy::RunBound,
         coverage_revision: binding.coverage_revision,
-    })
+    }
 }
 
 pub(crate) fn validate_product_skill_binding(
@@ -266,8 +277,8 @@ pub(crate) fn validate_product_skill_binding(
     let expected = product_skill_binding_for_route(route, tool.original_name.as_str());
     if route_requires_product_skill_binding(route) && expected.is_none() {
         return Err(format!(
-            "system tool {} has no registered product Skill binding",
-            tool.exposed_name
+            "system tool {} on resource {} has no registered product Skill binding",
+            tool.exposed_name, route.resource_id
         ));
     }
     if tool.skill_binding != expected {
@@ -281,8 +292,9 @@ pub(crate) fn validate_product_skill_binding(
 
 fn route_requires_product_skill_binding(route: &ResolvedMcpRoute) -> bool {
     route.is_available()
-        && system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
-            .is_some_and(|descriptor| descriptor.key != SystemMcpKey::TaskManager)
+        && (route.resource_id == PRODUCT_SKILL_RUNTIME_RESOURCE_ID
+            || system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
+                .is_some_and(|descriptor| descriptor.key != SystemMcpKey::TaskManager))
 }
 
 fn bind_remote_connection_tool_definition(

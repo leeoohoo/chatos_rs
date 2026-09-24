@@ -1,6 +1,10 @@
 ---
 name: diagram-mindmap
 description: Design one focused Diagram Studio mind map with a single central topic, mutually distinct branches, concise hierarchical topics, bounded depth, positive and negative examples, and PlantUML mindmap guidance.
+metadata:
+  chatos.role: leaf
+  chatos.activation-policy: model-or-user
+  chatos.context-mode: inline
 ---
 
 # Diagram Studio mind-map guide

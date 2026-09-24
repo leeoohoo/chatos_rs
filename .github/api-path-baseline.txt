@@ -1,9 +1,11 @@
 # API Path Baseline
 
-main_backend_endpoint_count=215
-total_endpoint_count=215
+main_backend_endpoint_count=223
+total_endpoint_count=223
 
 ## chatos/backend endpoints (method + path)
+DELETE /api/agent-artifacts
+DELETE /api/agent-artifacts/{artifact_id}
 DELETE /api/agents/{agent_id}
 DELETE /api/ai-model-configs/{config_id}
 DELETE /api/ai-model-providers/{provider_id}
@@ -26,6 +28,9 @@ DELETE /api/task-manager/tasks/{task_id}
 DELETE /api/terminals/{id}
 DELETE /{application_id}
 GET /
+GET /api/agent-artifacts
+GET /api/agent-artifacts/{artifact_id}/content
+GET /api/agent-artifacts/{artifact_id}/metadata
 GET /api/agent/status
 GET /api/agent/tools
 GET /api/agents
@@ -130,6 +135,8 @@ PATCH /api/notepad/notes/{note_id}
 PATCH /api/task-manager/tasks/{task_id}
 PATCH /api/user-settings
 POST /
+POST /api/agent-artifacts/uploads
+POST /api/agent-artifacts/{artifact_id}/complete
 POST /api/agent-builder/ai-create
 POST /api/agent/chat/guidance
 POST /api/agent/chat/send
@@ -162,6 +169,7 @@ POST /api/conversations/{conversation_id}/review-repair
 POST /api/conversations/{conversation_id}/task-runner/active-message-tasks
 POST /api/local-connectors/fs/mkdir
 POST /api/local-connectors/terminal/exec
+POST /api/media/uploads
 POST /api/memory-agents
 POST /api/memory/project-agent-links/sync
 POST /api/memory/projects/sync

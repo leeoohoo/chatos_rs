@@ -122,6 +122,7 @@ pub(super) async fn resolve_mcp_management_gateway(
         server: resolved.server,
         provider_skills_prompt: resolved.provider_skills_prompt,
         plugin_instruction_items: resolved.plugin_instruction_items,
+        protected_skill_instruction_items: resolved.protected_skill_instruction_items,
         mcp_command_queue: resolved.mcp_command_queue,
         runtime_session: resolved.runtime_session,
     })
@@ -131,6 +132,7 @@ pub(super) struct ResolvedMcpManagementGateway {
     server: McpHttpServer,
     pub(super) provider_skills_prompt: Option<String>,
     pub(super) plugin_instruction_items: Vec<serde_json::Value>,
+    pub(super) protected_skill_instruction_items: Vec<serde_json::Value>,
     mcp_command_queue: String,
     runtime_session: McpManagementRuntimeSessionHandle,
 }

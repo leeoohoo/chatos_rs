@@ -78,6 +78,13 @@ impl ProviderDispatcher {
         arguments: Value,
         invocation_id: &str,
     ) -> Result<ProviderCallOutcome, ProviderCallError> {
+        if super::super::product_skills::supports(route) {
+            return super::super::product_skills::call_tool(
+                snapshot,
+                original_tool_name,
+                arguments,
+            );
+        }
         if let Some(result) = self
             .plugins
             .call_tool(

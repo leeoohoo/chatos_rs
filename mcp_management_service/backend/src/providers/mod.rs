@@ -22,6 +22,7 @@ mod plugin_routes;
 mod plugin_routes_prepare;
 #[path = "plugin_routes/runtime.rs"]
 mod plugin_routes_runtime;
+mod product_skills;
 mod task_runner;
 
 use std::time::Duration;

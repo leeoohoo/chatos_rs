@@ -68,6 +68,12 @@ internal sealed class PluginRelayHandler(
                     : 400;
             throw new RelayRequestException(status, exception.Message);
         }
+        catch (PluginSkillGateException exception)
+        {
+            throw new RelayRequestException(
+                400,
+                $"Plugin Skill gate rejected the request [{exception.Code}]: {exception.Message}");
+        }
     }
 
     private async Task<RelayHandlerResult> PrepareAsync(
@@ -295,9 +301,16 @@ internal sealed class PluginRelayHandler(
             {
                 throw new PluginRuntimeException("Plugin is not installed, is disabled, or its Release does not match.");
             }
-            var skillResult = operation == "skill_activate"
-                ? PluginSkillSnapshotLoader.Activate(record, componentKey, expectedSnapshot)
-                : ReadSkillResource(record, componentKey, expectedSnapshot, body);
+            JsonElement skillResult;
+            if (operation == "skill_activate")
+            {
+                skillResult = PluginSkillSnapshotLoader.Activate(record, componentKey, expectedSnapshot);
+                sessions.MarkSkillActivated(adapterSessionId);
+            }
+            else
+            {
+                skillResult = ReadSkillResource(record, componentKey, expectedSnapshot, body);
+            }
             return RelayHandlerResult.Ok(JsonSerializer.SerializeToElement(new
             {
                 plugin_id = pluginId,
@@ -339,6 +352,7 @@ internal sealed class PluginRelayHandler(
         var arguments = body.TryGetProperty("arguments", out var argumentValue)
             ? argumentValue.Clone()
             : JsonSerializer.SerializeToElement(new { }, JsonOptions);
+        EnforceSkillGate(sessions, adapterSessionId, definition, arguments);
         var policy = PluginToolPolicy.Parse(definition);
         var granted = sessions.Permissions(adapterSessionId);
         var required = policy.RequiredPermissions(arguments);
@@ -545,6 +559,22 @@ internal sealed class PluginRelayHandler(
             arguments.TryGetProperty("max_chars", out var maximum) && maximum.TryGetInt32(out var maximumValue)
                 ? maximumValue
                 : 32_000);
+    }
+
+    private static void EnforceSkillGate(
+        PluginRuntimeSessionStore sessions,
+        string adapterSessionId,
+        JsonElement definition,
+        JsonElement arguments)
+    {
+        if (!definition.TryGetProperty("_meta", out var metadata) ||
+            metadata.ValueKind != JsonValueKind.Object ||
+            !metadata.TryGetProperty("chatos/skillGate", out var declaration))
+        {
+            return;
+        }
+        var gate = PluginSkillGate.Parse(declaration);
+        sessions.EnsureSkillsActivated(adapterSessionId, gate.RequiredSkillNames(arguments));
     }
 
     private static string SafeArgumentSummary(string toolName, JsonElement arguments)

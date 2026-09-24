@@ -71,6 +71,7 @@ pub struct ResolvedConversationRuntimeContext {
     pub agent_system_prompt: Option<String>,
     pub contact_system_prompt: Option<String>,
     pub builtin_mcp_system_prompt: Option<String>,
+    pub protected_skill_instruction_items: Vec<Value>,
     pub plugin_instruction_items: Vec<Value>,
     pub selected_commands_for_snapshot: Arc<Mutex<Vec<TurnRuntimeSnapshotSelectedCommandDto>>>,
     pub plugin_command_invocations_for_snapshot: Vec<TurnRuntimeSnapshotPluginCommandInvocationDto>,
@@ -100,7 +101,7 @@ pub struct ResumedMcpManagementGateway {
 pub async fn resume_mcp_management_gateway(
     session_id: &str,
 ) -> Result<ResumedMcpManagementGateway, String> {
-    let (server, _, _, _, command_queue, runtime_session) =
+    let (server, _, _, _, _, command_queue, runtime_session) =
         resolve_existing_mcp_management_gateway(session_id)
             .await?
             .into_parts();
@@ -253,6 +254,7 @@ pub async fn resolve_runtime_context(
     };
     let mut effective_mcp_resource_ids = Vec::new();
     let mut gateway_provider_skills_prompt = None;
+    let mut gateway_protected_skill_instruction_items = Vec::new();
     let mut gateway_plugin_instruction_items = Vec::new();
     let mut mcp_management_runtime_session = None;
     let mut mcp_command_queue = None;
@@ -350,6 +352,7 @@ pub async fn resolve_runtime_context(
             effective_mcp_ids,
             provider_skills_prompt,
             plugin_instruction_items,
+            protected_skill_instruction_items,
             command_queue,
             runtime_session,
         ) = gateway.into_parts();
@@ -357,6 +360,7 @@ pub async fn resolve_runtime_context(
         effective_mcp_resource_ids = effective_mcp_ids;
         gateway_provider_skills_prompt = provider_skills_prompt;
         gateway_plugin_instruction_items = plugin_instruction_items;
+        gateway_protected_skill_instruction_items = protected_skill_instruction_items;
         mcp_command_queue = Some(command_queue);
         mcp_management_runtime_session = Some(runtime_session);
     }
@@ -391,6 +395,7 @@ pub async fn resolve_runtime_context(
         agent_system_prompt,
         contact_system_prompt,
         builtin_mcp_system_prompt,
+        protected_skill_instruction_items: gateway_protected_skill_instruction_items,
         plugin_instruction_items: gateway_plugin_instruction_items,
         selected_commands_for_snapshot,
         plugin_command_invocations_for_snapshot,

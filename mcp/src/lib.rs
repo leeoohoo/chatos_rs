@@ -6,6 +6,7 @@ mod catalog;
 mod contracts;
 mod definition;
 mod implementations;
+mod product_skills;
 mod skills;
 mod system_tool_catalog;
 mod task_types;
@@ -61,6 +62,12 @@ pub use chatos_plugin_management_sdk::{
 };
 pub use definition::{CatalogSystemMcpDefinition, SystemMcpDefinition};
 pub use implementations::{system_mcp_definition, system_mcp_definitions};
+pub use product_skills::{
+    product_skill_document, product_skill_documents, product_skill_runtime_binding,
+    product_skill_runtime_tool_definitions, ProductSkillDocument, ProductSkillResource,
+    PRODUCT_SKILL_LIST_RESOURCES_TOOL, PRODUCT_SKILL_READ_RESOURCE_TOOL,
+    PRODUCT_SKILL_RUNTIME_RESOURCE_ID, PRODUCT_SKILL_RUNTIME_SERVER_NAME,
+};
 pub use skills::{
     system_mcp_product_skill_binding, system_mcp_provider_skills, task_runner_provider_skill,
     SystemMcpProductSkillBinding, SystemMcpProviderSkill,

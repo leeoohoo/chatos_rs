@@ -84,7 +84,7 @@ internal sealed class PluginRuntimeSessionStore : IPluginRuntimeLifetime
         JsonElement expectedSnapshot,
         DateTimeOffset expiresAt)
     {
-        var session = new SkillSession(identity, expectedSnapshot.Clone(), expiresAt);
+        var session = new SkillSession(identity, expectedSnapshot.Clone(), expiresAt, false);
         if (!_skillSessions.TryAdd(identity.AdapterSessionId, session))
         {
             throw new PluginRuntimeException("Plugin Skill runtime session could not be registered.");
@@ -117,6 +117,62 @@ internal sealed class PluginRuntimeSessionStore : IPluginRuntimeLifetime
             throw new PluginRuntimeException("Plugin Skill request does not match its prepared session.");
         }
         return session.ExpectedSnapshot.Clone();
+    }
+
+    public void MarkSkillActivated(string adapterSessionId)
+    {
+        while (_skillSessions.TryGetValue(adapterSessionId, out var session))
+        {
+            if (session.ExpiresAt <= DateTimeOffset.UtcNow)
+            {
+                _skillSessions.TryRemove(adapterSessionId, out _);
+                throw new PluginRuntimeException("Plugin Skill session does not exist or has ended.");
+            }
+            if (session.Activated ||
+                _skillSessions.TryUpdate(adapterSessionId, session with { Activated = true }, session))
+            {
+                return;
+            }
+        }
+        throw new PluginRuntimeException("Plugin Skill session does not exist or has ended.");
+    }
+
+    public void EnsureSkillsActivated(
+        string adapterSessionId,
+        IReadOnlyList<string> requiredSkillNames)
+    {
+        if (!_sessions.TryGetValue(adapterSessionId, out var toolSession))
+        {
+            throw new PluginRuntimeException("Plugin local session does not exist or has ended.");
+        }
+        var now = DateTimeOffset.UtcNow;
+        var missing = requiredSkillNames
+            .Distinct(StringComparer.Ordinal)
+            .Where(skillName => !_skillSessions.Values.Any(skillSession =>
+                skillSession.Activated &&
+                skillSession.ExpiresAt > now &&
+                string.Equals(skillSession.Identity.RunId, toolSession.Identity.RunId,
+                    StringComparison.Ordinal) &&
+                string.Equals(skillSession.Identity.PluginId, toolSession.Identity.PluginId,
+                    StringComparison.Ordinal) &&
+                string.Equals(skillSession.Identity.ReleaseId, toolSession.Identity.ReleaseId,
+                    StringComparison.Ordinal) &&
+                string.Equals(skillSession.Identity.ArtifactSha256,
+                    toolSession.Identity.ArtifactSha256, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(skillSession.Identity.ComponentKey, skillName,
+                    StringComparison.Ordinal) &&
+                string.Equals(skillSession.Identity.WorkspaceId, toolSession.Identity.WorkspaceId,
+                    StringComparison.Ordinal) &&
+                string.Equals(skillSession.Identity.ProjectId, toolSession.Identity.ProjectId,
+                    StringComparison.Ordinal)))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        if (missing.Length > 0)
+        {
+            throw new PluginSkillGateException(
+                "missing_activation",
+                $"Plugin tool requires activated Skills in the same Run: {string.Join(", ", missing)}");
+        }
     }
 
     public bool RemoveSkill(
@@ -362,7 +418,8 @@ internal sealed class PluginRuntimeSessionStore : IPluginRuntimeLifetime
     private sealed record SkillSession(
         PluginRuntimeIdentity Identity,
         JsonElement ExpectedSnapshot,
-        DateTimeOffset ExpiresAt);
+        DateTimeOffset ExpiresAt,
+        bool Activated);
 
     internal sealed record PluginVisualDescriptor(
         PluginRuntimeIdentity Identity,

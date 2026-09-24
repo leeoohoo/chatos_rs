@@ -1,6 +1,10 @@
 ---
 name: solution-discovery
 description: Analyze an existing project or greenfield brief and create evidence-backed, testable requirements. Use when goals, scope, constraints, users, acceptance criteria, or open questions need to be established before solution design.
+metadata:
+  chatos.role: leaf
+  chatos.activation-policy: model-or-user
+  chatos.context-mode: inline
 ---
 
 # Solution Discovery

@@ -298,6 +298,8 @@ pub struct RuntimeSessionResponse {
     pub provider_skills_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plugin_instruction_items: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub protected_skill_instruction_items: Vec<serde_json::Value>,
     #[serde(default)]
     pub unavailable_required_mcps: Vec<String>,
 }
@@ -470,5 +472,6 @@ mod tests {
         assert!(response.effective_mcp_ids.is_empty());
         assert!(response.provider_skills_prompt.is_none());
         assert!(response.plugin_instruction_items.is_empty());
+        assert!(response.protected_skill_instruction_items.is_empty());
     }
 }

@@ -34,7 +34,9 @@
     "sbom:check": "node scripts/generate-sbom.mjs --check",
     "security:audit": "npm audit --omit=dev --audit-level=low",
     "typecheck": "tsc --noEmit",
+    "audit:skill-gates": "node ../../scripts/audit-plugin-skill-gates.mjs --manifest chatos.plugin.json --cwd . -- node bin/chatos-document-mcp mcp",
     "test": "npm run build && npm run sbom:check && node --test test/*.test.mjs",
+    "prepack": "node ../../scripts/run-plugin-prepack.mjs build audit:skill-gates",
     "pack:verify": "npm run test && node scripts/pack-and-verify.mjs"
   },
   "publishConfig": {

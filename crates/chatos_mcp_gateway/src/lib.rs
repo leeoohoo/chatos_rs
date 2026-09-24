@@ -141,6 +141,7 @@ fn existing_session_response(session: RuntimeSessionRoutesResponse) -> RuntimeSe
         effective_mcp_ids: session.effective_mcp_ids,
         provider_skills_prompt: session.provider_skills_prompt,
         plugin_instruction_items: session.plugin_instruction_items,
+        protected_skill_instruction_items: session.protected_skill_instruction_items,
         unavailable_required_mcps: Vec::new(),
     }
 }
@@ -154,6 +155,7 @@ pub struct ResolvedMcpGateway {
     pub effective_mcp_ids: Vec<String>,
     pub provider_skills_prompt: Option<String>,
     pub plugin_instruction_items: Vec<serde_json::Value>,
+    pub protected_skill_instruction_items: Vec<serde_json::Value>,
     pub mcp_command_queue: String,
     pub runtime_token: String,
     pub runtime_session: McpManagementRuntimeSessionHandle,
@@ -232,6 +234,7 @@ async fn build_resolved_gateway(
         effective_mcp_ids: session.effective_mcp_ids,
         provider_skills_prompt: session.provider_skills_prompt,
         plugin_instruction_items: session.plugin_instruction_items,
+        protected_skill_instruction_items: session.protected_skill_instruction_items,
         mcp_command_queue: session.mcp_command_queue,
         runtime_token: session.runtime_token,
         runtime_session,
@@ -406,7 +409,10 @@ mod tests {
                 "role": "system",
                 "content": "plugin instructions"
             })],
-            protected_skill_instruction_items: Vec::new(),
+            protected_skill_instruction_items: vec![serde_json::json!({
+                "role": "system",
+                "content": "protected product skill"
+            })],
             mcp_command_queue: "mcp_management.async.dispatch".to_string(),
             mcp_server_url: "http://127.0.0.1:39280/mcp".to_string(),
             runtime_token: "runtime-token".to_string(),
@@ -427,6 +433,7 @@ mod tests {
             effective_mcp_ids: Vec::new(),
             provider_skills_prompt: None,
             plugin_instruction_items: Vec::new(),
+            protected_skill_instruction_items: Vec::new(),
             unavailable_required_mcps: Vec::new(),
         }
     }
@@ -491,6 +498,7 @@ mod tests {
             Some("# Tool Usage Instructions")
         );
         assert_eq!(response.plugin_instruction_items.len(), 1);
+        assert_eq!(response.protected_skill_instruction_items.len(), 1);
     }
 
     #[test]
