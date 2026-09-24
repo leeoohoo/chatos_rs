@@ -8,16 +8,15 @@
     mc:Ignorable="d"
     Title="ChatOS Visual Session">
 
-    <Window.Resources>
+    <Grid x:Name="RootGrid" Background="{StaticResource ChatOSContentBackgroundBrush}">
+        <Grid.Resources>
         <DataTemplate x:Key="VisualSessionTemplate" x:DataType="connector:PluginVisualSession">
             <StackPanel Padding="4,2" Spacing="1">
                 <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSBodyStrongTextStyle}" TextTrimming="CharacterEllipsis" />
                 <TextBlock Text="{x:Bind PluginDisplayName}" Style="{StaticResource ChatOSCaptionTextStyle}" />
             </StackPanel>
         </DataTemplate>
-    </Window.Resources>
-
-    <Grid x:Name="RootGrid" Background="{StaticResource ChatOSContentBackgroundBrush}">
+        </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="46" />
             <RowDefinition Height="Auto" />

@@ -5,6 +5,7 @@ using ChatOS.Core.Domain;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using Windows.Storage.Streams;
+using WindowsClipboard = Windows.ApplicationModel.DataTransfer.Clipboard;
 
 namespace ChatOS.Desktop.Features.Clipboard;
 
@@ -33,14 +34,14 @@ public sealed class WindowsClipboardHistoryMonitor : IDisposable
     {
         if (_started) return;
         await _store.PruneAsync(DateTimeOffset.UtcNow.AddDays(-30), cancellationToken: cancellationToken);
-        Clipboard.ContentChanged += OnClipboardContentChanged;
+        WindowsClipboard.ContentChanged += OnClipboardContentChanged;
         _started = true;
     }
 
     public void Stop()
     {
         if (!_started) return;
-        Clipboard.ContentChanged -= OnClipboardContentChanged;
+        WindowsClipboard.ContentChanged -= OnClipboardContentChanged;
         _started = false;
     }
 
@@ -91,8 +92,8 @@ public sealed class WindowsClipboardHistoryMonitor : IDisposable
         _suppressNextChange = true;
         try
         {
-            Clipboard.SetContent(package);
-            Clipboard.Flush();
+            WindowsClipboard.SetContent(package);
+            WindowsClipboard.Flush();
         }
         catch
         {
@@ -122,7 +123,7 @@ public sealed class WindowsClipboardHistoryMonitor : IDisposable
         if (!await _captureGate.WaitAsync(0)) return;
         try
         {
-            var content = Clipboard.GetContent();
+            var content = WindowsClipboard.GetContent();
             var source = TryGetClipboardOwnerProcessName();
             if (IsSensitive(content.AvailableFormats, source)) return;
             var payload = await ReadPayloadAsync(content);

@@ -184,13 +184,13 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                                            <TextBlock Grid.Column="1" Text="{x:Bind StatusLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" Foreground="{StaticResource ChatOSAccentBrush}" />
+                                            <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                            <TextBlock Grid.Column="1" Text="{Binding StatusLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" Foreground="{StaticResource ChatOSAccentBrush}" />
                                         </Grid>
-                                        <TextBlock Text="{x:Bind Detail}" MaxLines="2" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                                        <TextBlock Text="{x:Bind SourceLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" Foreground="{StaticResource ChatOSTertiaryTextBrush}" />
+                                        <TextBlock Text="{Binding Detail}" MaxLines="2" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        <TextBlock Text="{Binding SourceLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" Foreground="{StaticResource ChatOSTertiaryTextBrush}" />
                                     </StackPanel>
-                                    <TextBlock Grid.Column="2" VerticalAlignment="Bottom" Text="{x:Bind TimeLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                    <TextBlock Grid.Column="2" VerticalAlignment="Bottom" Text="{Binding TimeLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
@@ -232,25 +232,25 @@
                                 Padding="12"
                                 Background="{StaticResource ChatOSProcessBackgroundBrush}"
                                 CornerRadius="10"
-                                Visibility="{x:Bind ViewModel.HasActivePrompt, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                Visibility="{Binding ViewModel.HasActivePrompt, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <StackPanel Spacing="9">
                                     <TextBlock Text="{x:Bind ViewModel.ActivePrompt.Message, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
                                     <ItemsControl ItemsSource="{x:Bind ViewModel.ActivePrompt.Fields, Mode=OneWay}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate x:DataType="chat:AskUserFieldInputViewModel">
                                                 <StackPanel Margin="0,2" Spacing="4">
-                                                    <TextBlock Text="{x:Bind Label}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                                                    <TextBlock Text="{x:Bind Description}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                    <TextBlock Text="{Binding Label}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                    <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                     <TextBox
-                                                        AcceptsReturn="{x:Bind IsMultiline}"
-                                                        PlaceholderText="{x:Bind Placeholder}"
-                                                        Text="{x:Bind Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                        AcceptsReturn="{Binding IsMultiline}"
+                                                        PlaceholderText="{Binding Placeholder}"
+                                                        Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                         TextWrapping="Wrap"
-                                                        Visibility="{x:Bind IsSecret, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
+                                                        Visibility="{Binding IsSecret, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
                                                     <PasswordBox
-                                                        PasswordChanged="OnAskUserSecretChanged"
-                                                        PlaceholderText="{x:Bind Placeholder}"
-                                                        Visibility="{x:Bind IsSecret, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                        desktopPet:PasswordBoxBinding.Value="{Binding Value, Mode=TwoWay}"
+                                                        PlaceholderText="{Binding Placeholder}"
+                                                        Visibility="{Binding IsSecret, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                                 </StackPanel>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
@@ -259,13 +259,13 @@
                                         DisplayMemberPath="Label"
                                         ItemsSource="{x:Bind ViewModel.ActivePrompt.Options, Mode=OneWay}"
                                         SelectedItem="{x:Bind ViewModel.ActivePrompt.SelectedSingleOption, Mode=TwoWay}"
-                                        Visibility="{x:Bind ViewModel.ActivePrompt.IsSingleChoice, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        Visibility="{Binding ViewModel.ActivePrompt.IsSingleChoice, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                     <ItemsControl
                                         ItemsSource="{x:Bind ViewModel.ActivePrompt.Options, Mode=OneWay}"
-                                        Visibility="{x:Bind ViewModel.ActivePrompt.AllowsMultiple, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        Visibility="{Binding ViewModel.ActivePrompt.AllowsMultiple, Converter={StaticResource BooleanToVisibilityConverter}}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate x:DataType="chat:AskUserChoiceOptionViewModel">
-                                                <CheckBox IsChecked="{x:Bind IsSelected, Mode=TwoWay}" Content="{x:Bind Label}" />
+                                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" Content="{Binding Label}" />
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
@@ -294,7 +294,7 @@
                                     Click="OnCancelTaskClicked"
                                     Content="{x:Bind ViewModel.CancelTaskLabel, Mode=OneWay}"
                                     Style="{StaticResource ChatOSPrimaryButtonStyle}"
-                                    Visibility="{x:Bind ViewModel.CanCancelSelected, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                    Visibility="{Binding ViewModel.CanCancelSelected, Converter={StaticResource BooleanToVisibilityConverter}}" />
                             </Grid>
                         </StackPanel>
                     </ScrollViewer>
@@ -373,11 +373,11 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <Border Width="32" Height="32" Background="{StaticResource ChatOSProcessBackgroundBrush}" CornerRadius="9">
-                                        <FontIcon Glyph="{x:Bind Glyph}" FontSize="14" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                                        <FontIcon Glyph="{Binding Glyph}" FontSize="14" Foreground="{StaticResource ChatOSPurpleBrush}" />
                                     </Border>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                                        <TextBlock Text="{x:Bind Subtitle}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                        <TextBlock Text="{Binding Subtitle}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                     </StackPanel>
                                     <FontIcon Grid.Column="2" VerticalAlignment="Center" Glyph="&#xE76C;" FontSize="11" Foreground="{StaticResource ChatOSTertiaryTextBrush}" />
                                 </Grid>
@@ -414,18 +414,18 @@
                                 <DataTemplate x:DataType="chat:ConversationTurnItemViewModel">
                                     <StackPanel Spacing="6">
                                         <Border MaxWidth="300" Padding="10,7" HorizontalAlignment="Right" Background="{StaticResource ChatOSAccentBrush}" CornerRadius="11">
-                                            <TextBlock Text="{x:Bind UserText}" TextWrapping="Wrap" Foreground="White" />
+                                            <TextBlock Text="{Binding UserText}" TextWrapping="Wrap" Foreground="White" />
                                         </Border>
-                                        <ItemsControl ItemsSource="{x:Bind Replies}">
+                                        <ItemsControl ItemsSource="{Binding Replies}">
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate x:DataType="chat:ConversationReplyItemViewModel">
                                                     <Border MaxWidth="300" Margin="0,2" Padding="10,7" HorizontalAlignment="Left" Background="{StaticResource ChatOSSidebarBackgroundBrush}" CornerRadius="11">
-                                                        <TextBlock Text="{x:Bind Text}" IsTextSelectionEnabled="True" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                                        <TextBlock Text="{Binding Text}" IsTextSelectionEnabled="True" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
                                                     </Border>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
-                                        <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind IsRunning, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{Binding IsRunning, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <ProgressRing Width="14" Height="14" IsActive="True" />
                                             <TextBlock Text="{Binding Replying, Source={StaticResource ChatOSLocalization}}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                         </StackPanel>
@@ -451,7 +451,7 @@
                                     PlaceholderText="{x:Bind QuickChat.ComposerPlaceholder, Mode=OneWay}"
                                     Text="{x:Bind QuickChat.Conversation.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                     TextWrapping="Wrap" />
-                                <Button AutomationProperties.AutomationId="ChatOS.Pet.QuickChat.Stop" Grid.Column="1" Command="{x:Bind QuickChat.Conversation.StopCommand}" Content="{x:Bind QuickChat.CancelLabel, Mode=OneWay}" Visibility="{x:Bind QuickChat.Conversation.IsRunning, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                <Button AutomationProperties.AutomationId="ChatOS.Pet.QuickChat.Stop" Grid.Column="1" Command="{x:Bind QuickChat.Conversation.StopCommand}" Content="{x:Bind QuickChat.CancelLabel, Mode=OneWay}" Visibility="{Binding QuickChat.Conversation.IsRunning, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                 <Button AutomationProperties.AutomationId="ChatOS.Pet.QuickChat.Send" Grid.Column="2" Command="{x:Bind QuickChat.Conversation.SendCommand}" Content="{x:Bind QuickChat.SendLabel, Mode=OneWay}" IsEnabled="{x:Bind QuickChat.Conversation.CanSendDraft, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
                             </Grid>
                         </StackPanel>

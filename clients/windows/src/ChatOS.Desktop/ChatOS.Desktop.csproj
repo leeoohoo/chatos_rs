@@ -11,6 +11,8 @@
     <EnableMsixTooling>true</EnableMsixTooling>
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <!-- This app does not publish with NativeAOT; XAML binds directly to the generated .NET properties. -->
+    <NoWarn>$(NoWarn);MVVMTK0045</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\ChatOS.Core\ChatOS.Core.csproj" />

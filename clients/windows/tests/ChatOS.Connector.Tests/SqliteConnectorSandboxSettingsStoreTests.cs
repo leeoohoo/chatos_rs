@@ -7,7 +7,7 @@ namespace ChatOS.Connector.Tests;
 public sealed class SqliteConnectorSandboxSettingsStoreTests
 {
     [Fact]
-    public async Task DefaultsToWorkspaceWriteWithNetworkDisabledAndRoundTrips()
+    public async Task DefaultsToCompatibleHostAccessAndRoundTrips()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"chatos-sandbox-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);

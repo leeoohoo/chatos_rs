@@ -151,6 +151,9 @@ public sealed class DesktopAutomationContractTests
         var desktopRoot = Path.Combine(FindRepositoryRoot(), "src", "ChatOS.Desktop");
         var occurrences = Directory
             .EnumerateFiles(desktopRoot, "*.xaml", SearchOption.AllDirectories)
+            .Where(path => !path
+                .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                .Any(segment => segment is "bin" or "obj"))
             .SelectMany(path => XDocument.Load(path, LoadOptions.SetLineInfo)
                 .Root!
                 .DescendantsAndSelf()

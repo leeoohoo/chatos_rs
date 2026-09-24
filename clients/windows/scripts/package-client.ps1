@@ -203,6 +203,16 @@ try {
     $null = New-Item -ItemType Directory -Path $payloadRoot -Force
     $null = New-Item -ItemType Directory -Path $installerRoot -Force
 
+    Write-Host "Cleaning stale ChatOS Desktop build state..."
+    & $dotnetExecutable clean $desktopProject `
+        -c Release `
+        -p:Platform=$Platform `
+        -p:RuntimeIdentifier=$runtimeIdentifier `
+        --nologo
+    if ($LASTEXITCODE -ne 0) {
+        throw "ChatOS Windows clean failed with exit code $LASTEXITCODE."
+    }
+
     Write-Host "Publishing ChatOS Windows Release/$Platform..."
     & $dotnetExecutable publish $desktopProject `
         -c Release `
@@ -214,7 +224,9 @@ try {
         --output $payloadRoot `
         --nologo
     if ($LASTEXITCODE -ne 0) {
-        throw "ChatOS Windows publish failed with exit code $LASTEXITCODE."
+        $publishExitCode = $LASTEXITCODE
+        & (Join-Path $repoRoot "build\diagnose-xaml-compiler.ps1")
+        throw "ChatOS Windows publish failed with exit code $publishExitCode."
     }
 
     $executable = Join-Path $payloadRoot "ChatOS.Desktop.exe"

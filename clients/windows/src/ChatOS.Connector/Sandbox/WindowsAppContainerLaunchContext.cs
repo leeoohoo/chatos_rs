@@ -10,7 +10,8 @@ namespace ChatOS.Connector.Sandbox;
 
 internal sealed class WindowsAppContainerLaunchContext : IDisposable, IAsyncDisposable
 {
-    private readonly List<IntPtr> _ownedSids;
+    private readonly IntPtr _appContainerSid;
+    private readonly List<IntPtr> _capabilitySids;
     private readonly IntPtr _capabilityArray;
     private IAsyncDisposable? _profileLease;
     private int _disposed;
@@ -23,7 +24,8 @@ internal sealed class WindowsAppContainerLaunchContext : IDisposable, IAsyncDisp
         SandboxExecutionPolicy policy,
         IAsyncDisposable? profileLease = null)
     {
-        _ownedSids = [appContainerSid, .. capabilitySids];
+        _appContainerSid = appContainerSid;
+        _capabilitySids = [.. capabilitySids];
         if (capabilitySids.Count > 0)
         {
             var itemSize = Marshal.SizeOf<SidAndAttributes>();
@@ -77,12 +79,13 @@ internal sealed class WindowsAppContainerLaunchContext : IDisposable, IAsyncDisp
         {
             Marshal.FreeHGlobal(_capabilityArray);
         }
-        foreach (var sid in _ownedSids)
+        if (_appContainerSid != IntPtr.Zero)
         {
-            if (sid != IntPtr.Zero)
-            {
-                _ = WindowsAppContainerSandbox.FreeSid(sid);
-            }
+            _ = WindowsAppContainerSandbox.FreeSid(_appContainerSid);
+        }
+        foreach (var sid in _capabilitySids)
+        {
+            if (sid != IntPtr.Zero) _ = WindowsAppContainerSandbox.FreeLocalMemory(sid);
         }
         var profileLease = Interlocked.Exchange(ref _profileLease, null);
         if (profileLease is not null)
@@ -104,16 +107,34 @@ internal sealed class WindowsAppContainerLaunchContext : IDisposable, IAsyncDisp
         string temporaryDirectory,
         SandboxExecutionPolicy policy)
     {
-        var systemRoot = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        var systemRoot = Environment.GetEnvironmentVariable("SystemRoot");
+        if (string.IsNullOrWhiteSpace(systemRoot))
+        {
+            systemRoot = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        }
+        var commandInterpreter = Environment.GetEnvironmentVariable("ComSpec");
+        if (string.IsNullOrWhiteSpace(commandInterpreter))
+        {
+            commandInterpreter = Path.Combine(systemRoot, "System32", "cmd.exe");
+        }
+        var path = string.Join(
+            Path.PathSeparator,
+            Environment.ExpandEnvironmentVariables(
+                    Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
+                .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(value => value.Trim('"'))
+                .Where(value => value.Length > 0 && !value.Contains('%') && Path.IsPathRooted(value)));
         var variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["CHATOS_SANDBOX"] = "1",
             ["CHATOS_SANDBOX_NETWORK"] = policy.NetworkAccess.ToString(),
             ["CHATOS_SANDBOX_PROFILE"] = policy.PermissionProfile.ToString(),
-            ["ComSpec"] = Environment.GetEnvironmentVariable("ComSpec")
-                ?? Path.Combine(systemRoot, "System32", "cmd.exe"),
-            ["PATH"] = Environment.GetEnvironmentVariable("PATH") ?? string.Empty,
+            ["ComSpec"] = Environment.ExpandEnvironmentVariables(commandInterpreter),
+            ["LOCALAPPDATA"] = temporaryDirectory,
+            ["PATH"] = path,
             ["PATHEXT"] = Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD",
+            ["PROCESSOR_ARCHITECTURE"] = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE") ?? string.Empty,
+            ["SystemDrive"] = Path.GetPathRoot(systemRoot)?.TrimEnd(Path.DirectorySeparatorChar) ?? "C:",
             ["SystemRoot"] = systemRoot,
             ["TEMP"] = temporaryDirectory,
             ["TMP"] = temporaryDirectory,
@@ -124,11 +145,35 @@ internal sealed class WindowsAppContainerLaunchContext : IDisposable, IAsyncDisp
 }
 
 [StructLayout(LayoutKind.Sequential)]
-internal readonly record struct SecurityCapabilities(
-    IntPtr AppContainerSid,
-    IntPtr Capabilities,
-    uint CapabilityCount,
-    uint Reserved);
+internal readonly struct SecurityCapabilities
+{
+    public SecurityCapabilities(
+        IntPtr appContainerSid,
+        IntPtr capabilities,
+        uint capabilityCount,
+        uint reserved)
+    {
+        AppContainerSid = appContainerSid;
+        Capabilities = capabilities;
+        CapabilityCount = capabilityCount;
+        Reserved = reserved;
+    }
+
+    public readonly IntPtr AppContainerSid;
+    public readonly IntPtr Capabilities;
+    public readonly uint CapabilityCount;
+    public readonly uint Reserved;
+}
 
 [StructLayout(LayoutKind.Sequential)]
-internal readonly record struct SidAndAttributes(IntPtr Sid, uint Attributes);
+internal readonly struct SidAndAttributes
+{
+    public SidAndAttributes(IntPtr sid, uint attributes)
+    {
+        Sid = sid;
+        Attributes = attributes;
+    }
+
+    public readonly IntPtr Sid;
+    public readonly uint Attributes;
+}

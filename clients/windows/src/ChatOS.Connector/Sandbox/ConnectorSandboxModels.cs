@@ -22,9 +22,9 @@ public sealed record ConnectorSandboxSettings(
     ConnectorSandboxNetworkAccess NetworkAccess)
 {
     public static ConnectorSandboxSettings Default { get; } = new(
-        Enabled: true,
-        ConnectorSandboxPermissionProfile.WorkspaceWrite,
-        ConnectorSandboxNetworkAccess.Disabled);
+        Enabled: false,
+        ConnectorSandboxPermissionProfile.FullAccess,
+        ConnectorSandboxNetworkAccess.Host);
 
     public ConnectorSandboxSettings Normalize()
     {

@@ -12,6 +12,7 @@ using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.Storage.Streams;
+using WindowsClipboard = Windows.ApplicationModel.DataTransfer.Clipboard;
 
 namespace ChatOS.Desktop.Features.Chat;
 
@@ -136,7 +137,7 @@ public sealed partial class ConversationPage : UserControl
         DataPackageView content;
         try
         {
-            content = Clipboard.GetContent();
+            content = WindowsClipboard.GetContent();
         }
         catch (Exception exception)
         {

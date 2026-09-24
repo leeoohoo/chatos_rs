@@ -8,33 +8,32 @@
     mc:Ignorable="d"
     Title="Clipboard History">
 
-    <Window.Resources>
-        <DataTemplate x:Key="ClipboardEntryTemplate" x:DataType="domain:ClipboardHistoryEntry">
-            <Border Margin="0,0,0,8" Padding="12" Style="{StaticResource ChatOSCardStyle}">
-                <Grid ColumnSpacing="12">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Spacing="4">
-                        <TextBlock Text="{x:Bind Preview}" Style="{StaticResource ChatOSBodyStrongTextStyle}" TextWrapping="Wrap" MaxLines="3" />
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <TextBlock Text="{x:Bind Kind}" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                            <TextBlock Text="{x:Bind SourceApplication}" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                            <TextBlock Text="{x:Bind UpdatedAt}" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                        </StackPanel>
-                    </StackPanel>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="6">
-                        <Button AutomationProperties.AutomationId="ChatOS.Clipboard.Restore" Click="OnRestoreClicked" Content="恢复" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
-                        <Button AutomationProperties.AutomationId="ChatOS.Clipboard.Pin" Click="OnPinClicked" Content="固定/取消" />
-                        <Button AutomationProperties.AutomationId="ChatOS.Clipboard.Delete" Click="OnDeleteClicked" Content="删除" />
-                    </StackPanel>
-                </Grid>
-            </Border>
-        </DataTemplate>
-    </Window.Resources>
-
     <Grid Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
+        <Grid.Resources>
+            <DataTemplate x:Key="ClipboardEntryTemplate" x:DataType="domain:ClipboardHistoryEntry">
+                <Border Margin="0,0,0,8" Padding="12" Style="{StaticResource ChatOSCardStyle}">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="{x:Bind Preview}" Style="{StaticResource ChatOSBodyStrongTextStyle}" TextWrapping="Wrap" MaxLines="3" />
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="{x:Bind Kind}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                <TextBlock Text="{x:Bind SourceApplication}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                <TextBlock Text="{x:Bind UpdatedAt}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </StackPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="6">
+                            <Button AutomationProperties.AutomationId="ChatOS.Clipboard.Restore" Click="OnRestoreClicked" Content="恢复" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                            <Button AutomationProperties.AutomationId="ChatOS.Clipboard.Pin" Click="OnPinClicked" Content="固定/取消" />
+                            <Button AutomationProperties.AutomationId="ChatOS.Clipboard.Delete" Click="OnDeleteClicked" Content="删除" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </DataTemplate>
+        </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="48" />
             <RowDefinition Height="Auto" />

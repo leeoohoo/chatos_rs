@@ -21,25 +21,29 @@ public sealed class SandboxExecutionPolicyTests
     }
 
     [Fact]
-    public void DefaultPolicyUsesAppContainerWithoutNetworkCapabilities()
+    public void DefaultPolicyUsesCompatibleHostAccess()
     {
         var policy = SandboxExecutionPolicy.FromSettings(ConnectorSandboxSettings.Default);
 
-        Assert.True(policy.UseAppContainer);
-        Assert.Equal(ConnectorSandboxPermissionProfile.WorkspaceWrite, policy.PermissionProfile);
-        Assert.False(policy.AllowHostNetwork);
+        Assert.False(policy.UseAppContainer);
+        Assert.Equal(ConnectorSandboxPermissionProfile.FullAccess, policy.PermissionProfile);
+        Assert.True(policy.AllowHostNetwork);
     }
 
     [Fact]
     public void RestrictedEnvironmentUsesAllowlistInsteadOfInheritingProcessSecrets()
     {
-        var policy = SandboxExecutionPolicy.FromSettings(ConnectorSandboxSettings.Default);
+        var policy = SandboxExecutionPolicy.FromSettings(new ConnectorSandboxSettings(
+            true,
+            ConnectorSandboxPermissionProfile.WorkspaceWrite,
+            ConnectorSandboxNetworkAccess.Disabled));
         var environment = WindowsAppContainerLaunchContext.BuildEnvironmentVariables(
             "C:\\sandbox-temp",
             policy);
 
         Assert.Equal("1", environment["CHATOS_SANDBOX"]);
         Assert.Equal("C:\\sandbox-temp", environment["TEMP"]);
+        Assert.Equal("C:\\sandbox-temp", environment["LOCALAPPDATA"]);
         Assert.DoesNotContain("OPENAI_API_KEY", environment.Keys, StringComparer.OrdinalIgnoreCase);
         Assert.DoesNotContain("CHATOS_API_TOKEN", environment.Keys, StringComparer.OrdinalIgnoreCase);
         Assert.DoesNotContain("USERPROFILE", environment.Keys, StringComparer.OrdinalIgnoreCase);
