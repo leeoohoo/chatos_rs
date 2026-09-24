@@ -36,6 +36,12 @@ pub fn normalize_path_for_compare(path: &Path) -> String {
 }
 
 pub fn path_is_within_root(candidate: &Path, root: &Path) -> bool {
+    // Unix filenames can contain literal backslashes. Require native component
+    // containment before the compatibility normalization can turn those bytes
+    // into separators and mistake a sibling for an authorized descendant.
+    if cfg!(unix) && !candidate.starts_with(root) {
+        return false;
+    }
     let candidate_norm = normalize_path_for_compare(candidate);
     let root_norm = normalize_path_for_compare(root);
 
@@ -89,6 +95,32 @@ mod tests {
         let root = PathBuf::from("/tmp/demo");
         let sibling = PathBuf::from("/tmp/demo-elsewhere/src/main.rs");
         assert!(!path_is_within_root(sibling.as_path(), root.as_path()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_within_root_preserves_literal_backslashes() {
+        let root = PathBuf::from("/tmp/demo");
+        for sibling in [r"/tmp/demo\private", r"/tmp/demo\private/secret.txt"] {
+            assert!(!path_is_within_root(
+                PathBuf::from(sibling).as_path(),
+                &root
+            ));
+        }
+        assert!(path_is_within_root(
+            PathBuf::from(r"/tmp/demo/valid\child").as_path(),
+            &root
+        ));
+
+        let backslash_root = PathBuf::from(r"/tmp/demo\private");
+        assert!(!path_is_within_root(
+            PathBuf::from("/tmp/demo/private").as_path(),
+            &backslash_root
+        ));
+        assert!(path_is_within_root(
+            &backslash_root.join("child"),
+            &backslash_root
+        ));
     }
 
     #[test]

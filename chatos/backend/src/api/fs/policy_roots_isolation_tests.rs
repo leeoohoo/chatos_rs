@@ -50,6 +50,7 @@ async fn user_roots_reject_redirected_directories() {
             "other-user",
             "inside-user",
             "configured-base-link",
+            "backslash-sibling",
         ],
     ]
     .concat();
@@ -128,7 +129,10 @@ async fn check_case(case: &str) {
         }
     }
     let roots = build_allowed_roots(&auth).await;
-    if case == "normal" || case == "configured-base-link" {
+    if matches!(
+        case,
+        "normal" | "configured-base-link" | "backslash-sibling"
+    ) {
         assert_eq!(roots.len(), 2);
         assert_eq!(roots[0].kind, FsAllowedRootKind::Workspace);
         assert_eq!(roots[1].kind, FsAllowedRootKind::Public);
@@ -141,6 +145,10 @@ async fn check_case(case: &str) {
             fs::canonicalize(user_root.join("public")).unwrap()
         );
         let policy = FsPathPolicy::for_user(&auth).await.unwrap();
+        #[cfg(unix)]
+        if case == "backslash-sibling" {
+            check_backslash_sibling(&policy, &user_root);
+        }
         for root in &roots {
             let authorized = policy
                 .authorize_existing_dir(root.path.to_str().unwrap(), "missing", "not dir")
@@ -176,6 +184,54 @@ async fn check_case(case: &str) {
     assert_eq!(
         fs::read_to_string(outside.join("sentinel")).unwrap(),
         "unchanged"
+    );
+}
+
+#[cfg(unix)]
+fn check_backslash_sibling(policy: &FsPathPolicy, user_root: &Path) {
+    use std::os::unix::fs::symlink;
+
+    // On Unix this is a sibling directory, not a child of workspaces.
+    let sibling = user_root.join(r"workspaces\private");
+    fs::create_dir(&sibling).unwrap();
+    let secret = sibling.join("secret.txt");
+    fs::write(&secret, "outside the authorized root").unwrap();
+    let link = user_root.join("workspaces/redirect");
+    symlink(&sibling, &link).unwrap();
+    for directory in [&sibling, &link] {
+        assert!(
+            matches!(
+                policy.authorize_existing_dir(directory.to_str().unwrap(), "missing", "not dir"),
+                Err(FsPolicyError::Forbidden(_))
+            ),
+            "a sibling or symlink to it must not be authorized: {directory:?}"
+        );
+        assert!(matches!(
+            policy.authorize_existing_file(
+                directory.join("secret.txt").to_str().unwrap(),
+                "missing",
+                "not file"
+            ),
+            Err(FsPolicyError::Forbidden(_))
+        ));
+    }
+
+    // A literal backslash in an actual child filename remains valid.
+    let child = user_root.join(r"workspaces/valid\child");
+    fs::create_dir(&child).unwrap();
+    let file = child.join("note.txt");
+    fs::write(&file, "inside the authorized root").unwrap();
+    let authorized = policy
+        .authorize_existing_dir(child.to_str().unwrap(), "missing", "not dir")
+        .unwrap();
+    policy.require_write(&authorized).unwrap();
+    let authorized = policy
+        .authorize_existing_file(file.to_str().unwrap(), "missing", "not file")
+        .unwrap();
+    policy.require_write(&authorized).unwrap();
+    assert_eq!(
+        fs::read_to_string(secret).unwrap(),
+        "outside the authorized root"
     );
 }
 
