@@ -50,7 +50,7 @@ impl NotepadStore for TaskRunnerNotepadStore {
         self.create_note_value(params).await
     }
 
-    async fn read_note(&self, id: &str) -> Result<Value, String> {
+    async fn read_note(&self, id: &str, _image_offset: usize) -> Result<Value, String> {
         self.read_note_value(id).await
     }
 

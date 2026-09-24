@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Testing
 @testable import ChatOSApp
 
@@ -110,5 +111,97 @@ struct MarkdownRenderCacheTests {
         #expect(first == second)
         #expect(cache.metrics().blockMisses == 1)
         #expect(cache.metrics().blockHits == 1)
+    }
+
+    @Test
+    func parsesStandardAndModelStylePipeTables() {
+        let standard = MarkdownBlockParser.parse("""
+        | Source | 简体中文 |
+        | --- | --- |
+        | Security and quality | 安全与质量 |
+        """)
+        #expect(standard == [
+            .table(
+                headers: ["Source", "简体中文"],
+                rows: [["Security and quality", "安全与质量"]]
+            ),
+        ])
+
+        let withoutDelimiter = MarkdownBlockParser.parse("""
+        Source | 简体中文
+        Security and quality | 安全与质量
+        Findings | 发现的问题
+        Dependabot | Dependabot
+        """)
+        #expect(withoutDelimiter == [
+            .table(
+                headers: ["Source", "简体中文"],
+                rows: [
+                    ["Security and quality", "安全与质量"],
+                    ["Findings", "发现的问题"],
+                    ["Dependabot", "Dependabot"],
+                ]
+            ),
+        ])
+    }
+
+    @Test
+    func escapedAndInlineCodePipesStayInsideTableCells() {
+        let blocks = MarkdownBlockParser.parse("""
+        | Expression | Meaning |
+        | --- | --- |
+        | `a | b` | a \\| b |
+        """)
+        #expect(blocks == [
+            .table(
+                headers: ["Expression", "Meaning"],
+                rows: [["`a | b`", "a \\| b"]]
+            ),
+        ])
+    }
+
+    @Test
+    func parsesPlainAndAngleWrappedMarkdownImagesAsImageBlocks() {
+        let blocks = MarkdownBlockParser.parse("""
+        Before
+
+        ![screenshot](<https://example.test/api/chatos/attachments/object?token=signed>)
+
+        ![diagram](https://example.test/api/attachments/object?token=other)
+        """)
+
+        #expect(blocks == [
+            .paragraph("Before"),
+            .image(
+                altText: "screenshot",
+                url: "https://example.test/api/chatos/attachments/object?token=signed"
+            ),
+            .image(
+                altText: "diagram",
+                url: "https://example.test/api/attachments/object?token=other"
+            ),
+        ])
+    }
+
+    @Test @MainActor
+    func tableRendererUsesNativeTextTableBlocks() {
+        let rendered = MarkdownAttributedRenderer.render([
+            .table(
+                headers: ["Source", "简体中文"],
+                rows: [["Security and quality", "安全与质量"]]
+            ),
+        ])
+        var tableBlocks: [NSTextTableBlock] = []
+        rendered.enumerateAttribute(
+            .paragraphStyle,
+            in: NSRange(location: 0, length: rendered.length)
+        ) { value, _, _ in
+            guard let style = value as? NSParagraphStyle else { return }
+            tableBlocks.append(contentsOf: style.textBlocks.compactMap { $0 as? NSTextTableBlock })
+        }
+
+        #expect(tableBlocks.count == 4)
+        #expect(Set(tableBlocks.map(\.startingColumn)) == Set([0, 1]))
+        #expect(!rendered.string.contains("│"))
     }
 }

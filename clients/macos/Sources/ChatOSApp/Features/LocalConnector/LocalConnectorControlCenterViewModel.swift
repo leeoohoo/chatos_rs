@@ -278,6 +278,19 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         }
     }
 
+    func availableTaskModels() async throws -> [LocalConnectorModelConfig] {
+        if let modelCatalog {
+            return modelCatalog.items.filter {
+                $0.enabled && $0.taskEnabled && $0.hasAPIKey
+            }
+        }
+        let catalog = try await service.fetchModelCatalog(refresh: false)
+        modelCatalog = catalog
+        return catalog.items.filter {
+            $0.enabled && $0.taskEnabled && $0.hasAPIKey
+        }
+    }
+
     func saveModelConfiguration(
         settings: LocalConnectorModelSettings,
         updates: [String: LocalConnectorModelConfigUpdate]

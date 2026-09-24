@@ -3,6 +3,48 @@ import XCTest
 @testable import ChatOSAgentRuntime
 
 final class AgentChatModelClientTests: XCTestCase {
+    func testToolFreeRequestsDoNotAdvertiseToolCalling() async throws {
+        let responses = try AgentResponsesModelClient(
+            baseURL: URL(string: "https://api.openai.com/v1")!,
+            model: "gpt-test",
+            apiKey: "secret",
+            transport: { request in
+                let payload = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody))
+                        as? [String: Any]
+                )
+                XCTAssertNil(payload["tools"])
+                XCTAssertNil(payload["tool_choice"])
+                return (Data(#"{"id":"resp","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"done"}]}]}"#.utf8), 200)
+            }
+        )
+        _ = try await responses.complete(
+            messages: [.init(role: .user, content: "translate")],
+            tools: [],
+            timeout: 20
+        )
+
+        let chat = try AgentChatModelClient(
+            baseURL: URL(string: "https://model.example/v1")!,
+            model: "gpt-test",
+            apiKey: "secret",
+            transport: { request in
+                let payload = try XCTUnwrap(
+                    JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody))
+                        as? [String: Any]
+                )
+                XCTAssertNil(payload["tools"])
+                XCTAssertNil(payload["tool_choice"])
+                return (Data(#"{"choices":[{"finish_reason":"stop","message":{"content":"done"}}]}"#.utf8), 200)
+            }
+        )
+        _ = try await chat.complete(
+            messages: [.init(role: .user, content: "translate")],
+            tools: [],
+            timeout: 20
+        )
+    }
+
     func testResponsesUsesCompactionAndStatelessFullOutputContinuation() async throws {
         let recorder = ResponsesTransportRecorder()
         let client = try AgentResponsesModelClient(

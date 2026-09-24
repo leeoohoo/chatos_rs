@@ -4,6 +4,7 @@ import CoreGraphics
 @MainActor
 final class ScreenshotInlineAnnotationController {
     var onComplete: ((CGImage) -> Void)?
+    var onSendToTranslation: ((CGImage) -> Void)?
     var onCancel: (() -> Void)?
     var onRequestLongCapture: (() -> Void)?
 
@@ -99,7 +100,7 @@ final class ScreenshotInlineAnnotationController {
     }
 
     private func presentToolbar() {
-        let toolbarSize = NSSize(width: 780, height: 52)
+        let toolbarSize = NSSize(width: 824, height: 52)
         let panel = ScreenshotOverlayPanel(
             contentRect: NSRect(origin: toolbarOrigin(for: toolbarSize), size: toolbarSize),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -221,6 +222,13 @@ final class ScreenshotInlineAnnotationController {
         done.contentTintColor = .systemGreen
         done.keyEquivalent = "\r"
 
+        let sendToTranslation = iconButton(
+            "translate",
+            help: localized("发送到快速翻译", "Send to Quick Translate"),
+            action: #selector(sendToTranslationPressed)
+        )
+        sendToTranslation.contentTintColor = .systemPurple
+
         let divider = NSBox()
         divider.boxType = .separator
         divider.translatesAutoresizingMaskIntoConstraints = false
@@ -236,6 +244,7 @@ final class ScreenshotInlineAnnotationController {
             clear,
             divider,
             cancel,
+            sendToTranslation,
             done,
         ])
         stack.orientation = .horizontal
@@ -345,12 +354,17 @@ final class ScreenshotInlineAnnotationController {
         complete()
     }
 
+    @objc private func sendToTranslationPressed() {
+        completeToTranslation()
+    }
+
     @objc private func longCapturePressed() {
         guard !hasFinished, !annotationView.hasAnnotations else { return }
         hasFinished = true
         dismissWindows()
         onRequestLongCapture?()
         onComplete = nil
+        onSendToTranslation = nil
         onCancel = nil
         onRequestLongCapture = nil
     }
@@ -361,6 +375,18 @@ final class ScreenshotInlineAnnotationController {
         dismissWindows()
         onComplete?(image)
         onComplete = nil
+        onSendToTranslation = nil
+        onCancel = nil
+        onRequestLongCapture = nil
+    }
+
+    private func completeToTranslation() {
+        guard !hasFinished, let image = annotationView.renderedImage() else { return }
+        hasFinished = true
+        dismissWindows()
+        onSendToTranslation?(image)
+        onComplete = nil
+        onSendToTranslation = nil
         onCancel = nil
         onRequestLongCapture = nil
     }
@@ -373,6 +399,7 @@ final class ScreenshotInlineAnnotationController {
             onCancel?()
         }
         onComplete = nil
+        onSendToTranslation = nil
         onCancel = nil
         onRequestLongCapture = nil
     }

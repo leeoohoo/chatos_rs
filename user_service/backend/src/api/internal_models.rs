@@ -424,3 +424,105 @@ pub async fn get_user_model_runtime_config(
     );
     result
 }
+
+pub async fn list_user_model_runtime_configs(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(user_id): Path<String>,
+) -> ApiResult<Vec<InternalModelRuntimeConfigResponse>> {
+    let identity =
+        require_user_model_internal_request(&state.config, &headers, MODEL_RUNTIME_READ_SCOPE)?;
+    let user_id = user_id.trim().to_string();
+    let result = async {
+        if user_id.is_empty() {
+            return Err(bad_request("user_id is required"));
+        }
+        if state
+            .store
+            .find_user_by_id(user_id.as_str())
+            .await
+            .map_err(internal_error)?
+            .is_none()
+        {
+            return Err(not_found("user not found"));
+        }
+
+        let configs = state
+            .store
+            .list_user_model_configs(Some(user_id.as_str()))
+            .await
+            .map_err(internal_error)?;
+        let providers = state
+            .store
+            .list_user_model_providers(Some(user_id.as_str()))
+            .await
+            .map_err(internal_error)?;
+        let mut items = Vec::new();
+        for model_config in configs {
+            if !model_config.enabled
+                || model_config.model.trim().is_empty()
+                || !is_supported_provider(model_config.provider.as_str())
+                || !model_config_has_backing_provider(&model_config, providers.as_slice())
+            {
+                continue;
+            }
+            let Some(api_key) = model_config
+                .api_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+            else {
+                continue;
+            };
+            let Some(base_url) = model_config
+                .base_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+            else {
+                continue;
+            };
+            let prompt_vendor = model_config.prompt_vendor.clone().or_else(|| {
+                normalize_agent_prompt_vendor(None, model_config.provider.as_str())
+                    .map(|vendor| vendor.as_str().to_string())
+            });
+            items.push(InternalModelRuntimeConfigResponse {
+                id: model_config.id,
+                owner_user_id: model_config.owner_user_id,
+                name: model_config.name,
+                provider: model_config.provider,
+                prompt_vendor,
+                base_url,
+                api_key,
+                model: model_config.model,
+                thinking_level: model_config.thinking_level,
+                temperature: model_config.temperature,
+                max_output_tokens: model_config.max_output_tokens,
+                supports_images: model_config.supports_images,
+                supports_reasoning: model_config.supports_reasoning,
+                supports_responses: model_config.supports_responses,
+            });
+        }
+        Ok(Json(items))
+    }
+    .await;
+    record_user_service_internal_resource_access(
+        &identity,
+        UserServiceInternalResourceAudit {
+            represented_user_id: (!user_id.is_empty()).then_some(user_id.as_str()),
+            project_id: None,
+            resource_type: "user_model_runtime_catalog",
+            resource_id: "all",
+            resource_name: None,
+            action: "read",
+            outcome: if result.is_ok() {
+                "succeeded"
+            } else {
+                "failed"
+            },
+        },
+    );
+    result
+}

@@ -3,9 +3,14 @@ import Foundation
 
 public struct ChatOSNotepadService: NotepadServicing {
     private let client: ChatOSAPIClient
+    private let uploadTransport: any HTTPTransport
 
-    public init(client: ChatOSAPIClient) {
+    public init(
+        client: ChatOSAPIClient,
+        uploadTransport: any HTTPTransport = URLSessionHTTPTransport()
+    ) {
         self.client = client
+        self.uploadTransport = uploadTransport
     }
 
     public func initialize() async throws {
@@ -88,6 +93,52 @@ public struct ChatOSNotepadService: NotepadServicing {
         return try response.domainModel()
     }
 
+    public func uploadImage(
+        _ image: NotepadImageUpload,
+        noteID: String
+    ) async throws -> NotepadImageAsset {
+        let body = try JSONEncoder().encode(MediaUploadsRequestDTO(assets: [
+            .init(name: image.name, mimeType: image.mimeType, size: image.data.count),
+        ]))
+        let response: MediaUploadsResponseDTO = try await client.request(
+            "/media/uploads",
+            method: "POST",
+            body: body
+        )
+        guard let target = response.uploads.first,
+              let uploadURL = URL(string: target.uploadURL) else {
+            throw ChatOSAPIError.decoding("记事本图片上传地址无效")
+        }
+        var headers = (target.uploadHeaders ?? [:]).filter { key, _ in
+            key.caseInsensitiveCompare("Host") != .orderedSame
+                && key.caseInsensitiveCompare("Content-Length") != .orderedSame
+        }
+        if !headers.keys.contains(where: { $0.caseInsensitiveCompare("Content-Type") == .orderedSame }) {
+            headers["Content-Type"] = image.mimeType
+        }
+        let uploadResponse = try await uploadTransport.send(HTTPRequest(
+            url: uploadURL,
+            method: "PUT",
+            headers: headers,
+            body: image.data
+        ))
+        guard (200..<300).contains(uploadResponse.statusCode) else {
+            throw ChatOSAPIError.server(
+                statusCode: uploadResponse.statusCode,
+                message: "记事本图片上传失败"
+            )
+        }
+        guard let resolvedURL = await client.resolvePublicURL(target.viewURL ?? target.url ?? "") else {
+            throw ChatOSAPIError.decoding("记事本图片访问地址无效")
+        }
+        return NotepadImageAsset(
+            url: resolvedURL,
+            mimeType: target.mimeType,
+            name: target.name,
+            size: target.size
+        )
+    }
+
     public func deleteNote(id: String) async throws {
         let _: SimpleResponse = try await client.request(
             "/notepad/notes/\(id.notepadPathEncoded)",
@@ -98,6 +149,30 @@ public struct ChatOSNotepadService: NotepadServicing {
 
 private struct SimpleResponse: Decodable, Sendable {
     var ok: Bool?
+}
+
+private struct MediaUploadsRequestDTO: Encodable {
+    var assets: [MediaUploadItemDTO]
+}
+
+private struct MediaUploadItemDTO: Encodable {
+    var name: String
+    var mimeType: String
+    var size: Int
+}
+
+private struct MediaUploadsResponseDTO: Decodable, Sendable {
+    var uploads: [MediaUploadTargetDTO]
+}
+
+private struct MediaUploadTargetDTO: Decodable, Sendable {
+    var name: String
+    var mimeType: String
+    var size: Int
+    var uploadURL: String
+    var uploadHeaders: [String: String]?
+    var url: String?
+    var viewURL: String?
 }
 
 private struct FoldersResponse: Decodable, Sendable {

@@ -1,14 +1,29 @@
 import ChatOSCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct PetQuickChatView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var interactionState: PetOverlayInteractionState
+    @ObservedObject var translationViewModel: PetTranslationViewModel
+    @ObservedObject var notepadViewModel: NotepadViewModel
     let onInspectTaskReply: (TaskReplySelection, any MessageTaskGraphServicing) -> Void
 
     var body: some View {
         Group {
-            if let selectedResource {
+            if interactionState.isTranslationPresented {
+                PetTranslationView(
+                    viewModel: translationViewModel,
+                    onBack: closeTranslation,
+                    onClose: close
+                )
+            } else if interactionState.isNotepadPresented {
+                PetQuickNotepadView(
+                    viewModel: notepadViewModel,
+                    onBack: closeNotepad,
+                    onClose: close
+                )
+            } else if let selectedResource {
                 PetQuickChatConversationView(
                     resource: selectedResource,
                     conversation: model.petConversation(for: selectedResource),
@@ -49,7 +64,10 @@ struct PetQuickChatView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(model.localized("快捷聊天", english: "Quick Chat"))
                         .font(.system(size: 14, weight: .semibold))
-                    Text(model.localized("选择联系人或常用项目", english: "Choose a contact or favorite project"))
+                    Text(model.localized(
+                        "选择快速功能、联系人或常用项目",
+                        english: "Choose a quick action, contact, or favorite project"
+                    ))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
@@ -62,24 +80,21 @@ struct PetQuickChatView: View {
 
             ScrollView {
                 LazyVStack(spacing: 8) {
+                    translationButton
+                    notepadButton
+
                     ForEach(resources) { resource in
                         resourceButton(resource)
                     }
 
-                    if resources.isEmpty {
-                        ContentUnavailableView(
-                            model.localized("暂无快捷会话", english: "No Quick Conversations"),
-                            systemImage: "message.badge",
-                            description: Text(model.localized(
-                                "请先在项目设置中添加常用项目。",
-                                english: "Add a favorite project in Project Settings first."
-                            ))
-                        )
-                        .frame(minHeight: 260)
-                    } else if resources.allSatisfy({ $0.kind == .contact }) {
+                    if resources.isEmpty || resources.allSatisfy({ $0.kind == .contact }) {
                         Text(model.localized(
-                            "可在项目设置中开启“设为常用项目”。",
-                            english: "Enable “Add to Favorite Projects” in Project Settings."
+                            resources.isEmpty
+                                ? "可直接使用快速翻译；也可在项目设置中添加常用项目。"
+                                : "可在项目设置中开启“设为常用项目”。",
+                            english: resources.isEmpty
+                                ? "Use Quick Translate now, or add favorite projects in Project Settings."
+                                : "Enable “Add to Favorite Projects” in Project Settings."
                         ))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
@@ -91,8 +106,80 @@ struct PetQuickChatView: View {
         }
     }
 
+    private var translationButton: some View {
+        Button {
+            interactionState.selectedQuickChatResourceID = nil
+            interactionState.isNotepadPresented = false
+            interactionState.isTranslationPresented = true
+        } label: {
+            HStack(spacing: 11) {
+                Image(systemName: "translate")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Color.purple)
+                    .frame(width: 34, height: 34)
+                    .background(Color.purple.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(model.localized("快速翻译", english: "Quick Translate"))
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(model.localized(
+                        "粘贴文字、截图或拖入文件",
+                        english: "Paste text, screenshots, or drop files"
+                    ))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.purple.opacity(0.06), in: RoundedRectangle(cornerRadius: 11))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var notepadButton: some View {
+        Button {
+            interactionState.selectedQuickChatResourceID = nil
+            interactionState.isTranslationPresented = false
+            interactionState.isNotepadPresented = true
+        } label: {
+            HStack(spacing: 11) {
+                Image(systemName: "note.text")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Color.orange)
+                    .frame(width: 34, height: 34)
+                    .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(model.localized("快速记事本", english: "Quick Notepad"))
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(model.localized(
+                        "快速记录，与完整记事本同步",
+                        english: "Capture notes synced with the full notepad"
+                    ))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 11))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private func resourceButton(_ resource: PetQuickChatResource) -> some View {
         Button {
+            interactionState.isTranslationPresented = false
+            interactionState.isNotepadPresented = false
             interactionState.selectedQuickChatResourceID = resource.id
         } label: {
             HStack(spacing: 11) {
@@ -142,8 +229,20 @@ struct PetQuickChatView: View {
     }
 
     private func close() {
+        translationViewModel.cancel()
+        interactionState.isTranslationPresented = false
+        interactionState.isNotepadPresented = false
         interactionState.selectedQuickChatResourceID = nil
         interactionState.isQuickChatPresented = false
+    }
+
+    private func closeTranslation() {
+        translationViewModel.cancel()
+        interactionState.isTranslationPresented = false
+    }
+
+    private func closeNotepad() {
+        interactionState.isNotepadPresented = false
     }
 }
 
@@ -292,6 +391,10 @@ private struct PetQuickChatTimeline: View {
                     .font(.system(size: 12))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if !message.attachments.isEmpty {
+                    MessageAttachmentChips(attachments: message.attachments)
+                }
 
                 if let taskSelection {
                     Divider()
@@ -445,36 +548,53 @@ struct PetQuickChatTaskInspectorView: View {
 private struct PetQuickChatComposer: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var conversation: ConversationSessionViewModel
-    @FocusState private var isFocused: Bool
+    @State private var showsFileImporter = false
+    @State private var previewedAttachment: ConversationAttachmentDraft?
+    @State private var isDropTargeted = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            if let error = conversation.sendError {
+            if !conversation.attachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 7) {
+                        ForEach(conversation.attachments) { attachment in
+                            ComposerAttachmentChip(
+                                attachment: attachment,
+                                onPreview: { previewedAttachment = attachment },
+                                onRemove: { conversation.removeAttachment(id: attachment.id) }
+                            )
+                        }
+                    }
+                }
+            }
+            if let error = conversation.attachmentError ?? conversation.sendError {
                 Text(error)
                     .font(.system(size: 10))
                     .foregroundStyle(.red)
                     .lineLimit(2)
             }
             HStack(alignment: .bottom, spacing: 8) {
-                TextField(
-                    model.localized("发送消息…", english: "Send a message…"),
-                    text: $conversation.draft,
-                    axis: .vertical
-                )
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .lineLimit(1...4)
-                .focused($isFocused)
-                .onSubmit(send)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                Button {
+                    showsFileImporter = true
+                } label: {
+                    Image(systemName: "paperclip")
+                        .frame(width: 28, height: 28)
+                        .foregroundStyle(.secondary)
                 }
+                .buttonStyle(.plain)
+                .help(model.localized("添加附件", english: "Add Attachment"))
 
-                Button(action: send) {
+                ComposerPasteTextEditor(
+                    text: $conversation.draft,
+                    placeholder: model.localized(
+                        "发送消息，或粘贴图片和文件…",
+                        english: "Send a message, or paste images and files…"
+                    ),
+                    onSubmit: conversation.sendDraft,
+                    onPasteContent: handlePasteContent
+                )
+
+                Button(action: conversation.sendDraft) {
                     Group {
                         if conversation.isSending {
                             ProgressView().controlSize(.small)
@@ -484,25 +604,75 @@ private struct PetQuickChatComposer: View {
                         }
                     }
                     .frame(width: 30, height: 30)
-                    .foregroundStyle(canSend ? Color.white : Color.secondary)
-                    .background(canSend ? Color.accentColor : Color.secondary.opacity(0.14), in: Circle())
+                    .foregroundStyle(conversation.canSendDraft ? Color.white : Color.secondary)
+                    .background(
+                        conversation.canSendDraft
+                            ? Color.accentColor
+                            : Color.secondary.opacity(0.14),
+                        in: Circle()
+                    )
                 }
                 .buttonStyle(.plain)
-                .disabled(!canSend)
+                .disabled(!conversation.canSendDraft)
                 .help(model.localized("发送", english: "Send"))
             }
+            .padding(.leading, 7)
+            .padding(.trailing, 5)
+            .padding(.vertical, 4)
+            .background(AppPalette.inputSurface, in: RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color(nsColor: .separatorColor).opacity(0.72), lineWidth: 1)
+            }
         }
-        .padding(11)
-        .onAppear { isFocused = true }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .overlay {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [7, 5]))
+                    .allowsHitTesting(false)
+            }
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            conversation.addAttachmentFiles(urls)
+            return !urls.isEmpty
+        } isTargeted: { isDropTargeted = $0 }
+        .fileImporter(
+            isPresented: $showsFileImporter,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case let .success(urls):
+                conversation.addAttachmentFiles(urls)
+            case let .failure(error):
+                conversation.attachmentError = error.localizedDescription
+            }
+        }
+        .sheet(item: $previewedAttachment) { attachment in
+            ComposerAttachmentPreview(attachment: attachment)
+        }
     }
 
-    private var canSend: Bool {
-        !conversation.isSending
-            && !conversation.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private func send() {
-        guard canSend else { return }
-        conversation.sendDraft()
+    private func handlePasteContent(_ content: ComposerPasteContent) {
+        switch content {
+        case let .files(urls):
+            conversation.addAttachmentFiles(urls)
+        case let .image(data, mimeType, suggestedName):
+            conversation.addPastedImage(
+                data: data,
+                mimeType: mimeType,
+                suggestedName: suggestedName
+            )
+        case let .document(data, mimeType, suggestedName):
+            conversation.addPastedDocument(
+                data: data,
+                mimeType: mimeType,
+                suggestedName: suggestedName
+            )
+        case let .longText(text):
+            conversation.addLongPastedText(text)
+        }
     }
 }

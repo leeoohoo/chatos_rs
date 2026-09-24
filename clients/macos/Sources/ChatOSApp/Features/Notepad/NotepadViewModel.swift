@@ -47,12 +47,14 @@ final class NotepadViewModel: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var isLoadingNote = false
     @Published private(set) var isSaving = false
+    @Published private(set) var pendingImageUploadCount = 0
     @Published private(set) var errorMessage: String?
     @Published var interfaceLanguage: ChatOSLanguage = .simplifiedChinese
 
     private let service: any NotepadServicing
     private var initialized = false
     private var searchTask: Task<Void, Never>?
+    private var activeNoteSelectionID: UUID?
     private var savedTitle = ""
     private var savedTagsText = ""
     private var savedContent = ""
@@ -73,6 +75,8 @@ final class NotepadViewModel: ObservableObject {
         selectedNoteID != nil
             && (title != savedTitle || tagsText != savedTagsText || content != savedContent)
     }
+
+    var isUploadingImage: Bool { pendingImageUploadCount > 0 }
 
     var tree: [NotepadTreeNode] {
         let allFolders = normalizedFolders()
@@ -139,15 +143,39 @@ final class NotepadViewModel: ObservableObject {
     ) async {
         let normalizedID = id.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedID.isEmpty else { return }
-        if !force, selectedNoteID == normalizedID { return }
-        if savingCurrent, isDirty, !(await save()) { return }
+        let selectionID = UUID()
+        activeNoteSelectionID = selectionID
+        selectedTreeNodeID = "note:\(normalizedID)"
+        if !force, selectedNoteID == normalizedID {
+            isLoadingNote = false
+            return
+        }
+
+        if savingCurrent, isDirty, !(await save()) {
+            if activeNoteSelectionID == selectionID {
+                selectedTreeNodeID = selectedNoteID.map { "note:\($0)" }
+                    ?? "folder:\(selectedFolder)"
+            }
+            return
+        }
+        guard activeNoteSelectionID == selectionID else { return }
+        selectedTreeNodeID = "note:\(normalizedID)"
 
         isLoadingNote = true
         errorMessage = nil
-        defer { isLoadingNote = false }
+        defer {
+            if activeNoteSelectionID == selectionID {
+                isLoadingNote = false
+            }
+        }
         do {
-            apply(try await service.fetchNote(id: normalizedID))
+            let detail = try await service.fetchNote(id: normalizedID)
+            guard activeNoteSelectionID == selectionID else { return }
+            apply(detail)
         } catch {
+            guard activeNoteSelectionID == selectionID else { return }
+            selectedTreeNodeID = selectedNoteID.map { "note:\($0)" }
+                ?? "folder:\(selectedFolder)"
             errorMessage = error.localizedDescription
         }
     }
@@ -182,6 +210,18 @@ final class NotepadViewModel: ObservableObject {
 
     func save() async -> Bool {
         guard let selectedNoteID else { return true }
+        guard !isUploadingImage else {
+            errorMessage = interfaceLanguage == .english
+                ? "Please wait for the pasted image to finish uploading."
+                : "请等待粘贴的图片上传完成。"
+            return false
+        }
+        let submittedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let submittedContent = content
+        let submittedTags = parseTags(tagsText)
+        let editorTitleAtStart = title
+        let editorTagsAtStart = tagsText
+        let editorContentAtStart = content
         isSaving = true
         errorMessage = nil
         defer { isSaving = false }
@@ -189,13 +229,28 @@ final class NotepadViewModel: ObservableObject {
             let detail = try await service.updateNote(
                 id: selectedNoteID,
                 update: .init(
-                    title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-                    content: content,
-                    tags: parseTags(tagsText)
+                    title: submittedTitle,
+                    content: submittedContent,
+                    tags: submittedTags
                 )
             )
             upsert(detail.note)
-            apply(detail)
+
+            // PATCH responses are metadata-first and may omit note content. Re-applying the
+            // response used to blank and rebuild the TextEditor after every save, which was
+            // both visibly jarring and expensive. Keep the editor buffer in place and only
+            // accept server-normalized metadata if the user has not typed again meanwhile.
+            guard self.selectedNoteID == selectedNoteID else { return true }
+            let normalizedTags = detail.note.tags.joined(separator: ", ")
+            if title == editorTitleAtStart,
+               tagsText == editorTagsAtStart,
+               content == editorContentAtStart {
+                if title != detail.note.title { title = detail.note.title }
+                if tagsText != normalizedTags { tagsText = normalizedTags }
+            }
+            savedTitle = detail.note.title
+            savedTagsText = normalizedTags
+            savedContent = submittedContent
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -230,6 +285,40 @@ final class NotepadViewModel: ObservableObject {
 
     func clearError() { errorMessage = nil }
 
+    func uploadPastedImage(_ image: NotepadImageUpload, placeholder: String) async {
+        guard let selectedNoteID else {
+            removeFirstOccurrence(of: placeholder)
+            errorMessage = interfaceLanguage == .english
+                ? "Select or create a note before pasting an image."
+                : "请先选择或新建笔记，再粘贴图片。"
+            return
+        }
+        guard image.data.count <= 20 * 1_024 * 1_024 else {
+            removeFirstOccurrence(of: placeholder)
+            errorMessage = interfaceLanguage == .english
+                ? "The pasted image exceeds the 20 MB limit."
+                : "粘贴的图片超过 20 MB 限制。"
+            return
+        }
+
+        pendingImageUploadCount += 1
+        errorMessage = nil
+        defer { pendingImageUploadCount = max(0, pendingImageUploadCount - 1) }
+        do {
+            let asset = try await service.uploadImage(image, noteID: selectedNoteID)
+            let rawAlt = (image.name as NSString).deletingPathExtension
+            let alt = rawAlt
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "[", with: "\\[")
+                .replacingOccurrences(of: "]", with: "\\]")
+            let markdown = "![\(alt)](<\(asset.url.absoluteString)>)"
+            replaceFirstOccurrence(of: placeholder, with: markdown)
+        } catch {
+            removeFirstOccurrence(of: placeholder)
+            errorMessage = error.localizedDescription
+        }
+    }
+
     private func mutate(_ operation: () async throws -> Void) async -> Bool {
         isLoading = true
         errorMessage = nil
@@ -241,6 +330,15 @@ final class NotepadViewModel: ObservableObject {
             errorMessage = error.localizedDescription
             return false
         }
+    }
+
+    private func removeFirstOccurrence(of value: String) {
+        replaceFirstOccurrence(of: value, with: "")
+    }
+
+    private func replaceFirstOccurrence(of value: String, with replacement: String) {
+        guard let range = content.range(of: value) else { return }
+        content.replaceSubrange(range, with: replacement)
     }
 
     private func reloadResources() async throws {

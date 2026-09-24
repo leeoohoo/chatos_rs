@@ -80,6 +80,10 @@ final class PetOverlayCoordinator {
         windowController.openFile(request)
     }
 
+    func openTranslationImage(data: Data, suggestedName: String) {
+        windowController.openTranslationImage(data: data, suggestedName: suggestedName)
+    }
+
     private func bind(model: AppModel) {
         Publishers.CombineLatest(
             model.authentication.$phase.removeDuplicates(),

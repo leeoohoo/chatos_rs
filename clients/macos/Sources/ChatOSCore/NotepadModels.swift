@@ -76,6 +76,32 @@ public struct NotepadNoteUpdate: Hashable, Sendable {
     }
 }
 
+public struct NotepadImageUpload: Sendable, Equatable {
+    public var data: Data
+    public var mimeType: String
+    public var name: String
+
+    public init(data: Data, mimeType: String, name: String) {
+        self.data = data
+        self.mimeType = mimeType
+        self.name = name
+    }
+}
+
+public struct NotepadImageAsset: Sendable, Equatable {
+    public var url: URL
+    public var mimeType: String
+    public var name: String
+    public var size: Int
+
+    public init(url: URL, mimeType: String, name: String, size: Int) {
+        self.url = url
+        self.mimeType = mimeType
+        self.name = name
+        self.size = size
+    }
+}
+
 public protocol NotepadServicing: Sendable {
     func initialize() async throws
     func listFolders() async throws -> [String]
@@ -86,5 +112,6 @@ public protocol NotepadServicing: Sendable {
     func createNote(_ draft: NotepadNoteDraft) async throws -> NotepadNoteDetail
     func fetchNote(id: String) async throws -> NotepadNoteDetail
     func updateNote(id: String, update: NotepadNoteUpdate) async throws -> NotepadNoteDetail
+    func uploadImage(_ image: NotepadImageUpload, noteID: String) async throws -> NotepadImageAsset
     func deleteNote(id: String) async throws
 }

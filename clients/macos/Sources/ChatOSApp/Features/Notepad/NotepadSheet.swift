@@ -22,12 +22,13 @@ struct NotepadSheet: View {
             Divider()
             HSplitView {
                 sidebar
-                    .frame(minWidth: 250, idealWidth: 310, maxWidth: 380)
+                    .frame(minWidth: 280, idealWidth: 340, maxWidth: 420)
                 editor
-                    .frame(minWidth: 620)
+                    .frame(minWidth: 720)
             }
         }
-        .frame(minWidth: 980, idealWidth: 1_180, minHeight: 650, idealHeight: 760)
+        .frame(minWidth: 1_120, idealWidth: 1_300, minHeight: 720, idealHeight: 840)
+        .background(Color(nsColor: .windowBackgroundColor))
         .environment(\.locale, model.interfaceLocale)
         .task {
             viewModel.interfaceLanguage = model.interfaceLanguage
@@ -61,14 +62,17 @@ struct NotepadSheet: View {
         } message: {
             Text(deleteTarget?.message(language: model.interfaceLanguage) ?? "")
         }
-        .interactiveDismissDisabled(viewModel.isDirty || viewModel.isSaving)
+        .interactiveDismissDisabled(
+            viewModel.isDirty || viewModel.isSaving || viewModel.isUploadingImage
+        )
     }
 
     private var header: some View {
         HStack(spacing: 12) {
             Label("记事本", systemImage: "note.text")
                 .appFont(.headline)
-            if viewModel.isLoading || viewModel.isLoadingNote || viewModel.isSaving {
+            if viewModel.isLoading || viewModel.isLoadingNote
+                || viewModel.isSaving || viewModel.isUploadingImage {
                 ProgressView().controlSize(.small)
             }
             Spacer()
@@ -87,17 +91,6 @@ struct NotepadSheet: View {
     private var sidebar: some View {
         VStack(spacing: 0) {
             VStack(spacing: 10) {
-                HStack(spacing: 8) {
-                    Button("新建文件夹", systemImage: "folder.badge.plus") {
-                        showPrompt(.folder(parent: viewModel.selectedFolder))
-                    }
-                    Button("新建笔记", systemImage: "square.and.pencil") {
-                        showPrompt(.note(folder: viewModel.selectedFolder))
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-                .controlSize(.small)
-
                 TextField("搜索标题或文件夹", text: $viewModel.searchQuery)
                     .textFieldStyle(.roundedBorder)
 
@@ -121,15 +114,19 @@ struct NotepadSheet: View {
                     viewModel.selectFolder("")
                 } label: {
                     Label("根目录", systemImage: "tray")
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 6)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
+                        .background(
+                            viewModel.selectedTreeNodeID == "folder:"
+                                ? Color.accentColor.opacity(0.15)
+                                : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
                 }
                 .buttonStyle(.plain)
-                .listRowBackground(
-                    viewModel.selectedTreeNodeID == "folder:"
-                        ? Color.accentColor.opacity(0.12)
-                        : Color.clear
-                )
+                .listRowBackground(Color.clear)
                 .contextMenu { creationMenu(folder: "") }
 
                 OutlineGroup(viewModel.tree, children: \.children) { node in
@@ -137,6 +134,8 @@ struct NotepadSheet: View {
                 }
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .background(Color.clear)
             .overlay {
                 if !viewModel.isLoading, viewModel.tree.isEmpty {
                     ContentUnavailableView(
@@ -147,6 +146,7 @@ struct NotepadSheet: View {
                 }
             }
         }
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.42))
     }
 
     @ViewBuilder
@@ -157,15 +157,19 @@ struct NotepadSheet: View {
                 viewModel.selectFolder(folder)
             } label: {
                 Label(node.title, systemImage: "folder")
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
+                    .background(
+                        viewModel.selectedTreeNodeID == node.id
+                            ? Color.accentColor.opacity(0.15)
+                            : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 8)
+                    )
             }
             .buttonStyle(.plain)
-            .listRowBackground(
-                viewModel.selectedTreeNodeID == node.id
-                    ? Color.accentColor.opacity(0.12)
-                    : Color.clear
-            )
+            .listRowBackground(Color.clear)
             .contextMenu {
                 creationMenu(folder: folder)
                 Divider()
@@ -186,15 +190,19 @@ struct NotepadSheet: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 5)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
+                .background(
+                    viewModel.selectedTreeNodeID == node.id
+                        ? Color.accentColor.opacity(0.15)
+                        : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 8)
+                )
             }
             .buttonStyle(.plain)
-            .listRowBackground(
-                viewModel.selectedTreeNodeID == node.id
-                    ? Color.accentColor.opacity(0.12)
-                    : Color.clear
-            )
+            .listRowBackground(Color.clear)
             .contextMenu {
                 Button("复制文本", systemImage: "doc.on.doc") { copyText(viewModel.content) }
                     .disabled(viewModel.selectedNoteID != note.id)
@@ -241,6 +249,7 @@ struct NotepadSheet: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var editorToolbar: some View {
@@ -274,7 +283,7 @@ struct NotepadSheet: View {
             }
             .keyboardShortcut("s", modifiers: .command)
             .buttonStyle(.borderedProminent)
-            .disabled(!viewModel.isDirty || viewModel.isSaving)
+            .disabled(!viewModel.isDirty || viewModel.isSaving || viewModel.isUploadingImage)
             Button("删除", systemImage: "trash", role: .destructive) {
                 if let note = viewModel.selectedNote { deleteTarget = .note(note) }
             }
@@ -310,9 +319,9 @@ struct NotepadSheet: View {
     }
 
     private var markdownEditor: some View {
-        TextEditor(text: $viewModel.content)
-            .appFont(.system(.body, design: .monospaced))
-            .scrollContentBackground(.hidden)
+        NotepadMarkdownEditor(text: $viewModel.content) { image, placeholder in
+            Task { await viewModel.uploadPastedImage(image, placeholder: placeholder) }
+        }
             .padding(8)
             .background(Color(nsColor: .textBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 7))

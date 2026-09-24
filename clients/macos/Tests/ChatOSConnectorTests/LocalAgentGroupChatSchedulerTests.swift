@@ -1461,16 +1461,20 @@ private actor SchedulerTestMemoryRegistry {
 }
 
 private actor SchedulerTestMemory: AgentMemoryServicing {
-    private var entries: [AgentMemoryEntry] = []
+    private var records: [Int: AgentMemoryContextRecord] = [:]
 
     func ensureThread() async throws {}
+
     func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {
-        self.entries.append(contentsOf: entries)
+        for entry in entries {
+            records[entry.index] = .init(id: entry.id, message: entry.message)
+        }
     }
+
     func compose() async throws -> AgentMemoryContext {
         .init(
             blocks: [],
-            recentRecords: entries.map { .init(id: $0.id, message: $0.message) }
+            recentRecords: records.keys.sorted().compactMap { records[$0] }
         )
     }
 }
@@ -1911,7 +1915,10 @@ private actor ActiveCancellationSchedulerTestModel: AgentModelClient {
         tools: [AgentToolDefinition],
         timeout: TimeInterval
     ) async throws -> AgentMessage {
-        if tools.contains(where: { $0.name == LocalAgentChatToolProvider.todoCompleteToolName }) {
+        let isExecutorLane = messages.contains {
+            $0.role == .user && $0.content.contains("- trigger_kind: todo\n")
+        }
+        if isExecutorLane {
             try await Task.sleep(for: .seconds(30))
             return .init(role: .assistant, content: "不应自然结束")
         }
