@@ -1464,6 +1464,7 @@ private actor SchedulerTestMemory: AgentMemoryServicing {
 
 private struct TodoRetrySchedulerTestServices: AgentServiceProviding {
     let model: TodoRetrySchedulerTestModel
+    private let memory = SchedulerTestMemory()
 
     func makeAgentModel(
         configID: String,
@@ -1474,7 +1475,7 @@ private struct TodoRetrySchedulerTestServices: AgentServiceProviding {
     }
 
     func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
-        SchedulerTestMemory()
+        memory
     }
 }
 
