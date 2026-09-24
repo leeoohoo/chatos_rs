@@ -321,3 +321,101 @@ fn assert_private(_path: &Path) {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn user_root_registration_rejects_replaced_directories() {
+    use super::{ensure_child_directory, push_user_scoped_roots, UserScopedRoots};
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    for replaced in ["users", "alice", "workspaces", "public"] {
+        let fixture = Fixture::new();
+        let users = ensure_child_directory(&fixture.0, "users").unwrap();
+        let user = ensure_child_directory(&users, "alice").unwrap();
+        let user_roots = UserScopedRoots {
+            workspaces_root: ensure_child_directory(&user, "workspaces").unwrap(),
+            public_root: ensure_child_directory(&user, "public").unwrap(),
+        };
+        for path in [&user, &user_roots.workspaces_root, &user_roots.public_root] {
+            super::set_private_dir_permissions(path).unwrap();
+        }
+        let mut roots = Vec::new();
+        push_user_scoped_roots(&mut roots, &user_roots);
+        let original = FsPathPolicy { roots };
+        assert_eq!(original.roots.len(), 2);
+        for path in [&user_roots.workspaces_root, &user_roots.public_root] {
+            let authorized = original
+                .authorize_existing_dir(path.to_str().unwrap(), "missing", "not dir")
+                .unwrap();
+            original.require_write(&authorized).unwrap();
+        }
+
+        let replaced_path = match replaced {
+            "users" => &users,
+            "alice" => &user,
+            "workspaces" => &user_roots.workspaces_root,
+            "public" => &user_roots.public_root,
+            _ => unreachable!(),
+        };
+        // Replace after validation/chmod but before registering the roots. No
+        // thread scheduling or process-wide environment mutation is needed.
+        let outside = fixture.0.join("outside");
+        fs::create_dir(&outside).unwrap();
+        for path in [&user_roots.workspaces_root, &user_roots.public_root] {
+            if let Ok(relative) = path.strip_prefix(replaced_path) {
+                let target = outside.join(relative);
+                fs::create_dir_all(&target).unwrap();
+                fs::write(target.join("note.txt"), "unchanged").unwrap();
+                fs::set_permissions(&target, fs::Permissions::from_mode(0o750)).unwrap();
+            }
+        }
+        fs::rename(replaced_path, fixture.0.join("original")).unwrap();
+        symlink(&outside, replaced_path).unwrap();
+        let mut roots = Vec::new();
+        push_user_scoped_roots(&mut roots, &user_roots);
+        let policy = FsPathPolicy { roots };
+        for path in [&user_roots.workspaces_root, &user_roots.public_root] {
+            if let Ok(relative) = path.strip_prefix(replaced_path) {
+                let target = outside.join(relative);
+                for candidate in [path, &target] {
+                    assert!(
+                        matches!(
+                            policy.authorize_existing_dir(
+                                candidate.to_str().unwrap(),
+                                "missing",
+                                "not dir"
+                            ),
+                            Err(FsPolicyError::Forbidden(_))
+                        ),
+                        "{replaced}: redirected directory was authorized: {candidate:?}"
+                    );
+                    assert!(matches!(
+                        policy.authorize_existing_file(
+                            candidate.join("note.txt").to_str().unwrap(),
+                            "missing",
+                            "not file"
+                        ),
+                        Err(FsPolicyError::Forbidden(_))
+                    ));
+                }
+                assert_eq!(
+                    fs::read_to_string(target.join("note.txt")).unwrap(),
+                    "unchanged"
+                );
+                assert_eq!(
+                    fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+                    0o750
+                );
+            } else {
+                let authorized = policy
+                    .authorize_existing_dir(path.to_str().unwrap(), "missing", "not dir")
+                    .unwrap();
+                policy.require_write(&authorized).unwrap();
+            }
+        }
+        assert_eq!(
+            policy.roots.len(),
+            usize::from(matches!(replaced, "workspaces" | "public"))
+        );
+    }
+}

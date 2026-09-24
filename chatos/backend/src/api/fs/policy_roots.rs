@@ -20,16 +20,7 @@ pub(super) async fn build_allowed_roots(auth: &AuthUser) -> Vec<FsAllowedRoot> {
     let user_roots = ensure_user_scoped_roots(auth);
 
     if let Some(user_roots) = user_roots.as_ref() {
-        push_root(
-            &mut roots,
-            user_roots.workspaces_root.clone(),
-            FsAllowedRootKind::Workspace,
-        );
-        push_root(
-            &mut roots,
-            user_roots.public_root.clone(),
-            FsAllowedRootKind::Public,
-        );
+        push_user_scoped_roots(&mut roots, user_roots);
     }
 
     if host_roots_enabled {
@@ -91,6 +82,24 @@ pub(super) async fn build_allowed_roots(auth: &AuthUser) -> Vec<FsAllowedRoot> {
 struct UserScopedRoots {
     workspaces_root: PathBuf,
     public_root: PathBuf,
+}
+
+fn push_user_scoped_roots(roots: &mut Vec<FsAllowedRoot>, user_roots: &UserScopedRoots) {
+    for (expected, kind) in [
+        (&user_roots.workspaces_root, FsAllowedRootKind::Workspace),
+        (&user_roots.public_root, FsAllowedRootKind::Public),
+    ] {
+        let Ok(canonical) = canonicalize_existing_dir(expected) else {
+            continue;
+        };
+        // These paths were already canonical when the user directories were
+        // validated. A later redirect must never become a new authorization root.
+        if canonical != *expected {
+            continue;
+        }
+        // Register this checked value without resolving the path a second time.
+        push_canonical_root(roots, canonical, kind);
+    }
 }
 
 fn ensure_user_scoped_roots(auth: &AuthUser) -> Option<UserScopedRoots> {
@@ -287,6 +296,14 @@ fn push_root(roots: &mut Vec<FsAllowedRoot>, candidate: PathBuf, kind: FsAllowed
     let Ok(canonical) = canonicalize_existing_dir(candidate.as_path()) else {
         return;
     };
+    push_canonical_root(roots, canonical, kind);
+}
+
+fn push_canonical_root(
+    roots: &mut Vec<FsAllowedRoot>,
+    canonical: PathBuf,
+    kind: FsAllowedRootKind,
+) {
     let normalized = normalize_path_for_compare(canonical.as_path());
     if let Some(root) = roots.iter_mut().find(|root| {
         // Unix directory identity must retain native components. Compatibility
