@@ -419,3 +419,68 @@ fn user_root_registration_rejects_replaced_directories() {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn child_validation_rejects_unix_path_alias_redirects() {
+    use super::{ensure_child_directory, normalize_path_for_compare, validate_child_directory};
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    for reverse in [false, true] {
+        for relative in [
+            "users",
+            "users/alice",
+            "users/alice/workspaces",
+            "users/alice/public",
+        ] {
+            let fixture = Fixture::new();
+            let literal = fixture.0.join(r"workspace\base");
+            let separated = fixture.0.join("workspace/base");
+            let (base, outside) = if reverse {
+                (separated, literal)
+            } else {
+                (literal, separated)
+            };
+            fs::create_dir_all(&base).unwrap();
+            fs::create_dir_all(&outside).unwrap();
+            let mut path = base.clone();
+            let mut target = outside.clone();
+            for component in Path::new(relative).components() {
+                let name = component.as_os_str().to_str().unwrap();
+                path = ensure_child_directory(&path, name).unwrap();
+                target = ensure_child_directory(&target, name).unwrap();
+            }
+            // Legitimate literal-backslash directories remain usable.
+            assert_eq!(validate_child_directory(&path).unwrap(), path);
+            assert_eq!(validate_child_directory(&target).unwrap(), target);
+            assert_ne!(path, target);
+            assert_eq!(
+                normalize_path_for_compare(&path),
+                normalize_path_for_compare(&target)
+            );
+            fs::write(target.join("sentinel"), "unchanged").unwrap();
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o750)).unwrap();
+            // Deterministically replace an ancestor after mkdirat, before the
+            // same post-creation validation used by ensure_child_directory.
+            fs::rename(&base, fixture.0.join("original")).unwrap();
+            symlink(&outside, &base).unwrap();
+            assert!(fs::symlink_metadata(&path).unwrap().file_type().is_dir());
+            assert_eq!(fs::canonicalize(&path).unwrap(), target);
+            let result = validate_child_directory(&path);
+            assert!(
+                matches!(&result, Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied),
+                "redirected canonical path must not become a validated user root: {result:?}"
+            );
+            assert_eq!(
+                fs::read_to_string(target.join("sentinel")).unwrap(),
+                "unchanged"
+            );
+            assert_eq!(
+                fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+                0o750
+            );
+            assert_eq!(fs::read_dir(&target).unwrap().count(), 1);
+            assert!(validate_child_directory(&target).is_ok());
+        }
+    }
+}

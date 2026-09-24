@@ -158,16 +158,24 @@ fn ensure_child_directory(parent: &Path, name: &str) -> std::io::Result<PathBuf>
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(err) => return Err(err),
     }
+    validate_child_directory(&path)
+}
+
+fn validate_child_directory(path: &Path) -> std::io::Result<PathBuf> {
     // Do not follow existing symlinks, including dangling ones. Check before
     // creating descendants or changing permissions on an existing directory.
-    if !fs::symlink_metadata(&path)?.file_type().is_dir() {
+    if !fs::symlink_metadata(path)?.file_type().is_dir() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
             "user root component is not a real directory",
         ));
     }
-    let canonical = canonicalize_existing_dir(&path)?;
-    if normalize_path_for_compare(&canonical) != normalize_path_for_compare(&path) {
+    let canonical = canonicalize_existing_dir(path)?;
+    // Compatibility normalization aliases literal Unix backslashes with path
+    // separators. Never return a redirected native path as a validated root.
+    if (cfg!(unix) && canonical != path)
+        || normalize_path_for_compare(&canonical) != normalize_path_for_compare(path)
+    {
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
             "user root component redirects outside its expected path",
