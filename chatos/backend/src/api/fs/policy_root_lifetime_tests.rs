@@ -50,18 +50,30 @@ fn registered_user_roots_reject_later_real_directory_replacements() {
             // Cloning a policy must retain the same identity protection.
             drop(prepared);
             drop(original_policy);
+            let mut authorizations = Vec::new();
             for path in &paths {
                 fs::write(path.join("note.txt"), "unchanged").unwrap();
                 let authorized = policy
                     .authorize_existing_dir(path.to_str().unwrap(), "missing", "not dir")
                     .unwrap();
                 policy.require_write(&authorized).unwrap();
+                authorizations.push(authorized);
+                let file = policy
+                    .authorize_existing_file(
+                        path.join("note.txt").to_str().unwrap(),
+                        "missing",
+                        "not file",
+                    )
+                    .unwrap();
+                policy.require_write(&file).unwrap();
+                authorizations.push(file);
             }
             for virtual_path in ["note.txt", "/public/note.txt"] {
                 let authorized = policy
                     .authorize_existing_file(virtual_path, "missing", "not file")
                     .unwrap();
                 policy.require_write(&authorized).unwrap();
+                authorizations.push(authorized);
             }
             let replaced_path = match replaced {
                 "users" => &users,
@@ -85,6 +97,19 @@ fn registered_user_roots_reject_later_real_directory_replacements() {
             fs::rename(incoming, replaced_path).unwrap();
             let after = fs::metadata(replaced_path).unwrap();
             assert_ne!((before.dev(), before.ino()), (after.dev(), after.ino()));
+            // Settings and runtime request write permission separately from
+            // initial path authorization. Do not trust a stale writable result.
+            for authorized in &authorizations {
+                let result = policy.require_write(authorized);
+                if authorized.path.starts_with(replaced_path) {
+                    assert!(
+                        matches!(result, Err(FsPolicyError::Forbidden(_))),
+                        "{replaced}, configured_parent={configured_parent}: stale write allowed: {result:?}"
+                    );
+                } else {
+                    result.unwrap();
+                }
+            }
             for (index, path) in paths.iter().enumerate() {
                 assert_eq!(fs::canonicalize(path).unwrap(), *path);
                 let results = [

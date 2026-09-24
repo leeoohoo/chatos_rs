@@ -134,7 +134,10 @@ impl FsPathPolicy {
     }
 
     pub(crate) fn require_write(&self, path: &AuthorizedPath) -> Result<(), FsPolicyError> {
-        if !path.can_write {
+        // Authorization and the write check are separate operations. Recheck
+        // the selected root's identity before trusting an earlier write grant.
+        // This does not make subsequent path-based filesystem use atomic.
+        if !path.can_write || !self.authorized_path_for(path.path.clone())?.can_write {
             return Err(FsPolicyError::Forbidden(WRITE_NOT_ALLOWED.to_string()));
         }
         Ok(())
