@@ -32,7 +32,7 @@
     "sync:magicui": "node scripts/sync-magicui-registry.mjs",
     "sync:spell": "node scripts/sync-spell-registry.mjs",
     "sync:daisyui": "node scripts/sync-daisyui-registry.mjs",
-    "build": "vite build && node scripts/build.mjs",
+    "build": "node --max-old-space-size=4096 node_modules/vite/bin/vite.js build && node scripts/build.mjs",
     "studio": "node bin/chatos-web-design-studio studio",
     "studio:dev": "npm run build && npm run studio",
     "mcp": "node dist/mcp-server.mjs mcp",
