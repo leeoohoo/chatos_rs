@@ -153,16 +153,20 @@ public sealed class WindowsTerminalCommandExecutor(
             };
             var launch = ResolveLaunch(request);
             var commandLine = new StringBuilder(BuildCommandLine(launch.Executable, launch.Arguments));
+            var creationFlags = NativeConPty.ExtendedStartupInfoPresent |
+                NativeConPty.CreateSuspended |
+                NativeTerminalProcess.CreateNoWindow;
+            if (sandbox is not null)
+            {
+                creationFlags |= NativeConPty.CreateUnicodeEnvironment;
+            }
             if (!NativeConPty.CreateProcess(
                     launch.Executable,
                     commandLine,
                     IntPtr.Zero,
                     IntPtr.Zero,
                     inheritHandles: true,
-                    NativeConPty.ExtendedStartupInfoPresent |
-                        NativeConPty.CreateSuspended |
-                        NativeConPty.CreateUnicodeEnvironment |
-                        NativeTerminalProcess.CreateNoWindow,
+                    creationFlags,
                     sandbox?.EnvironmentBlock ?? IntPtr.Zero,
                     request.WorkingDirectory,
                     ref startup,
@@ -529,7 +533,7 @@ internal static class NativeTerminalProcess
         uint mask,
         uint flags);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", EntryPoint = "TerminateProcess", SetLastError = true)]
     private static extern bool TerminateProcessNative(
         SafeKernelObjectHandle process,
         uint exitCode);

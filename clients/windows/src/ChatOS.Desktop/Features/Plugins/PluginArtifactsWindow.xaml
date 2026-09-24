@@ -8,7 +8,8 @@
     mc:Ignorable="d"
     Title="ChatOS Artifacts">
 
-    <Window.Resources>
+    <Grid x:Name="RootGrid" Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
+        <Grid.Resources>
         <DataTemplate x:Key="ArtifactTemplate" x:DataType="plugins:PluginArtifactItemViewModel">
             <Border Margin="0,0,0,8" Padding="12" Style="{StaticResource ChatOSCardStyle}">
                 <Grid ColumnSpacing="12">
@@ -30,9 +31,7 @@
                 </Grid>
             </Border>
         </DataTemplate>
-    </Window.Resources>
-
-    <Grid x:Name="RootGrid" Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
+        </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="48" />
             <RowDefinition Height="*" />

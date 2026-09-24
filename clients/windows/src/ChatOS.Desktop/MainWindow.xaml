@@ -8,7 +8,8 @@
     mc:Ignorable="d"
     Title="ChatOS">
 
-    <Window.Resources>
+    <Grid x:Name="RootGrid" Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
+        <Grid.Resources>
         <DataTemplate x:Key="ShellResourceTemplate" x:DataType="shell:ShellResourceViewModel">
             <Grid Padding="4,6">
                 <Grid.ColumnDefinitions>
@@ -22,9 +23,7 @@
                 </StackPanel>
             </Grid>
         </DataTemplate>
-    </Window.Resources>
-
-    <Grid x:Name="RootGrid" Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
+        </Grid.Resources>
         <Grid x:Name="LoginRoot" AutomationProperties.AutomationId="ChatOS.Login.Root" AutomationProperties.Name="ChatOS sign in" Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
             <Grid.RowDefinitions>
                 <RowDefinition Height="48" />

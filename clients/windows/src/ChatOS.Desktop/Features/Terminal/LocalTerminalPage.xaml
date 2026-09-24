@@ -34,8 +34,8 @@
             FontSize="12"
             IsReadOnly="True"
             TextWrapping="NoWrap"
-            VerticalScrollBarVisibility="Auto"
-            HorizontalScrollBarVisibility="Auto" />
+            ScrollViewer.VerticalScrollBarVisibility="Auto"
+            ScrollViewer.HorizontalScrollBarVisibility="Auto" />
         <Grid Grid.Row="3" Padding="12" ColumnSpacing="8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />

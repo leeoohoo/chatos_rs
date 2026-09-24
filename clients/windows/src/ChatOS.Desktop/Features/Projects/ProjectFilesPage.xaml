@@ -203,10 +203,10 @@
                     Grid.Row="2"
                     AcceptsReturn="True"
                     FontFamily="Cascadia Mono, Consolas"
-                    HorizontalScrollBarVisibility="Auto"
+                    ScrollViewer.HorizontalScrollBarVisibility="Auto"
                     Text="{x:Bind ViewModel.EditorContent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                     TextWrapping="NoWrap"
-                    VerticalScrollBarVisibility="Auto"
+                    ScrollViewer.VerticalScrollBarVisibility="Auto"
                     Visibility="{x:Bind ViewModel.IsEditing, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
 
                 <StackPanel Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Visibility="{x:Bind ViewModel.HasBinaryPreview, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">

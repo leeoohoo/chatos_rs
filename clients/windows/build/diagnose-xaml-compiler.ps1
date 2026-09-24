@@ -24,30 +24,28 @@ if ([string]::IsNullOrWhiteSpace($InputPath) -or -not (Test-Path $InputPath -Pat
     return
 }
 
-$compiler = Get-ChildItem `
-    (Join-Path $env:USERPROFILE ".nuget\packages\microsoft.windowsappsdk") `
-    -Filter "XamlCompiler.exe" `
-    -File `
-    -Recurse `
-    -ErrorAction SilentlyContinue |
-    Where-Object { $_.FullName -match '[\\/]tools[\\/]net472[\\/]' } |
-    Sort-Object FullName -Descending |
-    Select-Object -First 1 -ExpandProperty FullName
+$sourceInput = Get-Content $InputPath -Raw | ConvertFrom-Json
+$packageReference = $sourceInput.ReferenceAssemblies |
+    Where-Object { $_.FullPath -match '[\\/]microsoft\.windowsappsdk[\\/]' } |
+    Select-Object -First 1
+$compiler = $null
+if ($packageReference.FullPath -match '^(.*[\\/]microsoft\.windowsappsdk[\\/][^\\/]+)[\\/]') {
+    $compiler = Join-Path $Matches[1] "tools\net472\XamlCompiler.exe"
+}
 
-if ([string]::IsNullOrWhiteSpace($compiler)) {
+if ([string]::IsNullOrWhiteSpace($compiler) -or -not (Test-Path $compiler -PathType Leaf)) {
     Write-Warning "XamlCompiler.exe was not found in the NuGet package cache."
     return
 }
 
-$sourceInput = Get-Content $InputPath -Raw | ConvertFrom-Json
 $pages = @($sourceInput.XamlPages)
 if ($pages.Count -eq 0) {
     Write-Warning "The XAML compiler input contains no pages."
     return
 }
 
-$sharedPages = @($pages | Where-Object { $_.ItemSpec -like "DesignSystem/*" })
-$candidatePages = @($pages | Where-Object { $_.ItemSpec -notlike "DesignSystem/*" })
+$sharedPages = @($pages | Where-Object { $_.ItemSpec -match '^DesignSystem[\\/]' })
+$candidatePages = @($pages | Where-Object { $_.ItemSpec -notmatch '^DesignSystem[\\/]' })
 $diagnosticRoot = Join-Path `
     ([IO.Path]::GetTempPath()) `
     ("chatos-xaml-diagnostics-" + [Guid]::NewGuid().ToString("N"))
@@ -57,9 +55,10 @@ Write-Host "The WinUI compiler returned no useful diagnostic. Checking XAML page
 Push-Location $desktopRoot
 try {
     $failures = [Collections.Generic.List[string]]::new()
+    $caseNumber = 0
     foreach ($page in $candidatePages) {
-        $caseName = [IO.Path]::GetFileNameWithoutExtension([string]$page.ItemSpec)
-        $caseRoot = Join-Path $diagnosticRoot $caseName
+        $caseNumber += 1
+        $caseRoot = Join-Path $diagnosticRoot $caseNumber
         $null = New-Item -ItemType Directory -Path $caseRoot -Force
 
         $caseInput = Get-Content $InputPath -Raw | ConvertFrom-Json

@@ -9,9 +9,9 @@ internal static class NativeConPty
     internal const uint ExtendedStartupInfoPresent = 0x0008_0000;
     internal const uint CreateUnicodeEnvironment = 0x0000_0400;
     internal const uint CreateSuspended = 0x0000_0004;
+    internal const uint StartfUseStdHandles = 0x0000_0100;
     internal const nuint ProcThreadAttributePseudoConsole = 0x0002_0016;
     internal const nuint ProcThreadAttributeHandleList = 0x0002_0002;
-    private const uint HandleFlagInherit = 0x0000_0001;
     private const uint JobObjectExtendedLimitInformation = 9;
     private const uint JobObjectLimitKillOnJobClose = 0x0000_2000;
     private const uint Infinite = 0xffff_ffff;
@@ -24,7 +24,7 @@ internal static class NativeConPty
         var security = new SecurityAttributes
         {
             Length = Marshal.SizeOf<SecurityAttributes>(),
-            InheritHandle = true,
+            InheritHandle = false,
         };
         ThrowIfFalse(CreatePipe(out var read, out var write, ref security, 0));
         if (parentReads)
@@ -39,7 +39,6 @@ internal static class NativeConPty
             (parentEnd, pseudoConsoleEnd) = (pseudoConsoleEnd, parentEnd);
         }
 
-        ThrowIfFalse(SetHandleInformation(parentEnd, HandleFlagInherit, 0));
     }
 
     public static SafePseudoConsoleHandle CreatePseudoConsole(
@@ -144,12 +143,6 @@ internal static class NativeConPty
         ref SecurityAttributes pipeAttributes,
         uint size);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool SetHandleInformation(
-        SafeFileHandle handle,
-        uint mask,
-        uint flags);
-
     [DllImport("kernel32.dll")]
     private static extern int CreatePseudoConsole(
         Coord size,
@@ -235,6 +228,7 @@ internal static class NativeConPty
 
     [DllImport("kernel32.dll")]
     internal static extern bool CloseHandle(IntPtr handle);
+
 }
 
 internal sealed class SafePseudoConsoleHandle : SafeHandleZeroOrMinusOneIsInvalid

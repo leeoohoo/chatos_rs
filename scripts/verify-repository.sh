@@ -132,7 +132,10 @@ run_native_platform() {
         pwsh -NoProfile -File "$ROOT_DIR/clients/windows/build/diagnose-xaml-compiler.ps1"
         return 1
       fi
-      dotnet test "$ROOT_DIR/clients/windows/ChatOS.Win.sln" --configuration Release
+      dotnet test "$ROOT_DIR/clients/windows/ChatOS.Win.sln" \
+        --configuration Release \
+        --blame-hang \
+        --blame-hang-timeout 2m
       dotnet build "$ROOT_DIR/plugins/computer-use/windows/VisualComputerUse.Windows/VisualComputerUse.Windows.csproj" --configuration Release
       ;;
     *)

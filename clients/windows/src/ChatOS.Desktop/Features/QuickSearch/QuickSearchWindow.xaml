@@ -7,24 +7,24 @@
     xmlns:domain="using:ChatOS.Core.Domain"
     mc:Ignorable="d"
     Title="Quick Search">
-    <Window.Resources>
-        <DataTemplate x:Key="SearchResultTemplate" x:DataType="domain:QuickSearchResult">
-            <Grid Padding="12,9" ColumnSpacing="12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="28" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <FontIcon Glyph="{x:Bind Glyph}" VerticalAlignment="Center" />
-                <StackPanel Grid.Column="1" Spacing="2">
-                    <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                    <TextBlock Text="{x:Bind Subtitle}" Style="{StaticResource ChatOSCaptionTextStyle}" TextTrimming="CharacterEllipsis" />
-                </StackPanel>
-                <TextBlock Grid.Column="2" Text="{x:Bind Kind}" Style="{StaticResource ChatOSCaptionTextStyle}" VerticalAlignment="Center" />
-            </Grid>
-        </DataTemplate>
-    </Window.Resources>
     <Border BorderBrush="{StaticResource ChatOSBorderBrush}" BorderThickness="1" CornerRadius="14" Background="{StaticResource ChatOSContentBackgroundBrush}">
+        <Border.Resources>
+            <DataTemplate x:Key="SearchResultTemplate" x:DataType="domain:QuickSearchResult">
+                <Grid Padding="12,9" ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="28" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="{x:Bind Glyph}" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" Spacing="2">
+                        <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <TextBlock Text="{x:Bind Subtitle}" Style="{StaticResource ChatOSCaptionTextStyle}" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="2" Text="{x:Bind Kind}" Style="{StaticResource ChatOSCaptionTextStyle}" VerticalAlignment="Center" />
+                </Grid>
+            </DataTemplate>
+        </Border.Resources>
         <Grid x:Name="Root" KeyDown="OnKeyDown">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />

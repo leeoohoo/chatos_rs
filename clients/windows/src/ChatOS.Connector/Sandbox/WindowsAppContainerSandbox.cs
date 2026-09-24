@@ -8,11 +8,15 @@ using System.Text.Json;
 
 namespace ChatOS.Connector.Sandbox;
 
-internal static class WindowsAppContainerSandbox
+internal static partial class WindowsAppContainerSandbox
 {
     internal const uint SeGroupEnabled = 0x0000_0004;
     internal const nuint ProcThreadAttributeSecurityCapabilities = 0x0002_0009;
     private const int ErrorAlreadyExistsHResult = unchecked((int)0x800700B7);
+    private const uint DaclSecurityInformation = 0x0000_0004;
+    private const uint FileTraverse = 0x0000_0020;
+    private const uint GrantAccess = 1;
+    private const uint RevokeAccess = 4;
     private const string InternetClientSid = "S-1-15-3-1";
     private const string PrivateNetworkClientServerSid = "S-1-15-3-3";
     private static readonly ConcurrentDictionary<string, Lazy<Task>> PreparedWorkspaceAcls =
@@ -53,6 +57,7 @@ internal static class WindowsAppContainerSandbox
                 .ConfigureAwait(false);
         }
         IntPtr appContainerSid = IntPtr.Zero;
+        var capabilitySids = new List<IntPtr>();
         try
         {
             appContainerSid = CreateOrDeriveProfileSid(profileName);
@@ -61,6 +66,10 @@ internal static class WindowsAppContainerSandbox
                 workspaceRoot,
                 sidText,
                 policy.PermissionProfile,
+                cancellationToken).ConfigureAwait(false);
+            await EnsureAncestorTraverseAclsAsync(
+                workspaceRoot,
+                sidText,
                 cancellationToken).ConfigureAwait(false);
             var temporaryDirectory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -82,22 +91,32 @@ internal static class WindowsAppContainerSandbox
                     temporaryDirectory,
                     cancellationToken).ConfigureAwait(false);
             }
-            var capabilities = policy.GrantInternetCapabilities
-                ? new[] { CapabilitySid(InternetClientSid), CapabilitySid(PrivateNetworkClientServerSid) }
-                : Array.Empty<IntPtr>();
-            return new WindowsAppContainerLaunchContext(
+            if (policy.GrantInternetCapabilities)
+            {
+                capabilitySids.Add(CapabilitySid(InternetClientSid));
+                capabilitySids.Add(CapabilitySid(PrivateNetworkClientServerSid));
+            }
+            var context = new WindowsAppContainerLaunchContext(
                 appContainerSid,
                 sidText,
-                capabilities,
+                capabilitySids,
                 temporaryDirectory,
                 policy,
                 profileLease);
+            appContainerSid = IntPtr.Zero;
+            capabilitySids.Clear();
+            profileLease = null;
+            return context;
         }
         catch
         {
             if (appContainerSid != IntPtr.Zero)
             {
                 _ = FreeSid(appContainerSid);
+            }
+            foreach (var capabilitySid in capabilitySids)
+            {
+                if (capabilitySid != IntPtr.Zero) _ = LocalFree(capabilitySid);
             }
             if (profileLease is not null)
             {
@@ -136,32 +155,6 @@ internal static class WindowsAppContainerSandbox
     internal static bool HasPendingProfileCleanup(string profileName) =>
         EphemeralProfiles.ContainsKey(profileName) || File.Exists(ProfileMetadataPath(profileName));
 
-    private static IntPtr CreateOrDeriveProfileSid(string profileName)
-    {
-        var result = CreateAppContainerProfile(
-            profileName,
-            "ChatOS Windows command sandbox",
-            "Isolated command execution for the ChatOS Windows client.",
-            IntPtr.Zero,
-            0,
-            out var sid);
-        if (result == 0)
-        {
-            return sid;
-        }
-        if (result != ErrorAlreadyExistsHResult)
-        {
-            Marshal.ThrowExceptionForHR(result);
-        }
-
-        result = DeriveAppContainerSidFromAppContainerName(profileName, out sid);
-        if (result != 0)
-        {
-            Marshal.ThrowExceptionForHR(result);
-        }
-        return sid;
-    }
-
     private static async Task EnsureWorkspaceAclAsync(
         string workspaceRoot,
         string sid,
@@ -199,7 +192,8 @@ internal static class WindowsAppContainerSandbox
         string root,
         string sid,
         string access,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool recursive = true)
     {
         var systemDirectory = Environment.GetFolderPath(Environment.SpecialFolder.System);
         var icacls = Path.Combine(systemDirectory, "icacls.exe");
@@ -219,15 +213,22 @@ internal static class WindowsAppContainerSandbox
         start.ArgumentList.Add(root);
         start.ArgumentList.Add("/grant:r");
         start.ArgumentList.Add($"*{sid}:{access}");
-        start.ArgumentList.Add("/T");
+        if (recursive)
+        {
+            start.ArgumentList.Add("/T");
+        }
         start.ArgumentList.Add("/C");
-        start.ArgumentList.Add("/L");
+        if (recursive)
+        {
+            start.ArgumentList.Add("/L");
+        }
         start.ArgumentList.Add("/Q");
         using var process = Process.Start(start)
             ?? throw new InvalidOperationException("Unable to start Windows ACL preparation.");
         var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        using var timeout = new CancellationTokenSource(
+            recursive ? TimeSpan.FromMinutes(2) : TimeSpan.FromSeconds(10));
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             timeout.Token);
@@ -251,6 +252,19 @@ internal static class WindowsAppContainerSandbox
             throw new InvalidOperationException(
                 $"Windows could not prepare the workspace sandbox ACL (icacls {process.ExitCode}): {SafeAclError(error, output)}");
         }
+    }
+
+    private static Task EnsureAncestorTraverseAclsAsync(
+        string path,
+        string sid,
+        CancellationToken cancellationToken)
+    {
+        foreach (var ancestor in AncestorDirectories(path))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            UpdateTraverseAcl(ancestor, sid, remove: false);
+        }
+        return Task.CompletedTask;
     }
 
     private static async Task<EphemeralProfileLease> AcquireEphemeralProfileAsync(
@@ -293,6 +307,7 @@ internal static class WindowsAppContainerSandbox
                 profileName,
                 workspaceRoot,
                 sid,
+                null,
                 temporaryDirectory,
                 DateTimeOffset.UtcNow);
             if (state.Metadata is not null &&
@@ -364,12 +379,17 @@ internal static class WindowsAppContainerSandbox
 
         try
         {
-            await RemovePathAclAsync(metadata.WorkspaceRoot, metadata.Sid, CancellationToken.None)
+            var aclSid = metadata.AclSid ?? metadata.Sid;
+            await RemovePathAclAsync(metadata.WorkspaceRoot, aclSid, CancellationToken.None)
                 .ConfigureAwait(false);
+            await RemoveAncestorTraverseAclsAsync(
+                metadata.WorkspaceRoot,
+                aclSid,
+                CancellationToken.None).ConfigureAwait(false);
             PreparedWorkspaceAcls.TryRemove(
                 WorkspaceAclKey(
                     metadata.WorkspaceRoot,
-                    metadata.Sid,
+                    aclSid,
                     ProfilePermission(metadata.ProfileName)),
                 out _);
             await DeleteDirectoryWithRetriesAsync(metadata.TemporaryDirectory).ConfigureAwait(false);
@@ -384,7 +404,8 @@ internal static class WindowsAppContainerSandbox
     private static async Task RemovePathAclAsync(
         string root,
         string sid,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool recursive = true)
     {
         if (!Directory.Exists(root))
         {
@@ -407,15 +428,22 @@ internal static class WindowsAppContainerSandbox
         start.ArgumentList.Add(root);
         start.ArgumentList.Add("/remove:g");
         start.ArgumentList.Add($"*{sid}");
-        start.ArgumentList.Add("/T");
+        if (recursive)
+        {
+            start.ArgumentList.Add("/T");
+        }
         start.ArgumentList.Add("/C");
-        start.ArgumentList.Add("/L");
+        if (recursive)
+        {
+            start.ArgumentList.Add("/L");
+        }
         start.ArgumentList.Add("/Q");
         using var process = Process.Start(start)
             ?? throw new InvalidOperationException("Unable to start Windows ACL cleanup.");
         var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        using var timeout = new CancellationTokenSource(
+            recursive ? TimeSpan.FromMinutes(2) : TimeSpan.FromSeconds(10));
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             timeout.Token);
@@ -437,6 +465,103 @@ internal static class WindowsAppContainerSandbox
         {
             throw new InvalidOperationException(
                 $"Windows could not remove the workspace sandbox ACL (icacls {process.ExitCode}): {SafeAclError(error, output)}");
+        }
+    }
+
+    private static Task RemoveAncestorTraverseAclsAsync(
+        string path,
+        string sid,
+        CancellationToken cancellationToken)
+    {
+        foreach (var ancestor in AncestorDirectories(path).Reverse())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Directory.Exists(ancestor))
+            {
+                UpdateTraverseAcl(ancestor, sid, remove: true);
+            }
+        }
+        return Task.CompletedTask;
+    }
+
+    private static void UpdateTraverseAcl(string path, string sid, bool remove)
+    {
+        var result = GetNamedSecurityInfo(
+            path,
+            SeObjectType.FileObject,
+            DaclSecurityInformation,
+            out _,
+            out _,
+            out var currentAcl,
+            out _,
+            out var securityDescriptor);
+        if (result != 0)
+        {
+            throw new Win32Exception(checked((int)result));
+        }
+
+        IntPtr sidPointer = IntPtr.Zero;
+        IntPtr updatedAcl = IntPtr.Zero;
+        try
+        {
+            if (!ConvertStringSidToSid(sid, out sidPointer))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            var entry = new ExplicitAccess
+            {
+                AccessPermissions = FileTraverse,
+                AccessMode = remove ? RevokeAccess : GrantAccess,
+                Inheritance = 0,
+                Trustee = new Trustee
+                {
+                    TrusteeForm = TrusteeForm.Sid,
+                    TrusteeType = TrusteeType.Unknown,
+                    Name = sidPointer,
+                },
+            };
+            result = SetEntriesInAcl(1, ref entry, currentAcl, out updatedAcl);
+            if (result != 0)
+            {
+                throw new Win32Exception(checked((int)result));
+            }
+            result = SetNamedSecurityInfo(
+                path,
+                SeObjectType.FileObject,
+                DaclSecurityInformation,
+                IntPtr.Zero,
+                IntPtr.Zero,
+                updatedAcl,
+                IntPtr.Zero);
+            if (result != 0)
+            {
+                throw new Win32Exception(checked((int)result));
+            }
+        }
+        finally
+        {
+            if (updatedAcl != IntPtr.Zero) _ = LocalFree(updatedAcl);
+            if (sidPointer != IntPtr.Zero) _ = LocalFree(sidPointer);
+            if (securityDescriptor != IntPtr.Zero) _ = LocalFree(securityDescriptor);
+        }
+    }
+
+    private static IEnumerable<string> AncestorDirectories(string path)
+    {
+        var fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        var volumeRoot = Path.TrimEndingDirectorySeparator(Path.GetPathRoot(fullPath) ?? string.Empty);
+        var parent = Directory.GetParent(fullPath);
+        while (parent is not null)
+        {
+            if (string.Equals(
+                    Path.TrimEndingDirectorySeparator(parent.FullName),
+                    volumeRoot,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                yield break;
+            }
+            yield return parent.FullName;
+            parent = parent.Parent;
         }
     }
 
@@ -592,7 +717,9 @@ internal static class WindowsAppContainerSandbox
         if (!metadata.ProfileName.StartsWith("ChatOS.Sandbox.", StringComparison.Ordinal) ||
             !metadata.ProfileName.Contains(".controlled.v1.", StringComparison.Ordinal) ||
             string.IsNullOrWhiteSpace(metadata.Sid) ||
-            !metadata.Sid.StartsWith("S-1-15-2-", StringComparison.Ordinal))
+            !metadata.Sid.StartsWith("S-1-15-2-", StringComparison.Ordinal) ||
+            (metadata.AclSid is not null &&
+             !metadata.AclSid.StartsWith("S-1-15-3-", StringComparison.Ordinal)))
         {
             return false;
         }
@@ -616,68 +743,6 @@ internal static class WindowsAppContainerSandbox
         string sid,
         ConnectorSandboxPermissionProfile profile) =>
         string.Join('\0', Path.GetFullPath(workspaceRoot), sid, profile);
-
-    private static string SafeAclError(string error, string output)
-    {
-        var value = string.IsNullOrWhiteSpace(error) ? output : error;
-        value = new string(value.Where(value => !char.IsControl(value) || value == ' ').Take(500).ToArray());
-        return string.IsNullOrWhiteSpace(value) ? "ACL update failed" : value;
-    }
-
-    private static IntPtr CapabilitySid(string value)
-    {
-        if (!ConvertStringSidToSid(value, out var sid))
-        {
-            throw new Win32Exception(Marshal.GetLastWin32Error());
-        }
-        return sid;
-    }
-
-    private static string SidToString(IntPtr sid)
-    {
-        if (!ConvertSidToStringSid(sid, out var value))
-        {
-            throw new Win32Exception(Marshal.GetLastWin32Error());
-        }
-        try
-        {
-            return Marshal.PtrToStringUni(value)
-                ?? throw new InvalidOperationException("Windows returned an empty AppContainer SID.");
-        }
-        finally
-        {
-            _ = LocalFree(value);
-        }
-    }
-
-    [DllImport("userenv.dll", CharSet = CharSet.Unicode)]
-    private static extern int CreateAppContainerProfile(
-        string appContainerName,
-        string displayName,
-        string description,
-        IntPtr capabilities,
-        uint capabilityCount,
-        out IntPtr appContainerSid);
-
-    [DllImport("userenv.dll", CharSet = CharSet.Unicode)]
-    private static extern int DeriveAppContainerSidFromAppContainerName(
-        string appContainerName,
-        out IntPtr appContainerSid);
-
-    [DllImport("userenv.dll", CharSet = CharSet.Unicode)]
-    private static extern int DeleteAppContainerProfile(string appContainerName);
-
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern bool ConvertStringSidToSid(string stringSid, out IntPtr sid);
-
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern bool ConvertSidToStringSid(IntPtr sid, out IntPtr stringSid);
-
-    [DllImport("kernel32.dll")]
-    private static extern IntPtr LocalFree(IntPtr memory);
-
-    [DllImport("advapi32.dll")]
-    internal static extern IntPtr FreeSid(IntPtr sid);
 
     private sealed class EphemeralProfileState
     {
@@ -720,6 +785,7 @@ internal static class WindowsAppContainerSandbox
         string ProfileName,
         string WorkspaceRoot,
         string Sid,
+        string? AclSid,
         string TemporaryDirectory,
         DateTimeOffset CreatedAt);
 }

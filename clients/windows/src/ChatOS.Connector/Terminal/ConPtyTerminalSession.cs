@@ -76,7 +76,9 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
     private readonly FileStream _input;
+    private readonly SafeFileHandle _pseudoInput;
     private readonly FileStream _output;
+    private readonly SafeFileHandle _pseudoOutput;
     private readonly SafePseudoConsoleHandle _pseudoConsole;
     private readonly SafeKernelObjectHandle _job;
     private readonly SafeKernelObjectHandle _process;
@@ -84,6 +86,8 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
     private readonly Task _outputTask;
     private readonly Task _waitTask;
     private NetworkGuardLeaseLifetime? _networkLease;
+    private int _exitCode = int.MinValue;
+    private string? _outputFailure;
     private int _exited;
     private int _disposed;
 
@@ -93,19 +97,31 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
     {
         Identity = identity;
         _input = native.Input;
+        _pseudoInput = native.PseudoInput;
         _output = native.Output;
+        _pseudoOutput = native.PseudoOutput;
         _pseudoConsole = native.PseudoConsole;
         _job = native.Job;
         _process = native.Process;
         _networkLease = native.NetworkLease;
         _sandboxProfileLease = native.SandboxProfileLease;
-        _outputTask = ReadOutputAsync(_lifetime.Token);
+        _outputTask = Task.Factory.StartNew(
+            () => ReadOutput(_lifetime.Token),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
         _waitTask = WaitForExitAsync();
     }
 
     public TerminalSessionIdentity Identity { get; }
 
     public bool HasExited => Volatile.Read(ref _exited) != 0;
+
+    internal int? ExitCode => Volatile.Read(ref _exitCode) is var value && value != int.MinValue
+        ? value
+        : null;
+
+    internal string? OutputFailure => Volatile.Read(ref _outputFailure);
 
     public bool IsBusy => false;
 
@@ -168,8 +184,9 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await _input.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
-            await _input.FlushAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            _input.Write(bytes);
+            _input.Flush();
         }
         finally
         {
@@ -227,17 +244,37 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
         {
         }
 
-        _lifetime.Cancel();
         _input.Dispose();
+        // Closing ConPTY first releases its duplicated output writer, allowing the
+        // synchronous reader thread to drain the final frame and observe EOF. Do not
+        // cancel that reader until ClosePseudoConsole has finished or ConHost can block
+        // while flushing its remaining output.
+        var closePseudoConsoleTask = Task.Factory.StartNew(
+            _pseudoConsole.Dispose,
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        try
+        {
+            await closePseudoConsoleTask.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            // A broken output reader forces ConHost to abandon any final frame and lets
+            // ClosePseudoConsole return instead of hanging application shutdown.
+        }
+        _pseudoInput.Dispose();
+        _pseudoOutput.Dispose();
+        _lifetime.Cancel();
         _output.Dispose();
-        _pseudoConsole.Dispose();
         await ReleaseNetworkLeaseAsync().ConfigureAwait(false);
         _job.Dispose();
         _process.Dispose();
         await ReleaseSandboxProfileAsync().ConfigureAwait(false);
         try
         {
-            await Task.WhenAll(_outputTask, _waitTask).WaitAsync(TimeSpan.FromSeconds(1))
+            await Task.WhenAll(_outputTask, _waitTask, closePseudoConsoleTask)
+                .WaitAsync(TimeSpan.FromSeconds(1))
                 .ConfigureAwait(false);
         }
         catch
@@ -248,7 +285,7 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
         _writeGate.Dispose();
     }
 
-    private async Task ReadOutputAsync(CancellationToken cancellationToken)
+    private void ReadOutput(CancellationToken cancellationToken)
     {
         var bytes = new byte[16 * 1024];
         var decoder = Encoding.UTF8.GetDecoder();
@@ -257,7 +294,7 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                var read = await _output.ReadAsync(bytes, cancellationToken).ConfigureAwait(false);
+                var read = _output.Read(bytes, 0, bytes.Length);
                 if (read == 0)
                 {
                     break;
@@ -297,8 +334,12 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
+        catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
         catch (Exception exception)
         {
+            Volatile.Write(ref _outputFailure, exception.Message);
             Publish(new TerminalEvent(
                 TerminalEventKind.Error,
                 Identity.SessionId,
@@ -308,7 +349,30 @@ internal sealed class ConPtyTerminalSession : ITerminalSession
 
     private async Task WaitForExitAsync()
     {
-        var exitCode = await Task.Run(() => NativeConPty.WaitForExit(_process)).ConfigureAwait(false);
+        var exitCode = await Task.Factory.StartNew(
+            () => NativeConPty.WaitForExit(_process),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default).ConfigureAwait(false);
+        _input.Dispose();
+        var closePseudoConsoleTask = Task.Factory.StartNew(
+            _pseudoConsole.Dispose,
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        try
+        {
+            await closePseudoConsoleTask.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+            _pseudoInput.Dispose();
+            _pseudoOutput.Dispose();
+            await _outputTask.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            // The process has exited, so no more useful output can be produced. A broken
+            // pipe during the final ConHost frame must not delay exit notification.
+        }
+        Volatile.Write(ref _exitCode, exitCode);
         Interlocked.Exchange(ref _exited, 1);
         await ReleaseNetworkLeaseAsync().ConfigureAwait(false);
         await ReleaseSandboxProfileAsync().ConfigureAwait(false);
@@ -418,7 +482,9 @@ internal static class WindowsShellResolver
 
 internal sealed record NativeConPtyProcess(
     FileStream Input,
+    SafeFileHandle PseudoInput,
     FileStream Output,
+    SafeFileHandle PseudoOutput,
     SafePseudoConsoleHandle PseudoConsole,
     SafeKernelObjectHandle Job,
     SafeKernelObjectHandle Process,
@@ -459,7 +525,6 @@ internal sealed record NativeConPtyProcess(
         SafeKernelObjectHandle? thread = null;
         NetworkGuardLeaseLifetime? networkLease = null;
         IntPtr attributeList = IntPtr.Zero;
-        IntPtr pseudoConsolePointer = IntPtr.Zero;
         try
         {
             NativeConPty.CreatePipePair(out inputWriter, out pseudoInput, parentReads: false);
@@ -478,13 +543,11 @@ internal sealed record NativeConPtyProcess(
                 sandbox is null ? 1 : 2,
                 0,
                 ref attributeBytes));
-            pseudoConsolePointer = Marshal.AllocHGlobal(IntPtr.Size);
-            Marshal.WriteIntPtr(pseudoConsolePointer, pseudoConsole.DangerousGetHandle());
             NativeConPty.ThrowIfFalse(NativeConPty.UpdateProcThreadAttribute(
                 attributeList,
                 0,
                 NativeConPty.ProcThreadAttributePseudoConsole,
-                pseudoConsolePointer,
+                pseudoConsole.DangerousGetHandle(),
                 (nuint)IntPtr.Size,
                 IntPtr.Zero,
                 IntPtr.Zero));
@@ -502,19 +565,30 @@ internal sealed record NativeConPtyProcess(
 
             var startup = new StartupInfoEx
             {
-                StartupInfo = new StartupInfo { Size = (uint)Marshal.SizeOf<StartupInfoEx>() },
+                StartupInfo = new StartupInfo
+                {
+                    Size = (uint)Marshal.SizeOf<StartupInfoEx>(),
+                    Flags = NativeConPty.StartfUseStdHandles,
+                },
                 AttributeList = attributeList,
             };
             var commandLine = new StringBuilder(CommandLine(executable, arguments));
+            var creationFlags = NativeConPty.ExtendedStartupInfoPresent;
+            if (beforeResume is not null)
+            {
+                creationFlags |= NativeConPty.CreateSuspended;
+            }
+            if (sandbox is not null)
+            {
+                creationFlags |= NativeConPty.CreateUnicodeEnvironment;
+            }
             NativeConPty.ThrowIfFalse(NativeConPty.CreateProcess(
                 null,
                 commandLine,
                 IntPtr.Zero,
                 IntPtr.Zero,
                 false,
-                NativeConPty.ExtendedStartupInfoPresent |
-                    NativeConPty.CreateUnicodeEnvironment |
-                    NativeConPty.CreateSuspended,
+                creationFlags,
                 sandbox?.EnvironmentBlock ?? IntPtr.Zero,
                 workingDirectory,
                 ref startup,
@@ -531,24 +605,26 @@ internal sealed record NativeConPtyProcess(
                 networkLease = await beforeResume(processInformation.ProcessId, job)
                     .ConfigureAwait(false);
             }
-            if (NativeConPty.ResumeThread(thread) == uint.MaxValue)
+            if (beforeResume is not null && NativeConPty.ResumeThread(thread) == uint.MaxValue)
             {
                 throw new Win32Exception(Marshal.GetLastWin32Error());
             }
 
-            pseudoInput.Dispose();
-            pseudoInput = null;
-            pseudoOutput.Dispose();
-            pseudoOutput = null;
             thread.Dispose();
             thread = null;
             var input = new FileStream(inputWriter, FileAccess.Write, 16 * 1024, isAsync: false);
             inputWriter = null;
+            var retainedPseudoInput = pseudoInput;
+            pseudoInput = null;
             var output = new FileStream(outputReader, FileAccess.Read, 16 * 1024, isAsync: false);
             outputReader = null;
+            var retainedPseudoOutput = pseudoOutput;
+            pseudoOutput = null;
             return new NativeConPtyProcess(
                 input,
+                retainedPseudoInput,
                 output,
+                retainedPseudoOutput,
                 pseudoConsole,
                 job,
                 process,
@@ -561,14 +637,51 @@ internal sealed record NativeConPtyProcess(
             {
                 await networkLease.DisposeAsync().ConfigureAwait(false);
             }
+            if (job is not null && process is not null)
+            {
+                // beforeResume failures happen while the initial process is still
+                // suspended and therefore cannot have spawned descendants. Terminating
+                // that process directly avoids TerminateJobObject blocking on ConPTY.
+                NativeTerminalProcess.TerminateProcess(process, 1);
+                var processToWait = process;
+                var waitForExitTask = Task.Factory.StartNew(
+                    () => NativeConPty.WaitForExit(processToWait),
+                    CancellationToken.None,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default);
+                try
+                {
+                    await waitForExitTask.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    // Handle disposal below remains the final kill-on-close backstop.
+                }
+            }
             thread?.Dispose();
             process?.Dispose();
             job?.Dispose();
-            pseudoConsole?.Dispose();
             pseudoInput?.Dispose();
             inputWriter?.Dispose();
             outputReader?.Dispose();
             pseudoOutput?.Dispose();
+            if (pseudoConsole is not null)
+            {
+                var closeTask = Task.Factory.StartNew(
+                    pseudoConsole.Dispose,
+                    CancellationToken.None,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default);
+                try
+                {
+                    await closeTask.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    // The process and every pipe are already closed. Do not let a stuck
+                    // ConHost cleanup mask the original launch failure indefinitely.
+                }
+            }
             throw;
         }
         finally
@@ -577,11 +690,6 @@ internal sealed record NativeConPtyProcess(
             {
                 NativeConPty.DeleteProcThreadAttributeList(attributeList);
                 Marshal.FreeHGlobal(attributeList);
-            }
-
-            if (pseudoConsolePointer != IntPtr.Zero)
-            {
-                Marshal.FreeHGlobal(pseudoConsolePointer);
             }
         }
     }

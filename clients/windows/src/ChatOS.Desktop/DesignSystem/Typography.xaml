@@ -10,43 +10,43 @@
 
     <Style x:Key="ChatOSTitleTextStyle" TargetType="TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource ChatOSInterfaceFontFamily}" />
-        <Setter Property="FontSize" Value="{DynamicResource ChatOSFontSizeBody}" />
+        <Setter Property="FontSize" Value="{StaticResource ChatOSFontSizeBody}" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Foreground" Value="{StaticResource ChatOSPrimaryTextBrush}" />
     </Style>
 
     <Style x:Key="ChatOSHeadlineTextStyle" TargetType="TextBlock" BasedOn="{StaticResource ChatOSTitleTextStyle}">
-        <Setter Property="FontSize" Value="{DynamicResource ChatOSFontSizeHeadline}" />
+        <Setter Property="FontSize" Value="{StaticResource ChatOSFontSizeHeadline}" />
     </Style>
 
     <Style x:Key="ChatOSPageTitleTextStyle" TargetType="TextBlock" BasedOn="{StaticResource ChatOSTitleTextStyle}">
-        <Setter Property="FontSize" Value="{DynamicResource ChatOSFontSizePageTitle}" />
+        <Setter Property="FontSize" Value="{StaticResource ChatOSFontSizePageTitle}" />
         <Setter Property="FontWeight" Value="Bold" />
     </Style>
 
     <Style x:Key="ChatOSBodyStrongTextStyle" TargetType="TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource ChatOSInterfaceFontFamily}" />
-        <Setter Property="FontSize" Value="{DynamicResource ChatOSFontSizeBody}" />
+        <Setter Property="FontSize" Value="{StaticResource ChatOSFontSizeBody}" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Foreground" Value="{StaticResource ChatOSPrimaryTextBrush}" />
     </Style>
 
     <Style x:Key="ChatOSSecondaryBodyTextStyle" TargetType="TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource ChatOSInterfaceFontFamily}" />
-        <Setter Property="FontSize" Value="{DynamicResource ChatOSFontSizeBody}" />
+        <Setter Property="FontSize" Value="{StaticResource ChatOSFontSizeBody}" />
         <Setter Property="Foreground" Value="{StaticResource ChatOSSecondaryTextBrush}" />
         <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
     <Style x:Key="ChatOSCaptionTextStyle" TargetType="TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource ChatOSInterfaceFontFamily}" />
-        <Setter Property="FontSize" Value="{DynamicResource ChatOSFontSizeCaption}" />
+        <Setter Property="FontSize" Value="{StaticResource ChatOSFontSizeCaption}" />
         <Setter Property="Foreground" Value="{StaticResource ChatOSTertiaryTextBrush}" />
     </Style>
 
     <Style x:Key="ChatOSSectionLabelTextStyle" TargetType="TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource ChatOSInterfaceFontFamily}" />
-        <Setter Property="FontSize" Value="{DynamicResource ChatOSFontSizeCaption}" />
+        <Setter Property="FontSize" Value="{StaticResource ChatOSFontSizeCaption}" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Foreground" Value="{StaticResource ChatOSSecondaryTextBrush}" />
         <Setter Property="Margin" Value="8,0,0,2" />
