@@ -125,6 +125,44 @@ fn canonical_root_alias_cannot_override_read_only_permissions() {
 
 #[cfg(unix)]
 #[test]
+fn distinct_backslash_roots_cannot_discard_read_only_permissions() {
+    let fixture = Fixture::new();
+    let paths = [
+        fixture.0.join(r"home\private"),
+        fixture.0.join("home/private"),
+    ];
+    for path in &paths {
+        fs::create_dir_all(path).unwrap();
+        fs::write(path.join("note.txt"), "unchanged").unwrap();
+    }
+    assert_eq!(
+        super::normalize_path_for_compare(&paths[0]),
+        super::normalize_path_for_compare(&paths[1])
+    );
+    for kinds in [
+        [FsAllowedRootKind::Home, FsAllowedRootKind::Home],
+        [FsAllowedRootKind::Ssh, FsAllowedRootKind::Ssh],
+        [FsAllowedRootKind::Home, FsAllowedRootKind::Ssh],
+        [FsAllowedRootKind::Ssh, FsAllowedRootKind::Home],
+    ] {
+        for order in [[0, 1], [1, 0]] {
+            let mut roots = Vec::new();
+            push_root(&mut roots, fixture.0.clone(), FsAllowedRootKind::RepoParent);
+            for index in order {
+                push_root(&mut roots, paths[index].clone(), kinds[index]);
+            }
+            let policy = FsPathPolicy { roots };
+            for path in &paths {
+                assert_access(&policy, path, false);
+            }
+            assert_access(&policy, &fixture.0, true);
+            assert_eq!(policy.roots.len(), 3);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn private_permissions_reject_replaced_leaf_without_chmod_target() {
     use std::os::unix::fs::{symlink, PermissionsExt};
 
