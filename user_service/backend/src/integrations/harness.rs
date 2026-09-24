@@ -36,7 +36,7 @@ struct HarnessProvisioningIdentity {
     space_identifier: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 struct HarnessRegisterRequest<'a> {
     uid: &'a str,
     email: &'a str,
@@ -44,7 +44,7 @@ struct HarnessRegisterRequest<'a> {
     password: &'a str,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 struct HarnessLoginRequest<'a> {
     login_identifier: &'a str,
     password: &'a str,
@@ -63,11 +63,34 @@ struct HarnessCreateAccessTokenRequest<'a> {
     identifier: &'a str,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct HarnessTokenResponse {
     access_token: String,
     #[serde(default)]
     token: Option<HarnessTokenRecord>,
+}
+
+// Credential-bearing payloads expose only their type in diagnostics. Keep
+// serde independent: Debug redaction must not alter the Harness wire format.
+impl fmt::Debug for HarnessRegisterRequest<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HarnessRegisterRequest")
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for HarnessLoginRequest<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HarnessLoginRequest")
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for HarnessTokenResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HarnessTokenResponse")
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -657,3 +680,7 @@ mod response_tests;
 #[cfg(test)]
 #[path = "harness/request_tests.rs"]
 mod request_tests;
+
+#[cfg(test)]
+#[path = "harness/debug_tests.rs"]
+mod debug_tests;
