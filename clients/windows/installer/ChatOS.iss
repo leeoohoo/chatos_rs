@@ -14,7 +14,6 @@
 #define AppName "ChatOS"
 #define AppPublisher "ChatOS"
 #define AppExecutable "ChatOS.Desktop.exe"
-#define AppLauncher "Start-ChatOS.cmd"
 
 [Setup]
 AppId={{D9D7025E-C25B-4B9A-8C42-AF5E4301BBE8}
@@ -33,6 +32,7 @@ PrivilegesRequired=lowest
 CloseApplications=yes
 RestartApplications=no
 UninstallDisplayIcon={app}\{#AppExecutable}
+SetupIconFile={#SourceDir}\Assets\ChatOS.ico
 SetupLogging=yes
 #if TargetPlatform == "ARM64"
 ArchitecturesAllowed=arm64
@@ -45,12 +45,15 @@ ArchitecturesInstallIn64BitMode=x64compatible
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+Type: files; Name: "{app}\Start-ChatOS.cmd"
+
 [Icons]
-Name: "{autoprograms}\ChatOS"; Filename: "{app}\{#AppLauncher}"; WorkingDir: "{app}"; IconFilename: "{app}\{#AppExecutable}"
-Name: "{autodesktop}\ChatOS"; Filename: "{app}\{#AppLauncher}"; WorkingDir: "{app}"; IconFilename: "{app}\{#AppExecutable}"; Tasks: desktopicon
+Name: "{autoprograms}\ChatOS"; Filename: "{app}\{#AppExecutable}"; WorkingDir: "{app}"; IconFilename: "{app}\{#AppExecutable}"
+Name: "{autodesktop}\ChatOS"; Filename: "{app}\{#AppExecutable}"; WorkingDir: "{app}"; IconFilename: "{app}\{#AppExecutable}"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: checkedonce
 
 [Run]
-Filename: "{app}\{#AppLauncher}"; Description: "Start ChatOS"; WorkingDir: "{app}"; Flags: postinstall shellexec skipifsilent nowait
+Filename: "{app}\{#AppExecutable}"; Description: "Start ChatOS"; WorkingDir: "{app}"; Flags: postinstall skipifsilent nowait

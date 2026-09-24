@@ -234,17 +234,13 @@ try {
         throw "Installer payload does not contain ChatOS.Desktop.exe."
     }
 
-    $launcher = @"
-@echo off
-setlocal
-set "CHATOS_API_BASE_URL=$normalizedApiBaseUrl"
-set "CHATOS_LOCAL_CONNECTOR_CLOUD_BASE_URL=$normalizedConnectorBaseUrl"
-start "" "%~dp0ChatOS.Desktop.exe"
-endlocal
-"@
+    $runtimeSettings = [ordered]@{
+        api_base_url = $normalizedApiBaseUrl
+        local_connector_cloud_base_url = $normalizedConnectorBaseUrl
+    }
     [IO.File]::WriteAllText(
-        (Join-Path $payloadRoot "Start-ChatOS.cmd"),
-        $launcher,
+        (Join-Path $payloadRoot "chatos.runtime.json"),
+        ($runtimeSettings | ConvertTo-Json),
         [Text.UTF8Encoding]::new($false)
     )
 
@@ -314,16 +310,32 @@ Local Connector: $normalizedConnectorBaseUrl
 
         $installedRoot = Join-Path $env:LOCALAPPDATA "Programs\ChatOS"
         $installedExecutable = Join-Path $installedRoot "ChatOS.Desktop.exe"
-        $installedLauncher = Join-Path $installedRoot "Start-ChatOS.cmd"
-        if (-not (Test-Path $installedExecutable -PathType Leaf) -or
-            -not (Test-Path $installedLauncher -PathType Leaf)) {
+        if (-not (Test-Path $installedExecutable -PathType Leaf)) {
             throw "ChatOS installation completed without the expected application files."
         }
 
         Write-Host "ChatOS installed to: $installedRoot"
         if (-not $NoLaunch) {
-            Start-Process -FilePath $installedLauncher -WorkingDirectory $installedRoot
-            Write-Host "ChatOS started."
+            $startupLog = Join-Path $env:LOCALAPPDATA "ChatOS\logs\startup.log"
+            $process = Start-Process `
+                -FilePath $installedExecutable `
+                -WorkingDirectory $installedRoot `
+                -PassThru
+            $startupDeadline = [DateTime]::UtcNow.AddSeconds(30)
+            while ([DateTime]::UtcNow -lt $startupDeadline) {
+                Start-Sleep -Milliseconds 250
+                if ($process.HasExited) {
+                    throw "ChatOS exited during startup with code $($process.ExitCode). See $startupLog"
+                }
+                $process.Refresh()
+                if ($process.MainWindowHandle -ne [IntPtr]::Zero) {
+                    Write-Host "ChatOS started successfully (PID $($process.Id))."
+                    break
+                }
+            }
+            if (-not $process.HasExited -and $process.MainWindowHandle -eq [IntPtr]::Zero) {
+                throw "ChatOS did not show a window within 30 seconds. See $startupLog"
+            }
         }
     }
 }
