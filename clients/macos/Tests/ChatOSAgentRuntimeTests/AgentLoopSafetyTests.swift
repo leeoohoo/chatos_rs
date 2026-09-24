@@ -293,15 +293,18 @@ final class AgentLoopSafetyTests: XCTestCase {
 
     func testActiveStreamCanOutliveInactivityTimeout() async throws {
         let started = Date()
-        let value = try await withAgentInactivityTimeout(seconds: 0.06) { markActivity in
-            for _ in 0..<5 {
-                try await Task.sleep(for: .milliseconds(35))
+        // Keep a generous scheduling margin for loaded CI runners while making the total stream
+        // duration exceed the inactivity window. The behavior under test is renewal, not a
+        // sub-100 ms scheduler deadline.
+        let value = try await withAgentInactivityTimeout(seconds: 0.25) { markActivity in
+            for _ in 0..<8 {
+                try await Task.sleep(for: .milliseconds(50))
                 markActivity()
             }
             return "complete"
         }
         XCTAssertEqual(value, "complete")
-        XCTAssertGreaterThan(Date().timeIntervalSince(started), 0.15)
+        XCTAssertGreaterThan(Date().timeIntervalSince(started), 0.35)
     }
 
     func testSilentStreamHitsInactivityTimeout() async throws {
