@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
+use chatos_service_runtime::{http_client_builder, HttpClientTimeouts};
 use serde_json::Value;
 
-pub(super) fn build_client_with_timeout(timeout_ms: i64) -> Result<reqwest::Client, String> {
-    build_http_client(HttpClientTimeouts::new(std::time::Duration::from_millis(
+pub(super) fn build_harness_client_with_timeout(
+    timeout_ms: i64,
+) -> Result<reqwest::Client, String> {
+    http_client_builder(HttpClientTimeouts::new(std::time::Duration::from_millis(
         timeout_ms.max(300) as u64,
     )))
+    // Harness requests carry passwords or bearer tokens. Never replay them at
+    // a redirect destination, even on the same origin.
+    .redirect(reqwest::redirect::Policy::none())
+    .build()
     .map_err(|err| err.to_string())
 }
 

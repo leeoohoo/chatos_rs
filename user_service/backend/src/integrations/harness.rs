@@ -20,7 +20,7 @@ use crate::state::AppState;
 use crate::store::now_rfc3339;
 use crate::trace_context::InternalTraceContextExt;
 
-use super::http::{build_client_with_timeout, extract_error_message, normalized_url};
+use super::http::{build_harness_client_with_timeout, extract_error_message, normalized_url};
 
 mod identifiers;
 
@@ -615,7 +615,7 @@ where
     TResp: serde::de::DeserializeOwned,
     TBody: Serialize + ?Sized,
 {
-    let client = build_client_with_timeout(state.config.harness_request_timeout_ms)
+    let client = build_harness_client_with_timeout(state.config.harness_request_timeout_ms)
         .map_err(HarnessRequestError::from_error)?;
     let mut request = client.request(method, endpoint);
     if let Some(token) = bearer_token
@@ -659,9 +659,11 @@ async fn decode_harness_response<TResp: serde::de::DeserializeOwned>(
             status: Some(status),
             // Keep only the fallback decision. Downstream bodies may echo
             // credentials and must never reach logs or persisted last_error.
-            already_exists: HarnessRequestError::message_indicates_already_exists(
-                &extract_error_message(body_text.as_str()),
-            ),
+            // A refused redirect is not evidence that the account exists.
+            already_exists: !status.is_redirection()
+                && HarnessRequestError::message_indicates_already_exists(&extract_error_message(
+                    body_text.as_str(),
+                )),
             message: "harness request rejected".to_string(),
         });
     }
@@ -684,3 +686,7 @@ mod request_tests;
 #[cfg(test)]
 #[path = "harness/debug_tests.rs"]
 mod debug_tests;
+
+#[cfg(test)]
+#[path = "harness/redirect_tests.rs"]
+mod redirect_tests;

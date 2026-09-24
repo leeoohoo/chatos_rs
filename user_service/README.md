@@ -66,6 +66,8 @@ In the Docker stack, Harness runs as the `harness` service and `user_service` po
 - `HARNESS_PROVISIONING_ENABLED=true`
 - `HARNESS_BASE_URL=http://harness:3000`
 
+Harness provisioning does not follow HTTP redirects, including redirects on the same origin. Configure the Harness base URL to serve the API directly; a 3xx response is treated as a failed Harness request without forwarding passwords or tokens or triggering the existing-account login fallback.
+
 Harness source lives in a separate ignored Git checkout at repository root `harness/`; the Chat OS parent repository does not track it.
 
 Important behavior:
