@@ -48,18 +48,18 @@ pub(super) struct McpManagementGateway {
     runtime_session: McpManagementRuntimeSessionHandle,
 }
 
+type McpManagementGatewayParts = (
+    McpHttpServer,
+    Vec<String>,
+    Option<String>,
+    Vec<serde_json::Value>,
+    Vec<serde_json::Value>,
+    String,
+    McpManagementRuntimeSessionHandle,
+);
+
 impl McpManagementGateway {
-    pub(super) fn into_parts(
-        self,
-    ) -> (
-        McpHttpServer,
-        Vec<String>,
-        Option<String>,
-        Vec<serde_json::Value>,
-        Vec<serde_json::Value>,
-        String,
-        McpManagementRuntimeSessionHandle,
-    ) {
+    pub(super) fn into_parts(self) -> McpManagementGatewayParts {
         (
             self.server,
             self.effective_mcp_ids,
