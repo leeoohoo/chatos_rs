@@ -133,7 +133,7 @@ public struct LocalAgentBuilderService: Sendable {
         let scope = "account:\(ownerUserID):project:\(projectID):agent-builder:\(runID.uuidString.lowercased())"
         var checkpoint = AgentRunCheckpoint(
             scope: scope,
-            messages: Self.initialMessages(brief: trimmedBrief)
+            messages: try Self.initialMessages(brief: trimmedBrief)
         )
         checkpoint.id = runID
 
@@ -321,9 +321,14 @@ public struct LocalAgentBuilderService: Sendable {
         }
     }
 
-    private static func initialMessages(brief: String) -> [AgentMessage] {
+    private static func initialMessages(brief: String) throws -> [AgentMessage] {
+        let skill = try BundledAgentSkillLoader.load(named: "chatos-agent-builder")
         return [
-            .init(role: .system, content: LocalAgentPromptCatalog.render(.builderSystem)),
+            .init(
+                role: .system,
+                content: LocalAgentPromptCatalog.render(.builderSystem)
+                    + "\n\n" + skill.instructions
+            ),
             .init(
                 role: .user,
                 content: LocalAgentPromptCatalog.render(
@@ -381,23 +386,31 @@ actor LocalAgentBuilderToolProvider: AgentToolProvider {
             .init(
                 name: Self.projectInspectToolName,
                 description: "读取当前本地项目、群聊目标和现有 Agent 职责的冻结快照。",
-                schema: Self.emptyObjectSchema
+                schema: Self.emptyObjectSchema,
+                providerID: ProductToolProviderID.agentBuilder,
+                skillBindingID: ProductToolSkillBindingID.agentBuilder
             ),
             .init(
                 name: Self.modelListToolName,
                 description: "列出当前可用于普通 Agent 的已启用模型配置。",
-                schema: Self.emptyObjectSchema
+                schema: Self.emptyObjectSchema,
+                providerID: ProductToolProviderID.agentBuilder,
+                skillBindingID: ProductToolSkillBindingID.agentBuilder
             ),
             .init(
                 name: Self.professionListToolName,
                 description: "列出 ChatOS 内置职业及稳定 key。Agent 必须选择一个职业。",
-                schema: Self.emptyObjectSchema
+                schema: Self.emptyObjectSchema,
+                providerID: ProductToolProviderID.agentBuilder,
+                skillBindingID: ProductToolSkillBindingID.agentBuilder
             ),
             .init(
                 name: Self.agentDraftToolName,
                 description: "提交一个等待用户确认的 Agent 草案；这不会创建 Agent 或修改群聊。",
                 schema: try Self.draftSchema(models: models, professions: professions),
-                effect: .terminal
+                effect: .terminal,
+                providerID: ProductToolProviderID.agentBuilder,
+                skillBindingID: ProductToolSkillBindingID.agentBuilder
             ),
         ]
     }

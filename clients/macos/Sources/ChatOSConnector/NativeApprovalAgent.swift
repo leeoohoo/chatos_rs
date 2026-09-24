@@ -75,20 +75,16 @@ struct NativeApprovalAgent: Sendable {
             guard systemPrompt.trimmedNonEmpty != nil else {
                 throw NativeApprovalAgentError.invalidManagedPrompt
             }
-            let definitions = try Self.toolSchemas.map { schema -> AgentToolDefinition in
-                guard let function = schema["function"] as? [String: Any],
-                      let name = function["name"] as? String,
-                      let description = function["description"] as? String,
-                      let parameters = function["parameters"] as? [String: Any] else {
-                    throw NativeApprovalAgentError.invalidToolArguments
-                }
-                return .init(name: name, description: description,
-                    schema: try JSONSerialization.data(withJSONObject: parameters),
-                    effect: name == "approval_decision" ? .terminal : .readOnly)
-            }
+            let definitions = try Self.toolDefinitions()
+            let operationSkill = try BundledAgentSkillLoader.load(
+                named: "chatos-command-approval"
+            )
             let scope = runtimeScope ?? "approval:\(runID.uuidString)"
             var checkpoint = AgentRunCheckpoint(scope: scope, messages: [
-                .init(role: .system, content: systemPrompt),
+                .init(
+                    role: .system,
+                    content: systemPrompt + "\n\n" + operationSkill.instructions
+                ),
                 .init(role: .user, content: prompt(for: request)),
             ])
             checkpoint.id = runID
@@ -250,6 +246,35 @@ struct NativeApprovalAgent: Sendable {
             "required": ["decision", "reason"],
         ]),
     ] }
+
+    private static func toolDefinitions() throws -> [AgentToolDefinition] {
+        try toolSchemas.map { schema -> AgentToolDefinition in
+            guard let function = schema["function"] as? [String: Any],
+                  let name = function["name"] as? String,
+                  let description = function["description"] as? String,
+                  let parameters = function["parameters"] as? [String: Any] else {
+                throw NativeApprovalAgentError.invalidToolArguments
+            }
+            return .init(
+                name: name,
+                description: description,
+                schema: try JSONSerialization.data(withJSONObject: parameters),
+                effect: name == "approval_decision" ? .terminal : .readOnly,
+                providerID: ProductToolProviderID.commandApproval,
+                skillBindingID: ProductToolSkillBindingID.commandApproval
+            )
+        }
+    }
+
+    static func skillCoverageReport() throws -> ToolSkillCoverageReport {
+        ToolSkillCoverageCatalog.product.audit(try toolDefinitions().map {
+            .init(
+                providerID: $0.providerID,
+                toolName: $0.name,
+                skillBindingID: $0.skillBindingID
+            )
+        })
+    }
 
     private static func functionTool(
         _ name: String,

@@ -1,6 +1,8 @@
 import Foundation
 
 public enum ProductToolProviderID {
+    public static let agentBuilder = "chatos.auxiliary.agent-builder"
+    public static let commandApproval = "chatos.auxiliary.command-approval"
     public static let localAgentChat = "chatos.local.agent-chat"
     public static let localProjectTeam = "chatos.local.project-team"
     public static let projectRead = "chatos.builtin.project-read"
@@ -10,6 +12,8 @@ public enum ProductToolProviderID {
 }
 
 public enum ProductToolSkillBindingID {
+    public static let agentBuilder = "auxiliary.agent-builder"
+    public static let commandApproval = "auxiliary.command-approval"
     public static let agentSkillControlPlane = "agent-chat.skill-control-plane"
     public static let relayContext = "agent-chat.relay-context"
     public static let collaborationMessaging = "agent-chat.collaboration-messaging"
@@ -36,6 +40,27 @@ public extension ToolSkillCoverageCatalog {
     static let product: ToolSkillCoverageCatalog = {
         do {
             return try .init(bindings: [
+                .init(
+                    id: ProductToolSkillBindingID.agentBuilder,
+                    providerID: ProductToolProviderID.agentBuilder,
+                    toolNames: [
+                        "project_inspect", "model_list", "profession_list", "agent_draft",
+                    ],
+                    routerSkillName: "chatos-agent-builder",
+                    specialistSkillName: "chatos-agent-builder",
+                    activationPolicy: .runBound
+                ),
+                .init(
+                    id: ProductToolSkillBindingID.commandApproval,
+                    providerID: ProductToolProviderID.commandApproval,
+                    toolNames: [
+                        "read_file_raw", "read_file_range", "list_dir", "search_text",
+                        "approval_decision",
+                    ],
+                    routerSkillName: "chatos-command-approval",
+                    specialistSkillName: "chatos-command-approval",
+                    activationPolicy: .runBound
+                ),
                 .init(
                     id: ProductToolSkillBindingID.agentSkillControlPlane,
                     providerID: ProductToolProviderID.localAgentChat,
