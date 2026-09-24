@@ -23,6 +23,82 @@ impl Drop for Fixture {
     }
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn user_roots_are_private_at_creation() {
+    use std::os::unix::fs::PermissionsExt;
+
+    const CHILD: &str = "CHATOS_TEST_PRIVATE_ROOT_CREATION";
+    if std::env::var_os(CHILD).is_some() {
+        let base = PathBuf::from(std::env::var("CHATOS_WORKSPACE_DIR").unwrap());
+        let mut parent = base.parent().unwrap().to_path_buf();
+        // Check each component immediately, before the root builder's final
+        // chmod pass. This also covers the shared users directory.
+        for name in ["users", "alice", "workspaces", "nested"] {
+            parent = super::ensure_child_directory(&parent, name).unwrap();
+            assert_private(&parent);
+        }
+
+        let auth = AuthUser {
+            user_id: "alice".into(),
+            role: "user".into(),
+        };
+        let user_root = base.join("users").join(user_path_component(&auth.user_id));
+        fs::create_dir_all(&user_root).unwrap();
+        fs::set_permissions(&user_root, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(user_root.join("public"), "not a directory").unwrap();
+        // A later failure must not leave the newly created workspace exposed,
+        // even though the final chmod pass is never reached.
+        assert!(build_allowed_roots(&auth).await.is_empty());
+        assert_private(&user_root.join("workspaces"));
+        assert!(matches!(
+            FsPathPolicy::for_user(&auth).await,
+            Err(FsPolicyError::Forbidden(_))
+        ));
+        assert_private(&user_root);
+        assert_eq!(
+            fs::read_to_string(user_root.join("public")).unwrap(),
+            "not a directory"
+        );
+        return;
+    }
+
+    let fixture = Fixture::new();
+    for mask in ["000", "022", "077"] {
+        let root = fixture.0.join(mask);
+        fs::create_dir(&root).unwrap();
+        let module = module_path!().split_once("::").unwrap().1;
+        // Set umask before starting the test process; never mutate it in the
+        // multithreaded parent test runner. Arguments are passed without eval.
+        let output = std::process::Command::new("/bin/sh")
+            .args([
+                "-c",
+                "umask \"$1\"; shift; exec \"$@\"",
+                "private-root-test",
+                mask,
+            ])
+            .arg(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                &format!("{module}::user_roots_are_private_at_creation"),
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("CHATOS_WORKSPACE_DIR", root.join("failed-base"))
+            .env_remove("CHATOS_ENABLE_HOST_FS_ROOTS")
+            .env_remove("FS_ENABLE_HOST_ROOTS")
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&output.stdout).contains("running 1 test"));
+        assert!(
+            output.status.success(),
+            "umask {mask}:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
 #[tokio::test]
 async fn user_roots_reject_redirected_directories() {
     const CASE: &str = "CHATOS_TEST_ROOT_ISOLATION_CASE";

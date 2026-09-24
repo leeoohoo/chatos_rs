@@ -116,7 +116,16 @@ fn ensure_user_scoped_roots(auth: &AuthUser) -> Option<UserScopedRoots> {
 
 fn ensure_child_directory(parent: &Path, name: &str) -> std::io::Result<PathBuf> {
     let path = parent.join(name);
-    match fs::create_dir(&path) {
+    #[cfg(unix)]
+    let created = {
+        use std::os::unix::fs::DirBuilderExt;
+        // Restrict access at creation, including when a later component fails
+        // before the final permissions pass can run.
+        fs::DirBuilder::new().mode(0o700).create(&path)
+    };
+    #[cfg(not(unix))]
+    let created = fs::create_dir(&path);
+    match created {
         Ok(()) => {}
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(err) => return Err(err),
