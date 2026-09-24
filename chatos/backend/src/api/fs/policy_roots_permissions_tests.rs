@@ -122,3 +122,68 @@ fn canonical_root_alias_cannot_override_read_only_permissions() {
     assert_access(&policy, &fixture.0, false);
     assert_access(&policy, &alias, false);
 }
+
+#[cfg(unix)]
+#[test]
+fn private_permissions_reject_replaced_leaf_without_chmod_target() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let fixture = Fixture::new();
+    for target_is_dir in [true, false] {
+        let target = fixture
+            .0
+            .join(if target_is_dir { "directory" } else { "file" });
+        if target_is_dir {
+            fs::create_dir(&target).unwrap();
+        } else {
+            fs::write(&target, "unchanged").unwrap();
+        }
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o750)).unwrap();
+        let before = fs::metadata(&target).unwrap().permissions();
+        let checked = super::ensure_child_directory(&fixture.0, "workspaces").unwrap();
+        // Deterministically model replacement after validation, before chmod.
+        fs::remove_dir(&checked).unwrap();
+        symlink(&target, &checked).unwrap();
+        let result = super::set_private_dir_permissions(&checked);
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions(),
+            before,
+            "a replaced leaf must not change its symlink target's permissions"
+        );
+        assert!(result.is_err(), "a symlink must fail closed");
+        if target_is_dir {
+            assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
+        } else {
+            assert_eq!(fs::read_to_string(&target).unwrap(), "unchanged");
+        }
+        fs::remove_file(checked).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn private_permissions_only_accept_existing_real_directories() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let fixture = Fixture::new();
+    let directory = fixture.0.join("directory");
+    fs::create_dir(&directory).unwrap();
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
+    super::set_private_dir_permissions(&directory).unwrap();
+    assert_eq!(
+        fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+
+    let file = fixture.0.join("note.txt");
+    let before = fs::metadata(&file).unwrap().permissions();
+    assert!(super::set_private_dir_permissions(&file).is_err());
+    assert_eq!(fs::metadata(&file).unwrap().permissions(), before);
+    assert_eq!(fs::read_to_string(&file).unwrap(), "unchanged");
+    let missing = fixture.0.join("missing");
+    assert!(super::set_private_dir_permissions(&missing).is_err());
+    let dangling = fixture.0.join("dangling");
+    symlink(&missing, &dangling).unwrap();
+    assert!(super::set_private_dir_permissions(&dangling).is_err());
+    assert!(!missing.exists());
+}

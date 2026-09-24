@@ -151,8 +151,15 @@ fn ensure_child_directory(parent: &Path, name: &str) -> std::io::Result<PathBuf>
 fn set_private_dir_permissions(_path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(_path, fs::Permissions::from_mode(0o700))?;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        // Refuse a leaf replaced by a symlink or non-directory after validation.
+        // Apply chmod to the opened directory, so later leaf replacement cannot
+        // redirect the mutation. Ancestor traversal still needs separate hardening.
+        let directory = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY)
+            .open(_path)?;
+        directory.set_permissions(fs::Permissions::from_mode(0o700))?;
     }
     Ok(())
 }

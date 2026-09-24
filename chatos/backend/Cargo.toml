@@ -74,5 +74,8 @@ chatos_local_workspace = { path = "../../crates/chatos_local_workspace" }
 pdf = []
 test-support = []
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
