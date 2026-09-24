@@ -59,6 +59,51 @@ function Save-RemoteFile {
     Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $Destination
 }
 
+function Write-StartupDiagnostic {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    $logPath = Join-Path $env:LOCALAPPDATA "ChatOS\logs\startup.log"
+    $logDirectory = Split-Path -Parent $logPath
+    $null = New-Item -ItemType Directory -Path $logDirectory -Force
+    $timestamp = [DateTimeOffset]::Now.ToString("O")
+    Add-Content -LiteralPath $logPath -Value "[$timestamp] Installer: $Message" -Encoding utf8
+}
+
+function Write-RecentChatOSCrashEvents {
+    param(
+        [Parameter(Mandatory = $true)]
+        [DateTime]$Since
+    )
+
+    try {
+        Start-Sleep -Seconds 1
+        $events = Get-WinEvent `
+            -FilterHashtable @{ LogName = "Application"; StartTime = $Since } `
+            -ErrorAction Stop |
+            Where-Object {
+                $_.Message -match "ChatOS\.Desktop" -or
+                ($_.ProviderName -in @(".NET Runtime", "Application Error", "Windows Error Reporting") -and
+                    $_.Message -match "ChatOS")
+            } |
+            Select-Object -First 5
+        if (-not $events) {
+            Write-StartupDiagnostic "No matching Windows Application crash event was available yet."
+            return
+        }
+        foreach ($event in $events) {
+            $eventText = ($event.Message -replace "`r?`n", " | ").Trim()
+            Write-StartupDiagnostic `
+                "Windows event: Provider=$($event.ProviderName); Id=$($event.Id); $eventText"
+        }
+    }
+    catch {
+        Write-StartupDiagnostic "Unable to read Windows Application events: $($_.Exception.Message)"
+    }
+}
+
 $toolCacheRoot = Join-Path $env:LOCALAPPDATA "ChatOS\build-tools"
 $userDotnetRoot = Join-Path $toolCacheRoot "dotnet"
 
@@ -317,25 +362,57 @@ Local Connector: $normalizedConnectorBaseUrl
         Write-Host "ChatOS installed to: $installedRoot"
         if (-not $NoLaunch) {
             $startupLog = Join-Path $env:LOCALAPPDATA "ChatOS\logs\startup.log"
-            $process = Start-Process `
-                -FilePath $installedExecutable `
-                -WorkingDirectory $installedRoot `
-                -PassThru
+            $launchStartedAt = [DateTime]::Now
+            $installedHash = (Get-FileHash $installedExecutable -Algorithm SHA256).Hash.ToLowerInvariant()
+            Write-StartupDiagnostic `
+                "Launch verification starting. SourceRevision=$sourceRevision; Executable=$installedExecutable; SHA256=$installedHash"
+            try {
+                $process = Start-Process `
+                    -FilePath $installedExecutable `
+                    -WorkingDirectory $installedRoot `
+                    -PassThru
+            }
+            catch {
+                Write-StartupDiagnostic "Start-Process failed: $($_.Exception)"
+                throw
+            }
+            Write-StartupDiagnostic "Process created. PID=$($process.Id)"
             $startupDeadline = [DateTime]::UtcNow.AddSeconds(30)
+            $windowDetected = $false
             while ([DateTime]::UtcNow -lt $startupDeadline) {
                 Start-Sleep -Milliseconds 250
                 if ($process.HasExited) {
+                    Write-StartupDiagnostic `
+                        "Process exited before showing a window. PID=$($process.Id); ExitCode=$($process.ExitCode)"
+                    Write-RecentChatOSCrashEvents -Since $launchStartedAt
                     throw "ChatOS exited during startup with code $($process.ExitCode). See $startupLog"
                 }
                 $process.Refresh()
                 if ($process.MainWindowHandle -ne [IntPtr]::Zero) {
-                    Write-Host "ChatOS started successfully (PID $($process.Id))."
+                    $windowDetected = $true
+                    Write-StartupDiagnostic `
+                        "Main window detected. PID=$($process.Id); Handle=$($process.MainWindowHandle)"
                     break
                 }
             }
-            if (-not $process.HasExited -and $process.MainWindowHandle -eq [IntPtr]::Zero) {
+            if (-not $windowDetected) {
+                Write-StartupDiagnostic "No main window appeared within 30 seconds. PID=$($process.Id)"
+                Write-RecentChatOSCrashEvents -Since $launchStartedAt
                 throw "ChatOS did not show a window within 30 seconds. See $startupLog"
             }
+
+            $stabilityDeadline = [DateTime]::UtcNow.AddSeconds(5)
+            while ([DateTime]::UtcNow -lt $stabilityDeadline) {
+                Start-Sleep -Milliseconds 250
+                if ($process.HasExited) {
+                    Write-StartupDiagnostic `
+                        "Process exited during the startup stability check. PID=$($process.Id); ExitCode=$($process.ExitCode)"
+                    Write-RecentChatOSCrashEvents -Since $launchStartedAt
+                    throw "ChatOS exited immediately after opening with code $($process.ExitCode). See $startupLog"
+                }
+            }
+            Write-StartupDiagnostic "Startup stability check passed. PID=$($process.Id)"
+            Write-Host "ChatOS started successfully (PID $($process.Id))."
         }
     }
 }
