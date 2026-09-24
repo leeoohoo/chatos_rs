@@ -109,7 +109,7 @@ public enum BundledAgentSkillLoader {
         guard markdown.hasPrefix("---\n"),
               let end = markdown.dropFirst(4).range(of: "\n---") else { return nil }
         let prefix = key + ":"
-        return markdown[..<end.lowerBound].split(separator: "\n").compactMap { line in
+        return markdown[..<end.lowerBound].split(separator: "\n").compactMap { line -> String? in
             let value = line.trimmingCharacters(in: .whitespaces)
             guard value.hasPrefix(prefix) else { return nil }
             return String(value.dropFirst(prefix.count))
