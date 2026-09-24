@@ -332,10 +332,11 @@ fn user_root_registration_rejects_replaced_directories() {
         let fixture = Fixture::new();
         let users = ensure_child_directory(&fixture.0, "users").unwrap();
         let user = ensure_child_directory(&users, "alice").unwrap();
-        let user_roots = UserScopedRoots {
-            workspaces_root: ensure_child_directory(&user, "workspaces").unwrap(),
-            public_root: ensure_child_directory(&user, "public").unwrap(),
-        };
+        let user_roots = UserScopedRoots::new(
+            ensure_child_directory(&user, "workspaces").unwrap(),
+            ensure_child_directory(&user, "public").unwrap(),
+        )
+        .unwrap();
         for path in [&user, &user_roots.workspaces_root, &user_roots.public_root] {
             super::set_private_dir_permissions(path).unwrap();
         }
@@ -482,5 +483,97 @@ fn child_validation_rejects_unix_path_alias_redirects() {
             assert_eq!(fs::read_dir(&target).unwrap().count(), 1);
             assert!(validate_child_directory(&target).is_ok());
         }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn user_root_registration_rejects_real_directory_replacements() {
+    use super::{ensure_child_directory, push_user_scoped_roots, UserScopedRoots};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    for replaced in ["users", "alice", "workspaces", "public"] {
+        let fixture = Fixture::new();
+        let users = ensure_child_directory(&fixture.0, "users").unwrap();
+        let user = ensure_child_directory(&users, "alice").unwrap();
+        let prepared = UserScopedRoots::new(
+            ensure_child_directory(&user, "workspaces").unwrap(),
+            ensure_child_directory(&user, "public").unwrap(),
+        )
+        .unwrap();
+        let paths = [&prepared.workspaces_root, &prepared.public_root];
+        let mut roots = Vec::new();
+        push_user_scoped_roots(&mut roots, &prepared);
+        assert_eq!(roots.len(), 2);
+        for path in paths {
+            let policy = FsPathPolicy {
+                roots: roots.clone(),
+            };
+            let authorized = policy
+                .authorize_existing_dir(path.to_str().unwrap(), "missing", "not dir")
+                .unwrap();
+            policy.require_write(&authorized).unwrap();
+        }
+        let replaced_path = match replaced {
+            "users" => &users,
+            "alice" => &user,
+            "workspaces" => paths[0],
+            "public" => paths[1],
+            _ => unreachable!(),
+        };
+        let before = fs::metadata(replaced_path).unwrap();
+        // A real directory from elsewhere takes the same canonical pathname
+        // after preparation and before registration. No symlink or timing race.
+        let incoming = fixture.0.join("incoming");
+        fs::create_dir(&incoming).unwrap();
+        for path in paths {
+            if let Ok(relative) = path.strip_prefix(replaced_path) {
+                let target = incoming.join(relative);
+                fs::create_dir_all(&target).unwrap();
+                fs::write(target.join("sentinel"), "unchanged").unwrap();
+                fs::set_permissions(&target, fs::Permissions::from_mode(0o750)).unwrap();
+            }
+        }
+        fs::rename(replaced_path, fixture.0.join("original")).unwrap();
+        fs::rename(&incoming, replaced_path).unwrap();
+        let after = fs::metadata(replaced_path).unwrap();
+        assert_ne!((before.dev(), before.ino()), (after.dev(), after.ino()));
+        let mut roots = Vec::new();
+        push_user_scoped_roots(&mut roots, &prepared);
+        let policy = FsPathPolicy { roots };
+        for path in paths {
+            assert_eq!(fs::canonicalize(path).unwrap(), *path);
+            let authorized =
+                policy.authorize_existing_dir(path.to_str().unwrap(), "missing", "not dir");
+            if path.starts_with(replaced_path) {
+                assert!(
+                    matches!(authorized, Err(FsPolicyError::Forbidden(_))),
+                    "{replaced}: replacement directory was authorized: {authorized:?}"
+                );
+                assert!(matches!(
+                    policy.authorize_existing_file(
+                        path.join("sentinel").to_str().unwrap(),
+                        "missing",
+                        "not file"
+                    ),
+                    Err(FsPolicyError::Forbidden(_))
+                ));
+                assert_eq!(
+                    fs::read_to_string(path.join("sentinel")).unwrap(),
+                    "unchanged"
+                );
+                assert_eq!(
+                    fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                    0o750
+                );
+                assert_eq!(fs::read_dir(path).unwrap().count(), 1);
+            } else {
+                policy.require_write(&authorized.unwrap()).unwrap();
+            }
+        }
+        assert_eq!(
+            policy.roots.len(),
+            usize::from(matches!(replaced, "workspaces" | "public"))
+        );
     }
 }

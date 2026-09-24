@@ -78,17 +78,48 @@ pub(super) async fn build_allowed_roots(auth: &AuthUser) -> Vec<FsAllowedRoot> {
     roots
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct UserScopedRoots {
     workspaces_root: PathBuf,
     public_root: PathBuf,
+    // Hold the prepared directories until registration, preventing inode reuse
+    // and allowing comparison with the objects now occupying these paths.
+    #[cfg(unix)]
+    directories: [fs::File; 2],
+}
+
+impl UserScopedRoots {
+    fn new(workspaces_root: PathBuf, public_root: PathBuf) -> std::io::Result<Self> {
+        #[cfg(unix)]
+        let directories = {
+            use std::os::unix::fs::PermissionsExt;
+
+            let directories = [
+                open_directory_without_symlinks(&workspaces_root)?,
+                open_directory_without_symlinks(&public_root)?,
+            ];
+            for directory in &directories {
+                directory.set_permissions(fs::Permissions::from_mode(0o700))?;
+            }
+            directories
+        };
+        Ok(Self {
+            workspaces_root,
+            public_root,
+            #[cfg(unix)]
+            directories,
+        })
+    }
 }
 
 fn push_user_scoped_roots(roots: &mut Vec<FsAllowedRoot>, user_roots: &UserScopedRoots) {
-    for (expected, kind) in [
+    for (_index, (expected, kind)) in [
         (&user_roots.workspaces_root, FsAllowedRootKind::Workspace),
         (&user_roots.public_root, FsAllowedRootKind::Public),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let Ok(canonical) = canonicalize_existing_dir(expected) else {
             continue;
         };
@@ -97,7 +128,26 @@ fn push_user_scoped_roots(roots: &mut Vec<FsAllowedRoot>, user_roots: &UserScope
         if canonical != *expected {
             continue;
         }
-        // Register this checked value without resolving the path a second time.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+
+            let Ok(current) = open_directory_without_symlinks(expected) else {
+                continue;
+            };
+            let (Ok(prepared), Ok(current)) = (
+                user_roots.directories[_index].metadata(),
+                current.metadata(),
+            ) else {
+                continue;
+            };
+            // A different real directory can occupy the same canonical path.
+            // Register only the directory whose permissions we prepared.
+            if (prepared.dev(), prepared.ino()) != (current.dev(), current.ino()) {
+                continue;
+            }
+        }
+        // Register this checked value without another canonicalization.
         push_canonical_root(roots, canonical, kind);
     }
 }
@@ -115,12 +165,7 @@ fn ensure_user_scoped_roots(auth: &AuthUser) -> Option<UserScopedRoots> {
     let workspaces_root = ensure_child_directory(&user_root, "workspaces").ok()?;
     let public_root = ensure_child_directory(&user_root, "public").ok()?;
     set_private_dir_permissions(user_root.as_path()).ok()?;
-    set_private_dir_permissions(workspaces_root.as_path()).ok()?;
-    set_private_dir_permissions(public_root.as_path()).ok()?;
-    Some(UserScopedRoots {
-        workspaces_root,
-        public_root,
-    })
+    UserScopedRoots::new(workspaces_root, public_root).ok()
 }
 
 fn ensure_child_directory(parent: &Path, name: &str) -> std::io::Result<PathBuf> {
