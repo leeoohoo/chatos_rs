@@ -21,7 +21,7 @@ use chatos_mcp_service::{
 };
 use serde_json::{json, Value};
 
-use crate::capabilities::route_allows_system_tool;
+use crate::capabilities::{route_allows_system_tool, validate_product_skill_binding};
 use crate::postgres::required_timestamp;
 use crate::runtime::{
     RuntimeExecutionTurnState, RuntimeInvocationRecord, RuntimeInvocationRegisterError,

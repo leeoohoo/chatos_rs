@@ -7,7 +7,10 @@ use chatos_mcp::{
     system_mcp_descriptor_by_resource_id, system_mcp_descriptor_for_record,
     system_mcp_tool_catalog, SystemMcpKey, SystemMcpToolCatalog,
 };
-use chatos_mcp_management_sdk::{ResolvedMcpRoute, RuntimeToolDescriptor};
+use chatos_mcp_management_sdk::{
+    ResolvedMcpRoute, RuntimeToolDescriptor, RuntimeToolSkillActivationPolicy,
+    RuntimeToolSkillBinding,
+};
 use chatos_plugin_management_sdk::{AgentBindingRecord, ResolvedAgentCapabilities, ResolvedMcp};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -107,6 +110,7 @@ pub fn materialize_runtime_tools_with_plugin_components(
                 original_name: original_name.to_string(),
                 resource_id: resolved.resource.id.clone(),
                 definition: exposed_definition,
+                skill_binding: product_skill_binding_for_route(route, original_name),
             });
         }
         if tools.len() == exposed_before && resolved.binding.required {
@@ -158,6 +162,7 @@ pub fn materialize_runtime_tools_with_plugin_components(
                     original_name: original_name.to_string(),
                     resource_id: binding.resource_id.clone(),
                     definition: exposed_definition,
+                    skill_binding: None,
                 });
             }
         }
@@ -207,6 +212,7 @@ pub fn materialize_runtime_tools_with_plugin_components(
                     original_name: original_name.to_string(),
                     resource_id: binding.resource_id.clone(),
                     definition: exposed_definition,
+                    skill_binding: None,
                 });
             }
         }
@@ -227,6 +233,46 @@ fn is_bound_remote_connection_route(route: &ResolvedMcpRoute) -> bool {
     route.is_available()
         && system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
             .is_some_and(|descriptor| descriptor.key == SystemMcpKey::RemoteConnectionController)
+}
+
+pub(crate) fn product_skill_binding_for_route(
+    route: &ResolvedMcpRoute,
+    tool_name: &str,
+) -> Option<RuntimeToolSkillBinding> {
+    if !is_bound_remote_connection_route(route)
+        || !matches!(
+            tool_name,
+            "test_connection"
+                | "run_command"
+                | "list_directory"
+                | "read_file"
+                | "download_file"
+                | "upload_file"
+        )
+    {
+        return None;
+    }
+    Some(RuntimeToolSkillBinding {
+        binding_id: "remote-connection".to_string(),
+        primary_skill: "chatos-remote-connection".to_string(),
+        required_skills: vec!["chatos-remote-connection".to_string()],
+        activation_policy: RuntimeToolSkillActivationPolicy::RunBound,
+        coverage_revision: 1,
+    })
+}
+
+pub(crate) fn validate_product_skill_binding(
+    route: &ResolvedMcpRoute,
+    tool: &RuntimeToolDescriptor,
+) -> Result<(), String> {
+    let expected = product_skill_binding_for_route(route, tool.original_name.as_str());
+    if tool.skill_binding != expected {
+        return Err(format!(
+            "tool {} does not match its immutable product Skill binding",
+            tool.exposed_name
+        ));
+    }
+    Ok(())
 }
 
 fn bind_remote_connection_tool_definition(
@@ -669,6 +715,7 @@ mod tests {
                 "name": "demo_search",
                 "inputSchema": {"type": "object"}
             }),
+            skill_binding: None,
         }];
         let second = vec![RuntimeToolDescriptor {
             definition: json!({

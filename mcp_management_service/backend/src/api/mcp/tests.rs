@@ -75,6 +75,7 @@ fn snapshot() -> RuntimeSessionSnapshot {
             original_name: "search".to_string(),
             resource_id: "mcp-1".to_string(),
             definition: json!({"name": "demo_search", "inputSchema": {"type": "object"}}),
+            skill_binding: None,
         }],
         effective_mcp_ids: Vec::new(),
         provider_skills_prompt: None,
@@ -113,6 +114,7 @@ fn ask_user_snapshot() -> RuntimeSessionSnapshot {
             "name": "ask_user_prompt_choices",
             "inputSchema": {"type": "object"}
         }),
+        skill_binding: None,
     }];
     snapshot
 }
@@ -241,6 +243,60 @@ async fn tools_list_returns_only_session_namespaced_tools() {
 }
 
 #[tokio::test]
+async fn remote_connection_registration_fails_closed_without_product_skill_binding() {
+    let state = AppState::new(crate::config::AppConfig::test())
+        .await
+        .unwrap();
+    let descriptor = system_mcp_descriptor(SystemMcpKey::RemoteConnectionController);
+    let mut snapshot = snapshot();
+    snapshot.routes = vec![ResolvedMcpRoute {
+        resource_id: descriptor.resource_id.to_string(),
+        server_name: descriptor.server_name.to_string(),
+        provider_kind: McpProviderKind::LocalConnector,
+        provider_ref: Some("mcp-resource:builtin_remote_connection_controller".to_string()),
+        tool_namespace: descriptor.server_name.to_string(),
+        allow_writes: true,
+        retry_class: McpRetryClass::NoRetry,
+        cancel_supported: true,
+        reason: "bound remote connection".to_string(),
+    }];
+    snapshot.tools = vec![RuntimeToolDescriptor {
+        exposed_name: "remote_connection_controller_run_command".to_string(),
+        original_name: "run_command".to_string(),
+        resource_id: descriptor.resource_id.to_string(),
+        definition: json!({
+            "name": "remote_connection_controller_run_command",
+            "inputSchema": {"type": "object"}
+        }),
+        skill_binding: None,
+    }];
+    persist_runtime_session(&state, &snapshot).await;
+    let command = tool_call_command(
+        &state,
+        &snapshot,
+        vec![McpToolCallCommandItem {
+            invocation_id: "remote-without-skill-binding".to_string(),
+            tool_call_id: "remote-call".to_string(),
+            call_index: 0,
+            name: "remote_connection_controller_run_command".to_string(),
+            arguments: json!({"command": "pwd"}),
+            preflight_error: None,
+        }],
+    );
+
+    let batch = register_tool_call_command(&state, &command)
+        .await
+        .expect("register rejected call as a structured item")
+        .record;
+    let item = batch.items[0].as_ref().expect("failed item");
+    assert_eq!(item.status, McpToolCallResultStatus::Failed);
+    assert!(item
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("does not match its immutable product Skill binding")));
+}
+
+#[tokio::test]
 async fn single_tool_command_dispatches_and_returns_one_result() {
     async fn provider(Json(request): Json<Value>) -> Json<Value> {
         Json(json!({
@@ -289,6 +345,7 @@ async fn single_tool_command_dispatches_and_returns_one_result() {
             "name": "task_runner_service_list_tasks",
             "inputSchema": {"type": "object"}
         }),
+        skill_binding: None,
     }];
     persist_runtime_session(&state, &snapshot).await;
     let command = tool_call_command(
@@ -383,6 +440,7 @@ async fn duplicate_ready_delivery_returns_the_durable_result_without_executing_t
             "inputSchema": {"type": "object"},
             "annotations": {"readOnlyHint": true}
         }),
+        skill_binding: None,
     }];
     persist_runtime_session(&state, &snapshot).await;
     let command = tool_call_command(
@@ -481,6 +539,7 @@ async fn tool_batch_executes_one_run_in_model_order() {
             "inputSchema": {"type": "object"},
             "annotations": {"readOnlyHint": true}
         }),
+        skill_binding: None,
     }];
     persist_runtime_session(&state, &snapshot).await;
 
@@ -998,6 +1057,7 @@ async fn cancelled_notification_stops_the_active_call_and_propagates_the_interna
             "inputSchema": {"type": "object"},
             "annotations": {"readOnlyHint": true}
         }),
+        skill_binding: None,
     }];
     persist_runtime_session(&state, &snapshot).await;
     let snapshot = Arc::new(snapshot);

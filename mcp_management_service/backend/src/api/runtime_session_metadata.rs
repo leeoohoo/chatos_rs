@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_mcp_management_sdk::RuntimeToolDescriptor;
+use std::collections::BTreeMap;
+
+use chatos_mcp_management_sdk::{RuntimeToolDescriptor, RuntimeToolSkillBinding};
 use chatos_plugin_management_sdk::ResolvedAgentCapabilities;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use crate::providers::plugin_components::THIRD_PARTY_PLUGIN_ENVELOPE;
 use crate::runtime::PluginLocalProviderBinding;
@@ -76,6 +80,47 @@ pub(super) fn resolve_runtime_session_prompt_metadata(
     }
 }
 
+pub(super) fn protected_product_skill_instruction_items(
+    tools: &[RuntimeToolDescriptor],
+    provider_skills_prompt: Option<&str>,
+) -> Vec<Value> {
+    let Some(prompt) = provider_skills_prompt
+        .map(str::trim)
+        .filter(|prompt| !prompt.is_empty())
+    else {
+        return Vec::new();
+    };
+    let bindings = tools
+        .iter()
+        .filter_map(|tool| tool.skill_binding.as_ref())
+        .fold(
+            BTreeMap::<String, RuntimeToolSkillBinding>::new(),
+            |mut out, binding| {
+                out.entry(binding.binding_id.clone())
+                    .or_insert_with(|| binding.clone());
+                out
+            },
+        );
+    if bindings.is_empty() {
+        return Vec::new();
+    }
+    let binding_values = bindings.into_values().collect::<Vec<_>>();
+    let activation_material = serde_json::to_vec(&(prompt, &binding_values)).unwrap_or_default();
+    let activation_ref = format!(
+        "PS-{}",
+        hex::encode(Sha256::digest(activation_material))[..32].to_string()
+    );
+    vec![json!({
+        "type": "message",
+        "role": "system",
+        "content": [{"type": "input_text", "text": prompt}],
+        "_meta": {
+            "chatos/protectedSkillActivationRef": activation_ref,
+            "chatos/productSkillBindings": binding_values,
+        }
+    })]
+}
+
 fn normalized_provider_prompt_locale(value: Option<&str>) -> Option<&str> {
     match value.map(str::trim) {
         Some("en-US") => Some("en-US"),
@@ -87,6 +132,7 @@ fn normalized_provider_prompt_locale(value: Option<&str>) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chatos_mcp_management_sdk::RuntimeToolSkillActivationPolicy;
     use chatos_plugin_management_sdk::PluginMcpServer;
     use serde_json::json;
 
@@ -125,24 +171,65 @@ mod tests {
                 original_name: "tool".to_string(),
                 resource_id: "mcp-b".to_string(),
                 definition: json!({}),
+                skill_binding: None,
             },
             RuntimeToolDescriptor {
                 exposed_name: "a_tool".to_string(),
                 original_name: "tool".to_string(),
                 resource_id: "mcp-a".to_string(),
                 definition: json!({}),
+                skill_binding: None,
             },
             RuntimeToolDescriptor {
                 exposed_name: "a_tool_2".to_string(),
                 original_name: "tool_2".to_string(),
                 resource_id: "mcp-a".to_string(),
                 definition: json!({}),
+                skill_binding: None,
             },
         ];
         let metadata =
             resolve_runtime_session_prompt_metadata(&capabilities, &tools, Some("zh-CN"), None);
         assert_eq!(metadata.effective_mcp_ids, ["mcp-a", "mcp-b"]);
         assert!(metadata.provider_skills_prompt.is_none());
+    }
+
+    #[test]
+    fn run_bound_product_skills_become_protected_instruction_items() {
+        let tools = [RuntimeToolDescriptor {
+            exposed_name: "remote_connection_run_command".to_string(),
+            original_name: "run_command".to_string(),
+            resource_id: "builtin_remote_connection_controller".to_string(),
+            definition: json!({"name": "remote_connection_run_command"}),
+            skill_binding: Some(RuntimeToolSkillBinding {
+                binding_id: "remote-connection".to_string(),
+                primary_skill: "chatos-remote-connection".to_string(),
+                required_skills: vec!["chatos-remote-connection".to_string()],
+                activation_policy: RuntimeToolSkillActivationPolicy::RunBound,
+                coverage_revision: 1,
+            }),
+        }];
+
+        let items = protected_product_skill_instruction_items(
+            &tools,
+            Some("# Tool Usage Instructions\n\nUse the bound remote connection."),
+        );
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].pointer("/content/0/text").and_then(Value::as_str),
+            Some("# Tool Usage Instructions\n\nUse the bound remote connection.")
+        );
+        assert!(items[0]
+            .pointer("/_meta/chatos~1protectedSkillActivationRef")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.starts_with("PS-")));
+        assert_eq!(
+            items[0]
+                .pointer("/_meta/chatos~1productSkillBindings/0/primary_skill")
+                .and_then(Value::as_str),
+            Some("chatos-remote-connection")
+        );
     }
 
     #[test]

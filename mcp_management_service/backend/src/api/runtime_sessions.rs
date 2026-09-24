@@ -29,7 +29,8 @@ use crate::runtime::{RuntimeGrantClaims, RuntimeSessionSnapshot};
 use crate::state::AppState;
 
 use super::runtime_session_metadata::{
-    append_plugin_mcp_server_instructions, resolve_runtime_session_prompt_metadata,
+    append_plugin_mcp_server_instructions, protected_product_skill_instruction_items,
+    resolve_runtime_session_prompt_metadata,
 };
 
 mod routing;
@@ -663,11 +664,18 @@ pub(super) async fn runtime_session_routes(
     }
     record_runtime_session_audit(&identity.caller, trace_id, &snapshot, "read", "succeeded");
     let mut response = snapshot.routes_response();
-    response.protected_skill_instruction_items = state
-        .skill_attestations
-        .protected_instruction_items(snapshot.session_id.as_str())
-        .await
-        .map_err(ApiError::internal)?;
+    let mut protected_skill_instruction_items = protected_product_skill_instruction_items(
+        response.tools.as_slice(),
+        response.provider_skills_prompt.as_deref(),
+    );
+    protected_skill_instruction_items.extend(
+        state
+            .skill_attestations
+            .protected_instruction_items(snapshot.session_id.as_str())
+            .await
+            .map_err(ApiError::internal)?,
+    );
+    response.protected_skill_instruction_items = protected_skill_instruction_items;
     response.mcp_command_queue = state
         .config
         .async_tool_dispatch_topology

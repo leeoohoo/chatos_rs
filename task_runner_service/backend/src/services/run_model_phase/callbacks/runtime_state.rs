@@ -229,9 +229,21 @@ impl TaskRunnerLifecycleHook {
 }
 
 fn protected_skill_item_is_already_present(item: &Value, current_input: &str) -> bool {
-    item.pointer("/_meta/chatos~1protectedSkillActivationRef")
+    if item
+        .pointer("/_meta/chatos~1protectedSkillActivationRef")
         .and_then(Value::as_str)
         .is_some_and(|activation_ref| current_input.contains(activation_ref))
+    {
+        return true;
+    }
+    item.pointer("/content/0/text")
+        .and_then(Value::as_str)
+        .is_some_and(|text| {
+            current_input.contains(text)
+                || serde_json::to_string(text)
+                    .ok()
+                    .is_some_and(|encoded| current_input.contains(encoded.as_str()))
+        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
