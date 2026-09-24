@@ -98,6 +98,36 @@ public enum BundledAgentSkillCatalog {
             requiresFrontmatter: true
         ),
         .init(
+            name: "chatos-user-clarification",
+            role: .specialist,
+            relativeDirectory: "chatos-user-clarification",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-notepad",
+            role: .specialist,
+            relativeDirectory: "chatos-notepad",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-memory-context",
+            role: .specialist,
+            relativeDirectory: "chatos-memory-context",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-async-task-orchestration",
+            role: .specialist,
+            relativeDirectory: "chatos-async-task-orchestration",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-task-progress",
+            role: .specialist,
+            relativeDirectory: "chatos-task-progress",
+            requiresFrontmatter: true
+        ),
+        .init(
             name: "requirement-survey",
             role: .router,
             relativeDirectory: "requirement-survey",

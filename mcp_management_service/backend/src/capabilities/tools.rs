@@ -105,13 +105,15 @@ pub fn materialize_runtime_tools_with_plugin_components(
                 bind_remote_connection_tool_definition(object, original_name)?;
             }
             object.insert("name".to_string(), Value::String(exposed_name.clone()));
-            tools.push(RuntimeToolDescriptor {
+            let tool = RuntimeToolDescriptor {
                 exposed_name,
                 original_name: original_name.to_string(),
                 resource_id: resolved.resource.id.clone(),
                 definition: exposed_definition,
                 skill_binding: product_skill_binding_for_route(route, original_name),
-            });
+            };
+            validate_product_skill_binding(route, &tool)?;
+            tools.push(tool);
         }
         if tools.len() == exposed_before && resolved.binding.required {
             missing_required_tool_schemas.push(resolved.resource.id.clone());
@@ -262,6 +264,12 @@ pub(crate) fn validate_product_skill_binding(
     tool: &RuntimeToolDescriptor,
 ) -> Result<(), String> {
     let expected = product_skill_binding_for_route(route, tool.original_name.as_str());
+    if route_requires_product_skill_binding(route) && expected.is_none() {
+        return Err(format!(
+            "system tool {} has no registered product Skill binding",
+            tool.exposed_name
+        ));
+    }
     if tool.skill_binding != expected {
         return Err(format!(
             "tool {} does not match its immutable product Skill binding",
@@ -269,6 +277,12 @@ pub(crate) fn validate_product_skill_binding(
         ));
     }
     Ok(())
+}
+
+fn route_requires_product_skill_binding(route: &ResolvedMcpRoute) -> bool {
+    route.is_available()
+        && system_mcp_descriptor_by_resource_id(route.resource_id.as_str())
+            .is_some_and(|descriptor| descriptor.key != SystemMcpKey::TaskManager)
 }
 
 fn bind_remote_connection_tool_definition(
@@ -578,21 +592,6 @@ mod tests {
         }
     }
 
-    fn system_route(key: SystemMcpKey) -> ResolvedMcpRoute {
-        let descriptor = chatos_mcp::system_mcp_descriptor(key);
-        ResolvedMcpRoute {
-            resource_id: descriptor.resource_id.to_string(),
-            server_name: descriptor.server_name.to_string(),
-            provider_kind: McpProviderKind::LocalConnector,
-            provider_ref: Some(format!("system:{}", key.as_str())),
-            tool_namespace: descriptor.server_name.to_string(),
-            allow_writes: descriptor.allow_writes,
-            retry_class: McpRetryClass::NoRetry,
-            cancel_supported: true,
-            reason: "test".to_string(),
-        }
-    }
-
     #[test]
     fn external_snapshot_tools_receive_stable_server_namespace() {
         let capabilities = capabilities_with_mcp(resolved_external_mcp());
@@ -607,29 +606,6 @@ mod tests {
             Some("demo_search")
         );
         assert!(materialized.missing_required_tool_schemas.is_empty());
-    }
-
-    #[test]
-    fn system_routes_use_the_central_product_skill_catalog() {
-        let terminal = system_route(SystemMcpKey::TerminalController);
-        let command = product_skill_binding_for_route(&terminal, "execute_command")
-            .expect("terminal command binding");
-        assert_eq!(command.binding_id, "terminal.command-execution");
-        assert_eq!(
-            command.required_skills,
-            ["chatos-terminal", "chatos-terminal-command-execution"]
-        );
-
-        let observation = product_skill_binding_for_route(&terminal, "process_wait")
-            .expect("terminal observation binding");
-        assert_eq!(observation.binding_id, "terminal.process-observation");
-
-        let survey = system_route(SystemMcpKey::RequirementSurveyRead);
-        let survey_read = product_skill_binding_for_route(&survey, "requirement_survey_get")
-            .expect("requirement survey binding");
-        assert_eq!(survey_read.primary_skill, "requirement-survey-read-results");
-
-        assert!(product_skill_binding_for_route(&terminal, "future_unreviewed_tool").is_none());
     }
 
     #[test]
@@ -795,4 +771,7 @@ mod tests {
             runtime_route_revision("base-route", "policy-1", &[another], &[]).unwrap()
         );
     }
+
+    #[path = "product_skill_tests.rs"]
+    mod product_skill_tests;
 }

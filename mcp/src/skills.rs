@@ -47,6 +47,12 @@ const REQUIREMENT_SURVEY_REVIEW_SKILLS: &[&str] =
     &["requirement-survey", "requirement-survey-review-execution"];
 const AGENT_BUILDER_SKILLS: &[&str] = &["chatos-agent-builder"];
 const REMOTE_CONNECTION_SKILLS: &[&str] = &["chatos-remote-connection"];
+const USER_CLARIFICATION_SKILLS: &[&str] = &["chatos-user-clarification"];
+const NOTEPAD_SKILLS: &[&str] = &["chatos-notepad"];
+const MEMORY_CONTEXT_SKILLS: &[&str] = &["chatos-memory-context"];
+const COMMAND_APPROVAL_SKILLS: &[&str] = &["chatos-command-approval"];
+const TASK_PROGRESS_SKILLS: &[&str] = &["chatos-task-progress"];
+const ASYNC_TASK_ORCHESTRATION_SKILLS: &[&str] = &["chatos-async-task-orchestration"];
 
 const fn product_binding(
     binding_id: &'static str,
@@ -165,6 +171,56 @@ pub fn system_mcp_product_skill_binding(
             "chatos-remote-connection",
             REMOTE_CONNECTION_SKILLS,
         )),
+        (SystemMcpKey::AskUser, "prompt_key_values" | "prompt_choices" | "prompt_mixed_form") => {
+            Some(product_binding(
+                "user-clarification.forms",
+                "chatos-user-clarification",
+                USER_CLARIFICATION_SKILLS,
+            ))
+        }
+        (
+            SystemMcpKey::Notepad,
+            "init" | "list_folders" | "create_folder" | "rename_folder" | "delete_folder"
+            | "list_notes" | "create_note" | "read_note" | "update_note" | "delete_note"
+            | "list_tags" | "search_notes",
+        ) => Some(product_binding(
+            "notepad.durable-notes",
+            "chatos-notepad",
+            NOTEPAD_SKILLS,
+        )),
+        (SystemMcpKey::MemorySkillReader, "get_skill_detail")
+        | (SystemMcpKey::MemoryCommandReader, "get_command_detail")
+        | (SystemMcpKey::MemoryPluginReader, "get_plugin_detail") => Some(product_binding(
+            "memory-context.expansion",
+            "chatos-memory-context",
+            MEMORY_CONTEXT_SKILLS,
+        )),
+        (SystemMcpKey::LocalCommandApproval, "approval_decision") => Some(product_binding(
+            "command-approval.decision",
+            "chatos-command-approval",
+            COMMAND_APPROVAL_SKILLS,
+        )),
+        (SystemMcpKey::TaskProcessLog, "record_process" | "report_outcome") => {
+            Some(product_binding(
+                "task-progress.reporting",
+                "chatos-task-progress",
+                TASK_PROGRESS_SKILLS,
+            ))
+        }
+        (
+            SystemMcpKey::TaskRunnerService,
+            "list_tasks"
+            | "get_task"
+            | "create_task"
+            | "create_tasks_with_prerequisites"
+            | "cancel_task"
+            | "wait_for_task_completion"
+            | "get_task_dependency_graph",
+        ) => Some(product_binding(
+            "task-runner.orchestration",
+            "chatos-async-task-orchestration",
+            ASYNC_TASK_ORCHESTRATION_SKILLS,
+        )),
         _ => None,
     }
 }
@@ -271,6 +327,13 @@ mod tests {
             SystemMcpKey::RequirementSurveyWrite,
             SystemMcpKey::AgentBuilder,
             SystemMcpKey::RemoteConnectionController,
+            SystemMcpKey::AskUser,
+            SystemMcpKey::Notepad,
+            SystemMcpKey::MemorySkillReader,
+            SystemMcpKey::MemoryCommandReader,
+            SystemMcpKey::MemoryPluginReader,
+            SystemMcpKey::LocalCommandApproval,
+            SystemMcpKey::TaskProcessLog,
         ] {
             for tool in crate::system_mcp_static_tools(key).expect("static tool catalog") {
                 let tool_name = tool
@@ -297,6 +360,29 @@ mod tests {
         assert!(system_mcp_product_skill_binding(
             SystemMcpKey::TerminalController,
             "future_unreviewed_tool"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn task_runner_model_tools_have_explicit_bindings() {
+        for tool_name in [
+            "list_tasks",
+            "get_task",
+            "create_task",
+            "create_tasks_with_prerequisites",
+            "cancel_task",
+            "wait_for_task_completion",
+            "get_task_dependency_graph",
+        ] {
+            assert!(
+                system_mcp_product_skill_binding(SystemMcpKey::TaskRunnerService, tool_name)
+                    .is_some()
+            );
+        }
+        assert!(system_mcp_product_skill_binding(
+            SystemMcpKey::TaskRunnerService,
+            "admin_only_future_tool"
         )
         .is_none());
     }
