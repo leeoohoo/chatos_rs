@@ -112,22 +112,37 @@ public sealed partial class MainWindow : Window
     private async void OnActivated(object sender, WindowActivatedEventArgs args)
     {
         Activated -= OnActivated;
-        ApplyAppearance(Preferences.Current);
-        UpdateVisualState();
-        await ViewModel.InitializeAsync();
-        await PetWindowController.SetAuthenticatedAsync(ViewModel.IsAuthenticated);
-        await VisualSessionController.SetAuthenticatedAsync(ViewModel.IsAuthenticated);
         try
         {
-            await Approvals.InitializeAsync();
+            StartupDiagnostics.RecordStage("main window activation handler entered");
+            ApplyAppearance(Preferences.Current);
+            UpdateVisualState();
+            StartupDiagnostics.RecordStage("initial visual state applied");
+            await ViewModel.InitializeAsync();
+            StartupDiagnostics.RecordStage("account session restoration completed");
+            await PetWindowController.SetAuthenticatedAsync(ViewModel.IsAuthenticated);
+            StartupDiagnostics.RecordStage("pet window state synchronized");
+            await VisualSessionController.SetAuthenticatedAsync(ViewModel.IsAuthenticated);
+            StartupDiagnostics.RecordStage("plugin visual session state synchronized");
+            try
+            {
+                await Approvals.InitializeAsync();
+                StartupDiagnostics.RecordStage("approval coordinator initialized");
+            }
+            catch (Exception exception)
+            {
+                ViewModel.ErrorMessage = ViewModel.Localization.Text(
+                    $"加载本机审批状态失败：{exception.Message}",
+                    $"Unable to load local approval state: {exception.Message}");
+            }
+            UpdateVisualState();
+            StartupDiagnostics.RecordStage("main window post-activation initialization complete");
         }
         catch (Exception exception)
         {
-            ViewModel.ErrorMessage = ViewModel.Localization.Text(
-                $"加载本机审批状态失败：{exception.Message}",
-                $"Unable to load local approval state: {exception.Message}");
+            StartupDiagnostics.ReportFatal("main window post-activation initialization", exception);
+            Application.Current.Exit();
         }
-        UpdateVisualState();
     }
 
     private void OnPasswordChanged(object sender, RoutedEventArgs e)
