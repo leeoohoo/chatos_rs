@@ -39,6 +39,122 @@ fn make_fifo(path: &Path) {
 }
 
 #[test]
+fn cache_read_open_rejects_special_replacements() {
+    for kind in ["fifo", "directory", "socket"] {
+        let fixture = Fixture::new();
+        let relative = "code_nav/index.json";
+        let root = fixture.0.to_str().unwrap();
+        let path = project_cache_file_path(root, relative).unwrap();
+        let content = br#"{"cache":"original"}"#;
+        fs::write(&path, content).unwrap();
+        // Reproduce the gap between read_cache_json's is_file precheck and
+        // its production open helper, without relying on thread scheduling.
+        assert!(path.is_file());
+        let original = fixture.0.join("original.json");
+        fs::rename(&path, &original).unwrap();
+        let mut keeper = None;
+        let mut listener = None;
+        match kind {
+            "fifo" => {
+                make_fifo(&path);
+                // Let the old blocking open complete so type rejection can
+                // be tested independently of the no-peer watchdog below.
+                keeper = Some(
+                    fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .custom_flags(libc::O_NONBLOCK)
+                        .open(&path)
+                        .unwrap(),
+                );
+            }
+            "directory" => {
+                fs::create_dir(&path).unwrap();
+                fs::write(path.join("sentinel"), b"unchanged").unwrap();
+            }
+            "socket" => {
+                listener = Some(std::os::unix::net::UnixListener::bind(&path).unwrap());
+            }
+            _ => unreachable!(),
+        }
+        let before = fs::symlink_metadata(&path).unwrap();
+        assert!(
+            open_cache_file_without_symlinks(&path).is_err(),
+            "cache reader accepted {kind} after regular-file precheck"
+        );
+        let after = fs::symlink_metadata(&path).unwrap();
+        assert_eq!(
+            (before.dev(), before.ino(), before.mode(), before.nlink()),
+            (after.dev(), after.ino(), after.mode(), after.nlink())
+        );
+        assert_eq!(fs::read(&original).unwrap(), content);
+        if kind == "directory" {
+            assert_eq!(fs::read(path.join("sentinel")).unwrap(), b"unchanged");
+        }
+        // Existing non-file paths still have the public API's cache-miss behavior.
+        assert!(read_cache_json::<serde_json::Value>(root, relative)
+            .unwrap()
+            .is_none());
+        drop(keeper);
+        drop(listener);
+    }
+}
+
+#[test]
+fn cache_read_open_rejects_fifo_without_waiting_for_peer() {
+    const CHILD_ROOT: &str = "CHATOS_TEST_CACHE_READ_FIFO_ROOT";
+    if let Some(root) = std::env::var_os(CHILD_ROOT) {
+        let root = PathBuf::from(root);
+        let path = project_cache_file_path(root.to_str().unwrap(), "code_nav/index.json").unwrap();
+        let content = br#"{"cache":"original"}"#;
+        fs::write(&path, content).unwrap();
+        assert!(path.is_file());
+        let original = root.join("original.json");
+        fs::rename(&path, &original).unwrap();
+        make_fifo(&path);
+        let before = fs::symlink_metadata(&path).unwrap();
+        assert!(open_cache_file_without_symlinks(&path).is_err());
+        let after = fs::symlink_metadata(&path).unwrap();
+        assert!(after.file_type().is_fifo());
+        assert_eq!(
+            (before.dev(), before.ino(), before.mode(), before.nlink()),
+            (after.dev(), after.ino(), after.mode(), after.nlink())
+        );
+        assert_eq!(fs::read(&original).unwrap(), content);
+        fs::write(root.join("completed"), b"ok").unwrap();
+        return;
+    }
+    let fixture = Fixture::new();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "services::project_local_cache::special_tests::cache_read_open_rejects_fifo_without_waiting_for_peer",
+            "--nocapture",
+        ])
+        .env(CHILD_ROOT, &fixture.0)
+        .spawn()
+        .unwrap();
+    // Deadlock watchdog only: terminate and reap a blocked regression child.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success(), "cache FIFO read child failed: {status}");
+            assert!(
+                fixture.0.join("completed").is_file(),
+                "child did not finish"
+            );
+            break;
+        }
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("cache read blocked opening a FIFO without a writer");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
 fn cache_write_rejects_special_files_without_writing() {
     for kind in ["fifo", "directory", "socket"] {
         let fixture = Fixture::new();

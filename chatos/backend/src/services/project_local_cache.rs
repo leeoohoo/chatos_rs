@@ -70,16 +70,6 @@ where
     let mut file = open_cache_file_without_symlinks(&path).map_err(|err| err.to_string())?;
     #[cfg(not(unix))]
     let mut file = fs::File::open(&path).map_err(|err| err.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        // O_NOFOLLOW does not reject hard links. Inspect the opened inode
-        // before reading JSON shared with another path. This does not prevent
-        // concurrent link creation after the check.
-        if file.metadata().map_err(|err| err.to_string())?.nlink() > 1 {
-            return Err("cache target has multiple hard links".to_string());
-        }
-    }
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(|err| err.to_string())?;
@@ -94,6 +84,7 @@ fn open_cache_file_without_symlinks(path: &Path) -> std::io::Result<fs::File> {
     use std::ffi::CString;
     use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::MetadataExt;
 
     // The project context is already canonical. Resolving it again here would
     // follow replaced ancestors; instead hold each directory while opening the next.
@@ -114,14 +105,34 @@ fn open_cache_file_without_symlinks(path: &Path) -> std::io::Result<fs::File> {
         libc::openat(
             directory.as_raw_fd(),
             name.as_ptr(),
-            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            // A replaced FIFO must not wait for a writer before type validation.
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
         )
     };
     if fd < 0 {
         return Err(std::io::Error::last_os_error());
     }
     // SAFETY: successful openat returns a fresh descriptor owned only here.
-    Ok(unsafe { fs::File::from_raw_fd(fd) })
+    let file = unsafe { fs::File::from_raw_fd(fd) };
+    let metadata = file.metadata()?;
+    // The earlier is_file precheck may race. Validate the actual object before
+    // returning its handle for JSON reads; RAII closes rejected descriptors.
+    if !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "cache target is not a regular file",
+        ));
+    }
+    // O_NOFOLLOW does not reject hard links. Inspect the opened inode before
+    // reading JSON shared with another path. This does not prevent concurrent
+    // link creation after the check.
+    if metadata.nlink() > 1 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "cache target has multiple hard links",
+        ));
+    }
+    Ok(file)
 }
 
 pub fn write_cache_json<T>(project_root: &str, relative_path: &str, value: &T) -> Result<(), String>
