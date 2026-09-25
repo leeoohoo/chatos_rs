@@ -28,17 +28,19 @@ pub(super) async fn build_allowed_roots(auth: &AuthUser) -> Vec<FsAllowedRoot> {
             push_root(&mut roots, current_dir, FsAllowedRootKind::CurrentDir);
         }
 
-        if let Ok(current_dir) = env::current_dir() {
-            let repo_root = current_dir
-                .ancestors()
-                .find(|candidate| candidate.join(".git").exists())
-                .unwrap_or(current_dir.as_path());
-            if let Some(parent) = repo_root.parent() {
-                push_root(
-                    &mut roots,
-                    parent.to_path_buf(),
-                    FsAllowedRootKind::RepoParent,
-                );
+        if repo_parent_fs_root_enabled() {
+            if let Ok(current_dir) = env::current_dir() {
+                let repo_root = current_dir
+                    .ancestors()
+                    .find(|candidate| candidate.join(".git").exists())
+                    .unwrap_or(current_dir.as_path());
+                if let Some(parent) = repo_root.parent() {
+                    push_root(
+                        &mut roots,
+                        parent.to_path_buf(),
+                        FsAllowedRootKind::RepoParent,
+                    );
+                }
             }
         }
 
@@ -340,7 +342,17 @@ pub(crate) fn log_host_fs_roots_configuration() {
             event = "host_fs_roots_enabled",
             "Host filesystem roots explicitly enabled"
         );
+        if repo_parent_fs_root_enabled() {
+            tracing::warn!(
+                event = "repo_parent_fs_root_enabled",
+                "Repository parent filesystem root explicitly enabled"
+            );
+        }
     }
+}
+
+fn repo_parent_fs_root_enabled() -> bool {
+    env_bool_override("CHATOS_ENABLE_REPO_PARENT_FS_ROOT").unwrap_or(false)
 }
 
 fn host_fs_roots_enabled() -> bool {
@@ -411,6 +423,10 @@ mod permissions_tests;
 #[cfg(all(test, unix))]
 #[path = "policy_root_lifetime_tests.rs"]
 mod lifetime_tests;
+
+#[cfg(test)]
+#[path = "policy_repo_parent_tests.rs"]
+mod repo_parent_tests;
 
 #[cfg(test)]
 mod tests {
@@ -550,7 +566,8 @@ mod tests {
                     .arg("--exact")
                     .arg(format!("{module}::host_fs_roots_require_explicit_opt_in"))
                     .arg("--nocapture")
-                    .env(EXPECTED, expected.to_string());
+                    .env(EXPECTED, expected.to_string())
+                    .env_remove("CHATOS_ENABLE_REPO_PARENT_FS_ROOT");
                 for (key, value) in [
                     ("NODE_ENV", node_env.map(std::ffi::OsStr::new)),
                     ("CHATOS_ENABLE_HOST_FS_ROOTS", primary),
