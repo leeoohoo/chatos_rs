@@ -86,3 +86,45 @@ fn cache_read_preserves_regular_json_missing_and_invalid_behavior() {
     assert!(read_cache_json::<serde_json::Value>(root, relative).is_err());
     assert_eq!(fs::read(&cache).unwrap(), b"invalid json");
 }
+
+#[cfg(unix)]
+#[test]
+fn cache_read_rejects_hard_links_without_loading_target_json() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    for name in ["outside.json", "project/inside.json"] {
+        let fixture = Fixture::new();
+        let project = fixture.0.join("project");
+        let target = fixture.0.join(name);
+        let sentinel = br#"{"private_fixture_value":"must not be loaded"}"#;
+        fs::write(&target, sentinel).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+        let relative = "code_nav/index.json";
+        let cache = project_cache_file_path(project.to_str().unwrap(), relative).unwrap();
+        fs::hard_link(&target, &cache).unwrap();
+        let before = fs::metadata(&target).unwrap();
+        assert_eq!(before.nlink(), 2);
+        assert!(!fs::symlink_metadata(&cache).unwrap().is_symlink());
+
+        let result = read_cache_json::<serde_json::Value>(project.to_str().unwrap(), relative);
+        assert!(result.is_err(), "cache reader accepted hard link to {name}");
+        assert!(!result.unwrap_err().contains("private_fixture_value"));
+        for path in [&target, &cache] {
+            assert_eq!(fs::read(path).unwrap(), sentinel);
+            let after = fs::metadata(path).unwrap();
+            assert_eq!(
+                (after.dev(), after.ino(), after.mode(), after.nlink()),
+                (before.dev(), before.ino(), before.mode(), before.nlink())
+            );
+        }
+
+        // Removing the other name restores an ordinary single-link cache.
+        fs::remove_file(&target).unwrap();
+        assert_eq!(
+            read_cache_json::<serde_json::Value>(project.to_str().unwrap(), relative).unwrap(),
+            Some(serde_json::from_slice(sentinel).unwrap())
+        );
+        assert_eq!(fs::read(&cache).unwrap(), sentinel);
+        assert_eq!(fs::metadata(&cache).unwrap().nlink(), 1);
+    }
+}

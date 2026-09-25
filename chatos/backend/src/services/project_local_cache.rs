@@ -76,6 +76,16 @@ where
         options.custom_flags(libc::O_NOFOLLOW);
     }
     let mut file = options.open(path).map_err(|err| err.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // O_NOFOLLOW does not reject hard links. Inspect the opened inode
+        // before reading JSON shared with another path. This does not prevent
+        // concurrent link creation after the check.
+        if file.metadata().map_err(|err| err.to_string())?.nlink() > 1 {
+            return Err("cache target has multiple hard links".to_string());
+        }
+    }
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(|err| err.to_string())?;
