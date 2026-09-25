@@ -74,38 +74,23 @@ impl PostgresStore {
         rows.into_iter().map(decode_json).collect()
     }
 
-    pub(in crate::store) async fn list_runs_filtered(
+    pub(in crate::store) async fn list_runs_filtered_scoped(
         &self,
         filters: &RunListFilters,
+        owner_user_id: Option<&str>,
     ) -> Result<Vec<TaskRunRecord>, String> {
-        load_filtered_runs(&self.pool, filters, None).await
+        load_filtered_runs(&self.pool, filters, owner_user_id).await
     }
 
-    pub(in crate::store) async fn list_runs_visible_to_owner(
-        &self,
-        filters: &RunListFilters,
-        owner_user_id: &str,
-    ) -> Result<Vec<TaskRunRecord>, String> {
-        load_filtered_runs(&self.pool, filters, Some(owner_user_id)).await
-    }
-
+    #[cfg(test)]
     pub(in crate::store) async fn list_runs_page(
         &self,
         filters: &RunListFilters,
     ) -> Result<PaginatedResponse<TaskRunRecord>, String> {
-        self.list_runs_page_for_owner(filters, None).await
+        self.list_runs_page_scoped(filters, None).await
     }
 
-    pub(in crate::store) async fn list_runs_page_visible_to_owner(
-        &self,
-        filters: &RunListFilters,
-        owner_user_id: &str,
-    ) -> Result<PaginatedResponse<TaskRunRecord>, String> {
-        self.list_runs_page_for_owner(filters, Some(owner_user_id))
-            .await
-    }
-
-    async fn list_runs_page_for_owner(
+    pub(in crate::store) async fn list_runs_page_scoped(
         &self,
         filters: &RunListFilters,
         owner_user_id: Option<&str>,
@@ -124,9 +109,18 @@ impl PostgresStore {
         ))
     }
 
+    #[cfg(test)]
     pub(in crate::store) async fn list_run_summaries_filtered(
         &self,
         filters: &RunListFilters,
+    ) -> Result<Vec<RunSummaryRecord>, String> {
+        self.list_run_summaries_filtered_scoped(filters, None).await
+    }
+
+    pub(in crate::store) async fn list_run_summaries_filtered_scoped(
+        &self,
+        filters: &RunListFilters,
+        owner_user_id: Option<&str>,
     ) -> Result<Vec<RunSummaryRecord>, String> {
         let status = filters.status.map(|value| enum_text(&value)).transpose()?;
         let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
@@ -139,12 +133,16 @@ impl PostgresStore {
                  OR lower(model_config_id) LIKE '%'||$4||'%' \
                  OR lower(coalesce(data->>'result_summary','')) LIKE '%'||$4||'%' \
                  OR lower(coalesce(data->>'error_message','')) LIKE '%'||$4||'%') \
-             ORDER BY created_at DESC,id LIMIT $5 OFFSET $6",
+             AND ($5::text IS NULL OR EXISTS (SELECT 1 FROM tasks \
+                 WHERE tasks.id=task_runs.task_id \
+                 AND coalesce(nullif(btrim(tasks.owner_user_id),''),tasks.creator_user_id)=$5)) \
+             ORDER BY created_at DESC,id LIMIT $6 OFFSET $7",
         )
         .bind(filters.task_id.as_deref())
         .bind(status)
         .bind(filters.model_config_id.as_deref())
         .bind(filters.keyword.as_deref())
+        .bind(owner_user_id)
         .bind(optional_usize_as_i64(filters.limit))
         .bind(i64::try_from(filters.offset.unwrap_or(0)).unwrap_or(i64::MAX))
         .fetch_all(&self.pool)

@@ -22,61 +22,49 @@ impl AppStore {
         &self,
         filters: &RunListFilters,
     ) -> Result<Vec<TaskRunRecord>, String> {
-        match self {
-            Self::InMemory(store) => Ok(store.list_runs_filtered(filters)),
-            Self::Postgres(store) => store.list_runs_filtered(filters).await,
-        }
+        self.list_runs_filtered_scoped(filters, None).await
     }
 
-    pub async fn list_runs_visible_to_owner(
+    pub async fn list_runs_filtered_scoped(
         &self,
         filters: &RunListFilters,
-        owner_user_id: &str,
+        owner_user_id: Option<&str>,
     ) -> Result<Vec<TaskRunRecord>, String> {
         match self {
-            Self::InMemory(store) => Ok(store.list_runs_visible_to_owner(filters, owner_user_id)),
+            Self::InMemory(store) => Ok(store.list_runs_filtered_scoped(filters, owner_user_id)),
             Self::Postgres(store) => {
                 store
-                    .list_runs_visible_to_owner(filters, owner_user_id)
+                    .list_runs_filtered_scoped(filters, owner_user_id)
                     .await
             }
         }
     }
 
-    pub async fn list_runs_page(
+    pub async fn list_runs_page_scoped(
         &self,
         filters: &RunListFilters,
+        owner_user_id: Option<&str>,
     ) -> Result<PaginatedResponse<TaskRunRecord>, String> {
         match self {
-            Self::InMemory(store) => Ok(store.list_runs_page(filters)),
-            Self::Postgres(store) => store.list_runs_page(filters).await,
+            Self::InMemory(store) => Ok(store.list_runs_page_scoped(filters, owner_user_id)),
+            Self::Postgres(store) => store.list_runs_page_scoped(filters, owner_user_id).await,
         }
     }
 
-    pub async fn list_runs_page_visible_to_owner(
+    pub async fn list_run_summaries_filtered_scoped(
         &self,
         filters: &RunListFilters,
-        owner_user_id: &str,
-    ) -> Result<PaginatedResponse<TaskRunRecord>, String> {
-        match self {
-            Self::InMemory(store) => {
-                Ok(store.list_runs_page_visible_to_owner(filters, owner_user_id))
-            }
-            Self::Postgres(store) => {
-                store
-                    .list_runs_page_visible_to_owner(filters, owner_user_id)
-                    .await
-            }
-        }
-    }
-
-    pub async fn list_run_summaries_filtered(
-        &self,
-        filters: &RunListFilters,
+        owner_user_id: Option<&str>,
     ) -> Result<Vec<RunSummaryRecord>, String> {
         match self {
-            Self::InMemory(store) => Ok(store.list_run_summaries_filtered(filters)),
-            Self::Postgres(store) => store.list_run_summaries_filtered(filters).await,
+            Self::InMemory(store) => {
+                Ok(store.list_run_summaries_filtered_scoped(filters, owner_user_id))
+            }
+            Self::Postgres(store) => {
+                store
+                    .list_run_summaries_filtered_scoped(filters, owner_user_id)
+                    .await
+            }
         }
     }
 

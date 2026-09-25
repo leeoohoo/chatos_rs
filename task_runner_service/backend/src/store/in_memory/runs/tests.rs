@@ -116,7 +116,7 @@ fn visible_run_query_uses_task_owner_then_creator_fallback() {
         store.save_run(run).expect("save run");
     }
 
-    let visible = store.list_runs_visible_to_owner(&RunListFilters::default(), "user-a");
+    let visible = store.list_runs_filtered_scoped(&RunListFilters::default(), Some("user-a"));
 
     assert_eq!(
         visible
@@ -194,7 +194,7 @@ fn visible_run_page_applies_all_filters_before_count_and_pagination() {
         store.save_run(run).expect("save run");
     }
 
-    let page = store.list_runs_page_visible_to_owner(
+    let page = store.list_runs_page_scoped(
         &RunListFilters {
             status: Some(TaskRunStatus::Queued),
             model_config_id: Some("model-visible".to_string()),
@@ -203,7 +203,7 @@ fn visible_run_page_applies_all_filters_before_count_and_pagination() {
             offset: Some(1),
             ..RunListFilters::default()
         },
-        "user-a",
+        Some("user-a"),
     );
 
     assert_eq!(page.total, 2);
@@ -212,14 +212,14 @@ fn visible_run_page_applies_all_filters_before_count_and_pagination() {
     assert!(!page.has_more);
     assert_eq!(page.items[0].id, "run-visible-older");
 
-    let task_page = store.list_runs_page_visible_to_owner(
+    let task_page = store.list_runs_page_scoped(
         &RunListFilters {
             task_id: Some("visible-newer".to_string()),
             limit: Some(10),
             offset: Some(0),
             ..RunListFilters::default()
         },
-        "user-a",
+        Some("user-a"),
     );
     assert_eq!(task_page.total, 1);
     assert_eq!(task_page.items[0].id, "run-visible-newer");
@@ -271,6 +271,59 @@ fn run_listing_sort_uses_id_as_the_stable_tie_breaker() {
         .map(|run| run.id)
         .collect::<Vec<_>>();
     assert_eq!(page_ids, vec!["run-a", "run-b", "run-c", "run-d"]);
+}
+
+#[test]
+fn scoped_run_queries_share_filters_and_only_change_the_owner_predicate() {
+    let store = test_store();
+    for (task_id, owner, status, summary) in [
+        (
+            "owned-match",
+            "user-a",
+            TaskRunStatus::Succeeded,
+            "needle owned",
+        ),
+        (
+            "foreign-match",
+            "user-b",
+            TaskRunStatus::Succeeded,
+            "needle foreign",
+        ),
+        (
+            "owned-status",
+            "user-a",
+            TaskRunStatus::Failed,
+            "needle status",
+        ),
+        ("owned-keyword", "user-a", TaskRunStatus::Succeeded, "other"),
+    ] {
+        store.save_task(owned_task(task_id, Some(owner), owner));
+        let mut run = queued_run();
+        run.id = format!("run-{task_id}");
+        run.task_id = task_id.to_string();
+        run.status = status;
+        run.result_summary = Some(summary.to_string());
+        store.save_run(run).expect("save scoped run");
+    }
+    let filters = RunListFilters {
+        status: Some(TaskRunStatus::Succeeded),
+        keyword: Some("needle".to_string()),
+        limit: Some(10),
+        offset: Some(0),
+        ..RunListFilters::default()
+    };
+
+    let admin_page = store.list_runs_page_scoped(&filters, None);
+    let user_page = store.list_runs_page_scoped(&filters, Some("user-a"));
+    assert_eq!(admin_page.total, 2);
+    assert_eq!(user_page.total, 1);
+    assert_eq!(user_page.items[0].id, "run-owned-match");
+
+    let admin_summaries = store.list_run_summaries_filtered_scoped(&filters, None);
+    let user_summaries = store.list_run_summaries_filtered_scoped(&filters, Some("user-a"));
+    assert_eq!(admin_summaries.len(), 2);
+    assert_eq!(user_summaries.len(), 1);
+    assert_eq!(user_summaries[0].id, "run-owned-match");
 }
 
 #[test]

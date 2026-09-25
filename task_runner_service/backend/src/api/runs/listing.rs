@@ -61,23 +61,12 @@ pub(in crate::api) async fn list_runs_page(
     Extension(current_user): Extension<CurrentUser>,
     Query(query): Query<RunListQuery>,
 ) -> Result<Json<PaginatedResponse<TaskRunRecord>>, ApiError> {
-    if current_user.is_admin() {
-        let page = state
-            .run_service
-            .list_runs_page(query.into_filters())
-            .await
-            .map_err(ApiError::bad_request)?;
-        return Ok(Json(redact_workspace_paths(&state, page)?));
-    }
     let filters = query.into_filters();
-    if let Some(task_id) = filters.task_id.as_deref() {
-        get_task_for_user(&state, task_id, &current_user)
-            .await?
-            .ok_or_else(|| ApiError::not_found(format!("任务不存在: {task_id}")))?;
-    }
+    ensure_run_list_task_access(&state, &current_user, &filters).await?;
+    let owner_scope = run_owner_scope(&current_user)?;
     let page = state
         .run_service
-        .list_runs_page_visible_to_user(filters, &effective_owner_user_id(&current_user)?)
+        .list_runs_page_scoped(filters, owner_scope.as_deref())
         .await
         .map_err(ApiError::bad_request)?;
     Ok(Json(redact_workspace_paths(&state, page)?))
@@ -148,21 +137,11 @@ async fn list_runs_for_user(
     current_user: &CurrentUser,
     filters: RunListFilters,
 ) -> Result<Vec<TaskRunRecord>, ApiError> {
-    if current_user.is_admin() {
-        return state
-            .run_service
-            .list_runs_filtered(filters)
-            .await
-            .map_err(ApiError::bad_request);
-    }
-    if let Some(task_id) = filters.task_id.as_deref() {
-        get_task_for_user(state, task_id, current_user)
-            .await?
-            .ok_or_else(|| ApiError::not_found(format!("任务不存在: {task_id}")))?;
-    }
+    ensure_run_list_task_access(state, current_user, &filters).await?;
+    let owner_scope = run_owner_scope(current_user)?;
     state
         .run_service
-        .list_runs_visible_to_user(filters, &effective_owner_user_id(current_user)?)
+        .list_runs_filtered_scoped(filters, owner_scope.as_deref())
         .await
         .map_err(ApiError::bad_request)
 }
@@ -172,33 +151,37 @@ async fn list_run_summaries_for_user(
     current_user: &CurrentUser,
     filters: RunListFilters,
 ) -> Result<Vec<RunSummaryRecord>, ApiError> {
+    ensure_run_list_task_access(state, current_user, &filters).await?;
+    let owner_scope = run_owner_scope(current_user)?;
+    state
+        .run_service
+        .run_index_scoped(filters, owner_scope.as_deref())
+        .await
+        .map_err(ApiError::bad_request)
+}
+
+async fn ensure_run_list_task_access(
+    state: &AppState,
+    current_user: &CurrentUser,
+    filters: &RunListFilters,
+) -> Result<(), ApiError> {
     if current_user.is_admin() {
-        return state
-            .run_service
-            .run_index(filters)
-            .await
-            .map_err(ApiError::bad_request);
+        return Ok(());
     }
     if let Some(task_id) = filters.task_id.as_deref() {
         get_task_for_user(state, task_id, current_user)
             .await?
             .ok_or_else(|| ApiError::not_found(format!("任务不存在: {task_id}")))?;
-        return state
-            .run_service
-            .run_index(filters)
-            .await
-            .map_err(ApiError::bad_request);
     }
-    let allowed_task_ids = visible_task_ids_for_user(state, current_user).await?;
-    let mut unscoped = filters;
-    unscoped.limit = None;
-    unscoped.offset = None;
-    let summaries = state
-        .run_service
-        .run_index(unscoped)
-        .await
-        .map_err(ApiError::bad_request)?;
-    Ok(filter_run_summaries(summaries, allowed_task_ids.as_ref()))
+    Ok(())
+}
+
+fn run_owner_scope(current_user: &CurrentUser) -> Result<Option<String>, ApiError> {
+    if current_user.is_admin() {
+        Ok(None)
+    } else {
+        effective_owner_user_id(current_user).map(Some)
+    }
 }
 
 fn filter_run_summaries(
