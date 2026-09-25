@@ -192,3 +192,7 @@ mod tests {
         assert_request::<HarnessProvisioningRecord>(payload, expected, "HarnessProvisioningRecord");
     }
 }
+
+#[cfg(test)]
+#[path = "harness_summary_tests.rs"]
+mod summary_tests;

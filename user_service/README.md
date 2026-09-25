@@ -68,6 +68,8 @@ In the Docker stack, Harness runs as the `harness` service and `user_service` po
 
 Harness provisioning does not follow HTTP redirects, including redirects on the same origin. Configure the Harness base URL to serve the API directly; a 3xx response is treated as a failed Harness request without forwarding passwords or tokens or triggering the existing-account login fallback.
 
+User summaries expose any recorded Harness provisioning error as the fixed message `harness provisioning failed`; an absent error remains `null`. Historical error text may contain credentials echoed by downstream services, so it is never copied into user-list or user-detail summaries. Status, attempt count and timestamps remain available. This response projection does not rewrite existing provisioning records or change retry behavior.
+
 Harness source lives in a separate ignored Git checkout at repository root `harness/`; the Chat OS parent repository does not track it.
 
 Important behavior:

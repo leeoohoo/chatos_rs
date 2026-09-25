@@ -275,7 +275,12 @@ impl From<HarnessProvisioningRecord> for HarnessProvisioningSummaryRecord {
             harness_email: value.harness_email,
             space_identifier: value.space_identifier,
             attempts: value.attempts,
-            last_error: value.last_error,
+            // Legacy errors can contain downstream password/token echoes. The
+            // public summary must never trust stored diagnostic text, even if
+            // newer request failures are sanitized before persistence.
+            last_error: value
+                .last_error
+                .map(|_| "harness provisioning failed".to_string()),
             last_attempt_at: value.last_attempt_at,
             provisioned_at: value.provisioned_at,
             updated_at: value.updated_at,
