@@ -281,7 +281,7 @@ fn set_private_dir_permissions(_path: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(unix)]
-fn open_directory_without_symlinks(path: &Path) -> std::io::Result<fs::File> {
+pub(super) fn open_directory_without_symlinks(path: &Path) -> std::io::Result<fs::File> {
     use std::ffi::CString;
     use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::ffi::OsStrExt;

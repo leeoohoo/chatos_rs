@@ -265,3 +265,85 @@ fn registered_user_roots_reject_later_real_directory_replacements() {
         }
     }
 }
+
+#[test]
+fn write_checks_reject_same_path_descendant_directory_replacement() {
+    use std::os::unix::fs::symlink;
+
+    for replaced in ["nested", "nested/child"] {
+        for configured in [false, true] {
+            let base = std::env::temp_dir()
+                .join(format!("chatos-write-identity-{}", uuid::Uuid::new_v4()));
+            fs::create_dir(&base).unwrap();
+            let fixture = Fixture(fs::canonicalize(base).unwrap());
+            let workspace = ensure_child_directory(&fixture.0, "workspaces").unwrap();
+            let public = ensure_child_directory(&fixture.0, "public").unwrap();
+            let mut roots = Vec::new();
+            if configured {
+                push_root(&mut roots, workspace.clone(), FsAllowedRootKind::Configured);
+            } else {
+                let prepared = UserScopedRoots::new(workspace.clone(), public).unwrap();
+                push_user_scoped_roots(&mut roots, &prepared);
+            }
+            let policy = FsPathPolicy { roots };
+            let child = workspace.join("nested/child");
+            fs::create_dir_all(&child).unwrap();
+            fs::write(child.join("sentinel"), "original").unwrap();
+            symlink(&child, workspace.join("alias")).unwrap();
+            let grant = policy
+                .authorize_existing_dir(child.to_str().unwrap(), "missing", "not dir")
+                .unwrap();
+            let alias = policy
+                .authorize_existing_dir(
+                    workspace.join("alias").to_str().unwrap(),
+                    "missing",
+                    "not dir",
+                )
+                .unwrap();
+            assert_eq!(grant.path, alias.path);
+            policy.require_write(&grant).unwrap();
+            policy.require_write(&alias).unwrap();
+            let cloned = grant.clone();
+            drop(grant);
+            let root_grant = policy
+                .authorize_existing_dir(workspace.to_str().unwrap(), "missing", "not dir")
+                .unwrap();
+            let before = fs::metadata(&child).unwrap();
+            let replaced_path = workspace.join(replaced);
+            let moved = fixture.0.join("original");
+            fs::rename(&replaced_path, &moved).unwrap();
+            fs::create_dir_all(&child).unwrap();
+            fs::write(child.join("sentinel"), "replacement").unwrap();
+            fs::set_permissions(&child, fs::Permissions::from_mode(0o750)).unwrap();
+            let after = fs::metadata(&child).unwrap();
+            assert_ne!((before.dev(), before.ino()), (after.dev(), after.ino()));
+            assert_eq!(fs::canonicalize(&child).unwrap(), cloned.path);
+            for stale in [&cloned, &alias] {
+                let result = policy.require_write(stale);
+                assert!(matches!(result, Err(FsPolicyError::Forbidden(_))),
+                    "{replaced}, configured={configured}: replaced directory retained write grant: {result:?}");
+            }
+            policy.require_write(&root_grant).unwrap();
+            // A fresh authorization may accept a new real child in the writable
+            // root. The old grant must not silently become a grant to that child.
+            let fresh = policy
+                .authorize_existing_dir(child.to_str().unwrap(), "missing", "not dir")
+                .unwrap();
+            policy.require_write(&fresh).unwrap();
+            assert_eq!(
+                fs::read_to_string(child.join("sentinel")).unwrap(),
+                "replacement"
+            );
+            assert_eq!(fs::read_dir(&child).unwrap().count(), 1);
+            assert_eq!(
+                fs::metadata(&child).unwrap().permissions().mode() & 0o777,
+                0o750
+            );
+            let original_child = moved.join(child.strip_prefix(&replaced_path).unwrap());
+            assert_eq!(
+                fs::read_to_string(original_child.join("sentinel")).unwrap(),
+                "original"
+            );
+        }
+    }
+}

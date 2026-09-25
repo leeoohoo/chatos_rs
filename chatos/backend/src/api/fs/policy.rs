@@ -67,6 +67,10 @@ pub(crate) struct FsPathPolicy {
 pub(crate) struct AuthorizedPath {
     pub(crate) path: PathBuf,
     pub(crate) can_write: bool,
+    // Keep the authorized directory alive across clones and write checks, so
+    // another real directory at the same path cannot inherit its grant.
+    #[cfg(unix)]
+    directory: Option<std::sync::Arc<std::fs::File>>,
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +121,15 @@ impl FsPathPolicy {
         if !authorized.path.is_dir() {
             return Err(FsPolicyError::BadRequest(not_dir_message.to_string()));
         }
+        #[cfg(unix)]
+        let authorized = AuthorizedPath {
+            directory: Some(std::sync::Arc::new(
+                policy_roots::open_directory_without_symlinks(&authorized.path).map_err(|_| {
+                    FsPolicyError::Forbidden(PATH_OUTSIDE_ALLOWED_ROOTS.to_string())
+                })?,
+            )),
+            ..authorized
+        };
         Ok(authorized)
     }
 
@@ -147,6 +160,19 @@ impl FsPathPolicy {
             .map_err(|_| FsPolicyError::Forbidden(WRITE_NOT_ALLOWED.to_string()))?;
         if canonical != path.path {
             return Err(FsPolicyError::Forbidden(WRITE_NOT_ALLOWED.to_string()));
+        }
+        #[cfg(unix)]
+        if let Some(directory) = &path.directory {
+            use std::os::unix::fs::MetadataExt;
+
+            let denied = |_| FsPolicyError::Forbidden(WRITE_NOT_ALLOWED.to_string());
+            let current =
+                policy_roots::open_directory_without_symlinks(&path.path).map_err(denied)?;
+            let original = directory.metadata().map_err(denied)?;
+            let current = current.metadata().map_err(denied)?;
+            if (original.dev(), original.ino()) != (current.dev(), current.ino()) {
+                return Err(FsPolicyError::Forbidden(WRITE_NOT_ALLOWED.to_string()));
+            }
         }
         Ok(())
     }
@@ -247,6 +273,8 @@ impl FsPathPolicy {
         Ok(AuthorizedPath {
             path,
             can_write: root.can_write,
+            #[cfg(unix)]
+            directory: None,
         })
     }
 
