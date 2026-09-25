@@ -14,7 +14,14 @@ pub(super) fn build_harness_client_with_timeout(
     // a redirect destination, even on the same origin.
     .redirect(reqwest::redirect::Policy::none())
     .build()
-    .map_err(|err| err.to_string())
+    .map_err(harness_client_build_error)
+}
+
+fn harness_client_build_error(_error: impl std::fmt::Display) -> String {
+    // Client diagnostics are not part of the public or persisted error
+    // contract. Keep this boundary fixed even if a dependency later includes
+    // configuration or credential material in its Display implementation.
+    "build harness client failed".to_string()
 }
 
 pub(super) fn normalized_text(value: Option<&str>) -> Option<String> {
@@ -39,4 +46,17 @@ pub(super) fn extract_error_message(body: &str) -> String {
                 .map(ToOwned::to_owned)
         })
         .unwrap_or_else(|| body.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::harness_client_build_error;
+
+    #[test]
+    fn harness_client_build_errors_are_fixed_and_credential_free() {
+        let credential = "test-only-harness-client-credential";
+        let error = harness_client_build_error(format!("builder rejected {credential}"));
+        assert_eq!(error, "build harness client failed");
+        assert!(!error.contains(credential));
+    }
 }
