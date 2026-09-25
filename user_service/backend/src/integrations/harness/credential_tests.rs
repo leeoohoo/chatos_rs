@@ -128,3 +128,29 @@ fn provisioning_records_use_an_explicit_harness_secret_field() {
     assert!(migrated.get("encrypted_provisioning_secret").is_some());
     assert!(migrated.get("encrypted_password").is_none());
 }
+
+#[test]
+fn chatos_user_password_is_absent_from_retry_records_and_errors() {
+    let user_password = "test-only-chatos-user-password";
+    let credential = generated_harness_provisioning_password();
+    let encrypted_provisioning_secret = "enc:v1:test-only-harness-ciphertext";
+    let record = failed_record(
+        Some(HARNESS_PROVISIONING_CREDENTIAL_KIND_GENERATED_V1),
+        Some(encrypted_provisioning_secret),
+    );
+    let stored = serde_json::to_string(&record).unwrap();
+    assert!(!stored.contains(user_password));
+    assert!(!stored.contains(credential.as_str()));
+    assert!(stored.contains(encrypted_provisioning_secret));
+
+    let error = HarnessRequestError::from_error("harness request rejected");
+    for output in [
+        error.to_string(),
+        format!("{error:?}"),
+        format!("create or login harness user failed: {error}"),
+        truncate_error(&error.to_string()),
+    ] {
+        assert!(!output.contains(user_password));
+        assert!(!output.contains(credential.as_str()));
+    }
+}

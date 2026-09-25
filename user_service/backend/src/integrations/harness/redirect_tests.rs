@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 
 const PASSWORD: &str = "test-only-redirect-password";
 const TOKEN: &str = "test-only-redirect-token";
+const USER_PASSWORD: &str = "test-only-chatos-user-password";
 
 #[derive(Debug)]
 struct CapturedRequest {
@@ -241,4 +242,69 @@ async fn direct_harness_response_still_succeeds() {
         .await
         .unwrap();
     assert_eq!(token.access_token, TOKEN);
+}
+
+#[tokio::test]
+async fn direct_harness_request_bodies_use_only_the_provisioning_credential() {
+    let captures = Captures::default();
+    let server_captures = captures.clone();
+    let server = serve(
+        tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(),
+        Router::new().fallback(any(move |request| {
+            let captures = server_captures.clone();
+            async move {
+                capture(request, captures).await;
+                token_response()
+            }
+        })),
+    )
+    .await;
+    let credential = generated_harness_provisioning_password();
+    let client = build_harness_client_with_timeout(2000).unwrap();
+    let requests = [
+        (
+            "/api/v1/register",
+            serde_json::to_value(HarnessRegisterRequest {
+                uid: "test-user",
+                email: "test@example.invalid",
+                display_name: "test",
+                password: credential.as_str(),
+            })
+            .unwrap(),
+        ),
+        (
+            "/api/v1/login",
+            serde_json::to_value(HarnessLoginRequest {
+                login_identifier: "test-user",
+                password: credential.as_str(),
+            })
+            .unwrap(),
+        ),
+    ];
+
+    for (path, body) in requests {
+        let response = send_harness_request(build_harness_request(
+            &client,
+            Method::POST,
+            &format!("{}{path}", server.url),
+            None,
+            Some(&body),
+        ))
+        .await
+        .unwrap();
+        decode_harness_response::<HarnessTokenResponse>(response)
+            .await
+            .unwrap();
+    }
+
+    let captures = captures.lock().unwrap();
+    assert_eq!(captures.len(), 2);
+    for request in captures.iter() {
+        let body = String::from_utf8(request.body.clone()).unwrap();
+        assert!(!body.contains(USER_PASSWORD));
+        assert!(body.contains(credential.as_str()));
+        assert!(request.authorization.is_none());
+    }
+    assert_eq!(captures[0].path, "/api/v1/register");
+    assert_eq!(captures[1].path, "/api/v1/login");
 }
