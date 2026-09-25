@@ -19,7 +19,7 @@ fn make_temp_symbol_index_project() -> PathBuf {
         uuid::Uuid::new_v4()
     ));
     fs::create_dir_all(root.join("src")).expect("create source dir");
-    root
+    fs::canonicalize(root).expect("canonical project fixture")
 }
 
 fn analyze_fixture_file(path: &Path) -> Result<Vec<IndexedSymbol>, String> {

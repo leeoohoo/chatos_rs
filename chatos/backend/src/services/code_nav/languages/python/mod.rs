@@ -233,7 +233,7 @@ mod tests {
         fs::create_dir_all(root.join("app")).expect("create package dir");
         fs::write(root.join("pyproject.toml"), "[project]\nname = 'demo'\n")
             .expect("write pyproject");
-        root
+        fs::canonicalize(root).expect("canonical project fixture")
     }
 
     #[test]

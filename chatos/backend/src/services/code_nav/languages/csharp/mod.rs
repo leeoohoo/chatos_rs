@@ -433,7 +433,7 @@ mod tests {
             "<Project Sdk=\"Microsoft.NET.Sdk\" />\n",
         )
         .expect("write csproj");
-        root
+        fs::canonicalize(root).expect("canonical project fixture")
     }
 
     #[test]

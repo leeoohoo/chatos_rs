@@ -223,7 +223,7 @@ mod tests {
         ));
         fs::create_dir_all(root.join("helper")).expect("create helper dir");
         fs::write(root.join("go.mod"), "module demo\n\ngo 1.22\n").expect("write go.mod");
-        root
+        fs::canonicalize(root).expect("canonical project fixture")
     }
 
     #[test]

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
@@ -58,22 +58,47 @@ pub(crate) fn truncate_preview(value: &str, max_chars: usize) -> String {
 }
 
 fn open_code_nav_file(path: &Path) -> Result<File, String> {
-    let mut options = OpenOptions::new();
-    options.read(true);
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-
-        // Context validation resolves legitimate input links. Reject a leaf
-        // replaced by a symlink at open time, then read only the opened handle.
-        // Ancestor replacement still needs a separate traversal boundary.
-        options.custom_flags(libc::O_NOFOLLOW);
-    }
-    let file = options.open(path).map_err(|err| err.to_string())?;
+    let file = open_canonical_code_nav_file(path).map_err(|err| err.to_string())?;
+    #[cfg(not(unix))]
+    let file = File::open(path).map_err(|err| err.to_string())?;
     if let Ok(metadata) = file.metadata() {
         ensure_code_nav_file_within_limit(path, metadata.len())?;
     }
     Ok(file)
+}
+
+#[cfg(unix)]
+fn open_canonical_code_nav_file(path: &Path) -> std::io::Result<File> {
+    use crate::core::fs_open::open_directory_without_symlinks;
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+
+    // Callers supply paths from the validated canonical project context. Do
+    // not canonicalize again: that could follow a replaced ancestor outside it.
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "expected a file parent")
+    })?;
+    let name = path.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "expected a file name")
+    })?;
+    let name = CString::new(name.as_bytes())?;
+    let directory = open_directory_without_symlinks(parent)?;
+    // SAFETY: directory owns a live descriptor and name is one NUL-terminated
+    // component. O_CREAT is absent, so no mode argument is required.
+    let fd = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: successful openat returns a fresh descriptor owned only here.
+    Ok(unsafe { File::from_raw_fd(fd) })
 }
 
 fn ensure_code_nav_file_within_limit(path: &Path, actual_bytes: u64) -> Result<(), String> {
@@ -103,7 +128,7 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         fs::write(&path, content).expect("write temp file");
-        path
+        fs::canonicalize(path).expect("canonical temp file")
     }
 
     #[test]

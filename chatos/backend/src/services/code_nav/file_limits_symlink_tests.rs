@@ -27,6 +27,95 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn code_nav_reads_reject_ancestor_symlink_replacement_after_context_validation() {
+    for replaced in ["project", "project/src", "project/src/nested"] {
+        for target_exists in [true, false] {
+            let fixture = Fixture::new();
+            let root = fixture.0.join("project");
+            let source = root.join("src/nested/main.rs");
+            fs::create_dir_all(source.parent().unwrap()).unwrap();
+            fs::write(&source, "fn allowed_symbol() {}\n").unwrap();
+            let replaced_path = fixture.0.join(replaced);
+            let relative_source = source.strip_prefix(&replaced_path).unwrap();
+            let target = fixture.0.join("outside");
+            let target_source = target.join(relative_source);
+            if target_exists {
+                fs::create_dir_all(target_source.parent().unwrap()).unwrap();
+                fs::write(&target_source, "fn private_target_symbol() {}\n").unwrap();
+            }
+            let request = DocumentSymbolsRequest {
+                project_root: root.to_str().unwrap().to_string(),
+                file_path: source.to_str().unwrap().to_string(),
+            };
+            let context = build_project_context(&request.project_root, &request.file_path).unwrap();
+            assert_eq!(
+                fallback_document_symbols(&context, &request, "test")
+                    .unwrap()
+                    .symbols[0]
+                    .name,
+                "allowed_symbol"
+            );
+            let mut opened = open_code_nav_file(&context.file_path).unwrap();
+            let original = fixture.0.join("original");
+            fs::rename(&replaced_path, &original).unwrap();
+            symlink(&target, &replaced_path).unwrap();
+
+            let symbols = fallback_document_symbols(&context, &request, "test");
+            assert!(
+                symbols.is_err(),
+                "ancestor {replaced} leaked symbols: {symbols:?}"
+            );
+            assert!(read_code_nav_file_to_string(&context.file_path).is_err());
+            assert!(read_code_nav_line_preview(&context.file_path, 1, 100).is_err());
+            let mut content = String::new();
+            opened.read_to_string(&mut content).unwrap();
+            assert_eq!(content, "fn allowed_symbol() {}\n");
+            assert_eq!(
+                fs::read_to_string(original.join(relative_source)).unwrap(),
+                content
+            );
+            if target_exists {
+                assert_eq!(
+                    fs::read_to_string(target_source).unwrap(),
+                    "fn private_target_symbol() {}\n"
+                );
+            } else {
+                assert!(!target.exists());
+            }
+        }
+    }
+}
+
+#[test]
+fn code_nav_reads_accept_initial_ancestor_links_after_context_validation() {
+    for linked in ["project", "project/src", "project/src/nested"] {
+        let fixture = Fixture::new();
+        let root = fixture.0.join("project");
+        let source = root.join("src/nested/main.rs");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::write(&source, "fn allowed_symbol() {}\n").unwrap();
+        let original = fixture.0.join(linked);
+        let resolved = if linked == "project" {
+            fixture.0.join("resolved")
+        } else {
+            root.join("resolved")
+        };
+        fs::rename(&original, &resolved).unwrap();
+        symlink(&resolved, &original).unwrap();
+        let context =
+            build_project_context(root.to_str().unwrap(), source.to_str().unwrap()).unwrap();
+        assert_eq!(
+            read_code_nav_file_to_string(&context.file_path).unwrap(),
+            "fn allowed_symbol() {}\n"
+        );
+        assert_eq!(
+            read_code_nav_line_preview(&context.file_path, 1, 100).unwrap(),
+            "fn allowed_symbol() {}"
+        );
+    }
+}
+
+#[test]
 fn code_nav_reads_reject_file_symlink_replacement_after_context_validation() {
     for target_name in ["outside.rs", "project/other.rs", "missing.rs"] {
         let fixture = Fixture::new();

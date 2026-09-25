@@ -9,6 +9,8 @@ pub mod builtin_mcp_prompt;
 pub mod chat_context;
 pub mod chat_runtime;
 pub mod chat_stream;
+#[cfg(unix)]
+pub(crate) mod fs_open;
 pub mod internal_context_locale;
 pub mod mcp_runtime;
 pub mod mcp_tools;

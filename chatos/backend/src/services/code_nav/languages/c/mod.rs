@@ -324,7 +324,7 @@ mod tests {
             std::env::temp_dir().join(format!("code_nav_c_provider_test_{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(root.join("src")).expect("create source dir");
         fs::write(root.join("CMakeLists.txt"), "project(demo C)\n").expect("write cmake");
-        root
+        fs::canonicalize(root).expect("canonical project fixture")
     }
 
     #[test]
