@@ -327,6 +327,94 @@ fn scoped_run_queries_share_filters_and_only_change_the_owner_predicate() {
 }
 
 #[test]
+fn thousands_of_cross_user_runs_keep_totals_isolation_and_page_boundaries() {
+    const RUN_COUNT: usize = 4_096;
+    const PAGE_LIMIT: usize = 17;
+    let store = test_store();
+    let mut expected_admin = Vec::new();
+    let mut expected_user = Vec::new();
+
+    for index in 0..RUN_COUNT {
+        let task_id = format!("bulk-task-{index:04}");
+        let run_id = format!("bulk-run-{index:04}");
+        let owner = format!("user-{}", index % 4);
+        let owner_field = (index % 11 != 0).then_some(owner.as_str());
+        store.save_task(owned_task(&task_id, owner_field, &owner));
+
+        let matches = index % 2 == 0 && index % 3 == 1 && index % 5 == 0;
+        let mut run = queued_run();
+        run.id = run_id.clone();
+        run.task_id = task_id;
+        run.status = if index % 2 == 0 {
+            TaskRunStatus::Succeeded
+        } else {
+            TaskRunStatus::Failed
+        };
+        run.model_config_id = format!("model-{}", index % 3);
+        run.result_summary = Some(if index % 5 == 0 {
+            "needle bulk result".to_string()
+        } else {
+            "other bulk result".to_string()
+        });
+        run.created_at = format!(
+            "2026-09-26T{:02}:{:02}:{:02}Z",
+            index / 3_600,
+            (index / 60) % 60,
+            index % 60
+        );
+        store.save_run(run).expect("save bulk run");
+        if matches {
+            expected_admin.push(run_id.clone());
+            if owner == "user-0" {
+                expected_user.push(run_id);
+            }
+        }
+    }
+    expected_admin.reverse();
+    expected_user.reverse();
+
+    let base_filters = RunListFilters {
+        status: Some(TaskRunStatus::Succeeded),
+        model_config_id: Some("model-1".to_string()),
+        keyword: Some("needle".to_string()),
+        ..RunListFilters::default()
+    };
+    for (owner_scope, expected) in [
+        (None, expected_admin.as_slice()),
+        (Some("user-0"), expected_user.as_slice()),
+    ] {
+        let mut actual = Vec::new();
+        loop {
+            let offset = actual.len();
+            let page = store.list_runs_page_scoped(
+                &RunListFilters {
+                    limit: Some(PAGE_LIMIT),
+                    offset: Some(offset),
+                    ..base_filters.clone()
+                },
+                owner_scope,
+            );
+            assert_eq!(page.total, expected.len());
+            assert_eq!(page.limit, PAGE_LIMIT);
+            assert_eq!(page.offset, offset);
+            assert_eq!(page.has_more, offset + page.items.len() < page.total);
+            actual.extend(page.items.into_iter().map(|run| run.id));
+            if !page.has_more {
+                break;
+            }
+        }
+        assert_eq!(actual, expected);
+        assert_eq!(
+            actual
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            actual.len()
+        );
+    }
+}
+
+#[test]
 fn execution_stats_count_runs_and_pending_outboxes_without_cloning_records() {
     let store = test_store();
     store.save_run(queued_run()).expect("save queued run");
