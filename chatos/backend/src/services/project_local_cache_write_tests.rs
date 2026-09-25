@@ -67,7 +67,8 @@ fn cache_write_rejects_leaf_symlinks_without_touching_targets() {
 fn cache_write_creates_and_replaces_regular_json_files() {
     let fixture = Fixture::new();
     let project = fixture.project();
-    let relative = "new/nested/index.json";
+    fs::remove_dir_all(project.join(".chatos")).unwrap();
+    let relative = "new/目录/index.json";
     let long = serde_json::json!({"symbols": ["long first value", "another value"]});
     let short = serde_json::json!({"symbols": []});
     for value in [long, short] {
@@ -128,5 +129,109 @@ fn cache_write_rejects_hard_links_before_truncating() {
             serde_json::to_vec_pretty(&value).unwrap()
         );
         assert_eq!(fs::metadata(&cache).unwrap().nlink(), 1);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn cache_write_rejects_ancestor_symlinks_before_creating_or_overwriting() {
+    use std::os::unix::fs::{symlink, MetadataExt};
+
+    for ancestor in ["", ".chatos", ".chatos/cache", ".chatos/cache/code_nav"] {
+        for existing in [false, true] {
+            let fixture = Fixture::new();
+            let project = fixture.project();
+            let redirected = if ancestor.is_empty() {
+                project.clone()
+            } else {
+                project.join(ancestor)
+            };
+            let moved = fixture.0.join("moved");
+            let relative = "code_nav/new/nested/index.json";
+            let cache = project_cache_file_path(project.to_str().unwrap(), relative).unwrap();
+            let value = serde_json::json!({"replacement": true});
+            let sentinel = b"private fixture contents\n";
+            if existing {
+                fs::create_dir_all(cache.parent().unwrap()).unwrap();
+                fs::write(&cache, sentinel).unwrap();
+            }
+            let target = moved.join(cache.strip_prefix(&redirected).unwrap());
+            fs::rename(&redirected, &moved).unwrap();
+            symlink(&moved, &redirected).unwrap();
+            let before = fs::metadata(&moved).unwrap();
+            let file_before = existing.then(|| fs::metadata(&target).unwrap());
+
+            let result = write_cache_json(project.to_str().unwrap(), relative, &value);
+            assert!(
+                result.is_err(),
+                "cache writer followed {ancestor:?}, existing={existing}"
+            );
+            assert_eq!(fs::read_link(&redirected).unwrap(), moved);
+            let after = fs::metadata(&moved).unwrap();
+            assert_eq!(
+                (after.dev(), after.ino(), after.mode()),
+                (before.dev(), before.ino(), before.mode())
+            );
+            if let Some(before) = file_before {
+                assert_eq!(fs::read(&target).unwrap(), sentinel);
+                let after = fs::metadata(&target).unwrap();
+                assert_eq!(
+                    (after.dev(), after.ino(), after.mode(), after.nlink()),
+                    (before.dev(), before.ino(), before.mode(), before.nlink())
+                );
+            } else {
+                let created = moved.join(
+                    project
+                        .join(".chatos/cache/code_nav/new")
+                        .strip_prefix(&redirected)
+                        .unwrap(),
+                );
+                assert!(
+                    !created.exists(),
+                    "rejected write created external directories"
+                );
+            }
+
+            fs::remove_file(&redirected).unwrap();
+            fs::rename(&moved, &redirected).unwrap();
+            write_cache_json(project.to_str().unwrap(), relative, &value).unwrap();
+            assert_eq!(
+                fs::read(cache).unwrap(),
+                serde_json::to_vec_pretty(&value).unwrap()
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn cache_write_rejects_dangling_and_non_directory_ancestors() {
+    use std::os::unix::fs::symlink;
+
+    for ancestor in [".chatos", ".chatos/cache", ".chatos/cache/code_nav"] {
+        for dangling in [false, true] {
+            let fixture = Fixture::new();
+            let project = fixture.project();
+            let blocked = project.join(ancestor);
+            fs::remove_dir_all(&blocked).unwrap();
+            let missing = fixture.0.join("missing");
+            if dangling {
+                symlink(&missing, &blocked).unwrap();
+            } else {
+                fs::write(&blocked, b"sentinel").unwrap();
+            }
+            assert!(write_cache_json(
+                project.to_str().unwrap(),
+                "code_nav/new/index.json",
+                &serde_json::json!({"ok": true})
+            )
+            .is_err());
+            assert!(!missing.exists());
+            if dangling {
+                assert_eq!(fs::read_link(&blocked).unwrap(), missing);
+            } else {
+                assert_eq!(fs::read(&blocked).unwrap(), b"sentinel");
+            }
+        }
     }
 }

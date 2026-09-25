@@ -448,3 +448,63 @@ async fn index_cache_read_rejects_ancestor_symlinks_via_manager() {
         assert_eq!(fs::read(&valid).unwrap(), b"fn greet() {}\n");
     }
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn index_cache_write_rejects_ancestor_symlinks_via_manager() {
+    use crate::services::project_local_cache::project_cache_file_path;
+    use std::os::unix::fs::{symlink, MetadataExt};
+
+    for ancestor in [".chatos", ".chatos/cache", ".chatos/cache/code_nav"] {
+        let fixture = Fixture::new();
+        let root = fixture.0.join("project");
+        let source = root.join("src/main.rs");
+        let valid = root.join("src/valid.rs");
+        fs::write(&source, "fn main() { greet(); }\n").unwrap();
+        fs::write(&valid, "fn greet() {}\n").unwrap();
+        let request = NavPositionRequest {
+            project_root: root.to_str().unwrap().into(),
+            file_path: source.to_str().unwrap().into(),
+            line: 1,
+            column: 14,
+        };
+        let manager = CodeNavManager::new(vec![Arc::new(RustCodeNavProvider)]);
+        assert!(!manager
+            .definition(&request)
+            .await
+            .unwrap()
+            .locations
+            .is_empty());
+        let cache =
+            project_cache_file_path(root.to_str().unwrap(), &symbol_index_cache_path("rust"))
+                .unwrap();
+        let redirected = root.join(ancestor);
+        let moved = fixture.0.join("moved");
+        let target = moved.join(cache.strip_prefix(&redirected).unwrap());
+        fs::rename(&redirected, &moved).unwrap();
+        symlink(&moved, &redirected).unwrap();
+        let sentinel = b"private fixture contents\n";
+        fs::write(&target, sentinel).unwrap();
+        let before = fs::metadata(&target).unwrap();
+        // Dirty rebuild persists without reading the cache first. This exercises
+        // the writer independently of the existing read-side ancestor guard.
+        assert!(invalidate_project_symbol_indexes_for_path(&valid) > 0);
+        let response = manager.definition(&request).await.unwrap();
+        assert!(response.locations.iter().any(|location| {
+            location.path == valid.to_str().unwrap() && location.preview == "fn greet() {}"
+        }));
+        assert_eq!(
+            fs::read(&target).unwrap(),
+            sentinel,
+            "index write followed {ancestor}"
+        );
+        assert_eq!(fs::read_link(&redirected).unwrap(), moved);
+        let after = fs::metadata(&target).unwrap();
+        assert_eq!(
+            (after.dev(), after.ino(), after.mode(), after.nlink()),
+            (before.dev(), before.ino(), before.mode(), before.nlink())
+        );
+        assert_eq!(fs::read(&source).unwrap(), b"fn main() { greet(); }\n");
+        assert_eq!(fs::read(&valid).unwrap(), b"fn greet() {}\n");
+    }
+}
