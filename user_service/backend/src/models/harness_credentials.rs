@@ -150,7 +150,17 @@ mod tests {
             });
             let record: HarnessProvisioningRecord =
                 serde_json::from_value(payload.clone()).unwrap();
-            assert_eq!(serde_json::to_value(record.clone()).unwrap(), payload);
+            let mut expected = payload.clone();
+            let legacy_secret = expected
+                .as_object_mut()
+                .unwrap()
+                .remove("encrypted_password")
+                .unwrap();
+            expected
+                .as_object_mut()
+                .unwrap()
+                .insert("encrypted_provisioning_secret".to_string(), legacy_secret);
+            assert_eq!(serde_json::to_value(record.clone()).unwrap(), expected);
             for output in [
                 format!("{record:?}"),
                 format!("{record:#?}"),
@@ -179,7 +189,7 @@ mod tests {
         });
         let mut expected = payload.clone();
         for field in [
-            "encrypted_password",
+            "encrypted_provisioning_secret",
             "encrypted_access_token",
             "access_token_identifier",
             "access_token_created_at",

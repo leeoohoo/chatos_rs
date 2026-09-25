@@ -5,7 +5,7 @@ use super::*;
 
 fn failed_record(
     credential_kind: Option<&str>,
-    encrypted_password: Option<&str>,
+    encrypted_provisioning_secret: Option<&str>,
 ) -> HarnessProvisioningRecord {
     HarnessProvisioningRecord {
         user_id: "user-1".to_string(),
@@ -16,7 +16,7 @@ fn failed_record(
         status: HARNESS_PROVISIONING_STATUS_FAILED.to_string(),
         attempts: 1,
         credential_kind: credential_kind.map(str::to_string),
-        encrypted_password: encrypted_password.map(str::to_string),
+        encrypted_provisioning_secret: encrypted_provisioning_secret.map(str::to_string),
         encrypted_access_token: None,
         access_token_identifier: None,
         access_token_created_at: None,
@@ -64,4 +64,42 @@ fn legacy_user_password_records_are_never_reused() {
         "legacy Harness provisioning credential requires administrator recovery"
     );
     assert!(!error.contains(legacy_ciphertext));
+}
+
+#[test]
+fn provisioning_records_use_an_explicit_harness_secret_field() {
+    let record = failed_record(
+        Some(HARNESS_PROVISIONING_CREDENTIAL_KIND_GENERATED_V1),
+        Some("encrypted-harness-provisioning-secret"),
+    );
+    assert_eq!(
+        record.encrypted_provisioning_secret.as_deref(),
+        Some("encrypted-harness-provisioning-secret")
+    );
+
+    let stored = serde_json::to_value(record).unwrap();
+    assert_eq!(
+        stored["encrypted_provisioning_secret"],
+        "encrypted-harness-provisioning-secret"
+    );
+    assert!(stored.get("encrypted_password").is_none());
+
+    let mut legacy = stored;
+    let secret = legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("encrypted_provisioning_secret")
+        .unwrap();
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .insert("encrypted_password".to_string(), secret);
+    let migrated: HarnessProvisioningRecord = serde_json::from_value(legacy).unwrap();
+    assert_eq!(
+        migrated.encrypted_provisioning_secret.as_deref(),
+        Some("encrypted-harness-provisioning-secret")
+    );
+    let migrated = serde_json::to_value(migrated).unwrap();
+    assert!(migrated.get("encrypted_provisioning_secret").is_some());
+    assert!(migrated.get("encrypted_password").is_none());
 }

@@ -242,7 +242,8 @@ pub struct HarnessProvisioningRecord {
     pub attempts: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_kind: Option<String>,
-    pub encrypted_password: Option<String>,
+    #[serde(default, alias = "encrypted_password")]
+    pub encrypted_provisioning_secret: Option<String>,
     #[serde(default)]
     pub encrypted_access_token: Option<String>,
     #[serde(default)]

@@ -281,7 +281,7 @@ async fn begin_harness_provisioning_attempt(
         .map(|item| item.created_at.clone())
         .unwrap_or_else(|| now.clone());
     let provisioning_password = resolve_harness_provisioning_password(prior.as_ref())?;
-    let encrypted_password = encrypt_secret(provisioning_password.as_str())?;
+    let encrypted_provisioning_secret = encrypt_secret(provisioning_password.as_str())?;
     let record = HarnessProvisioningRecord {
         user_id: user.id.clone(),
         username: user.username.clone(),
@@ -291,7 +291,7 @@ async fn begin_harness_provisioning_attempt(
         status: HARNESS_PROVISIONING_STATUS_PENDING.to_string(),
         attempts,
         credential_kind: Some(HARNESS_PROVISIONING_CREDENTIAL_KIND_GENERATED_V1.to_string()),
-        encrypted_password: Some(encrypted_password),
+        encrypted_provisioning_secret: Some(encrypted_provisioning_secret),
         encrypted_access_token: prior
             .as_ref()
             .and_then(|item| item.encrypted_access_token.clone()),
@@ -323,7 +323,8 @@ fn resolve_harness_provisioning_password(
     let Some(record) = prior else {
         return Ok(generated_harness_provisioning_password());
     };
-    let Some(encrypted_password) = record.encrypted_password.as_deref() else {
+    let Some(encrypted_provisioning_secret) = record.encrypted_provisioning_secret.as_deref()
+    else {
         return Ok(generated_harness_provisioning_password());
     };
     if record.credential_kind.as_deref() != Some(HARNESS_PROVISIONING_CREDENTIAL_KIND_GENERATED_V1)
@@ -332,7 +333,7 @@ fn resolve_harness_provisioning_password(
             "legacy Harness provisioning credential requires administrator recovery".to_string(),
         );
     }
-    decrypt_secret(encrypted_password)
+    decrypt_secret(encrypted_provisioning_secret)
 }
 
 async fn finish_harness_provisioning_success(
@@ -345,7 +346,7 @@ async fn finish_harness_provisioning_success(
     if !token.resolved_harness_uid.trim().is_empty() {
         record.harness_uid = token.resolved_harness_uid;
     }
-    record.encrypted_password = None;
+    record.encrypted_provisioning_secret = None;
     record.encrypted_access_token = Some(encrypt_secret(token.access_token.as_str())?);
     record.access_token_identifier = Some(token.identifier);
     record.access_token_created_at = Some(now.clone());

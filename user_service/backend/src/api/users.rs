@@ -202,9 +202,9 @@ pub async fn retry_harness_provisioning(
     else {
         return Err(bad_request("harness provisioning record not found"));
     };
-    if record.encrypted_password.is_none() {
+    if record.encrypted_provisioning_secret.is_none() {
         return Err(bad_request(
-            "harness provisioning password is unavailable; reset password before retry",
+            "harness provisioning secret is unavailable; reprovision before retry",
         ));
     }
     provision_harness_user_public_register_result(&state, &user)
