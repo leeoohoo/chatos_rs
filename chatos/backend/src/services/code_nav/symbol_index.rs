@@ -18,6 +18,9 @@ mod persistence;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod path_security_tests;
+
 use files::{
     extension_matches, fingerprint_symbol_file, normalize_path, read_line_preview,
     should_visit_path, ProjectSymbolIndexSnapshot,
@@ -176,6 +179,18 @@ pub fn nav_location_from_indexed_symbol(
     score: f64,
 ) -> Result<NavLocation, String> {
     let path = Path::new(indexed.path.as_str());
+    // Indexes can be loaded from project-writable cache files. Their absolute
+    // paths are not authorization grants, even when the snapshot still matches.
+    // Check before preview reads (including line zero); do not canonicalize an
+    // untrusted path into a new target or trust its cached relative_path.
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        || !crate::core::path_guard::path_is_within_root(path, root)
+    {
+        return Err("code-nav indexed path is outside project root".to_string());
+    }
     let preview = read_line_preview(path, indexed.symbol.line)?;
     let relative_path = pathdiff::diff_paths(path, root)
         .unwrap_or_else(|| PathBuf::from(indexed.relative_path.as_str()))
