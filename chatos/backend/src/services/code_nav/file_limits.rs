@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
 pub(crate) const CODE_NAV_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+
+#[cfg(all(test, unix))]
+#[path = "file_limits_symlink_tests.rs"]
+mod symlink_tests;
 
 pub(crate) fn read_code_nav_file_to_string(path: &Path) -> Result<String, String> {
     let file = open_code_nav_file(path)?;
@@ -54,7 +58,18 @@ pub(crate) fn truncate_preview(value: &str, max_chars: usize) -> String {
 }
 
 fn open_code_nav_file(path: &Path) -> Result<File, String> {
-    let file = File::open(path).map_err(|err| err.to_string())?;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        // Context validation resolves legitimate input links. Reject a leaf
+        // replaced by a symlink at open time, then read only the opened handle.
+        // Ancestor replacement still needs a separate traversal boundary.
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options.open(path).map_err(|err| err.to_string())?;
     if let Ok(metadata) = file.metadata() {
         ensure_code_nav_file_within_limit(path, metadata.len())?;
     }
