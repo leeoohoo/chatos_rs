@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::fs;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 use chatos_local_workspace::LOCAL_CONNECTOR_ROOT_PREFIX;
@@ -83,7 +84,19 @@ where
         fs::create_dir_all(parent).map_err(|err| err.to_string())?;
     }
     let bytes = serde_json::to_vec_pretty(value).map_err(|err| err.to_string())?;
-    fs::write(path, bytes).map_err(|err| err.to_string())
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // Reject a project-writable cache leaf redirected to another file at
+        // the open itself, before truncation. A path precheck would race.
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    options
+        .open(path)
+        .and_then(|mut file| file.write_all(&bytes))
+        .map_err(|err| err.to_string())
 }
 
 pub fn cache_key(value: &str) -> String {
@@ -92,6 +105,10 @@ pub fn cache_key(value: &str) -> String {
     let hex = hex::encode(hasher.finalize());
     hex.chars().take(24).collect()
 }
+
+#[cfg(test)]
+#[path = "project_local_cache_write_tests.rs"]
+mod write_tests;
 
 #[cfg(test)]
 mod tests {
