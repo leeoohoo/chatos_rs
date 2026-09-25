@@ -231,7 +231,7 @@ pub const HARNESS_PROVISIONING_STATUS_PENDING: &str = "pending";
 pub const HARNESS_PROVISIONING_STATUS_PROVISIONED: &str = "provisioned";
 pub const HARNESS_PROVISIONING_STATUS_FAILED: &str = "failed";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct HarnessProvisioningRecord {
     pub user_id: String,
     pub username: String,
