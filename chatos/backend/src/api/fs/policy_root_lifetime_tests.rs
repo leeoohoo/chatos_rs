@@ -16,6 +16,114 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn write_checks_reject_redirected_descendants_of_unchanged_user_roots() {
+    use std::os::unix::fs::symlink;
+
+    for replaced in ["nested", "nested/child", "nested/child/note.txt"] {
+        for destination in ["outside", "readonly", "public", "missing"] {
+            let base = std::env::temp_dir()
+                .join(format!("chatos-write-redirect-{}", uuid::Uuid::new_v4()));
+            fs::create_dir(&base).unwrap();
+            let fixture = Fixture(fs::canonicalize(base).unwrap());
+            let prepared = UserScopedRoots::new(
+                ensure_child_directory(&fixture.0, "workspaces").unwrap(),
+                ensure_child_directory(&fixture.0, "public").unwrap(),
+            )
+            .unwrap();
+            let workspace = &prepared.workspaces_root;
+            fs::create_dir_all(workspace.join("nested/child")).unwrap();
+            fs::write(workspace.join("nested/child/note.txt"), "original").unwrap();
+            let target = match destination {
+                "readonly" => workspace.join("readonly"),
+                "public" => prepared.public_root.clone(),
+                _ => fixture.0.join(destination),
+            };
+            if destination != "missing" {
+                fs::create_dir_all(target.join("child")).unwrap();
+                fs::write(target.join("note.txt"), "unchanged").unwrap();
+                fs::write(target.join("child/note.txt"), "unchanged").unwrap();
+                fs::set_permissions(&target, fs::Permissions::from_mode(0o750)).unwrap();
+            }
+            let mut roots = Vec::new();
+            push_user_scoped_roots(&mut roots, &prepared);
+            if destination == "readonly" {
+                push_root(&mut roots, target.clone(), FsAllowedRootKind::Home);
+            }
+            let policy = FsPathPolicy { roots };
+            let directory = policy
+                .authorize_existing_dir("nested/child", "missing", "not dir")
+                .unwrap();
+            let file = policy
+                .authorize_existing_file("nested/child/note.txt", "missing", "not file")
+                .unwrap();
+            // Existing allowed symlinks resolve to canonical targets at the
+            // initial authorization boundary and remain supported.
+            symlink(workspace.join("nested/child"), workspace.join("alias")).unwrap();
+            let alias = policy
+                .authorize_existing_file("alias/note.txt", "missing", "not file")
+                .unwrap();
+            assert_eq!(alias.path, file.path);
+            for authorized in [&directory, &file, &alias] {
+                policy.require_write(authorized).unwrap();
+            }
+
+            let replaced_path = workspace.join(replaced);
+            fs::rename(&replaced_path, fixture.0.join("original")).unwrap();
+            let stale = if replaced.ends_with("note.txt") {
+                vec![&file, &alias]
+            } else {
+                vec![&directory, &file, &alias]
+            };
+            let link_target = if replaced.ends_with("note.txt") {
+                target.join("note.txt")
+            } else {
+                target.clone()
+            };
+            symlink(&link_target, &replaced_path).unwrap();
+            for authorized in &stale {
+                let result = policy.require_write(authorized);
+                assert!(
+                    matches!(result, Err(FsPolicyError::Forbidden(_))),
+                    "{replaced} -> {destination}: stale write allowed: {result:?}"
+                );
+            }
+            // Disappearance also invalidates the earlier write grant.
+            fs::remove_file(&replaced_path).unwrap();
+            for authorized in stale {
+                assert!(matches!(
+                    policy.require_write(authorized),
+                    Err(FsPolicyError::Forbidden(_))
+                ));
+            }
+            let unchanged_root = policy
+                .authorize_existing_dir(workspace.to_str().unwrap(), "missing", "not dir")
+                .unwrap();
+            policy.require_write(&unchanged_root).unwrap();
+            if replaced.ends_with("note.txt") {
+                policy.require_write(&directory).unwrap();
+            }
+            if destination != "missing" {
+                assert_eq!(
+                    fs::read_to_string(target.join("note.txt")).unwrap(),
+                    "unchanged"
+                );
+                assert_eq!(
+                    fs::read_to_string(target.join("child/note.txt")).unwrap(),
+                    "unchanged"
+                );
+                assert_eq!(fs::read_dir(&target).unwrap().count(), 2);
+                assert_eq!(
+                    fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+                    0o750
+                );
+            } else {
+                assert!(!target.exists());
+            }
+        }
+    }
+}
+
+#[test]
 fn registered_user_roots_reject_later_real_directory_replacements() {
     for replaced in ["users", "alice", "workspaces", "public"] {
         for configured_parent in [false, true] {

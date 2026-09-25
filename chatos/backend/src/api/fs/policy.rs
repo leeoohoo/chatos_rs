@@ -140,6 +140,14 @@ impl FsPathPolicy {
         if !path.can_write || !self.authorized_path_for(path.path.clone())?.can_write {
             return Err(FsPolicyError::Forbidden(WRITE_NOT_ALLOWED.to_string()));
         }
+        // The root can remain unchanged while a descendant becomes a symlink.
+        // Callers keep using the original canonical path, so reject redirects
+        // and failed resolution rather than silently authorizing a new target.
+        let canonical = policy_paths::canonicalize_existing_path(&path.path, WRITE_NOT_ALLOWED)
+            .map_err(|_| FsPolicyError::Forbidden(WRITE_NOT_ALLOWED.to_string()))?;
+        if canonical != path.path {
+            return Err(FsPolicyError::Forbidden(WRITE_NOT_ALLOWED.to_string()));
+        }
         Ok(())
     }
 
