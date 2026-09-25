@@ -3,9 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::matching::{
-    normalize_source_id, normalized_chatos_source, task_matches_source_user_message,
-};
+use super::matching::{normalize_source_id, normalized_chatos_source};
 use super::*;
 use crate::models::now_rfc3339;
 
@@ -13,6 +11,22 @@ mod graph;
 
 #[cfg(test)]
 mod tests;
+
+fn chatos_source_task_filters(
+    source_session_id: Option<String>,
+    source_user_message_ids: Vec<String>,
+    source_turn_ids: Vec<String>,
+    status: Option<TaskStatus>,
+) -> TaskListFilters {
+    TaskListFilters {
+        status,
+        source_session_id,
+        source_user_message_ids,
+        source_turn_ids,
+        include_subtasks: Some(false),
+        ..TaskListFilters::default()
+    }
+}
 
 impl TaskService {
     pub async fn list_tasks_for_source_user_message(
@@ -23,17 +37,12 @@ impl TaskService {
         let Some(source_user_message_id) = normalize_source_id(source_user_message_id) else {
             return Ok(Vec::new());
         };
-        let filters = sanitize_task_list_filters(TaskListFilters {
-            creator_user_id: creator
-                .and_then(|user| user.effective_owner_user_id().map(ToOwned::to_owned)),
-            include_subtasks: Some(false),
-            ..TaskListFilters::default()
-        });
+        let mut filters =
+            chatos_source_task_filters(None, vec![source_user_message_id], Vec::new(), None);
+        filters.creator_user_id =
+            creator.and_then(|user| user.effective_owner_user_id().map(ToOwned::to_owned));
+        let filters = sanitize_task_list_filters(filters);
         let tasks = self.store.list_tasks_filtered(&filters).await?;
-        let tasks = tasks
-            .into_iter()
-            .filter(|task| task_matches_source_user_message(task, source_user_message_id.as_str()))
-            .collect::<Vec<_>>();
         self.hydrate_tasks_prerequisites(tasks).await
     }
 
@@ -57,12 +66,15 @@ impl TaskService {
         else {
             return Ok(Vec::new());
         };
+        let filters = chatos_source_task_filters(
+            Some(source.source_session_id.clone()),
+            source.source_user_message_id.iter().cloned().collect(),
+            source.source_turn_id.iter().cloned().collect(),
+            None,
+        );
         let mut tasks = self
             .store
-            .list_tasks_filtered(&TaskListFilters {
-                include_subtasks: Some(false),
-                ..TaskListFilters::default()
-            })
+            .list_tasks_filtered(&filters)
             .await?
             .into_iter()
             .filter(|task| source.matches_task(task))
@@ -125,17 +137,13 @@ impl TaskService {
         let mut source_by_key = HashMap::<String, ChatosActiveMessageTaskSource>::new();
 
         for status in [TaskStatus::Ready, TaskStatus::Queued, TaskStatus::Running] {
-            let tasks = self
-                .store
-                .list_tasks_filtered(&TaskListFilters {
-                    status: Some(status),
-                    source_session_id: Some(source_session_id.clone()),
-                    source_user_message_ids: source_user_message_ids.clone(),
-                    source_turn_ids: source_turn_ids.clone(),
-                    include_subtasks: Some(false),
-                    ..TaskListFilters::default()
-                })
-                .await?;
+            let filters = chatos_source_task_filters(
+                Some(source_session_id.clone()),
+                source_user_message_ids.clone(),
+                source_turn_ids.clone(),
+                Some(status),
+            );
+            let tasks = self.store.list_tasks_filtered(&filters).await?;
             for task in tasks {
                 let task = self.reconcile_stale_active_message_task(task).await?;
                 if !is_active_task_status(task.status) {

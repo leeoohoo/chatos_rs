@@ -136,6 +136,22 @@ fn failed_run_for_task(task: &TaskRecord, run_id: &str) -> TaskRunRecord {
     }
 }
 
+#[test]
+fn chatos_source_query_filters_include_identifiers_and_active_status() {
+    let filters = chatos_source_task_filters(
+        Some("session-1".to_string()),
+        vec!["message-1".to_string()],
+        vec!["turn-1".to_string()],
+        Some(TaskStatus::Running),
+    );
+
+    assert_eq!(filters.status, Some(TaskStatus::Running));
+    assert_eq!(filters.source_session_id.as_deref(), Some("session-1"));
+    assert_eq!(filters.source_user_message_ids, ["message-1"]);
+    assert_eq!(filters.source_turn_ids, ["turn-1"]);
+    assert_eq!(filters.include_subtasks, Some(false));
+}
+
 #[tokio::test]
 async fn active_message_sources_repair_stale_running_task_from_failed_last_run() {
     let service = test_service().await;
