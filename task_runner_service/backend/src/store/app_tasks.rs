@@ -119,6 +119,13 @@ impl AppStore {
         }
     }
 
+    pub async fn update_tasks_batch(&self, tasks: &[TaskRecord]) -> Result<(), String> {
+        match self {
+            Self::InMemory(store) => store.update_tasks_batch(tasks),
+            Self::Postgres(store) => store.update_tasks_batch(tasks).await,
+        }
+    }
+
     pub async fn save_task_and_set_prerequisites_if_revision(
         &self,
         task: TaskRecord,

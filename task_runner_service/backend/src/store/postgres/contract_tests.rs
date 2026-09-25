@@ -87,6 +87,57 @@ fn task(id: &str, next_run_at: Option<&str>) -> TaskRecord {
 
 #[tokio::test]
 #[ignore = "requires TASK_RUNNER_TEST_DATABASE_URL and migrated PostgreSQL"]
+async fn postgres_batch_task_update_is_atomic() {
+    let store = test_store().await;
+    let suffix = uuid::Uuid::new_v4();
+    let first_id = format!("contract-batch-first-{suffix}");
+    let second_id = format!("contract-batch-second-{suffix}");
+    let mut first = store
+        .save_task(task(&first_id, None))
+        .await
+        .expect("save first task");
+    let mut second = store
+        .save_task(task(&second_id, None))
+        .await
+        .expect("save second task");
+
+    first.status = TaskStatus::Failed;
+    first.result_summary = Some("first failed".to_string());
+    second.status = TaskStatus::Cancelled;
+    second.result_summary = Some("second cancelled".to_string());
+    store
+        .update_tasks_batch(&[first.clone(), second.clone()])
+        .await
+        .expect("batch update");
+
+    assert_eq!(
+        store
+            .get_task(&first_id)
+            .await
+            .expect("load first")
+            .expect("first task")
+            .result_summary,
+        first.result_summary
+    );
+    assert_eq!(
+        store
+            .get_task(&second_id)
+            .await
+            .expect("load second")
+            .expect("second task")
+            .status,
+        TaskStatus::Cancelled
+    );
+
+    sqlx::query("DELETE FROM tasks WHERE id=ANY($1)")
+        .bind(&[first_id, second_id])
+        .execute(&store.pool)
+        .await
+        .expect("cleanup tasks");
+}
+
+#[tokio::test]
+#[ignore = "requires TASK_RUNNER_TEST_DATABASE_URL and migrated PostgreSQL"]
 async fn postgres_maintenance_lease_allows_one_owner_and_expiry_takeover() {
     let store = test_store().await;
     let app_store = AppStore::Postgres(store.clone());

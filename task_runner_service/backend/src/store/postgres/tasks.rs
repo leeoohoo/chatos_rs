@@ -154,6 +154,50 @@ impl PostgresStore {
         Ok(task)
     }
 
+    pub(in crate::store) async fn update_tasks_batch(
+        &self,
+        tasks: &[TaskRecord],
+    ) -> Result<(), String> {
+        if tasks.is_empty() {
+            return Ok(());
+        }
+        let rows = tasks
+            .iter()
+            .map(|task| {
+                Ok((
+                    task.id.clone(),
+                    enum_text(&task.status)?,
+                    timestamp(&task.updated_at)?,
+                    json(task)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let mut query = sqlx::QueryBuilder::new(
+            "UPDATE tasks AS target SET status=batch.status,updated_at=batch.updated_at,data=batch.data FROM (",
+        );
+        query.push_values(&rows, |mut values, row| {
+            values
+                .push_bind(&row.0)
+                .push_bind(&row.1)
+                .push_bind(row.2)
+                .push_bind(&row.3);
+        });
+        query.push(") AS batch(id,status,updated_at,data) WHERE target.id=batch.id");
+
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        let updated = query
+            .build()
+            .execute(&mut *tx)
+            .await
+            .map_err(db_error)?
+            .rows_affected();
+        if updated != u64::try_from(rows.len()).unwrap_or(u64::MAX) {
+            tx.rollback().await.map_err(db_error)?;
+            return Err("one or more tasks disappeared during batch update".to_string());
+        }
+        tx.commit().await.map_err(db_error)
+    }
+
     pub(in crate::store) async fn save_task_and_set_prerequisites_if_revision(
         &self,
         task: TaskRecord,

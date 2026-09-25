@@ -222,6 +222,8 @@ impl TaskService {
             .into_iter()
             .map(|run| (run.id.clone(), run))
             .collect::<HashMap<_, _>>();
+        let repaired_at = now_rfc3339();
+        let mut repairs = Vec::new();
         let mut repaired = Vec::with_capacity(tasks.len());
         for task in tasks {
             let last_run = task
@@ -229,51 +231,15 @@ impl TaskService {
                 .as_deref()
                 .map(str::trim)
                 .and_then(|run_id| runs_by_id.get(run_id));
-            repaired.push(
-                self.reconcile_stale_active_message_task(task, last_run)
-                    .await?,
-            );
+            if let Some(repair) = stale_active_task_repair(&task, last_run, &repaired_at) {
+                repairs.push(repair.clone());
+                repaired.push(repair);
+            } else {
+                repaired.push(task);
+            }
         }
+        self.store.update_tasks_batch(&repairs).await?;
         Ok(repaired)
-    }
-
-    async fn reconcile_stale_active_message_task(
-        &self,
-        task: TaskRecord,
-        last_run: Option<&TaskRunRecord>,
-    ) -> Result<TaskRecord, String> {
-        if !is_active_task_status(task.status) {
-            return Ok(task);
-        }
-        let Some(last_run) = last_run else {
-            return Ok(task);
-        };
-        if last_run.task_id.trim() != task.id.trim() {
-            return Ok(task);
-        }
-        let Some(next_status) = terminal_task_status_for_run_status(last_run.status) else {
-            return Ok(task);
-        };
-        if !should_reconcile_stale_active_task(&task, last_run) {
-            return Ok(task);
-        }
-
-        let mut repaired = task;
-        repaired.status = next_status;
-        repaired.last_run_id = Some(last_run.id.clone());
-        if repaired
-            .result_summary
-            .as_deref()
-            .map(str::trim)
-            .is_none_or(str::is_empty)
-        {
-            repaired.result_summary = last_run
-                .result_summary
-                .clone()
-                .or_else(|| last_run.error_message.clone());
-        }
-        repaired.updated_at = now_rfc3339();
-        self.store.save_task(repaired).await
     }
 
     pub async fn get_task_for_chatos_message(
@@ -491,6 +457,41 @@ fn is_active_task_status(status: TaskStatus) -> bool {
 
 fn is_running_task_status(status: TaskStatus) -> bool {
     matches!(status, TaskStatus::Queued | TaskStatus::Running)
+}
+
+fn stale_active_task_repair(
+    task: &TaskRecord,
+    last_run: Option<&TaskRunRecord>,
+    repaired_at: &str,
+) -> Option<TaskRecord> {
+    if !is_active_task_status(task.status) {
+        return None;
+    }
+    let last_run = last_run?;
+    if last_run.task_id.trim() != task.id.trim() {
+        return None;
+    }
+    let next_status = terminal_task_status_for_run_status(last_run.status)?;
+    if !should_reconcile_stale_active_task(task, last_run) {
+        return None;
+    }
+
+    let mut repaired = task.clone();
+    repaired.status = next_status;
+    repaired.last_run_id = Some(last_run.id.clone());
+    if repaired
+        .result_summary
+        .as_deref()
+        .map(str::trim)
+        .is_none_or(str::is_empty)
+    {
+        repaired.result_summary = last_run
+            .result_summary
+            .clone()
+            .or_else(|| last_run.error_message.clone());
+    }
+    repaired.updated_at = repaired_at.to_string();
+    Some(repaired)
 }
 
 fn terminal_task_status_for_run_status(status: TaskRunStatus) -> Option<TaskStatus> {

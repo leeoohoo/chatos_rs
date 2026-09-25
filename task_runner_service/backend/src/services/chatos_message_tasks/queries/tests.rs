@@ -153,6 +153,24 @@ fn chatos_source_query_filters_include_identifiers_and_active_status() {
 }
 
 #[tokio::test]
+async fn stale_active_task_repair_is_a_pure_decision() {
+    let service = test_service().await;
+    let mut task = create_chatos_task(&service, "pure repair").await;
+    task.status = TaskStatus::Running;
+    task.last_run_id = Some("run-failed".to_string());
+    let run = failed_run_for_task(&task, "run-failed");
+
+    let repaired =
+        stale_active_task_repair(&task, Some(&run), "2026-09-26T00:00:00Z").expect("repair needed");
+
+    assert_eq!(task.status, TaskStatus::Running);
+    assert!(task.result_summary.is_none());
+    assert_eq!(repaired.status, TaskStatus::Failed);
+    assert_eq!(repaired.result_summary.as_deref(), Some("run failed"));
+    assert_eq!(repaired.updated_at, "2026-09-26T00:00:00Z");
+}
+
+#[tokio::test]
 async fn active_message_sources_repair_stale_running_task_from_failed_last_run() {
     let service = test_service().await;
     let mut task = create_chatos_task(&service, "stale").await;
