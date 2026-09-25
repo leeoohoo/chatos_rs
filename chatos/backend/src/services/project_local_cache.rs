@@ -85,17 +85,27 @@ where
     }
     let bytes = serde_json::to_vec_pretty(value).map_err(|err| err.to_string())?;
     let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    options.write(true).create(true).truncate(false);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        // Reject a project-writable cache leaf redirected to another file at
-        // the open itself, before truncation. A path precheck would race.
-        options.custom_flags(libc::O_NOFOLLOW);
+        // Reject leaf links at open, and never wait for a FIFO reader before
+        // we can check the opened object's type. A path precheck would race.
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
     options
         .open(path)
-        .and_then(|mut file| file.write_all(&bytes))
+        .and_then(|mut file| {
+            if !file.metadata()?.is_file() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "cache target is not a regular file",
+                ));
+            }
+            // Validate before truncating, then write through the same handle.
+            file.set_len(0)?;
+            file.write_all(&bytes)
+        })
         .map_err(|err| err.to_string())
 }
 
@@ -109,6 +119,10 @@ pub fn cache_key(value: &str) -> String {
 #[cfg(test)]
 #[path = "project_local_cache_write_tests.rs"]
 mod write_tests;
+
+#[cfg(all(test, unix))]
+#[path = "project_local_cache_special_tests.rs"]
+mod special_tests;
 
 #[cfg(test)]
 mod tests {
