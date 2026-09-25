@@ -15,6 +15,10 @@ mod symlink_tests;
 #[path = "file_limits_special_tests.rs"]
 mod special_tests;
 
+#[cfg(all(test, unix))]
+#[path = "file_limits_hardlink_tests.rs"]
+mod hardlink_tests;
+
 pub(crate) fn read_code_nav_file_to_string(path: &Path) -> Result<String, String> {
     let file = open_code_nav_file(path)?;
     let mut bytes = Vec::new();
@@ -83,6 +87,16 @@ fn open_code_nav_file(path: &Path) -> Result<File, String> {
     let metadata = file.metadata().map_err(|err| err.to_string())?;
     if !metadata.is_file() {
         return Err("code-nav path is not a regular file".to_string());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // Canonical paths and O_NOFOLLOW cannot distinguish hard links to
+        // files outside the project. Check the opened inode before reading;
+        // this does not prevent links created after the metadata check.
+        if metadata.nlink() > 1 {
+            return Err("code-nav file has multiple hard links".to_string());
+        }
     }
     ensure_code_nav_file_within_limit(path, metadata.len())?;
     Ok(file)

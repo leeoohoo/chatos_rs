@@ -160,6 +160,7 @@ pub fn invalidate_project_symbol_indexes_for_path(path: &Path) -> usize {
             }
         })
         .collect();
+    let invalidated = keys.len();
     for key in keys {
         PROJECT_SYMBOL_INDEX_DIRTY_PATHS
             .entry(key)
@@ -170,7 +171,7 @@ pub fn invalidate_project_symbol_indexes_for_path(path: &Path) -> usize {
             })
             .or_insert_with(|| vec![target.clone()]);
     }
-    PROJECT_SYMBOL_INDEX_DIRTY_PATHS.len()
+    invalidated
 }
 
 pub fn nav_location_from_indexed_symbol(
