@@ -128,3 +128,50 @@ fn cache_read_rejects_hard_links_without_loading_target_json() {
         assert_eq!(fs::metadata(&cache).unwrap().nlink(), 1);
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn cache_read_rejects_ancestor_symlinks_without_loading_target_json() {
+    use std::os::unix::fs::{symlink, MetadataExt};
+
+    for ancestor in [
+        "project",
+        "project/.chatos",
+        "project/.chatos/cache",
+        "project/.chatos/cache/code_nav",
+    ] {
+        let fixture = Fixture::new();
+        let project = fixture.0.join("project");
+        let relative = "code_nav/index.json";
+        let cache = project_cache_file_path(project.to_str().unwrap(), relative).unwrap();
+        let sentinel = br#"{"private_fixture_value":"must not be loaded"}"#;
+        fs::write(&cache, sentinel).unwrap();
+        let redirected = fixture.0.join(ancestor);
+        let moved = fixture.0.join("moved");
+        let target = moved.join(cache.strip_prefix(&redirected).unwrap());
+        fs::rename(&redirected, &moved).unwrap();
+        symlink(&moved, &redirected).unwrap();
+        let before = fs::metadata(&target).unwrap();
+        assert!(cache.is_file());
+        assert!(!fs::symlink_metadata(&cache).unwrap().is_symlink());
+
+        let result = read_cache_json::<serde_json::Value>(project.to_str().unwrap(), relative);
+        assert!(result.is_err(), "cache reader followed ancestor {ancestor}");
+        assert!(!result.unwrap_err().contains("private_fixture_value"));
+        assert_eq!(fs::read_link(&redirected).unwrap(), moved);
+        assert_eq!(fs::read(&target).unwrap(), sentinel);
+        let after = fs::metadata(&target).unwrap();
+        assert_eq!(
+            (after.dev(), after.ino(), after.mode(), after.nlink()),
+            (before.dev(), before.ino(), before.mode(), before.nlink())
+        );
+
+        // Restoring the real directory permits ordinary JSON reads again.
+        fs::remove_file(&redirected).unwrap();
+        fs::rename(&moved, &redirected).unwrap();
+        assert_eq!(
+            read_cache_json::<serde_json::Value>(project.to_str().unwrap(), relative).unwrap(),
+            Some(serde_json::from_slice(sentinel).unwrap())
+        );
+    }
+}

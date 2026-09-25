@@ -66,16 +66,10 @@ where
     if !path.is_file() {
         return Ok(None);
     }
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        // The file check above follows links and can race with replacement.
-        // Reject a leaf symlink at the actual open, then read the same handle.
-        options.custom_flags(libc::O_NOFOLLOW);
-    }
-    let mut file = options.open(path).map_err(|err| err.to_string())?;
+    let mut file = open_cache_file_without_symlinks(&path).map_err(|err| err.to_string())?;
+    #[cfg(not(unix))]
+    let mut file = fs::File::open(&path).map_err(|err| err.to_string())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -92,6 +86,42 @@ where
     serde_json::from_slice::<T>(&bytes)
         .map(Some)
         .map_err(|err| err.to_string())
+}
+
+#[cfg(unix)]
+fn open_cache_file_without_symlinks(path: &Path) -> std::io::Result<fs::File> {
+    use crate::core::fs_open::open_directory_without_symlinks;
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+
+    // The project context is already canonical. Resolving it again here would
+    // follow replaced ancestors; instead hold each directory while opening the next.
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "expected a cache parent")
+    })?;
+    let name = path.file_name().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "expected a cache file name",
+        )
+    })?;
+    let name = CString::new(name.as_bytes())?;
+    let directory = open_directory_without_symlinks(parent)?;
+    // SAFETY: directory owns a live descriptor and name is one NUL-terminated
+    // component. O_CREAT is absent, so no mode argument is required.
+    let fd = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: successful openat returns a fresh descriptor owned only here.
+    Ok(unsafe { fs::File::from_raw_fd(fd) })
 }
 
 pub fn write_cache_json<T>(project_root: &str, relative_path: &str, value: &T) -> Result<(), String>

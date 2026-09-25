@@ -388,3 +388,63 @@ async fn index_cache_read_rejects_hard_links_via_manager() {
     assert_eq!(fs::read(&source).unwrap(), b"fn main() { greet(); }\n");
     assert_eq!(fs::read(&valid).unwrap(), b"fn greet() {}\n");
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn index_cache_read_rejects_ancestor_symlinks_via_manager() {
+    use crate::services::project_local_cache::project_cache_file_path;
+    use std::os::unix::fs::symlink;
+
+    for ancestor in [".chatos", ".chatos/cache", ".chatos/cache/code_nav"] {
+        let fixture = Fixture::new();
+        let root = fixture.0.join("project");
+        let source = root.join("src/main.rs");
+        let valid = root.join("src/valid.rs");
+        fs::write(&source, "fn main() { greet(); }\n").unwrap();
+        fs::write(&valid, "fn greet() {}\n").unwrap();
+        let snapshot = project_symbol_index_snapshot(&root, &["rs"], &[]).unwrap();
+        let external_index = ProjectSymbolIndex {
+            symbols_by_name: HashMap::from([("greet".into(), vec![indexed(&valid)])]),
+        };
+        let bytes = serde_json::to_vec(&persisted_project_symbol_index_entry(
+            snapshot,
+            &external_index,
+        ))
+        .unwrap();
+        let cache =
+            project_cache_file_path(root.to_str().unwrap(), &symbol_index_cache_path("rust"))
+                .unwrap();
+        fs::create_dir_all(cache.parent().unwrap()).unwrap();
+        fs::write(&cache, &bytes).unwrap();
+        let redirected = root.join(ancestor);
+        let moved = fixture.0.join("moved");
+        let target = moved.join(cache.strip_prefix(&redirected).unwrap());
+        fs::rename(&redirected, &moved).unwrap();
+        symlink(&moved, &redirected).unwrap();
+
+        let manager = CodeNavManager::new(vec![Arc::new(RustCodeNavProvider)]);
+        let response = manager
+            .definition(&NavPositionRequest {
+                project_root: root.to_str().unwrap().into(),
+                file_path: source.to_str().unwrap().into(),
+                line: 1,
+                column: 14,
+            })
+            .await
+            .unwrap();
+        // Matching external JSON must not be admitted to the in-memory index.
+        // The existing provider search fallback should still find real source.
+        assert!(
+            !PROJECT_SYMBOL_INDEX_CACHE
+                .contains_key(&project_symbol_index_cache_key(&root, "rust")),
+            "manager loaded the external index through ancestor {ancestor}"
+        );
+        assert!(response.locations.iter().any(|location| {
+            location.path == valid.to_str().unwrap() && location.preview == "fn greet() {}"
+        }));
+        assert_eq!(fs::read_link(&redirected).unwrap(), moved);
+        assert_eq!(fs::read(&target).unwrap(), bytes);
+        assert_eq!(fs::read(&source).unwrap(), b"fn main() { greet(); }\n");
+        assert_eq!(fs::read(&valid).unwrap(), b"fn greet() {}\n");
+    }
+}
