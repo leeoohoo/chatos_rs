@@ -67,6 +67,31 @@ fn legacy_user_password_records_are_never_reused() {
 }
 
 #[test]
+fn legacy_user_password_records_are_retired_without_decryption() {
+    let legacy_ciphertext = "legacy-user-password-ciphertext";
+    let mut record = failed_record(None, Some(legacy_ciphertext));
+
+    assert!(retire_legacy_harness_provisioning_credential(&mut record));
+    assert_eq!(
+        record.credential_kind.as_deref(),
+        Some(HARNESS_PROVISIONING_CREDENTIAL_KIND_LEGACY_REMOVED_V1)
+    );
+    assert!(record.encrypted_provisioning_secret.is_none());
+    assert_eq!(
+        record.last_error.as_deref(),
+        Some(HARNESS_LEGACY_CREDENTIAL_RECOVERY_ERROR)
+    );
+    assert_eq!(
+        resolve_harness_provisioning_password(Some(&record)).unwrap_err(),
+        HARNESS_LEGACY_CREDENTIAL_RECOVERY_ERROR
+    );
+    assert!(!retire_legacy_harness_provisioning_credential(&mut record));
+    assert!(!serde_json::to_string(&record)
+        .unwrap()
+        .contains(legacy_ciphertext));
+}
+
+#[test]
 fn provisioning_records_use_an_explicit_harness_secret_field() {
     let record = failed_record(
         Some(HARNESS_PROVISIONING_CREDENTIAL_KIND_GENERATED_V1),

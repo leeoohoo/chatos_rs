@@ -32,6 +32,10 @@ use identifiers::{
 };
 
 const HARNESS_PROVISIONING_CREDENTIAL_KIND_GENERATED_V1: &str = "generated_v1";
+const HARNESS_PROVISIONING_CREDENTIAL_KIND_LEGACY_REMOVED_V1: &str =
+    "legacy_user_password_removed_v1";
+const HARNESS_LEGACY_CREDENTIAL_RECOVERY_ERROR: &str =
+    "legacy Harness provisioning credential requires administrator recovery";
 
 #[derive(Debug, Clone)]
 struct HarnessProvisioningIdentity {
@@ -271,10 +275,17 @@ async fn begin_harness_provisioning_attempt(
     identity: &HarnessProvisioningIdentity,
 ) -> Result<(HarnessProvisioningRecord, String), String> {
     let now = now_rfc3339();
-    let prior = state
+    let mut prior = state
         .store
         .find_harness_provisioning_by_user_id(user.id.as_str())
         .await?;
+    if let Some(record) = prior.as_mut() {
+        if retire_legacy_harness_provisioning_credential(record) {
+            record.updated_at = now.clone();
+            state.store.save_harness_provisioning(record).await?;
+            return Err(HARNESS_LEGACY_CREDENTIAL_RECOVERY_ERROR.to_string());
+        }
+    }
     let attempts = prior.as_ref().map(|item| item.attempts + 1).unwrap_or(1);
     let created_at = prior
         .as_ref()
@@ -317,21 +328,36 @@ fn generated_harness_provisioning_password() -> String {
     format!("chatos_harness_{}", URL_SAFE_NO_PAD.encode(random))
 }
 
+fn retire_legacy_harness_provisioning_credential(record: &mut HarnessProvisioningRecord) -> bool {
+    if record.credential_kind.is_some() || record.encrypted_provisioning_secret.is_none() {
+        return false;
+    }
+    record.credential_kind =
+        Some(HARNESS_PROVISIONING_CREDENTIAL_KIND_LEGACY_REMOVED_V1.to_string());
+    record.encrypted_provisioning_secret = None;
+    record.status = HARNESS_PROVISIONING_STATUS_FAILED.to_string();
+    record.last_error = Some(HARNESS_LEGACY_CREDENTIAL_RECOVERY_ERROR.to_string());
+    true
+}
+
 fn resolve_harness_provisioning_password(
     prior: Option<&HarnessProvisioningRecord>,
 ) -> Result<String, String> {
     let Some(record) = prior else {
         return Ok(generated_harness_provisioning_password());
     };
+    if record.credential_kind.as_deref()
+        == Some(HARNESS_PROVISIONING_CREDENTIAL_KIND_LEGACY_REMOVED_V1)
+    {
+        return Err(HARNESS_LEGACY_CREDENTIAL_RECOVERY_ERROR.to_string());
+    }
     let Some(encrypted_provisioning_secret) = record.encrypted_provisioning_secret.as_deref()
     else {
         return Ok(generated_harness_provisioning_password());
     };
     if record.credential_kind.as_deref() != Some(HARNESS_PROVISIONING_CREDENTIAL_KIND_GENERATED_V1)
     {
-        return Err(
-            "legacy Harness provisioning credential requires administrator recovery".to_string(),
-        );
+        return Err(HARNESS_LEGACY_CREDENTIAL_RECOVERY_ERROR.to_string());
     }
     decrypt_secret(encrypted_provisioning_secret)
 }
