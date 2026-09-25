@@ -11,7 +11,9 @@ use crate::core::auth::AuthUser;
 use crate::utils::workspace::resolve_workspace_dir;
 
 use super::super::roots::home_dir;
-use super::policy_paths::{canonicalize_existing_dir, normalize_path_for_compare};
+use super::policy_paths::{
+    canonicalize_existing_dir, normalize_path_for_compare, path_is_within_root,
+};
 use super::{FsAllowedRoot, FsAllowedRootKind};
 
 pub(super) async fn build_allowed_roots(auth: &AuthUser) -> Vec<FsAllowedRoot> {
@@ -50,23 +52,39 @@ pub(super) async fn build_allowed_roots(auth: &AuthUser) -> Vec<FsAllowedRoot> {
             FsAllowedRootKind::Workspace,
         );
 
+        let configured_roots = env::var("FS_ALLOWED_ROOTS")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .filter_map(|value| canonicalize_existing_dir(Path::new(value)).ok())
+            .collect::<Vec<_>>();
+
         if let Some(home) = home_dir() {
-            push_root(&mut roots, home.join(".ssh"), FsAllowedRootKind::Ssh);
-            push_root(&mut roots, home, FsAllowedRootKind::Home);
+            let enabled = home_fs_roots_enabled();
+            for (candidate, kind) in [
+                (home.join(".ssh"), FsAllowedRootKind::Ssh),
+                (home, FsAllowedRootKind::Home),
+            ] {
+                let Ok(canonical) = canonicalize_existing_dir(&candidate) else {
+                    continue;
+                };
+                // Without opt-in, retain a read-only boundary only where an
+                // independent root already grants access to the whole directory.
+                // Dropping it would turn existing read-only access into writes.
+                let already_covered = roots
+                    .iter()
+                    .map(|root| &root.path)
+                    .chain(configured_roots.iter())
+                    .any(|root| path_is_within_root(&canonical, root));
+                if enabled || already_covered {
+                    push_canonical_root(&mut roots, canonical, kind);
+                }
+            }
         }
 
-        if let Ok(raw) = env::var("FS_ALLOWED_ROOTS") {
-            for value in raw
-                .split(',')
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                push_root(
-                    &mut roots,
-                    PathBuf::from(value),
-                    FsAllowedRootKind::Configured,
-                );
-            }
+        for canonical in configured_roots {
+            push_canonical_root(&mut roots, canonical, FsAllowedRootKind::Configured);
         }
     }
 
@@ -342,6 +360,12 @@ pub(crate) fn log_host_fs_roots_configuration() {
             event = "host_fs_roots_enabled",
             "Host filesystem roots explicitly enabled"
         );
+        if home_fs_roots_enabled() {
+            tracing::warn!(
+                event = "home_fs_roots_enabled",
+                "Home and SSH filesystem roots explicitly enabled"
+            );
+        }
         if repo_parent_fs_root_enabled() {
             tracing::warn!(
                 event = "repo_parent_fs_root_enabled",
@@ -349,6 +373,10 @@ pub(crate) fn log_host_fs_roots_configuration() {
             );
         }
     }
+}
+
+fn home_fs_roots_enabled() -> bool {
+    env_bool_override("CHATOS_ENABLE_HOME_FS_ROOTS").unwrap_or(false)
 }
 
 fn repo_parent_fs_root_enabled() -> bool {
@@ -427,6 +455,10 @@ mod lifetime_tests;
 #[cfg(test)]
 #[path = "policy_repo_parent_tests.rs"]
 mod repo_parent_tests;
+
+#[cfg(test)]
+#[path = "policy_home_tests.rs"]
+mod home_tests;
 
 #[cfg(test)]
 mod tests {
@@ -567,7 +599,8 @@ mod tests {
                     .arg(format!("{module}::host_fs_roots_require_explicit_opt_in"))
                     .arg("--nocapture")
                     .env(EXPECTED, expected.to_string())
-                    .env_remove("CHATOS_ENABLE_REPO_PARENT_FS_ROOT");
+                    .env_remove("CHATOS_ENABLE_REPO_PARENT_FS_ROOT")
+                    .env_remove("CHATOS_ENABLE_HOME_FS_ROOTS");
                 for (key, value) in [
                     ("NODE_ENV", node_env.map(std::ffi::OsStr::new)),
                     ("CHATOS_ENABLE_HOST_FS_ROOTS", primary),

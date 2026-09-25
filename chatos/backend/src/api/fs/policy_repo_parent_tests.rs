@@ -175,7 +175,8 @@ async fn repo_parent_requires_separate_opt_in() {
                     .env_remove("FS_ALLOWED_ROOTS")
                     .env_remove("CHATOS_ENABLE_HOST_FS_ROOTS")
                     .env_remove("FS_ENABLE_HOST_ROOTS")
-                    .env_remove("CHATOS_ENABLE_REPO_PARENT_FS_ROOT");
+                    .env_remove("CHATOS_ENABLE_REPO_PARENT_FS_ROOT")
+                    .env_remove("CHATOS_ENABLE_HOME_FS_ROOTS");
                 match host {
                     "primary" => {
                         command.env("CHATOS_ENABLE_HOST_FS_ROOTS", "true");
