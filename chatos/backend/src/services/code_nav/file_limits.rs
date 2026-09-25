@@ -36,12 +36,26 @@ pub(crate) fn read_code_nav_line_preview(
     }
 
     let file = open_code_nav_file(path)?;
-    let mut reader = BufReader::new(file);
+    read_code_nav_line_preview_from_reader(path, file, line, max_chars)
+}
+
+fn read_code_nav_line_preview_from_reader(
+    path: &Path,
+    source: impl Read,
+    line: usize,
+    max_chars: usize,
+) -> Result<String, String> {
+    // The file can grow after the opener's metadata check. Bound the source
+    // before buffering and share one budget across all scanned lines.
+    let mut reader = BufReader::new(source.take(CODE_NAV_MAX_FILE_BYTES + 1));
+    let mut total_bytes = 0;
     for current_line in 1..=line {
         let mut bytes = Vec::new();
         let read = reader
             .read_until(b'\n', &mut bytes)
             .map_err(|err| format!("read code-nav line failed: {err}"))?;
+        total_bytes += read as u64;
+        ensure_code_nav_file_within_limit(path, total_bytes)?;
         if read == 0 {
             return Ok(String::new());
         }
@@ -120,6 +134,10 @@ fn ensure_code_nav_file_within_limit(path: &Path, actual_bytes: u64) -> Result<(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "file_limits_growth_tests.rs"]
+mod growth_tests;
 
 #[cfg(test)]
 mod tests {
