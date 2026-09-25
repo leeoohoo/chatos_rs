@@ -13,7 +13,6 @@ use crate::models::{
     CreateUserRequest, ProvisionHarnessUserRequest, UpdateUserRequest, UserOptionRecord,
     UserRecord, UserSummaryPageResponse, UserSummaryRecord, USER_ROLE_SUPER_ADMIN, USER_ROLE_USER,
 };
-use crate::secrets::decrypt_secret;
 use crate::state::AppState;
 use crate::store::now_rfc3339;
 
@@ -161,8 +160,7 @@ pub async fn create_user(
         .await
         .map_err(internal_error)?;
     if user.enabled {
-        let _ =
-            provision_harness_user_public_register(&state, &user, input.password.as_str()).await;
+        let _ = provision_harness_user_public_register(&state, &user).await;
     }
 
     let summary = state
@@ -204,13 +202,12 @@ pub async fn retry_harness_provisioning(
     else {
         return Err(bad_request("harness provisioning record not found"));
     };
-    let Some(encrypted_password) = record.encrypted_password.as_deref() else {
+    if record.encrypted_password.is_none() {
         return Err(bad_request(
             "harness provisioning password is unavailable; reset password before retry",
         ));
-    };
-    let password = decrypt_secret(encrypted_password).map_err(internal_error)?;
-    provision_harness_user_public_register_result(&state, &user, password.as_str())
+    }
+    provision_harness_user_public_register_result(&state, &user)
         .await
         .map_err(internal_error)?;
 
@@ -254,7 +251,7 @@ pub async fn provision_harness_user(
         .await
         .map_err(internal_error)?;
 
-    provision_harness_user_public_register_result(&state, &user, input.password.as_str())
+    provision_harness_user_public_register_result(&state, &user)
         .await
         .map_err(internal_error)?;
 

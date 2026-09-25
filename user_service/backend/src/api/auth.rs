@@ -116,8 +116,7 @@ pub async fn login(
         .touch_user_last_login(user.id.as_str())
         .await
         .map_err(internal_error)?;
-    let _ =
-        ensure_harness_user_public_register_on_login(&state, &user, input.password.as_str()).await;
+    let _ = ensure_harness_user_public_register_on_login(&state, &user).await;
     let token = encode_user_token(&state.config, &user).map_err(internal_error)?;
 
     Ok(Json(LoginResponse {
@@ -293,7 +292,7 @@ pub async fn register(
         .mark_registration_email_code_consumed(email.as_str())
         .await
         .map_err(internal_error)?;
-    let _ = provision_harness_user_public_register(&state, &user, input.password.as_str()).await;
+    let _ = provision_harness_user_public_register(&state, &user).await;
     state
         .store
         .touch_user_last_login(user.id.as_str())

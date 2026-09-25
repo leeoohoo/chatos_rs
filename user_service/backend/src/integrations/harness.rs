@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use chatos_service_runtime::http_body::{
     read_response_json_limited, read_response_preview_text_limited_or_message,
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
@@ -15,7 +17,7 @@ use crate::models::{
     HarnessProvisioningRecord, UserRecord, HARNESS_PROVISIONING_STATUS_FAILED,
     HARNESS_PROVISIONING_STATUS_PENDING, HARNESS_PROVISIONING_STATUS_PROVISIONED,
 };
-use crate::secrets::encrypt_secret;
+use crate::secrets::{decrypt_secret, encrypt_secret};
 use crate::state::AppState;
 use crate::store::now_rfc3339;
 use crate::trace_context::InternalTraceContextExt;
@@ -28,6 +30,8 @@ use identifiers::{
     harness_email_for_user, harness_project_pat_identifier, harness_space_identifier_for_user,
     harness_uid_for_user, truncate_error,
 };
+
+const HARNESS_PROVISIONING_CREDENTIAL_KIND_GENERATED_V1: &str = "generated_v1";
 
 #[derive(Debug, Clone)]
 struct HarnessProvisioningIdentity {
@@ -151,9 +155,8 @@ impl fmt::Display for HarnessRequestError {
 pub async fn provision_harness_user_public_register(
     state: &AppState,
     user: &UserRecord,
-    password: &str,
 ) -> Vec<String> {
-    match provision_harness_user_public_register_result(state, user, password).await {
+    match provision_harness_user_public_register_result(state, user).await {
         Ok(()) => Vec::new(),
         Err(err) => vec![format!("harness provisioning failed: {err}")],
     }
@@ -162,7 +165,6 @@ pub async fn provision_harness_user_public_register(
 pub async fn ensure_harness_user_public_register_on_login(
     state: &AppState,
     user: &UserRecord,
-    password: &str,
 ) -> Vec<String> {
     if !state.config.harness_provisioning_enabled {
         return Vec::new();
@@ -182,7 +184,7 @@ pub async fn ensure_harness_user_public_register_on_login(
         {
             Vec::new()
         }
-        Ok(_) => provision_harness_user_public_register(state, user, password).await,
+        Ok(_) => provision_harness_user_public_register(state, user).await,
         Err(err) => vec![format!("harness provisioning lookup failed: {err}")],
     }
 }
@@ -190,14 +192,14 @@ pub async fn ensure_harness_user_public_register_on_login(
 pub async fn provision_harness_user_public_register_result(
     state: &AppState,
     user: &UserRecord,
-    password: &str,
 ) -> Result<(), String> {
     if !state.config.harness_provisioning_enabled {
         return Ok(());
     }
 
     let identity = HarnessProvisioningIdentity::from_user(user, state);
-    let attempt = begin_harness_provisioning_attempt(state, user, &identity, password).await?;
+    let (attempt, provisioning_password) =
+        begin_harness_provisioning_attempt(state, user, &identity).await?;
     let Some(base_url) = normalized_url(state.config.harness_base_url.as_deref()) else {
         warn!("harness provisioning enabled but HARNESS_BASE_URL is not configured");
         let err = "HARNESS_BASE_URL is not configured".to_string();
@@ -210,7 +212,7 @@ pub async fn provision_harness_user_public_register_result(
         base_url.as_str(),
         &identity,
         user,
-        password,
+        provisioning_password.as_str(),
     )
     .await;
 
@@ -267,8 +269,7 @@ async fn begin_harness_provisioning_attempt(
     state: &AppState,
     user: &UserRecord,
     identity: &HarnessProvisioningIdentity,
-    password: &str,
-) -> Result<HarnessProvisioningRecord, String> {
+) -> Result<(HarnessProvisioningRecord, String), String> {
     let now = now_rfc3339();
     let prior = state
         .store
@@ -279,7 +280,8 @@ async fn begin_harness_provisioning_attempt(
         .as_ref()
         .map(|item| item.created_at.clone())
         .unwrap_or_else(|| now.clone());
-    let encrypted_password = encrypt_secret(password)?;
+    let provisioning_password = resolve_harness_provisioning_password(prior.as_ref())?;
+    let encrypted_password = encrypt_secret(provisioning_password.as_str())?;
     let record = HarnessProvisioningRecord {
         user_id: user.id.clone(),
         username: user.username.clone(),
@@ -288,6 +290,7 @@ async fn begin_harness_provisioning_attempt(
         space_identifier: identity.space_identifier.clone(),
         status: HARNESS_PROVISIONING_STATUS_PENDING.to_string(),
         attempts,
+        credential_kind: Some(HARNESS_PROVISIONING_CREDENTIAL_KIND_GENERATED_V1.to_string()),
         encrypted_password: Some(encrypted_password),
         encrypted_access_token: prior
             .as_ref()
@@ -304,7 +307,32 @@ async fn begin_harness_provisioning_attempt(
         created_at,
         updated_at: now,
     };
-    state.store.save_harness_provisioning(&record).await
+    let record = state.store.save_harness_provisioning(&record).await?;
+    Ok((record, provisioning_password))
+}
+
+fn generated_harness_provisioning_password() -> String {
+    let mut random = [0u8; 32];
+    rand::fill(&mut random);
+    format!("chatos_harness_{}", URL_SAFE_NO_PAD.encode(random))
+}
+
+fn resolve_harness_provisioning_password(
+    prior: Option<&HarnessProvisioningRecord>,
+) -> Result<String, String> {
+    let Some(record) = prior else {
+        return Ok(generated_harness_provisioning_password());
+    };
+    let Some(encrypted_password) = record.encrypted_password.as_deref() else {
+        return Ok(generated_harness_provisioning_password());
+    };
+    if record.credential_kind.as_deref() != Some(HARNESS_PROVISIONING_CREDENTIAL_KIND_GENERATED_V1)
+    {
+        return Err(
+            "legacy Harness provisioning credential requires administrator recovery".to_string(),
+        );
+    }
+    decrypt_secret(encrypted_password)
 }
 
 async fn finish_harness_provisioning_success(
@@ -702,3 +730,7 @@ mod debug_tests;
 #[cfg(test)]
 #[path = "harness/redirect_tests.rs"]
 mod redirect_tests;
+
+#[cfg(test)]
+#[path = "harness/credential_tests.rs"]
+mod credential_tests;
