@@ -392,7 +392,7 @@ pub struct AuthUser {
     pub principal_type: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
@@ -507,7 +507,7 @@ pub struct SendRegisterEmailCodeResponse {
     pub resend_after_seconds: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RegisterRequest {
     pub username: Option<String>,
     pub email: Option<String>,
@@ -578,7 +578,7 @@ pub struct TokenVerifyResponse {
     pub principal: VerifiedPrincipal,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CreateUserRequest {
     pub username: String,
     pub display_name: Option<String>,
@@ -595,7 +595,7 @@ pub struct UpdateUserRequest {
     pub enabled: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ProvisionHarnessUserRequest {
     pub password: String,
 }
@@ -749,6 +749,8 @@ pub struct SystemConfigResponse {
     pub user_access_ttl_seconds: i64,
     pub task_runner_access_ttl_seconds: i64,
 }
+
+mod harness_credentials;
 
 #[cfg(test)]
 mod tests {
