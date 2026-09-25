@@ -78,6 +78,13 @@ impl AppStore {
         }
     }
 
+    pub async fn get_runs_by_ids(&self, ids: &[String]) -> Result<Vec<TaskRunRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.get_runs_by_ids(ids)),
+            Self::Postgres(store) => store.get_runs_by_ids(ids).await,
+        }
+    }
+
     pub async fn get_run(&self, id: &str) -> Result<Option<TaskRunRecord>, String> {
         match self {
             Self::InMemory(store) => Ok(store.get_run(id)),

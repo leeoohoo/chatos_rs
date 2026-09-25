@@ -207,6 +207,16 @@ impl InMemoryStore {
         items
     }
 
+    pub(in crate::store) fn get_runs_by_ids(&self, ids: &[String]) -> Vec<TaskRunRecord> {
+        let wanted = ids.iter().collect::<std::collections::HashSet<_>>();
+        let data = self.inner.read();
+        data.runs
+            .values()
+            .filter(|run| wanted.contains(&run.id))
+            .cloned()
+            .collect()
+    }
+
     pub(in crate::store) fn get_run(&self, id: &str) -> Option<TaskRunRecord> {
         self.inner.read().runs.get(id).cloned()
     }

@@ -135,6 +135,7 @@ impl TaskService {
         let source_turn_id_set = source_turn_ids.iter().cloned().collect::<HashSet<_>>();
         let has_source_filters = !source_user_message_ids.is_empty() || !source_turn_ids.is_empty();
         let mut source_by_key = HashMap::<String, ChatosActiveMessageTaskSource>::new();
+        let mut active_tasks = Vec::new();
 
         for status in [TaskStatus::Ready, TaskStatus::Queued, TaskStatus::Running] {
             let filters = chatos_source_task_filters(
@@ -143,54 +144,54 @@ impl TaskService {
                 source_turn_ids.clone(),
                 Some(status),
             );
-            let tasks = self.store.list_tasks_filtered(&filters).await?;
-            for task in tasks {
-                let task = self.reconcile_stale_active_message_task(task).await?;
-                if !is_active_task_status(task.status) {
-                    continue;
-                }
-                if task.source_session_id.as_deref().map(str::trim)
-                    != Some(source_session_id.as_str())
-                {
-                    continue;
-                }
-                let source_user_message_id = task
-                    .source_user_message_id
-                    .as_deref()
-                    .and_then(normalize_source_id);
-                let source_turn_id = task.source_turn_id.as_deref().and_then(normalize_source_id);
-                if source_user_message_id.is_none() && source_turn_id.is_none() {
-                    continue;
-                }
-                if has_source_filters {
-                    let message_matches = source_user_message_id
-                        .as_ref()
-                        .is_some_and(|id| source_user_message_id_set.contains(id));
-                    let turn_matches = source_turn_id
-                        .as_ref()
-                        .is_some_and(|id| source_turn_id_set.contains(id));
-                    if !message_matches && !turn_matches {
-                        continue;
-                    }
-                }
-                let key = source_user_message_id
-                    .clone()
-                    .or_else(|| source_turn_id.as_ref().map(|id| format!("turn:{id}")))
-                    .unwrap_or_default();
-                let entry =
-                    source_by_key
-                        .entry(key)
-                        .or_insert_with(|| ChatosActiveMessageTaskSource {
-                            source_user_message_id: source_user_message_id.clone(),
-                            source_turn_id: source_turn_id.clone(),
-                            running_count: 0,
-                            active_count: 0,
-                        });
-                if is_running_task_status(task.status) {
-                    entry.running_count += 1;
-                }
-                entry.active_count += 1;
+            active_tasks.extend(self.store.list_tasks_filtered(&filters).await?);
+        }
+        for task in self
+            .reconcile_stale_active_message_tasks(active_tasks)
+            .await?
+        {
+            if !is_active_task_status(task.status) {
+                continue;
             }
+            if task.source_session_id.as_deref().map(str::trim) != Some(source_session_id.as_str())
+            {
+                continue;
+            }
+            let source_user_message_id = task
+                .source_user_message_id
+                .as_deref()
+                .and_then(normalize_source_id);
+            let source_turn_id = task.source_turn_id.as_deref().and_then(normalize_source_id);
+            if source_user_message_id.is_none() && source_turn_id.is_none() {
+                continue;
+            }
+            if has_source_filters {
+                let message_matches = source_user_message_id
+                    .as_ref()
+                    .is_some_and(|id| source_user_message_id_set.contains(id));
+                let turn_matches = source_turn_id
+                    .as_ref()
+                    .is_some_and(|id| source_turn_id_set.contains(id));
+                if !message_matches && !turn_matches {
+                    continue;
+                }
+            }
+            let key = source_user_message_id
+                .clone()
+                .or_else(|| source_turn_id.as_ref().map(|id| format!("turn:{id}")))
+                .unwrap_or_default();
+            let entry = source_by_key
+                .entry(key)
+                .or_insert_with(|| ChatosActiveMessageTaskSource {
+                    source_user_message_id: source_user_message_id.clone(),
+                    source_turn_id: source_turn_id.clone(),
+                    running_count: 0,
+                    active_count: 0,
+                });
+            if is_running_task_status(task.status) {
+                entry.running_count += 1;
+            }
+            entry.active_count += 1;
         }
 
         let mut items = source_by_key.into_values().collect::<Vec<_>>();
@@ -206,9 +207,32 @@ impl TaskService {
         &self,
         tasks: Vec<TaskRecord>,
     ) -> Result<Vec<TaskRecord>, String> {
+        let last_run_ids = tasks
+            .iter()
+            .filter(|task| is_active_task_status(task.status))
+            .filter_map(|task| task.last_run_id.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        let runs_by_id = self
+            .store
+            .get_runs_by_ids(&last_run_ids)
+            .await?
+            .into_iter()
+            .map(|run| (run.id.clone(), run))
+            .collect::<HashMap<_, _>>();
         let mut repaired = Vec::with_capacity(tasks.len());
         for task in tasks {
-            repaired.push(self.reconcile_stale_active_message_task(task).await?);
+            let last_run = task
+                .last_run_id
+                .as_deref()
+                .map(str::trim)
+                .and_then(|run_id| runs_by_id.get(run_id));
+            repaired.push(
+                self.reconcile_stale_active_message_task(task, last_run)
+                    .await?,
+            );
         }
         Ok(repaired)
     }
@@ -216,20 +240,12 @@ impl TaskService {
     async fn reconcile_stale_active_message_task(
         &self,
         task: TaskRecord,
+        last_run: Option<&TaskRunRecord>,
     ) -> Result<TaskRecord, String> {
         if !is_active_task_status(task.status) {
             return Ok(task);
         }
-        let Some(last_run_id) = task
-            .last_run_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-        else {
-            return Ok(task);
-        };
-        let Some(last_run) = self.store.get_run(last_run_id.as_str()).await? else {
+        let Some(last_run) = last_run else {
             return Ok(task);
         };
         if last_run.task_id.trim() != task.id.trim() {
@@ -238,7 +254,7 @@ impl TaskService {
         let Some(next_status) = terminal_task_status_for_run_status(last_run.status) else {
             return Ok(task);
         };
-        if !should_reconcile_stale_active_task(&task, &last_run) {
+        if !should_reconcile_stale_active_task(&task, last_run) {
             return Ok(task);
         }
 

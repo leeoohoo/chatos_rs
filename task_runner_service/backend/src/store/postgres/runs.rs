@@ -170,6 +170,23 @@ impl PostgresStore {
         rows.into_iter().map(decode_json).collect()
     }
 
+    pub(in crate::store) async fn get_runs_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
+            "SELECT data FROM task_runs WHERE id=ANY($1)",
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?;
+        rows.into_iter().map(decode_json).collect()
+    }
+
     pub(in crate::store) async fn get_run(
         &self,
         id: &str,

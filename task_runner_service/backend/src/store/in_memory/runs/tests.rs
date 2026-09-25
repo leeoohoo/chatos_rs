@@ -101,6 +101,34 @@ fn owned_task(id: &str, owner_user_id: Option<&str>, creator_user_id: &str) -> T
 }
 
 #[test]
+fn batch_run_lookup_returns_complete_requested_records() {
+    let store = test_store();
+    for (task_id, run_id) in [("task-a", "run-a"), ("task-b", "run-b")] {
+        store.save_task(owned_task(task_id, Some("user-a"), "user-a"));
+        let mut run = queued_run();
+        run.id = run_id.to_string();
+        run.task_id = task_id.to_string();
+        run.status = TaskRunStatus::Failed;
+        run.result_summary = Some(format!("summary-{run_id}"));
+        store.save_run(run).expect("save run");
+    }
+
+    let runs = store.get_runs_by_ids(&[
+        "run-b".to_string(),
+        "missing".to_string(),
+        "run-a".to_string(),
+    ]);
+
+    assert_eq!(runs.len(), 2);
+    let run_b = runs
+        .iter()
+        .find(|run| run.id == "run-b")
+        .expect("run-b returned");
+    assert_eq!(run_b.result_summary.as_deref(), Some("summary-run-b"));
+    assert!(runs.iter().any(|run| run.id == "run-a"));
+}
+
+#[test]
 fn visible_run_query_uses_task_owner_then_creator_fallback() {
     let store = test_store();
     for task in [
