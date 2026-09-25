@@ -9,6 +9,15 @@ mod events;
 #[path = "runs/tests.rs"]
 mod tests;
 
+fn sort_runs_for_listing(runs: &mut [TaskRunRecord]) {
+    runs.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+}
+
 impl InMemoryStore {
     pub(in crate::store) fn run_execution_stats(&self) -> RunExecutionStats {
         let data = self.inner.read();
@@ -75,7 +84,7 @@ impl InMemoryStore {
             .filter(|run| task_id.is_none_or(|value| run.task_id == value))
             .cloned()
             .collect::<Vec<_>>();
-        items.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        sort_runs_for_listing(&mut items);
         items
     }
 
@@ -149,7 +158,7 @@ impl InMemoryStore {
             })
             .cloned()
             .collect::<Vec<_>>();
-        items.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        sort_runs_for_listing(&mut items);
         apply_offset_limit(&mut items, filters.offset, filters.limit);
         items
     }
@@ -210,7 +219,12 @@ impl InMemoryStore {
             .filter(|run| wanted.contains(&run.id))
             .map(RunSummaryRecord::from)
             .collect::<Vec<_>>();
-        items.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        items.sort_by(|left, right| {
+            right
+                .updated_at
+                .cmp(&left.updated_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
         items
     }
 

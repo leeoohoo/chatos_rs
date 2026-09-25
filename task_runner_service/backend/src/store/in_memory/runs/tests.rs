@@ -226,6 +226,54 @@ fn visible_run_page_applies_all_filters_before_count_and_pagination() {
 }
 
 #[test]
+fn run_listing_sort_uses_id_as_the_stable_tie_breaker() {
+    let mut id_b = queued_run();
+    id_b.id = "run-b".to_string();
+    id_b.created_at = "2026-09-26T02:00:00Z".to_string();
+    let mut newer = queued_run();
+    newer.id = "run-newer".to_string();
+    newer.created_at = "2026-09-26T03:00:00Z".to_string();
+    let mut id_a = queued_run();
+    id_a.id = "run-a".to_string();
+    id_a.created_at = "2026-09-26T02:00:00Z".to_string();
+    let mut runs = vec![id_b, newer, id_a];
+
+    sort_runs_for_listing(&mut runs);
+
+    assert_eq!(
+        runs.into_iter().map(|run| run.id).collect::<Vec<_>>(),
+        vec!["run-newer", "run-a", "run-b"]
+    );
+
+    let store = test_store();
+    for id in ["run-d", "run-b", "run-c", "run-a"] {
+        let mut run = queued_run();
+        run.id = id.to_string();
+        run.task_id = format!("task-{id}");
+        run.status = TaskRunStatus::Succeeded;
+        run.created_at = "2026-09-26T04:00:00Z".to_string();
+        store.save_run(run).expect("save tied run");
+    }
+    let first = store.list_runs_page(&RunListFilters {
+        limit: Some(2),
+        offset: Some(0),
+        ..RunListFilters::default()
+    });
+    let second = store.list_runs_page(&RunListFilters {
+        limit: Some(2),
+        offset: Some(2),
+        ..RunListFilters::default()
+    });
+    let page_ids = first
+        .items
+        .into_iter()
+        .chain(second.items)
+        .map(|run| run.id)
+        .collect::<Vec<_>>();
+    assert_eq!(page_ids, vec!["run-a", "run-b", "run-c", "run-d"]);
+}
+
+#[test]
 fn execution_stats_count_runs_and_pending_outboxes_without_cloning_records() {
     let store = test_store();
     store.save_run(queued_run()).expect("save queued run");
