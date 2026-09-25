@@ -28,6 +28,21 @@ impl AppStore {
         }
     }
 
+    pub async fn list_runs_visible_to_owner(
+        &self,
+        filters: &RunListFilters,
+        owner_user_id: &str,
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.list_runs_visible_to_owner(filters, owner_user_id)),
+            Self::Postgres(store) => {
+                store
+                    .list_runs_visible_to_owner(filters, owner_user_id)
+                    .await
+            }
+        }
+    }
+
     pub async fn list_runs_page(
         &self,
         filters: &RunListFilters,

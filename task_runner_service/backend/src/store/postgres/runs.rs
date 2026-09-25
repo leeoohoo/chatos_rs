@@ -78,7 +78,15 @@ impl PostgresStore {
         &self,
         filters: &RunListFilters,
     ) -> Result<Vec<TaskRunRecord>, String> {
-        load_filtered_runs(&self.pool, filters).await
+        load_filtered_runs(&self.pool, filters, None).await
+    }
+
+    pub(in crate::store) async fn list_runs_visible_to_owner(
+        &self,
+        filters: &RunListFilters,
+        owner_user_id: &str,
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        load_filtered_runs(&self.pool, filters, Some(owner_user_id)).await
     }
 
     pub(in crate::store) async fn list_runs_page(
@@ -92,7 +100,7 @@ impl PostgresStore {
         page_filters.limit = Some(limit);
         page_filters.offset = Some(offset);
         Ok(build_page_response(
-            load_filtered_runs(&self.pool, &page_filters).await?,
+            load_filtered_runs(&self.pool, &page_filters, None).await?,
             total,
             limit,
             offset,
@@ -443,6 +451,7 @@ impl PostgresStore {
 async fn load_filtered_runs(
     pool: &chatos_postgres::PgPool,
     filters: &RunListFilters,
+    owner_user_id: Option<&str>,
 ) -> Result<Vec<TaskRunRecord>, String> {
     let status = filters.status.map(|value| enum_text(&value)).transpose()?;
     let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
@@ -453,12 +462,16 @@ async fn load_filtered_runs(
              OR lower(model_config_id) LIKE '%'||$4||'%' \
              OR lower(coalesce(data->>'result_summary','')) LIKE '%'||$4||'%' \
              OR lower(coalesce(data->>'error_message','')) LIKE '%'||$4||'%') \
-         ORDER BY created_at DESC,id LIMIT $5 OFFSET $6",
+         AND ($5::text IS NULL OR EXISTS (SELECT 1 FROM tasks \
+             WHERE tasks.id=task_runs.task_id \
+             AND coalesce(nullif(btrim(tasks.owner_user_id),''),tasks.creator_user_id)=$5)) \
+         ORDER BY created_at DESC,id LIMIT $6 OFFSET $7",
     )
     .bind(filters.task_id.as_deref())
     .bind(status)
     .bind(filters.model_config_id.as_deref())
     .bind(filters.keyword.as_deref())
+    .bind(owner_user_id)
     .bind(optional_usize_as_i64(filters.limit))
     .bind(i64::try_from(filters.offset.unwrap_or(0)).unwrap_or(i64::MAX))
     .fetch_all(pool)

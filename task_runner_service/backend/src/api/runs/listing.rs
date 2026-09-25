@@ -168,22 +168,12 @@ async fn list_runs_for_user(
         get_task_for_user(state, task_id, current_user)
             .await?
             .ok_or_else(|| ApiError::not_found(format!("任务不存在: {task_id}")))?;
-        return state
-            .run_service
-            .list_runs_filtered(filters)
-            .await
-            .map_err(ApiError::bad_request);
     }
-    let allowed_task_ids = visible_task_ids_for_user(state, current_user).await?;
-    let mut unscoped = filters;
-    unscoped.limit = None;
-    unscoped.offset = None;
-    let runs = state
+    state
         .run_service
-        .list_runs_filtered(unscoped)
+        .list_runs_visible_to_user(filters, &effective_owner_user_id(current_user)?)
         .await
-        .map_err(ApiError::bad_request)?;
-    Ok(filter_runs(runs, allowed_task_ids.as_ref()))
+        .map_err(ApiError::bad_request)
 }
 
 async fn list_run_summaries_for_user(
@@ -218,19 +208,6 @@ async fn list_run_summaries_for_user(
         .await
         .map_err(ApiError::bad_request)?;
     Ok(filter_run_summaries(summaries, allowed_task_ids.as_ref()))
-}
-
-fn filter_runs(
-    runs: Vec<TaskRunRecord>,
-    allowed_task_ids: Option<&HashSet<String>>,
-) -> Vec<TaskRunRecord> {
-    match allowed_task_ids {
-        Some(task_ids) => runs
-            .into_iter()
-            .filter(|run| task_ids.contains(run.task_id.as_str()))
-            .collect(),
-        None => runs,
-    }
 }
 
 fn filter_run_summaries(

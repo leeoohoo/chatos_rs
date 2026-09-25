@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::models::{TaskMcpConfig, TaskScheduleConfig, TaskStatus, TaskToolState};
 
 fn test_store() -> InMemoryStore {
     let (sender, _) = broadcast::channel(16);
@@ -53,6 +54,80 @@ fn queued_run() -> TaskRunRecord {
         created_at: now.clone(),
         updated_at: now,
     }
+}
+
+fn owned_task(id: &str, owner_user_id: Option<&str>, creator_user_id: &str) -> TaskRecord {
+    TaskRecord {
+        id: id.to_string(),
+        title: id.to_string(),
+        description: None,
+        objective: format!("run {id}"),
+        input_payload: None,
+        status: TaskStatus::Ready,
+        priority: 0,
+        tags: Vec::new(),
+        default_model_config_id: None,
+        memory_thread_id: format!("thread-{id}"),
+        tenant_id: owner_user_id.unwrap_or(creator_user_id).to_string(),
+        subject_id: "subject".to_string(),
+        project_id: None,
+        project_context: None,
+        task_profile: crate::models::TASK_PROFILE_DEFAULT.to_string(),
+        creator_user_id: Some(creator_user_id.to_string()),
+        creator_username: None,
+        creator_display_name: None,
+        owner_user_id: owner_user_id.map(ToOwned::to_owned),
+        owner_username: None,
+        owner_display_name: None,
+        result_summary: None,
+        process_log: None,
+        last_run_id: None,
+        schedule: TaskScheduleConfig::default(),
+        parent_task_id: None,
+        source_run_id: None,
+        source_session_id: None,
+        source_turn_id: None,
+        source_user_message_id: None,
+        remote_connection_id: None,
+        prerequisite_task_ids: Vec::new(),
+        task_tool_state: TaskToolState::default(),
+        plugin_config: Default::default(),
+        plugin_selection_audit: None,
+        mcp_config: TaskMcpConfig::default(),
+        created_at: now_rfc3339(),
+        updated_at: now_rfc3339(),
+        deleted_at: None,
+    }
+}
+
+#[test]
+fn visible_run_query_uses_task_owner_then_creator_fallback() {
+    let store = test_store();
+    for task in [
+        owned_task("owned", Some("user-a"), "creator-other"),
+        owned_task("creator-fallback", None, "user-a"),
+        owned_task("foreign", Some("user-b"), "user-a"),
+    ] {
+        let task_id = task.id.clone();
+        store.save_task(task);
+        let mut run = queued_run();
+        run.id = format!("run-{task_id}");
+        run.task_id = task_id;
+        store.save_run(run).expect("save run");
+    }
+
+    let visible = store.list_runs_visible_to_owner(&RunListFilters::default(), "user-a");
+
+    assert_eq!(
+        visible
+            .into_iter()
+            .map(|run| run.id)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([
+            "run-creator-fallback".to_string(),
+            "run-owned".to_string(),
+        ])
+    );
 }
 
 #[test]

@@ -83,10 +83,38 @@ impl InMemoryStore {
         &self,
         filters: &RunListFilters,
     ) -> Vec<TaskRunRecord> {
+        self.list_runs_filtered_for_owner(filters, None)
+    }
+
+    pub(in crate::store) fn list_runs_visible_to_owner(
+        &self,
+        filters: &RunListFilters,
+        owner_user_id: &str,
+    ) -> Vec<TaskRunRecord> {
+        self.list_runs_filtered_for_owner(filters, Some(owner_user_id))
+    }
+
+    fn list_runs_filtered_for_owner(
+        &self,
+        filters: &RunListFilters,
+        owner_user_id: Option<&str>,
+    ) -> Vec<TaskRunRecord> {
         let data = self.inner.read();
         let mut items = data
             .runs
             .values()
+            .filter(|run| {
+                owner_user_id.is_none_or(|owner_user_id| {
+                    data.tasks.get(&run.task_id).is_some_and(|task| {
+                        task.owner_user_id
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .or(task.creator_user_id.as_deref())
+                            == Some(owner_user_id)
+                    })
+                })
+            })
             .filter(|run| {
                 filters
                     .task_id

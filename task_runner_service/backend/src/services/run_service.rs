@@ -217,6 +217,21 @@ impl RunService {
         self.store.list_runs_filtered(&filters).await
     }
 
+    pub async fn list_runs_visible_to_user(
+        &self,
+        filters: RunListFilters,
+        owner_user_id: &str,
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        let filters = sanitize_run_list_filters(filters);
+        let owner_user_id = owner_user_id.trim();
+        if owner_user_id.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.store
+            .list_runs_visible_to_owner(&filters, owner_user_id)
+            .await
+    }
+
     pub async fn list_runs_page(
         &self,
         filters: RunListFilters,
