@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 
 use chatos_local_workspace::LOCAL_CONNECTOR_ROOT_PREFIX;
@@ -66,7 +66,19 @@ where
     if !path.is_file() {
         return Ok(None);
     }
-    let bytes = fs::read(path).map_err(|err| err.to_string())?;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // The file check above follows links and can race with replacement.
+        // Reject a leaf symlink at the actual open, then read the same handle.
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut file = options.open(path).map_err(|err| err.to_string())?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|err| err.to_string())?;
     serde_json::from_slice::<T>(&bytes)
         .map(Some)
         .map_err(|err| err.to_string())
@@ -129,6 +141,10 @@ pub fn cache_key(value: &str) -> String {
     let hex = hex::encode(hasher.finalize());
     hex.chars().take(24).collect()
 }
+
+#[cfg(test)]
+#[path = "project_local_cache_read_tests.rs"]
+mod read_tests;
 
 #[cfg(test)]
 #[path = "project_local_cache_write_tests.rs"]
