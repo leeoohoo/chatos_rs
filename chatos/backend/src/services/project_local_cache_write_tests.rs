@@ -83,3 +83,50 @@ fn cache_write_creates_and_replaces_regular_json_files() {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn cache_write_rejects_hard_links_before_truncating() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    for name in ["outside.json", "project/inside.json"] {
+        let fixture = Fixture::new();
+        let project = fixture.project();
+        let target = fixture.0.join(name);
+        let sentinel = b"private fixture contents\n";
+        fs::write(&target, sentinel).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+        let relative = "code_nav/index.json";
+        let cache = project_cache_file_path(project.to_str().unwrap(), relative).unwrap();
+        fs::hard_link(&target, &cache).unwrap();
+        let before = fs::metadata(&target).unwrap();
+        assert_eq!(before.nlink(), 2);
+        assert!(!fs::symlink_metadata(&cache).unwrap().is_symlink());
+
+        let result = write_cache_json(
+            project.to_str().unwrap(),
+            relative,
+            &serde_json::json!({"replacement": true}),
+        );
+        assert!(result.is_err(), "cache writer accepted hard link to {name}");
+        for path in [&target, &cache] {
+            assert_eq!(fs::read(path).unwrap(), sentinel);
+            let after = fs::metadata(path).unwrap();
+            assert_eq!(
+                (after.dev(), after.ino(), after.mode(), after.nlink()),
+                (before.dev(), before.ino(), before.mode(), before.nlink())
+            );
+        }
+
+        // A regular cache inode becomes writable again after its other name
+        // is removed; the guard does not remember or ban previously linked files.
+        fs::remove_file(&target).unwrap();
+        let value = serde_json::json!({"ok": true});
+        write_cache_json(project.to_str().unwrap(), relative, &value).unwrap();
+        assert_eq!(
+            fs::read(&cache).unwrap(),
+            serde_json::to_vec_pretty(&value).unwrap()
+        );
+        assert_eq!(fs::metadata(&cache).unwrap().nlink(), 1);
+    }
+}

@@ -96,11 +96,25 @@ where
     options
         .open(path)
         .and_then(|mut file| {
-            if !file.metadata()?.is_file() {
+            let metadata = file.metadata()?;
+            if !metadata.is_file() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     "cache target is not a regular file",
                 ));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                // O_NOFOLLOW does not reject hard links. Check the opened
+                // inode before truncating any file with another name. This
+                // does not prevent concurrent link creation after the check.
+                if metadata.nlink() > 1 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "cache target has multiple hard links",
+                    ));
+                }
             }
             // Validate before truncating, then write through the same handle.
             file.set_len(0)?;
