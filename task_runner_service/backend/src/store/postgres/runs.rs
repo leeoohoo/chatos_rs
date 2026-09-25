@@ -93,14 +93,31 @@ impl PostgresStore {
         &self,
         filters: &RunListFilters,
     ) -> Result<PaginatedResponse<TaskRunRecord>, String> {
+        self.list_runs_page_for_owner(filters, None).await
+    }
+
+    pub(in crate::store) async fn list_runs_page_visible_to_owner(
+        &self,
+        filters: &RunListFilters,
+        owner_user_id: &str,
+    ) -> Result<PaginatedResponse<TaskRunRecord>, String> {
+        self.list_runs_page_for_owner(filters, Some(owner_user_id))
+            .await
+    }
+
+    async fn list_runs_page_for_owner(
+        &self,
+        filters: &RunListFilters,
+        owner_user_id: Option<&str>,
+    ) -> Result<PaginatedResponse<TaskRunRecord>, String> {
         let limit = filters.limit.unwrap_or(DEFAULT_PAGE_LIMIT);
         let offset = filters.offset.unwrap_or(0);
-        let total = count_filtered_runs(&self.pool, filters).await?;
+        let total = count_filtered_runs(&self.pool, filters, owner_user_id).await?;
         let mut page_filters = filters.clone();
         page_filters.limit = Some(limit);
         page_filters.offset = Some(offset);
         Ok(build_page_response(
-            load_filtered_runs(&self.pool, &page_filters, None).await?,
+            load_filtered_runs(&self.pool, &page_filters, owner_user_id).await?,
             total,
             limit,
             offset,
@@ -483,6 +500,7 @@ async fn load_filtered_runs(
 async fn count_filtered_runs(
     pool: &chatos_postgres::PgPool,
     filters: &RunListFilters,
+    owner_user_id: Option<&str>,
 ) -> Result<usize, String> {
     let status = filters.status.map(|value| enum_text(&value)).transpose()?;
     let total: i64 = sqlx::query_scalar(
@@ -492,12 +510,16 @@ async fn count_filtered_runs(
              OR lower(task_id) LIKE '%'||$4||'%' \
              OR lower(model_config_id) LIKE '%'||$4||'%' \
              OR lower(coalesce(data->>'result_summary','')) LIKE '%'||$4||'%' \
-             OR lower(coalesce(data->>'error_message','')) LIKE '%'||$4||'%')",
+             OR lower(coalesce(data->>'error_message','')) LIKE '%'||$4||'%') \
+         AND ($5::text IS NULL OR EXISTS (SELECT 1 FROM tasks \
+             WHERE tasks.id=task_runs.task_id \
+             AND coalesce(nullif(btrim(tasks.owner_user_id),''),tasks.creator_user_id)=$5))",
     )
     .bind(filters.task_id.as_deref())
     .bind(status)
     .bind(filters.model_config_id.as_deref())
     .bind(filters.keyword.as_deref())
+    .bind(owner_user_id)
     .fetch_one(pool)
     .await
     .map_err(db_error)?;

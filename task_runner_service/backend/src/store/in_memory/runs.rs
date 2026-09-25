@@ -158,12 +158,30 @@ impl InMemoryStore {
         &self,
         filters: &RunListFilters,
     ) -> PaginatedResponse<TaskRunRecord> {
+        self.list_runs_page_for_owner(filters, None)
+    }
+
+    pub(in crate::store) fn list_runs_page_visible_to_owner(
+        &self,
+        filters: &RunListFilters,
+        owner_user_id: &str,
+    ) -> PaginatedResponse<TaskRunRecord> {
+        self.list_runs_page_for_owner(filters, Some(owner_user_id))
+    }
+
+    fn list_runs_page_for_owner(
+        &self,
+        filters: &RunListFilters,
+        owner_user_id: Option<&str>,
+    ) -> PaginatedResponse<TaskRunRecord> {
         let mut count_filters = filters.clone();
         count_filters.limit = None;
         count_filters.offset = None;
-        let total = self.list_runs_filtered(&count_filters).len();
+        let total = self
+            .list_runs_filtered_for_owner(&count_filters, owner_user_id)
+            .len();
         build_page_response(
-            self.list_runs_filtered(filters),
+            self.list_runs_filtered_for_owner(filters, owner_user_id),
             total,
             filters.limit.unwrap_or(DEFAULT_PAGE_LIMIT),
             filters.offset.unwrap_or(0),

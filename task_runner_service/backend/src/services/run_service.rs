@@ -242,6 +242,29 @@ impl RunService {
         self.store.list_runs_page(&filters).await
     }
 
+    pub async fn list_runs_page_visible_to_user(
+        &self,
+        filters: RunListFilters,
+        owner_user_id: &str,
+    ) -> Result<PaginatedResponse<TaskRunRecord>, String> {
+        let mut filters = sanitize_run_list_filters(filters);
+        filters.limit = Some(filters.limit.unwrap_or(20));
+        filters.offset = Some(filters.offset.unwrap_or(0));
+        let owner_user_id = owner_user_id.trim();
+        if owner_user_id.is_empty() {
+            return Ok(PaginatedResponse {
+                items: Vec::new(),
+                total: 0,
+                limit: filters.limit.unwrap_or(20),
+                offset: filters.offset.unwrap_or(0),
+                has_more: false,
+            });
+        }
+        self.store
+            .list_runs_page_visible_to_owner(&filters, owner_user_id)
+            .await
+    }
+
     pub async fn run_index(
         &self,
         filters: RunListFilters,

@@ -131,6 +131,101 @@ fn visible_run_query_uses_task_owner_then_creator_fallback() {
 }
 
 #[test]
+fn visible_run_page_applies_all_filters_before_count_and_pagination() {
+    let store = test_store();
+    for (index, task_id, owner, status, model, summary) in [
+        (
+            1,
+            "visible-older",
+            "user-a",
+            TaskRunStatus::Queued,
+            "model-visible",
+            "needle one",
+        ),
+        (
+            2,
+            "visible-newer",
+            "user-a",
+            TaskRunStatus::Queued,
+            "model-visible",
+            "needle two",
+        ),
+        (
+            3,
+            "foreign",
+            "user-b",
+            TaskRunStatus::Queued,
+            "model-visible",
+            "needle foreign",
+        ),
+        (
+            4,
+            "wrong-status",
+            "user-a",
+            TaskRunStatus::Failed,
+            "model-visible",
+            "needle status",
+        ),
+        (
+            5,
+            "wrong-model",
+            "user-a",
+            TaskRunStatus::Queued,
+            "model-other",
+            "needle model",
+        ),
+        (
+            6,
+            "wrong-keyword",
+            "user-a",
+            TaskRunStatus::Queued,
+            "model-visible",
+            "other",
+        ),
+    ] {
+        store.save_task(owned_task(task_id, Some(owner), owner));
+        let mut run = queued_run();
+        run.id = format!("run-{task_id}");
+        run.task_id = task_id.to_string();
+        run.status = status;
+        run.model_config_id = model.to_string();
+        run.result_summary = Some(summary.to_string());
+        run.created_at = format!("2026-09-26T00:00:0{index}Z");
+        store.save_run(run).expect("save run");
+    }
+
+    let page = store.list_runs_page_visible_to_owner(
+        &RunListFilters {
+            status: Some(TaskRunStatus::Queued),
+            model_config_id: Some("model-visible".to_string()),
+            keyword: Some("needle".to_string()),
+            limit: Some(1),
+            offset: Some(1),
+            ..RunListFilters::default()
+        },
+        "user-a",
+    );
+
+    assert_eq!(page.total, 2);
+    assert_eq!(page.limit, 1);
+    assert_eq!(page.offset, 1);
+    assert!(!page.has_more);
+    assert_eq!(page.items[0].id, "run-visible-older");
+
+    let task_page = store.list_runs_page_visible_to_owner(
+        &RunListFilters {
+            task_id: Some("visible-newer".to_string()),
+            limit: Some(10),
+            offset: Some(0),
+            ..RunListFilters::default()
+        },
+        "user-a",
+    );
+    assert_eq!(task_page.total, 1);
+    assert_eq!(task_page.items[0].id, "run-visible-newer");
+}
+
+#[test]
 fn execution_stats_count_runs_and_pending_outboxes_without_cloning_records() {
     let store = test_store();
     store.save_run(queued_run()).expect("save queued run");

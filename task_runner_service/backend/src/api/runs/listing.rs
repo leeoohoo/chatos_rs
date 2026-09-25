@@ -70,25 +70,16 @@ pub(in crate::api) async fn list_runs_page(
         return Ok(Json(redact_workspace_paths(&state, page)?));
     }
     let filters = query.into_filters();
-    let offset = filters.offset.unwrap_or(0);
-    let limit = filters.limit.unwrap_or(20).clamp(1, 500);
-    let mut unpaged = filters.clone();
-    unpaged.offset = None;
-    unpaged.limit = None;
-    let mut runs = list_runs_for_user(&state, &current_user, unpaged).await?;
-    let total = runs.len();
-    if offset >= runs.len() {
-        runs.clear();
-    } else {
-        runs = runs.into_iter().skip(offset).take(limit).collect();
+    if let Some(task_id) = filters.task_id.as_deref() {
+        get_task_for_user(&state, task_id, &current_user)
+            .await?
+            .ok_or_else(|| ApiError::not_found(format!("任务不存在: {task_id}")))?;
     }
-    let page = PaginatedResponse {
-        has_more: offset.saturating_add(runs.len()) < total,
-        items: runs,
-        total,
-        limit,
-        offset,
-    };
+    let page = state
+        .run_service
+        .list_runs_page_visible_to_user(filters, &effective_owner_user_id(&current_user)?)
+        .await
+        .map_err(ApiError::bad_request)?;
     Ok(Json(redact_workspace_paths(&state, page)?))
 }
 
