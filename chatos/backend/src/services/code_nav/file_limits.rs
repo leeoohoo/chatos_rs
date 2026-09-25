@@ -11,6 +11,10 @@ pub(crate) const CODE_NAV_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 #[path = "file_limits_symlink_tests.rs"]
 mod symlink_tests;
 
+#[cfg(all(test, unix))]
+#[path = "file_limits_special_tests.rs"]
+mod special_tests;
+
 pub(crate) fn read_code_nav_file_to_string(path: &Path) -> Result<String, String> {
     let file = open_code_nav_file(path)?;
     let mut bytes = Vec::new();
@@ -62,9 +66,11 @@ fn open_code_nav_file(path: &Path) -> Result<File, String> {
     let file = open_canonical_code_nav_file(path).map_err(|err| err.to_string())?;
     #[cfg(not(unix))]
     let file = File::open(path).map_err(|err| err.to_string())?;
-    if let Ok(metadata) = file.metadata() {
-        ensure_code_nav_file_within_limit(path, metadata.len())?;
+    let metadata = file.metadata().map_err(|err| err.to_string())?;
+    if !metadata.is_file() {
+        return Err("code-nav path is not a regular file".to_string());
     }
+    ensure_code_nav_file_within_limit(path, metadata.len())?;
     Ok(file)
 }
 
@@ -91,7 +97,9 @@ fn open_canonical_code_nav_file(path: &Path) -> std::io::Result<File> {
         libc::openat(
             directory.as_raw_fd(),
             name.as_ptr(),
-            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            // Do not wait for a FIFO peer before the handle's type can be
+            // checked. O_NONBLOCK does not change regular-file reads.
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
         )
     };
     if fd < 0 {
