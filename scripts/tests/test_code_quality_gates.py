@@ -66,6 +66,32 @@ class CodeQualityCommonTests(unittest.TestCase):
 
 
 class SourceSizePolicyTests(unittest.TestCase):
+    def test_owned_baseline_blocks_new_oversized_files_and_existing_growth(self) -> None:
+        allowlist = {
+            "legacy.rs": AllowlistEntry(
+                path="legacy.rs",
+                max_lines=800,
+                expires_on=date(2026, 12, 31),
+                reason="scheduled split",
+            )
+        }
+        _, errors = evaluate_source_sizes(
+            {"legacy.rs": 801, "new.swift": 800},
+            allowlist,
+            warn_lines=500,
+            hard_lines=800,
+            today=date(2026, 9, 26),
+            warning_paths={"new.swift"},
+            hard_limit_inclusive=True,
+        )
+        self.assertEqual(
+            errors,
+            [
+                "legacy.rs: 801 lines exceeds allowlist budget 800",
+                "new.swift: 800 lines reaches hard limit 800 without an allowlist entry",
+            ],
+        )
+
     def test_owned_scope_is_stably_sorted_and_treats_800_lines_as_oversized(self) -> None:
         line_counts = {"z_test.rs": 800, "largest.swift": 1200, "small.ts": 799}
         self.assertEqual(
