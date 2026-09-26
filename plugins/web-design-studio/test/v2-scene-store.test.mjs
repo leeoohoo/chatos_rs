@@ -97,6 +97,52 @@ test('the directory lock allows only one concurrent writer at the same revision'
   }
 });
 
+test('the directory lock serializes concurrent writes to different scene documents', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-cross-document-concurrency-'));
+  const store = new SceneDocumentStore(root);
+  try {
+    const firstSource = nestedWebsite();
+    firstSource.documentId = 'scene-concurrent-first';
+    const secondSource = nestedWebsite();
+    secondSource.documentId = 'scene-concurrent-second';
+    const first = await store.create(firstSource);
+    const second = await store.create(secondSource);
+
+    const originalWithLock = store.files.withLock.bind(store.files);
+    let requests = 0;
+    let activeCriticalSections = 0;
+    let maximumActiveCriticalSections = 0;
+    let releaseSecondRequest;
+    const secondRequested = new Promise((resolve) => { releaseSecondRequest = resolve; });
+    store.files.withLock = async (task) => {
+      const request = ++requests;
+      if (request === 2) releaseSecondRequest();
+      return originalWithLock(async () => {
+        activeCriticalSections += 1;
+        maximumActiveCriticalSections = Math.max(maximumActiveCriticalSections, activeCriticalSections);
+        try {
+          if (request === 1) await secondRequested;
+          return await task();
+        } finally {
+          activeCriticalSections -= 1;
+        }
+      });
+    };
+
+    const [firstApplied, secondApplied] = await Promise.all([
+      store.apply(first.documentId, headlineTransaction(first.revision, 'First document write', 'transaction-first-document')),
+      store.apply(second.documentId, headlineTransaction(second.revision, 'Second document write', 'transaction-second-document'))
+    ]);
+
+    assert.equal(requests, 2);
+    assert.equal(maximumActiveCriticalSections, 1);
+    assert.equal(firstApplied.document.revision, 2);
+    assert.equal(secondApplied.document.revision, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('scene transaction identities cannot be reused at a later revision', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-transaction-id-'));
   const store = new SceneDocumentStore(root);
