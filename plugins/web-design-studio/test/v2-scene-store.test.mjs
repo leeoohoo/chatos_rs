@@ -79,7 +79,7 @@ test('a new transaction after undo clears the redo branch', async () => {
   }
 });
 
-test('the directory lock allows only one concurrent writer at the same revision', async () => {
+test('the file-scoped lock allows only one concurrent writer for the same scene', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-concurrency-'));
   const store = new SceneDocumentStore(root);
   try {
@@ -97,7 +97,7 @@ test('the directory lock allows only one concurrent writer at the same revision'
   }
 });
 
-test('the directory lock serializes concurrent writes to different scene documents', async () => {
+test('file-scoped locks allow concurrent writes to different scene documents', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-cross-document-concurrency-'));
   const store = new SceneDocumentStore(root);
   try {
@@ -108,20 +108,17 @@ test('the directory lock serializes concurrent writes to different scene documen
     const first = await store.create(firstSource);
     const second = await store.create(secondSource);
 
-    const originalWithLock = store.files.withLock.bind(store.files);
-    let requests = 0;
+    const originalWithFileLock = store.files.withFileLock.bind(store.files);
     let activeCriticalSections = 0;
     let maximumActiveCriticalSections = 0;
-    let releaseSecondRequest;
-    const secondRequested = new Promise((resolve) => { releaseSecondRequest = resolve; });
-    store.files.withLock = async (task) => {
-      const request = ++requests;
-      if (request === 2) releaseSecondRequest();
-      return originalWithLock(async () => {
+    store.files.withFileLock = async (fileName, task) => {
+      return originalWithFileLock(fileName, async () => {
         activeCriticalSections += 1;
         maximumActiveCriticalSections = Math.max(maximumActiveCriticalSections, activeCriticalSections);
         try {
-          if (request === 1) await secondRequested;
+          for (let turn = 0; turn < 100 && maximumActiveCriticalSections < 2; turn += 1) {
+            await new Promise((resolve) => setImmediate(resolve));
+          }
           return await task();
         } finally {
           activeCriticalSections -= 1;
@@ -134,10 +131,24 @@ test('the directory lock serializes concurrent writes to different scene documen
       store.apply(second.documentId, headlineTransaction(second.revision, 'Second document write', 'transaction-second-document'))
     ]);
 
-    assert.equal(requests, 2);
-    assert.equal(maximumActiveCriticalSections, 1);
+    assert.equal(maximumActiveCriticalSections, 2);
     assert.equal(firstApplied.document.revision, 2);
     assert.equal(secondApplied.document.revision, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('file-scoped locks reject unsafe file names before entering the critical section', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-file-lock-name-'));
+  const store = new SceneDocumentStore(root);
+  let entered = false;
+  try {
+    await assert.rejects(
+      () => store.files.withFileLock('../outside.json', async () => { entered = true; }),
+      /file name is invalid/
+    );
+    assert.equal(entered, false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

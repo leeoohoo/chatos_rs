@@ -63,4 +63,18 @@ export class AtomicJsonDirectory {
       await release();
     }
   }
+
+  async withFileLock<T>(fileName: string, task: () => Promise<T>): Promise<T> {
+    const destination = this.resolve(fileName);
+    await this.initialize();
+    const release = await lockfile.lock(destination, {
+      realpath: false,
+      retries: { retries: 8, factor: 1.5, minTimeout: 20, maxTimeout: 400 }
+    });
+    try {
+      return await task();
+    } finally {
+      await release();
+    }
+  }
 }

@@ -122,8 +122,8 @@ export class SceneDocumentStore {
   async create(source: SceneDocument): Promise<SceneDocument> {
     assertSceneDocument(source);
     if (source.revision !== 0) throw new Error('A new scene document must start at revision 0.');
-    return this.files.withLock(async () => {
-      const fileName = fileNameFor(source.documentId);
+    const fileName = fileNameFor(source.documentId);
+    return this.files.withFileLock(fileName, async () => {
       try {
         await this.files.read<SceneStoreRecord>(fileName);
         throw new Error(`Scene document already exists: ${source.documentId}`);
@@ -144,7 +144,8 @@ export class SceneDocumentStore {
   }
 
   async apply(documentId: string, transaction: SceneTransaction): Promise<{ document: SceneDocument; summary: SceneTransactionSummary }> {
-    return this.files.withLock(async () => {
+    const fileName = fileNameFor(documentId);
+    return this.files.withFileLock(fileName, async () => {
       const record = await this.readRecord(documentId);
       if (transaction.baseRevision !== record.document.revision) throw new SceneRevisionConflictError(record.document.revision);
       if (record.past.some((entry) => entry.transaction.transactionId === transaction.transactionId)) {
@@ -164,20 +165,21 @@ export class SceneDocumentStore {
         document: result.document,
         ...history
       };
-      await this.files.write(fileNameFor(documentId), next);
+      await this.files.write(fileName, next);
       return { document: structuredClone(result.document), summary: structuredClone(result.summary) };
     });
   }
 
   async undo(documentId: string, expectedRevision: number, _author: SceneCreator = 'human'): Promise<SceneDocument> {
-    return this.files.withLock(async () => {
+    const fileName = fileNameFor(documentId);
+    return this.files.withFileLock(fileName, async () => {
       const record = await this.readRecord(documentId);
       if (record.document.revision !== expectedRevision) throw new SceneRevisionConflictError(record.document.revision);
       const entry = record.past.at(-1);
       if (!entry) throw new Error('Scene history has nothing to undo.');
       const document = restoredSnapshot(decompressSnapshot(entry.before), record.document, new Date().toISOString());
       const history = trimHistory(record.past.slice(0, -1), [...record.future, entry], this.historyLimit, this.historyByteLimit);
-      await this.files.write(fileNameFor(documentId), {
+      await this.files.write(fileName, {
         formatVersion: 2,
         document,
         ...history
@@ -187,14 +189,15 @@ export class SceneDocumentStore {
   }
 
   async redo(documentId: string, expectedRevision: number, _author: SceneCreator = 'human'): Promise<SceneDocument> {
-    return this.files.withLock(async () => {
+    const fileName = fileNameFor(documentId);
+    return this.files.withFileLock(fileName, async () => {
       const record = await this.readRecord(documentId);
       if (record.document.revision !== expectedRevision) throw new SceneRevisionConflictError(record.document.revision);
       const entry = record.future.at(-1);
       if (!entry) throw new Error('Scene history has nothing to redo.');
       const document = restoredSnapshot(decompressSnapshot(entry.after), record.document, new Date().toISOString());
       const history = trimHistory([...record.past, entry], record.future.slice(0, -1), this.historyLimit, this.historyByteLimit);
-      await this.files.write(fileNameFor(documentId), {
+      await this.files.write(fileName, {
         formatVersion: 2,
         document,
         ...history
@@ -221,7 +224,8 @@ export class SceneDocumentStore {
   }
 
   async remove(documentId: string): Promise<void> {
-    await this.files.withLock(() => this.files.remove(fileNameFor(documentId)));
+    const fileName = fileNameFor(documentId);
+    await this.files.withFileLock(fileName, () => this.files.remove(fileName));
   }
 
   private async readRecord(documentId: string): Promise<SceneStoreRecord> {
