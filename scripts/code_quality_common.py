@@ -49,6 +49,7 @@ EXCLUDED_DIRECTORY_NAMES = {
     "vendor",
 }
 EXCLUDED_ROOTS = {".github"}
+OWNED_SOURCE_EXCLUDED_DIRECTORY_NAMES = EXCLUDED_DIRECTORY_NAMES - {"bin", "tests"}
 TEST_FILE_PATTERNS = (
     re.compile(r"(^|[._-])tests?\.(?:cs|swift|xaml|c?m?js|jsx|py|rs|ts|tsx)$", re.IGNORECASE),
     re.compile(r"\.(?:spec|test)\.(?:c?m?js|jsx|ts|tsx)$", re.IGNORECASE),
@@ -79,6 +80,23 @@ def is_production_source(path: str | Path) -> bool:
     if any(part.lower() in EXCLUDED_DIRECTORY_NAMES for part in candidate.parts[:-1]):
         return False
     if any(pattern.search(candidate.name) for pattern in TEST_FILE_PATTERNS):
+        return False
+    if any(pattern.search(candidate.name) for pattern in GENERATED_FILE_PATTERNS):
+        return False
+    return True
+
+
+def is_owned_source(path: str | Path) -> bool:
+    relative = normalize_relative_path(path)
+    candidate = Path(relative)
+    if not candidate.parts or candidate.parts[0] in EXCLUDED_ROOTS:
+        return False
+    if candidate.suffix.lower() not in SOURCE_SUFFIXES:
+        return False
+    if any(
+        part.lower() in OWNED_SOURCE_EXCLUDED_DIRECTORY_NAMES
+        for part in candidate.parts[:-1]
+    ):
         return False
     if any(pattern.search(candidate.name) for pattern in GENERATED_FILE_PATTERNS):
         return False

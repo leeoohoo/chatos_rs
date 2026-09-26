@@ -14,8 +14,16 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from check_new_code_clones import build_source_sequence, find_clone_violations
-from check_source_size_policy import AllowlistEntry, evaluate_source_sizes
-from code_quality_common import is_production_source, parse_unified_diff_added_lines
+from check_source_size_policy import (
+    AllowlistEntry,
+    collect_oversized_sources,
+    evaluate_source_sizes,
+)
+from code_quality_common import (
+    is_owned_source,
+    is_production_source,
+    parse_unified_diff_added_lines,
+)
 
 
 class CodeQualityCommonTests(unittest.TestCase):
@@ -36,6 +44,14 @@ class CodeQualityCommonTests(unittest.TestCase):
         self.assertFalse(is_production_source("frontend/src/icons.generated.ts"))
         self.assertFalse(is_production_source("frontend/src/schema.GENERATED.tsx"))
 
+    def test_owned_scope_includes_tests_but_excludes_generated_and_external_files(self) -> None:
+        self.assertTrue(is_owned_source("service/src/api/tests.rs"))
+        self.assertTrue(is_owned_source("clients/macos/Tests/AppTests.swift"))
+        self.assertTrue(is_owned_source("plugins/studio/test/schema.test.mjs"))
+        self.assertFalse(is_owned_source("frontend/src/schema.generated.ts"))
+        self.assertFalse(is_owned_source("frontend/node_modules/library/index.js"))
+        self.assertFalse(is_owned_source("service/fixtures/large_fixture.rs"))
+
     def test_unified_diff_parser_tracks_only_added_head_lines(self) -> None:
         diff = """diff --git a/src/app.rs b/src/app.rs
 --- a/src/app.rs
@@ -50,6 +66,29 @@ class CodeQualityCommonTests(unittest.TestCase):
 
 
 class SourceSizePolicyTests(unittest.TestCase):
+    def test_owned_scope_is_stably_sorted_and_treats_800_lines_as_oversized(self) -> None:
+        line_counts = {"z_test.rs": 800, "largest.swift": 1200, "small.ts": 799}
+        self.assertEqual(
+            collect_oversized_sources(line_counts, hard_lines=800, inclusive=True),
+            [("largest.swift", 1200), ("z_test.rs", 800)],
+        )
+        _, errors = evaluate_source_sizes(
+            line_counts,
+            {},
+            warn_lines=500,
+            hard_lines=800,
+            today=date(2026, 9, 26),
+            warning_paths=set(),
+            hard_limit_inclusive=True,
+        )
+        self.assertEqual(
+            errors,
+            [
+                "largest.swift: 1200 lines reaches hard limit 800 without an allowlist entry",
+                "z_test.rs: 800 lines reaches hard limit 800 without an allowlist entry",
+            ],
+        )
+
     def test_only_new_files_warn_and_valid_allowlist_covers_hard_limit(self) -> None:
         allowlist = {
             "legacy.rs": AllowlistEntry(

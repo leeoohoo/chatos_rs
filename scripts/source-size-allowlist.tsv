@@ -1,3 +1,4 @@
 # path	max_lines	expires_on	reason
 # Only production source files above 800 lines belong here.
 # expires_on is inclusive; expired, stale, missing, and over-budget entries fail CI.
+user_service/backend/src/models.rs	802	2026-12-31	Split user-service model types by domain

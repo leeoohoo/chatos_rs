@@ -1,0 +1,28 @@
+# path	max_lines	expires_on	reason
+# First-party source at or above 800 lines must have a bounded budget and an expiry.
+clients/macos/Tests/ChatOSConnectorTests/SQLiteAgentGroupChatStoreTests.swift	3470	2026-12-31	Split message, member, task, and migration store scenarios
+config_center_service/backend/src/state/tests.rs	2557	2026-12-31	Split state read/write, publish, and recovery scenarios
+config_center_service/backend/src/catalog/tests.rs	2281	2026-12-31	Split catalog parsing, version, and permission scenarios
+clients/macos/Tests/ChatOSConnectorTests/NativePluginRuntimeTests.swift	2227	2026-12-31	Split plugin discovery, installation, runtime, and skill-gate scenarios
+clients/macos/Tests/ChatOSConnectorTests/LocalAgentChatToolProviderTests.swift	1999	2026-12-31	Split local agent tool-provider tests by tool family
+clients/macos/Tests/ChatOSConnectorTests/LocalAgentGroupChatSchedulerTests.swift	1970	2026-12-31	Split scheduler, recovery, and concurrency scenarios
+clients/macos/Tests/ChatOSAppTests/StoryStudioTests.swift	1558	2026-12-31	Split Story Studio UI state and business action scenarios
+crates/chatos_ai_runtime/src/runtime/tests.rs	1479	2026-12-31	Split AI runtime tests by execution phase
+mcp_management_service/backend/src/api/mcp/tests.rs	1312	2026-12-31	Split MCP API tests by resource
+local_connector_service/backend/src/relay/tests.rs	1230	2026-12-31	Split relay protocol, reconnect, and authorization scenarios
+crates/chatos_cloud_agent_runtime/src/lib_inline_tests.rs	1128	2026-12-31	Move cloud runtime inline tests into layered test modules
+task_runner_service/backend/src/services/run_model_phase/completion/tests.rs	1102	2026-12-31	Split completion states and tool-call scenarios
+mcp/src/implementations/builtin/code_maintainer/tests.rs	1082	2026-12-31	Split code maintainer read, edit, and verification scenarios
+mcp_management_service/backend/src/providers/plugin_local/tests.rs	1051	2026-12-31	Split local plugin discovery, connection, and recovery scenarios
+plugins/web-design-studio/test/schema.test.mjs	1003	2026-12-31	Split Web Design Studio schema tests by document area
+task_runner_service/backend/src/store/in_memory/runs/tests.rs	966	2026-12-31	Split in-memory run-store tests by lifecycle operation
+chatos/backend/src/api/sessions/history_process_inline_tests.rs	946	2026-12-31	Split session history trimming and error scenarios
+memory_engine/backend/src/repositories/postgres_contract_tests.rs	893	2026-12-31	Split PostgreSQL repository contracts by repository
+task_runner_service/backend/src/store/postgres/contract_tests.rs	852	2026-12-31	Split PostgreSQL run-store contracts by operation
+mcp_management_service/backend/src/runtime/invocation_store/tests.rs	851	2026-12-31	Split invocation store lifecycle scenarios
+chatos/backend/src/api/agent_chat/task_runner_callback/messages/tests.rs	847	2026-12-31	Split task-runner callback tests by message state
+mcp_management_service/backend/src/providers/plugin_components/tests.rs	835	2026-12-31	Split plugin component tests by component type
+task_runner_service/backend/src/services/tool_runtime/mcp_server/tests/schema.rs	826	2026-12-31	Extract fixtures and split MCP schema tests by schema family
+user_service/backend/src/models.rs	802	2026-12-31	Split user-service model types by domain
+clients/macos/Sources/ChatOSApp/Features/Shared/MarkdownDocumentView.swift	800	2026-12-31	Split Markdown rendering, interaction, and preview components
+plugins/web-design-studio/src/v2/scene-editor-command.ts	800	2026-12-31	Split Scene command parsing, validation, and execution

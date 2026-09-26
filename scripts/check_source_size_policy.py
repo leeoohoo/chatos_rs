@@ -14,6 +14,7 @@ from pathlib import Path
 
 from code_quality_common import (
     collect_added_lines,
+    is_owned_source,
     is_production_source,
     iter_repository_files,
     normalize_relative_path,
@@ -87,6 +88,7 @@ def evaluate_source_sizes(
     hard_lines: int,
     today: date,
     warning_paths: set[str] | None = None,
+    hard_limit_inclusive: bool = False,
 ) -> tuple[list[str], list[str]]:
     warnings: list[str] = []
     errors: list[str] = []
@@ -101,7 +103,10 @@ def evaluate_source_sizes(
             warnings.append(
                 f"{relative_path}: {line_count} lines (warning threshold {warn_lines})"
             )
-        if line_count <= hard_lines:
+        below_hard_limit = (
+            line_count < hard_lines if hard_limit_inclusive else line_count <= hard_lines
+        )
+        if below_hard_limit:
             if entry:
                 errors.append(
                     f"{relative_path}: stale allowlist entry; file is now {line_count} lines "
@@ -109,8 +114,9 @@ def evaluate_source_sizes(
                 )
             continue
         if not entry:
+            limit_message = "reaches" if hard_limit_inclusive else "exceeds"
             errors.append(
-                f"{relative_path}: {line_count} lines exceeds hard limit {hard_lines} "
+                f"{relative_path}: {line_count} lines {limit_message} hard limit {hard_lines} "
                 "without an allowlist entry"
             )
             continue
@@ -133,6 +139,19 @@ def evaluate_source_sizes(
     return warnings, errors
 
 
+def collect_oversized_sources(
+    line_counts: dict[str, int], *, hard_lines: int, inclusive: bool
+) -> list[tuple[str, int]]:
+    return sorted(
+        (
+            (relative_path, line_count)
+            for relative_path, line_count in line_counts.items()
+            if (line_count >= hard_lines if inclusive else line_count > hard_lines)
+        ),
+        key=lambda item: (-item[1], item[0]),
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Warn above 500 lines and require expiring allowlist entries above 800 lines."
@@ -140,9 +159,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warn-lines", type=int, default=DEFAULT_WARN_LINES)
     parser.add_argument("--hard-lines", type=int, default=DEFAULT_HARD_LINES)
     parser.add_argument(
+        "--scope",
+        choices=("production", "owned"),
+        default="production",
+        help="Use 'owned' to include first-party tests and executable scripts.",
+    )
+    parser.add_argument(
         "--allowlist",
         type=Path,
-        default=Path(__file__).with_name("source-size-allowlist.tsv"),
+        default=None,
     )
     parser.add_argument(
         "--today",
@@ -166,6 +191,11 @@ def main() -> int:
         return 2
 
     root = Path(__file__).resolve().parent.parent
+    owned_scope = args.scope == "owned"
+    source_predicate = is_owned_source if owned_scope else is_production_source
+    allowlist_path = args.allowlist or Path(__file__).with_name(
+        "oversized-source-allowlist.tsv" if owned_scope else "source-size-allowlist.tsv"
+    )
     base_revision, head_revision, comparison_warning = resolve_git_comparison(
         root, args.base, args.head
     )
@@ -174,7 +204,7 @@ def main() -> int:
     line_counts = {
         relative_path: len(read_source_lines(root, relative_path))
         for relative_path in iter_repository_files(root)
-        if is_production_source(relative_path) and (root / relative_path).is_file()
+        if source_predicate(relative_path) and (root / relative_path).is_file()
     }
     added_lines = collect_added_lines(
         root,
@@ -187,7 +217,7 @@ def main() -> int:
         if relative_path in line_counts
         and line_numbers == set(range(1, line_counts[relative_path] + 1))
     }
-    allowlist, parse_errors = parse_allowlist(args.allowlist)
+    allowlist, parse_errors = parse_allowlist(allowlist_path)
     warnings, policy_errors = evaluate_source_sizes(
         line_counts,
         allowlist,
@@ -195,12 +225,27 @@ def main() -> int:
         hard_lines=args.hard_lines,
         today=today,
         warning_paths=new_file_paths,
+        hard_limit_inclusive=owned_scope,
     )
 
     print(
-        f"Production source size policy: {len(line_counts)} files, "
-        f"warn for new files > {args.warn_lines}, require allowlist > {args.hard_lines}"
+        f"{args.scope.capitalize()} source size policy: {len(line_counts)} files, "
+        f"warn for new files > {args.warn_lines}, require allowlist "
+        f"{'≥' if owned_scope else '>'} {args.hard_lines}"
     )
+    if owned_scope:
+        print(f"Oversized source files (>= {args.hard_lines} lines):")
+        for relative_path, line_count in collect_oversized_sources(
+            line_counts, hard_lines=args.hard_lines, inclusive=True
+        ):
+            entry = allowlist.get(relative_path)
+            baseline = (
+                f"max={entry.max_lines}, expires={entry.expires_on.isoformat()}, "
+                f"reason={entry.reason}"
+                if entry
+                else "not allowlisted"
+            )
+            print(f"  {line_count}\t{relative_path}\t{baseline}")
     if warnings:
         print("Warnings:")
         for warning in warnings:
