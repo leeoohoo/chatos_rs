@@ -2,6 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc;
 use std::sync::Arc;
 
@@ -275,6 +277,15 @@ impl RunTerminalSubscriptionRecord {
 pub(crate) struct InMemoryStore {
     inner: Arc<RwLock<StoreData>>,
     run_event_sender: broadcast::Sender<TaskRunEventRecord>,
+    #[cfg(test)]
+    run_lookup_query_counts: Arc<RunLookupQueryCounts>,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct RunLookupQueryCounts {
+    full_lists: AtomicUsize,
+    latest: AtomicUsize,
 }
 
 #[derive(Clone)]

@@ -15,6 +15,8 @@ impl InMemoryStore {
         Self {
             inner: Arc::new(RwLock::new(StoreData::default())),
             run_event_sender,
+            #[cfg(test)]
+            run_lookup_query_counts: Arc::new(RunLookupQueryCounts::default()),
         }
     }
 }

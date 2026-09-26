@@ -3,6 +3,8 @@
 
 use super::*;
 use crate::models::WorkspaceIntegrationStatus;
+#[cfg(test)]
+use std::sync::atomic::Ordering;
 #[path = "runs/events.rs"]
 mod events;
 #[cfg(test)]
@@ -77,6 +79,10 @@ impl InMemoryStore {
     }
 
     pub(in crate::store) fn list_runs(&self, task_id: Option<&str>) -> Vec<TaskRunRecord> {
+        #[cfg(test)]
+        self.run_lookup_query_counts
+            .full_lists
+            .fetch_add(1, Ordering::Relaxed);
         let data = self.inner.read();
         let mut items = data
             .runs
@@ -88,12 +94,15 @@ impl InMemoryStore {
         items
     }
 
-    #[allow(dead_code)]
     pub(in crate::store) fn latest_run_for_task_by_statuses(
         &self,
         task_id: &str,
         statuses: &[TaskRunStatus],
     ) -> Option<TaskRunRecord> {
+        #[cfg(test)]
+        self.run_lookup_query_counts
+            .latest
+            .fetch_add(1, Ordering::Relaxed);
         self.inner
             .read()
             .runs
@@ -105,6 +114,16 @@ impl InMemoryStore {
                     .then_with(|| left.id.cmp(&right.id))
             })
             .cloned()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn run_lookup_query_counts(&self) -> (usize, usize) {
+        (
+            self.run_lookup_query_counts
+                .full_lists
+                .load(Ordering::Relaxed),
+            self.run_lookup_query_counts.latest.load(Ordering::Relaxed),
+        )
     }
 
     pub(in crate::store) fn list_runs_filtered_scoped(

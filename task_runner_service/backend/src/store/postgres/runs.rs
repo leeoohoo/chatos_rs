@@ -74,7 +74,6 @@ impl PostgresStore {
         rows.into_iter().map(decode_json).collect()
     }
 
-    #[allow(dead_code)]
     pub(in crate::store) async fn latest_run_for_task_by_statuses(
         &self,
         task_id: &str,

@@ -18,7 +18,6 @@ impl AppStore {
         }
     }
 
-    #[allow(dead_code)]
     pub async fn latest_run_for_task_by_statuses(
         &self,
         task_id: &str,
