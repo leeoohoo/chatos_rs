@@ -2,13 +2,56 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
+use crate::config::{AppConfig, StoreMode, TaskRunnerRole};
 use crate::models::{
     AskUserPromptStatus, ModelPhaseStatus, TaskMcpConfig, TaskRunStatus, TaskScheduleConfig,
     TaskScheduleMode, TaskStatus, TaskToolState, TASK_PROFILE_DEFAULT,
 };
+use crate::services::TaskService;
 use serde_json::json;
+
+fn service_config(database_url: String) -> AppConfig {
+    AppConfig {
+        host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+        port: 0,
+        otlp_endpoint: "http://127.0.0.1:4317".to_string(),
+        otlp_trace_sample_ratio: 0.0,
+        otlp_export_timeout: Duration::from_secs(1),
+        role: TaskRunnerRole::All,
+        store_mode: StoreMode::Postgres,
+        database_url,
+        memory_engine_base_url: None,
+        memory_engine_source_id: "task".to_string(),
+        memory_engine_operator_token: None,
+        memory_engine_http_client: reqwest::Client::new(),
+        default_tenant_id: "tenant".to_string(),
+        default_subject_id: "subject".to_string(),
+        default_workspace_dir: ".".to_string(),
+        memory_timeout: Duration::from_secs(1),
+        execution_timeout: Duration::from_secs(1),
+        scheduler_poll_interval: Duration::from_secs(1),
+        worker_id: "postgres-contract-worker".to_string(),
+        worker_claim_ttl: Duration::from_secs(120),
+        worker_concurrency: 4,
+        default_task_execution_max_iterations: 1,
+        default_tool_result_model_max_chars: 1_000,
+        default_tool_results_model_total_max_chars: 2_000,
+        chatos_callback_url: String::new(),
+        chatos_callback_http_client: reqwest::Client::new(),
+        chatos_internal_api_secret: None,
+        mcp_management_internal_api_secret: None,
+        user_service_internal_api_secret: None,
+        callback_timeout: Duration::from_secs(1),
+        admin_username: "admin".to_string(),
+        admin_password: "admin".to_string(),
+        admin_display_name: "Admin".to_string(),
+        user_service_base_url: "http://127.0.0.1:39190".to_string(),
+        user_service_request_timeout: Duration::from_secs(1),
+    }
+}
 
 async fn test_store() -> PostgresStore {
     let database_url = std::env::var("TASK_RUNNER_TEST_DATABASE_URL")
@@ -83,6 +126,109 @@ fn task(id: &str, next_run_at: Option<&str>) -> TaskRecord {
         updated_at: now,
         deleted_at: None,
     }
+}
+
+async fn seed_message_tasks(
+    store: &PostgresStore,
+    source_session_id: &str,
+    source_user_message_id: &str,
+    count: usize,
+) -> Vec<String> {
+    let mut task_ids = Vec::with_capacity(count);
+    for index in 0..count {
+        let task_id = format!("contract-message-{source_session_id}-{index:04}");
+        let run_id = format!("contract-message-run-{source_session_id}-{index:04}");
+        let mut record = task(&task_id, None);
+        record.status = TaskStatus::Queued;
+        record.source_session_id = Some(source_session_id.to_string());
+        record.source_user_message_id = Some(source_user_message_id.to_string());
+        record.last_run_id = Some(run_id.clone());
+        store.save_task(record).await.expect("save message task");
+        store
+            .save_run(TaskRunRecord::queued(
+                run_id,
+                task_id.clone(),
+                "model-contract".to_string(),
+                format!("thread-{task_id}"),
+                json!({}),
+                now_rfc3339(),
+            ))
+            .await
+            .expect("save message run");
+        task_ids.push(task_id);
+    }
+    task_ids
+}
+
+async fn measured_message_query_calls(
+    service: &TaskService,
+    store: &PostgresStore,
+    source_session_id: &str,
+    source_user_message_id: &str,
+    expected_tasks: usize,
+) -> i64 {
+    sqlx::query("SELECT pg_stat_statements_reset()")
+        .execute(&store.pool)
+        .await
+        .expect("reset query statistics");
+    let tasks = service
+        .list_tasks_for_chatos_source(source_session_id, Some(source_user_message_id), None)
+        .await
+        .expect("list message tasks");
+    assert_eq!(tasks.len(), expected_tasks);
+    sqlx::query_scalar::<_, i64>(
+        "SELECT coalesce(sum(calls),0)::bigint FROM pg_stat_statements \
+         WHERE query LIKE 'SELECT data FROM tasks WHERE %' \
+         OR query LIKE 'SELECT data FROM task_runs WHERE id=ANY%' \
+         OR query LIKE 'SELECT data FROM task_prerequisites WHERE task_id = ANY%'",
+    )
+    .fetch_one(&store.pool)
+    .await
+    .expect("read query statistics")
+}
+
+#[tokio::test]
+#[ignore = "requires TASK_RUNNER_TEST_DATABASE_URL, migrations, and pg_stat_statements"]
+async fn postgres_message_task_round_trips_stay_constant_at_one_thousand_tasks() {
+    let database_url = std::env::var("TASK_RUNNER_TEST_DATABASE_URL")
+        .expect("TASK_RUNNER_TEST_DATABASE_URL must be set");
+    let store = test_store().await;
+    let service = TaskService::new(
+        service_config(database_url),
+        AppStore::Postgres(store.clone()),
+    );
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let single_session = format!("single-{suffix}");
+    let bulk_session = format!("bulk-{suffix}");
+    let source_user_message_id = format!("message-{suffix}");
+    seed_message_tasks(&store, &single_session, &source_user_message_id, 1).await;
+    seed_message_tasks(&store, &bulk_session, &source_user_message_id, 1_000).await;
+
+    let single_calls = measured_message_query_calls(
+        &service,
+        &store,
+        &single_session,
+        &source_user_message_id,
+        1,
+    )
+    .await;
+    let bulk_calls = measured_message_query_calls(
+        &service,
+        &store,
+        &bulk_session,
+        &source_user_message_id,
+        1_000,
+    )
+    .await;
+
+    assert_eq!(single_calls, 3);
+    assert_eq!(bulk_calls, single_calls);
+
+    sqlx::query("DELETE FROM tasks WHERE source_session_id=ANY($1)")
+        .bind(&[single_session, bulk_session])
+        .execute(&store.pool)
+        .await
+        .expect("cleanup message tasks");
 }
 
 #[tokio::test]
