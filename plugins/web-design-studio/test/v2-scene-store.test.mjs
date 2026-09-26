@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -189,6 +189,50 @@ test('history uses checksummed compressed snapshots and enforces count and byte 
     assert.match(record.past[0].before.sha256, /^[a-f0-9]{64}$/);
     assert.equal(typeof record.past[0].before.data, 'string');
     assert.equal((await store.history(document.documentId)).undoCount, record.past.length);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('common paths skip unused snapshot payloads while explicit history audit checks all snapshots', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-history-audit-'));
+  const store = new SceneDocumentStore(root);
+  try {
+    let document = await store.create(nestedWebsite());
+    document = (await store.apply(document.documentId, headlineTransaction(document.revision, 'First version', 'transaction-audit-first'))).document;
+    document = (await store.apply(document.documentId, headlineTransaction(document.revision, 'Second version', 'transaction-audit-second'))).document;
+
+    const files = await readdir(root);
+    const file = path.join(root, files.find((candidate) => candidate.endsWith('.json')));
+    const record = JSON.parse(await readFile(file, 'utf8'));
+    record.past[0].before.data = 'corrupted-unused-snapshot';
+    await writeFile(file, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+
+    assert.equal((await store.read(document.documentId)).revision, document.revision);
+    assert.equal((await store.history(document.documentId)).undoCount, 2);
+    await assert.rejects(() => store.auditHistory(document.documentId), /cannot be decompressed/);
+    const undone = await store.undo(document.documentId, document.revision);
+    assert.equal(indexSceneDocument(undone).get('text-hero-heading').node.content, 'First version');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('undo still deeply validates the exact snapshot it restores', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-target-snapshot-'));
+  const store = new SceneDocumentStore(root);
+  try {
+    let document = await store.create(nestedWebsite());
+    document = (await store.apply(document.documentId, headlineTransaction(document.revision, 'Changed version', 'transaction-target-snapshot'))).document;
+
+    const files = await readdir(root);
+    const file = path.join(root, files.find((candidate) => candidate.endsWith('.json')));
+    const record = JSON.parse(await readFile(file, 'utf8'));
+    record.past.at(-1).before.sha256 = '0'.repeat(64);
+    await writeFile(file, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+
+    assert.equal((await store.read(document.documentId)).revision, document.revision);
+    await assert.rejects(() => store.undo(document.documentId, document.revision), /checksum mismatch/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
