@@ -88,6 +88,25 @@ impl InMemoryStore {
         items
     }
 
+    #[allow(dead_code)]
+    pub(in crate::store) fn latest_run_for_task_by_statuses(
+        &self,
+        task_id: &str,
+        statuses: &[TaskRunStatus],
+    ) -> Option<TaskRunRecord> {
+        self.inner
+            .read()
+            .runs
+            .values()
+            .filter(|run| run.task_id == task_id && statuses.contains(&run.status))
+            .max_by(|left, right| {
+                left.created_at
+                    .cmp(&right.created_at)
+                    .then_with(|| left.id.cmp(&right.id))
+            })
+            .cloned()
+    }
+
     pub(in crate::store) fn list_runs_filtered_scoped(
         &self,
         filters: &RunListFilters,

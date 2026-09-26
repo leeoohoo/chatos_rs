@@ -18,6 +18,22 @@ impl AppStore {
         }
     }
 
+    #[allow(dead_code)]
+    pub async fn latest_run_for_task_by_statuses(
+        &self,
+        task_id: &str,
+        statuses: &[TaskRunStatus],
+    ) -> Result<Option<TaskRunRecord>, String> {
+        match self {
+            Self::InMemory(store) => Ok(store.latest_run_for_task_by_statuses(task_id, statuses)),
+            Self::Postgres(store) => {
+                store
+                    .latest_run_for_task_by_statuses(task_id, statuses)
+                    .await
+            }
+        }
+    }
+
     pub async fn list_runs_filtered(
         &self,
         filters: &RunListFilters,

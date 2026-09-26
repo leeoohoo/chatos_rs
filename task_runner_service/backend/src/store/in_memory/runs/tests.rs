@@ -129,6 +129,29 @@ fn batch_run_lookup_returns_complete_requested_records() {
 }
 
 #[test]
+fn latest_run_for_task_by_statuses_returns_most_recent_matching_run() {
+    let store = test_store();
+    store.save_task(owned_task("task-latest", Some("user-a"), "user-a"));
+    for (id, created_at) in [
+        ("run-older", "2026-09-26T00:00:00Z"),
+        ("run-newer", "2026-09-26T00:01:00Z"),
+    ] {
+        let mut run = queued_run();
+        run.id = id.to_string();
+        run.task_id = "task-latest".to_string();
+        run.status = TaskRunStatus::Succeeded;
+        run.created_at = created_at.to_string();
+        store.save_run(run).expect("save terminal run");
+    }
+
+    let latest = store
+        .latest_run_for_task_by_statuses("task-latest", &[TaskRunStatus::Succeeded])
+        .expect("latest run");
+
+    assert_eq!(latest.id, "run-newer");
+}
+
+#[test]
 fn visible_run_query_uses_task_owner_then_creator_fallback() {
     let store = test_store();
     for task in [

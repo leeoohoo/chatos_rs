@@ -74,6 +74,32 @@ impl PostgresStore {
         rows.into_iter().map(decode_json).collect()
     }
 
+    #[allow(dead_code)]
+    pub(in crate::store) async fn latest_run_for_task_by_statuses(
+        &self,
+        task_id: &str,
+        statuses: &[TaskRunStatus],
+    ) -> Result<Option<TaskRunRecord>, String> {
+        if statuses.is_empty() {
+            return Ok(None);
+        }
+        let statuses = statuses
+            .iter()
+            .map(enum_text)
+            .collect::<Result<Vec<_>, _>>()?;
+        sqlx::query_scalar::<_, Json<serde_json::Value>>(
+            "SELECT data FROM task_runs WHERE task_id=$1 AND status=ANY($2) \
+             ORDER BY created_at DESC,id DESC LIMIT 1",
+        )
+        .bind(task_id)
+        .bind(statuses)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_error)?
+        .map(decode_json)
+        .transpose()
+    }
+
     pub(in crate::store) async fn list_runs_filtered_scoped(
         &self,
         filters: &RunListFilters,
