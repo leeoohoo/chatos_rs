@@ -138,4 +138,67 @@ mod tests {
         };
         assert_eq!(memory.run_lookup_query_counts(), (0, 2));
     }
+
+    #[tokio::test]
+    async fn dependency_run_lookup_handles_empty_ties_and_mixed_statuses() {
+        let config = test_config();
+        let store = AppStore::new(&config).await.expect("store");
+        let service = RunService::new(
+            config,
+            store.clone(),
+            AskUserPromptService::new(store.clone()),
+        );
+
+        assert!(service
+            .active_run_for_task("empty-task")
+            .await
+            .expect("empty active lookup")
+            .is_none());
+        assert!(service
+            .latest_successful_run("empty-task")
+            .await
+            .expect("empty successful lookup")
+            .is_none());
+
+        for candidate in [
+            run("active-a", TaskRunStatus::Queued, "2026-09-26T00:01:00Z"),
+            run("active-z", TaskRunStatus::Running, "2026-09-26T00:01:00Z"),
+            run(
+                "success-a",
+                TaskRunStatus::Succeeded,
+                "2026-09-26T00:02:00Z",
+            ),
+            run(
+                "success-z",
+                TaskRunStatus::Succeeded,
+                "2026-09-26T00:02:00Z",
+            ),
+            run(
+                "failed-newest",
+                TaskRunStatus::Failed,
+                "2026-09-26T00:03:00Z",
+            ),
+        ] {
+            store.save_run(candidate).await.expect("save run");
+        }
+
+        assert_eq!(
+            service
+                .active_run_for_task("dependency-task")
+                .await
+                .expect("active lookup")
+                .expect("active run")
+                .id,
+            "active-z"
+        );
+        assert_eq!(
+            service
+                .latest_successful_run("dependency-task")
+                .await
+                .expect("successful lookup")
+                .expect("successful run")
+                .id,
+            "success-z"
+        );
+    }
 }
