@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -37,6 +38,56 @@ test('v2 scene store persists atomic transactions with monotonic revisions', asy
     assert.equal(record.document.revision, 2);
     assert.equal(record.past.length, 1);
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('scene commits preserve fsync and atomic rename recovery semantics', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-atomic-commit-'));
+  const store = new SceneDocumentStore(root);
+  const open = fs.open;
+  const rename = fs.rename;
+  try {
+    const created = await store.create(nestedWebsite());
+    const events = [];
+    fs.open = async (target, ...argumentsValue) => {
+      const handle = await open.call(fs, target, ...argumentsValue);
+      const resolved = String(target);
+      if (!resolved.startsWith(root)) return handle;
+      return new Proxy(handle, {
+        get(source, property) {
+          if (property === 'sync') {
+            return async () => {
+              events.push(resolved === root ? 'directory-fsync' : 'temporary-file-fsync');
+              return source.sync();
+            };
+          }
+          const value = Reflect.get(source, property, source);
+          return typeof value === 'function' ? value.bind(source) : value;
+        }
+      });
+    };
+    fs.rename = async (temporary, destination) => {
+      events.push('rename');
+      return rename.call(fs, temporary, destination);
+    };
+
+    const applied = await store.apply(created.documentId, headlineTransaction(1, 'Atomic commit', 'transaction-atomic-commit'));
+    assert.deepEqual(events, ['temporary-file-fsync', 'rename', 'directory-fsync']);
+
+    fs.rename = async () => {
+      throw Object.assign(new Error('injected rename failure'), { code: 'EIO' });
+    };
+    await assert.rejects(
+      () => store.apply(applied.document.documentId, headlineTransaction(2, 'Must not commit', 'transaction-atomic-failure')),
+      /injected rename failure/
+    );
+    assert.equal((await store.read(created.documentId)).revision, 2);
+    assert.equal((await store.history(created.documentId)).nextUndoTransactionId, 'transaction-atomic-commit');
+    assert.equal((await readdir(root)).some((file) => file.endsWith('.tmp')), false);
+  } finally {
+    fs.open = open;
+    fs.rename = rename;
     await rm(root, { recursive: true, force: true });
   }
 });
