@@ -112,18 +112,26 @@ function trimHistory(
 ): { past: SceneHistoryEntry[]; future: SceneHistoryEntry[] } {
   const past = pastSource.slice();
   const future = futureSource.slice();
+  const byteCounts = new Map<SceneHistoryEntry, number>();
+  const cachedHistoryEntryBytes = (entry: SceneHistoryEntry): number => {
+    const cached = byteCounts.get(entry);
+    if (cached !== undefined) return cached;
+    const measured = historyEntryBytes(entry);
+    byteCounts.set(entry, measured);
+    return measured;
+  };
   while (past.length + future.length > historyLimit) {
     if (past.length >= future.length && past.length > 0) past.shift();
     else future.shift();
   }
-  let storedBytes = [...past, ...future].reduce((total, entry) => total + historyEntryBytes(entry), 0);
+  let storedBytes = [...past, ...future].reduce((total, entry) => total + cachedHistoryEntryBytes(entry), 0);
   while (storedBytes > historyByteLimit && past.length + future.length > 1) {
     const pastCandidate = past[0];
     const futureCandidate = future[0];
-    if (pastCandidate && (!futureCandidate || historyEntryBytes(pastCandidate) >= historyEntryBytes(futureCandidate))) {
-      storedBytes -= historyEntryBytes(past.shift()!);
+    if (pastCandidate && (!futureCandidate || cachedHistoryEntryBytes(pastCandidate) >= cachedHistoryEntryBytes(futureCandidate))) {
+      storedBytes -= cachedHistoryEntryBytes(past.shift()!);
     } else if (futureCandidate) {
-      storedBytes -= historyEntryBytes(future.shift()!);
+      storedBytes -= cachedHistoryEntryBytes(future.shift()!);
     }
   }
   return { past, future };

@@ -261,3 +261,44 @@ test('history count trimming keeps the newest exact undo chain', async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('history byte trimming measures each transaction and summary at most once', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-history-byte-cache-'));
+  try {
+    const seedStore = new SceneDocumentStore(root);
+    let document = await seedStore.create(nestedWebsite());
+    for (let index = 0; index < 8; index += 1) {
+      const content = Array.from({ length: 700 }, (_, character) => String.fromCharCode(33 + ((character * 31 + index * 17) % 90))).join('');
+      document = (await seedStore.apply(document.documentId, headlineTransaction(document.revision, content, `transaction-byte-cache-${index}`))).document;
+    }
+
+    const stringify = JSON.stringify;
+    const measurements = new Map();
+    JSON.stringify = (value, ...argumentsValue) => {
+      if (value && typeof value === 'object' && typeof value.transactionId === 'string') {
+        const kind = Array.isArray(value.operations) ? 'transaction' : 'summary';
+        const key = `${kind}:${value.transactionId}`;
+        measurements.set(key, (measurements.get(key) ?? 0) + 1);
+      }
+      return stringify(value, ...argumentsValue);
+    };
+    try {
+      const constrainedStore = new SceneDocumentStore(root, 60, 1024);
+      await constrainedStore.apply(document.documentId, headlineTransaction(
+        document.revision,
+        'Trigger byte trimming',
+        'transaction-byte-cache-trigger'
+      ));
+    } finally {
+      JSON.stringify = stringify;
+    }
+
+    assert.ok(measurements.size > 2, 'Expected multiple history entries to be measured.');
+    assert.ok(
+      [...measurements.entries()].every(([, count]) => count === 1),
+      `History entry byte measurements were repeated: ${JSON.stringify([...measurements.entries()])}`
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
