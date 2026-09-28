@@ -11,15 +11,15 @@ struct TeamTodoBoardView: View {
     let focusedTodoID: String?
     let onInspectRun: (UUID) -> Void
 
-    @State private var expandedTodoIDs: Set<String> = []
+    @State private var expandedTodoID: String?
     @State private var resultTodo: LocalAgentTodo?
     @State private var page = 0
-    @State private var pageSize = 20
+    @State private var pageSize = 10
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 12) {
                     if todos.isEmpty {
                         ContentUnavailableView(
                             "还没有团队任务",
@@ -38,7 +38,8 @@ struct TeamTodoBoardView: View {
                         AgentListPaginationBar(
                             totalCount: todos.count,
                             page: $page,
-                            pageSize: $pageSize
+                            pageSize: $pageSize,
+                            pageSizeOptions: [10]
                         )
                         .padding(.top, 4)
                     }
@@ -61,7 +62,7 @@ struct TeamTodoBoardView: View {
         let profile = profilesByID[todo.agentID]
         let run = runsByTodoID[todo.id]
         let agentName = profile?.draft.name ?? "Agent"
-        let isExpanded = expandedTodoIDs.contains(todo.id)
+        let isExpanded = expandedTodoID == todo.id
         let authorizedToolCount = todo.executionPlan.builtinCapabilities.reduce(0) {
             $0 + LocalAgentTodoAuthorizationCatalog.descriptor(for: $1).toolNames.count
         }
@@ -88,22 +89,19 @@ struct TeamTodoBoardView: View {
                         .appFont(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
 
-                    Text(todo.executionContract.objective)
-                        .appFont(.body)
-                        .foregroundStyle(.primary)
-                        .lineLimit(isExpanded ? nil : 2)
-                        .textSelection(.enabled)
+                    objectiveText(todo.executionContract.objective, isExpanded: isExpanded)
                 }
             }
 
             if todo.status == .blocked {
                 HStack(alignment: .center, spacing: 10) {
                     Label(
-                        todo.blockedReason.isEmpty ? "任务已阻塞，但未记录原因。" : todo.blockedReason,
+                        blockedReason(todo, isExpanded: isExpanded),
                         systemImage: "exclamationmark.octagon.fill"
                     )
                     .appFont(.caption)
                     .foregroundStyle(.orange)
+                    .lineLimit(isExpanded ? nil : 3)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                     if let run, run.status == .needsReview {
@@ -174,9 +172,9 @@ struct TeamTodoBoardView: View {
                 Spacer(minLength: 8)
                 Button {
                     if isExpanded {
-                        expandedTodoIDs.remove(todo.id)
+                        expandedTodoID = nil
                     } else {
-                        expandedTodoIDs.insert(todo.id)
+                        expandedTodoID = todo.id
                     }
                 } label: {
                     Label(isExpanded ? "收起" : "查看详情", systemImage: isExpanded ? "chevron.up" : "chevron.down")
@@ -231,14 +229,35 @@ struct TeamTodoBoardView: View {
                 .padding(.vertical, 14)
                 .padding(.leading, 2)
         }
-        .shadow(color: .black.opacity(0.035), radius: 3, y: 1)
+    }
+
+    @ViewBuilder
+    private func objectiveText(_ objective: String, isExpanded: Bool) -> some View {
+        if isExpanded {
+            Text(objective)
+                .appFont(.body)
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+        } else {
+            let summary = TeamTodoCardText.collapsedSummary(objective)
+            Text(summary)
+                .appFont(.body)
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .accessibilityLabel(summary)
+        }
+    }
+
+    private func blockedReason(_ todo: LocalAgentTodo, isExpanded: Bool) -> String {
+        let reason = todo.blockedReason.isEmpty ? "任务已阻塞，但未记录原因。" : todo.blockedReason
+        return isExpanded ? reason : TeamTodoCardText.collapsedSummary(reason, maximumCharacters: 180)
     }
 
     private func focusRequestedTodo(using proxy: ScrollViewProxy) {
         guard let focusedTodoID,
               let index = todos.firstIndex(where: { $0.id == focusedTodoID }) else { return }
         page = index / max(pageSize, 1)
-        expandedTodoIDs.insert(focusedTodoID)
+        expandedTodoID = focusedTodoID
         DispatchQueue.main.async {
             withAnimation { proxy.scrollTo(focusedTodoID, anchor: .top) }
         }
@@ -543,6 +562,22 @@ struct TeamTodoBoardView: View {
         case .completed: "checkmark.circle.fill"
         case .cancelled: "xmark.circle.fill"
         }
+    }
+}
+
+enum TeamTodoCardText {
+    static func collapsedSummary(
+        _ value: String,
+        maximumCharacters: Int = 220
+    ) -> String {
+        let normalized = value
+            .split(whereSeparator: \Character.isWhitespace)
+            .joined(separator: " ")
+        guard maximumCharacters > 0, normalized.count > maximumCharacters else {
+            return normalized
+        }
+        let end = normalized.index(normalized.startIndex, offsetBy: maximumCharacters)
+        return normalized[..<end].trimmingCharacters(in: .whitespacesAndNewlines) + "…"
     }
 }
 

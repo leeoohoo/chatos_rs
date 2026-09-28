@@ -69,4 +69,16 @@ struct PerformancePolicyTests {
             idlePollCount: 20
         ) == .seconds(3))
     }
+
+    @Test("collapsed task cards normalize and bound long text")
+    func collapsedTaskCardTextIsBounded() {
+        let input = "  first\n\nsecond   " + String(repeating: "界", count: 240)
+        let summary = TeamTodoCardText.collapsedSummary(input, maximumCharacters: 40)
+
+        #expect(!summary.contains("\n"))
+        #expect(!summary.contains("  "))
+        #expect(summary.count == 41)
+        #expect(summary.hasSuffix("…"))
+        #expect(TeamTodoCardText.collapsedSummary(" short text ") == "short text")
+    }
 }
