@@ -269,6 +269,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         try
         {
             VideoFirstFrame = await LoadImageInputAsync(path, cancellationToken);
+            VideoReferenceAudio = null;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -300,6 +301,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
                 Path.GetFileName(path),
                 mimeType,
                 Convert.ToBase64String(bytes));
+            VideoFirstFrame = null;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {

@@ -332,6 +332,9 @@ public sealed partial class MediaGenerationService
         }
         if (request.FirstFrame is null && !VideoGenerationProfile.Ratios.Contains(request.Ratio))
             throw new ArgumentException("Choose a supported video ratio.", nameof(request));
+        if (request.ReferenceAudio is not null &&
+            (request.FirstFrame is not null || request.LastFrame is not null))
+            throw new ArgumentException("Reference audio cannot be combined with video frames.", nameof(request));
         ValidateVideoFrame(request.FirstFrame, request);
         ValidateVideoFrame(request.LastFrame, request);
         ValidateReferenceAudio(request.ReferenceAudio, profile, request);
