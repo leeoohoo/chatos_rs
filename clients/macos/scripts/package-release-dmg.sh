@@ -22,7 +22,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-APP_PATH=$(CHATOS_BUILD_CONFIGURATION=release "$SCRIPT_DIR/package-debug-app.sh" | tail -n 1)
+APP_PATH=$("$SCRIPT_DIR/package-release-app.sh" | tail -n 1)
 codesign --verify --deep --strict "$APP_PATH"
 
 mkdir -p "$OUTPUT_DIR"

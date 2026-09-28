@@ -398,7 +398,7 @@ deploy_plugins() {
 package_client() {
   case "$1" in
     mac)
-      "$ROOT_DIR/clients/macos/scripts/package-debug-app.sh"
+      "$ROOT_DIR/clients/macos/scripts/package-release-app.sh"
       ;;
     windows)
       if command -v dotnet >/dev/null 2>&1; then
