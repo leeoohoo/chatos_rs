@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Media.Core;
+using Windows.Media.Playback;
 using Windows.Storage.Pickers;
 
 namespace ChatOS.Desktop.Features.MediaStudio;
@@ -13,6 +14,7 @@ public sealed partial class MediaStudioPage : Page
     private readonly AppShell.MainWindowViewModel _shell;
     private string? _activeVideoPath;
     private string? _activeStoryVideoPath;
+    private MediaPlaybackList? _storyPlaylist;
 
     public MediaStudioPage(
         MediaStudioViewModel viewModel,
@@ -94,6 +96,65 @@ public sealed partial class MediaStudioPage : Page
     {
         if (sender is Button { DataContext: StoryContinuityIssue issue })
             StoryViewModel.SelectContinuityIssue(issue);
+    }
+
+    private void OnPlayStoryPlaylistClick(object sender, RoutedEventArgs e)
+    {
+        var videos = StoryViewModel.StartStoryPlaylist();
+        if (videos.Count == 0) return;
+        ReleaseStoryPlaylist();
+        var playlist = new MediaPlaybackList();
+        foreach (var video in videos)
+        {
+            playlist.Items.Add(new MediaPlaybackItem(
+                MediaSource.CreateFromUri(new Uri(video.FilePath, UriKind.Absolute))));
+        }
+        playlist.CurrentItemChanged += OnStoryPlaylistItemChanged;
+        _storyPlaylist = playlist;
+        _activeStoryVideoPath = "playlist";
+        StoryVideoPlayer.Source = playlist;
+        StoryVideoPlayer.Visibility = Visibility.Visible;
+        StoryVideoPlayer.MediaPlayer.Play();
+    }
+
+    private void OnStopStoryPlaylistClick(object sender, RoutedEventArgs e)
+    {
+        StoryViewModel.StopStoryPlaylist();
+        ReleaseStoryPlaylist();
+        _activeStoryVideoPath = null;
+        StoryVideoPlayer.Source = null;
+        RefreshStoryState();
+    }
+
+    private void OnStoryProjectVideoClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is not StoryProjectVideoItem item) return;
+        StoryViewModel.SelectProjectVideo(item);
+        ReleaseStoryPlaylist();
+        _activeStoryVideoPath = null;
+        RefreshStoryState();
+        StoryVideoPlayer.MediaPlayer.Play();
+    }
+
+    private void OnStoryPlaylistItemChanged(
+        MediaPlaybackList sender,
+        CurrentMediaPlaybackItemChangedEventArgs args)
+    {
+        if (args.NewItem is null)
+        {
+            DispatcherQueue.TryEnqueue(() => StoryViewModel.StopStoryPlaylist());
+            return;
+        }
+        var index = sender.Items.IndexOf(args.NewItem);
+        if (index >= 0)
+            DispatcherQueue.TryEnqueue(() => StoryViewModel.SelectPlaylistIndex(index));
+    }
+
+    private void ReleaseStoryPlaylist()
+    {
+        if (_storyPlaylist is not null)
+            _storyPlaylist.CurrentItemChanged -= OnStoryPlaylistItemChanged;
+        _storyPlaylist = null;
     }
 
     private async void OnGenerateStoryResourceImageClick(object sender, RoutedEventArgs e) =>
@@ -368,6 +429,13 @@ public sealed partial class MediaStudioPage : Page
         var hasResource = StoryViewModel.SelectedResource is not null;
         StoryResourceEmptyState.Visibility = hasResource ? Visibility.Collapsed : Visibility.Visible;
         StoryResourceEditorPanel.Visibility = hasResource ? Visibility.Visible : Visibility.Collapsed;
+
+        if (StoryViewModel.IsPlaylistActive)
+        {
+            StoryVideoPlayer.Visibility = Visibility.Visible;
+            return;
+        }
+        ReleaseStoryPlaylist();
 
         var path = StoryViewModel.SelectedSegment?.VideoPath;
         var hasVideo = path is { Length: > 0 } && File.Exists(path);

@@ -37,6 +37,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             RefreshPromptAudit();
             RefreshStoryRelations();
             RefreshContinuityAudit();
+            RefreshProjectMedia();
         };
         Resources.CollectionChanged += (_, _) =>
         {
@@ -144,6 +145,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanImportResourceAsset))]
     [NotifyPropertyChangedFor(nameof(CanImportSegmentAsset))]
     [NotifyPropertyChangedFor(nameof(CanAutoFillContinuity))]
+    [NotifyPropertyChangedFor(nameof(CanPlayStoryPlaylist))]
     private bool _isBusy;
     [ObservableProperty] private string _statusMessage = "剧情项目只保存在本机";
     [ObservableProperty] private string? _errorMessage;
@@ -563,6 +565,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         RefreshPromptAudit();
         RefreshStoryRelations();
         RefreshContinuityAudit();
+        RefreshProjectMedia();
     }
 
     private void OnWorkspaceChanged()
@@ -578,6 +581,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         RefreshPromptAudit();
         RefreshStoryRelations();
         RefreshContinuityAudit();
+        RefreshProjectMedia();
     }
 
     private async Task GenerateFrameCoreAsync(

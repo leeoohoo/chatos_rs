@@ -488,6 +488,28 @@
                                                         </ItemsControl>
                                                     </StackPanel>
                                                 </Expander>
+                                                <Expander Header="{x:Bind StoryViewModel.ProjectVideoSummary, Mode=OneWay}">
+                                                    <StackPanel Padding="0,8,0,0" Spacing="8">
+                                                        <Grid ColumnSpacing="8">
+                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                            <Button Click="OnPlayStoryPlaylistClick" Content="连续播放已完成分段" HorizontalAlignment="Stretch" IsEnabled="{x:Bind StoryViewModel.CanPlayStoryPlaylist, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                                            <Button Grid.Column="1" Click="OnStopStoryPlaylistClick" Content="停止连播" IsEnabled="{x:Bind StoryViewModel.IsPlaylistActive, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                        </Grid>
+                                                        <TextBlock Text="{x:Bind StoryViewModel.PlaylistStatusLabel, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        <ListView MaxHeight="220" Background="Transparent" BorderThickness="0" IsItemClickEnabled="True" ItemClick="OnStoryProjectVideoClick" ItemsSource="{x:Bind StoryViewModel.ProjectVideos}" SelectionMode="None">
+                                                            <ListView.ItemTemplate>
+                                                                <DataTemplate x:DataType="media:StoryProjectVideoItem">
+                                                                    <Border Margin="0,0,0,6" Padding="9" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="8">
+                                                                        <StackPanel Spacing="2">
+                                                                            <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                                            <TextBlock Text="{x:Bind SequenceLabel}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                        </StackPanel>
+                                                                    </Border>
+                                                                </DataTemplate>
+                                                            </ListView.ItemTemplate>
+                                                        </ListView>
+                                                    </StackPanel>
+                                                </Expander>
                                             </StackPanel>
                                         </ScrollViewer>
 
