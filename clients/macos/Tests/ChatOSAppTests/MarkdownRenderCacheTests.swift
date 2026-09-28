@@ -43,19 +43,52 @@ struct MarkdownRenderCacheTests {
     }
 
     @Test
-    func largeMarkdownIsSelectedForBackgroundParsing() {
-        #expect(!MarkdownLayoutPolicy.shouldParseOffMain("# Short\n\nBody"))
-        #expect(MarkdownLayoutPolicy.shouldParseOffMain(
-            String(repeating: "long markdown row\n", count: 600)
-        ))
-    }
-
-    @Test
     func onlyLongInlineMarkdownGetsItsOwnBoundedViewport() {
         #expect(!MarkdownLayoutPolicy.shouldUseBoundedViewport("**Short** reply"))
         #expect(MarkdownLayoutPolicy.shouldUseBoundedViewport(
             String(repeating: "long task result line\n", count: 80)
         ))
+    }
+
+    @Test
+    func onlyIncrementalStreamingMarkdownUsesTheUpdateDebounce() {
+        #expect(MarkdownLayoutPolicy.shouldDebounceStreamingUpdate(
+            previousSource: "Partial reply",
+            nextSource: "Partial reply with another token"
+        ))
+        #expect(!MarkdownLayoutPolicy.shouldDebounceStreamingUpdate(
+            previousSource: "Old document",
+            nextSource: "Completely different document"
+        ))
+        #expect(!MarkdownLayoutPolicy.shouldDebounceStreamingUpdate(
+            previousSource: "Completed reply",
+            nextSource: "Completed reply"
+        ))
+    }
+
+    @Test
+    func remoteMarkdownImagesAreValidatedAndBoundedBeforeDecoding() {
+        #expect(MarkdownRemoteImageLoader.allowedURL(
+            from: "https://example.test/api/attachments/object?token=signed"
+        ) != nil)
+        #expect(MarkdownRemoteImageLoader.allowedURL(
+            from: "https://example.test/api/attachments/object"
+        ) == nil)
+        #expect(MarkdownRemoteImageLoader.allowedURL(
+            from: "https://example.test/untrusted.png?token=signed"
+        ) == nil)
+        #expect(MarkdownRemoteImageLoader.boundedDisplaySize(
+            pixelWidth: 4_000,
+            pixelHeight: 2_000
+        ) == NSSize(width: 520, height: 260))
+        #expect(MarkdownRemoteImageLoader.boundedDisplaySize(
+            pixelWidth: 100,
+            pixelHeight: 50
+        ) == NSSize(width: 100, height: 50))
+        #expect(MarkdownRemoteImageLoader.boundedDisplaySize(
+            pixelWidth: 20_000,
+            pixelHeight: 20_000
+        ) == nil)
     }
 
     @Test

@@ -1,6 +1,12 @@
 import Foundation
 import AppKit
+import ImageIO
 import SwiftUI
+
+private let markdownImageSourceURLKey = NSAttributedString.Key(
+    "ChatOSMarkdownImageSourceURL"
+)
+
 struct MarkdownDocumentView: View {
     enum WidthBehavior: Equatable {
         case fill
@@ -30,14 +36,7 @@ struct MarkdownDocumentView: View {
         self.widthBehavior = widthBehavior
         viewport = .bounded(maximumHeight: maximumHeight)
 
-        let initialBlocks: [MarkdownBlock]?
-        if let cached = MarkdownRenderCache.shared.cachedBlocks(for: markdown) {
-            initialBlocks = cached
-        } else if MarkdownLayoutPolicy.shouldParseOffMain(markdown) {
-            initialBlocks = nil
-        } else {
-            initialBlocks = MarkdownRenderCache.shared.blocks(for: markdown)
-        }
+        let initialBlocks = MarkdownRenderCache.shared.cachedBlocks(for: markdown)
         _loadedDocument = State(
             initialValue: initialBlocks.map { LoadedDocument(source: markdown, blocks: $0) }
         )
@@ -62,11 +61,11 @@ struct MarkdownDocumentView: View {
 
     var body: some View {
         Group {
-            if let loadedDocument, loadedDocument.source == markdown {
+            if let loadedDocument {
                 if viewport.fillsAvailableHeight
-                    || MarkdownLayoutPolicy.shouldUseBoundedViewport(markdown) {
+                    || MarkdownLayoutPolicy.shouldUseBoundedViewport(loadedDocument.source) {
                     MarkdownNativeScrollView(
-                        source: markdown,
+                        source: loadedDocument.source,
                         blocks: loadedDocument.blocks,
                         allowsTextSelection: allowsTextSelection,
                         widthBehavior: widthBehavior,
@@ -79,7 +78,7 @@ struct MarkdownDocumentView: View {
                     )
                 } else {
                     MarkdownNativeTextView(
-                        source: markdown,
+                        source: loadedDocument.source,
                         blocks: loadedDocument.blocks,
                         allowsTextSelection: allowsTextSelection,
                         widthBehavior: widthBehavior
@@ -96,6 +95,17 @@ struct MarkdownDocumentView: View {
         .task(id: markdown) {
             guard loadedDocument?.source != markdown else { return }
             let source = markdown
+            if let previousSource = loadedDocument?.source,
+               MarkdownLayoutPolicy.shouldDebounceStreamingUpdate(
+                   previousSource: previousSource,
+                   nextSource: source
+               ) {
+                do {
+                    try await Task.sleep(for: MarkdownLayoutPolicy.streamingUpdateDebounce)
+                } catch {
+                    return
+                }
+            }
             let parsed = await Task.detached(priority: .userInitiated) {
                 let blocks = MarkdownRenderCache.shared.blocks(for: source)
                 MarkdownRenderCache.shared.prepareInlineAttributes(for: blocks)
@@ -176,15 +186,17 @@ struct MarkdownReaderView: View {
 
 enum MarkdownLayoutPolicy {
     static let maximumInlineHeight: CGFloat = 520
-    static let backgroundParsingByteThreshold = 8 * 1_024
-    static let backgroundParsingLineThreshold = 120
+    static let streamingUpdateDebounce: Duration = .milliseconds(40)
     static let boundedViewportByteThreshold = 1_500
     static let boundedViewportLineThreshold = 32
 
-    static func shouldParseOffMain(_ source: String) -> Bool {
-        source.utf8.count >= backgroundParsingByteThreshold
-            || source.lazy.filter(\.isNewline).prefix(backgroundParsingLineThreshold).count
-                >= backgroundParsingLineThreshold
+    static func shouldDebounceStreamingUpdate(
+        previousSource: String,
+        nextSource: String
+    ) -> Bool {
+        !previousSource.isEmpty
+            && nextSource.count > previousSource.count
+            && nextSource.hasPrefix(previousSource)
     }
 
     static func shouldUseBoundedViewport(_ source: String) -> Bool {
@@ -377,7 +389,12 @@ private final class MarkdownScrollContainerView: NSScrollView {
 
 @MainActor
 private final class MarkdownLayoutTextView: NSTextView {
-    private static let imageCache = NSCache<NSString, NSImage>()
+    private static let imageCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 32
+        cache.totalCostLimit = 64 * 1_024 * 1_024
+        return cache
+    }()
     private var source = ""
     private var measuredHeights: [UInt64: CGFloat] = [:]
     private var measuredWidths: [UInt64: CGFloat] = [:]
@@ -429,33 +446,38 @@ private final class MarkdownLayoutTextView: NSTextView {
         textStorage?.setAttributedString(MarkdownAttributedRenderer.render(blocks))
         invalidateMeasurements()
 
+        var seenImageURLs: Set<String> = []
         let imageBlocks = blocks.compactMap { block -> (String, URL)? in
             guard case let .image(_, rawURL) = block,
+                  seenImageURLs.insert(rawURL).inserted,
                   let url = MarkdownRemoteImageLoader.allowedURL(from: rawURL) else { return nil }
             return (rawURL, url)
         }
         guard !imageBlocks.isEmpty else { return }
         imageLoadTask = Task { [weak self] in
             guard let self else { return }
-            var images: [String: NSImage] = [:]
             for (rawURL, url) in imageBlocks {
                 guard !Task.isCancelled else { return }
                 if let cached = Self.imageCache.object(forKey: rawURL as NSString) {
-                    images[rawURL] = cached
+                    applyLoadedImage(cached, sourceURL: rawURL, documentSource: nextSource)
                     continue
                 }
                 guard let data = await MarkdownRemoteImageLoader.load(url),
-                      !Task.isCancelled,
-                      let image = NSImage(data: data) else { continue }
-                Self.imageCache.setObject(image, forKey: rawURL as NSString, cost: data.count)
-                images[rawURL] = image
+                      !Task.isCancelled else { continue }
+                let decoded = await Task.detached(priority: .utility) {
+                    MarkdownRemoteImageLoader.decode(data)
+                }.value
+                guard !Task.isCancelled,
+                      let decoded,
+                      source == nextSource else { continue }
+                let image = NSImage(cgImage: decoded.image, size: decoded.displaySize)
+                Self.imageCache.setObject(
+                    image,
+                    forKey: rawURL as NSString,
+                    cost: decoded.cost
+                )
+                applyLoadedImage(image, sourceURL: rawURL, documentSource: nextSource)
             }
-            guard !Task.isCancelled, source == nextSource, !images.isEmpty else { return }
-            textStorage?.setAttributedString(
-                MarkdownAttributedRenderer.render(blocks, loadedImages: images)
-            )
-            invalidateMeasurements()
-            enclosingScrollView?.needsLayout = true
         }
     }
 
@@ -473,6 +495,9 @@ private final class MarkdownLayoutTextView: NSTextView {
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         ).height ?? 1
         let result = max(ceil(measured), 1)
+        if measuredHeights.count >= 8 {
+            measuredHeights.removeAll(keepingCapacity: true)
+        }
         measuredHeights[widthKey] = result
         return result
     }
@@ -488,8 +513,37 @@ private final class MarkdownLayoutTextView: NSTextView {
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         ).width ?? 1
         let result = min(max(ceil(measured), 1), safeMaxWidth)
+        if measuredWidths.count >= 8 {
+            measuredWidths.removeAll(keepingCapacity: true)
+        }
         measuredWidths[widthKey] = result
         return result
+    }
+
+    private func applyLoadedImage(
+        _ image: NSImage,
+        sourceURL: String,
+        documentSource: String
+    ) {
+        guard source == documentSource, let textStorage else { return }
+        var matchingRanges: [NSRange] = []
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        textStorage.enumerateAttribute(
+            markdownImageSourceURLKey,
+            in: fullRange
+        ) { value, range, _ in
+            guard value as? String == sourceURL else { return }
+            matchingRanges.append(range)
+        }
+        guard !matchingRanges.isEmpty else { return }
+        let replacement = MarkdownAttributedRenderer.imageAttachment(image)
+        textStorage.beginEditing()
+        for range in matchingRanges.reversed() {
+            textStorage.replaceCharacters(in: range, with: replacement)
+        }
+        textStorage.endEditing()
+        invalidateMeasurements()
+        enclosingScrollView?.needsLayout = true
     }
 
     private func invalidateMeasurements() {
@@ -500,8 +554,16 @@ private final class MarkdownLayoutTextView: NSTextView {
     }
 }
 
-private enum MarkdownRemoteImageLoader {
+enum MarkdownRemoteImageLoader {
     static let maximumBytes = 10 * 1_024 * 1_024
+    static let maximumPixelCount = 40_000_000
+    static let maximumDisplaySize = NSSize(width: 520, height: 420)
+
+    struct DecodedImage: @unchecked Sendable {
+        let image: CGImage
+        let displaySize: NSSize
+        let cost: Int
+    }
 
     static func allowedURL(from rawValue: String) -> URL? {
         guard let url = URL(string: rawValue),
@@ -523,6 +585,66 @@ private enum MarkdownRemoteImageLoader {
               (200..<300).contains(response.statusCode),
               response.mimeType?.hasPrefix("image/") == true else { return nil }
         return data
+    }
+
+    nonisolated static func decode(_ data: Data) -> DecodedImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+                as? [CFString: Any],
+              let pixelWidth = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let pixelHeight = properties[kCGImagePropertyPixelHeight] as? NSNumber else {
+            return nil
+        }
+        let width = pixelWidth.doubleValue
+        let height = pixelHeight.doubleValue
+        guard width.isFinite, height.isFinite,
+              width > 0, height > 0,
+              width * height <= Double(maximumPixelCount) else { return nil }
+
+        guard let displaySize = boundedDisplaySize(
+            pixelWidth: width,
+            pixelHeight: height
+        ) else { return nil }
+        let thumbnailPixelSize = max(
+            1,
+            Int(ceil(max(displaySize.width, displaySize.height) * 2))
+        )
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: thumbnailPixelSize,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(
+            source,
+            0,
+            options as CFDictionary
+        ) else { return nil }
+        return DecodedImage(
+            image: image,
+            displaySize: displaySize,
+            cost: image.bytesPerRow * image.height
+        )
+    }
+
+    nonisolated static func boundedDisplaySize(
+        pixelWidth width: Double,
+        pixelHeight height: Double
+    ) -> NSSize? {
+        guard width.isFinite, height.isFinite,
+              width > 0, height > 0,
+              width * height <= Double(maximumPixelCount) else { return nil }
+        let displayScale = min(
+            1,
+            min(
+                Double(maximumDisplaySize.width) / width,
+                Double(maximumDisplaySize.height) / height
+            )
+        )
+        return NSSize(
+            width: max(1, width * displayScale),
+            height: max(1, height * displayScale)
+        )
     }
 
     private static func matchesAllowedScheme(_ scheme: String?) -> Bool {
@@ -596,25 +718,7 @@ enum MarkdownAttributedRenderer {
 
         case let .image(altText, url):
             if let image = loadedImages[url] {
-                let attachment = NSTextAttachment()
-                attachment.image = image
-                let maximumSize = NSSize(width: 520, height: 420)
-                let naturalSize = image.size
-                let scale = min(
-                    1,
-                    min(
-                        maximumSize.width / max(naturalSize.width, 1),
-                        maximumSize.height / max(naturalSize.height, 1)
-                    )
-                )
-                attachment.bounds = NSRect(
-                    origin: .zero,
-                    size: NSSize(
-                        width: max(1, naturalSize.width * scale),
-                        height: max(1, naturalSize.height * scale)
-                    )
-                )
-                result.append(NSAttributedString(attachment: attachment))
+                result.append(imageAttachment(image))
             } else {
                 let label = altText.isEmpty ? "图片" : altText
                 let placeholder = NSMutableAttributedString(
@@ -631,6 +735,11 @@ enum MarkdownAttributedRenderer {
                         range: NSRange(location: 0, length: placeholder.length)
                     )
                 }
+                placeholder.addAttribute(
+                    markdownImageSourceURLKey,
+                    value: url,
+                    range: NSRange(location: 0, length: placeholder.length)
+                )
                 result.append(placeholder)
             }
 
@@ -667,6 +776,13 @@ enum MarkdownAttributedRenderer {
         case let .table(headers, rows):
             appendTable(headers: headers, rows: rows, to: result)
         }
+    }
+
+    static func imageAttachment(_ image: NSImage) -> NSAttributedString {
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = NSRect(origin: .zero, size: image.size)
+        return NSAttributedString(attachment: attachment)
     }
 
     private static func appendTable(
