@@ -70,6 +70,52 @@ struct PerformancePolicyTests {
         ) == .seconds(3))
     }
 
+    @Test("application activation keeps an existing artifact sync coordinator")
+    func applicationActivationKeepsArtifactSyncCoordinator() {
+        #expect(!AgentArtifactSyncCoordinatorPolicy.shouldStart(
+            existingOwnerUserID: "owner",
+            requestedOwnerUserID: "owner",
+            hasLiveTask: true,
+            forceRestart: false
+        ))
+        #expect(AgentArtifactSyncCoordinatorPolicy.shouldStart(
+            existingOwnerUserID: "old-owner",
+            requestedOwnerUserID: "new-owner",
+            hasLiveTask: true,
+            forceRestart: false
+        ))
+        #expect(AgentArtifactSyncCoordinatorPolicy.shouldStart(
+            existingOwnerUserID: "owner",
+            requestedOwnerUserID: "owner",
+            hasLiveTask: true,
+            forceRestart: true
+        ))
+    }
+
+    @Test("application activation coalesces connector recovery")
+    func applicationActivationCoalescesConnectorRecovery() {
+        #expect(!LocalConnectorRecoveryPolicy.shouldStart(
+            forceReconnect: false,
+            hasLiveTask: true,
+            secondsSinceLastRecovery: nil
+        ))
+        #expect(!LocalConnectorRecoveryPolicy.shouldStart(
+            forceReconnect: false,
+            hasLiveTask: false,
+            secondsSinceLastRecovery: 10
+        ))
+        #expect(LocalConnectorRecoveryPolicy.shouldStart(
+            forceReconnect: false,
+            hasLiveTask: false,
+            secondsSinceLastRecovery: 60
+        ))
+        #expect(LocalConnectorRecoveryPolicy.shouldStart(
+            forceReconnect: true,
+            hasLiveTask: true,
+            secondsSinceLastRecovery: 1
+        ))
+    }
+
     @Test("collapsed task cards normalize and bound long text")
     func collapsedTaskCardTextIsBounded() {
         let input = "  first\n\nsecond   " + String(repeating: "界", count: 240)

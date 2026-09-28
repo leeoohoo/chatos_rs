@@ -110,12 +110,31 @@ extension AppModel {
         }
     }
 
+    func ensureAgentArtifactSyncCoordinator() {
+        startAgentArtifactSyncCoordinator(forceRestart: false)
+    }
+
     func restartAgentArtifactSyncCoordinator() {
-        agentArtifactSyncTask?.cancel()
+        startAgentArtifactSyncCoordinator(forceRestart: true)
+    }
+
+    private func startAgentArtifactSyncCoordinator(forceRestart: Bool) {
         guard let ownerUserID = authenticatedUserID else {
+            agentArtifactSyncTask?.cancel()
             agentArtifactSyncTask = nil
+            agentArtifactSyncOwnerUserID = nil
             return
         }
+        let hasLiveTask = agentArtifactSyncTask.map { !$0.isCancelled } ?? false
+        guard AgentArtifactSyncCoordinatorPolicy.shouldStart(
+            existingOwnerUserID: agentArtifactSyncOwnerUserID,
+            requestedOwnerUserID: ownerUserID,
+            hasLiveTask: hasLiveTask,
+            forceRestart: forceRestart
+        ) else { return }
+
+        agentArtifactSyncTask?.cancel()
+        agentArtifactSyncOwnerUserID = ownerUserID
         let service = agentGroupChatService
         agentArtifactSyncTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -141,4 +160,17 @@ extension AppModel {
         }
     }
 
+}
+
+enum AgentArtifactSyncCoordinatorPolicy {
+    static func shouldStart(
+        existingOwnerUserID: String?,
+        requestedOwnerUserID: String,
+        hasLiveTask: Bool,
+        forceRestart: Bool
+    ) -> Bool {
+        forceRestart
+            || !hasLiveTask
+            || existingOwnerUserID != requestedOwnerUserID
+    }
 }
