@@ -1,6 +1,16 @@
 import ChatOSCore
 import Foundation
 
+enum MessageTaskPollingPolicy {
+    static func interval(
+        isEmptyGraphRetry: Bool,
+        hasActiveRealtimeStream: Bool
+    ) -> Duration {
+        if isEmptyGraphRetry { return .milliseconds(600) }
+        return hasActiveRealtimeStream ? .seconds(15) : .seconds(2)
+    }
+}
+
 @MainActor
 final class MessageTaskWorkspaceViewModel: ObservableObject {
     static let emptyGraphRetryLimit = 3
@@ -44,6 +54,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     let initialRunID: String?
     var pollingTask: Task<Void, Never>?
     var realtimeTask: Task<Void, Never>?
+    var hasActiveRealtimeStream = false
     var loadedModelOutputRunID: String?
     var workspaceRefreshGeneration = 0
     var emptyGraphRetryAttemptsRemaining = MessageTaskWorkspaceViewModel.emptyGraphRetryLimit
@@ -151,6 +162,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     func stopRealtime() {
         realtimeTask?.cancel()
         realtimeTask = nil
+        hasActiveRealtimeStream = false
     }
 
     var baseLookup: MessageTaskLookup {
@@ -172,13 +184,19 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     func resetEmptyGraphRetryBudgetIfNeeded() {
         guard graph?.nodes.isEmpty != false, expectsTaskGraph else { return }
         emptyGraphRetryAttemptsRemaining = Self.emptyGraphRetryLimit
-        isAwaitingInitialGraph = graph != nil
+        let nextIsAwaitingInitialGraph = graph != nil
+        if isAwaitingInitialGraph != nextIsAwaitingInitialGraph {
+            isAwaitingInitialGraph = nextIsAwaitingInitialGraph
+        }
     }
 
     func recordEmptyGraphRetryAttempt() {
         guard graph?.nodes.isEmpty == true else { return }
         emptyGraphRetryAttemptsRemaining = max(0, emptyGraphRetryAttemptsRemaining - 1)
-        isAwaitingInitialGraph = shouldRetryEmptyGraph
+        let nextIsAwaitingInitialGraph = shouldRetryEmptyGraph
+        if isAwaitingInitialGraph != nextIsAwaitingInitialGraph {
+            isAwaitingInitialGraph = nextIsAwaitingInitialGraph
+        }
     }
 
     func applyGraph(_ graph: MessageTaskGraphSnapshot) {
@@ -186,14 +204,22 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
             // A graph that has already been observed is stable for the lifetime of a
             // message. Do not let a transient empty gateway response erase the canvas.
             guard self.graph?.nodes.isEmpty != false else { return }
-            self.graph = graph
-            isAwaitingInitialGraph = shouldRetryEmptyGraph
+            if self.graph != graph {
+                self.graph = graph
+            }
+            let nextIsAwaitingInitialGraph = shouldRetryEmptyGraph
+            if isAwaitingInitialGraph != nextIsAwaitingInitialGraph {
+                isAwaitingInitialGraph = nextIsAwaitingInitialGraph
+            }
             return
         }
 
+        guard self.graph != graph else { return }
         self.graph = graph
         emptyGraphRetryAttemptsRemaining = 0
-        isAwaitingInitialGraph = false
+        if isAwaitingInitialGraph {
+            isAwaitingInitialGraph = false
+        }
         var normalized = MessageTaskGraphNormalizer.normalize(graph, mode: displayMode)
         if let initialTaskID,
            !normalized.nodes.contains(where: { $0.id == initialTaskID }),

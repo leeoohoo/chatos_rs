@@ -157,6 +157,22 @@ struct PerformancePolicyTests {
         #expect(ProjectRunMonitoringPolicy.shouldRefresh(runningState))
     }
 
+    @Test("task graph polling uses realtime as the primary update path")
+    func taskGraphPollingBacksOffWithRealtime() {
+        #expect(MessageTaskPollingPolicy.interval(
+            isEmptyGraphRetry: true,
+            hasActiveRealtimeStream: true
+        ) == .milliseconds(600))
+        #expect(MessageTaskPollingPolicy.interval(
+            isEmptyGraphRetry: false,
+            hasActiveRealtimeStream: false
+        ) == .seconds(2))
+        #expect(MessageTaskPollingPolicy.interval(
+            isEmptyGraphRetry: false,
+            hasActiveRealtimeStream: true
+        ) == .seconds(15))
+    }
+
     @Test("application activation keeps an existing artifact sync coordinator")
     func applicationActivationKeepsArtifactSyncCoordinator() {
         #expect(!AgentArtifactSyncCoordinatorPolicy.shouldStart(
