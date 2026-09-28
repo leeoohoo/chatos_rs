@@ -150,6 +150,15 @@ public sealed partial class MainWindow : Window
         ViewModel.Password = ((PasswordBox)sender).Password;
     }
 
+    private void OnSidebarSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (e.AddedItems.FirstOrDefault() is not ShellResourceViewModel selected) return;
+        if (ViewModel.SelectedResource is { } current &&
+            current.Kind == selected.Kind && current.Id == selected.Id) return;
+
+        ViewModel.SelectedResource = selected;
+    }
+
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(MainWindowViewModel.SelectedResource) && ViewModel.IsPublishingWorkspace) return;
