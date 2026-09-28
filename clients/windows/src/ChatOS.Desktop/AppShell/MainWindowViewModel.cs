@@ -559,8 +559,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             return;
         }
-        if (resource.Kind is WorkspaceResourceKind.AgentTeams or
-            WorkspaceResourceKind.RequirementSurveys or
+        if (resource.Kind == WorkspaceResourceKind.AgentTeams)
+        {
+            var owner = RequireAccount(AccountGeneration);
+            if (AgentTeam is not null)
+                await AgentTeam.OpenGlobalAsync(owner, cancellationToken);
+            return;
+        }
+        if (resource.Kind is WorkspaceResourceKind.RequirementSurveys or
             WorkspaceResourceKind.MediaStudio)
         {
             return;

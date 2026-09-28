@@ -45,6 +45,7 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
     public ObservableCollection<AgentMessageAttachment> PendingAttachments { get; } = [];
 
     public bool IsOpen => _ownerUserId is not null && ProjectId is not null;
+    public bool IsGlobalWorkspace { get; private set; }
     public bool HasRoom => SelectedRoom is not null;
     public bool HasAgents => Agents.Count > 0;
     public bool CanConfigureTeam => SelectedRoom is { Kind: AgentConversationKind.ProjectTeam };
@@ -89,8 +90,25 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
     {
         CancelSession();
         _ownerUserId = ownerUserId;
+        IsGlobalWorkspace = false;
         ProjectId = project.Id;
         ProjectName = project.Name;
+        _modelsLoaded = false;
+        await _dispatcher.InvokeAsync(() => Models.Clear(), cancellationToken).ConfigureAwait(false);
+        _sessionCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Interlocked.Increment(ref _generation);
+        await RefreshAsync(_sessionCancellation.Token).ConfigureAwait(false);
+    }
+
+    public async Task OpenGlobalAsync(
+        string ownerUserId,
+        CancellationToken cancellationToken = default)
+    {
+        CancelSession();
+        _ownerUserId = ownerUserId;
+        IsGlobalWorkspace = true;
+        ProjectId = "direct";
+        ProjectName = "Agent";
         _modelsLoaded = false;
         await _dispatcher.InvokeAsync(() => Models.Clear(), cancellationToken).ConfigureAwait(false);
         _sessionCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -106,7 +124,9 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
         {
             await SetBusyAsync(true, null, context.Token).ConfigureAwait(false);
             var agentsTask = _service.ListAgentsAsync(context.Owner, false, context.Token);
-            var roomsTask = _service.ListRoomsAsync(context.Owner, context.Project, context.Token);
+            var roomsTask = IsGlobalWorkspace
+                ? Task.FromResult<IReadOnlyList<AgentRoom>>([])
+                : _service.ListRoomsAsync(context.Owner, context.Project, context.Token);
             var directsTask = _service.ListRoomsAsync(context.Owner, "direct", context.Token);
             var shouldLoadModels = !_modelsLoaded;
             var modelsTask = shouldLoadModels

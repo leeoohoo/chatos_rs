@@ -21,6 +21,8 @@ public sealed partial class AgentTeamWorkspaceViewModel
     public Task CreateTeamAsync(string name, string goal, string managerAgentId) =>
         MutateAsync("正在创建团队…", async context =>
         {
+            if (IsGlobalWorkspace)
+                throw new InvalidOperationException("请先进入一个项目，再创建项目 Agent 团队。");
             var room = await _service.CreateTeamAsync(context.Owner, context.Project,
                 new AgentRoomDraft(name.Trim(), goal.Trim()), managerAgentId, context.Token)
                 .ConfigureAwait(false);

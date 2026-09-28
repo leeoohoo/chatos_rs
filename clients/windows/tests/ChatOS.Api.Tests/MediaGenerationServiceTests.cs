@@ -66,9 +66,18 @@ public sealed class MediaGenerationServiceTests
         var api = RuntimeApi(store, "https://provider.example.test/v1/images/generations");
         string? contentType = null;
         string? body = null;
+        string? imageField = null;
+        string? imageFileName = null;
+        byte[]? imageBytes = null;
         var provider = ProviderFactory(async request =>
         {
             contentType = request.Content?.Headers.ContentType?.MediaType;
+            var multipart = Assert.IsType<MultipartFormDataContent>(request.Content);
+            var imagePart = Assert.Single(multipart.Where(part =>
+                part.Headers.ContentDisposition?.Name?.Trim('"') == "image"));
+            imageField = imagePart.Headers.ContentDisposition?.Name?.Trim('"');
+            imageFileName = imagePart.Headers.ContentDisposition?.FileName?.Trim('"');
+            imageBytes = await imagePart.ReadAsByteArrayAsync();
             body = await request.Content!.ReadAsStringAsync();
             return Json("""{"data":[{"url":"https://cdn.example.test/output.png"}]}""");
         });
@@ -78,8 +87,10 @@ public sealed class MediaGenerationServiceTests
         var result = await service.GenerateImageAsync(Request([input]));
 
         Assert.Equal("multipart/form-data", contentType);
-        Assert.Contains("name=\"image\"; filename=\"face.png\"", body!);
-        Assert.Contains("name=\"prompt\"", body!);
+        Assert.Equal("image", imageField);
+        Assert.Equal("face.png", imageFileName);
+        Assert.Equal(new byte[] { 1, 2, 3 }, imageBytes);
+        Assert.Contains("draw a fox", body!);
         Assert.Equal("https://cdn.example.test/output.png", Assert.Single(result.Images).Url?.AbsoluteUri);
     }
 

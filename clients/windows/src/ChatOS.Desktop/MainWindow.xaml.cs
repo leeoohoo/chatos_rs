@@ -42,7 +42,8 @@ public sealed partial class MainWindow : Window
         ClipboardHistoryWindow clipboardHistoryWindow,
         PluginApplicationsPage pluginApplicationsPage,
         ProjectFeatureHubPage projectFeatureHubPage,
-        MediaStudioPage mediaStudioPage)
+        MediaStudioPage mediaStudioPage,
+        AgentWorkspacePage agentWorkspacePage)
     {
         ViewModel = viewModel;
         WorkspaceHost = workspaceHostPage;
@@ -61,6 +62,7 @@ public sealed partial class MainWindow : Window
         PluginApplicationsPage = pluginApplicationsPage;
         ProjectFeatureHubPage = projectFeatureHubPage;
         MediaStudioPage = mediaStudioPage;
+        AgentWorkspacePage = agentWorkspacePage;
         InitializeComponent();
 
         ExtendsContentIntoTitleBar = true;
@@ -82,6 +84,7 @@ public sealed partial class MainWindow : Window
         ViewModel.RemoteResources.CollectionChanged += (_, _) => RefreshSidebarState();
         WorkspaceHost.ProjectTabRequested += async (_, tab) => await ViewModel.OpenProjectTabAsync(tab);
         ProjectFeatureHubPage.FeatureRequested += OnProjectFeatureRequested;
+        AgentWorkspacePage.FeatureRequested += OnProjectFeatureRequested;
         Approvals.PendingChanged += OnPendingApprovalsChanged;
         Activated += OnActivated;
     }
@@ -91,6 +94,8 @@ public sealed partial class MainWindow : Window
     private ProjectFeatureHubPage ProjectFeatureHubPage { get; }
 
     private MediaStudioPage MediaStudioPage { get; }
+
+    private AgentWorkspacePage AgentWorkspacePage { get; }
 
     public MainWindowViewModel ViewModel { get; }
 
@@ -192,7 +197,11 @@ public sealed partial class MainWindow : Window
                     ShowContent(PluginApplicationsPage);
                     _ = PluginApplicationsPage.OpenAsync();
                 }
-                else if (ViewModel.SelectedResource?.Kind is WorkspaceResourceKind.AgentTeams or WorkspaceResourceKind.RequirementSurveys)
+                else if (ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.AgentTeams)
+                {
+                    ShowContent(AgentWorkspacePage);
+                }
+                else if (ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.RequirementSurveys)
                 {
                     ProjectFeatureHubPage.Configure(ViewModel.SelectedResource.Kind);
                     ShowContent(ProjectFeatureHubPage);
@@ -483,7 +492,12 @@ public sealed partial class MainWindow : Window
             _ = PluginApplicationsPage.OpenAsync();
             return;
         }
-        if (ViewModel.SelectedResource?.Kind is WorkspaceResourceKind.AgentTeams or WorkspaceResourceKind.RequirementSurveys)
+        if (ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.AgentTeams)
+        {
+            ShowContent(AgentWorkspacePage);
+            return;
+        }
+        if (ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.RequirementSurveys)
         {
             ProjectFeatureHubPage.Configure(ViewModel.SelectedResource.Kind);
             ShowContent(ProjectFeatureHubPage);
