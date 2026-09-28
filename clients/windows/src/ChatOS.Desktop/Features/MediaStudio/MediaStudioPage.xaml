@@ -683,7 +683,7 @@
                                                         <TextBox Header="视频提示词" AcceptsReturn="True" MaxLength="7000" MinHeight="90" Text="{Binding VideoPrompt, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                         <Grid ColumnSpacing="8">
                                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                                            <Button Click="OnGenerateStoryVideoClick" Content="生成该段视频" IsEnabled="{x:Bind StoryViewModel.CanGenerateVideo, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                                            <Button Click="OnGenerateStoryVideoClick" Content="{x:Bind StoryViewModel.GenerateVideoActionLabel, Mode=OneWay}" IsEnabled="{x:Bind StoryViewModel.CanGenerateVideo, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
                                                             <Button Grid.Column="1" Click="OnImportStoryVideoClick" Content="导入视频" IsEnabled="{x:Bind StoryViewModel.CanImportSegmentAsset, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                             <Button Grid.Column="2" Click="OnCancelStoryGenerationClick" Content="停止等待" IsEnabled="{x:Bind StoryViewModel.IsBusy, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                         </Grid>

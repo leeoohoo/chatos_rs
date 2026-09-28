@@ -157,6 +157,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanRefineSelectedSegment))]
     [NotifyPropertyChangedFor(nameof(CanResumeSelectedVideo))]
     [NotifyPropertyChangedFor(nameof(SelectedVideoJobLabel))]
+    [NotifyPropertyChangedFor(nameof(VideoRegenerationSummary))]
     private MediaGenerationModel? _projectVideoModel;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanGenerateFrame))]

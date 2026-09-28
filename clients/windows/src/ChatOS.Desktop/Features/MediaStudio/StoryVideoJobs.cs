@@ -10,6 +10,13 @@ public sealed partial class StoryStudioViewModel
         ProjectVideoModel is { } model && segment.HasPendingVideoJob &&
         string.IsNullOrWhiteSpace(segment.VideoPath) && VideoJobMatches(segment, model);
     public bool CanAbandonSelectedVideoJob => !IsBusy && SelectedSegment?.HasPendingVideoJob == true;
+    public string GenerateVideoActionLabel => SelectedSegment?.VideoPath is { Length: > 0 }
+        ? "准备重新生成该段视频"
+        : "生成该段视频";
+    public string VideoRegenerationSummary => SelectedSegment is { } segment &&
+        ProjectVideoModel is { } model
+        ? $"将使用“{model.Name}”重新生成 {segment.NumberLabel} · {segment.Title}（约 {segment.Seconds} 秒）。这会再次调用视频模型；当前视频和成片末帧会进入历史版本，可随时恢复。"
+        : string.Empty;
     public string SelectedVideoJobLabel
     {
         get
@@ -23,10 +30,15 @@ public sealed partial class StoryStudioViewModel
     }
 
     public Task GenerateVideoAsync(CancellationToken cancellationToken = default) =>
-        RunSelectedVideoAsync(false, cancellationToken);
+        RunSelectedVideoAsync(false, false, null, cancellationToken);
+
+    public Task RegenerateSelectedVideoAsync(
+        string confirmedSegmentId,
+        CancellationToken cancellationToken = default) =>
+        RunSelectedVideoAsync(false, true, confirmedSegmentId, cancellationToken);
 
     public Task ResumeSelectedVideoAsync(CancellationToken cancellationToken = default) =>
-        RunSelectedVideoAsync(true, cancellationToken);
+        RunSelectedVideoAsync(true, false, null, cancellationToken);
 
     public async Task AbandonSelectedVideoJobAsync(CancellationToken cancellationToken = default)
     {
@@ -55,12 +67,24 @@ public sealed partial class StoryStudioViewModel
         }
     }
 
-    private async Task RunSelectedVideoAsync(bool resume, CancellationToken cancellationToken)
+    private async Task RunSelectedVideoAsync(
+        bool resume,
+        bool confirmedRegeneration,
+        string? confirmedSegmentId,
+        CancellationToken cancellationToken)
     {
         var context = CaptureGenerationContext();
         var model = ProjectVideoModel;
         if (context is null || model is null || (resume && !CanResumeSelectedVideo) ||
             (!resume && !CanGenerateVideo)) return;
+        if (!resume && context.Segment.VideoPath is { Length: > 0 })
+        {
+            if (!confirmedRegeneration || confirmedSegmentId != context.Segment.Id)
+            {
+                StatusMessage = "该分段已有完成视频，请先确认重新生成；当前版本不会被直接覆盖。";
+                return;
+            }
+        }
         _generationCancellation?.Cancel();
         _generationCancellation?.Dispose();
         _generationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -217,6 +241,8 @@ public sealed partial class StoryStudioViewModel
         OnPropertyChanged(nameof(CanResumeSelectedVideo));
         OnPropertyChanged(nameof(CanAbandonSelectedVideoJob));
         OnPropertyChanged(nameof(SelectedVideoJobLabel));
+        OnPropertyChanged(nameof(GenerateVideoActionLabel));
+        OnPropertyChanged(nameof(VideoRegenerationSummary));
     }
 
     private static string ShortJobId(string? value) => string.IsNullOrWhiteSpace(value)

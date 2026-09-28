@@ -229,8 +229,27 @@ public sealed partial class MediaStudioPage : Page
     private async void OnExtractStoryVideoLastFrameClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.ExtractSelectedVideoLastFrameAsync();
 
-    private async void OnGenerateStoryVideoClick(object sender, RoutedEventArgs e) =>
-        await StoryViewModel.GenerateVideoAsync();
+    private async void OnGenerateStoryVideoClick(object sender, RoutedEventArgs e)
+    {
+        var segment = StoryViewModel.SelectedSegment;
+        if (segment?.VideoPath is not { Length: > 0 })
+        {
+            await StoryViewModel.GenerateVideoAsync();
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "确认重新生成已完成视频？",
+            Content = StoryViewModel.VideoRegenerationSummary,
+            PrimaryButtonText = "确认并重新生成",
+            CloseButtonText = "保留当前视频",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            await StoryViewModel.RegenerateSelectedVideoAsync(segment.Id);
+    }
 
     private async void OnResumeStoryVideoClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.ResumeSelectedVideoAsync();
