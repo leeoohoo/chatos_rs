@@ -146,12 +146,27 @@ public sealed partial class ProjectFeatureHubPage : Page
     }
 }
 
-public sealed record ProjectSurveySummary(
-    ShellResourceViewModel Project,
-    int PendingCount,
-    int AwaitingCount,
-    int ResolvedCount)
+public sealed class ProjectSurveySummary
 {
+    public ProjectSurveySummary(
+        ShellResourceViewModel project,
+        int pendingCount,
+        int awaitingCount,
+        int resolvedCount)
+    {
+        Project = project;
+        PendingCount = pendingCount;
+        AwaitingCount = awaitingCount;
+        ResolvedCount = resolvedCount;
+    }
+
+    // WinUI's generated XAML metadata requires public setters even though these values
+    // are only assigned by the constructor in application code.
+    public ShellResourceViewModel Project { get; set; }
+    public int PendingCount { get; set; }
+    public int AwaitingCount { get; set; }
+    public int ResolvedCount { get; set; }
+
     public string StatusLabel => PendingCount > 0
         ? $"有 {PendingCount} 张问卷等待 Human 填写"
         : AwaitingCount > 0
