@@ -22,8 +22,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
-using Microsoft.Windows.System.Power;
-using ChatOS.Connector.Runtime;
 using ChatOS.Connector.Remote;
 using ChatOS.Connector.Terminal;
 
@@ -33,7 +31,6 @@ public partial class App : Application
 {
     private readonly IHost _host;
     private Window? _window;
-    private ConnectorPowerStateCoordinator? _powerState;
 
     public Window? MainWindow => _window;
 
@@ -147,9 +144,9 @@ public partial class App : Application
             await _host.Services.GetRequiredService<WindowsClipboardHistoryMonitor>().StartAsync();
             StartupDiagnostics.RecordStage("clipboard monitor started");
 
-            _powerState = _host.Services.GetRequiredService<ConnectorPowerStateCoordinator>();
-            PowerManager.SystemSuspendStatusChanged += OnSystemSuspendStatusChanged;
-            StartupDiagnostics.RecordStage("power callbacks registered");
+            // Connector transports already retry after suspend/resume. Avoid the Windows App SDK
+            // PowerManager callback here because it crashes some Windows 11 builds in CoreMessagingXP.
+            StartupDiagnostics.RecordStage("connector power recovery configured through transport reconnect");
 
             _window = _host.Services.GetRequiredService<MainWindow>();
             StartupDiagnostics.RecordStage("main window constructed");
@@ -189,7 +186,6 @@ public partial class App : Application
         _host.Services.GetRequiredService<WindowsClipboardHistoryMonitor>().Stop();
         _host.Services.GetRequiredService<QuickSearchCoordinator>().Dispose();
         _host.Services.GetRequiredService<WindowsScreenRecordingCoordinator>().Dispose();
-        PowerManager.SystemSuspendStatusChanged -= OnSystemSuspendStatusChanged;
         try
         {
             _host.Services.GetRequiredService<TerminalSessionManager>()
@@ -208,18 +204,4 @@ public partial class App : Application
         }
     }
 
-    private void OnSystemSuspendStatusChanged(object? sender, object args)
-    {
-        if (_powerState is null) return;
-        // Windows only permits reading SystemSuspendStatus from inside this callback.
-        var status = PowerManager.SystemSuspendStatus;
-        if (status == SystemSuspendStatus.Entering)
-        {
-            _powerState.Suspend();
-        }
-        else if (status is SystemSuspendStatus.AutoResume or SystemSuspendStatus.ManualResume)
-        {
-            _powerState.Resume();
-        }
-    }
 }
