@@ -681,6 +681,19 @@
                                                         </Grid>
                                                         <TextBlock Text="{x:Bind StoryViewModel.VideoProgressLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                         <MediaPlayerElement x:Name="StoryVideoPlayer" Height="220" AreTransportControlsEnabled="True" AutoPlay="False" Stretch="Uniform" />
+                                                        <Expander Header="视频历史版本" IsEnabled="{x:Bind StoryViewModel.CanRestoreArchivedVideo, Mode=OneWay}">
+                                                            <ItemsControl ItemsSource="{Binding ArchivedVideos}">
+                                                                <ItemsControl.ItemTemplate>
+                                                                    <DataTemplate x:DataType="media:StoryArchivedVideoEditor">
+                                                                        <Grid Margin="0,4" ColumnSpacing="8">
+                                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                                            <StackPanel><TextBlock Text="{x:Bind Label}" Style="{StaticResource ChatOSBodyStrongTextStyle}" /><TextBlock Text="{x:Bind ArchivedAtLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
+                                                                            <Button Grid.Column="1" Click="OnRestoreStoryVideoVersionClick" Content="恢复此版本" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                                        </Grid>
+                                                                    </DataTemplate>
+                                                                </ItemsControl.ItemTemplate>
+                                                            </ItemsControl>
+                                                        </Expander>
                                                     </StackPanel>
                                                 </StackPanel>
                                             </ScrollViewer>

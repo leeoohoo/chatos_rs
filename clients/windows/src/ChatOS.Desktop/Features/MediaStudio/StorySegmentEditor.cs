@@ -1,11 +1,15 @@
+using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace ChatOS.Desktop.Features.MediaStudio;
 
 public sealed partial class StorySegmentEditor : ObservableObject
 {
+    private readonly Func<string?, string?> _resolvePath;
+
     public StorySegmentEditor(StorySegmentDocument document, Func<string?, string?> resolvePath)
     {
+        _resolvePath = resolvePath;
         Id = document.Id;
         _title = document.Title;
         _narrative = document.Narrative;
@@ -29,6 +33,8 @@ public sealed partial class StorySegmentEditor : ObservableObject
         LastFramePath = resolvePath(document.LastFrameAsset);
         VideoPath = resolvePath(document.VideoAsset);
         ActualVideoLastFramePath = resolvePath(document.ActualVideoLastFrameAsset);
+        foreach (var archived in document.ArchivedVideos)
+            ArchivedVideos.Add(new StoryArchivedVideoEditor(archived, resolvePath));
     }
 
     public string Id { get; }
@@ -51,6 +57,7 @@ public sealed partial class StorySegmentEditor : ObservableObject
     public string? PendingVideoJobStatus => _pendingVideoJobStatus;
     public string? PendingVideoRequestDigest => _pendingVideoRequestDigest;
     public string KindLabel => Kind == StorySegmentKind.Transition ? "转场" : "剧情";
+    public ObservableCollection<StoryArchivedVideoEditor> ArchivedVideos { get; } = [];
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(KindLabel))]
@@ -90,6 +97,7 @@ public sealed partial class StorySegmentEditor : ObservableObject
         PendingVideoJobStatus = _pendingVideoJobStatus,
         PendingVideoRequestDigest = _pendingVideoRequestDigest,
         ActualVideoLastFrameAsset = _actualVideoLastFrameAsset,
+        ArchivedVideos = ArchivedVideos.Select(item => item.Document).ToArray(),
         ResourceIds = ParseResourceIds(ResourceIdsText),
         ContinuityIn = ContinuityIn.Trim(),
         ContinuityOut = ContinuityOut.Trim(),
@@ -126,6 +134,7 @@ public sealed partial class StorySegmentEditor : ObservableObject
 
     public void SetVideo(string relativePath, string fullPath)
     {
+        ArchiveCurrentVideo();
         _videoAsset = relativePath;
         VideoPath = fullPath;
         _actualVideoLastFrameAsset = null;
@@ -136,11 +145,53 @@ public sealed partial class StorySegmentEditor : ObservableObject
         OnPropertyChanged(nameof(VideoStatus));
     }
 
+    public void RestoreArchivedVideo(StoryArchivedVideoEditor archived)
+    {
+        if (!ArchivedVideos.Contains(archived))
+            throw new InvalidOperationException("视频历史版本已失效。");
+        ArchiveCurrentVideo();
+        ArchivedVideos.Remove(archived);
+        ApplyVideoState(archived.Document.Asset, archived.Document.ActualLastFrameAsset);
+    }
+
+    public void RestoreVideoState(StorySegmentDocument document)
+    {
+        ArchivedVideos.Clear();
+        foreach (var archived in document.ArchivedVideos)
+            ArchivedVideos.Add(new StoryArchivedVideoEditor(archived, _resolvePath));
+        ApplyVideoState(document.VideoAsset, document.ActualVideoLastFrameAsset);
+    }
+
     public void SetActualVideoLastFrame(string relativePath, string fullPath)
     {
         _actualVideoLastFrameAsset = relativePath;
         ActualVideoLastFramePath = fullPath;
         OnPropertyChanged(nameof(ActualVideoLastFramePath));
+    }
+
+    private void ArchiveCurrentVideo()
+    {
+        if (string.IsNullOrWhiteSpace(_videoAsset)) return;
+        var existing = ArchivedVideos.FirstOrDefault(item => item.Document.Asset == _videoAsset);
+        if (existing is not null) ArchivedVideos.Remove(existing);
+        ArchivedVideos.Insert(0, new StoryArchivedVideoEditor(new StoryArchivedVideoDocument(
+            _videoAsset,
+            _actualVideoLastFrameAsset,
+            $"{Title} · {DateTimeOffset.Now:MM-dd HH:mm}",
+            DateTimeOffset.UtcNow), _resolvePath));
+        while (ArchivedVideos.Count > 20) ArchivedVideos.RemoveAt(ArchivedVideos.Count - 1);
+    }
+
+    private void ApplyVideoState(string? asset, string? actualLastFrameAsset)
+    {
+        _videoAsset = asset;
+        _actualVideoLastFrameAsset = actualLastFrameAsset;
+        VideoPath = _resolvePath(asset);
+        ActualVideoLastFramePath = _resolvePath(actualLastFrameAsset);
+        ClearPendingVideoJob();
+        OnPropertyChanged(nameof(VideoPath));
+        OnPropertyChanged(nameof(ActualVideoLastFramePath));
+        OnPropertyChanged(nameof(VideoStatus));
     }
 
     public bool SetPendingVideoJob(string jobId, string status, string digest)
@@ -192,4 +243,20 @@ public sealed partial class StorySegmentEditor : ObservableObject
     partial void OnContinuityInChanged(string value) => MarkRefinementStale();
     partial void OnContinuityOutChanged(string value) => MarkRefinementStale();
     partial void OnShotPlanChanged(string value) => MarkRefinementStale();
+}
+
+public sealed class StoryArchivedVideoEditor
+{
+    public StoryArchivedVideoEditor(
+        StoryArchivedVideoDocument document,
+        Func<string?, string?> resolvePath)
+    {
+        Document = document;
+        FilePath = resolvePath(document.Asset);
+    }
+
+    public StoryArchivedVideoDocument Document { get; }
+    public string Label => Document.Label;
+    public string ArchivedAtLabel => Document.ArchivedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+    public string? FilePath { get; }
 }

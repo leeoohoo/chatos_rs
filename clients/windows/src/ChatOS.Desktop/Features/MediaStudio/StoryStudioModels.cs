@@ -66,6 +66,7 @@ public sealed record StorySegmentDocument(
     public string? PendingVideoJobStatus { get; init; }
     public string? PendingVideoRequestDigest { get; init; }
     public string? ActualVideoLastFrameAsset { get; init; }
+    public IReadOnlyList<StoryArchivedVideoDocument> ArchivedVideos { get; init; } = [];
     public IReadOnlyList<string> ResourceIds { get; init; } = [];
     public string ContinuityIn { get; init; } = string.Empty;
     public string ContinuityOut { get; init; } = string.Empty;
@@ -78,6 +79,8 @@ public sealed record StorySegmentDocument(
             Narrative.Length > 8_000 || ImagePrompt.Length > 7_000 || VideoPrompt.Length > 7_000 ||
             ContinuityIn.Length > 2_000 || ContinuityOut.Length > 2_000 || ShotPlan.Length > 8_000 ||
             Seconds is < 2 or > 30 || !Enum.IsDefined(Kind) || ResourceIds is null ||
+            ArchivedVideos is null or { Count: > 20 } ||
+            ArchivedVideos.Any(archived => archived is null) ||
             !SafeJob(PendingVideoJobId, 512) || !SafeJob(PendingVideoJobStatus, 80) ||
             !SafeDigest(PendingVideoRequestDigest) ||
             (PendingVideoJobId is null) != (PendingVideoRequestDigest is null) ||
@@ -87,6 +90,7 @@ public sealed record StorySegmentDocument(
         {
             throw new InvalidDataException("剧情分段数据无效，请检查标题、提示词、时长和素材。");
         }
+        foreach (var archived in ArchivedVideos) archived.Validate();
     }
 
     private static bool SafeAsset(string? value) => value is null ||
@@ -98,6 +102,24 @@ public sealed record StorySegmentDocument(
 
     private static bool SafeDigest(string? value) => value is null ||
         value.Length == 64 && value.All(character => char.IsAsciiHexDigit(character));
+}
+
+public sealed record StoryArchivedVideoDocument(
+    string Asset,
+    string? ActualLastFrameAsset,
+    string Label,
+    DateTimeOffset ArchivedAt)
+{
+    public void Validate()
+    {
+        if (!SafeAsset(Asset) || ActualLastFrameAsset is not null && !SafeAsset(ActualLastFrameAsset) ||
+            string.IsNullOrWhiteSpace(Label) || Label.Length > 200)
+            throw new InvalidDataException("剧情视频历史版本数据无效。");
+    }
+
+    private static bool SafeAsset(string value) => !string.IsNullOrWhiteSpace(value) &&
+        !Path.IsPathFullyQualified(value) &&
+        !value.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Contains("..");
 }
 
 public enum StorySegmentKind

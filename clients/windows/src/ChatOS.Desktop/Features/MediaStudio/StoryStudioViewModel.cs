@@ -164,6 +164,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanAbandonSelectedVideoJob))]
     [NotifyPropertyChangedFor(nameof(SelectedVideoJobLabel))]
     [NotifyPropertyChangedFor(nameof(CanExtractSelectedVideoLastFrame))]
+    [NotifyPropertyChangedFor(nameof(CanRestoreArchivedVideo))]
     [NotifyPropertyChangedFor(nameof(CanImportSegmentAsset))]
     [NotifyPropertyChangedFor(nameof(CanRefineSelectedSegment))]
     [NotifyPropertyChangedFor(nameof(CanApplySegmentRefinement))]
@@ -198,6 +199,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanResumeSelectedVideo))]
     [NotifyPropertyChangedFor(nameof(CanAbandonSelectedVideoJob))]
     [NotifyPropertyChangedFor(nameof(CanExtractSelectedVideoLastFrame))]
+    [NotifyPropertyChangedFor(nameof(CanRestoreArchivedVideo))]
     private bool _isBusy;
     [ObservableProperty] private string _statusMessage = "剧情项目只保存在本机";
     [ObservableProperty] private string? _errorMessage;
@@ -564,6 +566,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         OnPropertyChanged(nameof(CanAbandonSelectedVideoJob));
         OnPropertyChanged(nameof(SelectedVideoJobLabel));
         OnPropertyChanged(nameof(CanExtractSelectedVideoLastFrame));
+        OnPropertyChanged(nameof(CanRestoreArchivedVideo));
         OnPropertyChanged(nameof(CanGenerateResourceImage));
         if (e.PropertyName == nameof(StorySegmentEditor.Seconds))
             OnPropertyChanged(nameof(WorkspaceSummary));
