@@ -50,9 +50,12 @@ public sealed partial class StoryStudioViewModel
             var runnable = work.Count(item => item.CanRun);
             var skipped = work.Count - runnable;
             var calls = runnable == 0 ? "没有可执行的模型调用" : $"预计调用模型 {runnable} 次";
+            var continuity = BatchVideos
+                ? "；含视频的批次会逐段完成，以便下一段继承上一段成片末帧"
+                : string.Empty;
             return skipped == 0
-                ? $"{calls}；只生成缺失项，每完成一项立即保存。"
-                : $"{calls}；另有 {skipped} 项缺少提示词，将跳过。";
+                ? $"{calls}；只生成缺失项，每完成一项立即保存{continuity}。"
+                : $"{calls}；另有 {skipped} 项缺少提示词，将跳过{continuity}。";
         }
     }
 
@@ -216,13 +219,31 @@ public sealed partial class StoryStudioViewModel
                     resource,
                     null)));
         }
-        AddSegmentWork(work, BatchFirstFrames, BatchWorkKind.FirstFrame, "首帧",
-            segment => segment.FirstFramePath, segment => segment.ImagePrompt);
-        AddSegmentWork(work, BatchLastFrames, BatchWorkKind.LastFrame, "尾帧",
-            segment => segment.LastFramePath, segment => segment.ImagePrompt);
-        AddSegmentWork(work, BatchVideos, BatchWorkKind.Video, "视频",
-            segment => segment.VideoPath, segment => segment.VideoPrompt);
+        if (BatchVideos)
+        {
+            AddContinuousSegmentWork(work);
+        }
+        else
+        {
+            AddSegmentWork(work, BatchFirstFrames, BatchWorkKind.FirstFrame, "首帧",
+                segment => segment.FirstFramePath, segment => segment.ImagePrompt);
+            AddSegmentWork(work, BatchLastFrames, BatchWorkKind.LastFrame, "尾帧",
+                segment => segment.LastFramePath, segment => segment.ImagePrompt);
+        }
         return work;
+    }
+
+    private void AddContinuousSegmentWork(ICollection<BatchWorkItem> work)
+    {
+        foreach (var segment in Segments)
+        {
+            AddSegmentWorkItem(work, segment, BatchFirstFrames, BatchWorkKind.FirstFrame, "首帧",
+                segment.FirstFramePath, segment.ImagePrompt);
+            AddSegmentWorkItem(work, segment, BatchLastFrames, BatchWorkKind.LastFrame, "尾帧",
+                segment.LastFramePath, segment.ImagePrompt);
+            AddSegmentWorkItem(work, segment, true, BatchWorkKind.Video, "视频",
+                segment.VideoPath, segment.VideoPrompt);
+        }
     }
 
     private void AddSegmentWork(
@@ -234,15 +255,26 @@ public sealed partial class StoryStudioViewModel
         Func<StorySegmentEditor, string> prompt)
     {
         if (!enabled) return;
-        foreach (var segment in Segments.Where(segment => string.IsNullOrWhiteSpace(asset(segment))))
-        {
-            work.Add(new BatchWorkItem(
-                kind,
-                $"{label} · {segment.NumberLabel} {segment.Title}",
-                !string.IsNullOrWhiteSpace(prompt(segment)),
-                null,
-                segment));
-        }
+        foreach (var segment in Segments)
+            AddSegmentWorkItem(work, segment, true, kind, label, asset(segment), prompt(segment));
+    }
+
+    private static void AddSegmentWorkItem(
+        ICollection<BatchWorkItem> work,
+        StorySegmentEditor segment,
+        bool enabled,
+        BatchWorkKind kind,
+        string label,
+        string? asset,
+        string prompt)
+    {
+        if (!enabled || !string.IsNullOrWhiteSpace(asset)) return;
+        work.Add(new BatchWorkItem(
+            kind,
+            $"{label} · {segment.NumberLabel} {segment.Title}",
+            !string.IsNullOrWhiteSpace(prompt),
+            null,
+            segment));
     }
 
     private void EnsureBatchContext(string owner, Guid projectId, Guid session)
