@@ -623,6 +623,20 @@
                                                             <TextBox Header="剧情内容" AcceptsReturn="True" MaxLength="8000" MinHeight="100" Text="{Binding Narrative, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                             <NumberBox Grid.Column="1" Header="时长（秒）" Minimum="2" Maximum="15" SpinButtonPlacementMode="Compact" Value="{Binding Seconds, Mode=TwoWay}" />
                                                         </Grid>
+                                                        <Button Click="OnRefineStorySegmentClick" Content="AI 细化本段镜头（先生成候选）" HorizontalAlignment="Stretch" IsEnabled="{x:Bind StoryViewModel.CanRefineSelectedSegment, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                                        <Border Padding="12" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="10" Visibility="{x:Bind StoryViewModel.HasSegmentRefinement, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                            <StackPanel Spacing="8">
+                                                                <TextBlock Text="{x:Bind StoryViewModel.SegmentRefinementTitle, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                                                <TextBlock Text="{x:Bind StoryViewModel.SegmentRefinementRationale, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                <TextBox AcceptsReturn="True" IsReadOnly="True" MaxHeight="260" Text="{x:Bind StoryViewModel.SegmentRefinementPreview, Mode=OneWay}" TextWrapping="Wrap" />
+                                                                <Grid ColumnSpacing="8">
+                                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                                    <Button Click="OnApplyStorySegmentRefinementClick" Content="采用并保存镜头计划" HorizontalAlignment="Stretch" IsEnabled="{x:Bind StoryViewModel.CanApplySegmentRefinement, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                                                    <Button Grid.Column="1" Click="OnDiscardStorySegmentRefinementClick" Content="放弃候选" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                                </Grid>
+                                                                <TextBlock Text="已有首帧、尾帧或视频时禁止细化，避免镜头计划与已生成媒体不一致。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                            </StackPanel>
+                                                        </Border>
                                                         <TextBox Header="衔接起点" AcceptsReturn="True" MaxLength="2000" MinHeight="60" PlaceholderText="人物位置、动作、服装、光线及上一段延续状态" Text="{Binding ContinuityIn, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                         <TextBox Header="镜头计划" AcceptsReturn="True" MaxLength="8000" MinHeight="75" PlaceholderText="按时间描述动作、构图与镜头运动" Text="{Binding ShotPlan, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                         <TextBox Header="衔接终点" AcceptsReturn="True" MaxLength="2000" MinHeight="60" PlaceholderText="本段结束时留给下一段的人物与画面状态" Text="{Binding ContinuityOut, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />

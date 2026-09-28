@@ -11,4 +11,8 @@ public interface IStoryPlanningService
     Task<StoryOptimizationSuggestion> OptimizeAsync(
         StoryOptimizationRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<StorySegmentRefinementSuggestion> RefineSegmentAsync(
+        StorySegmentRefinementRequest request,
+        CancellationToken cancellationToken = default);
 }

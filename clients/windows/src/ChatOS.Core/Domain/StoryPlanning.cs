@@ -47,3 +47,27 @@ public sealed record StoryOptimizationRequest(
 public sealed record StoryOptimizationSuggestion(
     string OptimizedText,
     string Rationale);
+
+public sealed record StorySegmentRefinementRequest(
+    string ModelConfigId,
+    string ProjectTitle,
+    string ProjectSummary,
+    string VisualStyle,
+    string Ratio,
+    string SegmentId,
+    string Kind,
+    string Title,
+    string Narrative,
+    int Seconds,
+    string ImagePrompt,
+    string VideoPrompt,
+    string ContinuityContext,
+    string ResourceContext);
+
+public sealed record StorySegmentRefinementSuggestion(
+    string ImagePrompt,
+    string VideoPrompt,
+    string ContinuityIn,
+    string ContinuityOut,
+    string ShotPlan,
+    string Rationale);

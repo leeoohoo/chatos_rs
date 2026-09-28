@@ -177,5 +177,6 @@ public sealed partial class StoryStudioViewModel
     {
         RefreshPromptAudit();
         RefreshContinuityAudit();
+        NotifySegmentRefinementChanged();
     }
 }

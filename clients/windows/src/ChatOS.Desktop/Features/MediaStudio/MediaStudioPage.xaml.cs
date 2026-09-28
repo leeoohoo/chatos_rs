@@ -95,6 +95,15 @@ public sealed partial class MediaStudioPage : Page
     private void OnRemoveStorySegmentClick(object sender, RoutedEventArgs e) =>
         StoryViewModel.RemoveSelectedSegment();
 
+    private async void OnRefineStorySegmentClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.RefineSelectedSegmentAsync();
+
+    private async void OnApplyStorySegmentRefinementClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.ApplySegmentRefinementAsync();
+
+    private void OnDiscardStorySegmentRefinementClick(object sender, RoutedEventArgs e) =>
+        StoryViewModel.ClearSegmentRefinement();
+
     private void OnAddStoryResourceClick(object sender, RoutedEventArgs e) =>
         StoryViewModel.AddResource();
 

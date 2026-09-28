@@ -41,6 +41,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             NotifySegmentOrderChanged();
             NotifyPlanningRunsChanged();
             NotifyOptimizationChanged();
+            NotifySegmentRefinementChanged();
         };
         Resources.CollectionChanged += (_, _) =>
         {
@@ -51,6 +52,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             RefreshContinuityAudit();
             NotifyPlanningRunsChanged();
             NotifyOptimizationChanged();
+            NotifySegmentRefinementChanged();
         };
     }
 
@@ -109,6 +111,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanSave))]
+    [NotifyPropertyChangedFor(nameof(CanRefineSelectedSegment))]
     private string _projectTitle = string.Empty;
     [ObservableProperty] private string _projectDescription = string.Empty;
     [ObservableProperty]
@@ -122,23 +125,28 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanSave))]
     [NotifyPropertyChangedFor(nameof(CanQuickSplit))]
     [NotifyPropertyChangedFor(nameof(CanPlan))]
+    [NotifyPropertyChangedFor(nameof(CanRefineSelectedSegment))]
     private MediaGenerationModel? _projectTextModel;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanSave))]
     [NotifyPropertyChangedFor(nameof(CanQuickSplit))]
     [NotifyPropertyChangedFor(nameof(CanPlan))]
     [NotifyPropertyChangedFor(nameof(CanStartBatch))]
+    [NotifyPropertyChangedFor(nameof(CanRefineSelectedSegment))]
     private MediaGenerationModel? _projectImageModel;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanSave))]
     [NotifyPropertyChangedFor(nameof(CanQuickSplit))]
     [NotifyPropertyChangedFor(nameof(CanPlan))]
     [NotifyPropertyChangedFor(nameof(CanStartBatch))]
+    [NotifyPropertyChangedFor(nameof(CanRefineSelectedSegment))]
     private MediaGenerationModel? _projectVideoModel;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanGenerateFrame))]
     [NotifyPropertyChangedFor(nameof(CanGenerateVideo))]
     [NotifyPropertyChangedFor(nameof(CanImportSegmentAsset))]
+    [NotifyPropertyChangedFor(nameof(CanRefineSelectedSegment))]
+    [NotifyPropertyChangedFor(nameof(CanApplySegmentRefinement))]
     private StorySegmentEditor? _selectedSegment;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanGenerateResourceImage))]
@@ -164,6 +172,8 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanOptimizeStorySource))]
     [NotifyPropertyChangedFor(nameof(CanOptimizeVisualStyle))]
     [NotifyPropertyChangedFor(nameof(CanApplyOptimization))]
+    [NotifyPropertyChangedFor(nameof(CanRefineSelectedSegment))]
+    [NotifyPropertyChangedFor(nameof(CanApplySegmentRefinement))]
     private bool _isBusy;
     [ObservableProperty] private string _statusMessage = "剧情项目只保存在本机";
     [ObservableProperty] private string? _errorMessage;
@@ -228,6 +238,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     {
         _current = project;
         ClearOptimizationSuggestion();
+        ClearSegmentRefinement();
         _planningRunsReady = false;
         PlanningRuns.Clear();
         ProjectTitle = project.Title;
@@ -265,6 +276,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         _generationCancellation?.Cancel();
         _current = null;
         ClearOptimizationSuggestion();
+        ClearSegmentRefinement();
         _planningRunsReady = false;
         Segments.Clear();
         Resources.Clear();
@@ -450,11 +462,14 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         _ownerUserId = ownerUserId;
         _current = null;
         ClearOptimizationSuggestion();
+        ClearSegmentRefinement();
         _planningRunsReady = false;
         Projects.Clear();
         Segments.Clear();
         Resources.Clear();
         PlanningRuns.Clear();
+        SelectedSegment = null;
+        SelectedResource = null;
         Models.Clear();
         ImageModels.Clear();
         VideoModels.Clear();
@@ -522,6 +537,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     {
         if (oldValue is not null) oldValue.PropertyChanged -= OnSelectedSegmentPropertyChanged;
         if (newValue is not null) newValue.PropertyChanged += OnSelectedSegmentPropertyChanged;
+        ClearSegmentRefinement();
         NotifySegmentOrderChanged();
         RefreshPromptAudit();
     }
@@ -539,6 +555,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         RefreshContinuityAudit();
         RefreshProjectMedia();
         NotifySegmentOrderChanged();
+        NotifySegmentRefinementChanged();
     }
 
     private void OnWorkspaceChanged()
@@ -556,6 +573,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         RefreshContinuityAudit();
         RefreshProjectMedia();
         NotifySegmentOrderChanged();
+        NotifySegmentRefinementChanged();
     }
 
     private async Task GenerateFrameCoreAsync(

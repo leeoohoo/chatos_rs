@@ -45,6 +45,18 @@ public sealed class StoryPlanningService(
         return DecodeOptimization(payload, request.Target);
     }
 
+    public async Task<StorySegmentRefinementSuggestion> RefineSegmentAsync(
+        StorySegmentRefinementRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateSegmentRefinementRequest(request);
+        var payload = await SendStructuredAsync(
+            request.ModelConfigId,
+            runtime => BuildSegmentRefinementBody(runtime, request),
+            cancellationToken).ConfigureAwait(false);
+        return DecodeSegmentRefinement(payload);
+    }
+
     private async Task<byte[]> SendStructuredAsync(
         string modelConfigId,
         Func<RuntimeModelDto, object> body,
@@ -164,6 +176,48 @@ public sealed class StoryPlanningService(
             },
         },
         max_output_tokens = request.Target == StoryOptimizationTarget.Source ? 32_000 : 4_000,
+        store = false,
+    };
+
+    private static object BuildSegmentRefinementBody(
+        RuntimeModelDto runtime,
+        StorySegmentRefinementRequest request) => new
+    {
+        model = runtime.Model,
+        input = new object[]
+        {
+            new { role = "developer", content = StoryPromptCatalog.RefineSegmentSystem },
+            new { role = "user", content = StoryPromptCatalog.RenderSegmentRefinementUser(request) },
+        },
+        text = new
+        {
+            format = new
+            {
+                type = "json_schema",
+                name = "story_segment_refinement",
+                strict = true,
+                schema = new
+                {
+                    type = "object",
+                    additionalProperties = false,
+                    required = new[]
+                    {
+                        "image_prompt", "video_prompt", "continuity_in",
+                        "continuity_out", "shot_plan", "rationale",
+                    },
+                    properties = new
+                    {
+                        image_prompt = new { type = "string", minLength = 1, maxLength = 7_000 },
+                        video_prompt = new { type = "string", minLength = 1, maxLength = 7_000 },
+                        continuity_in = new { type = "string", minLength = 1, maxLength = 2_000 },
+                        continuity_out = new { type = "string", minLength = 1, maxLength = 2_000 },
+                        shot_plan = new { type = "string", minLength = 1, maxLength = 8_000 },
+                        rationale = new { type = "string", minLength = 1, maxLength = 2_000 },
+                    },
+                },
+            },
+        },
+        max_output_tokens = 12_000,
         store = false,
     };
 
@@ -288,6 +342,31 @@ public sealed class StoryPlanningService(
         }
     }
 
+    private static StorySegmentRefinementSuggestion DecodeSegmentRefinement(byte[] payload)
+    {
+        try
+        {
+            using var response = JsonDocument.Parse(payload);
+            var text = OutputText(response.RootElement);
+            if (string.IsNullOrWhiteSpace(text)) throw new JsonException("Missing output text.");
+            var suggestion = JsonSerializer.Deserialize<SegmentRefinementDto>(StripCodeFence(text), JsonOptions)
+                ?? throw new JsonException();
+            return new StorySegmentRefinementSuggestion(
+                Required(suggestion.ImagePrompt, 7_000),
+                Required(suggestion.VideoPrompt, 7_000),
+                Required(suggestion.ContinuityIn, 2_000),
+                Required(suggestion.ContinuityOut, 2_000),
+                Required(suggestion.ShotPlan, 8_000),
+                Required(suggestion.Rationale, 2_000));
+        }
+        catch (JsonException exception)
+        {
+            throw new ChatOSApiException(
+                "The story planning provider returned an invalid segment refinement.",
+                innerException: exception);
+        }
+    }
+
     private static string? OutputText(JsonElement root)
     {
         if (root.TryGetProperty("output_text", out var direct) && direct.ValueKind == JsonValueKind.String)
@@ -345,6 +424,25 @@ public sealed class StoryPlanningService(
             : request.VisualStyle;
         if (string.IsNullOrWhiteSpace(selected))
             throw new ArgumentException("The text to optimize is required.", nameof(request));
+    }
+
+    private static void ValidateSegmentRefinementRequest(StorySegmentRefinementRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.ModelConfigId) ||
+            string.IsNullOrWhiteSpace(request.ProjectTitle) || request.ProjectTitle.Length > 120 ||
+            request.ProjectSummary is null or { Length: > 16_000 } ||
+            request.VisualStyle is null or { Length: > 2_000 } ||
+            !StoryPlanningRatios.Contains(request.Ratio) ||
+            string.IsNullOrWhiteSpace(request.SegmentId) || request.SegmentId.Length > 80 ||
+            request.Kind is not ("story" or "transition") ||
+            string.IsNullOrWhiteSpace(request.Title) || request.Title.Length > 200 ||
+            string.IsNullOrWhiteSpace(request.Narrative) || request.Narrative.Length > 8_000 ||
+            request.Seconds is < 2 or > 15 ||
+            request.ImagePrompt is null or { Length: > 7_000 } ||
+            request.VideoPrompt is null or { Length: > 7_000 } ||
+            request.ContinuityContext is null or { Length: > 8_000 } ||
+            request.ResourceContext is null or { Length: > 16_000 })
+            throw new ArgumentException("The segment refinement input is invalid.", nameof(request));
     }
 
     private static async Task<byte[]> ReadLimitedAsync(HttpContent content, CancellationToken cancellationToken)
@@ -465,5 +563,13 @@ public sealed class StoryPlanningService(
 
     private sealed record OptimizationDto(
         [property: JsonPropertyName("optimized_text")] string? OptimizedText,
+        [property: JsonPropertyName("rationale")] string? Rationale);
+
+    private sealed record SegmentRefinementDto(
+        [property: JsonPropertyName("image_prompt")] string? ImagePrompt,
+        [property: JsonPropertyName("video_prompt")] string? VideoPrompt,
+        [property: JsonPropertyName("continuity_in")] string? ContinuityIn,
+        [property: JsonPropertyName("continuity_out")] string? ContinuityOut,
+        [property: JsonPropertyName("shot_plan")] string? ShotPlan,
         [property: JsonPropertyName("rationale")] string? Rationale);
 }

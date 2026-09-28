@@ -65,6 +65,7 @@ public sealed partial class StoryStudioViewModel
         RefreshPromptAudit();
         RefreshStoryRelations();
         RefreshContinuityAudit();
+        NotifySegmentRefinementChanged();
     }
 
     public void AddResource()

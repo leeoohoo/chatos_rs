@@ -51,6 +51,8 @@ public sealed partial class StoryStudioViewModel
             RenderOptimizationAudit(StoryOptimizationTarget.Source),
         StoryPromptCatalog.OptimizeStyleKey when _current is not null =>
             RenderOptimizationAudit(StoryOptimizationTarget.VisualStyle),
+        StoryPromptCatalog.RefineSegmentKey when SelectedSegment is { } refinementSegment =>
+            RenderSegmentRefinementAudit(refinementSegment),
         StoryPromptCatalog.ResourceImageKey when SelectedResource is { } resource =>
             StoryPromptCatalog.RenderResourceImage(
                 VisualStyle,
@@ -94,6 +96,14 @@ public sealed partial class StoryStudioViewModel
         return $"{system}\n\n用户上下文：\n{StoryPromptCatalog.RenderOptimizationUser(request)}";
     }
 
+    private string RenderSegmentRefinementAudit(StorySegmentEditor segment)
+    {
+        var request = BuildSegmentRefinementRequest(
+            segment,
+            ProjectTextModel?.Id ?? string.Empty);
+        return $"{StoryPromptCatalog.RefineSegmentSystem}\n\n用户上下文：\n{StoryPromptCatalog.RenderSegmentRefinementUser(request)}";
+    }
+
     partial void OnProjectTitleChanged(string value) => RefreshPlanningInputs();
     partial void OnProjectDescriptionChanged(string value) => RefreshPlanningInputs();
     partial void OnProjectSourceChanged(string value) => RefreshPlanningInputs();
@@ -106,5 +116,6 @@ public sealed partial class StoryStudioViewModel
         RefreshPromptAudit();
         NotifyPlanningRunsChanged();
         NotifyOptimizationChanged();
+        NotifySegmentRefinementChanged();
     }
 }

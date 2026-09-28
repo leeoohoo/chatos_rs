@@ -141,6 +141,38 @@ public sealed class StoryPlanningServiceTests
         Assert.Contains("invalid optimization", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task RefineSegmentPostsContinuityAwareStructuredRequest()
+    {
+        var store = TokenStore();
+        string? body = null;
+        var refinement = """
+            {"image_prompt":"A train enters a tunnel","video_prompt":"Dissolve from station to tunnel","continuity_in":"Train waits at station","continuity_out":"Train emerges at night","shot_plan":"0-1s hold; 1-3s dissolve","rationale":"Connects time and place without adding plot."}
+            """;
+        var provider = ProviderFactory(async request =>
+        {
+            body = await request.Content!.ReadAsStringAsync();
+            return Json(JsonSerializer.Serialize(new { output_text = refinement }));
+        });
+        var service = new StoryPlanningService(RuntimeApi(store), provider, store);
+
+        var result = await service.RefineSegmentAsync(new StorySegmentRefinementRequest(
+            "model-config", "Train story", "A journey", "cinematic natural light", "16:9",
+            "segment-2", "transition", "Nightfall", "Time passes", 3, "Train at station", "Dissolve",
+            "Previous shot ends at the station", "scene station: fixed platform layout"));
+
+        Assert.Equal("0-1s hold; 1-3s dissolve", result.ShotPlan);
+        Assert.Equal("Train emerges at night", result.ContinuityOut);
+        using var json = JsonDocument.Parse(body!);
+        var root = json.RootElement;
+        Assert.Equal("story_segment_refinement",
+            root.GetProperty("text").GetProperty("format").GetProperty("name").GetString());
+        Assert.Contains("转场段只连接前后画面状态",
+            root.GetProperty("input")[0].GetProperty("content").GetString());
+        Assert.Contains("Previous shot ends at the station",
+            root.GetProperty("input")[1].GetProperty("content").GetString());
+    }
+
     private static StoryPlanningRequest Request() => new(
         "model-config", "Train story", "A journey", "The train leaves the station.",
         "cinematic natural light", "16:9");
