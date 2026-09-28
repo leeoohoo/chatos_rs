@@ -931,8 +931,10 @@ struct NativePluginRuntimeTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let grandchildPIDFile = root.appendingPathComponent("grandchild.pid")
+        let pluginPIDFile = root.appendingPathComponent("plugin.pid")
         let script = root.appendingPathComponent("fixture.zsh")
         try """
+        echo $$ > '\(pluginPIDFile.path)'
         while IFS= read -r line; do
           if [[ "$line" == *'tools/list'* ]]; then
             echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"hang","description":"Hang","inputSchema":{"type":"object"}}]}}'
@@ -975,14 +977,23 @@ struct NativePluginRuntimeTests {
         let text = try String(contentsOf: grandchildPIDFile, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let grandchildPID = try #require(pid_t(text))
+        let pluginText = try String(contentsOf: pluginPIDFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let pluginPID = try #require(pid_t(pluginText))
         #expect(Darwin.kill(grandchildPID, 0) == 0)
+        #expect(Darwin.kill(pluginPID, 0) == 0)
 
         await client.terminate()
         _ = try? await call.value
         for _ in 0..<100 where Darwin.kill(grandchildPID, 0) == 0 {
             try await Task.sleep(for: .milliseconds(20))
         }
+        for _ in 0..<150 where Darwin.kill(pluginPID, 0) == 0 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
         #expect(Darwin.kill(grandchildPID, 0) == -1)
+        #expect(errno == ESRCH)
+        #expect(Darwin.kill(pluginPID, 0) == -1)
         #expect(errno == ESRCH)
     }
 

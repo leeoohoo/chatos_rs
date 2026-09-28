@@ -14,7 +14,6 @@ struct ProjectAgentDashboardView: View {
     let profilesByID: [String: LocalAgentProfile]
     let pendingApprovalCount: Int
     let onOpen: (AgentTeamSection) -> Void
-    let onOpenTodo: (LocalAgentTodo) -> Void
     let onInspectRun: (LocalAgentGroupChatRun) -> Void
 
     @State private var milestonePage = 0
@@ -53,8 +52,7 @@ struct ProjectAgentDashboardView: View {
     }
 
     private var attentionCount: Int {
-        needsReviewRuns.count + blockedTodos.count + pendingSurveys.count
-            + pendingApprovalCount + humanIssues.count
+        needsReviewRuns.count + pendingSurveys.count + pendingApprovalCount + humanIssues.count
     }
 
     var body: some View {
@@ -112,7 +110,7 @@ struct ProjectAgentDashboardView: View {
             HStack(spacing: 18) {
                 summaryMetric(todos.filter { $0.status == .inProgress }.count, "进行中", .blue)
                 summaryMetric(todos.filter { $0.status == .pending }.count, "等待", .secondary)
-                summaryMetric(blockedTodos.count, "阻塞", .orange)
+                summaryMetric(blockedTodos.count, "经理协调", .orange)
                 summaryMetric(attentionCount, "需你处理", .red)
             }
         }
@@ -121,7 +119,7 @@ struct ProjectAgentDashboardView: View {
 
     private var attentionPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
-            dashboardSectionHeader("需要你处理", subtitle: "系统事实与项目经理请求", count: attentionCount)
+            dashboardSectionHeader("需要你处理", subtitle: "仅显示必须由你决定或输入的事项", count: attentionCount)
             if attentionCount == 0 {
                 Label("当前没有需要你处理的事项", systemImage: "checkmark.circle.fill")
                     .appFont(.body)
@@ -136,22 +134,6 @@ struct ProjectAgentDashboardView: View {
                     color: .orange,
                     action: { onInspectRun(run) }
                 )
-            }
-            ForEach(blockedTodos.prefix(3)) { todo in
-                attentionRow(
-                    title: "处理阻塞：\(todo.title)",
-                    detail: todo.blockedReason.isEmpty
-                        ? "任务处于阻塞状态，但未记录具体原因"
-                        : todo.blockedReason,
-                    icon: "exclamationmark.octagon.fill",
-                    color: .red,
-                    action: { onOpenTodo(todo) }
-                )
-            }
-            if blockedTodos.count > 3 {
-                Button("另有 \(blockedTodos.count - 3) 项阻塞任务，查看全部") { onOpen(.tasks) }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
             }
             if !pendingSurveys.isEmpty {
                 attentionRow(
@@ -188,6 +170,14 @@ struct ProjectAgentDashboardView: View {
     private var executionPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
             dashboardSectionHeader("当前执行", subtitle: "任务状态由系统实时汇总")
+            if !blockedTodos.isEmpty {
+                Label(
+                    "\(blockedTodos.count) 项普通阻塞正由项目经理协调，不需要你逐项处理",
+                    systemImage: "person.crop.circle.badge.checkmark"
+                )
+                .appFont(.caption)
+                .foregroundStyle(.orange)
+            }
             statusBar
             ForEach(todos.filter { !$0.status.isTerminal }.prefix(4)) { todo in
                 HStack(spacing: 10) {
@@ -384,7 +374,7 @@ struct ProjectAgentDashboardView: View {
         switch status {
         case .pending: "等待"
         case .inProgress: "执行中"
-        case .blocked: "阻塞"
+        case .blocked: "项目经理协调中"
         case .completed: "已完成"
         case .cancelled: "已取消"
         }

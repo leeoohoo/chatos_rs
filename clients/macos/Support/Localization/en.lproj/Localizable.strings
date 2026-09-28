@@ -514,6 +514,7 @@
 "每小时" = "Every hour";
 "尚未指定项目经理，团队任务板暂不可创建任务。" = "No project manager is assigned, so tasks cannot yet be created on the team board.";
 "项目经理" = "Project Manager";
+"项目经理协调中" = "Project manager coordinating";
 "设为当前团队的项目经理" = "Make project manager for this team";
 "项目经理独占团队任务板的创建、分配、优先级和依赖管理权限。" = "The project manager exclusively manages task creation, assignment, priority, and dependencies for the team board.";
 "请先在 Agent 管理中创建一个职业为“项目经理”的 Agent。" = "First create an Agent with the Project Manager profession in Agent Management.";

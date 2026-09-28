@@ -7,14 +7,12 @@ import SwiftUI
 struct TeamTodoBoardView: View {
     let todos: [LocalAgentTodo]
     let profilesByID: [String: LocalAgentProfile]
-    let runsByTodoID: [String: LocalAgentGroupChatRun]
+    let runsByTodoID: [String: TeamTodoRunPresentation]
     let focusedTodoID: String?
-    let onResolveBlocked: (LocalAgentTodo, String) async -> Bool
-    let onInspectRun: (LocalAgentGroupChatRun) -> Void
+    let onInspectRun: (UUID) -> Void
 
     @State private var expandedTodoIDs: Set<String> = []
     @State private var resultTodo: LocalAgentTodo?
-    @State private var resolvingTodo: LocalAgentTodo?
     @State private var page = 0
     @State private var pageSize = 20
 
@@ -55,13 +53,6 @@ struct TeamTodoBoardView: View {
             TeamTodoResultDetailView(
                 todo: todo,
                 profile: profilesByID[todo.agentID]
-            )
-        }
-        .sheet(item: $resolvingTodo) { todo in
-            TeamTodoBlockResolutionSheet(
-                todo: todo,
-                profile: profilesByID[todo.agentID],
-                onSubmit: { note in await onResolveBlocked(todo, note) }
             )
         }
     }
@@ -115,15 +106,15 @@ struct TeamTodoBoardView: View {
                     .foregroundStyle(.orange)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    if let run, run.checkpoint.status == .needsReview {
-                        Button("检查中断步骤") { onInspectRun(run) }
+                    if let run, run.status == .needsReview {
+                        Button("检查中断步骤") { onInspectRun(run.runID) }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)
                             .tint(.orange)
                     } else {
-                        Button("处理阻塞") { resolvingTodo = todo }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
+                        Label("项目经理协调中", systemImage: "person.crop.circle.badge.checkmark")
+                            .appFont(.caption.weight(.semibold))
+                            .foregroundStyle(.orange)
                     }
                 }
                 .padding(.horizontal, 10)
@@ -158,18 +149,18 @@ struct TeamTodoBoardView: View {
                 }
                 if let run {
                     metadataBadge(
-                        "实际调用 \(run.checkpoint.receipts.count) 次",
+                        "实际调用 \(run.receiptCount) 次",
                         systemImage: "bolt.horizontal.circle"
                     )
                 }
-                let committedCount = committedPaths(in: run).count
+                let committedCount = run?.committedPaths.count ?? 0
                 if committedCount > 0 {
                     metadataBadge(
                         "已提交 \(committedCount) 个项目文件",
                         systemImage: "doc.badge.checkmark.fill",
                         color: .green
                     )
-                } else if run?.checkpoint.status == .needsReview {
+                } else if run?.status == .needsReview {
                     metadataBadge("写入中断，未落盘", systemImage: "exclamationmark.triangle.fill", color: .orange)
                 } else if !todo.result.isEmpty {
                     metadataBadge(
@@ -255,12 +246,12 @@ struct TeamTodoBoardView: View {
 
     private var deliveryOverview: some View {
         let delivered = todos.filter {
-            $0.status == .completed && !committedPaths(in: runsByTodoID[$0.id]).isEmpty
+            $0.status == .completed && !(runsByTodoID[$0.id]?.committedPaths.isEmpty ?? true)
         }.count
         let summaryOnly = todos.filter {
-            $0.status == .completed && committedPaths(in: runsByTodoID[$0.id]).isEmpty
+            $0.status == .completed && (runsByTodoID[$0.id]?.committedPaths.isEmpty ?? true)
         }.count
-        let review = todos.filter { runsByTodoID[$0.id]?.checkpoint.status == .needsReview }.count
+        let review = todos.filter { runsByTodoID[$0.id]?.status == .needsReview }.count
         let waiting = todos.filter { $0.status == .pending }.count
 
         return VStack(alignment: .leading, spacing: 10) {
@@ -414,9 +405,9 @@ struct TeamTodoBoardView: View {
 
     private func statusBadge(
         _ status: LocalAgentTodoStatus,
-        run: LocalAgentGroupChatRun?
+        run: TeamTodoRunPresentation?
     ) -> some View {
-        let needsReview = run?.checkpoint.status == .needsReview
+        let needsReview = run?.status == .needsReview
         let color = effectiveStatusColor(status, run: run)
         return Label(
             needsReview ? "需检查" : todoStatusLabel(status),
@@ -477,9 +468,9 @@ struct TeamTodoBoardView: View {
 
     private func resultSummary(
         _ todo: LocalAgentTodo,
-        run: LocalAgentGroupChatRun?
+        run: TeamTodoRunPresentation?
     ) -> some View {
-        let hasProjectFiles = !committedPaths(in: run).isEmpty
+        let hasProjectFiles = !(run?.committedPaths.isEmpty ?? true)
         let color: Color = hasProjectFiles ? .green : .blue
         return HStack(alignment: .top, spacing: 12) {
             Image(systemName: hasProjectFiles ? "checkmark.circle.fill" : "doc.text.fill")
@@ -507,28 +498,6 @@ struct TeamTodoBoardView: View {
         .contractPanel(tint: color.opacity(0.055))
     }
 
-    private func committedPaths(in run: LocalAgentGroupChatRun?) -> [String] {
-        guard let run else { return [] }
-        var paths: Set<String> = []
-        for receipt in run.checkpoint.receipts.values where !receipt.isError {
-            guard let data = receipt.content.data(using: .utf8),
-                  let value = try? JSONSerialization.jsonObject(with: data) else { continue }
-            collectCommittedPaths(from: value, into: &paths)
-        }
-        return paths.sorted()
-    }
-
-    private func collectCommittedPaths(from value: Any, into paths: inout Set<String>) {
-        if let object = value as? [String: Any] {
-            if let committed = object["committed_paths"] as? [String] {
-                paths.formUnion(committed)
-            }
-            for nested in object.values { collectCommittedPaths(from: nested, into: &paths) }
-        } else if let array = value as? [Any] {
-            for nested in array { collectCommittedPaths(from: nested, into: &paths) }
-        }
-    }
-
     private func sectionLabel(
         _ title: String,
         systemImage: String,
@@ -543,7 +512,7 @@ struct TeamTodoBoardView: View {
         switch status {
         case .pending: "待执行"
         case .inProgress: "执行中"
-        case .blocked: "已阻塞"
+        case .blocked: "待项目经理协调"
         case .completed: "已完成"
         case .cancelled: "已取消"
         }
@@ -561,9 +530,9 @@ struct TeamTodoBoardView: View {
 
     private func effectiveStatusColor(
         _ status: LocalAgentTodoStatus,
-        run: LocalAgentGroupChatRun?
+        run: TeamTodoRunPresentation?
     ) -> Color {
-        run?.checkpoint.status == .needsReview ? .orange : todoStatusColor(status)
+        run?.status == .needsReview ? .orange : todoStatusColor(status)
     }
 
     private func todoStatusIcon(_ status: LocalAgentTodoStatus) -> String {
@@ -574,93 +543,6 @@ struct TeamTodoBoardView: View {
         case .completed: "checkmark.circle.fill"
         case .cancelled: "xmark.circle.fill"
         }
-    }
-}
-
-private struct TeamTodoBlockResolutionSheet: View {
-    @Environment(\.dismiss) private var dismiss
-
-    let todo: LocalAgentTodo
-    let profile: LocalAgentProfile?
-    let onSubmit: (String) async -> Bool
-
-    @State private var resolution = ""
-    @State private var isSubmitting = false
-
-    private var agentName: String { profile?.draft.name ?? "Agent" }
-    private var trimmedResolution: String {
-        resolution.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "exclamationmark.octagon.fill")
-                    .font(.title2)
-                    .foregroundStyle(.orange)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("处理阻塞任务")
-                        .appFont(.title3.weight(.semibold))
-                    Text("\(todo.title) · \(agentName)")
-                        .appFont(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-
-            VStack(alignment: .leading, spacing: 7) {
-                Text("阻塞原因")
-                    .appFont(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Text(todo.blockedReason.isEmpty ? "任务未记录具体阻塞原因。" : todo.blockedReason)
-                    .appFont(.body)
-                    .textSelection(.enabled)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-
-            VStack(alignment: .leading, spacing: 7) {
-                Text("你的处理说明")
-                    .appFont(.caption.weight(.semibold))
-                Text("写清已经补充的信息、作出的决定，或外部依赖如何解除。下一次执行会把这段内容作为 Human 处理记录读取。")
-                    .appFont(.caption2)
-                    .foregroundStyle(.secondary)
-                TextEditor(text: $resolution)
-                    .appFont(.body)
-                    .frame(minHeight: 130)
-                    .padding(8)
-                    .background(AppPalette.surface, in: RoundedRectangle(cornerRadius: 9))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 9)
-                            .stroke(AppPalette.border, lineWidth: 1)
-                    }
-            }
-
-            Label(
-                "提交后会保存处理记录、清除普通阻塞并重新排队。若任务涉及结果不明的写入或计费步骤，系统会拒绝普通重跑并要求进入 Run 检查器。",
-                systemImage: "arrow.trianglehead.2.clockwise.rotate.90"
-            )
-            .appFont(.caption)
-            .foregroundStyle(.secondary)
-
-            HStack {
-                Spacer()
-                Button("取消") { dismiss() }
-                    .disabled(isSubmitting)
-                Button("提交说明并重新执行") {
-                    isSubmitting = true
-                    Task {
-                        if await onSubmit(trimmedResolution) { dismiss() }
-                        isSubmitting = false
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(isSubmitting || trimmedResolution.isEmpty || trimmedResolution.count > 16_000)
-            }
-        }
-        .padding(22)
-        .frame(width: 620)
     }
 }
 

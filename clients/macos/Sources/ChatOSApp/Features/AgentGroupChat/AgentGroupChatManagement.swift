@@ -94,9 +94,20 @@ extension AgentGroupChatViewModel {
                 await self?.load()
             }
             defer { refreshCoalescer.cancel() }
-            for await _ in changes {
+            for await change in changes {
                 guard !Task.isCancelled else { break }
-                refreshCoalescer.signal()
+                guard change.roomID == self?.room?.id else { continue }
+                switch change.kind {
+                case .roomUpdated:
+                    self?.cancelScheduledRunRefreshes()
+                    refreshCoalescer.signal()
+                case .deliveryClaimed, .runUpdated:
+                    guard let runID = change.runID else {
+                        refreshCoalescer.signal()
+                        continue
+                    }
+                    self?.scheduleRunRefresh(runID)
+                }
             }
         }
     }

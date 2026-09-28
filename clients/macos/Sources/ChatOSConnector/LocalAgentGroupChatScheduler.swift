@@ -50,16 +50,15 @@ actor LocalAgentExecutorTaskRegistry {
 actor LocalAgentActiveDeliveryRegistry {
     private var deliveryIDs: Set<String> = []
 
-    func register(deliveryID: String) {
-        deliveryIDs.insert(deliveryID)
+    /// Atomically claims in-process ownership of a delivery. Manual resume, Human retry, and
+    /// crash recovery all use this gate so a durable `running` checkpoint cannot be executed by
+    /// two local tasks at once.
+    func acquire(deliveryID: String) -> Bool {
+        deliveryIDs.insert(deliveryID).inserted
     }
 
     func unregister(deliveryID: String) {
         deliveryIDs.remove(deliveryID)
-    }
-
-    func contains(deliveryID: String) -> Bool {
-        deliveryIDs.contains(deliveryID)
     }
 }
 

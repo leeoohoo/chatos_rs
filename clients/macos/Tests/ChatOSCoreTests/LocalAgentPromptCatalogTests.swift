@@ -104,11 +104,18 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
         XCTAssertTrue(rendered.contains("project_dashboard_update"))
         XCTAssertTrue(rendered.contains("expected_revision"))
         XCTAssertTrue(rendered.contains("不得复制或伪造系统统计"))
+        XCTAssertTrue(rendered.contains("不能把可预见的跨角色交接制造成成员阻塞"))
+        XCTAssertTrue(rendered.contains("不得把成员原始阻塞转发给 Human"))
+        XCTAssertTrue(rendered.contains("推荐方案以及一个明确请求"))
+        XCTAssertTrue(rendered.contains("普通 blocked Todo 是项目经理待协调事项"))
 
         let todoStatus = LocalAgentPromptCatalog.render(.todoStatusCycle)
         XCTAssertTrue(todoStatus.contains("project_dashboard_get"))
         XCTAssertTrue(todoStatus.contains("project_dashboard_update"))
         XCTAssertTrue(todoStatus.contains("发生实质变化"))
+        XCTAssertTrue(todoStatus.contains("不能把成员的原始阻塞直接转发给 Human"))
+        XCTAssertTrue(todoStatus.contains("创建 requirement_survey_write 调研 Todo"))
+        XCTAssertTrue(todoStatus.contains("不得自动登记为 Human 待办"))
     }
 
     func testRequirementSurveySkillIsProgressiveAndToolDirected() {

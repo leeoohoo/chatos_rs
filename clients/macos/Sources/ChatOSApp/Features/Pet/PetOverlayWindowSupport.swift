@@ -94,7 +94,7 @@ final class PetMessagePanel: NSPanel {
 
     override func sendEvent(_ event: NSEvent) {
         if event.type == .leftMouseDown, !isKeyWindow {
-            makeKey()
+            makeKeyAndOrderFront(nil)
         }
         super.sendEvent(event)
     }
@@ -254,7 +254,14 @@ enum PetOverlayPanelFactory {
         acceptsKeyboardInput: Bool = false
     ) -> NSPanel {
         let contentRect = NSRect(origin: .zero, size: size)
-        let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel]
+        // Keep the pet and passive activity bubbles non-activating, but use a
+        // genuinely activating panel for Quick Chat. A non-activating panel can
+        // become key enough to receive raw key events while the app remains
+        // inactive; in that state macOS input methods may draw marked Pinyin in
+        // the NSTextView but suppress or misplace their candidate window.
+        let styleMask: NSWindow.StyleMask = acceptsKeyboardInput
+            ? [.borderless]
+            : [.borderless, .nonactivatingPanel]
         let panel: NSPanel = acceptsKeyboardInput
             ? PetMessagePanel(
                 contentRect: contentRect,

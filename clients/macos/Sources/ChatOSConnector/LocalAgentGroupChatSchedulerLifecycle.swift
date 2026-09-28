@@ -35,6 +35,31 @@ extension LocalAgentGroupChatScheduler {
         projectID: String,
         deliveryID: String
     ) async throws -> DeliveryAttemptReceipt {
+        guard await activeDeliveryRegistry.acquire(deliveryID: deliveryID) else {
+            throw AgentGroupChatError.conflict
+        }
+        do {
+            let result = try await resumeRegisteredDelivery(
+                ownerUserID: ownerUserID,
+                projectID: projectID,
+                deliveryID: deliveryID
+            )
+            await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
+            return result
+        } catch {
+            await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
+            throw error
+        }
+    }
+
+    /// Runs a delivery whose in-process ownership has already been acquired by the caller.
+    /// Keeping registration outside this method lets Human retry hold ownership while it repairs
+    /// the Todo and checkpoint, closing the recovery race across that whole state transition.
+    func resumeRegisteredDelivery(
+        ownerUserID: String,
+        projectID: String,
+        deliveryID: String
+    ) async throws -> DeliveryAttemptReceipt {
         let store = try await service.store()
         guard let delivery = try await store.delivery(
             ownerUserID: ownerUserID,
@@ -96,6 +121,28 @@ extension LocalAgentGroupChatScheduler {
     /// entry point clears only the in-flight marker while preserving the pending call and its
     /// stable call id, so idempotent local tools can reconcile an already-applied result.
     public func retryInterruptedDelivery(
+        ownerUserID: String,
+        projectID: String,
+        deliveryID: String
+    ) async throws -> DeliveryAttemptReceipt {
+        guard await activeDeliveryRegistry.acquire(deliveryID: deliveryID) else {
+            throw AgentGroupChatError.conflict
+        }
+        do {
+            let result = try await retryRegisteredInterruptedDelivery(
+                ownerUserID: ownerUserID,
+                projectID: projectID,
+                deliveryID: deliveryID
+            )
+            await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
+            return result
+        } catch {
+            await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
+            throw error
+        }
+    }
+
+    func retryRegisteredInterruptedDelivery(
         ownerUserID: String,
         projectID: String,
         deliveryID: String
@@ -170,7 +217,7 @@ extension LocalAgentGroupChatScheduler {
             runID: savedRun.id,
             kind: .runUpdated
         ))
-        return try await resumeDelivery(
+        return try await resumeRegisteredDelivery(
             ownerUserID: ownerUserID,
             projectID: projectID,
             deliveryID: deliveryID

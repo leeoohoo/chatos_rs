@@ -23,6 +23,7 @@ actor NativePluginStdioClient {
     private let childErrorOutput: FileHandle
     private var processID: pid_t?
     private var processExitSource: DispatchSourceProcess?
+    private var terminationEscalationTask: Task<Void, Never>?
     private var outputReaderTask: Task<Void, Never>?
     private var errorReaderTask: Task<Void, Never>?
     private var nextRequestID = 1
@@ -245,16 +246,22 @@ actor NativePluginStdioClient {
             readBuffer.removeSubrange(...newline)
             guard !line.isEmpty else { continue }
             guard line.count <= maximumMessageBytes else {
-                stop(with: NativePluginRuntimeError.invalidMCPResponse("Plugin MCP 响应超过大小限制"))
+                stop(
+                    with: NativePluginRuntimeError.invalidMCPResponse("Plugin MCP 响应超过大小限制"),
+                    terminateProcess: true
+                )
                 return
             }
             let value: NativeJSONValue
             do {
                 value = try JSONDecoder().decode(NativeJSONValue.self, from: Data(line))
             } catch {
-                stop(with: NativePluginRuntimeError.invalidMCPResponse(
-                    "Plugin MCP 返回了无法解析的 JSON 响应"
-                ))
+                stop(
+                    with: NativePluginRuntimeError.invalidMCPResponse(
+                        "Plugin MCP 返回了无法解析的 JSON 响应"
+                    ),
+                    terminateProcess: true
+                )
                 return
             }
             guard let object = value.jsonObject,
@@ -272,7 +279,10 @@ actor NativePluginStdioClient {
             }
         }
         guard readBuffer.count <= maximumMessageBytes else {
-            stop(with: NativePluginRuntimeError.invalidMCPResponse("Plugin MCP 响应超过大小限制"))
+            stop(
+                with: NativePluginRuntimeError.invalidMCPResponse("Plugin MCP 响应超过大小限制"),
+                terminateProcess: true
+            )
             return
         }
     }
@@ -377,16 +387,27 @@ actor NativePluginStdioClient {
         errorReaderTask?.cancel()
         outputReaderTask = nil
         errorReaderTask = nil
-        processExitSource?.cancel()
-        processExitSource = nil
+        // Keep the process source alive until the child exits so its waitpid is
+        // still delivered. Cancelling it here both leaked a zombie and removed
+        // the only path that cleared processID during termination.
+        if processID == nil {
+            processExitSource?.cancel()
+            processExitSource = nil
+        }
         output.closeFile()
         errorOutput.closeFile()
         input.closeFile()
         if terminateProcess, let processID {
             _ = chatos_signal_process_group(processID, SIGTERM)
-            Task { [weak self] in
+            terminationEscalationTask?.cancel()
+            // Retain the client until escalation completes. A weak capture let
+            // short-lived callers (notably tests and failed plugin starts)
+            // deallocate the client before SIGKILL, leaving a hot orphaned
+            // process group behind.
+            terminationEscalationTask = Task { [self] in
                 try? await Task.sleep(for: .seconds(2))
-                await self?.forceKillProcessGroup(processID)
+                guard !Task.isCancelled else { return }
+                forceKillProcessGroup(processID)
             }
         }
         let requests = pending.values
@@ -397,8 +418,11 @@ actor NativePluginStdioClient {
     }
 
     private func forceKillProcessGroup(_ expectedProcessID: pid_t) {
-        guard processID == expectedProcessID else { return }
+        // The group leader can exit on SIGTERM while a descendant ignores the
+        // signal. The process group remains valid until its last member exits,
+        // so escalation must not depend on the leader still being our child.
         _ = chatos_signal_process_group(expectedProcessID, SIGKILL)
+        terminationEscalationTask = nil
     }
 
     private static func withCStringArray<Result>(

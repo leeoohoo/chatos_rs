@@ -96,6 +96,7 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published var loadingTeamAssetRevisionIDs: Set<String> = []
     @Published var recentRuns: [LocalAgentGroupChatRun] = []
     @Published var recentRunDeliveries: [UUID: ProjectAgentDelivery] = [:]
+    @Published var todoRunPresentationsByTodoID: [String: TeamTodoRunPresentation] = [:]
     @Published var draftMessage = ""
     @Published var attachments: [ConversationAttachmentDraft] = []
     @Published var attachmentError: String?
@@ -110,7 +111,6 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published var isPausingAgents = false
     @Published var isStoppingAgents = false
     @Published var runActionDeliveryIDs: Set<String> = []
-    @Published var blockedTodoActionIDs: Set<String> = []
     @Published var proposalActionIDs: Set<String> = []
     @Published var removalProposalActionIDs: Set<String> = []
     @Published var teamProposalActionIDs: Set<String> = []
@@ -130,6 +130,7 @@ final class AgentGroupChatViewModel: ObservableObject {
     var communicationSchedulerNeedsAnotherPass = false
     var changeObservationTask: Task<Void, Never>?
     var supplementaryLoadTask: Task<Void, Never>?
+    var runRefreshTasks: [UUID: Task<Void, Never>] = [:]
     var modelLoadTask: Task<LocalAgentBuilderResources, Error>?
     var hasLoadedModels = false
     let messagePageSize = 50
@@ -155,6 +156,7 @@ final class AgentGroupChatViewModel: ObservableObject {
         communicationSchedulerTask?.cancel()
         changeObservationTask?.cancel()
         supplementaryLoadTask?.cancel()
+        for task in runRefreshTasks.values { task.cancel() }
     }
 
     var profilesByID: [String: LocalAgentProfile] {
@@ -302,6 +304,7 @@ final class AgentGroupChatViewModel: ObservableObject {
             requirementSurveys = []
             recentRuns = []
             recentRunDeliveries = [:]
+            todoRunPresentationsByTodoID = [:]
             return
         }
 
@@ -387,6 +390,12 @@ final class AgentGroupChatViewModel: ObservableObject {
                         return (run.id, delivery)
                     }
                 )
+                let todoRunPresentationsByTodoID = await Task.detached(priority: .utility) {
+                    TeamTodoRunPresentation.presentationsByTodoID(
+                        runs: recentRuns,
+                        deliveriesByRunID: recentRunDeliveries
+                    )
+                }.value
                 guard !Task.isCancelled, self.room?.id == room.id else { return }
                 if mergeAttachments {
                     attachmentDataByID.merge(loadedAttachmentData) { _, new in new }
@@ -407,6 +416,7 @@ final class AgentGroupChatViewModel: ObservableObject {
                 loadingTeamAssetRevisionIDs.formIntersection(activeAssetIDs)
                 self.recentRuns = recentRuns
                 self.recentRunDeliveries = recentRunDeliveries
+                self.todoRunPresentationsByTodoID = todoRunPresentationsByTodoID
             } catch {
                 guard !Task.isCancelled, self.room?.id == room.id else { return }
                 errorMessage = error.localizedDescription

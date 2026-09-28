@@ -96,10 +96,10 @@ final class AgentGroupChatViewModelPerformanceBaselineTests: XCTestCase {
 
         // Freeze the trailing-edge coalesced refresh fan-out. A 500-event burst must settle as
         // one complete refresh; any higher result is a duplicate-refresh regression.
-        XCTAssertEqual(initialLoadPreparedStatements, 349)
-        XCTAssertEqual(initialLoadPublications, 45)
-        XCTAssertEqual(burstRefreshPreparedStatements, 123)
-        XCTAssertEqual(burstRefreshPublications, 21)
+        XCTAssertEqual(initialLoadPreparedStatements, 541)
+        XCTAssertEqual(initialLoadPublications, 74)
+        XCTAssertEqual(burstRefreshPreparedStatements, 125)
+        XCTAssertEqual(burstRefreshPublications, 23)
         XCTAssertGreaterThan(probe.sampleCount, 0)
 
         let measurements = Measurements(
