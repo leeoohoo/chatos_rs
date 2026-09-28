@@ -17,7 +17,10 @@ public sealed class StoryProjectStoreTests
         Assert.Equal(project.Id, restored.Id);
         Assert.Equal(project.Title, restored.Title);
         Assert.Equal(project.Source, restored.Source);
-        Assert.Equal(project.Segments, restored.Segments);
+        var restoredSegment = Assert.Single(restored.Segments);
+        Assert.Equal("segment-1", restoredSegment.Id);
+        Assert.Equal(new[] { "hero" }, restoredSegment.ResourceIds);
+        Assert.Equal("hero", Assert.Single(restored.Resources).Id);
         Assert.Empty(await store.LoadAsync("owner-b"));
     }
 
@@ -75,14 +78,37 @@ public sealed class StoryProjectStoreTests
         Assert.Throws<InvalidDataException>(project.Validate);
     }
 
+    [Fact]
+    public void ProjectValidationRejectsUnknownSegmentResource()
+    {
+        var project = Project("Unknown resource") with
+        {
+            Segments =
+            [
+                new StorySegmentDocument(
+                    "segment-1", "Shot", "Narrative", "Image", "Video", 4,
+                    null, null, null)
+                {
+                    ResourceIds = ["missing"],
+                },
+            ],
+        };
+
+        Assert.Throws<InvalidDataException>(project.Validate);
+    }
+
     private static StoryProjectDocument Project(string title)
     {
         var now = new DateTimeOffset(2026, 9, 28, 8, 0, 0, TimeSpan.Zero);
         return new StoryProjectDocument(
             Guid.NewGuid(), StoryProjectDocument.CurrentVersion, title, "Description", "Source", "Summary", "Style",
             "16:9", "text-model", "image-model", "video-model",
-            [new StorySegmentDocument("segment-1", "Shot", "Narrative", "Image", "Video", 4, null, null, null)],
-            now, now);
+            [new StorySegmentDocument("segment-1", "Shot", "Narrative", "Image", "Video", 4, null, null, null)
+                { ResourceIds = ["hero"] }],
+            now, now)
+        {
+            Resources = [new StoryResourceDocument("hero", StoryResourceKind.Character, "Hero", "Lead", "Hero portrait", null)],
+        };
     }
 
     private sealed class TemporaryFolder : IDisposable

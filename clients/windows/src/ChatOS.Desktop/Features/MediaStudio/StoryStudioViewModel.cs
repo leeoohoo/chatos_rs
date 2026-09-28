@@ -18,6 +18,7 @@ public sealed partial class StorySegmentEditor : ObservableObject
         _firstFrameAsset = document.FirstFrameAsset;
         _lastFrameAsset = document.LastFrameAsset;
         _videoAsset = document.VideoAsset;
+        _resourceIdsText = string.Join(", ", document.ResourceIds);
         FirstFramePath = resolvePath(document.FirstFrameAsset);
         LastFramePath = resolvePath(document.LastFrameAsset);
         VideoPath = resolvePath(document.VideoAsset);
@@ -41,6 +42,7 @@ public sealed partial class StorySegmentEditor : ObservableObject
     [ObservableProperty] private string _imagePrompt;
     [ObservableProperty] private string _videoPrompt;
     [ObservableProperty] private int _seconds;
+    [ObservableProperty] private string _resourceIdsText;
     private string? _firstFrameAsset;
     private string? _lastFrameAsset;
     private string? _videoAsset;
@@ -54,7 +56,21 @@ public sealed partial class StorySegmentEditor : ObservableObject
         Seconds,
         _firstFrameAsset,
         _lastFrameAsset,
-        _videoAsset);
+        _videoAsset)
+    {
+        ResourceIds = ParseResourceIds(ResourceIdsText),
+    };
+
+    internal void RemoveResource(string resourceId)
+    {
+        ResourceIdsText = string.Join(", ", ParseResourceIds(ResourceIdsText)
+            .Where(id => !string.Equals(id, resourceId, StringComparison.Ordinal)));
+    }
+
+    private static IReadOnlyList<string> ParseResourceIds(string value) => value
+        .Split([',', '，', ';', '；'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+        .Distinct(StringComparer.Ordinal)
+        .ToArray();
 
     public void SetFrame(bool lastFrame, string relativePath, string fullPath)
     {
@@ -117,14 +133,17 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             OnPropertyChanged(nameof(CanPlan));
             OnPropertyChanged(nameof(WorkspaceSummary));
         };
+        Resources.CollectionChanged += (_, _) => OnPropertyChanged(nameof(CanGenerateResourceImage));
     }
 
     public ObservableCollection<StoryProjectCard> Projects { get; } = [];
     public ObservableCollection<StorySegmentEditor> Segments { get; } = [];
+    public ObservableCollection<StoryResourceEditor> Resources { get; } = [];
     public ObservableCollection<MediaGenerationModel> Models { get; } = [];
     public ObservableCollection<MediaGenerationModel> ImageModels { get; } = [];
     public ObservableCollection<MediaGenerationModel> VideoModels { get; } = [];
     public IReadOnlyList<string> Ratios => StoryStudioOptions.Ratios;
+    public IReadOnlyList<StoryResourceKind> ResourceKinds { get; } = Enum.GetValues<StoryResourceKind>();
 
     public bool IsWorkspaceOpen => _current is not null;
     public bool CanCreate => !IsBusy && !string.IsNullOrWhiteSpace(NewTitle) &&
@@ -137,6 +156,8 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         !string.IsNullOrWhiteSpace(SelectedSegment.ImagePrompt);
     public bool CanGenerateVideo => CanSave && SelectedSegment is not null &&
         !string.IsNullOrWhiteSpace(SelectedSegment.VideoPrompt);
+    public bool CanGenerateResourceImage => CanSave && SelectedResource is not null &&
+        !string.IsNullOrWhiteSpace(SelectedResource.ImagePrompt);
     public string WorkspaceSummary => _current is null
         ? "选择或新建剧情项目"
         : $"{Segments.Count} 个分段 · {Segments.Sum(segment => segment.Seconds)} 秒";
@@ -193,12 +214,16 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanGenerateVideo))]
     private StorySegmentEditor? _selectedSegment;
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanGenerateResourceImage))]
+    private StoryResourceEditor? _selectedResource;
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanCreate))]
     [NotifyPropertyChangedFor(nameof(CanSave))]
     [NotifyPropertyChangedFor(nameof(CanQuickSplit))]
     [NotifyPropertyChangedFor(nameof(CanPlan))]
     [NotifyPropertyChangedFor(nameof(CanGenerateFrame))]
     [NotifyPropertyChangedFor(nameof(CanGenerateVideo))]
+    [NotifyPropertyChangedFor(nameof(CanGenerateResourceImage))]
     private bool _isBusy;
     [ObservableProperty] private string _statusMessage = "剧情项目只保存在本机";
     [ObservableProperty] private string? _errorMessage;
@@ -272,12 +297,19 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         ProjectImageModel = ImageModels.FirstOrDefault(model => model.Id == project.ImageModelConfigId);
         ProjectVideoModel = VideoModels.FirstOrDefault(model => model.Id == project.VideoModelConfigId);
         Segments.Clear();
+        Resources.Clear();
+        foreach (var resource in project.Resources)
+        {
+            Resources.Add(new StoryResourceEditor(resource, asset =>
+                _ownerUserId is null ? null : _store.ResolveAssetPath(_ownerUserId, project.Id, asset)));
+        }
         foreach (var segment in project.Segments)
         {
             Segments.Add(new StorySegmentEditor(segment, asset =>
                 _ownerUserId is null ? null : _store.ResolveAssetPath(_ownerUserId, project.Id, asset)));
         }
         SelectedSegment = Segments.FirstOrDefault();
+        SelectedResource = Resources.FirstOrDefault();
         ErrorMessage = null;
         OnWorkspaceChanged();
     }
@@ -287,7 +319,9 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         _generationCancellation?.Cancel();
         _current = null;
         Segments.Clear();
+        Resources.Clear();
         SelectedSegment = null;
+        SelectedResource = null;
         OnWorkspaceChanged();
     }
 
@@ -368,14 +402,30 @@ public sealed partial class StoryStudioViewModel : ObservableObject
                 cancellationToken);
             ProjectSummary = result.Summary;
             staged = true;
+            foreach (var resource in result.Resources)
+            {
+                var kind = resource.Kind switch
+                {
+                    "character" => StoryResourceKind.Character,
+                    "scene" => StoryResourceKind.Scene,
+                    _ => StoryResourceKind.Prop,
+                };
+                Resources.Add(new StoryResourceEditor(new StoryResourceDocument(
+                    resource.Id, kind, resource.Name, resource.Description,
+                    resource.ImagePrompt, null), _ => null));
+            }
             foreach (var plan in result.Segments)
             {
                 Segments.Add(new StorySegmentEditor(new StorySegmentDocument(
                     $"segment-{Guid.NewGuid():N}", plan.Title, plan.Narrative,
                     plan.ImagePrompt, plan.VideoPrompt, plan.Seconds,
-                    null, null, null), _ => null));
+                    null, null, null)
+                {
+                    ResourceIds = plan.ResourceIds,
+                }, _ => null));
             }
             SelectedSegment = Segments.FirstOrDefault();
+            SelectedResource = Resources.FirstOrDefault();
             await PersistCurrentAsync(cancellationToken);
             committed = true;
             StatusMessage = $"AI 已完成全剧规划，共 {Segments.Count} 个分段";
@@ -390,6 +440,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             if (staged && !committed)
             {
                 Segments.Clear();
+                Resources.Clear();
                 ProjectSummary = previousSummary;
             }
             IsBusy = false;
@@ -502,6 +553,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             ImageModelConfigId = ProjectImageModel.Id,
             VideoModelConfigId = ProjectVideoModel.Id,
             Segments = Segments.Select(segment => segment.ToDocument()).ToArray(),
+            Resources = Resources.Select(resource => resource.ToDocument()).ToArray(),
             UpdatedAt = DateTimeOffset.UtcNow,
         };
         await _store.SaveAsync(owner, project, cancellationToken);
@@ -538,6 +590,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         _current = null;
         Projects.Clear();
         Segments.Clear();
+        Resources.Clear();
         Models.Clear();
         ImageModels.Clear();
         VideoModels.Clear();
@@ -610,6 +663,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(CanGenerateFrame));
         OnPropertyChanged(nameof(CanGenerateVideo));
+        OnPropertyChanged(nameof(CanGenerateResourceImage));
         if (e.PropertyName == nameof(StorySegmentEditor.Seconds))
             OnPropertyChanged(nameof(WorkspaceSummary));
     }

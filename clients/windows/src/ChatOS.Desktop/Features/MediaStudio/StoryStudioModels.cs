@@ -17,6 +17,7 @@ public sealed record StoryProjectDocument(
     DateTimeOffset UpdatedAt)
 {
     public const int CurrentVersion = 1;
+    public IReadOnlyList<StoryResourceDocument> Resources { get; init; } = [];
     public int TotalSeconds => Segments.Sum(segment => segment.Seconds);
     public int CompletedCount => Segments.Count(segment => !string.IsNullOrWhiteSpace(segment.VideoAsset));
 
@@ -28,13 +29,23 @@ public sealed record StoryProjectDocument(
             string.IsNullOrWhiteSpace(TextModelConfigId) ||
             string.IsNullOrWhiteSpace(ImageModelConfigId) ||
             string.IsNullOrWhiteSpace(VideoModelConfigId) ||
-            !StoryStudioOptions.Ratios.Contains(Ratio) || Segments.Count > 200 ||
+            !StoryStudioOptions.Ratios.Contains(Ratio) || Segments is null || Resources is null ||
+            Segments.Count > 200 || Resources.Count > 100 ||
             Segments.Select(segment => segment.Id).Distinct(StringComparer.Ordinal).Count() != Segments.Count)
         {
             throw new InvalidDataException("剧情项目数据无效，请检查标题、模型、内容长度和分段。");
         }
 
-        foreach (var segment in Segments) segment.Validate();
+        if (Resources.Select(resource => resource.Id).Distinct(StringComparer.Ordinal).Count() != Resources.Count)
+            throw new InvalidDataException("剧情素材 ID 重复。");
+        foreach (var resource in Resources) resource.Validate();
+        var resourceIds = Resources.Select(resource => resource.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var segment in Segments)
+        {
+            segment.Validate();
+            if (segment.ResourceIds.Any(id => !resourceIds.Contains(id)))
+                throw new InvalidDataException("剧情分段引用了不存在的角色、场景或道具。");
+        }
     }
 }
 
@@ -49,12 +60,14 @@ public sealed record StorySegmentDocument(
     string? LastFrameAsset,
     string? VideoAsset)
 {
+    public IReadOnlyList<string> ResourceIds { get; init; } = [];
+
     public void Validate()
     {
         if (string.IsNullOrWhiteSpace(Id) || Id.Length > 80 ||
             string.IsNullOrWhiteSpace(Title) || Title.Length > 200 ||
             Narrative.Length > 8_000 || ImagePrompt.Length > 7_000 || VideoPrompt.Length > 7_000 ||
-            Seconds is < 2 or > 30 ||
+            Seconds is < 2 or > 30 || ResourceIds is null ||
             !SafeAsset(FirstFrameAsset) || !SafeAsset(LastFrameAsset) || !SafeAsset(VideoAsset))
         {
             throw new InvalidDataException("剧情分段数据无效，请检查标题、提示词、时长和素材。");
@@ -64,6 +77,34 @@ public sealed record StorySegmentDocument(
     private static bool SafeAsset(string? value) => value is null ||
         (!Path.IsPathFullyQualified(value) &&
          !value.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Contains(".."));
+}
+
+public enum StoryResourceKind
+{
+    Character,
+    Scene,
+    Prop,
+}
+
+public sealed record StoryResourceDocument(
+    string Id,
+    StoryResourceKind Kind,
+    string Name,
+    string Description,
+    string ImagePrompt,
+    string? ImageAsset)
+{
+    public void Validate()
+    {
+        if (string.IsNullOrWhiteSpace(Id) || Id.Length > 80 ||
+            string.IsNullOrWhiteSpace(Name) || Name.Length > 200 ||
+            Description.Length > 8_000 || ImagePrompt.Length > 7_000 ||
+            ImageAsset is not null && (Path.IsPathFullyQualified(ImageAsset) ||
+                ImageAsset.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Contains("..")))
+        {
+            throw new InvalidDataException("剧情角色、场景或道具数据无效。");
+        }
+    }
 }
 
 public static class StoryStudioOptions

@@ -14,8 +14,17 @@ public sealed record PlannedStorySegment(
     string Narrative,
     string ImagePrompt,
     string VideoPrompt,
-    int Seconds);
+    int Seconds,
+    IReadOnlyList<string> ResourceIds);
+
+public sealed record PlannedStoryResource(
+    string Id,
+    string Kind,
+    string Name,
+    string Description,
+    string ImagePrompt);
 
 public sealed record StoryPlanningResult(
     string Summary,
+    IReadOnlyList<PlannedStoryResource> Resources,
     IReadOnlyList<PlannedStorySegment> Segments);

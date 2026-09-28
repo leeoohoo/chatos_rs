@@ -369,6 +369,33 @@
                                                 <Button Click="OnPlanStoryClick" Content="AI 分析全剧并拆分计划" IsEnabled="{x:Bind StoryViewModel.CanPlan, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
                                                 <Button Click="OnQuickSplitStoryClick" Content="不调用模型：按段落快速分段" IsEnabled="{x:Bind StoryViewModel.CanQuickSplit, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                 <TextBlock Text="AI 规划会调用所选文本模型并产生相应费用；不会自动生成图片或视频。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                <Rectangle Height="1" Fill="{StaticResource ChatOSBorderBrush}" />
+                                                <Grid>
+                                                    <StackPanel><TextBlock Text="角色 · 场景 · 道具" Style="{StaticResource ChatOSHeadlineTextStyle}" /><TextBlock Text="分段通过稳定素材 ID 复用一致性参考" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
+                                                    <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="5">
+                                                        <Button Click="OnAddStoryResourceClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="添加素材"><FontIcon Glyph="&#xE710;" /></Button>
+                                                        <Button Click="OnRemoveStoryResourceClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="移除素材"><FontIcon Glyph="&#xE74D;" /></Button>
+                                                    </StackPanel>
+                                                </Grid>
+                                                <ListView MaxHeight="190" Background="Transparent" BorderThickness="0" ItemsSource="{x:Bind StoryViewModel.Resources}" SelectedItem="{x:Bind StoryViewModel.SelectedResource, Mode=TwoWay}" SelectionMode="Single">
+                                                    <ListView.ItemTemplate>
+                                                        <DataTemplate x:DataType="media:StoryResourceEditor">
+                                                            <Border Margin="0,0,0,6" Padding="9" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="8">
+                                                                <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Text="{x:Bind KindLabel, Mode=OneWay}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" /><TextBlock Grid.Column="1" Text="{x:Bind Name, Mode=OneWay}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" /></Grid>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ListView.ItemTemplate>
+                                                </ListView>
+                                                <StackPanel x:Name="StoryResourceEmptyState"><TextBlock Text="添加角色、场景或道具，或使用 AI 全剧规划自动建立素材表。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
+                                                <StackPanel x:Name="StoryResourceEditorPanel" DataContext="{x:Bind StoryViewModel.SelectedResource, Mode=OneWay}" Spacing="9">
+                                                    <ComboBox Header="类型" ItemsSource="{x:Bind StoryViewModel.ResourceKinds}" SelectedItem="{Binding Kind, Mode=TwoWay}" />
+                                                    <TextBox Header="名称" MaxLength="200" Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                    <TextBox Header="文字画像 / 说明" AcceptsReturn="True" MaxLength="8000" MinHeight="70" Text="{Binding Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
+                                                    <TextBox Header="参考图提示词" AcceptsReturn="True" MaxLength="7000" MinHeight="70" Text="{Binding ImagePrompt, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
+                                                    <Button Click="OnGenerateStoryResourceImageClick" Content="生成一致性参考图" IsEnabled="{x:Bind StoryViewModel.CanGenerateResourceImage, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                    <Border Height="150" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10"><Image Source="{Binding ImagePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="Uniform" /></Border>
+                                                    <TextBlock Text="素材 ID" Style="{StaticResource ChatOSCaptionTextStyle}" /><TextBlock IsTextSelectionEnabled="True" Text="{Binding Id}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                </StackPanel>
                                             </StackPanel>
                                         </ScrollViewer>
 
@@ -421,6 +448,7 @@
                                                             <NumberBox Grid.Column="1" Header="时长（秒）" Minimum="2" Maximum="30" SpinButtonPlacementMode="Compact" Value="{Binding Seconds, Mode=TwoWay}" />
                                                         </Grid>
                                                         <TextBox Header="画面提示词" AcceptsReturn="True" MaxLength="7000" MinHeight="90" Text="{Binding ImagePrompt, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
+                                                        <TextBox Header="关联素材 ID（逗号分隔）" PlaceholderText="例如 character-lead, scene-home" Text="{Binding ResourceIdsText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                                         <Grid ColumnSpacing="8">
                                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                                             <Button Click="OnGenerateStoryFirstFrameClick" Content="生成首帧" IsEnabled="{x:Bind StoryViewModel.CanGenerateFrame, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />

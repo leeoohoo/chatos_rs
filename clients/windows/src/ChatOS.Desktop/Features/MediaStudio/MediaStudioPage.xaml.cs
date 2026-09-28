@@ -69,6 +69,15 @@ public sealed partial class MediaStudioPage : Page
     private void OnRemoveStorySegmentClick(object sender, RoutedEventArgs e) =>
         StoryViewModel.RemoveSelectedSegment();
 
+    private void OnAddStoryResourceClick(object sender, RoutedEventArgs e) =>
+        StoryViewModel.AddResource();
+
+    private void OnRemoveStoryResourceClick(object sender, RoutedEventArgs e) =>
+        StoryViewModel.RemoveSelectedResource();
+
+    private async void OnGenerateStoryResourceImageClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.GenerateResourceImageAsync();
+
     private async void OnGenerateStoryFirstFrameClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.GenerateFirstFrameAsync();
 
@@ -285,6 +294,9 @@ public sealed partial class MediaStudioPage : Page
         var hasSegment = StoryViewModel.SelectedSegment is not null;
         StorySegmentEmptyState.Visibility = hasSegment ? Visibility.Collapsed : Visibility.Visible;
         StorySegmentEditorPanel.Visibility = hasSegment ? Visibility.Visible : Visibility.Collapsed;
+        var hasResource = StoryViewModel.SelectedResource is not null;
+        StoryResourceEmptyState.Visibility = hasResource ? Visibility.Collapsed : Visibility.Visible;
+        StoryResourceEditorPanel.Visibility = hasResource ? Visibility.Visible : Visibility.Collapsed;
 
         var path = StoryViewModel.SelectedSegment?.VideoPath;
         var hasVideo = path is { Length: > 0 } && File.Exists(path);

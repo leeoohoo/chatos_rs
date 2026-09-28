@@ -74,7 +74,7 @@ public sealed class StoryPlanningService(
             new
             {
                 role = "developer",
-                content = "你是影视剧情规划师。只返回满足 JSON Schema 的计划。按原文顺序连续覆盖故事，不添加原文没有的事实。每段必须能独立制作成 2-15 秒视频，图片提示词描述静态画面，视频提示词描述动作、镜头和节奏。",
+                content = "你是影视剧情规划师。只返回满足 JSON Schema 的计划。先建立可复用的角色、场景、道具表，再按原文顺序连续覆盖故事，不添加原文没有的事实。每段必须引用实际使用的素材 ID，并能独立制作成 2-15 秒视频；图片提示词描述静态画面，视频提示词描述动作、镜头和节奏。",
             },
             new
             {
@@ -100,10 +100,29 @@ public sealed class StoryPlanningService(
     {
         type = "object",
         additionalProperties = false,
-        required = new[] { "summary", "segments" },
+        required = new[] { "summary", "resources", "segments" },
         properties = new
         {
             summary = new { type = "string", maxLength = 16000 },
+            resources = new
+            {
+                type = "array",
+                maxItems = 100,
+                items = new
+                {
+                    type = "object",
+                    additionalProperties = false,
+                    required = new[] { "id", "kind", "name", "description", "image_prompt" },
+                    properties = new
+                    {
+                        id = new { type = "string", minLength = 1, maxLength = 80 },
+                        kind = new { type = "string", @enum = new[] { "character", "scene", "prop" } },
+                        name = new { type = "string", minLength = 1, maxLength = 200 },
+                        description = new { type = "string", maxLength = 8000 },
+                        image_prompt = new { type = "string", minLength = 1, maxLength = 7000 },
+                    },
+                },
+            },
             segments = new
             {
                 type = "array",
@@ -113,7 +132,7 @@ public sealed class StoryPlanningService(
                 {
                     type = "object",
                     additionalProperties = false,
-                    required = new[] { "title", "narrative", "image_prompt", "video_prompt", "seconds" },
+                    required = new[] { "title", "narrative", "image_prompt", "video_prompt", "seconds", "resource_ids" },
                     properties = new
                     {
                         title = new { type = "string", minLength = 1, maxLength = 200 },
@@ -121,6 +140,12 @@ public sealed class StoryPlanningService(
                         image_prompt = new { type = "string", minLength = 1, maxLength = 7000 },
                         video_prompt = new { type = "string", minLength = 1, maxLength = 7000 },
                         seconds = new { type = "integer", minimum = 2, maximum = 15 },
+                        resource_ids = new
+                        {
+                            type = "array",
+                            uniqueItems = true,
+                            items = new { type = "string", minLength = 1, maxLength = 80 },
+                        },
                     },
                 },
             },
@@ -138,16 +163,27 @@ public sealed class StoryPlanningService(
             var plan = JsonSerializer.Deserialize<PlanDto>(trimmed, JsonOptions) ?? throw new JsonException();
             if (plan.Segments is not { Count: > 0 } || plan.Segments.Count > maximumSegments)
                 throw new JsonException("Invalid segment count.");
+            var resources = (plan.Resources ?? []).Select(resource => new PlannedStoryResource(
+                Identifier(resource.Id),
+                ResourceKind(resource.Kind),
+                Required(resource.Name, 200),
+                Optional(resource.Description, 8_000),
+                Required(resource.ImagePrompt, 7_000)))
+                .ToArray();
+            if (resources.Length > 100 || resources.Select(resource => resource.Id).Distinct(StringComparer.Ordinal).Count() != resources.Length)
+                throw new JsonException("Invalid resources.");
+            var resourceIds = resources.Select(resource => resource.Id).ToHashSet(StringComparer.Ordinal);
             var segments = plan.Segments.Select(segment => new PlannedStorySegment(
                 Required(segment.Title, 200),
                 Required(segment.Narrative, 8_000),
                 Required(segment.ImagePrompt, 7_000),
                 Required(segment.VideoPrompt, 7_000),
-                segment.Seconds is >= 2 and <= 15 ? segment.Seconds : throw new JsonException("Invalid duration.")))
+                segment.Seconds is >= 2 and <= 15 ? segment.Seconds : throw new JsonException("Invalid duration."),
+                ResourceIds(segment.ResourceIds, resourceIds)))
                 .ToArray();
             var summary = (plan.Summary ?? string.Empty).Trim();
             if (summary.Length > 16_000) throw new JsonException("Summary is too long.");
-            return new StoryPlanningResult(summary, segments);
+            return new StoryPlanningResult(summary, resources, segments);
         }
         catch (JsonException exception)
         {
@@ -236,6 +272,38 @@ public sealed class StoryPlanningService(
             : throw new JsonException("A required story plan field is invalid.");
     }
 
+    private static string Optional(string? value, int maximumLength)
+    {
+        var result = value?.Trim() ?? string.Empty;
+        return result.Length <= maximumLength ? result : throw new JsonException("A story plan field is too long.");
+    }
+
+    private static string Identifier(string? value)
+    {
+        var result = Required(value, 80);
+        return result.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_')
+            ? result
+            : throw new JsonException("A resource ID is invalid.");
+    }
+
+    private static string ResourceKind(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "character" => "character",
+        "scene" => "scene",
+        "prop" => "prop",
+        _ => throw new JsonException("A resource kind is invalid."),
+    };
+
+    private static IReadOnlyList<string> ResourceIds(
+        IReadOnlyList<string>? values,
+        IReadOnlySet<string> known)
+    {
+        var ids = (values ?? []).Select(Identifier).ToArray();
+        if (ids.Distinct(StringComparer.Ordinal).Count() != ids.Length || ids.Any(id => !known.Contains(id)))
+            throw new JsonException("A segment contains invalid resource references.");
+        return ids;
+    }
+
     private static string StripCodeFence(string value)
     {
         var trimmed = value.Trim();
@@ -255,12 +323,21 @@ public sealed class StoryPlanningService(
 
     private sealed record PlanDto(
         [property: JsonPropertyName("summary")] string? Summary,
+        [property: JsonPropertyName("resources")] IReadOnlyList<ResourceDto>? Resources,
         [property: JsonPropertyName("segments")] IReadOnlyList<SegmentDto>? Segments);
+
+    private sealed record ResourceDto(
+        [property: JsonPropertyName("id")] string? Id,
+        [property: JsonPropertyName("kind")] string? Kind,
+        [property: JsonPropertyName("name")] string? Name,
+        [property: JsonPropertyName("description")] string? Description,
+        [property: JsonPropertyName("image_prompt")] string? ImagePrompt);
 
     private sealed record SegmentDto(
         [property: JsonPropertyName("title")] string? Title,
         [property: JsonPropertyName("narrative")] string? Narrative,
         [property: JsonPropertyName("image_prompt")] string? ImagePrompt,
         [property: JsonPropertyName("video_prompt")] string? VideoPrompt,
-        [property: JsonPropertyName("seconds")] int Seconds);
+        [property: JsonPropertyName("seconds")] int Seconds,
+        [property: JsonPropertyName("resource_ids")] IReadOnlyList<string>? ResourceIds);
 }
