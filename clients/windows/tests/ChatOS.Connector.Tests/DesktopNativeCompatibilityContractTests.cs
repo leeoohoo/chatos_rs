@@ -15,6 +15,24 @@ public sealed class DesktopNativeCompatibilityContractTests
         Assert.DoesNotContain("PowerManager.", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void DesktopUsesWindowsAppSdk18OrNewerRuntimeLine()
+    {
+        var packages = System.Xml.Linq.XDocument.Load(Path.Combine(
+            FindWindowsRoot(),
+            "Directory.Packages.props"));
+        var package = packages.Descendants("PackageVersion").Single(element =>
+            string.Equals(
+                (string?)element.Attribute("Include"),
+                "Microsoft.WindowsAppSDK",
+                StringComparison.Ordinal));
+        var rawVersion = (string?)package.Attribute("Version");
+        var version = Version.Parse(rawVersion ?? throw new InvalidDataException(
+            "Microsoft.WindowsAppSDK package version is missing."));
+
+        Assert.True(version >= new Version(1, 8), $"Unsupported Windows App SDK: {rawVersion}");
+    }
+
     private static string FindWindowsRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

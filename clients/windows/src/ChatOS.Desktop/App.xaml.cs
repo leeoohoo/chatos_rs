@@ -37,6 +37,7 @@ public partial class App : Application
     public App()
     {
         StartupDiagnostics.Initialize();
+        AppDomain.CurrentDomain.FirstChanceException += OnFirstChanceException;
         UnhandledException += OnUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnAppDomainUnhandledException;
         AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
@@ -168,6 +169,16 @@ public partial class App : Application
         if (args.ExceptionObject is Exception exception)
         {
             StartupDiagnostics.RecordUnhandled("AppDomain", exception);
+        }
+    }
+
+    private static void OnFirstChanceException(
+        object? sender,
+        System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs args)
+    {
+        if (args.Exception is System.Runtime.InteropServices.COMException exception)
+        {
+            StartupDiagnostics.RecordFirstChanceComException(exception);
         }
     }
 
