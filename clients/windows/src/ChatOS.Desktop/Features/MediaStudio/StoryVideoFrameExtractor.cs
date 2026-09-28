@@ -15,13 +15,15 @@ internal static class StoryVideoFrameExtractor
     {
         cancellationToken.ThrowIfCancellationRequested();
         var file = await StorageFile.GetFileFromPathAsync(videoPath);
-        using var clip = await MediaClip.CreateFromFileAsync(file);
+        var clip = await MediaClip.CreateFromFileAsync(file);
         if (clip.OriginalDuration <= TimeSpan.Zero)
             throw new InvalidDataException("视频时长无效，无法提取成片末帧。");
         var offset = clip.OriginalDuration > TimeSpan.FromMilliseconds(80)
             ? clip.OriginalDuration - TimeSpan.FromMilliseconds(50)
             : TimeSpan.Zero;
-        using var thumbnail = await clip.GetThumbnailAsync(
+        var composition = new MediaComposition();
+        composition.Clips.Add(clip);
+        using var thumbnail = await composition.GetThumbnailAsync(
             offset, 0, 0, VideoFramePrecision.NearestFrame);
         await using var input = thumbnail.AsStreamForRead();
         using var output = new MemoryStream();
