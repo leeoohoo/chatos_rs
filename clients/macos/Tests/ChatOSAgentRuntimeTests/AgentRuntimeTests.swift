@@ -9,9 +9,26 @@ final class AgentRuntimeTests: XCTestCase {
         XCTAssertEqual(settings.effective(.approval).maximumModelCalls, 600)
         XCTAssertEqual(settings.global.maximumRequestRetries, 2)
         let context = try XCTUnwrap(settings.global.context ?? AgentContextPolicy())
-        XCTAssertEqual(context.windowTokens, 250_000)
+        XCTAssertEqual(context.windowTokens, 2_000_000)
         XCTAssertEqual(context.outputReserveTokens, 30_000)
         try settings.validate()
+    }
+
+    func testManagedSettingsOverrideLegacyLocalPreferences() throws {
+        let name = "AgentManagedSettingsTests.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        var legacy = AgentRuntimePreferences()
+        legacy.global.maximumModelCalls = 111
+        defaults.set(try JSONEncoder().encode(legacy), forKey: "chatos.agent-runtime.settings.v1")
+
+        var managed = AgentRuntimePreferences()
+        managed.global.maximumModelCalls = 725
+        managed.global.context = AgentContextPolicy()
+        let store = AgentSettingsStore(suiteName: name)
+        try store.saveManaged(managed)
+
+        XCTAssertEqual(try store.load(), managed)
     }
 
     func testLegacyRetryDefaultMigratesOnceWithoutResettingContextSettings() throws {

@@ -81,6 +81,7 @@ impl AppState {
         let plugin_management_client = PluginManagementClient::new(plugin_management_config)
             .map_err(|err| format!("initialize plugin management client failed: {err}"))?;
         chatos_agent::require_task_runner_runtime_settings(&local_connector_snapshot)?;
+        chatos_agent::resolve_native_agent_runtime_settings(&local_connector_snapshot)?;
         let user_service_http =
             build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
                 .map_err(|err| format!("build user_service client failed: {err}"))?;
@@ -180,6 +181,8 @@ impl AppState {
         validate_active_relay_signer_trust(&active_relay_signer, &remote_control_trust)?;
         let task_runner_runtime_settings =
             chatos_agent::require_task_runner_runtime_settings(&local_connector_snapshot)?;
+        let native_agent_runtime_settings =
+            chatos_agent::resolve_native_agent_runtime_settings(&local_connector_snapshot)?;
         Ok(ManagedRuntimeConfigBundle {
             environment: local_connector_snapshot.environment,
             revision: local_connector_snapshot.revision,
@@ -187,6 +190,7 @@ impl AppState {
             generated_at: local_connector_snapshot.generated_at,
             stale: false,
             source: Some("configuration_center".to_string()),
+            native_agent_runtime_settings,
             task_runner_runtime_settings,
             remote_control_trust,
         })

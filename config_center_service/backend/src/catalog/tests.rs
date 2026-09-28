@@ -83,6 +83,60 @@ fn catalog_exposes_shared_and_task_runner_iteration_limits() {
 }
 
 #[test]
+fn catalog_exposes_native_agent_runtime_policy() {
+    let definitions = builtin_definitions();
+    for (key, expected_default, expected_min, expected_max) in [
+        (
+            AGENT_MAX_REQUEST_RETRIES_CONFIG_KEY,
+            json!(DEFAULT_AGENT_MAX_REQUEST_RETRIES),
+            0,
+            10,
+        ),
+        (
+            AGENT_REQUEST_TIMEOUT_SECONDS_CONFIG_KEY,
+            json!(DEFAULT_AGENT_REQUEST_TIMEOUT_SECONDS),
+            5,
+            1_800,
+        ),
+        (
+            AGENT_RUN_TIMEOUT_SECONDS_CONFIG_KEY,
+            json!(DEFAULT_AGENT_RUN_TIMEOUT_SECONDS),
+            10,
+            86_400,
+        ),
+        (
+            AGENT_MAX_NO_PROGRESS_ROUNDS_CONFIG_KEY,
+            json!(DEFAULT_AGENT_MAX_NO_PROGRESS_ROUNDS),
+            1,
+            100,
+        ),
+        (
+            AGENT_CONTEXT_WINDOW_TOKENS_CONFIG_KEY,
+            json!(DEFAULT_AGENT_CONTEXT_WINDOW_TOKENS),
+            2_048,
+            2_000_000,
+        ),
+        (
+            AGENT_OUTPUT_RESERVE_TOKENS_CONFIG_KEY,
+            json!(DEFAULT_AGENT_OUTPUT_RESERVE_TOKENS),
+            256,
+            1_999_999,
+        ),
+    ] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| panic!("missing managed definition {key}"));
+        assert_eq!(definition.scope, "shared");
+        assert_eq!(definition.service_name, None);
+        assert_eq!(definition.default_value, expected_default);
+        assert_eq!(definition.min, Some(expected_min));
+        assert_eq!(definition.max, Some(expected_max));
+        assert_eq!(definition.reload_mode, "next_run");
+    }
+}
+
+#[test]
 fn catalog_exposes_separate_mcp_management_timeout_profiles() {
     let definitions = builtin_definitions();
     let control = definitions

@@ -160,14 +160,27 @@ public struct AgentRuntimePreferences: Codable, Equatable, Sendable {
     public func validate() throws { try global.validate(); try effective(.approval).validate(); try effective(.story).validate() }
 }
 
-/// Device-local configuration, shared by native approval and story creation. No secrets.
+/// Platform-managed configuration shared by native approval, group chat, and story creation.
+/// Production ignores the retired user-editable snapshot and falls back to product defaults until
+/// the Local Connector persists a fresh Configuration Center snapshot.
 public struct AgentSettingsStore: Sendable {
     private let suiteName: String?
     private let key = "chatos.agent-runtime.settings.v1"
+    private let managedKey = "chatos.agent-runtime.managed-settings.v1"
     private let retryDefaultMigrationKey = "chatos.agent-runtime.retry-default.v3"
     public init(suiteName: String? = nil) { self.suiteName = suiteName }
     public func load() throws -> AgentRuntimePreferences {
         let defaults = suiteName.flatMap(UserDefaults.init(suiteName:)) ?? .standard
+        if let data = defaults.data(forKey: managedKey) {
+            let value = try JSONDecoder().decode(AgentRuntimePreferences.self, from: data)
+            try value.validate()
+            return value
+        }
+        if suiteName == nil {
+            defaults.removeObject(forKey: key)
+            defaults.set(true, forKey: retryDefaultMigrationKey)
+            return .init()
+        }
         guard let data = defaults.data(forKey: key) else {
             defaults.set(true, forKey: retryDefaultMigrationKey)
             return .init()
@@ -191,6 +204,12 @@ public struct AgentSettingsStore: Sendable {
             defaults.set(true, forKey: retryDefaultMigrationKey)
         }
         return value
+    }
+    public func saveManaged(_ value: AgentRuntimePreferences) throws {
+        try value.validate()
+        let defaults = suiteName.flatMap(UserDefaults.init(suiteName:)) ?? .standard
+        defaults.set(try JSONEncoder().encode(value), forKey: managedKey)
+        defaults.removeObject(forKey: key)
     }
     public func save(_ value: AgentRuntimePreferences) throws {
         try value.validate()
