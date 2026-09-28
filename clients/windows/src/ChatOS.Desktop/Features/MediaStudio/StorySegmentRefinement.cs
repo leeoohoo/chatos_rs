@@ -181,13 +181,16 @@ public sealed partial class StoryStudioViewModel
             segment.ImagePrompt.Trim(),
             segment.VideoPrompt.Trim(),
             BuildContinuityContext(segment),
-            BuildSegmentResourceContext(segment));
+            BuildSegmentResourceContext(segment))
+        {
+            CreativeRequirements = CreativeRequirements.Trim(),
+        };
 
     private string CurrentSegmentRefinementDigest(StorySegmentEditor segment)
     {
         var value = string.Join('\u001f',
             _current?.Id.ToString() ?? string.Empty,
-            ProjectTitle, ProjectSummary, VisualStyle, ProjectRatio,
+            ProjectTitle, ProjectSummary, VisualStyle, CreativeRequirements, ProjectRatio,
             segment.Id, segment.Kind.ToString(), segment.Title, segment.Narrative, segment.Seconds.ToString(),
             segment.ImagePrompt, segment.VideoPrompt, segment.ContinuityIn,
             segment.ContinuityOut, segment.ShotPlan, segment.ResourceIdsText,

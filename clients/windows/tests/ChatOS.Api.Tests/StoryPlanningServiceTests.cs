@@ -159,7 +159,10 @@ public sealed class StoryPlanningServiceTests
         var result = await service.RefineSegmentAsync(new StorySegmentRefinementRequest(
             "model-config", "Train story", "A journey", "cinematic natural light", "16:9",
             "segment-2", "transition", "Nightfall", "Time passes", 3, "Train at station", "Dissolve",
-            "Previous shot ends at the station", "scene station: fixed platform layout"));
+            "Previous shot ends at the station", "scene station: fixed platform layout")
+        {
+            CreativeRequirements = "Use a warmer palette and slower camera motion.",
+        });
 
         Assert.Equal("0-1s hold; 1-3s dissolve", result.ShotPlan);
         Assert.Equal("Train emerges at night", result.ContinuityOut);
@@ -170,6 +173,8 @@ public sealed class StoryPlanningServiceTests
         Assert.Contains("转场段只连接前后画面状态",
             root.GetProperty("input")[0].GetProperty("content").GetString());
         Assert.Contains("Previous shot ends at the station",
+            root.GetProperty("input")[1].GetProperty("content").GetString());
+        Assert.Contains("Use a warmer palette and slower camera motion.",
             root.GetProperty("input")[1].GetProperty("content").GetString());
     }
 

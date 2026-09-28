@@ -7,7 +7,10 @@ public sealed record StoryPlanningRequest(
     string Source,
     string VisualStyle,
     string Ratio,
-    int MaximumSegments = 200);
+    int MaximumSegments = 200)
+{
+    public string CreativeRequirements { get; init; } = string.Empty;
+}
 
 public sealed record PlannedStorySegment(
     string Kind,
@@ -62,7 +65,10 @@ public sealed record StorySegmentRefinementRequest(
     string ImagePrompt,
     string VideoPrompt,
     string ContinuityContext,
-    string ResourceContext);
+    string ResourceContext)
+{
+    public string CreativeRequirements { get; init; } = string.Empty;
+}
 
 public sealed record StorySegmentRefinementSuggestion(
     string ImagePrompt,

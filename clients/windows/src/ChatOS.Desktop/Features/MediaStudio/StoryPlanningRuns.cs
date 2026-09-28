@@ -49,7 +49,10 @@ public sealed partial class StoryStudioViewModel
             ProjectDescription.Trim(),
             ProjectSource.Trim(),
             VisualStyle.Trim(),
-            ProjectRatio);
+            ProjectRatio)
+        {
+            CreativeRequirements = CreativeRequirements.Trim(),
+        };
         var run = new StoryPlanningRunDocument(
             Guid.NewGuid(), project.Id, CurrentPlanningDigest(), request,
             StoryPlanningRunStatus.Running, null, null, now, now);
@@ -300,6 +303,7 @@ public sealed partial class StoryStudioViewModel
             ProjectDescription.Trim(),
             ProjectSource.Trim(),
             VisualStyle.Trim(),
+            CreativeRequirements.Trim(),
             ProjectRatio,
             ProjectTextModel?.Id ?? string.Empty);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();

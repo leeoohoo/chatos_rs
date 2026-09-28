@@ -104,7 +104,8 @@ public sealed partial class StoryStudioViewModel
         context.Segment.Seconds = seconds;
         var prompt = StoryPromptCatalog.RenderVideo(
             context.Segment.VideoPrompt,
-            BuildContinuityContext(context.Segment));
+            BuildContinuityContext(context.Segment),
+            CreativeRequirements);
         var first = await LoadFrameAsync(context.Segment.FirstFramePath, cancellationToken);
         var last = profile.SupportsLastFrame
             ? await LoadFrameAsync(context.Segment.LastFramePath, cancellationToken)
@@ -187,7 +188,8 @@ public sealed partial class StoryStudioViewModel
         if (model is null || string.IsNullOrWhiteSpace(segment.PendingVideoRequestDigest)) return false;
         var profile = VideoGenerationProfile.ForModel(model.ModelName);
         var seconds = profile.Durations.OrderBy(value => Math.Abs(value - segment.Seconds)).First();
-        var prompt = StoryPromptCatalog.RenderVideo(segment.VideoPrompt, BuildContinuityContext(segment));
+        var prompt = StoryPromptCatalog.RenderVideo(
+            segment.VideoPrompt, BuildContinuityContext(segment), CreativeRequirements);
         return string.Equals(
             segment.PendingVideoRequestDigest,
             VideoRequestDigest(segment, model, profile, prompt, seconds),

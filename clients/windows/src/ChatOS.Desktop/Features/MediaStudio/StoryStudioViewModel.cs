@@ -128,6 +128,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanRefineSelectedSegment))]
     private string _projectTitle = string.Empty;
     [ObservableProperty] private string _projectDescription = string.Empty;
+    [ObservableProperty] private string _creativeRequirements = string.Empty;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanQuickSplit))]
     [NotifyPropertyChangedFor(nameof(CanPlan))]
@@ -271,6 +272,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         PlanningRuns.Clear();
         ProjectTitle = project.Title;
         ProjectDescription = project.Description;
+        CreativeRequirements = project.CreativeRequirements;
         ProjectSource = project.Source;
         ProjectSummary = project.Summary ?? string.Empty;
         VisualStyle = project.VisualStyle;
@@ -428,6 +430,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             {
                 Title = ProjectTitle.Trim(),
                 Description = ProjectDescription.Trim(),
+                CreativeRequirements = CreativeRequirements.Trim(),
                 Source = ProjectSource.Trim(),
                 Summary = ProjectSummary.Trim(),
                 VisualStyle = VisualStyle.Trim(),
@@ -493,6 +496,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         VideoModels.Clear();
         ErrorMessage = null;
         VideoProgress = null;
+        CreativeRequirements = string.Empty;
         OnWorkspaceChanged();
         NotifyPlanningRunsChanged();
     }
@@ -636,7 +640,8 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             context.Segment.ImagePrompt,
             lastFrame,
             ProjectRatio,
-            BuildContinuityContext(context.Segment));
+            BuildContinuityContext(context.Segment),
+            CreativeRequirements);
         var references = await LoadSegmentReferencesAsync(context, lastFrame, cancellationToken);
         var result = await _media.GenerateImageAsync(
             new ImageGenerationRequest(imageModel.Id, prompt, ImageSize(ProjectRatio), 1, references),

@@ -18,6 +18,7 @@ public sealed class StoryProjectStoreTests
         Assert.Equal(project.Id, restored.Id);
         Assert.Equal(project.Title, restored.Title);
         Assert.Equal(project.Source, restored.Source);
+        Assert.Equal("Keep the palette warm", restored.CreativeRequirements);
         var restoredSegment = Assert.Single(restored.Segments);
         Assert.Equal("segment-1", restoredSegment.Id);
         Assert.Equal(StorySegmentKind.Transition, restoredSegment.Kind);
@@ -161,6 +162,7 @@ public sealed class StoryProjectStoreTests
                 }],
             now, now)
         {
+            CreativeRequirements = "Keep the palette warm",
             Resources = [new StoryResourceDocument("hero", StoryResourceKind.Character, "Hero", "Lead", "Hero portrait", null)],
         };
     }

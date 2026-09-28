@@ -17,6 +17,7 @@ public sealed record StoryProjectDocument(
     DateTimeOffset UpdatedAt)
 {
     public const int CurrentVersion = 1;
+    public string CreativeRequirements { get; init; } = string.Empty;
     public IReadOnlyList<StoryResourceDocument> Resources { get; init; } = [];
     public int TotalSeconds => Segments.Sum(segment => segment.Seconds);
     public int CompletedCount => Segments.Count(segment => !string.IsNullOrWhiteSpace(segment.VideoAsset));
@@ -25,7 +26,8 @@ public sealed record StoryProjectDocument(
     {
         if (Version != CurrentVersion || Id == Guid.Empty ||
             string.IsNullOrWhiteSpace(Title) || Title.Trim().Length > 120 ||
-            Description.Length > 4_000 || Source.Length > 80_000 || (Summary?.Length ?? 0) > 16_000 || VisualStyle.Length > 2_000 ||
+            Description.Length > 4_000 || Source.Length > 80_000 || (Summary?.Length ?? 0) > 16_000 ||
+            VisualStyle.Length > 2_000 || CreativeRequirements is null or { Length: > 2_000 } ||
             string.IsNullOrWhiteSpace(TextModelConfigId) ||
             string.IsNullOrWhiteSpace(ImageModelConfigId) ||
             string.IsNullOrWhiteSpace(VideoModelConfigId) ||

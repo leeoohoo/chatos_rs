@@ -405,7 +405,9 @@ public sealed class StoryPlanningService(
         if (string.IsNullOrWhiteSpace(request.ModelConfigId)) throw new ArgumentException("Choose a text model.", nameof(request));
         if (string.IsNullOrWhiteSpace(request.Title) || request.Title.Length > 120) throw new ArgumentException("The story title is invalid.", nameof(request));
         if (string.IsNullOrWhiteSpace(request.Source) || request.Source.Length > 80_000) throw new ArgumentException("The story source is required and cannot exceed 80,000 characters.", nameof(request));
-        if (request.Description.Length > 4_000 || request.VisualStyle.Length > 2_000) throw new ArgumentException("The story description or style is too long.", nameof(request));
+        if (request.Description.Length > 4_000 || request.VisualStyle.Length > 2_000 ||
+            request.CreativeRequirements is null or { Length: > 2_000 })
+            throw new ArgumentException("The story description, style, or creative requirements are too long.", nameof(request));
         if (!StoryPlanningRatios.Contains(request.Ratio) || request.MaximumSegments is < 1 or > 200) throw new ArgumentException("The story ratio or segment limit is invalid.", nameof(request));
     }
 
@@ -441,7 +443,8 @@ public sealed class StoryPlanningService(
             request.ImagePrompt is null or { Length: > 7_000 } ||
             request.VideoPrompt is null or { Length: > 7_000 } ||
             request.ContinuityContext is null or { Length: > 8_000 } ||
-            request.ResourceContext is null or { Length: > 16_000 })
+            request.ResourceContext is null or { Length: > 16_000 } ||
+            request.CreativeRequirements is null or { Length: > 2_000 })
             throw new ArgumentException("The segment refinement input is invalid.", nameof(request));
     }
 

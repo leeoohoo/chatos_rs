@@ -36,6 +36,7 @@ public sealed record StoryPlanningRunDocument(
             Request.Description is null or { Length: > 4_000 } ||
             string.IsNullOrWhiteSpace(Request.Source) || Request.Source.Length > 80_000 ||
             Request.VisualStyle is null or { Length: > 2_000 } ||
+            Request.CreativeRequirements is null or { Length: > 2_000 } ||
             !StoryStudioOptions.Ratios.Contains(Request.Ratio) || Request.MaximumSegments is < 1 or > 200 ||
             CreatedAt > UpdatedAt || Error is { Length: > 8_000 })
         {

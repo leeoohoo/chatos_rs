@@ -46,7 +46,10 @@ public sealed partial class StoryStudioViewModel
                 ProjectDescription,
                 ProjectSource,
                 VisualStyle,
-                ProjectRatio)),
+                ProjectRatio)
+            {
+                CreativeRequirements = CreativeRequirements,
+            }),
         StoryPromptCatalog.OptimizeSourceKey when _current is not null =>
             RenderOptimizationAudit(StoryOptimizationTarget.Source),
         StoryPromptCatalog.OptimizeStyleKey when _current is not null =>
@@ -59,25 +62,29 @@ public sealed partial class StoryStudioViewModel
                 resource.ImagePrompt,
                 resource.KindLabel,
                 resource.Name,
-                ProjectRatio),
+                ProjectRatio,
+                CreativeRequirements),
         StoryPromptCatalog.FirstFrameKey when SelectedSegment is { } firstSegment =>
             StoryPromptCatalog.RenderFrame(
                 VisualStyle,
                 firstSegment.ImagePrompt,
                 false,
                 ProjectRatio,
-                BuildContinuityContext(firstSegment)),
+                BuildContinuityContext(firstSegment),
+                CreativeRequirements),
         StoryPromptCatalog.LastFrameKey when SelectedSegment is { } lastSegment =>
             StoryPromptCatalog.RenderFrame(
                 VisualStyle,
                 lastSegment.ImagePrompt,
                 true,
                 ProjectRatio,
-                BuildContinuityContext(lastSegment)),
+                BuildContinuityContext(lastSegment),
+                CreativeRequirements),
         StoryPromptCatalog.VideoKey when SelectedSegment is { } videoSegment =>
             StoryPromptCatalog.RenderVideo(
                 videoSegment.VideoPrompt,
-                BuildContinuityContext(videoSegment)),
+                BuildContinuityContext(videoSegment),
+                CreativeRequirements),
         _ => definition.Template,
     };
 
@@ -106,6 +113,11 @@ public sealed partial class StoryStudioViewModel
 
     partial void OnProjectTitleChanged(string value) => RefreshPlanningInputs();
     partial void OnProjectDescriptionChanged(string value) => RefreshPlanningInputs();
+    partial void OnCreativeRequirementsChanged(string value)
+    {
+        RefreshPlanningInputs();
+        NotifyVideoJobChanged();
+    }
     partial void OnProjectSourceChanged(string value) => RefreshPlanningInputs();
     partial void OnVisualStyleChanged(string value) => RefreshPlanningInputs();
     partial void OnProjectRatioChanged(string value) => RefreshPlanningInputs();

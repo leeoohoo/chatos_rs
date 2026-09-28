@@ -38,7 +38,7 @@ public static class StoryPromptCatalog
             PlanningUserKey,
             "全剧规划 · 项目内容",
             "把当前项目资料和剧情原文提交给所选文本模型。",
-            "标题：{title}\n描述：{description}\n画面风格：{visual_style}\n比例：{ratio}\n最多分段：{maximum_segments}\n\n剧情原文：\n{source}"),
+            "标题：{title}\n描述：{description}\n画面风格：{visual_style}\n比例：{ratio}\n最多分段：{maximum_segments}\n附加创作要求：{creative_requirements}\n\n剧情原文：\n{source}"),
         new(
             OptimizeSourceKey,
             "剧情原文 · AI 优化",
@@ -76,38 +76,62 @@ public static class StoryPromptCatalog
             "{segment_video_prompt}\n连续性上下文：\n{continuity_context}"),
     ];
 
-    public static string RenderPlanningUser(StoryPlanningRequest request) =>
-        $"标题：{request.Title}\n描述：{request.Description}\n画面风格：{request.VisualStyle}\n比例：{request.Ratio}\n最多分段：{request.MaximumSegments}\n\n剧情原文：\n{request.Source}";
+    public static string RenderPlanningUser(StoryPlanningRequest request) => AddCreativeRequirements(
+        $"标题：{request.Title}\n描述：{request.Description}\n画面风格：{request.VisualStyle}\n比例：{request.Ratio}\n最多分段：{request.MaximumSegments}\n\n剧情原文：\n{request.Source}",
+        request.CreativeRequirements);
 
     public static string RenderOptimizationUser(StoryOptimizationRequest request) =>
         $"标题：{request.Title}\n描述：{request.Description}\n优化目标：{(request.Target == StoryOptimizationTarget.Source ? "剧情原文" : "画面风格")}\n\n剧情原文：\n{request.Source}\n\n当前画面风格：\n{request.VisualStyle}";
 
-    public static string RenderSegmentRefinementUser(StorySegmentRefinementRequest request) =>
-        $"项目：{request.ProjectTitle}\n全剧摘要：{request.ProjectSummary}\n画面风格：{request.VisualStyle}\n比例：{request.Ratio}\n\n分段 ID：{request.SegmentId}\n类型：{request.Kind}\n标题：{request.Title}\n时长：{request.Seconds} 秒\n剧情：{request.Narrative}\n当前画面提示词：{request.ImagePrompt}\n当前视频提示词：{request.VideoPrompt}\n\n连续性上下文：\n{request.ContinuityContext}\n\n关联素材：\n{request.ResourceContext}";
+    public static string RenderSegmentRefinementUser(StorySegmentRefinementRequest request) => AddCreativeRequirements(
+        $"项目：{request.ProjectTitle}\n全剧摘要：{request.ProjectSummary}\n画面风格：{request.VisualStyle}\n比例：{request.Ratio}\n\n分段 ID：{request.SegmentId}\n类型：{request.Kind}\n标题：{request.Title}\n时长：{request.Seconds} 秒\n剧情：{request.Narrative}\n当前画面提示词：{request.ImagePrompt}\n当前视频提示词：{request.VideoPrompt}\n\n连续性上下文：\n{request.ContinuityContext}\n\n关联素材：\n{request.ResourceContext}",
+        request.CreativeRequirements);
 
     public static string RenderResourceImage(
         string visualStyle,
         string imagePrompt,
         string kindLabel,
         string name,
-        string ratio) =>
-        $"{visualStyle}\n{imagePrompt.Trim()}\n生成{kindLabel}“{name}”的一致性参考图，画面比例 {ratio}。";
+        string ratio,
+        string creativeRequirements = "") => AddCreativeRequirements(
+        $"{visualStyle}\n{imagePrompt.Trim()}\n生成{kindLabel}“{name}”的一致性参考图，画面比例 {ratio}。",
+        creativeRequirements);
 
     public static string RenderFrame(
         string visualStyle,
         string imagePrompt,
         bool lastFrame,
         string ratio,
-        string continuityContext = "") =>
+        string continuityContext = "",
+        string creativeRequirements = "") => AddCreativeRequirements(
         JoinContext(
             $"{visualStyle}\n{imagePrompt.Trim()}\n生成该分段的{(lastFrame ? "尾帧" : "首帧")}，画面比例 {ratio}。",
-            continuityContext);
+            continuityContext),
+        creativeRequirements);
 
-    public static string RenderVideo(string videoPrompt, string continuityContext = "") =>
-        JoinContext(videoPrompt.Trim(), continuityContext);
+    public static string RenderVideo(
+        string videoPrompt,
+        string continuityContext = "",
+        string creativeRequirements = "") => AddCreativeRequirements(
+        JoinContext(videoPrompt.Trim(), continuityContext),
+        creativeRequirements,
+        7_000);
 
     private static string JoinContext(string prompt, string continuityContext) =>
         string.IsNullOrWhiteSpace(continuityContext)
             ? prompt
             : $"{prompt}\n连续性上下文：\n{continuityContext.Trim()}";
+
+    private static string AddCreativeRequirements(
+        string prompt,
+        string creativeRequirements,
+        int maximumLength = int.MaxValue)
+    {
+        var requirements = creativeRequirements.Trim();
+        if (requirements.Length == 0) return prompt[..Math.Min(prompt.Length, maximumLength)];
+        var section = $"\n附加创作要求：\n{requirements}";
+        var promptLength = Math.Max(0, maximumLength - section.Length);
+        var combined = $"{prompt[..Math.Min(prompt.Length, promptLength)]}{section}";
+        return combined[..Math.Min(combined.Length, maximumLength)];
+    }
 }

@@ -121,7 +121,8 @@ public sealed partial class StoryStudioViewModel
         EnsureResourceContext(context);
         var resource = context.Resource;
         var prompt = StoryPromptCatalog.RenderResourceImage(
-            VisualStyle, resource.ImagePrompt, resource.KindLabel, resource.Name, ProjectRatio);
+            VisualStyle, resource.ImagePrompt, resource.KindLabel, resource.Name, ProjectRatio,
+            CreativeRequirements);
         var result = await _media.GenerateImageAsync(
             new ImageGenerationRequest(imageModel.Id, prompt, ImageSize(ProjectRatio), 1, []),
             cancellationToken);

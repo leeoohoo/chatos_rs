@@ -22,29 +22,41 @@ public sealed class StoryPromptCatalogTests
     public void RuntimeRenderersUseTheAuditedPromptContents()
     {
         var request = new StoryPlanningRequest(
-            "text-model", "标题", "描述", "原文", "电影感", "16:9", 80);
+            "text-model", "标题", "描述", "原文", "电影感", "16:9", 80)
+        {
+            CreativeRequirements = "整体温暖，不要快速运镜",
+        };
 
         var planning = StoryPromptCatalog.RenderPlanningUser(request);
         var resource = StoryPromptCatalog.RenderResourceImage(
-            "电影感", "红色风衣", "角色", "阿青", "16:9");
+            "电影感", "红色风衣", "角色", "阿青", "16:9", "突出主角");
         var lastFrame = StoryPromptCatalog.RenderFrame(
-            "电影感", "走到门前", true, "16:9", "上一段停在门外");
+            "电影感", "走到门前", true, "16:9", "上一段停在门外", "保持暖色");
         var optimization = StoryPromptCatalog.RenderOptimizationUser(new StoryOptimizationRequest(
             "text-model", "标题", "描述", "完整原文", "电影感", StoryOptimizationTarget.Source));
         var refinement = StoryPromptCatalog.RenderSegmentRefinementUser(new StorySegmentRefinementRequest(
             "text-model", "标题", "摘要", "电影感", "16:9", "segment-1", "transition",
-            "转场", "时间流逝", 3, "当前画面", "当前动作", "上一段在车站", "场景 station"));
+            "转场", "时间流逝", 3, "当前画面", "当前动作", "上一段在车站", "场景 station")
+        {
+            CreativeRequirements = "减少快速运镜",
+        });
 
         Assert.Contains("最多分段：80", planning);
         Assert.Contains("剧情原文：\n原文", planning);
+        Assert.Contains("整体温暖，不要快速运镜", planning);
         Assert.Contains("角色“阿青”", resource);
         Assert.Contains("红色风衣", resource);
+        Assert.Contains("突出主角", resource);
         Assert.Contains("尾帧", lastFrame);
         Assert.Contains("上一段停在门外", lastFrame);
+        Assert.Contains("保持暖色", lastFrame);
         Assert.Contains("优化目标：剧情原文", optimization);
         Assert.Contains("完整原文", optimization);
         Assert.Contains("类型：transition", refinement);
         Assert.Contains("上一段在车站", refinement);
+        Assert.Contains("减少快速运镜", refinement);
         Assert.Equal("镜头推进", StoryPromptCatalog.RenderVideo("  镜头推进  "));
+        Assert.Contains("低机位", StoryPromptCatalog.RenderVideo("镜头推进", "", "低机位"));
+        Assert.Equal(7_000, StoryPromptCatalog.RenderVideo(new string('v', 7_000), "", "保留主角").Length);
     }
 }
