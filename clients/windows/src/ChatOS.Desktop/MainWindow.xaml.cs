@@ -8,6 +8,7 @@ using ChatOS.Desktop.Features.Pet;
 using ChatOS.Desktop.Features.Plugins;
 using ChatOS.Desktop.Features.Terminal;
 using ChatOS.Desktop.Features.Clipboard;
+using ChatOS.Desktop.Features.AgentTeams;
 using ChatOS.Connector.Approval;
 using ChatOS.Core.Domain;
 using ChatOS.Core.State;
@@ -38,7 +39,8 @@ public sealed partial class MainWindow : Window
         PluginVisualSessionController visualSessionController,
         PluginArtifactsWindow artifactsWindow,
         ClipboardHistoryWindow clipboardHistoryWindow,
-        PluginApplicationsPage pluginApplicationsPage)
+        PluginApplicationsPage pluginApplicationsPage,
+        ProjectFeatureHubPage projectFeatureHubPage)
     {
         ViewModel = viewModel;
         WorkspaceHost = workspaceHostPage;
@@ -55,13 +57,14 @@ public sealed partial class MainWindow : Window
         ArtifactsWindow = artifactsWindow;
         ClipboardHistoryWindow = clipboardHistoryWindow;
         PluginApplicationsPage = pluginApplicationsPage;
+        ProjectFeatureHubPage = projectFeatureHubPage;
         InitializeComponent();
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         AppWindow.Resize(new SizeInt32(1440, 900));
         AppWindow.Title = "ChatOS";
-        WorkspaceContent.Content = WorkspaceHost;
+        ShowContent(WorkspaceHost);
         SettingsPage.CloseRequested += OnSettingsCloseRequested;
         SettingsPage.Connector.PropertyChanged += OnConnectorSettingsPropertyChanged;
         RemoteConnectionsPage.OpenSftpRequested += OnOpenSftpRequested;
@@ -72,12 +75,17 @@ public sealed partial class MainWindow : Window
         NotepadPage.CloseRequested += OnNotepadCloseRequested;
         Preferences.Changed += OnPreferencesChanged;
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
+        ViewModel.Projects.CollectionChanged += (_, _) => RefreshSidebarState();
+        ViewModel.RemoteResources.CollectionChanged += (_, _) => RefreshSidebarState();
         WorkspaceHost.ProjectTabRequested += async (_, tab) => await ViewModel.OpenProjectTabAsync(tab);
+        ProjectFeatureHubPage.FeatureRequested += OnProjectFeatureRequested;
         Approvals.PendingChanged += OnPendingApprovalsChanged;
         Activated += OnActivated;
     }
 
     private PluginApplicationsPage PluginApplicationsPage { get; }
+
+    private ProjectFeatureHubPage ProjectFeatureHubPage { get; }
 
     public MainWindowViewModel ViewModel { get; }
 
@@ -176,12 +184,17 @@ public sealed partial class MainWindow : Window
                 }
                 else if (ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.Applications)
                 {
-                    WorkspaceContent.Content = PluginApplicationsPage;
+                    ShowContent(PluginApplicationsPage);
                     _ = PluginApplicationsPage.OpenAsync();
+                }
+                else if (ViewModel.SelectedResource?.Kind is WorkspaceResourceKind.AgentTeams or WorkspaceResourceKind.RequirementSurveys)
+                {
+                    ProjectFeatureHubPage.Configure(ViewModel.SelectedResource.Kind);
+                    ShowContent(ProjectFeatureHubPage);
                 }
                 else if (ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.RemoteConnection)
                 {
-                    WorkspaceContent.Content = RemoteConnectionsPage;
+                    ShowContent(RemoteConnectionsPage);
                 }
                 else if (ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.LocalTerminal)
                 {
@@ -207,6 +220,16 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void OnSidebarRetryClicked(object sender, RoutedEventArgs e) =>
+        ViewModel.RefreshWorkspaceCommand.Execute(null);
+
+    private void OnProjectFeatureRequested(object? sender, ProjectFeatureRequestedEventArgs e)
+    {
+        ViewModel.SelectedResource = e.Project;
+        ShowWorkspace();
+        WorkspaceHost.OpenProjectFeature(e.Tab);
+    }
+
     private void OnSettingsClicked(object sender, RoutedEventArgs e)
     {
         ShowSettings();
@@ -214,7 +237,7 @@ public sealed partial class MainWindow : Window
 
     private async void OnNotepadClicked(object sender, RoutedEventArgs e)
     {
-        WorkspaceContent.Content = NotepadPage;
+        ShowContent(NotepadPage);
         await NotepadPage.ViewModel.OpenAsync();
     }
 
@@ -242,31 +265,31 @@ public sealed partial class MainWindow : Window
 
     public void OpenSettings() => ShowSettings();
 
-    private void ShowSettings() => WorkspaceContent.Content = SettingsPage;
+    private void ShowSettings() => ShowContent(SettingsPage);
 
     private async void OnOpenSftpRequested(object? sender, RemoteConnection connection)
     {
-        WorkspaceContent.Content = RemoteSftpPage;
+        ShowContent(RemoteSftpPage);
         await RemoteSftpPage.OpenAsync(connection);
     }
 
     private void OnRemoteSftpCloseRequested(object? sender, EventArgs e) =>
-        WorkspaceContent.Content = RemoteConnectionsPage;
+        ShowContent(RemoteConnectionsPage);
 
     private void OnOpenTerminalRequested(object? sender, RemoteConnection connection)
     {
-        WorkspaceContent.Content = RemoteTerminalPage;
+        ShowContent(RemoteTerminalPage);
         RemoteTerminalPage.Open(connection);
     }
 
     private void OnRemoteTerminalCloseRequested(object? sender, EventArgs e) =>
-        WorkspaceContent.Content = RemoteConnectionsPage;
+        ShowContent(RemoteConnectionsPage);
 
     private async Task OpenLocalTerminalAsync(ShellResourceViewModel resource)
     {
         try
         {
-            WorkspaceContent.Content = LocalTerminalPage;
+            ShowContent(LocalTerminalPage);
             await LocalTerminalPage.OpenAsync(resource);
         }
         catch (Exception exception)
@@ -438,7 +461,7 @@ public sealed partial class MainWindow : Window
 
     private void ShowWorkspace()
     {
-        WorkspaceContent.Content = WorkspaceHost;
+        ShowContent(WorkspaceHost);
         WorkspaceHost.Configure(ViewModel.SelectedResource);
     }
 
@@ -446,11 +469,43 @@ public sealed partial class MainWindow : Window
     {
         if (ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.Applications)
         {
-            WorkspaceContent.Content = PluginApplicationsPage;
+            ShowContent(PluginApplicationsPage);
             _ = PluginApplicationsPage.OpenAsync();
             return;
         }
+        if (ViewModel.SelectedResource?.Kind is WorkspaceResourceKind.AgentTeams or WorkspaceResourceKind.RequirementSurveys)
+        {
+            ProjectFeatureHubPage.Configure(ViewModel.SelectedResource.Kind);
+            ShowContent(ProjectFeatureHubPage);
+            return;
+        }
         ShowWorkspace();
+    }
+
+    private void ShowContent(object? content)
+    {
+        WorkspaceContent.Content = content;
+        RefreshWorkspaceEmptyState();
+    }
+
+    private void RefreshSidebarState()
+    {
+        if (ProjectsEmptyText is null || RemoteEmptyText is null) return;
+        ProjectsEmptyText.Visibility = !ViewModel.IsBusy && ViewModel.Projects.Count == 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        RemoteEmptyText.Visibility = !ViewModel.IsBusy && ViewModel.RemoteResources.Count == 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private void RefreshWorkspaceEmptyState()
+    {
+        if (EmptyWorkspaceState is null) return;
+        EmptyWorkspaceState.Visibility = ReferenceEquals(WorkspaceContent.Content, WorkspaceHost) &&
+            ViewModel.SelectedResource is null
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     private void OnPreferencesChanged(object? sender, AppPreferences preferences)
@@ -469,7 +524,7 @@ public sealed partial class MainWindow : Window
         Application.Current.Resources["ChatOSFontSizeCaption"] = 11d * preferences.FontScale;
         Application.Current.Resources["ChatOSFontSizeBody"] = 13d * preferences.FontScale;
         Application.Current.Resources["ChatOSFontSizeHeadline"] = 14d * preferences.FontScale;
-        Application.Current.Resources["ChatOSFontSizePageTitle"] = 24d * preferences.FontScale;
+        Application.Current.Resources["ChatOSFontSizePageTitle"] = 26d * preferences.FontScale;
     }
 
     private void UpdateVisualState()
@@ -487,6 +542,8 @@ public sealed partial class MainWindow : Window
         }
 
         WorkspaceHost.Configure(ViewModel.SelectedResource);
+        RefreshSidebarState();
+        RefreshWorkspaceEmptyState();
         RefreshApprovalOverlay();
     }
 

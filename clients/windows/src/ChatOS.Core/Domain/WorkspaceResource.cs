@@ -8,6 +8,8 @@ public enum WorkspaceResourceKind
     LocalConnector,
     LocalTerminal,
     RemoteConnection,
+    AgentTeams,
+    RequirementSurveys,
 }
 
 public sealed record WorkspaceResource(

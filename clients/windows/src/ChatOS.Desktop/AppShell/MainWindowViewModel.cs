@@ -69,7 +69,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _remoteTerminalSessions = remoteTerminalSessions;
         RemoteConnections.Connections.CollectionChanged += (_, _) => RebuildRemoteResources();
         Localization.PropertyChanged += (_, _) => RelocalizeResources();
-        ApplicationResources.Add(CreateApplicationsResource());
+        AddWorkspaceTools();
     }
 
     public ConversationSessionViewModel Conversation { get; }
@@ -556,6 +556,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
         if (resource.Kind == WorkspaceResourceKind.Applications)
+        {
+            return;
+        }
+        if (resource.Kind is WorkspaceResourceKind.AgentTeams or WorkspaceResourceKind.RequirementSurveys)
         {
             return;
         }

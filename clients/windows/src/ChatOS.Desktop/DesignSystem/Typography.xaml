@@ -6,7 +6,7 @@
     <x:Double x:Key="ChatOSFontSizeCaption">11</x:Double>
     <x:Double x:Key="ChatOSFontSizeBody">13</x:Double>
     <x:Double x:Key="ChatOSFontSizeHeadline">14</x:Double>
-    <x:Double x:Key="ChatOSFontSizePageTitle">24</x:Double>
+    <x:Double x:Key="ChatOSFontSizePageTitle">26</x:Double>
 
     <Style x:Key="ChatOSTitleTextStyle" TargetType="TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource ChatOSInterfaceFontFamily}" />
@@ -21,7 +21,7 @@
 
     <Style x:Key="ChatOSPageTitleTextStyle" TargetType="TextBlock" BasedOn="{StaticResource ChatOSTitleTextStyle}">
         <Setter Property="FontSize" Value="{StaticResource ChatOSFontSizePageTitle}" />
-        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
 
     <Style x:Key="ChatOSBodyStrongTextStyle" TargetType="TextBlock">
@@ -49,6 +49,7 @@
         <Setter Property="FontSize" Value="{StaticResource ChatOSFontSizeCaption}" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Foreground" Value="{StaticResource ChatOSSecondaryTextBrush}" />
-        <Setter Property="Margin" Value="8,0,0,2" />
+        <Setter Property="CharacterSpacing" Value="45" />
+        <Setter Property="Margin" Value="10,0,0,3" />
     </Style>
 </ResourceDictionary>

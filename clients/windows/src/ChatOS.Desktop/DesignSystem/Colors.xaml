@@ -2,33 +2,78 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Light">
+            <Color x:Key="ChatOSWorkspaceBackgroundColor">#F4F5F7</Color>
+            <Color x:Key="ChatOSSidebarBackgroundColor">#F8F8FA</Color>
+            <Color x:Key="ChatOSTitleBarBackgroundColor">#FCFCFD</Color>
+            <Color x:Key="ChatOSContentBackgroundColor">#FFFFFF</Color>
+            <Color x:Key="ChatOSSurfaceSubtleColor">#F1F2F5</Color>
+            <Color x:Key="ChatOSInputBackgroundColor">#FFFFFF</Color>
+            <Color x:Key="ChatOSPrimaryTextColor">#1D1D1F</Color>
+            <Color x:Key="ChatOSSecondaryTextColor">#65656B</Color>
+            <Color x:Key="ChatOSTertiaryTextColor">#8A8A92</Color>
+            <Color x:Key="ChatOSBorderColor">#E0E1E5</Color>
+            <Color x:Key="ChatOSBorderStrongColor">#D0D1D6</Color>
+            <Color x:Key="ChatOSSelectionColor">#E2EEFF</Color>
+            <Color x:Key="ChatOSAccentSoftColor">#E7F1FF</Color>
+            <Color x:Key="ChatOSPurpleSoftColor">#F0ECFF</Color>
+            <Color x:Key="ChatOSWarningSoftColor">#FFF3E4</Color>
+            <Color x:Key="ChatOSSuccessSoftColor">#EAF7EE</Color>
+            <Color x:Key="ChatOSUserBubbleColor">#E7F2FF</Color>
+            <Color x:Key="ChatOSTerminalColor">#218B45</Color>
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="Default">
+            <Color x:Key="ChatOSWorkspaceBackgroundColor">#17181A</Color>
+            <Color x:Key="ChatOSSidebarBackgroundColor">#1E1F22</Color>
+            <Color x:Key="ChatOSTitleBarBackgroundColor">#202124</Color>
+            <Color x:Key="ChatOSContentBackgroundColor">#242528</Color>
+            <Color x:Key="ChatOSSurfaceSubtleColor">#2C2D31</Color>
+            <Color x:Key="ChatOSInputBackgroundColor">#1C1D20</Color>
+            <Color x:Key="ChatOSPrimaryTextColor">#F5F5F7</Color>
+            <Color x:Key="ChatOSSecondaryTextColor">#B6B6BD</Color>
+            <Color x:Key="ChatOSTertiaryTextColor">#8E8E97</Color>
+            <Color x:Key="ChatOSBorderColor">#38393E</Color>
+            <Color x:Key="ChatOSBorderStrongColor">#484A50</Color>
+            <Color x:Key="ChatOSSelectionColor">#243A56</Color>
+            <Color x:Key="ChatOSAccentSoftColor">#203B5B</Color>
+            <Color x:Key="ChatOSPurpleSoftColor">#352E52</Color>
+            <Color x:Key="ChatOSWarningSoftColor">#4A3721</Color>
+            <Color x:Key="ChatOSSuccessSoftColor">#203D2A</Color>
+            <Color x:Key="ChatOSUserBubbleColor">#1F3E61</Color>
+            <Color x:Key="ChatOSTerminalColor">#55C878</Color>
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+
     <Color x:Key="ChatOSAccentColor">#0A7AFF</Color>
     <Color x:Key="ChatOSPurpleColor">#7057D8</Color>
     <Color x:Key="ChatOSSuccessColor">#2EA44F</Color>
     <Color x:Key="ChatOSWarningColor">#D97720</Color>
     <Color x:Key="ChatOSFailureColor">#D64545</Color>
-    <Color x:Key="ChatOSWorkspaceBackgroundColor">#EDEDF1</Color>
-    <Color x:Key="ChatOSSidebarBackgroundColor">#F4F4F6</Color>
-    <Color x:Key="ChatOSTitleBarBackgroundColor">#F7F7F8</Color>
-    <Color x:Key="ChatOSContentBackgroundColor">#FBFBFC</Color>
-    <Color x:Key="ChatOSPrimaryTextColor">#202124</Color>
-    <Color x:Key="ChatOSSecondaryTextColor">#6E6E73</Color>
-    <Color x:Key="ChatOSTertiaryTextColor">#9A9AA1</Color>
-    <Color x:Key="ChatOSBorderColor">#D9D9DE</Color>
 
     <SolidColorBrush x:Key="ChatOSAccentBrush" Color="{StaticResource ChatOSAccentColor}" />
-    <SolidColorBrush x:Key="ChatOSWorkspaceBackgroundBrush" Color="{StaticResource ChatOSWorkspaceBackgroundColor}" />
-    <SolidColorBrush x:Key="ChatOSSidebarBackgroundBrush" Color="{StaticResource ChatOSSidebarBackgroundColor}" />
-    <SolidColorBrush x:Key="ChatOSTitleBarBackgroundBrush" Color="{StaticResource ChatOSTitleBarBackgroundColor}" />
-    <SolidColorBrush x:Key="ChatOSContentBackgroundBrush" Color="{StaticResource ChatOSContentBackgroundColor}" />
-    <SolidColorBrush x:Key="ChatOSPrimaryTextBrush" Color="{StaticResource ChatOSPrimaryTextColor}" />
-    <SolidColorBrush x:Key="ChatOSSecondaryTextBrush" Color="{StaticResource ChatOSSecondaryTextColor}" />
-    <SolidColorBrush x:Key="ChatOSTertiaryTextBrush" Color="{StaticResource ChatOSTertiaryTextColor}" />
-    <SolidColorBrush x:Key="ChatOSBorderBrush" Color="{StaticResource ChatOSBorderColor}" />
-    <SolidColorBrush x:Key="ChatOSFailureBrush" Color="{StaticResource ChatOSFailureColor}" />
+    <SolidColorBrush x:Key="ChatOSPurpleBrush" Color="{StaticResource ChatOSPurpleColor}" />
     <SolidColorBrush x:Key="ChatOSSuccessBrush" Color="{StaticResource ChatOSSuccessColor}" />
     <SolidColorBrush x:Key="ChatOSWarningBrush" Color="{StaticResource ChatOSWarningColor}" />
-    <SolidColorBrush x:Key="ChatOSPurpleBrush" Color="{StaticResource ChatOSPurpleColor}" />
-    <SolidColorBrush x:Key="ChatOSUserBubbleBrush" Color="#E7F2FF" />
-    <SolidColorBrush x:Key="ChatOSProcessBackgroundBrush" Color="#F2EEFF" />
+    <SolidColorBrush x:Key="ChatOSFailureBrush" Color="{StaticResource ChatOSFailureColor}" />
+    <SolidColorBrush x:Key="ChatOSWorkspaceBackgroundBrush" Color="{ThemeResource ChatOSWorkspaceBackgroundColor}" />
+    <SolidColorBrush x:Key="ChatOSSidebarBackgroundBrush" Color="{ThemeResource ChatOSSidebarBackgroundColor}" />
+    <SolidColorBrush x:Key="ChatOSTitleBarBackgroundBrush" Color="{ThemeResource ChatOSTitleBarBackgroundColor}" />
+    <SolidColorBrush x:Key="ChatOSContentBackgroundBrush" Color="{ThemeResource ChatOSContentBackgroundColor}" />
+    <SolidColorBrush x:Key="ChatOSSurfaceSubtleBrush" Color="{ThemeResource ChatOSSurfaceSubtleColor}" />
+    <SolidColorBrush x:Key="ChatOSInputBackgroundBrush" Color="{ThemeResource ChatOSInputBackgroundColor}" />
+    <SolidColorBrush x:Key="ChatOSPrimaryTextBrush" Color="{ThemeResource ChatOSPrimaryTextColor}" />
+    <SolidColorBrush x:Key="ChatOSSecondaryTextBrush" Color="{ThemeResource ChatOSSecondaryTextColor}" />
+    <SolidColorBrush x:Key="ChatOSTertiaryTextBrush" Color="{ThemeResource ChatOSTertiaryTextColor}" />
+    <SolidColorBrush x:Key="ChatOSBorderBrush" Color="{ThemeResource ChatOSBorderColor}" />
+    <SolidColorBrush x:Key="ChatOSBorderStrongBrush" Color="{ThemeResource ChatOSBorderStrongColor}" />
+    <SolidColorBrush x:Key="ChatOSSelectionBrush" Color="{ThemeResource ChatOSSelectionColor}" />
+    <SolidColorBrush x:Key="ChatOSAccentSoftBrush" Color="{ThemeResource ChatOSAccentSoftColor}" />
+    <SolidColorBrush x:Key="ChatOSPurpleSoftBrush" Color="{ThemeResource ChatOSPurpleSoftColor}" />
+    <SolidColorBrush x:Key="ChatOSWarningSoftBrush" Color="{ThemeResource ChatOSWarningSoftColor}" />
+    <SolidColorBrush x:Key="ChatOSSuccessSoftBrush" Color="{ThemeResource ChatOSSuccessSoftColor}" />
+    <SolidColorBrush x:Key="ChatOSUserBubbleBrush" Color="{ThemeResource ChatOSUserBubbleColor}" />
+    <SolidColorBrush x:Key="ChatOSProcessBackgroundBrush" Color="{ThemeResource ChatOSPurpleSoftColor}" />
+    <SolidColorBrush x:Key="ChatOSTerminalBrush" Color="{ThemeResource ChatOSTerminalColor}" />
 </ResourceDictionary>

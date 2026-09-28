@@ -83,6 +83,7 @@ public partial class App : Application
             builder.Services.AddSingleton<ProjectRunPage>();
             builder.Services.AddSingleton<AgentTeamPage>();
             builder.Services.AddSingleton<ProjectRequirementSurveysPage>();
+            builder.Services.AddSingleton<ProjectFeatureHubPage>();
             builder.Services.AddSingleton<SettingsPage>();
             builder.Services.AddSingleton<PluginSettingsViewModel>();
             builder.Services.AddSingleton<ApprovalSettingsViewModel>();
