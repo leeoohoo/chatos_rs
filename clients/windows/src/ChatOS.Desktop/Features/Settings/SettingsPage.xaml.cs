@@ -11,6 +11,7 @@ namespace ChatOS.Desktop.Features.Settings;
 
 public sealed partial class SettingsPage : UserControl
 {
+    private bool _controlsInitialized;
     private bool _syncing;
 
     public SettingsPage(
@@ -30,6 +31,7 @@ public sealed partial class SettingsPage : UserControl
         SandboxSettings = sandboxSettings;
         Localization = localization;
         InitializeComponent();
+        _controlsInitialized = true;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
         ViewModel.PropertyChanged += (_, _) => SyncControls();
@@ -139,6 +141,10 @@ public sealed partial class SettingsPage : UserControl
 
     private async void OnFontScaleChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
+        // The Slider raises ValueChanged while InitializeComponent is still creating
+        // later siblings, before FontScaleLabel has been assigned.
+        if (!_controlsInitialized || FontScaleLabel is null) return;
+
         FontScaleLabel.Text = $"{e.NewValue:P0}";
         if (!_syncing)
         {
