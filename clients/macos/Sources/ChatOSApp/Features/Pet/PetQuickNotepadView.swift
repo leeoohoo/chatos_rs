@@ -8,6 +8,7 @@ struct PetQuickNotepadView: View {
     @State private var collapsedFolderIDs: Set<String> = []
     @State private var creationPrompt: PetQuickNotepadCreationPrompt?
     @State private var creationName = ""
+    @State private var deleteTarget: PetQuickNotepadDeleteTarget?
     let onBack: () -> Void
     let onClose: () -> Void
 
@@ -15,9 +16,10 @@ struct PetQuickNotepadView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            HStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
                 sidebar
                     .frame(width: 230)
+                    .frame(maxHeight: .infinity, alignment: .top)
                 Divider()
                 editor
             }
@@ -51,6 +53,21 @@ struct PetQuickNotepadView: View {
             .disabled(creationName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         } message: {
             Text(creationPrompt?.message(language: model.interfaceLanguage) ?? "")
+        }
+        .confirmationDialog(
+            deleteTarget?.title(language: model.interfaceLanguage)
+                ?? model.localized("确认删除", english: "Confirm Deletion"),
+            isPresented: deletePresented,
+            titleVisibility: .visible
+        ) {
+            Button(model.localized("删除", english: "Delete"), role: .destructive) {
+                performDelete()
+            }
+            Button(model.localized("取消", english: "Cancel"), role: .cancel) {
+                deleteTarget = nil
+            }
+        } message: {
+            Text(deleteTarget?.message(language: model.interfaceLanguage) ?? "")
         }
     }
 
@@ -133,6 +150,7 @@ struct PetQuickNotepadView: View {
                         english: "Create a note to get started"
                     ))
                 )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 5) {
@@ -219,7 +237,19 @@ struct PetQuickNotepadView: View {
                     )
             }
             .buttonStyle(.plain)
-            .contextMenu { creationMenu(folder: folder) }
+            .contextMenu {
+                creationMenu(folder: folder)
+                Divider()
+                Button(role: .destructive) {
+                    deleteTarget = .folder(folder)
+                } label: {
+                    Label(
+                        model.localized("删除文件夹", english: "Delete Folder"),
+                        systemImage: "trash"
+                    )
+                }
+                .disabled(viewModel.isSaving || viewModel.isUploadingImage)
+            }
 
         case let .note(note):
             Button {
@@ -260,7 +290,19 @@ struct PetQuickNotepadView: View {
                 )
             }
             .buttonStyle(.plain)
-            .contextMenu { creationMenu(folder: note.folder) }
+            .contextMenu {
+                creationMenu(folder: note.folder)
+                Divider()
+                Button(role: .destructive) {
+                    deleteTarget = .note(note)
+                } label: {
+                    Label(
+                        model.localized("删除笔记", english: "Delete Note"),
+                        systemImage: "trash"
+                    )
+                }
+                .disabled(viewModel.isSaving || viewModel.isUploadingImage)
+            }
         }
     }
 
@@ -353,6 +395,17 @@ struct PetQuickNotepadView: View {
                     .disabled(
                         !viewModel.isDirty || viewModel.isSaving || viewModel.isUploadingImage
                     )
+                    Button(role: .destructive) {
+                        if let note = viewModel.selectedNote {
+                            deleteTarget = .note(note)
+                        }
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help(model.localized("删除笔记", english: "Delete Note"))
+                    .disabled(viewModel.isSaving || viewModel.isUploadingImage)
                 }
 
                 Divider()
@@ -421,6 +474,13 @@ struct PetQuickNotepadView: View {
         )
     }
 
+    private var deletePresented: Binding<Bool> {
+        Binding(
+            get: { deleteTarget != nil },
+            set: { if !$0 { deleteTarget = nil } }
+        )
+    }
+
     private func showCreationPrompt(_ prompt: PetQuickNotepadCreationPrompt) {
         creationName = ""
         creationPrompt = prompt
@@ -438,6 +498,17 @@ struct PetQuickNotepadView: View {
             case let .note(folder):
                 let created = await viewModel.createNote(title: name, folder: folder)
                 if created { viewModel.editorMode = .edit }
+            }
+        }
+    }
+
+    private func performDelete() {
+        guard let target = deleteTarget else { return }
+        deleteTarget = nil
+        Task {
+            switch target {
+            case let .folder(folder): _ = await viewModel.deleteFolder(folder)
+            case let .note(note): _ = await viewModel.deleteNote(note.id)
             }
         }
     }
@@ -487,6 +558,34 @@ private enum PetQuickNotepadCreationPrompt {
         switch self {
         case .folder: language == .english ? "Folder name" : "文件夹名称"
         case .note: language == .english ? "Note title" : "笔记标题"
+        }
+    }
+}
+
+private enum PetQuickNotepadDeleteTarget {
+    case folder(String)
+    case note(NotepadNote)
+
+    func title(language: ChatOSLanguage) -> String {
+        switch self {
+        case .folder: language == .english ? "Delete Folder?" : "删除文件夹？"
+        case .note: language == .english ? "Delete Note?" : "删除笔记？"
+        }
+    }
+
+    func message(language: ChatOSLanguage) -> String {
+        switch self {
+        case let .folder(folder):
+            return language == .english
+                ? "“\(folder)” and all notes inside it will be permanently deleted."
+                : "“\(folder)”以及其中的全部笔记都会被删除，此操作无法撤销。"
+        case let .note(note):
+            let title = note.title.isEmpty
+                ? (language == .english ? "Untitled Note" : "未命名笔记")
+                : note.title
+            return language == .english
+                ? "“\(title)” will be permanently deleted."
+                : "“\(title)”将被永久删除。"
         }
     }
 }

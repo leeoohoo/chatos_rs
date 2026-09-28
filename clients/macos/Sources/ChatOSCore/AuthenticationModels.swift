@@ -35,8 +35,25 @@ public struct AuthSession: Sendable, Equatable {
     }
 }
 
+public struct RegistrationCodeDelivery: Sendable, Equatable {
+    public var expiresInSeconds: Int
+    public var resendAfterSeconds: Int
+
+    public init(expiresInSeconds: Int, resendAfterSeconds: Int) {
+        self.expiresInSeconds = expiresInSeconds
+        self.resendAfterSeconds = resendAfterSeconds
+    }
+}
+
 public protocol AuthenticationServicing: Sendable {
     func restoreSession() async throws -> AuthSession?
     func login(username: String, password: String) async throws -> AuthSession
+    func sendRegistrationCode(email: String, inviteCode: String) async throws -> RegistrationCodeDelivery
+    func register(
+        email: String,
+        password: String,
+        inviteCode: String,
+        verificationCode: String
+    ) async throws -> AuthSession
     func logout() async
 }
