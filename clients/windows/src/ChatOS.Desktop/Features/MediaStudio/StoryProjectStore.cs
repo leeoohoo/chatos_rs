@@ -92,7 +92,8 @@ public sealed class StoryProjectStore
 
         var safeSegment = SafeSegment(segmentId);
         var relative = Path.Combine("assets", safeSegment, $"{(video ? "video" : "frame")}-{Guid.NewGuid():N}{extension}");
-        var destination = ResolveAssetPath(ownerUserId, projectId, relative);
+        var destination = ResolveAssetPath(ownerUserId, projectId, relative)
+            ?? throw new InvalidDataException("剧情素材目标路径无效。");
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
         await using var input = new FileStream(source.FullName, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
         await using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true);
