@@ -134,12 +134,14 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             OnPropertyChanged(nameof(WorkspaceSummary));
             NotifyBatchPlanChanged();
             RefreshPromptAudit();
+            RefreshStoryRelations();
         };
         Resources.CollectionChanged += (_, _) =>
         {
             OnPropertyChanged(nameof(CanGenerateResourceImage));
             NotifyBatchPlanChanged();
             RefreshPromptAudit();
+            RefreshStoryRelations();
         };
     }
 
@@ -649,6 +651,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             OnPropertyChanged(nameof(WorkspaceSummary));
         NotifyBatchPlanChanged();
         RefreshPromptAudit();
+        RefreshStoryRelations();
     }
 
     private void OnWorkspaceChanged()
@@ -662,6 +665,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         OnPropertyChanged(nameof(WorkspaceSummary));
         NotifyBatchPlanChanged();
         RefreshPromptAudit();
+        RefreshStoryRelations();
     }
 
     private async Task GenerateFrameCoreAsync(

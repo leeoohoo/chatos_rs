@@ -440,6 +440,31 @@
                                                     <Border Height="150" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10"><Image Source="{Binding ImagePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="Uniform" /></Border>
                                                     <TextBlock Text="素材 ID" Style="{StaticResource ChatOSCaptionTextStyle}" /><TextBlock IsTextSelectionEnabled="True" Text="{Binding Id}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                 </StackPanel>
+                                                <Expander Header="{x:Bind StoryViewModel.RelationSummary, Mode=OneWay}">
+                                                    <StackPanel Padding="0,8,0,0" Spacing="8">
+                                                        <TextBlock Text="点击素材或分段即可定位；不存在的素材 ID 和未关联分段也会显示。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        <ItemsControl ItemsSource="{x:Bind StoryViewModel.ResourceRelations}">
+                                                            <ItemsControl.ItemTemplate>
+                                                                <DataTemplate x:DataType="media:StoryResourceRelationGroup">
+                                                                    <Border Margin="0,0,0,8" Padding="9" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="8">
+                                                                        <StackPanel Spacing="5">
+                                                                            <Button Click="OnStoryRelationResourceClick" Content="{x:Bind Header}" HorizontalAlignment="Stretch" IsEnabled="{x:Bind CanSelectResource}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                                            <TextBlock Text="{x:Bind KindLabel}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                            <TextBlock Text="{x:Bind UsageLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                            <ItemsControl ItemsSource="{x:Bind Links}">
+                                                                                <ItemsControl.ItemTemplate>
+                                                                                    <DataTemplate x:DataType="media:StorySegmentRelationLink">
+                                                                                        <Button Margin="0,3,0,0" Click="OnStoryRelationSegmentClick" Content="{x:Bind Label}" HorizontalAlignment="Stretch" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                                                    </DataTemplate>
+                                                                                </ItemsControl.ItemTemplate>
+                                                                            </ItemsControl>
+                                                                        </StackPanel>
+                                                                    </Border>
+                                                                </DataTemplate>
+                                                            </ItemsControl.ItemTemplate>
+                                                        </ItemsControl>
+                                                    </StackPanel>
+                                                </Expander>
                                             </StackPanel>
                                         </ScrollViewer>
 

@@ -63,6 +63,7 @@ public sealed partial class StoryStudioViewModel
         OnPropertyChanged(nameof(CanGenerateResourceImage));
         NotifyBatchPlanChanged();
         RefreshPromptAudit();
+        RefreshStoryRelations();
     }
 
     public void AddResource()

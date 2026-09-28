@@ -75,6 +75,18 @@ public sealed partial class MediaStudioPage : Page
     private void OnRemoveStoryResourceClick(object sender, RoutedEventArgs e) =>
         StoryViewModel.RemoveSelectedResource();
 
+    private void OnStoryRelationResourceClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: StoryResourceRelationGroup group })
+            StoryViewModel.SelectRelationResource(group);
+    }
+
+    private void OnStoryRelationSegmentClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: StorySegmentRelationLink link })
+            StoryViewModel.SelectRelationSegment(link);
+    }
+
     private async void OnGenerateStoryResourceImageClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.GenerateResourceImageAsync();
 
