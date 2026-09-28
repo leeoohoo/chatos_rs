@@ -666,6 +666,19 @@
                                                             <Border Grid.Column="1" Height="135" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10"><Image Source="{Binding LastFramePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="Uniform" /></Border>
                                                             <Border Grid.Column="2" Height="135" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10"><Image Source="{Binding ActualVideoLastFramePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="Uniform" /></Border>
                                                         </Grid>
+                                                        <Expander Header="首尾帧历史版本" IsEnabled="{x:Bind StoryViewModel.CanRestoreArchivedFrame, Mode=OneWay}">
+                                                            <ItemsControl ItemsSource="{Binding ArchivedFrames}">
+                                                                <ItemsControl.ItemTemplate>
+                                                                    <DataTemplate x:DataType="media:StoryArchivedFrameEditor">
+                                                                        <Grid Margin="0,4" ColumnSpacing="8">
+                                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                                            <TextBlock VerticalAlignment="Center" Text="{x:Bind Label}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                            <Button Grid.Column="1" Click="OnRestoreStoryFrameVersionClick" Content="恢复" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                                        </Grid>
+                                                                    </DataTemplate>
+                                                                </ItemsControl.ItemTemplate>
+                                                            </ItemsControl>
+                                                        </Expander>
                                                         <TextBox Header="视频提示词" AcceptsReturn="True" MaxLength="7000" MinHeight="90" Text="{Binding VideoPrompt, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                         <Grid ColumnSpacing="8">
                                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>

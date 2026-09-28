@@ -256,6 +256,12 @@ public sealed partial class MediaStudioPage : Page
             await StoryViewModel.RestoreArchivedVideoAsync(archived);
     }
 
+    private async void OnRestoreStoryFrameVersionClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: StoryArchivedFrameEditor archived })
+            await StoryViewModel.RestoreArchivedFrameAsync(archived);
+    }
+
     private async void OnImportStoryVideoClick(object sender, RoutedEventArgs e)
     {
         if (await PickStoryAssetAsync(true) is { } path)

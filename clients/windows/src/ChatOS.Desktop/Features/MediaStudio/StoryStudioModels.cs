@@ -67,6 +67,7 @@ public sealed record StorySegmentDocument(
     public string? PendingVideoRequestDigest { get; init; }
     public string? ActualVideoLastFrameAsset { get; init; }
     public IReadOnlyList<StoryArchivedVideoDocument> ArchivedVideos { get; init; } = [];
+    public IReadOnlyList<StoryArchivedFrameDocument> ArchivedFrames { get; init; } = [];
     public IReadOnlyList<string> ResourceIds { get; init; } = [];
     public string ContinuityIn { get; init; } = string.Empty;
     public string ContinuityOut { get; init; } = string.Empty;
@@ -81,6 +82,8 @@ public sealed record StorySegmentDocument(
             Seconds is < 2 or > 30 || !Enum.IsDefined(Kind) || ResourceIds is null ||
             ArchivedVideos is null or { Count: > 20 } ||
             ArchivedVideos.Any(archived => archived is null) ||
+            ArchivedFrames is null or { Count: > 40 } ||
+            ArchivedFrames.Any(archived => archived is null) ||
             !SafeJob(PendingVideoJobId, 512) || !SafeJob(PendingVideoJobStatus, 80) ||
             !SafeDigest(PendingVideoRequestDigest) ||
             (PendingVideoJobId is null) != (PendingVideoRequestDigest is null) ||
@@ -91,6 +94,7 @@ public sealed record StorySegmentDocument(
             throw new InvalidDataException("剧情分段数据无效，请检查标题、提示词、时长和素材。");
         }
         foreach (var archived in ArchivedVideos) archived.Validate();
+        foreach (var archived in ArchivedFrames) archived.Validate();
     }
 
     private static bool SafeAsset(string? value) => value is null ||
@@ -102,6 +106,21 @@ public sealed record StorySegmentDocument(
 
     private static bool SafeDigest(string? value) => value is null ||
         value.Length == 64 && value.All(character => char.IsAsciiHexDigit(character));
+}
+
+public sealed record StoryArchivedFrameDocument(
+    string Asset,
+    bool IsLastFrame,
+    string Label,
+    DateTimeOffset ArchivedAt)
+{
+    public void Validate()
+    {
+        if (string.IsNullOrWhiteSpace(Asset) || Path.IsPathFullyQualified(Asset) ||
+            Asset.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Contains("..") ||
+            string.IsNullOrWhiteSpace(Label) || Label.Length > 200)
+            throw new InvalidDataException("剧情画面历史版本数据无效。");
+    }
 }
 
 public sealed record StoryArchivedVideoDocument(
