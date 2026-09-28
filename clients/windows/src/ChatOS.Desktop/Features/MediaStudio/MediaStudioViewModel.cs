@@ -47,6 +47,8 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public IReadOnlyList<string> VideoRatios => VideoGenerationProfile.Ratios;
 
+    public bool CanUseVideoReferenceAudio => VideoProfile.SupportsReferenceVideo;
+
     public bool CanGenerate => !IsBusy && SelectedModel is not null &&
         !string.IsNullOrWhiteSpace(Prompt) && _ownerUserId is not null;
 
@@ -62,6 +64,8 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     };
 
     public string VideoFirstFrameLabel => VideoFirstFrame?.Name ?? "未选择";
+
+    public string VideoReferenceAudioLabel => VideoReferenceAudio?.Name ?? "未选择";
 
     private VideoGenerationProfile VideoProfile =>
         VideoGenerationProfile.ForModel(SelectedVideoModel?.ModelName ?? string.Empty);
@@ -100,6 +104,10 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(VideoFirstFrameLabel))]
     private ImageGenerationInput? _videoFirstFrame;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VideoReferenceAudioLabel))]
+    private VideoGenerationInputAudio? _videoReferenceAudio;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanGenerateVideo))]
@@ -270,6 +278,37 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public void RemoveVideoFirstFrame() => VideoFirstFrame = null;
 
+    public async Task SetVideoReferenceAudioAsync(
+        string path,
+        CancellationToken cancellationToken = default)
+    {
+        ErrorMessage = null;
+        try
+        {
+            var mimeType = Path.GetExtension(path).ToLowerInvariant() switch
+            {
+                ".mp3" => "audio/mpeg",
+                ".wav" => "audio/wav",
+                ".m4a" => "audio/mp4",
+                ".aac" => "audio/aac",
+                _ => throw new InvalidDataException("参考音频必须是 MP3、WAV、M4A 或 AAC。"),
+            };
+            var bytes = await File.ReadAllBytesAsync(path, cancellationToken);
+            if (bytes.Length == 0 || bytes.Length > MaximumImageBytes)
+                throw new InvalidDataException("参考音频为空或超过 20 MB。");
+            VideoReferenceAudio = new VideoGenerationInputAudio(
+                Path.GetFileName(path),
+                mimeType,
+                Convert.ToBase64String(bytes));
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            ErrorMessage = exception.Message;
+        }
+    }
+
+    public void RemoveVideoReferenceAudio() => VideoReferenceAudio = null;
+
     public async Task GenerateVideoAsync(CancellationToken cancellationToken = default)
     {
         var owner = _ownerUserId;
@@ -293,6 +332,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
                     VideoSeconds,
                     VideoFirstFrame,
                     null,
+                    VideoReferenceAudio,
                     VideoRatio),
                 progress,
                 token);
@@ -348,6 +388,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         SelectedVideoModel = null;
         LatestVideo = null;
         VideoFirstFrame = null;
+        VideoReferenceAudio = null;
         VideoProgress = null;
         Prompt = string.Empty;
         VideoPrompt = string.Empty;
@@ -382,8 +423,10 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         var profile = VideoProfile;
         if (!profile.Sizes.Contains(VideoSize)) VideoSize = profile.Sizes[0];
         if (!profile.Durations.Contains(VideoSeconds)) VideoSeconds = profile.Durations[0];
+        if (!profile.SupportsReferenceVideo) VideoReferenceAudio = null;
         OnPropertyChanged(nameof(VideoSizes));
         OnPropertyChanged(nameof(VideoDurations));
+        OnPropertyChanged(nameof(CanUseVideoReferenceAudio));
     }
 
     private static async Task<ImageGenerationInput> LoadImageInputAsync(

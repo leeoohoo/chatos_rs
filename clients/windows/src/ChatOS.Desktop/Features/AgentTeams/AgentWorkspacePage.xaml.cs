@@ -184,19 +184,27 @@ public sealed partial class AgentWorkspacePage : Page
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary ||
             model.SelectedItem is not ConversationModelOption selectedModel) return;
-        var draft = profile?.Draft with
+        AgentProfileDraft draft;
+        if (profile is null)
         {
-            Name = name.Text.Trim(),
-            Description = description.Text.Trim(),
-            RolePrompt = prompt.Text.Trim(),
-            ModelConfigId = selectedModel.Id,
-            ThinkingLevel = thinking.SelectedItem?.ToString(),
-        } ?? new AgentProfileDraft(
-            name.Text.Trim(),
-            description.Text.Trim(),
-            prompt.Text.Trim(),
-            selectedModel.Id,
-            thinking.SelectedItem?.ToString());
+            draft = new AgentProfileDraft(
+                name.Text.Trim(),
+                description.Text.Trim(),
+                prompt.Text.Trim(),
+                selectedModel.Id,
+                thinking.SelectedItem?.ToString());
+        }
+        else
+        {
+            draft = profile.Draft with
+            {
+                Name = name.Text.Trim(),
+                Description = description.Text.Trim(),
+                RolePrompt = prompt.Text.Trim(),
+                ModelConfigId = selectedModel.Id,
+                ThinkingLevel = thinking.SelectedItem?.ToString(),
+            };
+        }
         await IgnoreFailureAsync(() => ViewModel.SaveAgentAsync(profile?.Id, draft));
     }
 

@@ -70,6 +70,15 @@ public sealed partial class MediaStudioPage : Page
             ViewModel.SelectHistoryItem(item);
     }
 
+    private async void OnUseImageForVideoClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: MediaStudioImageItem image })
+        {
+            await ViewModel.SetVideoFirstFrameAsync(image.FilePath);
+            StudioPivot.SelectedIndex = 1;
+        }
+    }
+
     private async void OnPickVideoFrameClick(object sender, RoutedEventArgs e)
     {
         var window = (Application.Current as App)?.MainWindow;
@@ -88,6 +97,25 @@ public sealed partial class MediaStudioPage : Page
 
     private void OnRemoveVideoFrameClick(object sender, RoutedEventArgs e) =>
         ViewModel.RemoveVideoFirstFrame();
+
+    private async void OnPickVideoAudioClick(object sender, RoutedEventArgs e)
+    {
+        var window = (Application.Current as App)?.MainWindow;
+        if (window is null) return;
+        var picker = new FileOpenPicker();
+        picker.FileTypeFilter.Add(".mp3");
+        picker.FileTypeFilter.Add(".wav");
+        picker.FileTypeFilter.Add(".m4a");
+        picker.FileTypeFilter.Add(".aac");
+        WinRT.Interop.InitializeWithWindow.Initialize(
+            picker,
+            WinRT.Interop.WindowNative.GetWindowHandle(window));
+        var file = await picker.PickSingleFileAsync();
+        if (file is not null) await ViewModel.SetVideoReferenceAudioAsync(file.Path);
+    }
+
+    private void OnRemoveVideoAudioClick(object sender, RoutedEventArgs e) =>
+        ViewModel.RemoveVideoReferenceAudio();
 
     private async void OnGenerateVideoClick(object sender, RoutedEventArgs e) =>
         await ViewModel.GenerateVideoAsync();

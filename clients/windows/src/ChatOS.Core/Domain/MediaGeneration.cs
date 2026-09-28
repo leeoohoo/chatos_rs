@@ -97,7 +97,13 @@ public sealed record VideoGenerationRequest(
     int Seconds,
     ImageGenerationInput? FirstFrame,
     ImageGenerationInput? LastFrame,
+    VideoGenerationInputAudio? ReferenceAudio,
     string Ratio);
+
+public sealed record VideoGenerationInputAudio(
+    string Name,
+    string MimeType,
+    string Base64Data);
 
 public sealed record VideoGenerationProgress(
     string Status,

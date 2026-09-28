@@ -73,8 +73,8 @@ public sealed class MediaGenerationServiceTests
         {
             contentType = request.Content?.Headers.ContentType?.MediaType;
             var multipart = Assert.IsType<MultipartFormDataContent>(request.Content);
-            var imagePart = Assert.Single(multipart.Where(part =>
-                part.Headers.ContentDisposition?.Name?.Trim('"') == "image"));
+            var imagePart = Assert.Single(multipart, part =>
+                part.Headers.ContentDisposition?.Name?.Trim('"') == "image");
             imageField = imagePart.Headers.ContentDisposition?.Name?.Trim('"');
             imageFileName = imagePart.Headers.ContentDisposition?.FileName?.Trim('"');
             imageBytes = await imagePart.ReadAsByteArrayAsync();
@@ -174,8 +174,12 @@ public sealed class MediaGenerationServiceTests
         var service = new MediaGenerationService(api, provider, store, TimeSpan.Zero, 5);
         var updates = new List<VideoGenerationProgress>();
 
+        var request = VideoRequest() with
+        {
+            ReferenceAudio = new VideoGenerationInputAudio("guide.mp3", "audio/mpeg", "AQID"),
+        };
         var result = await service.GenerateVideoAsync(
-            VideoRequest(),
+            request,
             new InlineProgress<VideoGenerationProgress>(updates.Add));
 
         Assert.Equal(1, statusQueries);
@@ -186,6 +190,9 @@ public sealed class MediaGenerationServiceTests
         Assert.Equal(4, json.RootElement.GetProperty("duration").GetInt32());
         Assert.Equal("768p", json.RootElement.GetProperty("size").GetString());
         Assert.Equal("16:9", json.RootElement.GetProperty("metadata").GetProperty("ratio").GetString());
+        Assert.Equal(
+            "data:audio/mpeg;base64,AQID",
+            json.RootElement.GetProperty("metadata").GetProperty("audio_url").GetString());
     }
 
     [Fact]
@@ -241,7 +248,7 @@ public sealed class MediaGenerationServiceTests
         new("model-config", "draw a fox", "1024x1024", 2, references ?? []);
 
     private static VideoGenerationRequest VideoRequest() =>
-        new("model-config", "a fox running through snow", "768P", 4, null, null, "16:9");
+        new("model-config", "a fox running through snow", "768P", 4, null, null, null, "16:9");
 
     private static MemoryTokenStore TokenStore()
     {

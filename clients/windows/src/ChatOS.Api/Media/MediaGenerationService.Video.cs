@@ -207,6 +207,8 @@ public sealed partial class MediaGenerationService
             metadata["first_frame_image"] = DataUrl(request.FirstFrame);
         if (request.LastFrame is not null)
             metadata["last_frame_image"] = DataUrl(request.LastFrame);
+        if (request.ReferenceAudio is not null)
+            metadata["audio_url"] = DataUrl(request.ReferenceAudio.MimeType, request.ReferenceAudio.Base64Data);
         var message = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/videos")
         {
             Content = JsonContent.Create(new
@@ -332,6 +334,7 @@ public sealed partial class MediaGenerationService
             throw new ArgumentException("Choose a supported video ratio.", nameof(request));
         ValidateVideoFrame(request.FirstFrame, request);
         ValidateVideoFrame(request.LastFrame, request);
+        ValidateReferenceAudio(request.ReferenceAudio, profile, request);
     }
 
     private static void ValidateVideoFrame(ImageGenerationInput? image, VideoGenerationRequest request)
@@ -352,7 +355,37 @@ public sealed partial class MediaGenerationService
     }
 
     private static string DataUrl(ImageGenerationInput image) =>
-        $"data:{image.MimeType.ToLowerInvariant()};base64,{image.Base64Data}";
+        DataUrl(image.MimeType, image.Base64Data);
+
+    private static string DataUrl(string mimeType, string base64Data) =>
+        $"data:{mimeType.ToLowerInvariant()};base64,{base64Data}";
+
+    private static void ValidateReferenceAudio(
+        VideoGenerationInputAudio? audio,
+        VideoGenerationProfile? profile,
+        VideoGenerationRequest request)
+    {
+        if (audio is null) return;
+        if (profile is { SupportsReferenceVideo: false })
+            throw new ArgumentException("The selected model cannot use reference audio.", nameof(request));
+        string[] mimeTypes =
+        [
+            "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/vnd.wave",
+            "audio/mp4", "audio/x-m4a", "audio/aac",
+        ];
+        if (!mimeTypes.Contains(audio.MimeType, StringComparer.OrdinalIgnoreCase))
+            throw new ArgumentException("Reference audio must be MP3, WAV, M4A, or AAC.", nameof(request));
+        try
+        {
+            var bytes = Convert.FromBase64String(audio.Base64Data);
+            if (bytes.Length == 0 || bytes.Length > MaximumImageBytes)
+                throw new ArgumentException("Reference audio is empty or exceeds 20 MB.", nameof(request));
+        }
+        catch (FormatException)
+        {
+            throw new ArgumentException("Reference audio is invalid.", nameof(request));
+        }
+    }
 
     private sealed record ProviderVideoJob(
         string Id,
