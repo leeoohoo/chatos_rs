@@ -12,28 +12,71 @@ public sealed partial class MediaStudioPage : Page
 {
     private readonly AppShell.MainWindowViewModel _shell;
     private string? _activeVideoPath;
+    private string? _activeStoryVideoPath;
 
     public MediaStudioPage(
         MediaStudioViewModel viewModel,
+        StoryStudioViewModel storyViewModel,
         AppShell.MainWindowViewModel shell)
     {
         ViewModel = viewModel;
+        StoryViewModel = storyViewModel;
         _shell = shell;
         InitializeComponent();
         ViewModel.PropertyChanged += (_, _) => DispatcherQueue.TryEnqueue(RefreshState);
         ViewModel.LatestImages.CollectionChanged += (_, _) => RefreshState();
+        StoryViewModel.PropertyChanged += (_, _) => DispatcherQueue.TryEnqueue(RefreshState);
+        StoryViewModel.Projects.CollectionChanged += (_, _) => RefreshState();
+        StoryViewModel.Segments.CollectionChanged += (_, _) => RefreshState();
         Loaded += OnLoaded;
         RefreshState();
     }
 
     public MediaStudioViewModel ViewModel { get; }
 
+    public StoryStudioViewModel StoryViewModel { get; }
+
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         if (_shell.CurrentOwnerUserId is not { Length: > 0 } owner) return;
-        await ViewModel.OpenAsync(owner);
+        await Task.WhenAll(ViewModel.OpenAsync(owner), StoryViewModel.OpenAsync(owner));
         RefreshState();
     }
+
+    private void OnStoryProjectClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is StoryProjectCard card) StoryViewModel.OpenProject(card.Project);
+    }
+
+    private async void OnCreateStoryProjectClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.CreateProjectAsync();
+
+    private void OnCloseStoryProjectClick(object sender, RoutedEventArgs e) =>
+        StoryViewModel.CloseProject();
+
+    private async void OnSaveStoryProjectClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.SaveCurrentAsync();
+
+    private void OnQuickSplitStoryClick(object sender, RoutedEventArgs e) =>
+        StoryViewModel.QuickSplit();
+
+    private void OnAddStorySegmentClick(object sender, RoutedEventArgs e) =>
+        StoryViewModel.AddSegment();
+
+    private void OnRemoveStorySegmentClick(object sender, RoutedEventArgs e) =>
+        StoryViewModel.RemoveSelectedSegment();
+
+    private async void OnGenerateStoryFirstFrameClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.GenerateFirstFrameAsync();
+
+    private async void OnGenerateStoryLastFrameClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.GenerateLastFrameAsync();
+
+    private async void OnGenerateStoryVideoClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.GenerateVideoAsync();
+
+    private void OnCancelStoryGenerationClick(object sender, RoutedEventArgs e) =>
+        StoryViewModel.CancelGeneration();
 
     private async void OnReloadModelsClick(object sender, RoutedEventArgs e) =>
         await ViewModel.ReloadModelsAsync();
@@ -187,9 +230,11 @@ public sealed partial class MediaStudioPage : Page
         var hasImages = ViewModel.LatestImages.Count > 0;
         LatestImageGrid.Visibility = hasImages ? Visibility.Visible : Visibility.Collapsed;
         CanvasEmptyState.Visibility = hasImages ? Visibility.Collapsed : Visibility.Visible;
-        ErrorInfoBar.IsOpen = !string.IsNullOrWhiteSpace(ViewModel.ErrorMessage);
-        ErrorInfoBar.Message = ViewModel.ErrorMessage ?? string.Empty;
+        var error = StoryViewModel.ErrorMessage ?? ViewModel.ErrorMessage;
+        ErrorInfoBar.IsOpen = !string.IsNullOrWhiteSpace(error);
+        ErrorInfoBar.Message = error ?? string.Empty;
         RefreshVideoState();
+        RefreshStoryState();
     }
 
     private void RefreshVideoState()
@@ -224,6 +269,33 @@ public sealed partial class MediaStudioPage : Page
         {
             VideoProgressBar.IsIndeterminate = true;
         }
+    }
+
+    private void RefreshStoryState()
+    {
+        StoryCreatePanel.Visibility = StoryViewModel.IsWorkspaceOpen
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        StoryWorkspacePanel.Visibility = StoryViewModel.IsWorkspaceOpen
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        var hasSegment = StoryViewModel.SelectedSegment is not null;
+        StorySegmentEmptyState.Visibility = hasSegment ? Visibility.Collapsed : Visibility.Visible;
+        StorySegmentEditorPanel.Visibility = hasSegment ? Visibility.Visible : Visibility.Collapsed;
+
+        var path = StoryViewModel.SelectedSegment?.VideoPath;
+        var hasVideo = path is { Length: > 0 } && File.Exists(path);
+        if (hasVideo && !string.Equals(_activeStoryVideoPath, path, StringComparison.OrdinalIgnoreCase))
+        {
+            _activeStoryVideoPath = path;
+            StoryVideoPlayer.Source = MediaSource.CreateFromUri(new Uri(path!, UriKind.Absolute));
+        }
+        else if (!hasVideo && _activeStoryVideoPath is not null)
+        {
+            _activeStoryVideoPath = null;
+            StoryVideoPlayer.Source = null;
+        }
+        StoryVideoPlayer.Visibility = hasVideo ? Visibility.Visible : Visibility.Collapsed;
     }
 }
 

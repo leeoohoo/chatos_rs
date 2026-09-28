@@ -88,6 +88,8 @@ public partial class App : Application
             builder.Services.AddSingleton<ProjectFeatureHubPage>();
             builder.Services.AddSingleton<MediaStudioHistoryStore>();
             builder.Services.AddSingleton<MediaStudioViewModel>();
+            builder.Services.AddSingleton<StoryProjectStore>();
+            builder.Services.AddSingleton<StoryStudioViewModel>();
             builder.Services.AddSingleton<MediaStudioPage>();
             builder.Services.AddSingleton<SettingsPage>();
             builder.Services.AddSingleton<PluginSettingsViewModel>();

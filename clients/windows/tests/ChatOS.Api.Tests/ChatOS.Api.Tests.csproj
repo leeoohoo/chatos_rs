@@ -8,6 +8,10 @@
     <ProjectReference Include="..\..\src\ChatOS.Api\ChatOS.Api.csproj" />
     <Compile Include="..\..\src\ChatOS.Desktop\Features\MediaStudio\MediaStudioHistoryStore.cs"
              Link="Desktop\MediaStudioHistoryStore.cs" />
+    <Compile Include="..\..\src\ChatOS.Desktop\Features\MediaStudio\StoryStudioModels.cs"
+             Link="Desktop\StoryStudioModels.cs" />
+    <Compile Include="..\..\src\ChatOS.Desktop\Features\MediaStudio\StoryProjectStore.cs"
+             Link="Desktop\StoryProjectStore.cs" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio">
