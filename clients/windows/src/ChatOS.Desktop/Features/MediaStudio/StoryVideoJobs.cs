@@ -133,6 +133,15 @@ public sealed partial class StoryStudioViewModel
         context.Segment.SetVideo(
             relative, _store.ResolveAssetPath(context.Owner, context.ProjectId, relative)!);
         await PersistCurrentAsync(cancellationToken);
+        try
+        {
+            await ExtractVideoLastFrameCoreAsync(context, context.Segment.VideoPath!, cancellationToken);
+            await PersistCurrentAsync(cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            ErrorMessage = $"视频已保存，但无法自动提取成片末帧：{exception.Message}";
+        }
         VideoProgress = new VideoGenerationProgress("completed", 100, result.Id);
         NotifyBatchPlanChanged();
         NotifyVideoJobChanged();

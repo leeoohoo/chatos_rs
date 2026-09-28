@@ -101,6 +101,26 @@ public sealed class StoryProjectStore
         return relative;
     }
 
+    public async Task<string> ImportFrameBytesAsync(
+        string ownerUserId,
+        Guid projectId,
+        string segmentId,
+        byte[] bytes,
+        string mimeType,
+        CancellationToken cancellationToken = default)
+    {
+        if (bytes.Length is <= 0 or > MaximumImageBytes)
+            throw new InvalidDataException("提取的成片末帧为空或超过 20 MB。");
+        var extension = mimeType.Equals("image/png", StringComparison.OrdinalIgnoreCase) ? ".png" : ".jpg";
+        var relative = Path.Combine(
+            "assets", SafeSegment(segmentId), $"video-final-frame-{Guid.NewGuid():N}{extension}");
+        var destination = ResolveAssetPath(ownerUserId, projectId, relative)
+            ?? throw new InvalidDataException("成片末帧目标路径无效。");
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        await File.WriteAllBytesAsync(destination, bytes, cancellationToken).ConfigureAwait(false);
+        return relative;
+    }
+
     public async Task<IReadOnlyList<StoryPlanningRunDocument>> LoadPlanningRunsAsync(
         string ownerUserId,
         Guid projectId,

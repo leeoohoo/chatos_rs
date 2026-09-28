@@ -65,6 +65,7 @@ public sealed record StorySegmentDocument(
     public string? PendingVideoJobId { get; init; }
     public string? PendingVideoJobStatus { get; init; }
     public string? PendingVideoRequestDigest { get; init; }
+    public string? ActualVideoLastFrameAsset { get; init; }
     public IReadOnlyList<string> ResourceIds { get; init; } = [];
     public string ContinuityIn { get; init; } = string.Empty;
     public string ContinuityOut { get; init; } = string.Empty;
@@ -81,7 +82,8 @@ public sealed record StorySegmentDocument(
             !SafeDigest(PendingVideoRequestDigest) ||
             (PendingVideoJobId is null) != (PendingVideoRequestDigest is null) ||
             PendingVideoJobId is null && PendingVideoJobStatus is not null ||
-            !SafeAsset(FirstFrameAsset) || !SafeAsset(LastFrameAsset) || !SafeAsset(VideoAsset))
+            !SafeAsset(FirstFrameAsset) || !SafeAsset(LastFrameAsset) || !SafeAsset(VideoAsset) ||
+            !SafeAsset(ActualVideoLastFrameAsset))
         {
             throw new InvalidDataException("剧情分段数据无效，请检查标题、提示词、时长和素材。");
         }

@@ -223,6 +223,9 @@ public sealed partial class MediaStudioPage : Page
             await StoryViewModel.ImportLastFrameAsync(path);
     }
 
+    private async void OnExtractStoryVideoLastFrameClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.ExtractSelectedVideoLastFrameAsync();
+
     private async void OnGenerateStoryVideoClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.GenerateVideoAsync();
 

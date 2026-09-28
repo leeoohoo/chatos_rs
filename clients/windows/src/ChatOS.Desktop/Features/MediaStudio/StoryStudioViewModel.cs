@@ -163,6 +163,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanResumeSelectedVideo))]
     [NotifyPropertyChangedFor(nameof(CanAbandonSelectedVideoJob))]
     [NotifyPropertyChangedFor(nameof(SelectedVideoJobLabel))]
+    [NotifyPropertyChangedFor(nameof(CanExtractSelectedVideoLastFrame))]
     [NotifyPropertyChangedFor(nameof(CanImportSegmentAsset))]
     [NotifyPropertyChangedFor(nameof(CanRefineSelectedSegment))]
     [NotifyPropertyChangedFor(nameof(CanApplySegmentRefinement))]
@@ -196,6 +197,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanEditPlanningInputs))]
     [NotifyPropertyChangedFor(nameof(CanResumeSelectedVideo))]
     [NotifyPropertyChangedFor(nameof(CanAbandonSelectedVideoJob))]
+    [NotifyPropertyChangedFor(nameof(CanExtractSelectedVideoLastFrame))]
     private bool _isBusy;
     [ObservableProperty] private string _statusMessage = "剧情项目只保存在本机";
     [ObservableProperty] private string? _errorMessage;
@@ -559,6 +561,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         OnPropertyChanged(nameof(CanResumeSelectedVideo));
         OnPropertyChanged(nameof(CanAbandonSelectedVideoJob));
         OnPropertyChanged(nameof(SelectedVideoJobLabel));
+        OnPropertyChanged(nameof(CanExtractSelectedVideoLastFrame));
         OnPropertyChanged(nameof(CanGenerateResourceImage));
         if (e.PropertyName == nameof(StorySegmentEditor.Seconds))
             OnPropertyChanged(nameof(WorkspaceSummary));
@@ -652,6 +655,14 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         {
             var firstFrame = await LoadFrameAsync(context.Segment.FirstFramePath, cancellationToken);
             if (firstFrame is not null) inputs.Add(firstFrame);
+        }
+        else
+        {
+            var index = Segments.IndexOf(context.Segment);
+            var previousTail = index > 0
+                ? await LoadFrameAsync(Segments[index - 1].ActualVideoLastFramePath, cancellationToken)
+                : null;
+            if (previousTail is not null) inputs.Add(previousTail);
         }
         foreach (var resource in Resources.Where(resource => resourceIds.Contains(resource.Id)).Take(8 - inputs.Count))
         {

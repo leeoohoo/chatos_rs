@@ -21,12 +21,14 @@ public sealed partial class StorySegmentEditor : ObservableObject
         _pendingVideoJobId = document.PendingVideoJobId;
         _pendingVideoJobStatus = document.PendingVideoJobStatus;
         _pendingVideoRequestDigest = document.PendingVideoRequestDigest;
+        _actualVideoLastFrameAsset = document.ActualVideoLastFrameAsset;
         _continuityIn = document.ContinuityIn ?? string.Empty;
         _continuityOut = document.ContinuityOut ?? string.Empty;
         _shotPlan = document.ShotPlan ?? string.Empty;
         FirstFramePath = resolvePath(document.FirstFrameAsset);
         LastFramePath = resolvePath(document.LastFrameAsset);
         VideoPath = resolvePath(document.VideoAsset);
+        ActualVideoLastFramePath = resolvePath(document.ActualVideoLastFrameAsset);
     }
 
     public string Id { get; }
@@ -34,6 +36,7 @@ public sealed partial class StorySegmentEditor : ObservableObject
     public string? FirstFramePath { get; private set; }
     public string? LastFramePath { get; private set; }
     public string? VideoPath { get; private set; }
+    public string? ActualVideoLastFramePath { get; private set; }
     public string FrameStatus => (FirstFramePath, LastFramePath) switch
     {
         ({ Length: > 0 }, { Length: > 0 }) => "首尾帧已就绪",
@@ -68,6 +71,7 @@ public sealed partial class StorySegmentEditor : ObservableObject
     private string? _pendingVideoJobId;
     private string? _pendingVideoJobStatus;
     private string? _pendingVideoRequestDigest;
+    private string? _actualVideoLastFrameAsset;
 
     public StorySegmentDocument ToDocument() => new(
         Id,
@@ -85,6 +89,7 @@ public sealed partial class StorySegmentEditor : ObservableObject
         PendingVideoJobId = _pendingVideoJobId,
         PendingVideoJobStatus = _pendingVideoJobStatus,
         PendingVideoRequestDigest = _pendingVideoRequestDigest,
+        ActualVideoLastFrameAsset = _actualVideoLastFrameAsset,
         ResourceIds = ParseResourceIds(ResourceIdsText),
         ContinuityIn = ContinuityIn.Trim(),
         ContinuityOut = ContinuityOut.Trim(),
@@ -123,9 +128,19 @@ public sealed partial class StorySegmentEditor : ObservableObject
     {
         _videoAsset = relativePath;
         VideoPath = fullPath;
+        _actualVideoLastFrameAsset = null;
+        ActualVideoLastFramePath = null;
         ClearPendingVideoJob();
         OnPropertyChanged(nameof(VideoPath));
+        OnPropertyChanged(nameof(ActualVideoLastFramePath));
         OnPropertyChanged(nameof(VideoStatus));
+    }
+
+    public void SetActualVideoLastFrame(string relativePath, string fullPath)
+    {
+        _actualVideoLastFrameAsset = relativePath;
+        ActualVideoLastFramePath = fullPath;
+        OnPropertyChanged(nameof(ActualVideoLastFramePath));
     }
 
     public bool SetPendingVideoJob(string jobId, string status, string digest)

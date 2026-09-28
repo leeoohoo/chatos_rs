@@ -645,7 +645,7 @@
                                                         <TextBox Header="画面提示词" AcceptsReturn="True" MaxLength="7000" MinHeight="90" Text="{Binding ImagePrompt, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                         <TextBox Header="关联素材 ID（逗号分隔）" PlaceholderText="例如 character-lead, scene-home" Text="{Binding ResourceIdsText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                                         <Grid ColumnSpacing="8">
-                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                                             <StackPanel Spacing="6">
                                                                 <Button Click="OnGenerateStoryFirstFrameClick" Content="生成首帧" HorizontalAlignment="Stretch" IsEnabled="{x:Bind StoryViewModel.CanGenerateFrame, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                                 <Button Click="OnImportStoryFirstFrameClick" Content="导入首帧" HorizontalAlignment="Stretch" IsEnabled="{x:Bind StoryViewModel.CanImportSegmentAsset, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
@@ -654,11 +654,16 @@
                                                                 <Button Click="OnGenerateStoryLastFrameClick" Content="生成尾帧" HorizontalAlignment="Stretch" IsEnabled="{x:Bind StoryViewModel.CanGenerateFrame, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                                 <Button Click="OnImportStoryLastFrameClick" Content="导入尾帧" HorizontalAlignment="Stretch" IsEnabled="{x:Bind StoryViewModel.CanImportSegmentAsset, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                             </StackPanel>
+                                                            <StackPanel Grid.Column="2" Spacing="6">
+                                                                <TextBlock Text="成片末帧" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                <Button Click="OnExtractStoryVideoLastFrameClick" Content="从视频提取" HorizontalAlignment="Stretch" IsEnabled="{x:Bind StoryViewModel.CanExtractSelectedVideoLastFrame, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                            </StackPanel>
                                                         </Grid>
                                                         <Grid ColumnSpacing="10">
-                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                                             <Border Height="135" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10"><Image Source="{Binding FirstFramePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="Uniform" /></Border>
                                                             <Border Grid.Column="1" Height="135" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10"><Image Source="{Binding LastFramePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="Uniform" /></Border>
+                                                            <Border Grid.Column="2" Height="135" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10"><Image Source="{Binding ActualVideoLastFramePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="Uniform" /></Border>
                                                         </Grid>
                                                         <TextBox Header="视频提示词" AcceptsReturn="True" MaxLength="7000" MinHeight="90" Text="{Binding VideoPrompt, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                         <Grid ColumnSpacing="8">

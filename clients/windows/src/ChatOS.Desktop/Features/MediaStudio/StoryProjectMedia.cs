@@ -105,6 +105,9 @@ public sealed partial class StoryStudioViewModel
             if (segment.LastFramePath is { Length: > 0 } last && File.Exists(last))
                 ProjectImages.Add(new StoryProjectImageItem(
                     segment.Title, $"第 {index + 1} 段尾帧", last, null, segment));
+            if (segment.ActualVideoLastFramePath is { Length: > 0 } actualLast && File.Exists(actualLast))
+                ProjectImages.Add(new StoryProjectImageItem(
+                    segment.Title, $"第 {index + 1} 段成片末帧", actualLast, null, segment));
             if (segment.VideoPath is { Length: > 0 } path && File.Exists(path))
                 ProjectVideos.Add(new StoryProjectVideoItem(segment, index + 1));
         }
