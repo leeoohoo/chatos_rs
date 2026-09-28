@@ -436,7 +436,11 @@
                                                     <TextBox Header="名称" MaxLength="200" Text="{Binding Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                                     <TextBox Header="文字画像 / 说明" AcceptsReturn="True" MaxLength="8000" MinHeight="70" Text="{Binding Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                     <TextBox Header="参考图提示词" AcceptsReturn="True" MaxLength="7000" MinHeight="70" Text="{Binding ImagePrompt, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
-                                                    <Button Click="OnGenerateStoryResourceImageClick" Content="生成一致性参考图" IsEnabled="{x:Bind StoryViewModel.CanGenerateResourceImage, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                    <Grid ColumnSpacing="8">
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                        <Button Click="OnGenerateStoryResourceImageClick" Content="生成参考图" IsEnabled="{x:Bind StoryViewModel.CanGenerateResourceImage, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                        <Button Grid.Column="1" Click="OnImportStoryResourceImageClick" Content="导入本地图片" IsEnabled="{x:Bind StoryViewModel.CanImportResourceAsset, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                    </Grid>
                                                     <Border Height="150" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10"><Image Source="{Binding ImagePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="Uniform" /></Border>
                                                     <TextBlock Text="素材 ID" Style="{StaticResource ChatOSCaptionTextStyle}" /><TextBlock IsTextSelectionEnabled="True" Text="{Binding Id}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                 </StackPanel>
@@ -520,8 +524,14 @@
                                                         <TextBox Header="关联素材 ID（逗号分隔）" PlaceholderText="例如 character-lead, scene-home" Text="{Binding ResourceIdsText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                                         <Grid ColumnSpacing="8">
                                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                                            <Button Click="OnGenerateStoryFirstFrameClick" Content="生成首帧" IsEnabled="{x:Bind StoryViewModel.CanGenerateFrame, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
-                                                            <Button Grid.Column="1" Click="OnGenerateStoryLastFrameClick" Content="生成尾帧" IsEnabled="{x:Bind StoryViewModel.CanGenerateFrame, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                            <StackPanel Spacing="6">
+                                                                <Button Click="OnGenerateStoryFirstFrameClick" Content="生成首帧" HorizontalAlignment="Stretch" IsEnabled="{x:Bind StoryViewModel.CanGenerateFrame, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                                <Button Click="OnImportStoryFirstFrameClick" Content="导入首帧" HorizontalAlignment="Stretch" IsEnabled="{x:Bind StoryViewModel.CanImportSegmentAsset, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                            </StackPanel>
+                                                            <StackPanel Grid.Column="1" Spacing="6">
+                                                                <Button Click="OnGenerateStoryLastFrameClick" Content="生成尾帧" HorizontalAlignment="Stretch" IsEnabled="{x:Bind StoryViewModel.CanGenerateFrame, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                                <Button Click="OnImportStoryLastFrameClick" Content="导入尾帧" HorizontalAlignment="Stretch" IsEnabled="{x:Bind StoryViewModel.CanImportSegmentAsset, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                            </StackPanel>
                                                         </Grid>
                                                         <Grid ColumnSpacing="10">
                                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
@@ -530,9 +540,10 @@
                                                         </Grid>
                                                         <TextBox Header="视频提示词" AcceptsReturn="True" MaxLength="7000" MinHeight="90" Text="{Binding VideoPrompt, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                         <Grid ColumnSpacing="8">
-                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                             <Button Click="OnGenerateStoryVideoClick" Content="生成该段视频" IsEnabled="{x:Bind StoryViewModel.CanGenerateVideo, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
-                                                            <Button Grid.Column="1" Click="OnCancelStoryGenerationClick" Content="停止等待" IsEnabled="{x:Bind StoryViewModel.IsBusy, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                            <Button Grid.Column="1" Click="OnImportStoryVideoClick" Content="导入视频" IsEnabled="{x:Bind StoryViewModel.CanImportSegmentAsset, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                            <Button Grid.Column="2" Click="OnCancelStoryGenerationClick" Content="停止等待" IsEnabled="{x:Bind StoryViewModel.IsBusy, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                         </Grid>
                                                         <TextBlock Text="{x:Bind StoryViewModel.VideoProgressLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                         <MediaPlayerElement x:Name="StoryVideoPlayer" Height="220" AreTransportControlsEnabled="True" AutoPlay="False" Stretch="Uniform" />

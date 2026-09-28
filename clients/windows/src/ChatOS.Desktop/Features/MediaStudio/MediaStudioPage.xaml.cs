@@ -90,20 +90,67 @@ public sealed partial class MediaStudioPage : Page
     private async void OnGenerateStoryResourceImageClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.GenerateResourceImageAsync();
 
+    private async void OnImportStoryResourceImageClick(object sender, RoutedEventArgs e)
+    {
+        if (await PickStoryAssetAsync(false) is { } path)
+            await StoryViewModel.ImportResourceImageAsync(path);
+    }
+
     private async void OnGenerateStoryFirstFrameClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.GenerateFirstFrameAsync();
+
+    private async void OnImportStoryFirstFrameClick(object sender, RoutedEventArgs e)
+    {
+        if (await PickStoryAssetAsync(false) is { } path)
+            await StoryViewModel.ImportFirstFrameAsync(path);
+    }
 
     private async void OnGenerateStoryLastFrameClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.GenerateLastFrameAsync();
 
+    private async void OnImportStoryLastFrameClick(object sender, RoutedEventArgs e)
+    {
+        if (await PickStoryAssetAsync(false) is { } path)
+            await StoryViewModel.ImportLastFrameAsync(path);
+    }
+
     private async void OnGenerateStoryVideoClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.GenerateVideoAsync();
+
+    private async void OnImportStoryVideoClick(object sender, RoutedEventArgs e)
+    {
+        if (await PickStoryAssetAsync(true) is { } path)
+            await StoryViewModel.ImportVideoAsync(path);
+    }
 
     private async void OnRunStoryBatchClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.RunBatchAsync();
 
     private void OnCancelStoryGenerationClick(object sender, RoutedEventArgs e) =>
         StoryViewModel.CancelGeneration();
+
+    private static async Task<string?> PickStoryAssetAsync(bool video)
+    {
+        var window = (Application.Current as App)?.MainWindow;
+        if (window is null) return null;
+        var picker = new FileOpenPicker();
+        if (video)
+        {
+            picker.FileTypeFilter.Add(".mp4");
+            picker.FileTypeFilter.Add(".mov");
+        }
+        else
+        {
+            picker.FileTypeFilter.Add(".png");
+            picker.FileTypeFilter.Add(".jpg");
+            picker.FileTypeFilter.Add(".jpeg");
+            picker.FileTypeFilter.Add(".webp");
+        }
+        WinRT.Interop.InitializeWithWindow.Initialize(
+            picker,
+            WinRT.Interop.WindowNative.GetWindowHandle(window));
+        return (await picker.PickSingleFileAsync())?.Path;
+    }
 
     private async void OnReloadModelsClick(object sender, RoutedEventArgs e) =>
         await ViewModel.ReloadModelsAsync();

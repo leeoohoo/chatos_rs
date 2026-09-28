@@ -223,9 +223,11 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanGenerateFrame))]
     [NotifyPropertyChangedFor(nameof(CanGenerateVideo))]
+    [NotifyPropertyChangedFor(nameof(CanImportSegmentAsset))]
     private StorySegmentEditor? _selectedSegment;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanGenerateResourceImage))]
+    [NotifyPropertyChangedFor(nameof(CanImportResourceAsset))]
     private StoryResourceEditor? _selectedResource;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanCreate))]
@@ -236,6 +238,8 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanGenerateVideo))]
     [NotifyPropertyChangedFor(nameof(CanGenerateResourceImage))]
     [NotifyPropertyChangedFor(nameof(CanStartBatch))]
+    [NotifyPropertyChangedFor(nameof(CanImportResourceAsset))]
+    [NotifyPropertyChangedFor(nameof(CanImportSegmentAsset))]
     private bool _isBusy;
     [ObservableProperty] private string _statusMessage = "剧情项目只保存在本机";
     [ObservableProperty] private string? _errorMessage;
