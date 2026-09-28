@@ -61,12 +61,16 @@ public sealed record StorySegmentDocument(
     string? VideoAsset)
 {
     public IReadOnlyList<string> ResourceIds { get; init; } = [];
+    public string ContinuityIn { get; init; } = string.Empty;
+    public string ContinuityOut { get; init; } = string.Empty;
+    public string ShotPlan { get; init; } = string.Empty;
 
     public void Validate()
     {
         if (string.IsNullOrWhiteSpace(Id) || Id.Length > 80 ||
             string.IsNullOrWhiteSpace(Title) || Title.Length > 200 ||
             Narrative.Length > 8_000 || ImagePrompt.Length > 7_000 || VideoPrompt.Length > 7_000 ||
+            ContinuityIn.Length > 2_000 || ContinuityOut.Length > 2_000 || ShotPlan.Length > 8_000 ||
             Seconds is < 2 or > 30 || ResourceIds is null ||
             !SafeAsset(FirstFrameAsset) || !SafeAsset(LastFrameAsset) || !SafeAsset(VideoAsset))
         {

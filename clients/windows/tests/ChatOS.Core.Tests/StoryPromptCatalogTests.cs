@@ -28,13 +28,14 @@ public sealed class StoryPromptCatalogTests
         var resource = StoryPromptCatalog.RenderResourceImage(
             "电影感", "红色风衣", "角色", "阿青", "16:9");
         var lastFrame = StoryPromptCatalog.RenderFrame(
-            "电影感", "走到门前", true, "16:9");
+            "电影感", "走到门前", true, "16:9", "上一段停在门外");
 
         Assert.Contains("最多分段：80", planning);
         Assert.Contains("剧情原文：\n原文", planning);
         Assert.Contains("角色“阿青”", resource);
         Assert.Contains("红色风衣", resource);
         Assert.Contains("尾帧", lastFrame);
+        Assert.Contains("上一段停在门外", lastFrame);
         Assert.Equal("镜头推进", StoryPromptCatalog.RenderVideo("  镜头推进  "));
     }
 }

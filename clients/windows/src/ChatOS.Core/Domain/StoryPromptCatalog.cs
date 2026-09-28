@@ -39,17 +39,17 @@ public static class StoryPromptCatalog
             FirstFrameKey,
             "分段首帧",
             "结合分段所关联的素材参考图生成首帧。",
-            "{visual_style}\n{segment_image_prompt}\n生成该分段的首帧，画面比例 {ratio}。"),
+            "{visual_style}\n{segment_image_prompt}\n生成该分段的首帧，画面比例 {ratio}。\n连续性上下文：\n{continuity_context}"),
         new(
             LastFrameKey,
             "分段尾帧",
             "结合首帧和分段所关联的素材参考图生成尾帧。",
-            "{visual_style}\n{segment_image_prompt}\n生成该分段的尾帧，画面比例 {ratio}。"),
+            "{visual_style}\n{segment_image_prompt}\n生成该分段的尾帧，画面比例 {ratio}。\n连续性上下文：\n{continuity_context}"),
         new(
             VideoKey,
             "分段视频",
             "把分段视频提示词及已有首尾帧提交给所选视频模型。",
-            "{segment_video_prompt}"),
+            "{segment_video_prompt}\n连续性上下文：\n{continuity_context}"),
     ];
 
     public static string RenderPlanningUser(StoryPlanningRequest request) =>
@@ -67,8 +67,17 @@ public static class StoryPromptCatalog
         string visualStyle,
         string imagePrompt,
         bool lastFrame,
-        string ratio) =>
-        $"{visualStyle}\n{imagePrompt.Trim()}\n生成该分段的{(lastFrame ? "尾帧" : "首帧")}，画面比例 {ratio}。";
+        string ratio,
+        string continuityContext = "") =>
+        JoinContext(
+            $"{visualStyle}\n{imagePrompt.Trim()}\n生成该分段的{(lastFrame ? "尾帧" : "首帧")}，画面比例 {ratio}。",
+            continuityContext);
 
-    public static string RenderVideo(string videoPrompt) => videoPrompt.Trim();
+    public static string RenderVideo(string videoPrompt, string continuityContext = "") =>
+        JoinContext(videoPrompt.Trim(), continuityContext);
+
+    private static string JoinContext(string prompt, string continuityContext) =>
+        string.IsNullOrWhiteSpace(continuityContext)
+            ? prompt
+            : $"{prompt}\n连续性上下文：\n{continuityContext.Trim()}";
 }

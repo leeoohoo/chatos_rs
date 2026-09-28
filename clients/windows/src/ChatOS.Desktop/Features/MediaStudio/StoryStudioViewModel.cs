@@ -5,105 +5,6 @@ using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace ChatOS.Desktop.Features.MediaStudio;
 
-public sealed partial class StorySegmentEditor : ObservableObject
-{
-    public StorySegmentEditor(StorySegmentDocument document, Func<string?, string?> resolvePath)
-    {
-        Id = document.Id;
-        _title = document.Title;
-        _narrative = document.Narrative;
-        _imagePrompt = document.ImagePrompt;
-        _videoPrompt = document.VideoPrompt;
-        _seconds = document.Seconds;
-        _firstFrameAsset = document.FirstFrameAsset;
-        _lastFrameAsset = document.LastFrameAsset;
-        _videoAsset = document.VideoAsset;
-        _resourceIdsText = string.Join(", ", document.ResourceIds);
-        FirstFramePath = resolvePath(document.FirstFrameAsset);
-        LastFramePath = resolvePath(document.LastFrameAsset);
-        VideoPath = resolvePath(document.VideoAsset);
-    }
-
-    public string Id { get; }
-    public string NumberLabel { get; internal set; } = string.Empty;
-    public string? FirstFramePath { get; private set; }
-    public string? LastFramePath { get; private set; }
-    public string? VideoPath { get; private set; }
-    public string FrameStatus => (FirstFramePath, LastFramePath) switch
-    {
-        ({ Length: > 0 }, { Length: > 0 }) => "首尾帧已就绪",
-        ({ Length: > 0 }, _) => "首帧已就绪",
-        _ => "尚未生成画面",
-    };
-    public string VideoStatus => VideoPath is { Length: > 0 } ? "视频已完成" : "视频待生成";
-
-    [ObservableProperty] private string _title;
-    [ObservableProperty] private string _narrative;
-    [ObservableProperty] private string _imagePrompt;
-    [ObservableProperty] private string _videoPrompt;
-    [ObservableProperty] private int _seconds;
-    [ObservableProperty] private string _resourceIdsText;
-    private string? _firstFrameAsset;
-    private string? _lastFrameAsset;
-    private string? _videoAsset;
-
-    public StorySegmentDocument ToDocument() => new(
-        Id,
-        Title.Trim(),
-        Narrative.Trim(),
-        ImagePrompt.Trim(),
-        VideoPrompt.Trim(),
-        Seconds,
-        _firstFrameAsset,
-        _lastFrameAsset,
-        _videoAsset)
-    {
-        ResourceIds = ParseResourceIds(ResourceIdsText),
-    };
-
-    internal void RemoveResource(string resourceId)
-    {
-        ResourceIdsText = string.Join(", ", ParseResourceIds(ResourceIdsText)
-            .Where(id => !string.Equals(id, resourceId, StringComparison.Ordinal)));
-    }
-
-    private static IReadOnlyList<string> ParseResourceIds(string value) => value
-        .Split([',', '，', ';', '；'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-        .Distinct(StringComparer.Ordinal)
-        .ToArray();
-
-    public void SetFrame(bool lastFrame, string relativePath, string fullPath)
-    {
-        if (lastFrame)
-        {
-            _lastFrameAsset = relativePath;
-            LastFramePath = fullPath;
-            OnPropertyChanged(nameof(LastFramePath));
-        }
-        else
-        {
-            _firstFrameAsset = relativePath;
-            FirstFramePath = fullPath;
-            OnPropertyChanged(nameof(FirstFramePath));
-        }
-        OnPropertyChanged(nameof(FrameStatus));
-    }
-
-    public void SetVideo(string relativePath, string fullPath)
-    {
-        _videoAsset = relativePath;
-        VideoPath = fullPath;
-        OnPropertyChanged(nameof(VideoPath));
-        OnPropertyChanged(nameof(VideoStatus));
-    }
-
-    internal void SetNumberLabel(string value)
-    {
-        NumberLabel = value;
-        OnPropertyChanged(nameof(NumberLabel));
-    }
-}
-
 public sealed partial class StoryStudioViewModel : ObservableObject
 {
     private const int MaximumImageBytes = 20 * 1024 * 1024;
@@ -135,6 +36,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             NotifyBatchPlanChanged();
             RefreshPromptAudit();
             RefreshStoryRelations();
+            RefreshContinuityAudit();
         };
         Resources.CollectionChanged += (_, _) =>
         {
@@ -142,6 +44,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             NotifyBatchPlanChanged();
             RefreshPromptAudit();
             RefreshStoryRelations();
+            RefreshContinuityAudit();
         };
     }
 
@@ -240,6 +143,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanStartBatch))]
     [NotifyPropertyChangedFor(nameof(CanImportResourceAsset))]
     [NotifyPropertyChangedFor(nameof(CanImportSegmentAsset))]
+    [NotifyPropertyChangedFor(nameof(CanAutoFillContinuity))]
     private bool _isBusy;
     [ObservableProperty] private string _statusMessage = "剧情项目只保存在本机";
     [ObservableProperty] private string? _errorMessage;
@@ -393,6 +297,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
                 4, null, null, null), _ => null));
         }
         SelectedSegment = Segments.FirstOrDefault();
+        FillMissingContinuity();
         StatusMessage = chunks.Length == 0 ? "原文中没有可分段内容" : $"已生成 {chunks.Length} 个可编辑分段";
     }
 
@@ -442,6 +347,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             }
             SelectedSegment = Segments.FirstOrDefault();
             SelectedResource = Resources.FirstOrDefault();
+            FillMissingContinuity();
             await PersistCurrentAsync(cancellationToken);
             committed = true;
             StatusMessage = $"AI 已完成全剧规划，共 {Segments.Count} 个分段";
@@ -656,6 +562,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         NotifyBatchPlanChanged();
         RefreshPromptAudit();
         RefreshStoryRelations();
+        RefreshContinuityAudit();
     }
 
     private void OnWorkspaceChanged()
@@ -670,6 +577,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         NotifyBatchPlanChanged();
         RefreshPromptAudit();
         RefreshStoryRelations();
+        RefreshContinuityAudit();
     }
 
     private async Task GenerateFrameCoreAsync(
@@ -680,7 +588,11 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     {
         EnsureContext(context);
         var prompt = StoryPromptCatalog.RenderFrame(
-            VisualStyle, context.Segment.ImagePrompt, lastFrame, ProjectRatio);
+            VisualStyle,
+            context.Segment.ImagePrompt,
+            lastFrame,
+            ProjectRatio,
+            BuildContinuityContext(context.Segment));
         var references = await LoadSegmentReferencesAsync(context, lastFrame, cancellationToken);
         var result = await _media.GenerateImageAsync(
             new ImageGenerationRequest(imageModel.Id, prompt, ImageSize(ProjectRatio), 1, references),
@@ -709,7 +621,9 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         var last = profile.SupportsLastFrame
             ? await LoadFrameAsync(context.Segment.LastFramePath, cancellationToken)
             : null;
-        var prompt = StoryPromptCatalog.RenderVideo(context.Segment.VideoPrompt);
+        var prompt = StoryPromptCatalog.RenderVideo(
+            context.Segment.VideoPrompt,
+            BuildContinuityContext(context.Segment));
         var result = await _media.GenerateVideoAsync(
             new VideoGenerationRequest(
                 videoModel.Id, prompt, profile.Sizes[0], seconds,

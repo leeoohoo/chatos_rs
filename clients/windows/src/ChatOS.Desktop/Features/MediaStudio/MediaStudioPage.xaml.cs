@@ -87,6 +87,15 @@ public sealed partial class MediaStudioPage : Page
             StoryViewModel.SelectRelationSegment(link);
     }
 
+    private async void OnAutoFillStoryContinuityClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.AutoFillContinuityAsync();
+
+    private void OnStoryContinuityIssueClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: StoryContinuityIssue issue })
+            StoryViewModel.SelectContinuityIssue(issue);
+    }
+
     private async void OnGenerateStoryResourceImageClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.GenerateResourceImageAsync();
 

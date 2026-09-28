@@ -64,6 +64,7 @@ public sealed partial class StoryStudioViewModel
         NotifyBatchPlanChanged();
         RefreshPromptAudit();
         RefreshStoryRelations();
+        RefreshContinuityAudit();
     }
 
     public void AddResource()

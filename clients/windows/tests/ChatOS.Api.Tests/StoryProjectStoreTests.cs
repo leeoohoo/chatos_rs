@@ -20,6 +20,9 @@ public sealed class StoryProjectStoreTests
         var restoredSegment = Assert.Single(restored.Segments);
         Assert.Equal("segment-1", restoredSegment.Id);
         Assert.Equal(new[] { "hero" }, restoredSegment.ResourceIds);
+        Assert.Equal("Enter from the hall", restoredSegment.ContinuityIn);
+        Assert.Equal("Stop beside the window", restoredSegment.ContinuityOut);
+        Assert.Equal("0-4s: dolly in", restoredSegment.ShotPlan);
         Assert.Equal("hero", Assert.Single(restored.Resources).Id);
         Assert.Empty(await store.LoadAsync("owner-b"));
     }
@@ -104,7 +107,12 @@ public sealed class StoryProjectStoreTests
             Guid.NewGuid(), StoryProjectDocument.CurrentVersion, title, "Description", "Source", "Summary", "Style",
             "16:9", "text-model", "image-model", "video-model",
             [new StorySegmentDocument("segment-1", "Shot", "Narrative", "Image", "Video", 4, null, null, null)
-                { ResourceIds = ["hero"] }],
+                {
+                    ResourceIds = ["hero"],
+                    ContinuityIn = "Enter from the hall",
+                    ContinuityOut = "Stop beside the window",
+                    ShotPlan = "0-4s: dolly in",
+                }],
             now, now)
         {
             Resources = [new StoryResourceDocument("hero", StoryResourceKind.Character, "Hero", "Lead", "Hero portrait", null)],

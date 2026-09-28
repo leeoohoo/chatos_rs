@@ -469,6 +469,25 @@
                                                         </ItemsControl>
                                                     </StackPanel>
                                                 </Expander>
+                                                <Expander Header="{x:Bind StoryViewModel.ContinuitySummary, Mode=OneWay}">
+                                                    <StackPanel Padding="0,8,0,0" Spacing="8">
+                                                        <Button Click="OnAutoFillStoryContinuityClick" Content="补齐缺失衔接和基础镜头计划" HorizontalAlignment="Stretch" IsEnabled="{x:Bind StoryViewModel.CanAutoFillContinuity, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                        <TextBlock Text="检查结果会随编辑实时更新；点击问题可定位分段。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        <ItemsControl ItemsSource="{x:Bind StoryViewModel.ContinuityIssues}">
+                                                            <ItemsControl.ItemTemplate>
+                                                                <DataTemplate x:DataType="media:StoryContinuityIssue">
+                                                                    <Button Margin="0,0,0,6" Click="OnStoryContinuityIssueClick" HorizontalAlignment="Stretch" Style="{StaticResource ChatOSSecondaryButtonStyle}">
+                                                                        <StackPanel HorizontalAlignment="Left" Spacing="2">
+                                                                            <TextBlock Text="{x:Bind SegmentLabel}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                                            <TextBlock Text="{x:Bind Title}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                            <TextBlock Text="{x:Bind Detail}" MaxLines="3" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                        </StackPanel>
+                                                                    </Button>
+                                                                </DataTemplate>
+                                                            </ItemsControl.ItemTemplate>
+                                                        </ItemsControl>
+                                                    </StackPanel>
+                                                </Expander>
                                             </StackPanel>
                                         </ScrollViewer>
 
@@ -518,8 +537,11 @@
                                                         <Grid ColumnSpacing="10">
                                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
                                                             <TextBox Header="剧情内容" AcceptsReturn="True" MaxLength="8000" MinHeight="100" Text="{Binding Narrative, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
-                                                            <NumberBox Grid.Column="1" Header="时长（秒）" Minimum="2" Maximum="30" SpinButtonPlacementMode="Compact" Value="{Binding Seconds, Mode=TwoWay}" />
+                                                            <NumberBox Grid.Column="1" Header="时长（秒）" Minimum="2" Maximum="15" SpinButtonPlacementMode="Compact" Value="{Binding Seconds, Mode=TwoWay}" />
                                                         </Grid>
+                                                        <TextBox Header="衔接起点" AcceptsReturn="True" MaxLength="2000" MinHeight="60" PlaceholderText="人物位置、动作、服装、光线及上一段延续状态" Text="{Binding ContinuityIn, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
+                                                        <TextBox Header="镜头计划" AcceptsReturn="True" MaxLength="8000" MinHeight="75" PlaceholderText="按时间描述动作、构图与镜头运动" Text="{Binding ShotPlan, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
+                                                        <TextBox Header="衔接终点" AcceptsReturn="True" MaxLength="2000" MinHeight="60" PlaceholderText="本段结束时留给下一段的人物与画面状态" Text="{Binding ContinuityOut, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                         <TextBox Header="画面提示词" AcceptsReturn="True" MaxLength="7000" MinHeight="90" Text="{Binding ImagePrompt, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                         <TextBox Header="关联素材 ID（逗号分隔）" PlaceholderText="例如 character-lead, scene-home" Text="{Binding ResourceIdsText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                                         <Grid ColumnSpacing="8">

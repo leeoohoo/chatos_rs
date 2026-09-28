@@ -59,15 +59,19 @@ public sealed partial class StoryStudioViewModel
                 VisualStyle,
                 firstSegment.ImagePrompt,
                 false,
-                ProjectRatio),
+                ProjectRatio,
+                BuildContinuityContext(firstSegment)),
         StoryPromptCatalog.LastFrameKey when SelectedSegment is { } lastSegment =>
             StoryPromptCatalog.RenderFrame(
                 VisualStyle,
                 lastSegment.ImagePrompt,
                 true,
-                ProjectRatio),
+                ProjectRatio,
+                BuildContinuityContext(lastSegment)),
         StoryPromptCatalog.VideoKey when SelectedSegment is { } videoSegment =>
-            StoryPromptCatalog.RenderVideo(videoSegment.VideoPrompt),
+            StoryPromptCatalog.RenderVideo(
+                videoSegment.VideoPrompt,
+                BuildContinuityContext(videoSegment)),
         _ => definition.Template,
     };
 
