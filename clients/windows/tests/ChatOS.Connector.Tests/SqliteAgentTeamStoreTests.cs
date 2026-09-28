@@ -1,6 +1,7 @@
 using ChatOS.Connector.AgentTeams;
 using ChatOS.Connector.Persistence;
 using ChatOS.Core.Domain;
+using Microsoft.Data.Sqlite;
 
 namespace ChatOS.Connector.Tests;
 
@@ -17,10 +18,20 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
         _store = new SqliteAgentTeamStore(database);
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
-        if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true);
-        return Task.CompletedTask;
+        SqliteConnection.ClearAllPools();
+        for (var attempt = 1; Directory.Exists(_directory); attempt++)
+        {
+            try
+            {
+                Directory.Delete(_directory, recursive: true);
+            }
+            catch (IOException) when (attempt < 6)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(50 * attempt));
+            }
+        }
     }
 
     [Fact]
