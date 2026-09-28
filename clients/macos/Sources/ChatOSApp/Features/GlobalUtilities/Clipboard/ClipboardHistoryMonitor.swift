@@ -10,7 +10,7 @@ final class ClipboardHistoryMonitor {
 
     var onEntryStored: ((ClipboardHistoryEntry) -> Void)?
 
-    private let store: ClipboardHistoryStore
+    private let processor: ClipboardCaptureProcessor
     private var monitorTask: Task<Void, Never>?
     private var lastChangeCount = NSPasteboard.general.changeCount
     private let maximumPayloadBytes = 25 * 1_024 * 1_024
@@ -20,7 +20,7 @@ final class ClipboardHistoryMonitor {
     private var cancellables = Set<AnyCancellable>()
 
     init(store: ClipboardHistoryStore) {
-        self.store = store
+        self.processor = ClipboardCaptureProcessor(store: store)
         let workspaceNotifications = NSWorkspace.shared.notificationCenter
         workspaceNotifications.publisher(for: NSWorkspace.willSleepNotification)
             .receive(on: RunLoop.main)
@@ -82,19 +82,21 @@ final class ClipboardHistoryMonitor {
         lastChangeCount = pasteboard.changeCount
         guard pasteboard.string(forType: Self.restoredMarkerType) == nil,
               !containsSensitiveType(pasteboard.types ?? []),
-              let captured = capture(pasteboard) else {
+              let source = captureSource(pasteboard) else {
             return true
         }
 
         let sourceBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        Task { [weak self, store] in
+        let processor = processor
+        let maximumPayloadBytes = maximumPayloadBytes
+        Task { [weak self] in
             do {
-                let entry = try await store.add(
-                    payload: captured.payload,
-                    contentHash: captured.hash,
-                    preview: captured.preview,
-                    sourceBundleID: sourceBundleID
-                )
+                guard let entry = try await processor.store(
+                    source,
+                    sourceBundleID: sourceBundleID,
+                    maximumPayloadBytes: maximumPayloadBytes
+                ) else { return }
+                guard !Task.isCancelled else { return }
                 self?.onEntryStored?(entry)
             } catch {
                 // Clipboard contents are private. Do not log payloads or previews here.
@@ -103,23 +105,14 @@ final class ClipboardHistoryMonitor {
         return true
     }
 
-    private func capture(_ pasteboard: NSPasteboard) -> CapturedClipboardPayload? {
+    private func captureSource(_ pasteboard: NSPasteboard) -> ClipboardCaptureSource? {
         if let objects = pasteboard.readObjects(
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
         ), !objects.isEmpty {
             let values = objects.compactMap { ($0 as? NSURL).map { $0 as URL } }
             guard values.count == objects.count else { return nil }
-            let sortedPaths = values.map(\.standardizedFileURL.path).sorted()
-            guard let data = try? JSONEncoder().encode(sortedPaths), data.count <= maximumPayloadBytes else {
-                return nil
-            }
-            let preview = values.prefix(3).map(\.lastPathComponent).joined(separator: ", ")
-            return CapturedClipboardPayload(
-                payload: .files(values),
-                hash: hash(prefix: "files", data: data),
-                preview: preview
-            )
+            return .files(values)
         }
 
         let imageTypes: [NSPasteboard.PasteboardType] = [
@@ -129,37 +122,16 @@ final class ClipboardHistoryMonitor {
         ]
         for type in imageTypes {
             if let data = pasteboard.data(forType: type), data.count <= maximumPayloadBytes {
-                return CapturedClipboardPayload(
-                    payload: .image(data: data, pasteboardType: type.rawValue),
-                    hash: hash(prefix: type.rawValue, data: data),
-                    preview: nil
-                )
+                return .image(data: data, pasteboardType: type.rawValue)
             }
         }
 
-        if let value = pasteboard.string(forType: .URL),
-           let url = URL(string: value),
-           let data = value.data(using: .utf8),
-           data.count <= maximumPayloadBytes {
-            return CapturedClipboardPayload(
-                payload: .url(url),
-                hash: hash(prefix: "url", data: data),
-                preview: value
-            )
+        if let value = pasteboard.string(forType: .URL) {
+            return .url(value)
         }
 
-        if let value = pasteboard.string(forType: .string),
-           let data = value.data(using: .utf8),
-           !data.isEmpty,
-           data.count <= maximumPayloadBytes {
-            let preview = value
-                .replacingOccurrences(of: "\n", with: " ")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return CapturedClipboardPayload(
-                payload: .text(value),
-                hash: hash(prefix: "text", data: data),
-                preview: String(preview.prefix(360))
-            )
+        if let value = pasteboard.string(forType: .string) {
+            return .text(value)
         }
         return nil
     }
@@ -178,13 +150,6 @@ final class ClipboardHistoryMonitor {
             let value = type.rawValue.lowercased()
             return blockedFragments.contains(where: value.contains)
         }
-    }
-
-    private func hash(prefix: String, data: Data) -> String {
-        var input = Data(prefix.utf8)
-        input.append(0)
-        input.append(data)
-        return SHA256.hash(data: input).map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -210,8 +175,105 @@ enum ClipboardPollingPolicy {
     }
 }
 
-private struct CapturedClipboardPayload {
+enum ClipboardCaptureSource: Sendable {
+    case files([URL])
+    case image(data: Data, pasteboardType: String)
+    case url(String)
+    case text(String)
+}
+
+struct PreparedClipboardPayload: Sendable {
     let payload: ClipboardHistoryPayload
     let hash: String
     let preview: String?
+}
+
+enum ClipboardPayloadPreparation {
+    static func prepare(
+        _ source: ClipboardCaptureSource,
+        maximumPayloadBytes: Int
+    ) -> PreparedClipboardPayload? {
+        switch source {
+        case let .files(values):
+            let sortedPaths = values.map(\.standardizedFileURL.path).sorted()
+            guard let data = try? JSONEncoder().encode(sortedPaths),
+                  data.count <= maximumPayloadBytes else {
+                return nil
+            }
+            return PreparedClipboardPayload(
+                payload: .files(values),
+                hash: hash(prefix: "files", data: data),
+                preview: values.prefix(3).map(\.lastPathComponent).joined(separator: ", ")
+            )
+
+        case let .image(data, pasteboardType):
+            guard data.count <= maximumPayloadBytes else { return nil }
+            return PreparedClipboardPayload(
+                payload: .image(data: data, pasteboardType: pasteboardType),
+                hash: hash(prefix: pasteboardType, data: data),
+                preview: nil
+            )
+
+        case let .url(value):
+            guard let url = URL(string: value),
+                  let data = value.data(using: .utf8),
+                  data.count <= maximumPayloadBytes else {
+                return nil
+            }
+            return PreparedClipboardPayload(
+                payload: .url(url),
+                hash: hash(prefix: "url", data: data),
+                preview: value
+            )
+
+        case let .text(value):
+            guard let data = value.data(using: .utf8),
+                  !data.isEmpty,
+                  data.count <= maximumPayloadBytes else {
+                return nil
+            }
+            let preview = value
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return PreparedClipboardPayload(
+                payload: .text(value),
+                hash: hash(prefix: "text", data: data),
+                preview: String(preview.prefix(360))
+            )
+        }
+    }
+
+    private static func hash(prefix: String, data: Data) -> String {
+        var input = Data(prefix.utf8)
+        input.append(0)
+        input.append(data)
+        return SHA256.hash(data: input).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+private actor ClipboardCaptureProcessor {
+    private let store: ClipboardHistoryStore
+
+    init(store: ClipboardHistoryStore) {
+        self.store = store
+    }
+
+    func store(
+        _ source: ClipboardCaptureSource,
+        sourceBundleID: String?,
+        maximumPayloadBytes: Int
+    ) async throws -> ClipboardHistoryEntry? {
+        guard let captured = ClipboardPayloadPreparation.prepare(
+            source,
+            maximumPayloadBytes: maximumPayloadBytes
+        ) else {
+            return nil
+        }
+        return try await store.add(
+            payload: captured.payload,
+            contentHash: captured.hash,
+            preview: captured.preview,
+            sourceBundleID: sourceBundleID
+        )
+    }
 }

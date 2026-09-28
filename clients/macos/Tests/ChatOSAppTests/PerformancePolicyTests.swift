@@ -96,6 +96,27 @@ struct PerformancePolicyTests {
         ) == .seconds(3))
     }
 
+    @Test("clipboard payload preparation is bounded and deterministic")
+    func clipboardPayloadPreparationIsBounded() {
+        let value = "  first\nsecond  "
+        let prepared = ClipboardPayloadPreparation.prepare(
+            .text(value),
+            maximumPayloadBytes: 1_024
+        )
+        let repeated = ClipboardPayloadPreparation.prepare(
+            .text(value),
+            maximumPayloadBytes: 1_024
+        )
+
+        #expect(prepared?.payload == .text(value))
+        #expect(prepared?.preview == "first second")
+        #expect(prepared?.hash == repeated?.hash)
+        #expect(ClipboardPayloadPreparation.prepare(
+            .image(data: Data(repeating: 1, count: 8), pasteboardType: "public.png"),
+            maximumPayloadBytes: 4
+        ) == nil)
+    }
+
     @Test("application activation keeps an existing artifact sync coordinator")
     func applicationActivationKeepsArtifactSyncCoordinator() {
         #expect(!AgentArtifactSyncCoordinatorPolicy.shouldStart(
