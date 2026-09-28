@@ -6,6 +6,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\ChatOS.Api\ChatOS.Api.csproj" />
+    <Compile Include="..\..\src\ChatOS.Desktop\Features\MediaStudio\MediaStudioHistoryStore.cs"
+             Link="Desktop\MediaStudioHistoryStore.cs" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio">

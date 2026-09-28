@@ -559,7 +559,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             return;
         }
-        if (resource.Kind is WorkspaceResourceKind.AgentTeams or WorkspaceResourceKind.RequirementSurveys)
+        if (resource.Kind is WorkspaceResourceKind.AgentTeams or
+            WorkspaceResourceKind.RequirementSurveys or
+            WorkspaceResourceKind.MediaStudio)
         {
             return;
         }

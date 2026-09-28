@@ -10,6 +10,7 @@ public enum WorkspaceResourceKind
     RemoteConnection,
     AgentTeams,
     RequirementSurveys,
+    MediaStudio,
 }
 
 public sealed record WorkspaceResource(

@@ -20,6 +20,7 @@ public sealed class PetQuickChatViewModelTests
         Assert.Equal(
             [
                 WorkspaceResourceKind.Applications,
+                WorkspaceResourceKind.MediaStudio,
                 WorkspaceResourceKind.AgentTeams,
                 WorkspaceResourceKind.RequirementSurveys,
             ],

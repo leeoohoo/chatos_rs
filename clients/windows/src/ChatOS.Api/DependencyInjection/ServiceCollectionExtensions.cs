@@ -8,6 +8,7 @@ using ChatOS.Api.Projects;
 using ChatOS.Api.Tasks;
 using ChatOS.Api.Workspace;
 using ChatOS.Api.Notepad;
+using ChatOS.Api.Media;
 using ChatOS.Core.Abstractions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -33,6 +34,8 @@ public static class ServiceCollectionExtensions
             // opt into a longer timeout without being preempted by HttpClient's global limit.
             client.Timeout = Timeout.InfiniteTimeSpan;
         });
+        services.AddHttpClient(MediaGenerationService.ProviderClientName, client =>
+            client.Timeout = Timeout.InfiniteTimeSpan);
         services.AddSingleton<IAuthenticationService, AuthenticationService>();
         services.AddSingleton<ILocalConnectorPairingTicketService, LocalConnectorPairingTicketService>();
         services.AddSingleton<IAskUserPromptService, AskUserPromptService>();
@@ -48,6 +51,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IProjectFilesystemService, ProjectFilesystemService>();
         services.AddSingleton<IProjectRunService, ProjectRunService>();
         services.AddSingleton<INotepadService, NotepadService>();
+        services.AddSingleton<IMediaGenerationService, MediaGenerationService>();
         services.AddSingleton<IMessageTaskGraphService, MessageTaskGraphService>();
         services.AddSingleton<IPetActivityInboxService, PetActivityInboxService>();
         services.AddSingleton<WebSocketTicketService>();

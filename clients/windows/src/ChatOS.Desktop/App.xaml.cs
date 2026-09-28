@@ -18,6 +18,7 @@ using ChatOS.Desktop.Features.Terminal;
 using ChatOS.Desktop.Features.Clipboard;
 using ChatOS.Desktop.Features.QuickSearch;
 using ChatOS.Desktop.Features.AgentTeams;
+using ChatOS.Desktop.Features.MediaStudio;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.UI.Dispatching;
@@ -84,6 +85,9 @@ public partial class App : Application
             builder.Services.AddSingleton<AgentTeamPage>();
             builder.Services.AddSingleton<ProjectRequirementSurveysPage>();
             builder.Services.AddSingleton<ProjectFeatureHubPage>();
+            builder.Services.AddSingleton<MediaStudioHistoryStore>();
+            builder.Services.AddSingleton<MediaStudioViewModel>();
+            builder.Services.AddSingleton<MediaStudioPage>();
             builder.Services.AddSingleton<SettingsPage>();
             builder.Services.AddSingleton<PluginSettingsViewModel>();
             builder.Services.AddSingleton<ApprovalSettingsViewModel>();

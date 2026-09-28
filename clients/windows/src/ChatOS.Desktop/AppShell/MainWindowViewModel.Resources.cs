@@ -108,6 +108,12 @@ public sealed partial class MainWindowViewModel
     {
         ApplicationResources.Add(CreateApplicationsResource());
         ApplicationResources.Add(new ShellResourceViewModel(
+            "media-studio",
+            WorkspaceResourceKind.MediaStudio,
+            Localization.Text("AI 创作", "AI Creation"),
+            Localization.Text("生成图片与视频", "Generate images and video"),
+            "\uE735"));
+        ApplicationResources.Add(new ShellResourceViewModel(
             "agent-teams",
             WorkspaceResourceKind.AgentTeams,
             "Agent",

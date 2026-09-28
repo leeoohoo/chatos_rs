@@ -9,6 +9,7 @@ using ChatOS.Desktop.Features.Plugins;
 using ChatOS.Desktop.Features.Terminal;
 using ChatOS.Desktop.Features.Clipboard;
 using ChatOS.Desktop.Features.AgentTeams;
+using ChatOS.Desktop.Features.MediaStudio;
 using ChatOS.Connector.Approval;
 using ChatOS.Core.Domain;
 using ChatOS.Core.State;
@@ -40,7 +41,8 @@ public sealed partial class MainWindow : Window
         PluginArtifactsWindow artifactsWindow,
         ClipboardHistoryWindow clipboardHistoryWindow,
         PluginApplicationsPage pluginApplicationsPage,
-        ProjectFeatureHubPage projectFeatureHubPage)
+        ProjectFeatureHubPage projectFeatureHubPage,
+        MediaStudioPage mediaStudioPage)
     {
         ViewModel = viewModel;
         WorkspaceHost = workspaceHostPage;
@@ -58,6 +60,7 @@ public sealed partial class MainWindow : Window
         ClipboardHistoryWindow = clipboardHistoryWindow;
         PluginApplicationsPage = pluginApplicationsPage;
         ProjectFeatureHubPage = projectFeatureHubPage;
+        MediaStudioPage = mediaStudioPage;
         InitializeComponent();
 
         ExtendsContentIntoTitleBar = true;
@@ -86,6 +89,8 @@ public sealed partial class MainWindow : Window
     private PluginApplicationsPage PluginApplicationsPage { get; }
 
     private ProjectFeatureHubPage ProjectFeatureHubPage { get; }
+
+    private MediaStudioPage MediaStudioPage { get; }
 
     public MainWindowViewModel ViewModel { get; }
 
@@ -192,6 +197,10 @@ public sealed partial class MainWindow : Window
                     ProjectFeatureHubPage.Configure(ViewModel.SelectedResource.Kind);
                     ShowContent(ProjectFeatureHubPage);
                 }
+                else if (ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.MediaStudio)
+                {
+                    ShowContent(MediaStudioPage);
+                }
                 else if (ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.RemoteConnection)
                 {
                     ShowContent(RemoteConnectionsPage);
@@ -214,6 +223,7 @@ public sealed partial class MainWindow : Window
                 {
                     _ = LocalTerminalPage.CloseSessionAsync();
                     _ = PluginApplicationsPage.ResetAsync();
+                    MediaStudioPage.ViewModel.Reset();
                 }
             }
             UpdateVisualState();
@@ -477,6 +487,11 @@ public sealed partial class MainWindow : Window
         {
             ProjectFeatureHubPage.Configure(ViewModel.SelectedResource.Kind);
             ShowContent(ProjectFeatureHubPage);
+            return;
+        }
+        if (ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.MediaStudio)
+        {
+            ShowContent(MediaStudioPage);
             return;
         }
         ShowWorkspace();
