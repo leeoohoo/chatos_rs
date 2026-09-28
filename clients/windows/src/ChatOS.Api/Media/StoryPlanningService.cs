@@ -26,16 +26,40 @@ public sealed class StoryPlanningService(
         CancellationToken cancellationToken = default)
     {
         ValidateRequest(request);
+        var payload = await SendStructuredAsync(
+            request.ModelConfigId,
+            runtime => BuildBody(runtime, request),
+            cancellationToken).ConfigureAwait(false);
+        return Decode(payload, request.MaximumSegments);
+    }
+
+    public async Task<StoryOptimizationSuggestion> OptimizeAsync(
+        StoryOptimizationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateOptimizationRequest(request);
+        var payload = await SendStructuredAsync(
+            request.ModelConfigId,
+            runtime => BuildOptimizationBody(runtime, request),
+            cancellationToken).ConfigureAwait(false);
+        return DecodeOptimization(payload, request.Target);
+    }
+
+    private async Task<byte[]> SendStructuredAsync(
+        string modelConfigId,
+        Func<RuntimeModelDto, object> body,
+        CancellationToken cancellationToken)
+    {
         var sessionToken = await tokenStore.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(sessionToken))
             throw new ChatOSApiException("Sign in before planning a story.");
         var runtime = await client.GetAsync<RuntimeModelDto>(
-            $"ai-model-configs/{Uri.EscapeDataString(request.ModelConfigId)}?include_secret=true",
+            $"ai-model-configs/{Uri.EscapeDataString(modelConfigId)}?include_secret=true",
             cancellationToken).ConfigureAwait(false);
         var endpoint = ResponsesEndpoint(runtime);
         using var providerRequest = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
-            Content = JsonContent.Create(BuildBody(runtime, request), options: JsonOptions),
+            Content = JsonContent.Create(body(runtime), options: JsonOptions),
         };
         providerRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", runtime.ApiKey!.Trim());
         providerRequest.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -54,7 +78,7 @@ public sealed class StoryPlanningService(
                 throw new ChatOSApiException(
                     $"Story planning provider rejected the request (HTTP {(int)response.StatusCode}): {ProviderError(payload)}",
                     response.StatusCode);
-            return Decode(payload, request.MaximumSegments);
+            return payload;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -93,6 +117,53 @@ public sealed class StoryPlanningService(
             },
         },
         max_output_tokens = 32_000,
+        store = false,
+    };
+
+    private static object BuildOptimizationBody(RuntimeModelDto runtime, StoryOptimizationRequest request) => new
+    {
+        model = runtime.Model,
+        input = new object[]
+        {
+            new
+            {
+                role = "developer",
+                content = request.Target == StoryOptimizationTarget.Source
+                    ? StoryPromptCatalog.OptimizeSourceSystem
+                    : StoryPromptCatalog.OptimizeStyleSystem,
+            },
+            new
+            {
+                role = "user",
+                content = StoryPromptCatalog.RenderOptimizationUser(request),
+            },
+        },
+        text = new
+        {
+            format = new
+            {
+                type = "json_schema",
+                name = "story_optimization",
+                strict = true,
+                schema = new
+                {
+                    type = "object",
+                    additionalProperties = false,
+                    required = new[] { "optimized_text", "rationale" },
+                    properties = new
+                    {
+                        optimized_text = new
+                        {
+                            type = "string",
+                            minLength = 1,
+                            maxLength = request.Target == StoryOptimizationTarget.Source ? 80_000 : 2_000,
+                        },
+                        rationale = new { type = "string", minLength = 1, maxLength = 2_000 },
+                    },
+                },
+            },
+        },
+        max_output_tokens = request.Target == StoryOptimizationTarget.Source ? 32_000 : 4_000,
         store = false,
     };
 
@@ -193,6 +264,30 @@ public sealed class StoryPlanningService(
         }
     }
 
+    private static StoryOptimizationSuggestion DecodeOptimization(
+        byte[] payload,
+        StoryOptimizationTarget target)
+    {
+        try
+        {
+            using var response = JsonDocument.Parse(payload);
+            var text = OutputText(response.RootElement);
+            if (string.IsNullOrWhiteSpace(text)) throw new JsonException("Missing output text.");
+            var suggestion = JsonSerializer.Deserialize<OptimizationDto>(StripCodeFence(text), JsonOptions)
+                ?? throw new JsonException();
+            var maximumLength = target == StoryOptimizationTarget.Source ? 80_000 : 2_000;
+            return new StoryOptimizationSuggestion(
+                Required(suggestion.OptimizedText, maximumLength),
+                Required(suggestion.Rationale, 2_000));
+        }
+        catch (JsonException exception)
+        {
+            throw new ChatOSApiException(
+                "The story planning provider returned an invalid optimization suggestion.",
+                innerException: exception);
+        }
+    }
+
     private static string? OutputText(JsonElement root)
     {
         if (root.TryGetProperty("output_text", out var direct) && direct.ValueKind == JsonValueKind.String)
@@ -233,6 +328,23 @@ public sealed class StoryPlanningService(
         if (string.IsNullOrWhiteSpace(request.Source) || request.Source.Length > 80_000) throw new ArgumentException("The story source is required and cannot exceed 80,000 characters.", nameof(request));
         if (request.Description.Length > 4_000 || request.VisualStyle.Length > 2_000) throw new ArgumentException("The story description or style is too long.", nameof(request));
         if (!StoryPlanningRatios.Contains(request.Ratio) || request.MaximumSegments is < 1 or > 200) throw new ArgumentException("The story ratio or segment limit is invalid.", nameof(request));
+    }
+
+    private static void ValidateOptimizationRequest(StoryOptimizationRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.ModelConfigId))
+            throw new ArgumentException("Choose a text model.", nameof(request));
+        if (string.IsNullOrWhiteSpace(request.Title) || request.Title.Length > 120 ||
+            request.Description is null or { Length: > 4_000 } ||
+            request.Source is null or { Length: > 80_000 } ||
+            request.VisualStyle is null or { Length: > 2_000 } ||
+            !Enum.IsDefined(request.Target))
+            throw new ArgumentException("The story optimization input is invalid.", nameof(request));
+        var selected = request.Target == StoryOptimizationTarget.Source
+            ? request.Source
+            : request.VisualStyle;
+        if (string.IsNullOrWhiteSpace(selected))
+            throw new ArgumentException("The text to optimize is required.", nameof(request));
     }
 
     private static async Task<byte[]> ReadLimitedAsync(HttpContent content, CancellationToken cancellationToken)
@@ -350,4 +462,8 @@ public sealed class StoryPlanningService(
         [property: JsonPropertyName("video_prompt")] string? VideoPrompt,
         [property: JsonPropertyName("seconds")] int Seconds,
         [property: JsonPropertyName("resource_ids")] IReadOnlyList<string>? ResourceIds);
+
+    private sealed record OptimizationDto(
+        [property: JsonPropertyName("optimized_text")] string? OptimizedText,
+        [property: JsonPropertyName("rationale")] string? Rationale);
 }

@@ -10,6 +10,8 @@ public static class StoryPromptCatalog
 {
     public const string PlanningSystemKey = "story.plan.system";
     public const string PlanningUserKey = "story.plan.user";
+    public const string OptimizeSourceKey = "story.optimize.source";
+    public const string OptimizeStyleKey = "story.optimize.style";
     public const string ResourceImageKey = "story.resource.image";
     public const string FirstFrameKey = "story.segment.first-frame";
     public const string LastFrameKey = "story.segment.last-frame";
@@ -17,6 +19,10 @@ public static class StoryPromptCatalog
 
     public const string PlanningSystem =
         "你是影视剧情规划师。只返回满足 JSON Schema 的计划。先建立可复用的角色、场景、道具表，再按原文顺序连续覆盖故事，不添加原文没有的事实。普通内容标记为 story；只有在时间、地点或画面状态无法直接连续时才插入 transition，转场段只连接前后状态，不新增剧情事实。每段必须引用实际使用的素材 ID，并能独立制作成 2-15 秒视频；图片提示词描述静态画面，视频提示词描述动作、镜头和节奏。";
+    public const string OptimizeSourceSystem =
+        "你是影视创作编辑。只返回满足 JSON Schema 的优化建议。在不改变人物、事件、因果与结局的前提下，优化完整剧情的表达、节奏和可拍摄性；保留原语言和全部重要信息，不添加新情节。";
+    public const string OptimizeStyleSystem =
+        "你是影视美术指导。只返回满足 JSON Schema 的优化建议。把现有画面风格整理成清晰、可复用的制作约束，覆盖质感、光线、色彩、镜头气质及人物场景一致性，不添加剧情事实。";
 
     public static IReadOnlyList<StoryPromptDefinition> Definitions { get; } =
     [
@@ -30,6 +36,16 @@ public static class StoryPromptCatalog
             "全剧规划 · 项目内容",
             "把当前项目资料和剧情原文提交给所选文本模型。",
             "标题：{title}\n描述：{description}\n画面风格：{visual_style}\n比例：{ratio}\n最多分段：{maximum_segments}\n\n剧情原文：\n{source}"),
+        new(
+            OptimizeSourceKey,
+            "剧情原文 · AI 优化",
+            "生成可审阅的剧情优化候选，不直接覆盖原文。",
+            OptimizeSourceSystem),
+        new(
+            OptimizeStyleKey,
+            "画面风格 · AI 优化",
+            "生成可审阅的统一视觉制作约束，不直接覆盖当前风格。",
+            OptimizeStyleSystem),
         new(
             ResourceImageKey,
             "素材一致性参考图",
@@ -54,6 +70,9 @@ public static class StoryPromptCatalog
 
     public static string RenderPlanningUser(StoryPlanningRequest request) =>
         $"标题：{request.Title}\n描述：{request.Description}\n画面风格：{request.VisualStyle}\n比例：{request.Ratio}\n最多分段：{request.MaximumSegments}\n\n剧情原文：\n{request.Source}";
+
+    public static string RenderOptimizationUser(StoryOptimizationRequest request) =>
+        $"标题：{request.Title}\n描述：{request.Description}\n优化目标：{(request.Target == StoryOptimizationTarget.Source ? "剧情原文" : "画面风格")}\n\n剧情原文：\n{request.Source}\n\n当前画面风格：\n{request.VisualStyle}";
 
     public static string RenderResourceImage(
         string visualStyle,

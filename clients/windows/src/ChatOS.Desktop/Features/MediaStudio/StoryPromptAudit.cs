@@ -47,6 +47,10 @@ public sealed partial class StoryStudioViewModel
                 ProjectSource,
                 VisualStyle,
                 ProjectRatio)),
+        StoryPromptCatalog.OptimizeSourceKey when _current is not null =>
+            RenderOptimizationAudit(StoryOptimizationTarget.Source),
+        StoryPromptCatalog.OptimizeStyleKey when _current is not null =>
+            RenderOptimizationAudit(StoryOptimizationTarget.VisualStyle),
         StoryPromptCatalog.ResourceImageKey when SelectedResource is { } resource =>
             StoryPromptCatalog.RenderResourceImage(
                 VisualStyle,
@@ -75,6 +79,21 @@ public sealed partial class StoryStudioViewModel
         _ => definition.Template,
     };
 
+    private string RenderOptimizationAudit(StoryOptimizationTarget target)
+    {
+        var request = new StoryOptimizationRequest(
+            ProjectTextModel?.Id ?? string.Empty,
+            ProjectTitle,
+            ProjectDescription,
+            ProjectSource,
+            VisualStyle,
+            target);
+        var system = target == StoryOptimizationTarget.Source
+            ? StoryPromptCatalog.OptimizeSourceSystem
+            : StoryPromptCatalog.OptimizeStyleSystem;
+        return $"{system}\n\n用户上下文：\n{StoryPromptCatalog.RenderOptimizationUser(request)}";
+    }
+
     partial void OnProjectTitleChanged(string value) => RefreshPlanningInputs();
     partial void OnProjectDescriptionChanged(string value) => RefreshPlanningInputs();
     partial void OnProjectSourceChanged(string value) => RefreshPlanningInputs();
@@ -86,5 +105,6 @@ public sealed partial class StoryStudioViewModel
     {
         RefreshPromptAudit();
         NotifyPlanningRunsChanged();
+        NotifyOptimizationChanged();
     }
 }

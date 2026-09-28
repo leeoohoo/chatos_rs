@@ -90,6 +90,57 @@ public sealed class StoryPlanningServiceTests
         Assert.Contains("account changed", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task OptimizePostsReviewableStructuredSuggestion()
+    {
+        var store = TokenStore();
+        string? body = null;
+        var provider = ProviderFactory(async request =>
+        {
+            body = await request.Content!.ReadAsStringAsync();
+            return Json(JsonSerializer.Serialize(new
+            {
+                output_text = "{\"optimized_text\":\"A tighter story.\",\"rationale\":\"Improved pacing.\"}",
+            }));
+        });
+        var service = new StoryPlanningService(RuntimeApi(store), provider, store);
+
+        var result = await service.OptimizeAsync(new StoryOptimizationRequest(
+            "model-config", "Train story", "A journey", "The train leaves.",
+            "cinematic natural light", StoryOptimizationTarget.Source));
+
+        Assert.Equal("A tighter story.", result.OptimizedText);
+        Assert.Equal("Improved pacing.", result.Rationale);
+        using var json = JsonDocument.Parse(body!);
+        var root = json.RootElement;
+        Assert.Equal("story_optimization", root.GetProperty("text").GetProperty("format").GetProperty("name").GetString());
+        Assert.Contains("不改变人物、事件、因果与结局",
+            root.GetProperty("input")[0].GetProperty("content").GetString());
+        Assert.Equal(80_000, root.GetProperty("text").GetProperty("format").GetProperty("schema")
+            .GetProperty("properties").GetProperty("optimized_text").GetProperty("maxLength").GetInt32());
+    }
+
+    [Fact]
+    public async Task OptimizeRejectsOversizedStyleSuggestion()
+    {
+        var store = TokenStore();
+        var output = JsonSerializer.Serialize(new
+        {
+            optimized_text = new string('x', 2_001),
+            rationale = "Reason",
+        });
+        var provider = ProviderFactory(_ => Task.FromResult(Json(
+            JsonSerializer.Serialize(new { output_text = output }))));
+        var service = new StoryPlanningService(RuntimeApi(store), provider, store);
+
+        var error = await Assert.ThrowsAsync<ChatOSApiException>(() => service.OptimizeAsync(
+            new StoryOptimizationRequest(
+                "model-config", "Train story", "A journey", "The train leaves.",
+                "cinematic natural light", StoryOptimizationTarget.VisualStyle)));
+
+        Assert.Contains("invalid optimization", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static StoryPlanningRequest Request() => new(
         "model-config", "Train story", "A journey", "The train leaves the station.",
         "cinematic natural light", "16:9");

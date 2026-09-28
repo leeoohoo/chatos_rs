@@ -65,6 +65,18 @@ public sealed partial class MediaStudioPage : Page
     private async void OnPlanStoryClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.PlanStoryAsync();
 
+    private async void OnOptimizeStorySourceClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.OptimizeStorySourceAsync();
+
+    private async void OnOptimizeVisualStyleClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.OptimizeVisualStyleAsync();
+
+    private void OnApplyStoryOptimizationClick(object sender, RoutedEventArgs e) =>
+        StoryViewModel.ApplyOptimizationSuggestion();
+
+    private void OnDiscardStoryOptimizationClick(object sender, RoutedEventArgs e) =>
+        StoryViewModel.ClearOptimizationSuggestion();
+
     private async void OnResumeStoryPlanningClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.ResumePlanningAsync();
 

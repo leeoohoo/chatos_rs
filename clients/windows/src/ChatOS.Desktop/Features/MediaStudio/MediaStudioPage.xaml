@@ -360,12 +360,27 @@
                                                 <TextBox Header="项目标题" MaxLength="120" Text="{x:Bind StoryViewModel.ProjectTitle, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                                 <TextBox Header="项目描述" AcceptsReturn="True" MaxLength="4000" MinHeight="60" Text="{x:Bind StoryViewModel.ProjectDescription, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                 <TextBox Header="剧情原文" AcceptsReturn="True" MaxLength="80000" MinHeight="210" PlaceholderText="粘贴完整剧情；快速分段只生成可编辑草稿，不会调用模型。" Text="{x:Bind StoryViewModel.ProjectSource, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
+                                                <Button Click="OnOptimizeStorySourceClick" Content="AI 优化剧情原文（先生成候选）" IsEnabled="{x:Bind StoryViewModel.CanOptimizeStorySource, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                 <TextBox Header="全剧摘要" AcceptsReturn="True" MaxLength="16000" MinHeight="80" PlaceholderText="AI 规划完成后会保存在这里，也可以手动编辑。" Text="{x:Bind StoryViewModel.ProjectSummary, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                 <TextBox Header="画面风格" AcceptsReturn="True" MaxLength="2000" MinHeight="90" Text="{x:Bind StoryViewModel.VisualStyle, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
+                                                <Button Click="OnOptimizeVisualStyleClick" Content="AI 优化画面风格（先生成候选）" IsEnabled="{x:Bind StoryViewModel.CanOptimizeVisualStyle, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                 <ComboBox Header="画面比例" ItemsSource="{x:Bind StoryViewModel.Ratios}" SelectedItem="{x:Bind StoryViewModel.ProjectRatio, Mode=TwoWay}" />
                                                 <ComboBox Header="文本模型" DisplayMemberPath="Name" ItemsSource="{x:Bind StoryViewModel.Models}" SelectedItem="{x:Bind StoryViewModel.ProjectTextModel, Mode=TwoWay}" />
                                                 <ComboBox Header="图片模型" DisplayMemberPath="Name" ItemsSource="{x:Bind StoryViewModel.ImageModels}" SelectedItem="{x:Bind StoryViewModel.ProjectImageModel, Mode=TwoWay}" />
                                                 <ComboBox Header="视频模型" DisplayMemberPath="Name" ItemsSource="{x:Bind StoryViewModel.VideoModels}" SelectedItem="{x:Bind StoryViewModel.ProjectVideoModel, Mode=TwoWay}" />
+                                                <Border Padding="12" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="10" Visibility="{x:Bind StoryViewModel.HasOptimizationSuggestion, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <StackPanel Spacing="8">
+                                                        <TextBlock Text="{x:Bind StoryViewModel.OptimizationTitle, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                                        <TextBlock Text="{x:Bind StoryViewModel.OptimizationRationale, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        <TextBox AcceptsReturn="True" IsReadOnly="True" MaxHeight="220" Text="{x:Bind StoryViewModel.OptimizationText, Mode=OneWay}" TextWrapping="Wrap" />
+                                                        <Grid ColumnSpacing="8">
+                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                            <Button Click="OnApplyStoryOptimizationClick" Content="采用候选" HorizontalAlignment="Stretch" IsEnabled="{x:Bind StoryViewModel.CanApplyOptimization, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                                            <Button Grid.Column="1" Click="OnDiscardStoryOptimizationClick" Content="放弃候选" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                        </Grid>
+                                                        <TextBlock Text="采用后仍需检查并保存；生成候选不会自动覆盖原文或画面风格。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                    </StackPanel>
+                                                </Border>
                                                 <Button Click="OnPlanStoryClick" Content="AI 分析全剧并拆分计划" IsEnabled="{x:Bind StoryViewModel.CanPlan, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
                                                 <Button Click="OnQuickSplitStoryClick" Content="不调用模型：按段落快速分段" IsEnabled="{x:Bind StoryViewModel.CanQuickSplit, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                 <TextBlock Text="AI 规划会调用所选文本模型并产生相应费用；不会自动生成图片或视频。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />

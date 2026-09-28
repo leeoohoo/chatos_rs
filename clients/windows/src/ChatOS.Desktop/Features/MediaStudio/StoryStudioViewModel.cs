@@ -40,6 +40,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             RefreshProjectMedia();
             NotifySegmentOrderChanged();
             NotifyPlanningRunsChanged();
+            NotifyOptimizationChanged();
         };
         Resources.CollectionChanged += (_, _) =>
         {
@@ -49,6 +50,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             RefreshStoryRelations();
             RefreshContinuityAudit();
             NotifyPlanningRunsChanged();
+            NotifyOptimizationChanged();
         };
     }
 
@@ -73,7 +75,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         ProjectTextModel is not null && ProjectImageModel is not null && ProjectVideoModel is not null;
     public bool CanQuickSplit => CanSave && Segments.Count == 0 &&
         !string.IsNullOrWhiteSpace(ProjectSource) && _planningRunsReady && ResumablePlanningRun is null;
-    public bool CanPlan => CanQuickSplit && ProjectTextModel is not null;
+    public bool CanPlan => CanQuickSplit && Resources.Count == 0 && ProjectTextModel is not null;
     public bool CanGenerateFrame => CanSave && SelectedSegment is not null &&
         !string.IsNullOrWhiteSpace(SelectedSegment.ImagePrompt);
     public bool CanGenerateVideo => CanSave && SelectedSegment is not null &&
@@ -159,6 +161,9 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanMoveSegmentDown))]
     [NotifyPropertyChangedFor(nameof(CanResumePlanning))]
     [NotifyPropertyChangedFor(nameof(CanAbandonPlanning))]
+    [NotifyPropertyChangedFor(nameof(CanOptimizeStorySource))]
+    [NotifyPropertyChangedFor(nameof(CanOptimizeVisualStyle))]
+    [NotifyPropertyChangedFor(nameof(CanApplyOptimization))]
     private bool _isBusy;
     [ObservableProperty] private string _statusMessage = "剧情项目只保存在本机";
     [ObservableProperty] private string? _errorMessage;
@@ -222,6 +227,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     public void OpenProject(StoryProjectDocument project)
     {
         _current = project;
+        ClearOptimizationSuggestion();
         _planningRunsReady = false;
         PlanningRuns.Clear();
         ProjectTitle = project.Title;
@@ -258,6 +264,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     {
         _generationCancellation?.Cancel();
         _current = null;
+        ClearOptimizationSuggestion();
         _planningRunsReady = false;
         Segments.Clear();
         Resources.Clear();
@@ -442,6 +449,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         _session = Guid.NewGuid();
         _ownerUserId = ownerUserId;
         _current = null;
+        ClearOptimizationSuggestion();
         _planningRunsReady = false;
         Projects.Clear();
         Segments.Clear();

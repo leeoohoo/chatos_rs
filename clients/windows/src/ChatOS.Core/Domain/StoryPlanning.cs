@@ -29,3 +29,21 @@ public sealed record StoryPlanningResult(
     string Summary,
     IReadOnlyList<PlannedStoryResource> Resources,
     IReadOnlyList<PlannedStorySegment> Segments);
+
+public enum StoryOptimizationTarget
+{
+    Source,
+    VisualStyle,
+}
+
+public sealed record StoryOptimizationRequest(
+    string ModelConfigId,
+    string Title,
+    string Description,
+    string Source,
+    string VisualStyle,
+    StoryOptimizationTarget Target);
+
+public sealed record StoryOptimizationSuggestion(
+    string OptimizedText,
+    string Rationale);

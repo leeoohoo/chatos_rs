@@ -7,7 +7,7 @@ public sealed class StoryPromptCatalogTests
     [Fact]
     public void DefinitionsExposeUniqueStableKeys()
     {
-        Assert.Equal(6, StoryPromptCatalog.Definitions.Count);
+        Assert.Equal(8, StoryPromptCatalog.Definitions.Count);
         Assert.Equal(
             StoryPromptCatalog.Definitions.Count,
             StoryPromptCatalog.Definitions.Select(definition => definition.Key).Distinct().Count());
@@ -29,6 +29,8 @@ public sealed class StoryPromptCatalogTests
             "电影感", "红色风衣", "角色", "阿青", "16:9");
         var lastFrame = StoryPromptCatalog.RenderFrame(
             "电影感", "走到门前", true, "16:9", "上一段停在门外");
+        var optimization = StoryPromptCatalog.RenderOptimizationUser(new StoryOptimizationRequest(
+            "text-model", "标题", "描述", "完整原文", "电影感", StoryOptimizationTarget.Source));
 
         Assert.Contains("最多分段：80", planning);
         Assert.Contains("剧情原文：\n原文", planning);
@@ -36,6 +38,8 @@ public sealed class StoryPromptCatalogTests
         Assert.Contains("红色风衣", resource);
         Assert.Contains("尾帧", lastFrame);
         Assert.Contains("上一段停在门外", lastFrame);
+        Assert.Contains("优化目标：剧情原文", optimization);
+        Assert.Contains("完整原文", optimization);
         Assert.Equal("镜头推进", StoryPromptCatalog.RenderVideo("  镜头推进  "));
     }
 }

@@ -281,5 +281,7 @@ public sealed partial class StoryStudioViewModel
         OnPropertyChanged(nameof(ResumePlanningLabel));
         OnPropertyChanged(nameof(CanQuickSplit));
         OnPropertyChanged(nameof(CanPlan));
+        OnPropertyChanged(nameof(CanOptimizeStorySource));
+        OnPropertyChanged(nameof(CanOptimizeVisualStyle));
     }
 }
