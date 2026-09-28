@@ -102,6 +102,10 @@ final class TaskReplyInspectorViewModel: ObservableObject {
     }
 
     func refresh() {
+        refresh(showsLoadingState: true)
+    }
+
+    private func refresh(showsLoadingState: Bool) {
         guard let callback = selection.reply.taskCallback else { return }
         pollingTask?.cancel()
         pollingTask = nil
@@ -110,10 +114,12 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         let selection = selection
         let requestedSection = section
         loadTask?.cancel()
-        isLoading = true
-        errorMessage = nil
-        modelOutputError = nil
-        isLoadingModelOutput = requestedSection == .detail
+        if showsLoadingState {
+            isLoading = true
+            errorMessage = nil
+            modelOutputError = nil
+            isLoadingModelOutput = requestedSection == .detail
+        }
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -138,11 +144,16 @@ final class TaskReplyInspectorViewModel: ObservableObject {
                 }
             } catch {
                 guard !Task.isCancelled, generation == loadGeneration else { return }
-                errorMessage = error.localizedDescription
+                let nextErrorMessage = error.localizedDescription
+                if errorMessage != nextErrorMessage {
+                    errorMessage = nextErrorMessage
+                }
             }
             guard !Task.isCancelled, generation == loadGeneration else { return }
-            isLoading = false
-            isLoadingModelOutput = false
+            if showsLoadingState {
+                isLoading = false
+                isLoadingModelOutput = false
+            }
             scheduleActiveRefreshIfNeeded()
         }
     }
@@ -213,12 +224,16 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         )
     }
 
-    private func apply(_ loadedTask: MessageTask) {
-        task = loadedTask
-        processTimelineItems = TaskProcessTimelineBuilder.build(
+    func apply(_ loadedTask: MessageTask) {
+        guard task != loadedTask else { return }
+        let nextTimelineItems = TaskProcessTimelineBuilder.build(
             processLog: loadedTask.processLog,
             taskStatus: loadedTask.status
         )
+        task = loadedTask
+        if processTimelineItems != nextTimelineItems {
+            processTimelineItems = nextTimelineItems
+        }
     }
 
     private func scheduleActiveRefreshIfNeeded() {
@@ -232,7 +247,7 @@ final class TaskReplyInspectorViewModel: ObservableObject {
                 return
             }
             guard let self, !Task.isCancelled else { return }
-            self.refresh()
+            self.refresh(showsLoadingState: false)
         }
     }
 
