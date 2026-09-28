@@ -75,9 +75,16 @@ public sealed partial class StoryStudioViewModel
         _ => definition.Template,
     };
 
-    partial void OnProjectTitleChanged(string value) => RefreshPromptAudit();
-    partial void OnProjectDescriptionChanged(string value) => RefreshPromptAudit();
-    partial void OnProjectSourceChanged(string value) => RefreshPromptAudit();
-    partial void OnVisualStyleChanged(string value) => RefreshPromptAudit();
-    partial void OnProjectRatioChanged(string value) => RefreshPromptAudit();
+    partial void OnProjectTitleChanged(string value) => RefreshPlanningInputs();
+    partial void OnProjectDescriptionChanged(string value) => RefreshPlanningInputs();
+    partial void OnProjectSourceChanged(string value) => RefreshPlanningInputs();
+    partial void OnVisualStyleChanged(string value) => RefreshPlanningInputs();
+    partial void OnProjectRatioChanged(string value) => RefreshPlanningInputs();
+    partial void OnProjectTextModelChanged(MediaGenerationModel? value) => RefreshPlanningInputs();
+
+    private void RefreshPlanningInputs()
+    {
+        RefreshPromptAudit();
+        NotifyPlanningRunsChanged();
+    }
 }

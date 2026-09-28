@@ -16,7 +16,7 @@ public static class StoryPromptCatalog
     public const string VideoKey = "story.segment.video";
 
     public const string PlanningSystem =
-        "你是影视剧情规划师。只返回满足 JSON Schema 的计划。先建立可复用的角色、场景、道具表，再按原文顺序连续覆盖故事，不添加原文没有的事实。每段必须引用实际使用的素材 ID，并能独立制作成 2-15 秒视频；图片提示词描述静态画面，视频提示词描述动作、镜头和节奏。";
+        "你是影视剧情规划师。只返回满足 JSON Schema 的计划。先建立可复用的角色、场景、道具表，再按原文顺序连续覆盖故事，不添加原文没有的事实。普通内容标记为 story；只有在时间、地点或画面状态无法直接连续时才插入 transition，转场段只连接前后状态，不新增剧情事实。每段必须引用实际使用的素材 ID，并能独立制作成 2-15 秒视频；图片提示词描述静态画面，视频提示词描述动作、镜头和节奏。";
 
     public static IReadOnlyList<StoryPromptDefinition> Definitions { get; } =
     [

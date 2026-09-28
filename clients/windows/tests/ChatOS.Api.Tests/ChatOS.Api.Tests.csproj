@@ -12,6 +12,8 @@
              Link="Desktop\StoryStudioModels.cs" />
     <Compile Include="..\..\src\ChatOS.Desktop\Features\MediaStudio\StoryProjectStore.cs"
              Link="Desktop\StoryProjectStore.cs" />
+    <Compile Include="..\..\src\ChatOS.Desktop\Features\MediaStudio\StoryPlanningRunModels.cs"
+             Link="Desktop\StoryPlanningRunModels.cs" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio">

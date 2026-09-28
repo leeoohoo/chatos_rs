@@ -132,9 +132,10 @@ public sealed class StoryPlanningService(
                 {
                     type = "object",
                     additionalProperties = false,
-                    required = new[] { "title", "narrative", "image_prompt", "video_prompt", "seconds", "resource_ids" },
+                    required = new[] { "kind", "title", "narrative", "image_prompt", "video_prompt", "seconds", "resource_ids" },
                     properties = new
                     {
+                        kind = new { type = "string", @enum = new[] { "story", "transition" } },
                         title = new { type = "string", minLength = 1, maxLength = 200 },
                         narrative = new { type = "string", minLength = 1, maxLength = 8000 },
                         image_prompt = new { type = "string", minLength = 1, maxLength = 7000 },
@@ -174,6 +175,7 @@ public sealed class StoryPlanningService(
                 throw new JsonException("Invalid resources.");
             var resourceIds = resources.Select(resource => resource.Id).ToHashSet(StringComparer.Ordinal);
             var segments = plan.Segments.Select(segment => new PlannedStorySegment(
+                SegmentKind(segment.Kind),
                 Required(segment.Title, 200),
                 Required(segment.Narrative, 8_000),
                 Required(segment.ImagePrompt, 7_000),
@@ -294,6 +296,13 @@ public sealed class StoryPlanningService(
         _ => throw new JsonException("A resource kind is invalid."),
     };
 
+    private static string SegmentKind(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "story" => "story",
+        "transition" => "transition",
+        _ => throw new JsonException("A segment kind is invalid."),
+    };
+
     private static IReadOnlyList<string> ResourceIds(
         IReadOnlyList<string>? values,
         IReadOnlySet<string> known)
@@ -334,6 +343,7 @@ public sealed class StoryPlanningService(
         [property: JsonPropertyName("image_prompt")] string? ImagePrompt);
 
     private sealed record SegmentDto(
+        [property: JsonPropertyName("kind")] string? Kind,
         [property: JsonPropertyName("title")] string? Title,
         [property: JsonPropertyName("narrative")] string? Narrative,
         [property: JsonPropertyName("image_prompt")] string? ImagePrompt,

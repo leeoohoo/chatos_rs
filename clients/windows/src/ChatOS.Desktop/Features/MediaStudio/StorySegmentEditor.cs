@@ -16,6 +16,7 @@ public sealed partial class StorySegmentEditor : ObservableObject
         _lastFrameAsset = document.LastFrameAsset;
         _videoAsset = document.VideoAsset;
         _resourceIdsText = string.Join(", ", document.ResourceIds);
+        _kind = document.Kind;
         _continuityIn = document.ContinuityIn ?? string.Empty;
         _continuityOut = document.ContinuityOut ?? string.Empty;
         _shotPlan = document.ShotPlan ?? string.Empty;
@@ -36,7 +37,11 @@ public sealed partial class StorySegmentEditor : ObservableObject
         _ => "尚未生成画面",
     };
     public string VideoStatus => VideoPath is { Length: > 0 } ? "视频已完成" : "视频待生成";
+    public string KindLabel => Kind == StorySegmentKind.Transition ? "转场" : "剧情";
 
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(KindLabel))]
+    private StorySegmentKind _kind;
     [ObservableProperty] private string _title;
     [ObservableProperty] private string _narrative;
     [ObservableProperty] private string _imagePrompt;
@@ -61,6 +66,7 @@ public sealed partial class StorySegmentEditor : ObservableObject
         _lastFrameAsset,
         _videoAsset)
     {
+        Kind = this.Kind,
         ResourceIds = ParseResourceIds(ResourceIdsText),
         ContinuityIn = ContinuityIn.Trim(),
         ContinuityOut = ContinuityOut.Trim(),

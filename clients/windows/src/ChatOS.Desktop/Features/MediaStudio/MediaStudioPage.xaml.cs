@@ -65,6 +65,12 @@ public sealed partial class MediaStudioPage : Page
     private async void OnPlanStoryClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.PlanStoryAsync();
 
+    private async void OnResumeStoryPlanningClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.ResumePlanningAsync();
+
+    private async void OnAbandonStoryPlanningClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.AbandonPlanningAsync();
+
     private void OnAddStorySegmentClick(object sender, RoutedEventArgs e) =>
         StoryViewModel.AddSegment();
 

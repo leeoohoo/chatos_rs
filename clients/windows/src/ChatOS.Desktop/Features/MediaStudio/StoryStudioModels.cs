@@ -60,6 +60,7 @@ public sealed record StorySegmentDocument(
     string? LastFrameAsset,
     string? VideoAsset)
 {
+    public StorySegmentKind Kind { get; init; } = StorySegmentKind.Story;
     public IReadOnlyList<string> ResourceIds { get; init; } = [];
     public string ContinuityIn { get; init; } = string.Empty;
     public string ContinuityOut { get; init; } = string.Empty;
@@ -71,7 +72,7 @@ public sealed record StorySegmentDocument(
             string.IsNullOrWhiteSpace(Title) || Title.Length > 200 ||
             Narrative.Length > 8_000 || ImagePrompt.Length > 7_000 || VideoPrompt.Length > 7_000 ||
             ContinuityIn.Length > 2_000 || ContinuityOut.Length > 2_000 || ShotPlan.Length > 8_000 ||
-            Seconds is < 2 or > 30 || ResourceIds is null ||
+            Seconds is < 2 or > 30 || !Enum.IsDefined(Kind) || ResourceIds is null ||
             !SafeAsset(FirstFrameAsset) || !SafeAsset(LastFrameAsset) || !SafeAsset(VideoAsset))
         {
             throw new InvalidDataException("剧情分段数据无效，请检查标题、提示词、时长和素材。");
@@ -82,6 +83,14 @@ public sealed record StorySegmentDocument(
         (!Path.IsPathFullyQualified(value) &&
          !value.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Contains(".."));
 }
+
+public enum StorySegmentKind
+{
+    Story,
+    Transition,
+}
+
+public sealed record StorySegmentKindOption(StorySegmentKind Kind, string Name);
 
 public enum StoryResourceKind
 {

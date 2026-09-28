@@ -16,7 +16,7 @@ public sealed class StoryPlanningServiceTests
         string? body = null;
         Uri? uri = null;
         var plan = """
-            {"summary":"A short journey","resources":[{"id":"train","kind":"prop","name":"Train","description":"A passenger train","image_prompt":"A blue passenger train"}],"segments":[{"title":"Departure","narrative":"The train leaves.","image_prompt":"A train at dawn","video_prompt":"The train pulls away slowly","seconds":5,"resource_ids":["train"]}]}
+            {"summary":"A short journey","resources":[{"id":"train","kind":"prop","name":"Train","description":"A passenger train","image_prompt":"A blue passenger train"}],"segments":[{"kind":"story","title":"Departure","narrative":"The train leaves.","image_prompt":"A train at dawn","video_prompt":"The train pulls away slowly","seconds":5,"resource_ids":["train"]}]}
             """;
         var provider = ProviderFactory(async request =>
         {
@@ -43,9 +43,14 @@ public sealed class StoryPlanningServiceTests
         using var requestJson = JsonDocument.Parse(body!);
         Assert.Equal("text-v1", requestJson.RootElement.GetProperty("model").GetString());
         Assert.Equal("json_schema", requestJson.RootElement.GetProperty("text").GetProperty("format").GetProperty("type").GetString());
+        var segmentKind = requestJson.RootElement.GetProperty("text").GetProperty("format")
+            .GetProperty("schema").GetProperty("properties").GetProperty("segments")
+            .GetProperty("items").GetProperty("properties").GetProperty("kind");
+        Assert.Equal("transition", segmentKind.GetProperty("enum")[1].GetString());
         Assert.Equal("A short journey", result.Summary);
         Assert.Equal("train", Assert.Single(result.Resources).Id);
         var segment = Assert.Single(result.Segments);
+        Assert.Equal("story", segment.Kind);
         Assert.Equal("Departure", segment.Title);
         Assert.Equal(5, segment.Seconds);
         Assert.Equal("train", Assert.Single(segment.ResourceIds));
@@ -56,7 +61,7 @@ public sealed class StoryPlanningServiceTests
     {
         var store = TokenStore();
         var text = """
-            {"summary":"Bad","resources":[],"segments":[{"title":"Shot","narrative":"Story","image_prompt":"Image","video_prompt":"Video","seconds":30,"resource_ids":[]}]}
+            {"summary":"Bad","resources":[],"segments":[{"kind":"story","title":"Shot","narrative":"Story","image_prompt":"Image","video_prompt":"Video","seconds":30,"resource_ids":[]}]}
             """;
         var provider = ProviderFactory(_ => Task.FromResult(Json(
             JsonSerializer.Serialize(new { output_text = text }))));
@@ -75,7 +80,7 @@ public sealed class StoryPlanningServiceTests
         {
             store.Seed("different-token");
             return Task.FromResult(Json("""
-                {"output_text":"{\"summary\":\"Summary\",\"resources\":[],\"segments\":[{\"title\":\"Shot\",\"narrative\":\"Story\",\"image_prompt\":\"Image\",\"video_prompt\":\"Video\",\"seconds\":4,\"resource_ids\":[]}] }"}
+                {"output_text":"{\"summary\":\"Summary\",\"resources\":[],\"segments\":[{\"kind\":\"story\",\"title\":\"Shot\",\"narrative\":\"Story\",\"image_prompt\":\"Image\",\"video_prompt\":\"Video\",\"seconds\":4,\"resource_ids\":[]}] }"}
                 """));
         });
         var service = new StoryPlanningService(RuntimeApi(store), provider, store);

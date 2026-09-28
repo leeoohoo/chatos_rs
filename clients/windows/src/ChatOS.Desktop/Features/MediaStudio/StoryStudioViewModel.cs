@@ -39,6 +39,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             RefreshContinuityAudit();
             RefreshProjectMedia();
             NotifySegmentOrderChanged();
+            NotifyPlanningRunsChanged();
         };
         Resources.CollectionChanged += (_, _) =>
         {
@@ -47,6 +48,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             RefreshPromptAudit();
             RefreshStoryRelations();
             RefreshContinuityAudit();
+            NotifyPlanningRunsChanged();
         };
     }
 
@@ -58,13 +60,19 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     public ObservableCollection<MediaGenerationModel> VideoModels { get; } = [];
     public IReadOnlyList<string> Ratios => StoryStudioOptions.Ratios;
     public IReadOnlyList<StoryResourceKind> ResourceKinds { get; } = Enum.GetValues<StoryResourceKind>();
+    public IReadOnlyList<StorySegmentKindOption> SegmentKinds { get; } =
+    [
+        new(StorySegmentKind.Story, "剧情"),
+        new(StorySegmentKind.Transition, "转场"),
+    ];
 
     public bool IsWorkspaceOpen => _current is not null;
     public bool CanCreate => !IsBusy && !string.IsNullOrWhiteSpace(NewTitle) &&
         NewTextModel is not null && NewImageModel is not null && NewVideoModel is not null;
     public bool CanSave => !IsBusy && _current is not null && !string.IsNullOrWhiteSpace(ProjectTitle) &&
         ProjectTextModel is not null && ProjectImageModel is not null && ProjectVideoModel is not null;
-    public bool CanQuickSplit => CanSave && Segments.Count == 0 && !string.IsNullOrWhiteSpace(ProjectSource);
+    public bool CanQuickSplit => CanSave && Segments.Count == 0 &&
+        !string.IsNullOrWhiteSpace(ProjectSource) && _planningRunsReady && ResumablePlanningRun is null;
     public bool CanPlan => CanQuickSplit && ProjectTextModel is not null;
     public bool CanGenerateFrame => CanSave && SelectedSegment is not null &&
         !string.IsNullOrWhiteSpace(SelectedSegment.ImagePrompt);
@@ -149,6 +157,8 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanPlayStoryPlaylist))]
     [NotifyPropertyChangedFor(nameof(CanMoveSegmentUp))]
     [NotifyPropertyChangedFor(nameof(CanMoveSegmentDown))]
+    [NotifyPropertyChangedFor(nameof(CanResumePlanning))]
+    [NotifyPropertyChangedFor(nameof(CanAbandonPlanning))]
     private bool _isBusy;
     [ObservableProperty] private string _statusMessage = "剧情项目只保存在本机";
     [ObservableProperty] private string? _errorMessage;
@@ -212,6 +222,8 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     public void OpenProject(StoryProjectDocument project)
     {
         _current = project;
+        _planningRunsReady = false;
+        PlanningRuns.Clear();
         ProjectTitle = project.Title;
         ProjectDescription = project.Description;
         ProjectSource = project.Source;
@@ -237,17 +249,23 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         SelectedResource = Resources.FirstOrDefault();
         ErrorMessage = null;
         OnWorkspaceChanged();
+        NotifyPlanningRunsChanged();
+        if (_ownerUserId is { } owner)
+            _ = LoadPlanningRunsAsync(owner, project.Id, _session);
     }
 
     public void CloseProject()
     {
         _generationCancellation?.Cancel();
         _current = null;
+        _planningRunsReady = false;
         Segments.Clear();
         Resources.Clear();
+        PlanningRuns.Clear();
         SelectedSegment = null;
         SelectedResource = null;
         OnWorkspaceChanged();
+        NotifyPlanningRunsChanged();
     }
 
     public async Task SaveCurrentAsync(CancellationToken cancellationToken = default)
@@ -310,73 +328,8 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         StatusMessage = chunks.Length == 0 ? "原文中没有可分段内容" : $"已生成 {chunks.Length} 个可编辑分段";
     }
 
-    public async Task PlanStoryAsync(CancellationToken cancellationToken = default)
-    {
-        if (!CanPlan || ProjectTextModel is null) return;
-        var previousSummary = ProjectSummary;
-        var staged = false;
-        var committed = false;
-        IsBusy = true;
-        ErrorMessage = null;
-        StatusMessage = "文本模型正在分析全剧并生成分段…";
-        try
-        {
-            var result = await _planner.PlanAsync(
-                new StoryPlanningRequest(
-                    ProjectTextModel.Id,
-                    ProjectTitle.Trim(),
-                    ProjectDescription.Trim(),
-                    ProjectSource.Trim(),
-                    VisualStyle.Trim(),
-                    ProjectRatio),
-                cancellationToken);
-            ProjectSummary = result.Summary;
-            staged = true;
-            foreach (var resource in result.Resources)
-            {
-                var kind = resource.Kind switch
-                {
-                    "character" => StoryResourceKind.Character,
-                    "scene" => StoryResourceKind.Scene,
-                    _ => StoryResourceKind.Prop,
-                };
-                Resources.Add(new StoryResourceEditor(new StoryResourceDocument(
-                    resource.Id, kind, resource.Name, resource.Description,
-                    resource.ImagePrompt, null), _ => null));
-            }
-            foreach (var plan in result.Segments)
-            {
-                Segments.Add(new StorySegmentEditor(new StorySegmentDocument(
-                    $"segment-{Guid.NewGuid():N}", plan.Title, plan.Narrative,
-                    plan.ImagePrompt, plan.VideoPrompt, plan.Seconds,
-                    null, null, null)
-                {
-                    ResourceIds = plan.ResourceIds,
-                }, _ => null));
-            }
-            SelectedSegment = Segments.FirstOrDefault();
-            SelectedResource = Resources.FirstOrDefault();
-            FillMissingContinuity();
-            await PersistCurrentAsync(cancellationToken);
-            committed = true;
-            StatusMessage = $"AI 已完成全剧规划，共 {Segments.Count} 个分段";
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            ErrorMessage = exception.Message;
-            StatusMessage = "全剧规划失败，原文和现有内容未被覆盖";
-        }
-        finally
-        {
-            if (staged && !committed)
-            {
-                Segments.Clear();
-                Resources.Clear();
-                ProjectSummary = previousSummary;
-            }
-            IsBusy = false;
-        }
-    }
+    public Task PlanStoryAsync(CancellationToken cancellationToken = default) =>
+        StartPlanningRunAsync(cancellationToken);
 
     public Task GenerateFirstFrameAsync(CancellationToken cancellationToken = default) =>
         GenerateFrameAsync(false, cancellationToken);
@@ -489,15 +442,18 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         _session = Guid.NewGuid();
         _ownerUserId = ownerUserId;
         _current = null;
+        _planningRunsReady = false;
         Projects.Clear();
         Segments.Clear();
         Resources.Clear();
+        PlanningRuns.Clear();
         Models.Clear();
         ImageModels.Clear();
         VideoModels.Clear();
         ErrorMessage = null;
         VideoProgress = null;
         OnWorkspaceChanged();
+        NotifyPlanningRunsChanged();
     }
 
     private GenerationContext? CaptureGenerationContext() =>

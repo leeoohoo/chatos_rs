@@ -101,6 +101,54 @@ public sealed class StoryProjectStore
         return relative;
     }
 
+    public async Task<IReadOnlyList<StoryPlanningRunDocument>> LoadPlanningRunsAsync(
+        string ownerUserId,
+        Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        var folder = Path.Combine(ProjectFolder(ownerUserId, projectId), "planning-runs");
+        if (!Directory.Exists(folder)) return [];
+        var runs = new List<StoryPlanningRunDocument>();
+        foreach (var path in Directory.EnumerateFiles(folder, "*.json"))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var info = new FileInfo(path);
+                if (info.Length is <= 0 or > MaximumManifestBytes) continue;
+                await using var stream = File.OpenRead(path);
+                var run = await JsonSerializer.DeserializeAsync<StoryPlanningRunDocument>(
+                    stream, JsonOptions, cancellationToken).ConfigureAwait(false);
+                if (run is null || run.ProjectId != projectId) continue;
+                run.Validate();
+                runs.Add(run);
+            }
+            catch (Exception exception) when (exception is IOException or JsonException or
+                UnauthorizedAccessException or InvalidDataException)
+            {
+                // Preserve unreadable records for a later compatible version.
+            }
+        }
+        return runs.OrderByDescending(run => run.UpdatedAt).ToArray();
+    }
+
+    public async Task SavePlanningRunAsync(
+        string ownerUserId,
+        StoryPlanningRunDocument run,
+        CancellationToken cancellationToken = default)
+    {
+        run.Validate();
+        var folder = Path.Combine(ProjectFolder(ownerUserId, run.ProjectId), "planning-runs");
+        Directory.CreateDirectory(folder);
+        var json = JsonSerializer.Serialize(run, JsonOptions);
+        if (Encoding.UTF8.GetByteCount(json) > MaximumManifestBytes)
+            throw new InvalidDataException("剧情规划运行记录超过 16 MB。");
+        var target = Path.Combine(folder, $"{run.Id:N}.json");
+        var temporary = $"{target}.{Guid.NewGuid():N}.tmp";
+        await File.WriteAllTextAsync(temporary, json, cancellationToken).ConfigureAwait(false);
+        File.Move(temporary, target, true);
+    }
+
     public string? ResolveAssetPath(string ownerUserId, Guid projectId, string? relativePath)
     {
         if (string.IsNullOrWhiteSpace(relativePath) || Path.IsPathFullyQualified(relativePath)) return null;

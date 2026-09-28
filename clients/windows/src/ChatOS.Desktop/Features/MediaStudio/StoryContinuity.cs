@@ -92,6 +92,7 @@ public sealed partial class StoryStudioViewModel
         var index = Segments.IndexOf(segment);
         if (index < 0) return string.Empty;
         var lines = new List<string>();
+        lines.Add($"本段类型：{segment.KindLabel}");
         if (!string.IsNullOrWhiteSpace(ProjectSummary))
             lines.Add($"全剧摘要：{Clip(ProjectSummary, 700)}");
         if (index > 0)

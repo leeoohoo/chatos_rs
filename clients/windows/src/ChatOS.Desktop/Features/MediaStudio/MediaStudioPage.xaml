@@ -369,6 +369,32 @@
                                                 <Button Click="OnPlanStoryClick" Content="AI 分析全剧并拆分计划" IsEnabled="{x:Bind StoryViewModel.CanPlan, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
                                                 <Button Click="OnQuickSplitStoryClick" Content="不调用模型：按段落快速分段" IsEnabled="{x:Bind StoryViewModel.CanQuickSplit, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                 <TextBlock Text="AI 规划会调用所选文本模型并产生相应费用；不会自动生成图片或视频。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                <Expander Header="{x:Bind StoryViewModel.PlanningRunSummary, Mode=OneWay}">
+                                                    <StackPanel Padding="0,8,0,0" Spacing="8">
+                                                        <TextBlock Text="规划会先保存运行状态和模型草稿。程序中断后，有草稿会直接应用且不重复调用模型；没有草稿的恢复会重新调用模型并产生费用。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        <Grid ColumnSpacing="8">
+                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                            <Button Click="OnResumeStoryPlanningClick" Content="{x:Bind StoryViewModel.ResumePlanningLabel, Mode=OneWay}" HorizontalAlignment="Stretch" IsEnabled="{x:Bind StoryViewModel.CanResumePlanning, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                                            <Button Grid.Column="1" Click="OnAbandonStoryPlanningClick" Content="放弃待恢复记录" IsEnabled="{x:Bind StoryViewModel.CanAbandonPlanning, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                        </Grid>
+                                                        <ItemsControl ItemsSource="{x:Bind StoryViewModel.PlanningRuns}">
+                                                            <ItemsControl.ItemTemplate>
+                                                                <DataTemplate x:DataType="media:StoryPlanningRunCard">
+                                                                    <Border Margin="0,0,0,6" Padding="10" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="8">
+                                                                        <Grid ColumnSpacing="8">
+                                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                                            <StackPanel Spacing="3">
+                                                                                <TextBlock Text="{x:Bind StatusLabel}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                                                <TextBlock Text="{x:Bind Detail}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                            </StackPanel>
+                                                                            <TextBlock Grid.Column="1" Text="{x:Bind UpdatedAtLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                        </Grid>
+                                                                    </Border>
+                                                                </DataTemplate>
+                                                            </ItemsControl.ItemTemplate>
+                                                        </ItemsControl>
+                                                    </StackPanel>
+                                                </Expander>
                                                 <Rectangle Height="1" Fill="{StaticResource ChatOSBorderBrush}" />
                                                 <Border Padding="12" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="10">
                                                     <StackPanel Spacing="10">
@@ -558,7 +584,7 @@
                                                                     <Grid.ColumnDefinitions><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                                                     <TextBlock Text="{x:Bind NumberLabel, Mode=OneWay}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
                                                                     <StackPanel Grid.Column="1" Spacing="3">
-                                                                        <TextBlock Text="{x:Bind Title, Mode=OneWay}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                                        <Grid ColumnSpacing="6"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Text="{x:Bind KindLabel, Mode=OneWay}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" /><TextBlock Grid.Column="1" Text="{x:Bind Title, Mode=OneWay}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" /></Grid>
                                                                         <TextBlock Text="{x:Bind VideoStatus, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                                     </StackPanel>
                                                                 </Grid>
@@ -576,6 +602,7 @@
                                                     </StackPanel>
                                                     <StackPanel x:Name="StorySegmentEditorPanel" DataContext="{x:Bind StoryViewModel.SelectedSegment, Mode=OneWay}" Spacing="12">
                                                         <TextBox Header="分段标题" MaxLength="200" Text="{Binding Title, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                        <ComboBox Header="分段类型" DisplayMemberPath="Name" ItemsSource="{x:Bind StoryViewModel.SegmentKinds}" SelectedValue="{Binding Kind, Mode=TwoWay}" SelectedValuePath="Kind" />
                                                         <Grid ColumnSpacing="10">
                                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
                                                             <TextBox Header="剧情内容" AcceptsReturn="True" MaxLength="8000" MinHeight="100" Text="{Binding Narrative, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />

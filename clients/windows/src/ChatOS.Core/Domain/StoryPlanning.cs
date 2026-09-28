@@ -10,6 +10,7 @@ public sealed record StoryPlanningRequest(
     int MaximumSegments = 200);
 
 public sealed record PlannedStorySegment(
+    string Kind,
     string Title,
     string Narrative,
     string ImagePrompt,
