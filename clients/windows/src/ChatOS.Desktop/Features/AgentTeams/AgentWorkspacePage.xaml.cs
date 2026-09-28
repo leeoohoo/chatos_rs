@@ -4,6 +4,8 @@ using ChatOS.Presentation.AgentTeams;
 using ChatOS.Presentation.Settings;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Windows.Storage.Pickers;
+using Windows.Storage.Streams;
 
 namespace ChatOS.Desktop.Features.AgentTeams;
 
@@ -46,7 +48,7 @@ public sealed partial class AgentWorkspacePage : Page
 
     private async void OnSendClick(object sender, RoutedEventArgs e)
     {
-        if (string.IsNullOrWhiteSpace(ViewModel.MessageText)) return;
+        if (string.IsNullOrWhiteSpace(ViewModel.MessageText) && !ViewModel.HasPendingAttachments) return;
         await IgnoreFailureAsync(() => ViewModel.SendMessageAsync());
     }
 
@@ -57,6 +59,76 @@ public sealed partial class AgentWorkspacePage : Page
     {
         if (sender is Button { DataContext: AgentProfile profile })
             await ShowAgentDialogAsync(profile);
+    }
+
+    private async void OnArchiveAgentClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: AgentProfile profile }) return;
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "归档 Agent",
+            Content = new TextBlock
+            {
+                Text = $"归档“{profile.Draft.Name}”？现有消息会保留。",
+                TextWrapping = TextWrapping.Wrap,
+            },
+            PrimaryButtonText = "归档",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            await IgnoreFailureAsync(() => ViewModel.ArchiveAgentAsync(profile));
+    }
+
+    private async void OnAddAttachmentClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var window = (Application.Current as App)?.MainWindow ??
+                throw new InvalidOperationException("无法找到当前窗口。");
+            var picker = new FileOpenPicker
+            {
+                ViewMode = PickerViewMode.List,
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+            };
+            picker.FileTypeFilter.Add("*");
+            WinRT.Interop.InitializeWithWindow.Initialize(
+                picker,
+                WinRT.Interop.WindowNative.GetWindowHandle(window));
+            var attachments = new List<AgentMessageAttachment>();
+            foreach (var file in await picker.PickMultipleFilesAsync())
+            {
+                using var stream = await file.OpenReadAsync();
+                if (stream.Size is 0 or > 20 * 1024 * 1024)
+                    throw new InvalidOperationException($"附件“{file.Name}”为空或超过 20 MB。");
+                var bytes = new byte[(int)stream.Size];
+                using var reader = new DataReader(stream.GetInputStreamAt(0));
+                await reader.LoadAsync((uint)stream.Size);
+                reader.ReadBytes(bytes);
+                var mime = string.IsNullOrWhiteSpace(file.ContentType)
+                    ? "application/octet-stream"
+                    : file.ContentType;
+                attachments.Add(new AgentMessageAttachment(
+                    Guid.NewGuid().ToString("D").ToLowerInvariant(),
+                    file.Name,
+                    mime,
+                    AttachmentKind(mime),
+                    bytes.LongLength,
+                    bytes));
+            }
+            ViewModel.AddAttachments(attachments);
+        }
+        catch (Exception exception)
+        {
+            await ShowAlertAsync("无法添加附件", exception.Message);
+        }
+    }
+
+    private void OnRemoveAttachmentClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: AgentMessageAttachment attachment })
+            ViewModel.RemoveAttachment(attachment);
     }
 
     private void OnProjectClicked(object sender, RoutedEventArgs e)
@@ -138,6 +210,27 @@ public sealed partial class AgentWorkspacePage : Page
             : InfoBarSeverity.Error;
         NoticeBar.Message = ViewModel.ErrorMessage ??
             (ViewModel.IsBusy ? "正在同步 Agent 工作区…" : ViewModel.StatusMessage);
+    }
+
+    private async Task ShowAlertAsync(string title, string message)
+    {
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = title,
+            Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
+            CloseButtonText = "关闭",
+        };
+        _ = await dialog.ShowAsync();
+    }
+
+    private static AgentMessageAttachmentKind AttachmentKind(string mimeType)
+    {
+        if (mimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            return AgentMessageAttachmentKind.Image;
+        if (mimeType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
+            return AgentMessageAttachmentKind.Audio;
+        return AgentMessageAttachmentKind.File;
     }
 
     private static async Task IgnoreFailureAsync(Func<Task> action)

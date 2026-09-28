@@ -51,7 +51,10 @@
                                             <TextBlock FontWeight="SemiBold" Text="{x:Bind Draft.Name}" TextTrimming="CharacterEllipsis" />
                                             <TextBlock Text="{x:Bind Draft.Description}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                         </StackPanel>
-                                        <Button Grid.Column="2" Click="OnEditAgentClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="编辑"><FontIcon Glyph="&#xE70F;" FontSize="12" /></Button>
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="3">
+                                            <Button Click="OnEditAgentClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="编辑"><FontIcon Glyph="&#xE70F;" FontSize="12" /></Button>
+                                            <Button Click="OnArchiveAgentClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="归档"><FontIcon Glyph="&#xE74D;" FontSize="12" /></Button>
+                                        </StackPanel>
                                     </Grid>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
@@ -114,11 +117,22 @@
                             </ListView.ItemTemplate>
                         </ListView>
                         <Border Grid.Row="3" Background="{StaticResource ChatOSBorderBrush}" />
-                        <Grid Grid.Row="4" Padding="14" ColumnSpacing="8">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBox AcceptsReturn="True" MaxHeight="130" PlaceholderText="给 Agent 发消息…" Text="{x:Bind ViewModel.MessageText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
-                            <Button Grid.Column="1" VerticalAlignment="Bottom" Click="OnSendClick" Content="发送" IsEnabled="{x:Bind ViewModel.HasRoom, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
-                        </Grid>
+                        <StackPanel Grid.Row="4" Padding="14" Spacing="8">
+                            <ItemsControl ItemsSource="{x:Bind ViewModel.PendingAttachments}">
+                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="6" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="domain:AgentMessageAttachment">
+                                        <Button Click="OnRemoveAttachmentClick" Content="{x:Bind Name}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <Button Click="OnAddAttachmentClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="添加附件"><FontIcon Glyph="&#xE723;" /></Button>
+                                <TextBox Grid.Column="1" AcceptsReturn="True" MaxHeight="130" PlaceholderText="给 Agent 发消息…" Text="{x:Bind ViewModel.MessageText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
+                                <Button Grid.Column="2" VerticalAlignment="Bottom" Click="OnSendClick" Content="发送" IsEnabled="{x:Bind ViewModel.HasRoom, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                            </Grid>
+                        </StackPanel>
                     </Grid>
                 </Border>
             </Grid>
