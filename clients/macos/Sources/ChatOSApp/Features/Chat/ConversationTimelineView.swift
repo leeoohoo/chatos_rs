@@ -98,7 +98,7 @@ struct ConversationTimelineView: View {
                                 .frame(maxWidth: .infinity, minHeight: 300)
                             }
 
-                            ForEach(timelineItems) { item in
+                            ForEach(conversation.timelineItems) { item in
                                 timelineRow(item)
                                     .padding(.top, item.spacingBefore)
                             }
@@ -201,17 +201,6 @@ struct ConversationTimelineView: View {
             ?? turn.finalAssistantMessage?.id
             ?? "none"
         return "\(turn.id)|\(turn.revision)|\(turn.assistantReplies.count)|\(replyID)"
-    }
-
-    private var timelineItems: [ConversationTimelineItem] {
-        let promptsByTurnID = Dictionary(uniqueKeysWithValues: conversation.turns.map {
-            ($0.id, conversation.prompts(for: $0.id))
-        })
-        return ConversationTimelineItem.build(
-            turns: conversation.turns,
-            promptsByTurnID: promptsByTurnID,
-            unattachedPrompts: conversation.unattachedPendingPrompts
-        )
     }
 
     @ViewBuilder
@@ -328,9 +317,9 @@ struct ConversationTimelineView: View {
         guard let request = conversation.focusRequest else { return }
 
         if let promptID = request.promptID,
-           timelineItems.contains(where: { $0.id == promptID }) {
+           conversation.timelineItems.contains(where: { $0.id == "ask-user-\(promptID)" }) {
             withAnimation(.easeOut(duration: 0.18)) {
-                proxy.scrollTo(promptID, anchor: .center)
+                proxy.scrollTo("ask-user-\(promptID)", anchor: .center)
             }
             conversation.consumeFocusRequest(id: request.id)
             return

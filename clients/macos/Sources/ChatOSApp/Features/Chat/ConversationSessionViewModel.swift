@@ -2,6 +2,13 @@ import ChatOSCore
 import Foundation
 
 @MainActor
+final class ConversationComposerState: ObservableObject {
+    @Published var draft = ""
+    @Published var attachments: [ConversationAttachmentDraft] = []
+    @Published var attachmentError: String?
+}
+
+@MainActor
 final class ConversationSessionViewModel: ObservableObject {
     private static let historyPageSize = 10
     private static let realtimeRefreshDebounce: Duration = .milliseconds(250)
@@ -34,13 +41,29 @@ final class ConversationSessionViewModel: ObservableObject {
     @Published var runtimeSettingsError: String?
     @Published var sendError: String?
     @Published var selectedTurnID: String?
-    @Published var draft = ""
-    @Published var attachments: [ConversationAttachmentDraft] = []
-    @Published var attachmentError: String?
     @Published var askUserPrompts: [AskUserPrompt] = []
     @Published var submittingAskUserPromptIDs: Set<String> = []
     @Published var askUserPromptErrors: [String: String] = [:]
     @Published private(set) var focusRequest: ConversationFocusRequest?
+
+    let composerState = ConversationComposerState()
+    private(set) var timelineItems: [ConversationTimelineItem]
+    private(set) var timelineItemsBuildCount = 0
+
+    var draft: String {
+        get { composerState.draft }
+        set { composerState.draft = newValue }
+    }
+
+    var attachments: [ConversationAttachmentDraft] {
+        get { composerState.attachments }
+        set { composerState.attachments = newValue }
+    }
+
+    var attachmentError: String? {
+        get { composerState.attachmentError }
+        set { composerState.attachmentError = newValue }
+    }
 
     let historyStore: any ConversationHistoryStoring
     let commandService: (any ConversationCommandServicing)?
@@ -79,6 +102,12 @@ final class ConversationSessionViewModel: ObservableObject {
     ) {
         self.sessionID = sessionID
         self.turns = initialTurns
+        self.timelineItems = ConversationTimelineItem.build(
+            turns: initialTurns,
+            promptsByTurnID: [:],
+            unattachedPrompts: []
+        )
+        self.timelineItemsBuildCount = 1
         self.selectedTurnID = initialTurns.last?.id
         self.historyStore = historyStore
         self.remoteService = remoteService
@@ -565,6 +594,7 @@ final class ConversationSessionViewModel: ObservableObject {
         let snapshot = await historyStore.snapshot(sessionID: sessionID)
         if turns != snapshot.turns {
             turns = snapshot.turns
+            rebuildTimelineItems()
         }
         preloadTaskGraphAvailability(for: snapshot.turns)
         olderCursor = snapshot.olderCursor
@@ -574,6 +604,24 @@ final class ConversationSessionViewModel: ObservableObject {
         if unreadNewerCount != snapshot.unreadNewerCount {
             unreadNewerCount = snapshot.unreadNewerCount
         }
+    }
+
+    func replaceAskUserPrompts(_ prompts: [AskUserPrompt]) {
+        guard askUserPrompts != prompts else { return }
+        askUserPrompts = prompts
+        rebuildTimelineItems()
+    }
+
+    private func rebuildTimelineItems() {
+        let promptsByTurnID = Dictionary(uniqueKeysWithValues: turns.map {
+            ($0.id, prompts(for: $0.id))
+        })
+        timelineItems = ConversationTimelineItem.build(
+            turns: turns,
+            promptsByTurnID: promptsByTurnID,
+            unattachedPrompts: unattachedPendingPrompts
+        )
+        timelineItemsBuildCount += 1
     }
 
     private func preloadTaskGraphAvailability(for turns: [ConversationTurn]) {

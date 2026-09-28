@@ -548,16 +548,22 @@ struct PetQuickChatTaskInspectorView: View {
 private struct PetQuickChatComposer: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var conversation: ConversationSessionViewModel
+    @ObservedObject private var composerState: ConversationComposerState
     @State private var showsFileImporter = false
     @State private var previewedAttachment: ConversationAttachmentDraft?
     @State private var isDropTargeted = false
 
+    init(conversation: ConversationSessionViewModel) {
+        self.conversation = conversation
+        _composerState = ObservedObject(wrappedValue: conversation.composerState)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            if !conversation.attachments.isEmpty {
+            if !composerState.attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 7) {
-                        ForEach(conversation.attachments) { attachment in
+                        ForEach(composerState.attachments) { attachment in
                             ComposerAttachmentChip(
                                 attachment: attachment,
                                 onPreview: { previewedAttachment = attachment },
@@ -567,7 +573,7 @@ private struct PetQuickChatComposer: View {
                     }
                 }
             }
-            if let error = conversation.attachmentError ?? conversation.sendError {
+            if let error = composerState.attachmentError ?? conversation.sendError {
                 Text(error)
                     .font(.system(size: 10))
                     .foregroundStyle(.red)
@@ -585,7 +591,7 @@ private struct PetQuickChatComposer: View {
                 .help(model.localized("添加附件", english: "Add Attachment"))
 
                 ComposerPasteTextEditor(
-                    text: $conversation.draft,
+                    text: $composerState.draft,
                     placeholder: model.localized(
                         "发送消息，或粘贴图片和文件…",
                         english: "Send a message, or paste images and files…"
@@ -647,7 +653,7 @@ private struct PetQuickChatComposer: View {
             case let .success(urls):
                 conversation.addAttachmentFiles(urls)
             case let .failure(error):
-                conversation.attachmentError = error.localizedDescription
+                composerState.attachmentError = error.localizedDescription
             }
         }
         .sheet(item: $previewedAttachment) { attachment in
