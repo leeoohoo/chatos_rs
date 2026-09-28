@@ -98,7 +98,24 @@ public sealed record VideoGenerationRequest(
     ImageGenerationInput? FirstFrame,
     ImageGenerationInput? LastFrame,
     VideoGenerationInputAudio? ReferenceAudio,
-    string Ratio);
+    string Ratio)
+{
+    public VideoGenerationInputVideo? ReferenceVideo { get; init; }
+    public VideoGenerationReferencePurpose ReferencePurpose { get; init; } =
+        VideoGenerationReferencePurpose.Reference;
+}
+
+public enum VideoGenerationReferencePurpose
+{
+    Reference,
+    Edit,
+    Extend,
+}
+
+public sealed record VideoGenerationInputVideo(
+    string Name,
+    string MimeType,
+    string Base64Data);
 
 public sealed record VideoGenerationInputAudio(
     string Name,

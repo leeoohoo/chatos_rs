@@ -188,6 +188,7 @@ public sealed partial class StoryStudioViewModel
                 await GenerateVideoCoreAsync(
                     new GenerationContext(owner, projectId, item.Segment!, session),
                     videoModel,
+                    StoryVideoGuidance.Frames,
                     cancellationToken);
                 break;
         }

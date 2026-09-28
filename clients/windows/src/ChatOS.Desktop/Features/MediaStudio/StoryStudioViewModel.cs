@@ -157,6 +157,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanRefineSelectedSegment))]
     [NotifyPropertyChangedFor(nameof(CanResumeSelectedVideo))]
     [NotifyPropertyChangedFor(nameof(SelectedVideoJobLabel))]
+    [NotifyPropertyChangedFor(nameof(CanRegenerateFromCurrentVideo))]
     [NotifyPropertyChangedFor(nameof(VideoRegenerationSummary))]
     private MediaGenerationModel? _projectVideoModel;
     [ObservableProperty]
@@ -171,6 +172,9 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanImportSegmentAsset))]
     [NotifyPropertyChangedFor(nameof(CanRefineSelectedSegment))]
     [NotifyPropertyChangedFor(nameof(CanApplySegmentRefinement))]
+    [NotifyPropertyChangedFor(nameof(CanRegenerateFromCurrentVideo))]
+    [NotifyPropertyChangedFor(nameof(GenerateVideoActionLabel))]
+    [NotifyPropertyChangedFor(nameof(VideoRegenerationSummary))]
     private StorySegmentEditor? _selectedSegment;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanGenerateResourceImage))]
@@ -204,6 +208,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanExtractSelectedVideoLastFrame))]
     [NotifyPropertyChangedFor(nameof(CanRestoreArchivedVideo))]
     [NotifyPropertyChangedFor(nameof(CanRestoreArchivedFrame))]
+    [NotifyPropertyChangedFor(nameof(CanRegenerateFromCurrentVideo))]
     private bool _isBusy;
     [ObservableProperty] private string _statusMessage = "剧情项目只保存在本机";
     [ObservableProperty] private string? _errorMessage;

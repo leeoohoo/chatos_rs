@@ -225,6 +225,40 @@ public sealed class MediaGenerationServiceTests
     }
 
     [Fact]
+    public async Task GenerateVideoSendsReferenceVideoForEditing()
+    {
+        var store = TokenStore();
+        var api = RuntimeApi(store, "https://provider.example.test/v1", "minimax-h3");
+        string? createBody = null;
+        var provider = ProviderFactory(async request =>
+        {
+            if (request.Method == HttpMethod.Post)
+            {
+                createBody = await request.Content!.ReadAsStringAsync();
+                return Json("""{"id":"job-edit","status":"completed"}""");
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent([1, 2, 3]),
+            }.WithContentType("video/mp4");
+        });
+        var service = new MediaGenerationService(api, provider, store, TimeSpan.Zero, 5);
+        var request = VideoRequest() with
+        {
+            ReferenceVideo = new VideoGenerationInputVideo("source.mp4", "video/mp4", "AQID"),
+            ReferencePurpose = VideoGenerationReferencePurpose.Edit,
+        };
+
+        await service.GenerateVideoAsync(request);
+
+        using var json = JsonDocument.Parse(createBody!);
+        var metadata = json.RootElement.GetProperty("metadata");
+        Assert.Equal("adaptive", metadata.GetProperty("ratio").GetString());
+        Assert.Equal("data:video/mp4;base64,AQID", metadata.GetProperty("video_url").GetString());
+        Assert.False(metadata.TryGetProperty("first_frame_image", out _));
+    }
+
+    [Fact]
     public async Task GenerateVideoRejectsUnsupportedLastFrameBeforeSubmitting()
     {
         var store = TokenStore();

@@ -129,6 +129,34 @@ public sealed class StoryProjectStoreTests
     }
 
     [Fact]
+    public async Task PendingVideoGuidancePersistsForSafeResume()
+    {
+        using var folder = new TemporaryFolder();
+        var store = new StoryProjectStore(folder.Path);
+        var project = Project("Video edit") with
+        {
+            Segments =
+            [
+                Project("unused").Segments[0] with
+                {
+                    VideoAsset = "assets/segment-1/source.mp4",
+                    PendingVideoJobId = "job-edit",
+                    PendingVideoJobStatus = "processing",
+                    PendingVideoRequestDigest = new string('a', 64),
+                    PendingVideoGuidance = "source-video",
+                },
+            ],
+        };
+
+        await store.SaveAsync("owner-a", project);
+
+        var restored = Assert.Single(await store.LoadAsync("owner-a"));
+        var segment = Assert.Single(restored.Segments);
+        Assert.Equal("source-video", segment.PendingVideoGuidance);
+        Assert.Equal("job-edit", segment.PendingVideoJobId);
+    }
+
+    [Fact]
     public async Task PlanningRunLoadSkipsCorruptRecordWithoutDeletingIt()
     {
         using var folder = new TemporaryFolder();

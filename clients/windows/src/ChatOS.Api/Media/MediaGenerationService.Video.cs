@@ -12,6 +12,7 @@ public sealed partial class MediaGenerationService
 {
     private const int MaximumVideoJobResponseBytes = 2 * 1024 * 1024;
     private const int MaximumVideoBytes = 512 * 1024 * 1024;
+    private const int MaximumReferenceVideoBytes = 47 * 1024 * 1024;
     private static readonly TimeSpan VideoRequestTimeout = TimeSpan.FromMinutes(10);
 
     public Task<VideoGenerationResult> GenerateVideoAsync(
@@ -201,7 +202,8 @@ public sealed partial class MediaGenerationService
         ValidateVideoRequest(request, profile);
         var metadata = new Dictionary<string, string>
         {
-            ["ratio"] = request.FirstFrame is null ? request.Ratio : "adaptive",
+            ["ratio"] = request.ReferencePurpose == VideoGenerationReferencePurpose.Reference &&
+                request.FirstFrame is null ? request.Ratio : "adaptive",
         };
         if (request.FirstFrame is not null)
             metadata["first_frame_image"] = DataUrl(request.FirstFrame);
@@ -209,6 +211,8 @@ public sealed partial class MediaGenerationService
             metadata["last_frame_image"] = DataUrl(request.LastFrame);
         if (request.ReferenceAudio is not null)
             metadata["audio_url"] = DataUrl(request.ReferenceAudio.MimeType, request.ReferenceAudio.Base64Data);
+        if (request.ReferenceVideo is not null)
+            metadata["video_url"] = DataUrl(request.ReferenceVideo.MimeType, request.ReferenceVideo.Base64Data);
         var message = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/videos")
         {
             Content = JsonContent.Create(new
@@ -332,11 +336,19 @@ public sealed partial class MediaGenerationService
         }
         if (request.FirstFrame is null && !VideoGenerationProfile.Ratios.Contains(request.Ratio))
             throw new ArgumentException("Choose a supported video ratio.", nameof(request));
-        if (request.ReferenceAudio is not null &&
+        if ((request.ReferenceAudio is not null || request.ReferenceVideo is not null) &&
             (request.FirstFrame is not null || request.LastFrame is not null))
-            throw new ArgumentException("Reference audio cannot be combined with video frames.", nameof(request));
+            throw new ArgumentException("Reference video or audio cannot be combined with video frames.", nameof(request));
+        if (request.ReferenceAudio is not null && request.ReferenceVideo is not null)
+            throw new ArgumentException("Choose either reference video or reference audio, not both.", nameof(request));
+        if (!Enum.IsDefined(request.ReferencePurpose))
+            throw new ArgumentException("Choose a supported reference video purpose.", nameof(request));
+        if (request.ReferencePurpose != VideoGenerationReferencePurpose.Reference &&
+            request.ReferenceVideo is null)
+            throw new ArgumentException("Editing or extending requires a reference video.", nameof(request));
         ValidateVideoFrame(request.FirstFrame, request);
         ValidateVideoFrame(request.LastFrame, request);
+        ValidateReferenceVideo(request.ReferenceVideo, profile, request);
         ValidateReferenceAudio(request.ReferenceAudio, profile, request);
     }
 
@@ -387,6 +399,28 @@ public sealed partial class MediaGenerationService
         catch (FormatException)
         {
             throw new ArgumentException("Reference audio is invalid.", nameof(request));
+        }
+    }
+
+    private static void ValidateReferenceVideo(
+        VideoGenerationInputVideo? video,
+        VideoGenerationProfile? profile,
+        VideoGenerationRequest request)
+    {
+        if (video is null) return;
+        if (profile is { SupportsReferenceVideo: false })
+            throw new ArgumentException("The selected model cannot use a reference video.", nameof(request));
+        if (video.MimeType.ToLowerInvariant() is not ("video/mp4" or "video/quicktime"))
+            throw new ArgumentException("Reference videos must be MP4 or MOV.", nameof(request));
+        try
+        {
+            var bytes = Convert.FromBase64String(video.Base64Data);
+            if (bytes.Length == 0 || bytes.Length > MaximumReferenceVideoBytes)
+                throw new ArgumentException("A reference video is empty or exceeds 47 MB.", nameof(request));
+        }
+        catch (FormatException)
+        {
+            throw new ArgumentException("The reference video is invalid.", nameof(request));
         }
     }
 

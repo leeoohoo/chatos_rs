@@ -67,6 +67,7 @@ public sealed record StorySegmentDocument(
     public string? PendingVideoJobId { get; init; }
     public string? PendingVideoJobStatus { get; init; }
     public string? PendingVideoRequestDigest { get; init; }
+    public string PendingVideoGuidance { get; init; } = "frames";
     public string? ActualVideoLastFrameAsset { get; init; }
     public IReadOnlyList<StoryArchivedVideoDocument> ArchivedVideos { get; init; } = [];
     public IReadOnlyList<StoryArchivedFrameDocument> ArchivedFrames { get; init; } = [];
@@ -88,8 +89,10 @@ public sealed record StorySegmentDocument(
             ArchivedFrames.Any(archived => archived is null) ||
             !SafeJob(PendingVideoJobId, 512) || !SafeJob(PendingVideoJobStatus, 80) ||
             !SafeDigest(PendingVideoRequestDigest) ||
+            PendingVideoGuidance is not ("frames" or "source-video") ||
             (PendingVideoJobId is null) != (PendingVideoRequestDigest is null) ||
             PendingVideoJobId is null && PendingVideoJobStatus is not null ||
+            PendingVideoJobId is null && PendingVideoGuidance != "frames" ||
             !SafeAsset(FirstFrameAsset) || !SafeAsset(LastFrameAsset) || !SafeAsset(VideoAsset) ||
             !SafeAsset(ActualVideoLastFrameAsset))
         {

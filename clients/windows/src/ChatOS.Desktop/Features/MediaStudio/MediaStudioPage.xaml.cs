@@ -238,17 +238,26 @@ public sealed partial class MediaStudioPage : Page
             return;
         }
 
+        var canUseReference = StoryViewModel.CanRegenerateFromCurrentVideo;
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = "确认重新生成已完成视频？",
             Content = StoryViewModel.VideoRegenerationSummary,
-            PrimaryButtonText = "确认并重新生成",
+            PrimaryButtonText = canUseReference
+                ? "参考当前视频重做"
+                : "仅按首尾帧重做",
+            SecondaryButtonText = canUseReference
+                ? "仅按首尾帧重做"
+                : string.Empty,
             CloseButtonText = "保留当前视频",
             DefaultButton = ContentDialogButton.Close,
         };
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
-            await StoryViewModel.RegenerateSelectedVideoAsync(segment.Id);
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary)
+            await StoryViewModel.RegenerateSelectedVideoAsync(segment.Id, canUseReference);
+        else if (result == ContentDialogResult.Secondary)
+            await StoryViewModel.RegenerateSelectedVideoAsync(segment.Id, false);
     }
 
     private async void OnResumeStoryVideoClick(object sender, RoutedEventArgs e) =>
