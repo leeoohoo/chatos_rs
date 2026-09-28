@@ -6,6 +6,7 @@ public sealed record StoryProjectDocument(
     string Title,
     string Description,
     string Source,
+    string Summary,
     string VisualStyle,
     string Ratio,
     string TextModelConfigId,
@@ -23,7 +24,7 @@ public sealed record StoryProjectDocument(
     {
         if (Version != CurrentVersion || Id == Guid.Empty ||
             string.IsNullOrWhiteSpace(Title) || Title.Trim().Length > 120 ||
-            Description.Length > 4_000 || Source.Length > 80_000 || VisualStyle.Length > 2_000 ||
+            Description.Length > 4_000 || Source.Length > 80_000 || (Summary?.Length ?? 0) > 16_000 || VisualStyle.Length > 2_000 ||
             string.IsNullOrWhiteSpace(TextModelConfigId) ||
             string.IsNullOrWhiteSpace(ImageModelConfigId) ||
             string.IsNullOrWhiteSpace(VideoModelConfigId) ||

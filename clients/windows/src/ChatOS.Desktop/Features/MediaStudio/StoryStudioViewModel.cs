@@ -92,6 +92,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
 {
     private const int MaximumImageBytes = 20 * 1024 * 1024;
     private readonly IMediaGenerationService _media;
+    private readonly IStoryPlanningService _planner;
     private readonly MediaStudioHistoryStore _history;
     private readonly StoryProjectStore _store;
     private string? _ownerUserId;
@@ -101,16 +102,19 @@ public sealed partial class StoryStudioViewModel : ObservableObject
 
     public StoryStudioViewModel(
         IMediaGenerationService media,
+        IStoryPlanningService planner,
         MediaStudioHistoryStore history,
         StoryProjectStore store)
     {
         _media = media;
+        _planner = planner;
         _history = history;
         _store = store;
         Segments.CollectionChanged += (_, _) =>
         {
             RenumberSegments();
             OnPropertyChanged(nameof(CanQuickSplit));
+            OnPropertyChanged(nameof(CanPlan));
             OnPropertyChanged(nameof(WorkspaceSummary));
         };
     }
@@ -128,6 +132,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     public bool CanSave => !IsBusy && _current is not null && !string.IsNullOrWhiteSpace(ProjectTitle) &&
         ProjectTextModel is not null && ProjectImageModel is not null && ProjectVideoModel is not null;
     public bool CanQuickSplit => CanSave && Segments.Count == 0 && !string.IsNullOrWhiteSpace(ProjectSource);
+    public bool CanPlan => CanQuickSplit && ProjectTextModel is not null;
     public bool CanGenerateFrame => CanSave && SelectedSegment is not null &&
         !string.IsNullOrWhiteSpace(SelectedSegment.ImagePrompt);
     public bool CanGenerateVideo => CanSave && SelectedSegment is not null &&
@@ -163,20 +168,25 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [ObservableProperty] private string _projectDescription = string.Empty;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanQuickSplit))]
+    [NotifyPropertyChangedFor(nameof(CanPlan))]
     private string _projectSource = string.Empty;
+    [ObservableProperty] private string _projectSummary = string.Empty;
     [ObservableProperty] private string _visualStyle = "自然光，电影感，保持角色外观、服装与场景一致";
     [ObservableProperty] private string _projectRatio = "16:9";
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanSave))]
     [NotifyPropertyChangedFor(nameof(CanQuickSplit))]
+    [NotifyPropertyChangedFor(nameof(CanPlan))]
     private MediaGenerationModel? _projectTextModel;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanSave))]
     [NotifyPropertyChangedFor(nameof(CanQuickSplit))]
+    [NotifyPropertyChangedFor(nameof(CanPlan))]
     private MediaGenerationModel? _projectImageModel;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanSave))]
     [NotifyPropertyChangedFor(nameof(CanQuickSplit))]
+    [NotifyPropertyChangedFor(nameof(CanPlan))]
     private MediaGenerationModel? _projectVideoModel;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanGenerateFrame))]
@@ -186,6 +196,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanCreate))]
     [NotifyPropertyChangedFor(nameof(CanSave))]
     [NotifyPropertyChangedFor(nameof(CanQuickSplit))]
+    [NotifyPropertyChangedFor(nameof(CanPlan))]
     [NotifyPropertyChangedFor(nameof(CanGenerateFrame))]
     [NotifyPropertyChangedFor(nameof(CanGenerateVideo))]
     private bool _isBusy;
@@ -227,7 +238,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         if (!CanCreate || owner is null || NewTextModel is null || NewImageModel is null || NewVideoModel is null) return;
         var now = DateTimeOffset.UtcNow;
         var project = new StoryProjectDocument(
-            Guid.NewGuid(), StoryProjectDocument.CurrentVersion, NewTitle.Trim(), NewDescription.Trim(), string.Empty,
+            Guid.NewGuid(), StoryProjectDocument.CurrentVersion, NewTitle.Trim(), NewDescription.Trim(), string.Empty, string.Empty,
             "自然光，电影感，保持角色外观、服装与场景一致", "16:9",
             NewTextModel.Id, NewImageModel.Id, NewVideoModel.Id, [], now, now);
         IsBusy = true;
@@ -254,6 +265,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         ProjectTitle = project.Title;
         ProjectDescription = project.Description;
         ProjectSource = project.Source;
+        ProjectSummary = project.Summary ?? string.Empty;
         VisualStyle = project.VisualStyle;
         ProjectRatio = project.Ratio;
         ProjectTextModel = Models.FirstOrDefault(model => model.Id == project.TextModelConfigId);
@@ -332,6 +344,56 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         }
         SelectedSegment = Segments.FirstOrDefault();
         StatusMessage = chunks.Length == 0 ? "原文中没有可分段内容" : $"已生成 {chunks.Length} 个可编辑分段";
+    }
+
+    public async Task PlanStoryAsync(CancellationToken cancellationToken = default)
+    {
+        if (!CanPlan || ProjectTextModel is null) return;
+        var previousSummary = ProjectSummary;
+        var staged = false;
+        var committed = false;
+        IsBusy = true;
+        ErrorMessage = null;
+        StatusMessage = "文本模型正在分析全剧并生成分段…";
+        try
+        {
+            var result = await _planner.PlanAsync(
+                new StoryPlanningRequest(
+                    ProjectTextModel.Id,
+                    ProjectTitle.Trim(),
+                    ProjectDescription.Trim(),
+                    ProjectSource.Trim(),
+                    VisualStyle.Trim(),
+                    ProjectRatio),
+                cancellationToken);
+            ProjectSummary = result.Summary;
+            staged = true;
+            foreach (var plan in result.Segments)
+            {
+                Segments.Add(new StorySegmentEditor(new StorySegmentDocument(
+                    $"segment-{Guid.NewGuid():N}", plan.Title, plan.Narrative,
+                    plan.ImagePrompt, plan.VideoPrompt, plan.Seconds,
+                    null, null, null), _ => null));
+            }
+            SelectedSegment = Segments.FirstOrDefault();
+            await PersistCurrentAsync(cancellationToken);
+            committed = true;
+            StatusMessage = $"AI 已完成全剧规划，共 {Segments.Count} 个分段";
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            ErrorMessage = exception.Message;
+            StatusMessage = "全剧规划失败，原文和现有内容未被覆盖";
+        }
+        finally
+        {
+            if (staged && !committed)
+            {
+                Segments.Clear();
+                ProjectSummary = previousSummary;
+            }
+            IsBusy = false;
+        }
     }
 
     public Task GenerateFirstFrameAsync(CancellationToken cancellationToken = default) =>
@@ -433,6 +495,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             Title = ProjectTitle.Trim(),
             Description = ProjectDescription.Trim(),
             Source = ProjectSource.Trim(),
+            Summary = ProjectSummary.Trim(),
             VisualStyle = VisualStyle.Trim(),
             Ratio = ProjectRatio,
             TextModelConfigId = ProjectTextModel.Id,
@@ -556,6 +619,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         OnPropertyChanged(nameof(IsWorkspaceOpen));
         OnPropertyChanged(nameof(CanSave));
         OnPropertyChanged(nameof(CanQuickSplit));
+        OnPropertyChanged(nameof(CanPlan));
         OnPropertyChanged(nameof(CanGenerateFrame));
         OnPropertyChanged(nameof(CanGenerateVideo));
         OnPropertyChanged(nameof(WorkspaceSummary));

@@ -36,6 +36,8 @@ public static class ServiceCollectionExtensions
         });
         services.AddHttpClient(MediaGenerationService.ProviderClientName, client =>
             client.Timeout = Timeout.InfiniteTimeSpan);
+        services.AddHttpClient(StoryPlanningService.ProviderClientName, client =>
+            client.Timeout = Timeout.InfiniteTimeSpan);
         services.AddSingleton<IAuthenticationService, AuthenticationService>();
         services.AddSingleton<ILocalConnectorPairingTicketService, LocalConnectorPairingTicketService>();
         services.AddSingleton<IAskUserPromptService, AskUserPromptService>();
@@ -52,6 +54,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IProjectRunService, ProjectRunService>();
         services.AddSingleton<INotepadService, NotepadService>();
         services.AddSingleton<IMediaGenerationService, MediaGenerationService>();
+        services.AddSingleton<IStoryPlanningService, StoryPlanningService>();
         services.AddSingleton<IMessageTaskGraphService, MessageTaskGraphService>();
         services.AddSingleton<IPetActivityInboxService, PetActivityInboxService>();
         services.AddSingleton<WebSocketTicketService>();

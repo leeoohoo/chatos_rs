@@ -79,7 +79,7 @@ public sealed class StoryProjectStoreTests
     {
         var now = new DateTimeOffset(2026, 9, 28, 8, 0, 0, TimeSpan.Zero);
         return new StoryProjectDocument(
-            Guid.NewGuid(), StoryProjectDocument.CurrentVersion, title, "Description", "Source", "Style",
+            Guid.NewGuid(), StoryProjectDocument.CurrentVersion, title, "Description", "Source", "Summary", "Style",
             "16:9", "text-model", "image-model", "video-model",
             [new StorySegmentDocument("segment-1", "Shot", "Narrative", "Image", "Video", 4, null, null, null)],
             now, now);

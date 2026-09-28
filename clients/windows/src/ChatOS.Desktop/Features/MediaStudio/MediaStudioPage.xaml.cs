@@ -60,6 +60,9 @@ public sealed partial class MediaStudioPage : Page
     private void OnQuickSplitStoryClick(object sender, RoutedEventArgs e) =>
         StoryViewModel.QuickSplit();
 
+    private async void OnPlanStoryClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.PlanStoryAsync();
+
     private void OnAddStorySegmentClick(object sender, RoutedEventArgs e) =>
         StoryViewModel.AddSegment();
 
