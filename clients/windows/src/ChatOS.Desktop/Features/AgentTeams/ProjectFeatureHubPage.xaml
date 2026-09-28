@@ -2,6 +2,7 @@
     x:Class="ChatOS.Desktop.Features.AgentTeams.ProjectFeatureHubPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:agent="using:ChatOS.Desktop.Features.AgentTeams"
     xmlns:shell="using:ChatOS.Desktop.AppShell">
 
     <Grid Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
@@ -28,16 +29,40 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <FontIcon Glyph="&#xE946;" FontSize="15" Foreground="{StaticResource ChatOSAccentBrush}" />
-                        <TextBlock Grid.Column="1" Text="Agent 团队和需求调研会保存在对应的本机项目中。选择项目后将直接进入完整工作区。" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                        <TextBlock Grid.Column="1" Text="{x:Bind FeatureHelpText, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
                     </Grid>
                 </Border>
 
+                <Grid x:Name="SurveySummaryPanel" ColumnSpacing="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Border Padding="14" Style="{StaticResource ChatOSSectionCardStyle}">
+                        <StackPanel Spacing="3"><TextBlock Text="{x:Bind PendingSurveyCount, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" /><TextBlock Text="待 Human 填写" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
+                    </Border>
+                    <Border Grid.Column="1" Padding="14" Style="{StaticResource ChatOSSectionCardStyle}">
+                        <StackPanel Spacing="3"><TextBlock Text="{x:Bind AwaitingSurveyCount, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" /><TextBlock Text="等待形成方案" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
+                    </Border>
+                    <Border Grid.Column="2" Padding="14" Style="{StaticResource ChatOSSectionCardStyle}">
+                        <StackPanel Spacing="3"><TextBlock Text="{x:Bind ResolvedSurveyCount, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" /><TextBlock Text="已有解决方案" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
+                    </Border>
+                    <StackPanel Grid.Column="3" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
+                        <ProgressRing Width="20" Height="20" IsActive="{x:Bind IsLoadingSurveySummary, Mode=OneWay}" />
+                        <Button Click="OnRefreshSurveySummaryClick" Content="刷新汇总" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                    </StackPanel>
+                </Grid>
+
                 <StackPanel Spacing="5">
-                    <TextBlock Text="选择项目" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                    <TextBlock Text="继续最近的工作，或者先从侧栏创建一个本机项目。" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    <TextBlock Text="{x:Bind FeatureListTitle, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                    <TextBlock Text="{x:Bind FeatureListDescription, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    <TextBlock Foreground="{StaticResource ChatOSFailureBrush}" Text="{x:Bind SurveySummaryError, Mode=OneWay}" TextWrapping="Wrap" />
                 </StackPanel>
 
                 <ListView
+                    x:Name="AgentProjectList"
                     AutomationProperties.AutomationId="ChatOS.ProjectFeatureHub.Projects"
                     AutomationProperties.Name="选择项目"
                     Background="Transparent"
@@ -45,8 +70,7 @@
                     IsItemClickEnabled="True"
                     ItemClick="OnProjectClicked"
                     ItemsSource="{x:Bind Shell.Projects}"
-                    SelectionMode="None"
-                    Visibility="{x:Bind HasProjects, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    SelectionMode="None">
                     <ListView.ItemsPanel>
                         <ItemsPanelTemplate>
                             <ItemsStackPanel Orientation="Vertical" />
@@ -78,7 +102,42 @@
                     </ListView.ItemTemplate>
                 </ListView>
 
+                <ListView
+                    x:Name="SurveyProjectList"
+                    AutomationProperties.AutomationId="ChatOS.RequirementSurveys.ProjectSummary"
+                    AutomationProperties.Name="跨项目需求调研汇总"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    IsItemClickEnabled="True"
+                    ItemClick="OnSurveyProjectClicked"
+                    ItemsSource="{x:Bind SurveyProjects}"
+                    SelectionMode="None">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="agent:ProjectSurveySummary">
+                            <Border Margin="0,0,0,10" Style="{StaticResource ChatOSSectionCardStyle}">
+                                <Grid ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="44" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <Border Width="42" Height="42" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="12">
+                                        <FontIcon Glyph="&#xE9D5;" FontSize="18" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                                    </Border>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
+                                        <TextBlock Text="{x:Bind Project.Title}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                        <TextBlock Text="{x:Bind StatusLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2" VerticalAlignment="Center" Orientation="Horizontal" Spacing="14">
+                                        <StackPanel><TextBlock HorizontalAlignment="Center" Text="{x:Bind PendingCount}" Style="{StaticResource ChatOSBodyStrongTextStyle}" /><TextBlock Text="待填写" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
+                                        <StackPanel><TextBlock HorizontalAlignment="Center" Text="{x:Bind AwaitingCount}" Style="{StaticResource ChatOSBodyStrongTextStyle}" /><TextBlock Text="待方案" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
+                                        <StackPanel><TextBlock HorizontalAlignment="Center" Text="{x:Bind ResolvedCount}" Style="{StaticResource ChatOSBodyStrongTextStyle}" /><TextBlock Text="已解决" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
+                                        <FontIcon Glyph="&#xE76C;" FontSize="13" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+
                 <Border
+                    x:Name="NoProjectsPanel"
                     MinHeight="300"
                     Style="{StaticResource ChatOSSectionCardStyle}"
                     Visibility="{x:Bind HasProjects, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
