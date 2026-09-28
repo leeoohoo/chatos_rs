@@ -112,6 +112,82 @@ public sealed class MediaStudioHistoryStore
             records);
     }
 
+    public async Task<IReadOnlyList<MediaStudioVideoHistoryItem>> LoadVideosAsync(
+        string ownerUserId,
+        CancellationToken cancellationToken = default)
+    {
+        var ownerFolder = OwnerFolder(ownerUserId);
+        if (!Directory.Exists(ownerFolder)) return [];
+        var items = new List<MediaStudioVideoHistoryItem>();
+        foreach (var manifestPath in Directory.EnumerateFiles(ownerFolder, "video.json", SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                await using var stream = File.OpenRead(manifestPath);
+                var manifest = await JsonSerializer.DeserializeAsync<VideoManifest>(
+                    stream,
+                    JsonOptions,
+                    cancellationToken).ConfigureAwait(false);
+                if (manifest is null) continue;
+                var filePath = Path.Combine(Path.GetDirectoryName(manifestPath)!, manifest.FileName);
+                if (!File.Exists(filePath)) continue;
+                items.Add(new MediaStudioVideoHistoryItem(
+                    manifest.Id,
+                    manifest.Prompt,
+                    manifest.ModelName,
+                    manifest.CreatedAt,
+                    filePath,
+                    manifest.MimeType));
+            }
+            catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
+            {
+                StartupDiagnostics.RecordStage($"media video history entry skipped: {Path.GetFileName(Path.GetDirectoryName(manifestPath))}");
+            }
+        }
+        return items.OrderByDescending(item => item.CreatedAt).ToArray();
+    }
+
+    public async Task<MediaStudioVideoHistoryItem> SaveVideoAsync(
+        string ownerUserId,
+        string prompt,
+        VideoGenerationResult result,
+        CancellationToken cancellationToken = default)
+    {
+        if (result.VideoData.Length == 0 || result.VideoData.Length > 512 * 1024 * 1024)
+            throw new InvalidDataException("Generated video is empty or exceeds 512 MB.");
+        var entryFolder = Path.Combine(
+            OwnerFolder(ownerUserId),
+            $"{result.CreatedAt:yyyyMMddHHmmssfff}-{SafeSegment(result.Id)}-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(entryFolder);
+        var extension = result.MimeType.Contains("quicktime", StringComparison.OrdinalIgnoreCase)
+            ? ".mov"
+            : ".mp4";
+        var fileName = $"video{extension}";
+        var filePath = Path.Combine(entryFolder, fileName);
+        await File.WriteAllBytesAsync(filePath, result.VideoData, cancellationToken).ConfigureAwait(false);
+        var manifest = new VideoManifest(
+            result.Id,
+            prompt,
+            result.ModelName,
+            result.CreatedAt,
+            fileName,
+            result.MimeType);
+        var temporaryPath = Path.Combine(entryFolder, "video.json.tmp");
+        await File.WriteAllTextAsync(
+            temporaryPath,
+            JsonSerializer.Serialize(manifest, JsonOptions),
+            cancellationToken).ConfigureAwait(false);
+        File.Move(temporaryPath, Path.Combine(entryFolder, "video.json"), true);
+        return new MediaStudioVideoHistoryItem(
+            result.Id,
+            prompt,
+            result.ModelName,
+            result.CreatedAt,
+            filePath,
+            result.MimeType);
+    }
+
     private async Task<byte[]> ReadAssetAsync(
         GeneratedMediaAsset asset,
         CancellationToken cancellationToken)
@@ -189,6 +265,14 @@ public sealed class MediaStudioHistoryStore
         string FileName,
         string MimeType,
         string? RevisedPrompt);
+
+    private sealed record VideoManifest(
+        string Id,
+        string Prompt,
+        string ModelName,
+        DateTimeOffset CreatedAt,
+        string FileName,
+        string MimeType);
 }
 
 public sealed record MediaStudioHistoryItem(
@@ -206,3 +290,14 @@ public sealed record MediaStudioImageItem(
     string FilePath,
     string MimeType,
     string? RevisedPrompt);
+
+public sealed record MediaStudioVideoHistoryItem(
+    string Id,
+    string Prompt,
+    string ModelName,
+    DateTimeOffset CreatedAt,
+    string FilePath,
+    string MimeType)
+{
+    public string CreatedAtLabel => CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+}

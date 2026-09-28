@@ -135,8 +135,102 @@ public sealed class MediaGenerationServiceTests
         Assert.Contains("account changed", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task GenerateVideoCreatesPollsAndDownloadsUnifiedVideoJob()
+    {
+        var store = TokenStore();
+        var api = RuntimeApi(store, "https://provider.example.test/v1", "minimax-h3");
+        var statusQueries = 0;
+        string? createBody = null;
+        var provider = ProviderFactory(async request =>
+        {
+            Assert.Equal("Bearer provider-secret", request.Headers.Authorization?.ToString());
+            if (request.Method == HttpMethod.Post)
+            {
+                createBody = await request.Content!.ReadAsStringAsync();
+                return Json("""{"task_id":"job/1","status":"processing","progress":25}""");
+            }
+            if (request.RequestUri!.AbsolutePath.EndsWith("/content", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent([4, 5, 6]),
+                }.WithContentType("video/mp4");
+            }
+            statusQueries++;
+            return Json("""{"id":"job/1","status":"completed","progress":100,"model":"minimax-h3"}""");
+        });
+        var service = new MediaGenerationService(api, provider, store, TimeSpan.Zero, 5);
+        var updates = new List<VideoGenerationProgress>();
+
+        var result = await service.GenerateVideoAsync(
+            VideoRequest(),
+            new InlineProgress<VideoGenerationProgress>(updates.Add));
+
+        Assert.Equal(1, statusQueries);
+        Assert.Equal(new byte[] { 4, 5, 6 }, result.VideoData);
+        Assert.Equal("video/mp4", result.MimeType);
+        Assert.Equal(new[] { "processing", "completed", "downloading" }, updates.Select(value => value.Status));
+        using var json = JsonDocument.Parse(createBody!);
+        Assert.Equal(4, json.RootElement.GetProperty("duration").GetInt32());
+        Assert.Equal("768p", json.RootElement.GetProperty("size").GetString());
+        Assert.Equal("16:9", json.RootElement.GetProperty("metadata").GetProperty("ratio").GetString());
+    }
+
+    [Fact]
+    public async Task ResumeVideoUsesSignedMetadataUrlWithoutProviderAuthorization()
+    {
+        var store = TokenStore();
+        var api = RuntimeApi(store, "https://provider.example.test/v1", "minimax-h3");
+        var requests = new List<(Uri Uri, string? Authorization)>();
+        var provider = ProviderFactory(request =>
+        {
+            requests.Add((request.RequestUri!, request.Headers.Authorization?.ToString()));
+            if (request.RequestUri!.Host == "cdn.example.test")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent([7, 8, 9]),
+                }.WithContentType("video/mp4"));
+            }
+            return Task.FromResult(Json("""
+                {"id":"job-2","status":"completed","metadata":{"url":"https://cdn.example.test/signed/video.mp4?token=secret"}}
+                """));
+        });
+        var service = new MediaGenerationService(api, provider, store, TimeSpan.Zero, 5);
+
+        var result = await service.ResumeVideoAsync(VideoRequest(), "job-2");
+
+        Assert.Equal(new byte[] { 7, 8, 9 }, result.VideoData);
+        Assert.Equal("Bearer provider-secret", requests[0].Authorization);
+        Assert.Null(requests[1].Authorization);
+    }
+
+    [Fact]
+    public async Task GenerateVideoRejectsUnsupportedLastFrameBeforeSubmitting()
+    {
+        var store = TokenStore();
+        var api = RuntimeApi(store, "https://provider.example.test/v1", "sora-2");
+        var service = new MediaGenerationService(api, EmptyProviderFactory(), store, TimeSpan.Zero, 5);
+        var frame = new ImageGenerationInput("frame.png", "image/png", "AQID");
+        var request = VideoRequest() with
+        {
+            Size = "1280x720",
+            FirstFrame = frame,
+            LastFrame = frame,
+        };
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.GenerateVideoAsync(request));
+
+        Assert.Contains("last frame", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static ImageGenerationRequest Request(IReadOnlyList<ImageGenerationInput>? references = null) =>
         new("model-config", "draw a fox", "1024x1024", 2, references ?? []);
+
+    private static VideoGenerationRequest VideoRequest() =>
+        new("model-config", "a fox running through snow", "768P", 4, null, null, "16:9");
 
     private static MemoryTokenStore TokenStore()
     {
@@ -147,13 +241,14 @@ public sealed class MediaGenerationServiceTests
 
     private static ChatOSApiClient RuntimeApi(
         MemoryTokenStore store,
-        string baseUrl = "https://provider.example.test/v1") =>
+        string baseUrl = "https://provider.example.test/v1",
+        string model = "image-v1") =>
         ApiTestClient.Create(store, request =>
         {
             Assert.Contains("ai-model-configs/model-config", request.RequestUri!.AbsoluteUri);
             Assert.Contains("include_secret=true", request.RequestUri.Query);
             return StubHttpMessageHandler.Json($$"""
-                {"model":"image-v1","api_key":"provider-secret","base_url":"{{baseUrl}}","enabled":true}
+                {"model":"{{model}}","api_key":"provider-secret","base_url":"{{baseUrl}}","enabled":true}
                 """);
         });
 
@@ -184,5 +279,21 @@ public sealed class MediaGenerationServiceTests
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken) => response(request);
+    }
+
+    private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
+    }
+}
+
+internal static class HttpResponseMessageTestExtensions
+{
+    public static HttpResponseMessage WithContentType(
+        this HttpResponseMessage response,
+        string mediaType)
+    {
+        response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mediaType);
+        return response;
     }
 }

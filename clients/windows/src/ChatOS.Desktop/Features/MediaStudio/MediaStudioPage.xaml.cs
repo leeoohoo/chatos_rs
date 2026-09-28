@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Windows.Media.Core;
 using Windows.Storage.Pickers;
 
 namespace ChatOS.Desktop.Features.MediaStudio;
@@ -10,6 +11,7 @@ namespace ChatOS.Desktop.Features.MediaStudio;
 public sealed partial class MediaStudioPage : Page
 {
     private readonly AppShell.MainWindowViewModel _shell;
+    private string? _activeVideoPath;
 
     public MediaStudioPage(
         MediaStudioViewModel viewModel,
@@ -68,6 +70,37 @@ public sealed partial class MediaStudioPage : Page
             ViewModel.SelectHistoryItem(item);
     }
 
+    private async void OnPickVideoFrameClick(object sender, RoutedEventArgs e)
+    {
+        var window = (Application.Current as App)?.MainWindow;
+        if (window is null) return;
+        var picker = new FileOpenPicker();
+        picker.FileTypeFilter.Add(".png");
+        picker.FileTypeFilter.Add(".jpg");
+        picker.FileTypeFilter.Add(".jpeg");
+        picker.FileTypeFilter.Add(".webp");
+        WinRT.Interop.InitializeWithWindow.Initialize(
+            picker,
+            WinRT.Interop.WindowNative.GetWindowHandle(window));
+        var file = await picker.PickSingleFileAsync();
+        if (file is not null) await ViewModel.SetVideoFirstFrameAsync(file.Path);
+    }
+
+    private void OnRemoveVideoFrameClick(object sender, RoutedEventArgs e) =>
+        ViewModel.RemoveVideoFirstFrame();
+
+    private async void OnGenerateVideoClick(object sender, RoutedEventArgs e) =>
+        await ViewModel.GenerateVideoAsync();
+
+    private void OnCancelVideoClick(object sender, RoutedEventArgs e) =>
+        ViewModel.CancelVideoGeneration();
+
+    private void OnVideoHistoryItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is MediaStudioVideoHistoryItem item)
+            ViewModel.SelectVideoHistoryItem(item);
+    }
+
     private async void OnSaveImageClick(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { DataContext: MediaStudioImageItem image }) return;
@@ -94,6 +127,32 @@ public sealed partial class MediaStudioPage : Page
         }
     }
 
+    private async void OnSaveVideoClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: MediaStudioVideoHistoryItem video }) return;
+        var window = (Application.Current as App)?.MainWindow;
+        if (window is null) return;
+        var picker = new FileSavePicker
+        {
+            SuggestedFileName = $"ChatOS-video-{DateTime.Now:yyyyMMdd-HHmmss}",
+        };
+        var extension = Path.GetExtension(video.FilePath);
+        picker.FileTypeChoices.Add("Video", [extension]);
+        WinRT.Interop.InitializeWithWindow.Initialize(
+            picker,
+            WinRT.Interop.WindowNative.GetWindowHandle(window));
+        var target = await picker.PickSaveFileAsync();
+        if (target is null) return;
+        try
+        {
+            File.Copy(video.FilePath, target.Path, true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            ViewModel.ReportError($"保存视频失败：{exception.Message}");
+        }
+    }
+
     private void RefreshState()
     {
         Bindings.Update();
@@ -102,6 +161,41 @@ public sealed partial class MediaStudioPage : Page
         CanvasEmptyState.Visibility = hasImages ? Visibility.Collapsed : Visibility.Visible;
         ErrorInfoBar.IsOpen = !string.IsNullOrWhiteSpace(ViewModel.ErrorMessage);
         ErrorInfoBar.Message = ViewModel.ErrorMessage ?? string.Empty;
+        RefreshVideoState();
+    }
+
+    private void RefreshVideoState()
+    {
+        var videoPath = ViewModel.LatestVideo?.FilePath;
+        var hasVideo = videoPath is { Length: > 0 } && File.Exists(videoPath);
+        if (hasVideo && !string.Equals(_activeVideoPath, videoPath, StringComparison.OrdinalIgnoreCase))
+        {
+            _activeVideoPath = videoPath;
+            VideoPlayer.Source = MediaSource.CreateFromUri(new Uri(videoPath!, UriKind.Absolute));
+        }
+        else if (!hasVideo && _activeVideoPath is not null)
+        {
+            _activeVideoPath = null;
+            VideoPlayer.Source = null;
+        }
+        VideoPlayer.Visibility = hasVideo && !ViewModel.IsGeneratingVideo
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        VideoEmptyState.Visibility = !hasVideo && !ViewModel.IsGeneratingVideo
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        VideoProgressPanel.Visibility = ViewModel.IsGeneratingVideo
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        if (ViewModel.VideoProgress?.Percent is { } percent)
+        {
+            VideoProgressBar.IsIndeterminate = false;
+            VideoProgressBar.Value = Math.Clamp(percent, 0, 100);
+        }
+        else
+        {
+            VideoProgressBar.IsIndeterminate = true;
+        }
     }
 }
 

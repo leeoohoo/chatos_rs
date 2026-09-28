@@ -9,7 +9,7 @@ using ChatOS.Core.Domain;
 
 namespace ChatOS.Api.Media;
 
-public sealed class MediaGenerationService : IMediaGenerationService
+public sealed partial class MediaGenerationService : IMediaGenerationService
 {
     public const string ProviderClientName = "ChatOS.MediaGeneration.Provider";
     private const int MaximumImageBytes = 20 * 1024 * 1024;
@@ -23,15 +23,21 @@ public sealed class MediaGenerationService : IMediaGenerationService
     private readonly ChatOSApiClient _client;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IAuthTokenStore _tokenStore;
+    private readonly TimeSpan _videoPollInterval;
+    private readonly int _maximumVideoPollCount;
 
     public MediaGenerationService(
         ChatOSApiClient client,
         IHttpClientFactory httpClientFactory,
-        IAuthTokenStore tokenStore)
+        IAuthTokenStore tokenStore,
+        TimeSpan? videoPollInterval = null,
+        int maximumVideoPollCount = 180)
     {
         _client = client;
         _httpClientFactory = httpClientFactory;
         _tokenStore = tokenStore;
+        _videoPollInterval = videoPollInterval ?? TimeSpan.FromSeconds(10);
+        _maximumVideoPollCount = maximumVideoPollCount;
     }
 
     public async Task<IReadOnlyList<MediaGenerationModel>> FetchModelsAsync(
@@ -219,7 +225,7 @@ public sealed class MediaGenerationService : IMediaGenerationService
             value.EndsWith(candidate, StringComparison.OrdinalIgnoreCase));
         if (suffix is not null) value = value[..^suffix.Length];
         if (!Uri.TryCreate($"{value}/images/{(edit ? "edits" : "generations")}", UriKind.Absolute, out var uri) ||
-            uri.Scheme is not (Uri.UriSchemeHttps or Uri.UriSchemeHttp))
+            uri.Scheme is not ("https" or "http"))
             throw new ChatOSApiException("The selected model has an invalid API address.");
         return uri;
     }
@@ -303,9 +309,11 @@ public sealed class MediaGenerationService : IMediaGenerationService
         [JsonPropertyName("provider")] public string? Provider { get; init; }
         [JsonPropertyName("model")] public string? Model { get; init; }
         [JsonPropertyName("enabled")] public bool? Enabled { get; init; }
+        [JsonPropertyName("task_enabled")] public bool? TaskEnabled { get; init; }
         [JsonPropertyName("has_api_key")] public bool? HasApiKey { get; init; }
         public MediaGenerationModel ToDomain() => new(
-            Id, Name, Provider ?? string.Empty, Model ?? Name, Enabled != false, HasApiKey != false);
+            Id, Name, Provider ?? string.Empty, Model ?? Name,
+            Enabled != false, TaskEnabled != false, HasApiKey != false);
     }
 
     private sealed record RuntimeModelDto(

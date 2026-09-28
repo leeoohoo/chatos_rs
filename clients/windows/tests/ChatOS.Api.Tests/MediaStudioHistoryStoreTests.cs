@@ -58,6 +58,31 @@ public sealed class MediaStudioHistoryStoreTests
         Assert.Equal("valid", history[0].Prompt);
     }
 
+    [Fact]
+    public async Task SaveAndLoadVideoPreservePlayableFile()
+    {
+        using var folder = new TemporaryFolder();
+        var store = new MediaStudioHistoryStore(
+            new NoNetworkHttpClientFactory(),
+            folder.Path);
+        var createdAt = new DateTimeOffset(2026, 9, 28, 10, 0, 0, TimeSpan.Zero);
+        var result = new VideoGenerationResult(
+            "video-job-1",
+            "video-model",
+            "minimax-h3",
+            createdAt,
+            "video/mp4",
+            [9, 8, 7]);
+
+        var saved = await store.SaveVideoAsync("owner-a", "camera tracks a fox", result);
+        var restored = Assert.Single(await store.LoadVideosAsync("owner-a"));
+
+        Assert.Equal(saved.FilePath, restored.FilePath);
+        Assert.Equal(createdAt, restored.CreatedAt);
+        Assert.Equal(new byte[] { 9, 8, 7 }, await File.ReadAllBytesAsync(restored.FilePath));
+        Assert.Empty(await store.LoadVideosAsync("owner-b"));
+    }
+
     private sealed class NoNetworkHttpClientFactory : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) =>

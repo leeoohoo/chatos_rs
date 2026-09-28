@@ -15,6 +15,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     private readonly MediaStudioHistoryStore _historyStore;
     private string? _ownerUserId;
     private bool _initialized;
+    private CancellationTokenSource? _videoGenerationCancellation;
 
     public MediaStudioViewModel(
         IMediaGenerationService service,
@@ -26,7 +27,11 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public ObservableCollection<MediaGenerationModel> Models { get; } = [];
 
+    public ObservableCollection<MediaGenerationModel> VideoModels { get; } = [];
+
     public ObservableCollection<MediaStudioHistoryItem> History { get; } = [];
+
+    public ObservableCollection<MediaStudioVideoHistoryItem> VideoHistory { get; } = [];
 
     public ObservableCollection<MediaStudioImageItem> LatestImages { get; } = [];
 
@@ -36,8 +41,30 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public IReadOnlyList<int> Counts => AvailableCounts;
 
+    public IReadOnlyList<string> VideoSizes => VideoProfile.Sizes;
+
+    public IReadOnlyList<int> VideoDurations => VideoProfile.Durations;
+
+    public IReadOnlyList<string> VideoRatios => VideoGenerationProfile.Ratios;
+
     public bool CanGenerate => !IsBusy && SelectedModel is not null &&
         !string.IsNullOrWhiteSpace(Prompt) && _ownerUserId is not null;
+
+    public bool CanGenerateVideo => !IsGeneratingVideo && SelectedVideoModel is not null &&
+        !string.IsNullOrWhiteSpace(VideoPrompt) && _ownerUserId is not null;
+
+    public string VideoProgressLabel => VideoProgress switch
+    {
+        { Status: "downloading" } => "正在下载视频…",
+        { Percent: { } percent } => $"{VideoProgress.Status} · {percent:0}%",
+        { } value => value.Status,
+        _ => "选择视频模型并描述镜头",
+    };
+
+    public string VideoFirstFrameLabel => VideoFirstFrame?.Name ?? "未选择";
+
+    private VideoGenerationProfile VideoProfile =>
+        VideoGenerationProfile.ForModel(SelectedVideoModel?.ModelName ?? string.Empty);
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanGenerate))]
@@ -52,6 +79,38 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     [ObservableProperty]
     private int _selectedCount = 1;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanGenerateVideo))]
+    private MediaGenerationModel? _selectedVideoModel;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanGenerateVideo))]
+    private string _videoPrompt = string.Empty;
+
+    [ObservableProperty]
+    private string _videoSize = "1280x720";
+
+    [ObservableProperty]
+    private int _videoSeconds = 4;
+
+    [ObservableProperty]
+    private string _videoRatio = "16:9";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VideoFirstFrameLabel))]
+    private ImageGenerationInput? _videoFirstFrame;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanGenerateVideo))]
+    private bool _isGeneratingVideo;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VideoProgressLabel))]
+    private VideoGenerationProgress? _videoProgress;
+
+    [ObservableProperty]
+    private MediaStudioVideoHistoryItem? _latestVideo;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanGenerate))]
@@ -77,10 +136,13 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         try
         {
             var historyTask = _historyStore.LoadAsync(ownerUserId, cancellationToken);
+            var videoHistoryTask = _historyStore.LoadVideosAsync(ownerUserId, cancellationToken);
             var modelsTask = _service.FetchModelsAsync(cancellationToken);
-            await Task.WhenAll(historyTask, modelsTask);
+            await Task.WhenAll(historyTask, videoHistoryTask, modelsTask);
             foreach (var item in historyTask.Result) History.Add(item);
+            foreach (var item in videoHistoryTask.Result) VideoHistory.Add(item);
             ShowLatest(History.FirstOrDefault());
+            LatestVideo = VideoHistory.FirstOrDefault();
             ApplyModels(modelsTask.Result);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -117,7 +179,8 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public async Task GenerateAsync(CancellationToken cancellationToken = default)
     {
-        if (!CanGenerate || SelectedModel is null || _ownerUserId is null) return;
+        var owner = _ownerUserId;
+        if (!CanGenerate || SelectedModel is null || owner is null) return;
         var submittedPrompt = Prompt.Trim();
         IsBusy = true;
         ErrorMessage = null;
@@ -133,7 +196,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
                     ReferenceImages.ToArray()),
                 cancellationToken);
             var item = await _historyStore.SaveAsync(
-                _ownerUserId,
+                owner,
                 submittedPrompt,
                 result,
                 cancellationToken);
@@ -190,20 +253,104 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public void RemoveReferenceImage(ImageGenerationInput image) => ReferenceImages.Remove(image);
 
+    public async Task SetVideoFirstFrameAsync(
+        string path,
+        CancellationToken cancellationToken = default)
+    {
+        ErrorMessage = null;
+        try
+        {
+            VideoFirstFrame = await LoadImageInputAsync(path, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            ErrorMessage = exception.Message;
+        }
+    }
+
+    public void RemoveVideoFirstFrame() => VideoFirstFrame = null;
+
+    public async Task GenerateVideoAsync(CancellationToken cancellationToken = default)
+    {
+        var owner = _ownerUserId;
+        if (!CanGenerateVideo || SelectedVideoModel is null || owner is null) return;
+        _videoGenerationCancellation?.Cancel();
+        _videoGenerationCancellation?.Dispose();
+        _videoGenerationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var token = _videoGenerationCancellation.Token;
+        var submittedPrompt = VideoPrompt.Trim();
+        IsGeneratingVideo = true;
+        ErrorMessage = null;
+        VideoProgress = new VideoGenerationProgress("submitting");
+        try
+        {
+            var progress = new Progress<VideoGenerationProgress>(value => VideoProgress = value);
+            var result = await _service.GenerateVideoAsync(
+                new VideoGenerationRequest(
+                    SelectedVideoModel.Id,
+                    submittedPrompt,
+                    VideoSize,
+                    VideoSeconds,
+                    VideoFirstFrame,
+                    null,
+                    VideoRatio),
+                progress,
+                token);
+            VideoProgress = new VideoGenerationProgress("saving", 100, result.Id);
+            var item = await _historyStore.SaveVideoAsync(
+                owner,
+                submittedPrompt,
+                result,
+                token);
+            VideoHistory.Insert(0, item);
+            LatestVideo = item;
+            VideoProgress = new VideoGenerationProgress("completed", 100, result.Id);
+            StatusMessage = "视频已生成并保存到本机";
+        }
+        catch (OperationCanceledException)
+        {
+            VideoProgress = null;
+            StatusMessage = "已停止等待视频任务";
+        }
+        catch (Exception exception)
+        {
+            ErrorMessage = exception.Message;
+            VideoProgress = new VideoGenerationProgress("failed");
+        }
+        finally
+        {
+            IsGeneratingVideo = false;
+        }
+    }
+
+    public void CancelVideoGeneration() => _videoGenerationCancellation?.Cancel();
+
     public void SelectHistoryItem(MediaStudioHistoryItem item) => ShowLatest(item);
+
+    public void SelectVideoHistoryItem(MediaStudioVideoHistoryItem item) => LatestVideo = item;
 
     public void ReportError(string message) => ErrorMessage = message;
 
     public void Reset()
     {
+        _videoGenerationCancellation?.Cancel();
+        _videoGenerationCancellation?.Dispose();
+        _videoGenerationCancellation = null;
         _ownerUserId = null;
         _initialized = false;
         Models.Clear();
+        VideoModels.Clear();
         History.Clear();
+        VideoHistory.Clear();
         LatestImages.Clear();
         ReferenceImages.Clear();
         SelectedModel = null;
+        SelectedVideoModel = null;
+        LatestVideo = null;
+        VideoFirstFrame = null;
+        VideoProgress = null;
         Prompt = string.Empty;
+        VideoPrompt = string.Empty;
         ErrorMessage = null;
         StatusMessage = "选择模型并描述想要生成的画面";
     }
@@ -214,6 +361,12 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         Models.Clear();
         foreach (var model in values.Where(model => !model.IsLikelyVideoModel)) Models.Add(model);
         SelectedModel = Models.FirstOrDefault(model => model.Id == selectedId) ?? Models.FirstOrDefault();
+        var selectedVideoId = SelectedVideoModel?.Id;
+        VideoModels.Clear();
+        foreach (var model in values.Where(model => model.IsLikelyVideoModel))
+            VideoModels.Add(model);
+        SelectedVideoModel = VideoModels.FirstOrDefault(model => model.Id == selectedVideoId) ??
+            VideoModels.FirstOrDefault();
         if (Models.Count == 0) StatusMessage = "没有找到已配置的图片模型";
     }
 
@@ -222,5 +375,34 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         LatestImages.Clear();
         if (item is null) return;
         foreach (var image in item.Images) LatestImages.Add(image);
+    }
+
+    partial void OnSelectedVideoModelChanged(MediaGenerationModel? value)
+    {
+        var profile = VideoProfile;
+        if (!profile.Sizes.Contains(VideoSize)) VideoSize = profile.Sizes[0];
+        if (!profile.Durations.Contains(VideoSeconds)) VideoSeconds = profile.Durations[0];
+        OnPropertyChanged(nameof(VideoSizes));
+        OnPropertyChanged(nameof(VideoDurations));
+    }
+
+    private static async Task<ImageGenerationInput> LoadImageInputAsync(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        var mimeType = Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".webp" => "image/webp",
+            _ => throw new InvalidDataException("参考图必须是 PNG、JPEG 或 WebP。"),
+        };
+        var bytes = await File.ReadAllBytesAsync(path, cancellationToken);
+        if (bytes.Length == 0 || bytes.Length > MaximumImageBytes)
+            throw new InvalidDataException("参考图为空或超过 20 MB。");
+        return new ImageGenerationInput(
+            Path.GetFileName(path),
+            mimeType,
+            Convert.ToBase64String(bytes));
     }
 }
