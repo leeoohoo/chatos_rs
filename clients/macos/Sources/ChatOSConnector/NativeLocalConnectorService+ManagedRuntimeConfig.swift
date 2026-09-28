@@ -1,3 +1,4 @@
+import ChatOSAgentRuntime
 import Foundation
 
 extension NativeLocalConnectorService {
@@ -7,16 +8,16 @@ extension NativeLocalConnectorService {
     func managedRuntimeConfig() async throws -> GatewayManagedRuntimeConfigDTO {
         let now = Date()
         if let cache = managedRuntimeConfigCache, cache.expiresAt > now {
-            return cache.value
+            return try applyManagedRuntimeConfig(cache.value)
         }
 
         let generation = managedRuntimeConfigGeneration
         if let refresh = managedRuntimeConfigRefresh, refresh.generation == generation {
             do {
-                return try await refresh.task.value
+                return try applyManagedRuntimeConfig(await refresh.task.value)
             } catch {
                 if let cache = managedRuntimeConfigCache, cache.staleUntil > Date() {
-                    return cache.value
+                    return try applyManagedRuntimeConfig(cache.value)
                 }
                 throw error
             }
@@ -27,7 +28,7 @@ extension NativeLocalConnectorService {
         let task = Task { try await gateway.managedRuntimeConfig(token: token) }
         managedRuntimeConfigRefresh = .init(generation: generation, task: task)
         do {
-            let value = try await task.value
+            let value = try applyManagedRuntimeConfig(await task.value)
             if managedRuntimeConfigGeneration == generation {
                 let refreshedAt = Date()
                 managedRuntimeConfigCache = .init(
@@ -43,7 +44,7 @@ extension NativeLocalConnectorService {
                 managedRuntimeConfigRefresh = nil
             }
             if let cache = managedRuntimeConfigCache, cache.staleUntil > Date() {
-                return cache.value
+                return try applyManagedRuntimeConfig(cache.value)
             }
             throw error
         }
@@ -54,6 +55,24 @@ extension NativeLocalConnectorService {
         managedRuntimeConfigRefresh?.task.cancel()
         managedRuntimeConfigRefresh = nil
         managedRuntimeConfigCache = nil
+    }
+
+    private func applyManagedRuntimeConfig(
+        _ value: GatewayManagedRuntimeConfigDTO
+    ) throws -> GatewayManagedRuntimeConfigDTO {
+        guard let managed = value.nativeAgentRuntimeSettings else { return value }
+        var preferences = AgentRuntimePreferences()
+        preferences.global.maximumModelCalls = managed.maximumModelCalls
+        preferences.global.maximumRequestRetries = managed.maximumRequestRetries
+        preferences.global.requestTimeoutSeconds = managed.requestTimeoutSeconds
+        preferences.global.runTimeoutSeconds = managed.runTimeoutSeconds
+        preferences.global.maximumNoProgressRounds = managed.maximumNoProgressRounds
+        var context = AgentContextPolicy()
+        context.windowTokens = managed.contextWindowTokens
+        context.outputReserveTokens = managed.outputReserveTokens
+        preferences.global.context = context
+        try AgentSettingsStore().saveManaged(preferences)
+        return value
     }
 }
 

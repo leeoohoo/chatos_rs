@@ -7,44 +7,7 @@ struct LocalConnectorRuntimePermissionsView: View {
 
     var body: some View {
         SettingsGroupedPage {
-            runtimeCard
             permissionsCard
-        }
-    }
-
-    private var runtimeCard: some View {
-        LocalConnectorCard(
-            model.localized("运行配置", english: "Runtime Configuration"),
-            subtitle: model.localized(
-                "开发模式只改变服务端点，不改变本机权限边界",
-                english: "Developer mode changes service endpoints, not local permission boundaries"
-            ),
-            systemImage: "slider.horizontal.3"
-        ) {
-            if let settings = viewModel.runtimeSettings {
-                Toggle(
-                    model.localized("开发者模式", english: "Developer mode"),
-                    isOn: Binding(
-                        get: { settings.developerMode },
-                        set: { enabled in
-                            viewModel.updateDeveloperMode(enabled)
-                        }
-                    )
-                )
-                .toggleStyle(.switch)
-                Divider()
-                LocalConnectorKeyValueRow(label: "Connector Gateway", value: settings.developerCloudBaseURL, monospaced: true)
-                LocalConnectorKeyValueRow(label: "Account Service", value: settings.developerUserServiceBaseURL, monospaced: true)
-                Text(model.localized(
-                    "Swift Native Connector 直接连接这些服务端点，不启动本机 HTTP Core。",
-                    english: "Swift Native Connector connects directly to these service endpoints without starting a local HTTP core."
-                ))
-                    .appFont(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ProgressView(model.localized("正在读取运行配置…", english: "Loading runtime configuration…"))
-                    .frame(maxWidth: .infinity, minHeight: 80)
-            }
         }
     }
 

@@ -55,6 +55,32 @@ final class ChatOSAPIClientErrorTests: XCTestCase {
         }
     }
 
+    func testRegistrationProxySurfacesActionableUpstreamDetail() async throws {
+        let client = ChatOSAPIClient(
+            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+            transport: APIErrorTransport(
+                response: HTTPResponse(
+                    statusCode: 400,
+                    headers: ["content-type": "application/json"],
+                    body: Data(#"{"error":"register via user_service failed","detail":"user_service request failed: 400 Bad Request: {\"error\":\"invite code is invalid\"}"}"#.utf8)
+                )
+            )
+        )
+
+        do {
+            let _: ErrorResponseDTO = try await client.request("/auth/register", method: "POST")
+            XCTFail("Expected request to fail")
+        } catch let error as ChatOSAPIError {
+            XCTAssertEqual(
+                error,
+                .server(
+                    statusCode: 400,
+                    message: #"user_service request failed: 400 Bad Request: {"error":"invite code is invalid"}"#
+                )
+            )
+        }
+    }
+
     func testAuthenticatedUnauthorizedRequestClearsCredentialAndPublishesExpiration() async throws {
         let store = APIErrorCredentialStore(token: "expired-token")
         let client = ChatOSAPIClient(

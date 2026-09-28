@@ -5,7 +5,6 @@ import Foundation
 final class LocalConnectorControlCenterViewModel: ObservableObject {
     @Published var selectedTab: LocalConnectorControlTab = .connection
     @Published private(set) var status: LocalConnectorStatus?
-    @Published private(set) var runtimeSettings: LocalConnectorRuntimeSettings?
     @Published private(set) var systemPermissions: LocalConnectorSystemPermissions?
     @Published private(set) var commandHistory: [LocalConnectorCommandHistoryEntry] = []
     @Published private(set) var terminalResult: LocalConnectorTerminalResult?
@@ -100,7 +99,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         case .approvals:
             loadApprovals()
         case .runtime:
-            loadRuntimeAndPermissions()
+            loadSystemPermissions()
         case .sandbox:
             loadSandbox()
         }
@@ -241,19 +240,9 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         }
     }
 
-    func loadRuntimeAndPermissions() {
+    func loadSystemPermissions() {
         load {
-            async let settings = self.service.fetchRuntimeSettings()
-            async let permissions = self.service.fetchSystemPermissions()
-            self.runtimeSettings = try await settings
-            self.systemPermissions = try await permissions
-        }
-    }
-
-    func updateDeveloperMode(_ enabled: Bool) {
-        performAction(successNotice: enabled ? "开发者模式已开启。" : "开发者模式已关闭。") {
-            self.runtimeSettings = try await self.service.updateDeveloperMode(enabled)
-            self.status = try await self.service.fetchStatus()
+            self.systemPermissions = try await self.service.fetchSystemPermissions()
         }
     }
 

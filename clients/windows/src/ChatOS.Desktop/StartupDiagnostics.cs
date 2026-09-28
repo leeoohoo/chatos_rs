@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -8,6 +9,7 @@ internal static class StartupDiagnostics
     private const uint ErrorIcon = 0x00000010;
     private static readonly object Sync = new();
     private static int _fatalDialogShown;
+    private static int _firstChanceComExceptionCount;
 
     public static string LogPath { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -19,6 +21,8 @@ internal static class StartupDiagnostics
     {
         WriteLine($"ChatOS startup initiated. Version={typeof(App).Assembly.GetName().Version}; " +
             $"OS={Environment.OSVersion}; ProcessArchitecture={RuntimeInformation.ProcessArchitecture}");
+        RecordNativeModule("CoreMessagingXP.dll");
+        RecordNativeModule("Microsoft.UI.Xaml.dll");
     }
 
     public static void RecordStage(string stage) => WriteLine($"Startup stage completed: {stage}");
@@ -27,6 +31,16 @@ internal static class StartupDiagnostics
 
     public static void RecordUnhandled(string phase, Exception exception) =>
         WriteLine($"Unhandled exception during {phase}:{Environment.NewLine}{exception}");
+
+    public static void RecordFirstChanceComException(COMException exception)
+    {
+        var occurrence = Interlocked.Increment(ref _firstChanceComExceptionCount);
+        if (occurrence > 20) return;
+
+        WriteLine($"First-chance COM exception #{occurrence}: HResult=0x{exception.HResult:X8}; " +
+            $"Type={exception.GetType().FullName}; Message={exception.Message}; " +
+            $"Stack={exception.StackTrace ?? "<native>"}");
+    }
 
     public static void ReportFatal(string phase, Exception exception)
     {
@@ -61,6 +75,27 @@ internal static class StartupDiagnostics
         catch
         {
             // Diagnostics must never replace the original startup failure.
+        }
+    }
+
+    private static void RecordNativeModule(string fileName)
+    {
+        try
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, fileName);
+            if (!File.Exists(path))
+            {
+                WriteLine($"Native runtime module missing: {fileName}");
+                return;
+            }
+
+            var version = FileVersionInfo.GetVersionInfo(path).FileVersion ?? "unknown";
+            WriteLine($"Native runtime module: {fileName}; FileVersion={version}");
+        }
+        catch (Exception exception)
+        {
+            WriteLine($"Native runtime module inspection failed: {fileName}; " +
+                $"Type={exception.GetType().FullName}; HResult=0x{exception.HResult:X8}");
         }
     }
 

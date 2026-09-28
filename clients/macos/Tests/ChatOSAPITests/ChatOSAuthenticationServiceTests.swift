@@ -57,6 +57,66 @@ final class ChatOSAuthenticationServiceTests: XCTestCase {
         XCTAssertEqual(request.headers["Authorization"], "Bearer token-old")
     }
 
+    func testSendRegistrationCodeUsesEmailAndInviteCode() async throws {
+        let transport = QueueTransport(responses: [
+            HTTPResponse(
+                statusCode: 200,
+                headers: [:],
+                body: Data(#"{"ok":true,"expires_in_seconds":600,"resend_after_seconds":60}"#.utf8)
+            ),
+        ])
+        let service = makeService(transport: transport, store: MemoryCredentialStore())
+
+        let delivery = try await service.sendRegistrationCode(
+            email: " person@example.com ",
+            inviteCode: " invite-123 "
+        )
+
+        XCTAssertEqual(delivery.expiresInSeconds, 600)
+        XCTAssertEqual(delivery.resendAfterSeconds, 60)
+        let requests = await transport.requests()
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(request.url.path, "/api/chatos/auth/register/send-code")
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: try XCTUnwrap(request.body)) as? [String: String]
+        )
+        XCTAssertEqual(payload["email"], "person@example.com")
+        XCTAssertEqual(payload["invite_code"], "invite-123")
+    }
+
+    func testRegisterPersistsReturnedTokenAndMapsUser() async throws {
+        let transport = QueueTransport(responses: [
+            HTTPResponse(
+                statusCode: 200,
+                headers: [:],
+                body: Data(#"{"access_token":"registered-token","user":{"id":"user-new","username":"new@example.com","display_name":null,"role":"user"}}"#.utf8)
+            ),
+        ])
+        let store = MemoryCredentialStore()
+        let service = makeService(transport: transport, store: store)
+
+        let session = try await service.register(
+            email: " new@example.com ",
+            password: "secret-value",
+            inviteCode: " invite-123 ",
+            verificationCode: " 123456 "
+        )
+
+        XCTAssertEqual(session.user.id, "user-new")
+        let storedToken = try await store.loadAccessToken()
+        XCTAssertEqual(storedToken, "registered-token")
+        let requests = await transport.requests()
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(request.url.path, "/api/chatos/auth/register")
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: try XCTUnwrap(request.body)) as? [String: String]
+        )
+        XCTAssertEqual(payload["email"], "new@example.com")
+        XCTAssertEqual(payload["password"], "secret-value")
+        XCTAssertEqual(payload["invite_code"], "invite-123")
+        XCTAssertEqual(payload["verification_code"], "123456")
+    }
+
     func testUnauthorizedRestoreClearsCredential() async throws {
         let transport = QueueTransport(responses: [
             HTTPResponse(statusCode: 401, headers: [:], body: Data()),

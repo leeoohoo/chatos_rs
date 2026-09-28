@@ -181,7 +181,7 @@ public struct AgentMemoryCheckpoint: Codable, Equatable, Sendable {
 public struct AgentContextPolicy: Codable, Equatable, Sendable {
     /// The first request in a run/resume must fit this local safety budget.
     /// Official OpenAI Responses owns subsequent in-run compaction.
-    public var windowTokens = 250_000
+    public var windowTokens = 2_000_000
     public var outputReserveTokens = 30_000
     public init() {}
     public var hardInputLimit: Int { windowTokens }

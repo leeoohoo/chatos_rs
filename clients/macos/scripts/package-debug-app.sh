@@ -16,6 +16,15 @@ ZH_HANS_LOCALIZATION_DIR="$RESOURCES_DIR/zh-Hans.lproj"
 SIGNING_IDENTITY=${CHATOS_CODESIGN_IDENTITY:-}
 SWIFT_BUILD_SYSTEM=${CHATOS_SWIFT_BUILD_SYSTEM:-native}
 SWIFT_SCRATCH_PATH=${CHATOS_SWIFT_SCRATCH_PATH:-"$PROJECT_DIR/.build-native"}
+BUILD_CONFIGURATION=${CHATOS_BUILD_CONFIGURATION:-debug}
+
+case "$BUILD_CONFIGURATION" in
+  debug|release) ;;
+  *)
+    echo "CHATOS_BUILD_CONFIGURATION must be debug or release" >&2
+    exit 2
+    ;;
+esac
 
 # The native build path is intentionally retained because SwiftBuild currently links
 # this AppKit executable with an obsolete SDK load command. SwiftPM also prints a
@@ -29,10 +38,12 @@ cd "$PROJECT_DIR"
 swiftpm build \
   --build-system "$SWIFT_BUILD_SYSTEM" \
   --scratch-path "$SWIFT_SCRATCH_PATH" \
+  --configuration "$BUILD_CONFIGURATION" \
   --product ChatOSSwift
 BIN_DIR=$(swiftpm build \
   --build-system "$SWIFT_BUILD_SYSTEM" \
   --scratch-path "$SWIFT_SCRATCH_PATH" \
+  --configuration "$BUILD_CONFIGURATION" \
   --show-bin-path)
 EXECUTABLE="$BIN_DIR/ChatOSSwift"
 if [[ ! -x "$EXECUTABLE" ]]; then

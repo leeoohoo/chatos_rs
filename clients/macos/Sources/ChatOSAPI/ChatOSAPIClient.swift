@@ -266,15 +266,25 @@ private struct EmptyResponse: Decodable, Sendable {}
 private struct APIErrorPayload: Decodable {
     var message: String?
     var error: String?
+    var detail: String?
     var code: String?
     var challengePrompt: String?
 
     enum CodingKeys: String, CodingKey {
-        case message, error, code
+        case message, error, detail, code
         case challengePrompt = "challenge_prompt"
     }
 
-    var resolvedMessage: String { message ?? error ?? "Request failed" }
+    var resolvedMessage: String {
+        if let message { return message }
+        if let error,
+           error == "register via user_service failed"
+            || error == "send register verification code via user_service failed",
+           let detail {
+            return detail
+        }
+        return error ?? detail ?? "Request failed"
+    }
 
     static func decode(_ data: Data, statusCode: Int) -> Self {
         if let payload = try? JSONDecoder().decode(Self.self, from: data) {
@@ -286,6 +296,7 @@ private struct APIErrorPayload: Decodable {
             return .init(
                 message: nested["message"] as? String,
                 error: nil,
+                detail: nil,
                 code: nested["code"] as? String,
                 challengePrompt: nested["challenge_prompt"] as? String
             )

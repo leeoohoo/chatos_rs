@@ -6,6 +6,18 @@ use serde::{Deserialize, Serialize};
 
 pub const AGENT_MAX_ITERATIONS_CONFIG_KEY: &str = "agent.runtime.max_iterations";
 pub const DEFAULT_AGENT_MAX_ITERATIONS: usize = 600;
+pub const AGENT_MAX_REQUEST_RETRIES_CONFIG_KEY: &str = "agent.runtime.max_request_retries";
+pub const AGENT_REQUEST_TIMEOUT_SECONDS_CONFIG_KEY: &str = "agent.runtime.request_timeout_seconds";
+pub const AGENT_RUN_TIMEOUT_SECONDS_CONFIG_KEY: &str = "agent.runtime.run_timeout_seconds";
+pub const AGENT_MAX_NO_PROGRESS_ROUNDS_CONFIG_KEY: &str = "agent.runtime.max_no_progress_rounds";
+pub const AGENT_CONTEXT_WINDOW_TOKENS_CONFIG_KEY: &str = "agent.runtime.context_window_tokens";
+pub const AGENT_OUTPUT_RESERVE_TOKENS_CONFIG_KEY: &str = "agent.runtime.output_reserve_tokens";
+pub const DEFAULT_AGENT_MAX_REQUEST_RETRIES: usize = 2;
+pub const DEFAULT_AGENT_REQUEST_TIMEOUT_SECONDS: usize = 180;
+pub const DEFAULT_AGENT_RUN_TIMEOUT_SECONDS: usize = 7_200;
+pub const DEFAULT_AGENT_MAX_NO_PROGRESS_ROUNDS: usize = 8;
+pub const DEFAULT_AGENT_CONTEXT_WINDOW_TOKENS: usize = 2_000_000;
+pub const DEFAULT_AGENT_OUTPUT_RESERVE_TOKENS: usize = 30_000;
 pub const TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY: &str = "task_runner.runtime.max_iterations";
 pub const TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY: &str =
     "task_runner.runtime.review_checkpoint.read_only_iterations";
@@ -33,6 +45,74 @@ pub struct TaskRunnerRuntimeSettings {
     pub prompt_cache_retention_enabled: bool,
 }
 
+#[cfg_attr(feature = "managed-config", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NativeAgentRuntimeSettings {
+    pub maximum_model_calls: usize,
+    pub maximum_request_retries: usize,
+    pub request_timeout_seconds: usize,
+    pub run_timeout_seconds: usize,
+    pub maximum_no_progress_rounds: usize,
+    pub context_window_tokens: usize,
+    pub output_reserve_tokens: usize,
+}
+
+impl Default for NativeAgentRuntimeSettings {
+    fn default() -> Self {
+        Self {
+            maximum_model_calls: DEFAULT_AGENT_MAX_ITERATIONS,
+            maximum_request_retries: DEFAULT_AGENT_MAX_REQUEST_RETRIES,
+            request_timeout_seconds: DEFAULT_AGENT_REQUEST_TIMEOUT_SECONDS,
+            run_timeout_seconds: DEFAULT_AGENT_RUN_TIMEOUT_SECONDS,
+            maximum_no_progress_rounds: DEFAULT_AGENT_MAX_NO_PROGRESS_ROUNDS,
+            context_window_tokens: DEFAULT_AGENT_CONTEXT_WINDOW_TOKENS,
+            output_reserve_tokens: DEFAULT_AGENT_OUTPUT_RESERVE_TOKENS,
+        }
+    }
+}
+
+#[cfg(feature = "managed-config")]
+impl NativeAgentRuntimeSettings {
+    fn validate(self) -> Result<Self, String> {
+        if !(1..=10_000).contains(&self.maximum_model_calls) {
+            return Err(format!(
+                "{AGENT_MAX_ITERATIONS_CONFIG_KEY} must be between 1 and 10000"
+            ));
+        }
+        if self.maximum_request_retries > 10 {
+            return Err(format!(
+                "{AGENT_MAX_REQUEST_RETRIES_CONFIG_KEY} must be between 0 and 10"
+            ));
+        }
+        if !(5..=1_800).contains(&self.request_timeout_seconds) {
+            return Err(format!(
+                "{AGENT_REQUEST_TIMEOUT_SECONDS_CONFIG_KEY} must be between 5 and 1800"
+            ));
+        }
+        if !(10..=86_400).contains(&self.run_timeout_seconds) {
+            return Err(format!(
+                "{AGENT_RUN_TIMEOUT_SECONDS_CONFIG_KEY} must be between 10 and 86400"
+            ));
+        }
+        if !(1..=100).contains(&self.maximum_no_progress_rounds) {
+            return Err(format!(
+                "{AGENT_MAX_NO_PROGRESS_ROUNDS_CONFIG_KEY} must be between 1 and 100"
+            ));
+        }
+        if !(2_048..=2_000_000).contains(&self.context_window_tokens) {
+            return Err(format!(
+                "{AGENT_CONTEXT_WINDOW_TOKENS_CONFIG_KEY} must be between 2048 and 2000000"
+            ));
+        }
+        if !(256..self.context_window_tokens).contains(&self.output_reserve_tokens) {
+            return Err(format!(
+                "{AGENT_OUTPUT_RESERVE_TOKENS_CONFIG_KEY} must be between 256 and the context window"
+            ));
+        }
+        Ok(self)
+    }
+}
+
 #[cfg(feature = "managed-config")]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RemoteControlTrustConfigBundle {
@@ -50,8 +130,40 @@ pub struct ManagedRuntimeConfigBundle {
     pub generated_at: String,
     pub stale: bool,
     pub source: Option<String>,
+    pub native_agent_runtime_settings: NativeAgentRuntimeSettings,
     pub task_runner_runtime_settings: TaskRunnerRuntimeSettings,
     pub remote_control_trust: RemoteControlTrustConfigBundle,
+}
+
+#[cfg(feature = "managed-config")]
+pub fn resolve_native_agent_runtime_settings(
+    snapshot: &chatos_config_sdk::ConfigSnapshot,
+) -> Result<NativeAgentRuntimeSettings, String> {
+    let defaults = NativeAgentRuntimeSettings::default();
+    NativeAgentRuntimeSettings {
+        maximum_model_calls: snapshot
+            .usize(AGENT_MAX_ITERATIONS_CONFIG_KEY)
+            .unwrap_or(defaults.maximum_model_calls),
+        maximum_request_retries: snapshot
+            .usize(AGENT_MAX_REQUEST_RETRIES_CONFIG_KEY)
+            .unwrap_or(defaults.maximum_request_retries),
+        request_timeout_seconds: snapshot
+            .usize(AGENT_REQUEST_TIMEOUT_SECONDS_CONFIG_KEY)
+            .unwrap_or(defaults.request_timeout_seconds),
+        run_timeout_seconds: snapshot
+            .usize(AGENT_RUN_TIMEOUT_SECONDS_CONFIG_KEY)
+            .unwrap_or(defaults.run_timeout_seconds),
+        maximum_no_progress_rounds: snapshot
+            .usize(AGENT_MAX_NO_PROGRESS_ROUNDS_CONFIG_KEY)
+            .unwrap_or(defaults.maximum_no_progress_rounds),
+        context_window_tokens: snapshot
+            .usize(AGENT_CONTEXT_WINDOW_TOKENS_CONFIG_KEY)
+            .unwrap_or(defaults.context_window_tokens),
+        output_reserve_tokens: snapshot
+            .usize(AGENT_OUTPUT_RESERVE_TOKENS_CONFIG_KEY)
+            .unwrap_or(defaults.output_reserve_tokens),
+    }
+    .validate()
 }
 
 #[cfg(feature = "managed-config")]
@@ -280,5 +392,74 @@ mod tests {
         let error = require_task_runner_runtime_settings(&snapshot).expect_err("invalid config");
 
         assert!(error.contains("must be at least 2"));
+    }
+
+    #[test]
+    fn native_agent_runtime_settings_use_managed_values() {
+        let snapshot = ConfigSnapshot {
+            environment: "test".to_string(),
+            service_name: "local-connector-service".to_string(),
+            revision: 8,
+            checksum: "checksum-8".to_string(),
+            values: BTreeMap::from([
+                (AGENT_MAX_ITERATIONS_CONFIG_KEY.to_string(), json!(725)),
+                (AGENT_MAX_REQUEST_RETRIES_CONFIG_KEY.to_string(), json!(3)),
+                (
+                    AGENT_REQUEST_TIMEOUT_SECONDS_CONFIG_KEY.to_string(),
+                    json!(240),
+                ),
+                (
+                    AGENT_RUN_TIMEOUT_SECONDS_CONFIG_KEY.to_string(),
+                    json!(8_000),
+                ),
+                (
+                    AGENT_MAX_NO_PROGRESS_ROUNDS_CONFIG_KEY.to_string(),
+                    json!(9),
+                ),
+                (
+                    AGENT_CONTEXT_WINDOW_TOKENS_CONFIG_KEY.to_string(),
+                    json!(1_500_000),
+                ),
+                (
+                    AGENT_OUTPUT_RESERVE_TOKENS_CONFIG_KEY.to_string(),
+                    json!(40_000),
+                ),
+            ]),
+            env: BTreeMap::new(),
+            generated_at: "now".to_string(),
+            stale: false,
+            source: None,
+        };
+
+        let settings = resolve_native_agent_runtime_settings(&snapshot)
+            .expect("managed native Agent settings");
+
+        assert_eq!(settings.maximum_model_calls, 725);
+        assert_eq!(settings.maximum_request_retries, 3);
+        assert_eq!(settings.request_timeout_seconds, 240);
+        assert_eq!(settings.run_timeout_seconds, 8_000);
+        assert_eq!(settings.maximum_no_progress_rounds, 9);
+        assert_eq!(settings.context_window_tokens, 1_500_000);
+        assert_eq!(settings.output_reserve_tokens, 40_000);
+    }
+
+    #[test]
+    fn native_agent_runtime_settings_fall_back_to_product_defaults() {
+        let snapshot = ConfigSnapshot {
+            environment: "test".to_string(),
+            service_name: "local-connector-service".to_string(),
+            revision: 1,
+            checksum: "checksum".to_string(),
+            values: BTreeMap::new(),
+            env: BTreeMap::new(),
+            generated_at: "now".to_string(),
+            stale: false,
+            source: None,
+        };
+
+        assert_eq!(
+            resolve_native_agent_runtime_settings(&snapshot).expect("product defaults"),
+            NativeAgentRuntimeSettings::default()
+        );
     }
 }

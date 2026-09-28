@@ -4,6 +4,40 @@ import Testing
 
 struct NativeConnectorGatewayDTOTests {
     @Test
+    func managedRuntimeConfigDecodesNativeAgentPolicy() throws {
+        let data = Data(
+            """
+            {
+              "native_agent_runtime_settings": {
+                "maximum_model_calls": 725,
+                "maximum_request_retries": 3,
+                "request_timeout_seconds": 240,
+                "run_timeout_seconds": 8000,
+                "maximum_no_progress_rounds": 9,
+                "context_window_tokens": 1500000,
+                "output_reserve_tokens": 40000
+              },
+              "remote_control_trust": {
+                "require_signed_messages": true,
+                "signature_max_skew_seconds": 300,
+                "trusted_relay_public_keys": { "relay-key-1": "public-key" }
+              }
+            }
+            """.utf8
+        )
+
+        let decoded = try JSONDecoder().decode(GatewayManagedRuntimeConfigDTO.self, from: data)
+        let settings = try #require(decoded.nativeAgentRuntimeSettings)
+        #expect(settings.maximumModelCalls == 725)
+        #expect(settings.maximumRequestRetries == 3)
+        #expect(settings.requestTimeoutSeconds == 240)
+        #expect(settings.runTimeoutSeconds == 8_000)
+        #expect(settings.maximumNoProgressRounds == 9)
+        #expect(settings.contextWindowTokens == 1_500_000)
+        #expect(settings.outputReserveTokens == 40_000)
+    }
+
+    @Test
     func pluginArtifactDownloadRetriesTransientNetworkFailuresOnly() {
         #expect(NativeConnectorGateway.shouldRetryArtifactDownload(
             after: URLError(.networkConnectionLost)

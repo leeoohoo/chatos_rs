@@ -45,6 +45,57 @@ public actor ChatOSAuthenticationService: AuthenticationServicing {
         return AuthSession(user: response.user.domainModel)
     }
 
+    public func sendRegistrationCode(
+        email: String,
+        inviteCode: String
+    ) async throws -> RegistrationCodeDelivery {
+        let email = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        let inviteCode = inviteCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !email.isEmpty, !inviteCode.isEmpty else {
+            throw ChatOSAPIError.invalidRequest("请输入邮箱和邀请码。")
+        }
+        let body = try encoder.encode(SendRegistrationCodeRequestDTO(
+            email: email,
+            inviteCode: inviteCode
+        ))
+        let response: SendRegistrationCodeResponseDTO = try await client.request(
+            "/auth/register/send-code",
+            method: "POST",
+            body: body
+        )
+        return RegistrationCodeDelivery(
+            expiresInSeconds: response.expiresInSeconds,
+            resendAfterSeconds: response.resendAfterSeconds
+        )
+    }
+
+    public func register(
+        email: String,
+        password: String,
+        inviteCode: String,
+        verificationCode: String
+    ) async throws -> AuthSession {
+        let email = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        let inviteCode = inviteCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        let verificationCode = verificationCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !email.isEmpty, !password.isEmpty, !inviteCode.isEmpty, !verificationCode.isEmpty else {
+            throw ChatOSAPIError.invalidRequest("请填写完整的注册信息。")
+        }
+        let body = try encoder.encode(RegisterRequestDTO(
+            email: email,
+            password: password,
+            inviteCode: inviteCode,
+            verificationCode: verificationCode
+        ))
+        let response: LoginResponseDTO = try await client.request(
+            "/auth/register",
+            method: "POST",
+            body: body
+        )
+        try await client.setAccessToken(response.accessToken)
+        return AuthSession(user: response.user.domainModel)
+    }
+
     public func logout() async {
         try? await client.setAccessToken(nil)
     }
@@ -53,6 +104,39 @@ public actor ChatOSAuthenticationService: AuthenticationServicing {
 private struct LoginRequestDTO: Encodable {
     var username: String
     var password: String
+}
+
+private struct SendRegistrationCodeRequestDTO: Encodable {
+    var email: String
+    var inviteCode: String
+
+    enum CodingKeys: String, CodingKey {
+        case email
+        case inviteCode = "invite_code"
+    }
+}
+
+private struct SendRegistrationCodeResponseDTO: Decodable, Sendable {
+    var expiresInSeconds: Int
+    var resendAfterSeconds: Int
+
+    enum CodingKeys: String, CodingKey {
+        case expiresInSeconds = "expires_in_seconds"
+        case resendAfterSeconds = "resend_after_seconds"
+    }
+}
+
+private struct RegisterRequestDTO: Encodable {
+    var email: String
+    var password: String
+    var inviteCode: String
+    var verificationCode: String
+
+    enum CodingKeys: String, CodingKey {
+        case email, password
+        case inviteCode = "invite_code"
+        case verificationCode = "verification_code"
+    }
 }
 
 private struct LoginResponseDTO: Decodable, Sendable {
