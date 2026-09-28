@@ -18,6 +18,9 @@ public sealed partial class StorySegmentEditor : ObservableObject
         _resourceIdsText = string.Join(", ", document.ResourceIds);
         _kind = document.Kind;
         _isRefined = document.IsRefined;
+        _pendingVideoJobId = document.PendingVideoJobId;
+        _pendingVideoJobStatus = document.PendingVideoJobStatus;
+        _pendingVideoRequestDigest = document.PendingVideoRequestDigest;
         _continuityIn = document.ContinuityIn ?? string.Empty;
         _continuityOut = document.ContinuityOut ?? string.Empty;
         _shotPlan = document.ShotPlan ?? string.Empty;
@@ -37,7 +40,13 @@ public sealed partial class StorySegmentEditor : ObservableObject
         ({ Length: > 0 }, _) => "首帧已就绪",
         _ => "尚未生成画面",
     };
-    public string VideoStatus => VideoPath is { Length: > 0 } ? "视频已完成" : "视频待生成";
+    public string VideoStatus => VideoPath is { Length: > 0 }
+        ? "视频已完成"
+        : HasPendingVideoJob ? $"已有视频任务 · {PendingVideoJobStatus ?? "等待查询"}" : "视频待生成";
+    public bool HasPendingVideoJob => !string.IsNullOrWhiteSpace(_pendingVideoJobId);
+    public string? PendingVideoJobId => _pendingVideoJobId;
+    public string? PendingVideoJobStatus => _pendingVideoJobStatus;
+    public string? PendingVideoRequestDigest => _pendingVideoRequestDigest;
     public string KindLabel => Kind == StorySegmentKind.Transition ? "转场" : "剧情";
 
     [ObservableProperty]
@@ -56,6 +65,9 @@ public sealed partial class StorySegmentEditor : ObservableObject
     private string? _firstFrameAsset;
     private string? _lastFrameAsset;
     private string? _videoAsset;
+    private string? _pendingVideoJobId;
+    private string? _pendingVideoJobStatus;
+    private string? _pendingVideoRequestDigest;
 
     public StorySegmentDocument ToDocument() => new(
         Id,
@@ -70,6 +82,9 @@ public sealed partial class StorySegmentEditor : ObservableObject
     {
         Kind = this.Kind,
         IsRefined = IsRefined,
+        PendingVideoJobId = _pendingVideoJobId,
+        PendingVideoJobStatus = _pendingVideoJobStatus,
+        PendingVideoRequestDigest = _pendingVideoRequestDigest,
         ResourceIds = ParseResourceIds(ResourceIdsText),
         ContinuityIn = ContinuityIn.Trim(),
         ContinuityOut = ContinuityOut.Trim(),
@@ -108,7 +123,36 @@ public sealed partial class StorySegmentEditor : ObservableObject
     {
         _videoAsset = relativePath;
         VideoPath = fullPath;
+        ClearPendingVideoJob();
         OnPropertyChanged(nameof(VideoPath));
+        OnPropertyChanged(nameof(VideoStatus));
+    }
+
+    public bool SetPendingVideoJob(string jobId, string status, string digest)
+    {
+        if (_pendingVideoJobId == jobId && _pendingVideoJobStatus == status &&
+            _pendingVideoRequestDigest == digest) return false;
+        _pendingVideoJobId = jobId;
+        _pendingVideoJobStatus = status;
+        _pendingVideoRequestDigest = digest;
+        OnPropertyChanged(nameof(PendingVideoJobId));
+        OnPropertyChanged(nameof(PendingVideoJobStatus));
+        OnPropertyChanged(nameof(PendingVideoRequestDigest));
+        OnPropertyChanged(nameof(HasPendingVideoJob));
+        OnPropertyChanged(nameof(VideoStatus));
+        return true;
+    }
+
+    public void ClearPendingVideoJob()
+    {
+        if (!HasPendingVideoJob && _pendingVideoJobStatus is null && _pendingVideoRequestDigest is null) return;
+        _pendingVideoJobId = null;
+        _pendingVideoJobStatus = null;
+        _pendingVideoRequestDigest = null;
+        OnPropertyChanged(nameof(PendingVideoJobId));
+        OnPropertyChanged(nameof(PendingVideoJobStatus));
+        OnPropertyChanged(nameof(PendingVideoRequestDigest));
+        OnPropertyChanged(nameof(HasPendingVideoJob));
         OnPropertyChanged(nameof(VideoStatus));
     }
 

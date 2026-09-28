@@ -667,6 +667,12 @@
                                                             <Button Grid.Column="1" Click="OnImportStoryVideoClick" Content="导入视频" IsEnabled="{x:Bind StoryViewModel.CanImportSegmentAsset, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                             <Button Grid.Column="2" Click="OnCancelStoryGenerationClick" Content="停止等待" IsEnabled="{x:Bind StoryViewModel.IsBusy, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                         </Grid>
+                                                        <TextBlock Text="{x:Bind StoryViewModel.SelectedVideoJobLabel, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        <Grid ColumnSpacing="8">
+                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                            <Button Click="OnResumeStoryVideoClick" Content="继续查询并下载已有任务" IsEnabled="{x:Bind StoryViewModel.CanResumeSelectedVideo, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                                            <Button Grid.Column="1" Click="OnAbandonStoryVideoJobClick" Content="清除任务记录" IsEnabled="{x:Bind StoryViewModel.CanAbandonSelectedVideoJob, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" ToolTipService.ToolTip="只有确认不再需要服务端旧任务时才清除；清除后允许重新提交并可能再次计费。" />
+                                                        </Grid>
                                                         <TextBlock Text="{x:Bind StoryViewModel.VideoProgressLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                         <MediaPlayerElement x:Name="StoryVideoPlayer" Height="220" AreTransportControlsEnabled="True" AutoPlay="False" Stretch="Uniform" />
                                                     </StackPanel>

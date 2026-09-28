@@ -62,6 +62,9 @@ public sealed record StorySegmentDocument(
 {
     public StorySegmentKind Kind { get; init; } = StorySegmentKind.Story;
     public bool IsRefined { get; init; }
+    public string? PendingVideoJobId { get; init; }
+    public string? PendingVideoJobStatus { get; init; }
+    public string? PendingVideoRequestDigest { get; init; }
     public IReadOnlyList<string> ResourceIds { get; init; } = [];
     public string ContinuityIn { get; init; } = string.Empty;
     public string ContinuityOut { get; init; } = string.Empty;
@@ -74,6 +77,10 @@ public sealed record StorySegmentDocument(
             Narrative.Length > 8_000 || ImagePrompt.Length > 7_000 || VideoPrompt.Length > 7_000 ||
             ContinuityIn.Length > 2_000 || ContinuityOut.Length > 2_000 || ShotPlan.Length > 8_000 ||
             Seconds is < 2 or > 30 || !Enum.IsDefined(Kind) || ResourceIds is null ||
+            !SafeJob(PendingVideoJobId, 512) || !SafeJob(PendingVideoJobStatus, 80) ||
+            !SafeDigest(PendingVideoRequestDigest) ||
+            (PendingVideoJobId is null) != (PendingVideoRequestDigest is null) ||
+            PendingVideoJobId is null && PendingVideoJobStatus is not null ||
             !SafeAsset(FirstFrameAsset) || !SafeAsset(LastFrameAsset) || !SafeAsset(VideoAsset))
         {
             throw new InvalidDataException("剧情分段数据无效，请检查标题、提示词、时长和素材。");
@@ -83,6 +90,12 @@ public sealed record StorySegmentDocument(
     private static bool SafeAsset(string? value) => value is null ||
         (!Path.IsPathFullyQualified(value) &&
          !value.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Contains(".."));
+
+    private static bool SafeJob(string? value, int maximum) =>
+        value is null || value.Length is > 0 && value.Length <= maximum;
+
+    private static bool SafeDigest(string? value) => value is null ||
+        value.Length == 64 && value.All(character => char.IsAsciiHexDigit(character));
 }
 
 public enum StorySegmentKind

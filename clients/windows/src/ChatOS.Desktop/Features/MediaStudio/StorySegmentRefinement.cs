@@ -140,7 +140,8 @@ public sealed partial class StoryStudioViewModel
     }
 
     private static bool SegmentHasNoMedia(StorySegmentEditor segment) =>
-        segment.FirstFramePath is null && segment.LastFramePath is null && segment.VideoPath is null;
+        segment.FirstFramePath is null && segment.LastFramePath is null && segment.VideoPath is null &&
+        !segment.HasPendingVideoJob;
 
     private static void ApplySegmentRefinement(
         StorySegmentEditor segment,

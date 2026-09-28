@@ -226,6 +226,24 @@ public sealed partial class MediaStudioPage : Page
     private async void OnGenerateStoryVideoClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.GenerateVideoAsync();
 
+    private async void OnResumeStoryVideoClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.ResumeSelectedVideoAsync();
+
+    private async void OnAbandonStoryVideoJobClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "确认清除视频任务记录？",
+            Content = "ChatOS 将不再查询这个服务端任务。只有确认不需要旧任务时才清除；之后重新提交可能再次计费。",
+            PrimaryButtonText = "清除本机记录",
+            CloseButtonText = "保留并返回",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            await StoryViewModel.AbandonSelectedVideoJobAsync();
+    }
+
     private async void OnImportStoryVideoClick(object sender, RoutedEventArgs e)
     {
         if (await PickStoryAssetAsync(true) is { } path)

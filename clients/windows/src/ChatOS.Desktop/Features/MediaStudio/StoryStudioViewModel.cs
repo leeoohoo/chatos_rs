@@ -12,6 +12,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     private readonly IStoryPlanningService _planner;
     private readonly MediaStudioHistoryStore _history;
     private readonly StoryProjectStore _store;
+    private readonly SemaphoreSlim _projectSaveGate = new(1, 1);
     private string? _ownerUserId;
     private Guid _session = Guid.NewGuid();
     private StoryProjectDocument? _current;
@@ -46,6 +47,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             NotifyPlanningRunsChanged();
             NotifyOptimizationChanged();
             NotifySegmentRefinementChanged();
+            NotifyVideoJobChanged();
             OnPropertyChanged(nameof(IsPlanningInputsLocked));
             OnPropertyChanged(nameof(CanEditPlanningInputs));
             OnPropertyChanged(nameof(PlanningInputsLockLabel));
@@ -93,7 +95,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     public bool CanGenerateFrame => CanSave && SelectedSegment is not null &&
         !string.IsNullOrWhiteSpace(SelectedSegment.ImagePrompt);
     public bool CanGenerateVideo => CanSave && SelectedSegment is not null &&
-        !string.IsNullOrWhiteSpace(SelectedSegment.VideoPrompt);
+        !SelectedSegment.HasPendingVideoJob && !string.IsNullOrWhiteSpace(SelectedSegment.VideoPrompt);
     public bool CanGenerateResourceImage => CanSave && SelectedResource is not null &&
         !string.IsNullOrWhiteSpace(SelectedResource.ImagePrompt);
     public string WorkspaceSummary => _current is null
@@ -152,10 +154,15 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanPlan))]
     [NotifyPropertyChangedFor(nameof(CanStartBatch))]
     [NotifyPropertyChangedFor(nameof(CanRefineSelectedSegment))]
+    [NotifyPropertyChangedFor(nameof(CanResumeSelectedVideo))]
+    [NotifyPropertyChangedFor(nameof(SelectedVideoJobLabel))]
     private MediaGenerationModel? _projectVideoModel;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanGenerateFrame))]
     [NotifyPropertyChangedFor(nameof(CanGenerateVideo))]
+    [NotifyPropertyChangedFor(nameof(CanResumeSelectedVideo))]
+    [NotifyPropertyChangedFor(nameof(CanAbandonSelectedVideoJob))]
+    [NotifyPropertyChangedFor(nameof(SelectedVideoJobLabel))]
     [NotifyPropertyChangedFor(nameof(CanImportSegmentAsset))]
     [NotifyPropertyChangedFor(nameof(CanRefineSelectedSegment))]
     [NotifyPropertyChangedFor(nameof(CanApplySegmentRefinement))]
@@ -187,6 +194,8 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanRefineSelectedSegment))]
     [NotifyPropertyChangedFor(nameof(CanApplySegmentRefinement))]
     [NotifyPropertyChangedFor(nameof(CanEditPlanningInputs))]
+    [NotifyPropertyChangedFor(nameof(CanResumeSelectedVideo))]
+    [NotifyPropertyChangedFor(nameof(CanAbandonSelectedVideoJob))]
     private bool _isBusy;
     [ObservableProperty] private string _statusMessage = "剧情项目只保存在本机";
     [ObservableProperty] private string? _errorMessage;
@@ -369,36 +378,6 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     public Task GenerateLastFrameAsync(CancellationToken cancellationToken = default) =>
         GenerateFrameAsync(true, cancellationToken);
 
-    public async Task GenerateVideoAsync(CancellationToken cancellationToken = default)
-    {
-        var context = CaptureGenerationContext();
-        if (!CanGenerateVideo || context is null || ProjectVideoModel is null) return;
-        _generationCancellation?.Cancel();
-        _generationCancellation?.Dispose();
-        _generationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var token = _generationCancellation.Token;
-        IsBusy = true;
-        ErrorMessage = null;
-        VideoProgress = new VideoGenerationProgress("submitting");
-        try
-        {
-            await PersistCurrentAsync(token);
-            await GenerateVideoCoreAsync(context, ProjectVideoModel, token);
-            StatusMessage = $"{context.Segment.Title} 的视频已生成";
-        }
-        catch (OperationCanceledException)
-        {
-            VideoProgress = null;
-            StatusMessage = "已停止等待剧情视频";
-        }
-        catch (Exception exception)
-        {
-            ErrorMessage = exception.Message;
-            VideoProgress = new VideoGenerationProgress("failed");
-        }
-        finally { IsBusy = false; }
-    }
-
     public void CancelGeneration() => _generationCancellation?.Cancel();
 
     private async Task GenerateFrameAsync(bool lastFrame, CancellationToken cancellationToken)
@@ -423,38 +402,48 @@ public sealed partial class StoryStudioViewModel : ObservableObject
 
     private async Task PersistCurrentAsync(CancellationToken cancellationToken)
     {
-        var owner = _ownerUserId ?? throw new InvalidOperationException("请先登录。");
-        var current = _current ?? throw new InvalidOperationException("请先打开剧情项目。");
-        if (ProjectTextModel is null || ProjectImageModel is null || ProjectVideoModel is null)
-            throw new InvalidOperationException("请选择文本、图片和视频模型。");
-        if (IsPlanningInputsLocked &&
-            (!string.Equals(ProjectSource.Trim(), _lockedPlanningSource, StringComparison.Ordinal) ||
-             !string.Equals(VisualStyle.Trim(), _lockedPlanningStyle, StringComparison.Ordinal) ||
-             !string.Equals(ProjectRatio, _lockedPlanningRatio, StringComparison.Ordinal)))
+        await _projectSaveGate.WaitAsync(cancellationToken);
+        try
         {
-            throw new InvalidOperationException("全剧计划建立后不能修改剧情原文、画面风格或画面比例；请先删除全部分段再重新规划。");
+            var owner = _ownerUserId ?? throw new InvalidOperationException("请先登录。");
+            var current = _current ?? throw new InvalidOperationException("请先打开剧情项目。");
+            var session = _session;
+            if (ProjectTextModel is null || ProjectImageModel is null || ProjectVideoModel is null)
+                throw new InvalidOperationException("请选择文本、图片和视频模型。");
+            if (IsPlanningInputsLocked &&
+                (!string.Equals(ProjectSource.Trim(), _lockedPlanningSource, StringComparison.Ordinal) ||
+                 !string.Equals(VisualStyle.Trim(), _lockedPlanningStyle, StringComparison.Ordinal) ||
+                 !string.Equals(ProjectRatio, _lockedPlanningRatio, StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException("全剧计划建立后不能修改剧情原文、画面风格或画面比例；请先删除全部分段再重新规划。");
+            }
+            var project = current with
+            {
+                Title = ProjectTitle.Trim(),
+                Description = ProjectDescription.Trim(),
+                Source = ProjectSource.Trim(),
+                Summary = ProjectSummary.Trim(),
+                VisualStyle = VisualStyle.Trim(),
+                Ratio = ProjectRatio,
+                TextModelConfigId = ProjectTextModel.Id,
+                ImageModelConfigId = ProjectImageModel.Id,
+                VideoModelConfigId = ProjectVideoModel.Id,
+                Segments = Segments.Select(segment => segment.ToDocument()).ToArray(),
+                Resources = Resources.Select(resource => resource.ToDocument()).ToArray(),
+                UpdatedAt = DateTimeOffset.UtcNow,
+            };
+            await _store.SaveAsync(owner, project, cancellationToken);
+            if (_session != session || _ownerUserId != owner || _current?.Id != project.Id) return;
+            _current = project;
+            var index = Projects.ToList().FindIndex(card => card.Id == project.Id);
+            if (index >= 0) Projects.RemoveAt(index);
+            Projects.Insert(0, new StoryProjectCard(project));
+            OnWorkspaceChanged();
         }
-        var project = current with
+        finally
         {
-            Title = ProjectTitle.Trim(),
-            Description = ProjectDescription.Trim(),
-            Source = ProjectSource.Trim(),
-            Summary = ProjectSummary.Trim(),
-            VisualStyle = VisualStyle.Trim(),
-            Ratio = ProjectRatio,
-            TextModelConfigId = ProjectTextModel.Id,
-            ImageModelConfigId = ProjectImageModel.Id,
-            VideoModelConfigId = ProjectVideoModel.Id,
-            Segments = Segments.Select(segment => segment.ToDocument()).ToArray(),
-            Resources = Resources.Select(resource => resource.ToDocument()).ToArray(),
-            UpdatedAt = DateTimeOffset.UtcNow,
-        };
-        await _store.SaveAsync(owner, project, cancellationToken);
-        _current = project;
-        var index = Projects.ToList().FindIndex(card => card.Id == project.Id);
-        if (index >= 0) Projects.RemoveAt(index);
-        Projects.Insert(0, new StoryProjectCard(project));
-        OnWorkspaceChanged();
+            _projectSaveGate.Release();
+        }
     }
 
     private void ApplyModels(IReadOnlyList<MediaGenerationModel> models)
@@ -567,6 +556,9 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(CanGenerateFrame));
         OnPropertyChanged(nameof(CanGenerateVideo));
+        OnPropertyChanged(nameof(CanResumeSelectedVideo));
+        OnPropertyChanged(nameof(CanAbandonSelectedVideoJob));
+        OnPropertyChanged(nameof(SelectedVideoJobLabel));
         OnPropertyChanged(nameof(CanGenerateResourceImage));
         if (e.PropertyName == nameof(StorySegmentEditor.Seconds))
             OnPropertyChanged(nameof(WorkspaceSummary));
@@ -577,6 +569,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         RefreshProjectMedia();
         NotifySegmentOrderChanged();
         NotifySegmentRefinementChanged();
+        NotifyVideoJobChanged();
     }
 
     private void OnWorkspaceChanged()
@@ -598,6 +591,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         RefreshProjectMedia();
         NotifySegmentOrderChanged();
         NotifySegmentRefinementChanged();
+        NotifyVideoJobChanged();
     }
 
     private void UpdatePlanningInputLock()
@@ -644,40 +638,6 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         context.Segment.SetFrame(
             lastFrame, relative, _store.ResolveAssetPath(context.Owner, context.ProjectId, relative)!);
         await PersistCurrentAsync(cancellationToken);
-        NotifyBatchPlanChanged();
-    }
-
-    private async Task GenerateVideoCoreAsync(
-        GenerationContext context,
-        MediaGenerationModel videoModel,
-        CancellationToken cancellationToken)
-    {
-        EnsureContext(context);
-        var profile = VideoGenerationProfile.ForModel(videoModel.ModelName);
-        var seconds = profile.Durations.OrderBy(value => Math.Abs(value - context.Segment.Seconds)).First();
-        context.Segment.Seconds = seconds;
-        var first = await LoadFrameAsync(context.Segment.FirstFramePath, cancellationToken);
-        var last = profile.SupportsLastFrame
-            ? await LoadFrameAsync(context.Segment.LastFramePath, cancellationToken)
-            : null;
-        var prompt = StoryPromptCatalog.RenderVideo(
-            context.Segment.VideoPrompt,
-            BuildContinuityContext(context.Segment));
-        var result = await _media.GenerateVideoAsync(
-            new VideoGenerationRequest(
-                videoModel.Id, prompt, profile.Sizes[0], seconds,
-                first, last, null, ProjectRatio),
-            new Progress<VideoGenerationProgress>(value => VideoProgress = value),
-            cancellationToken);
-        var history = await _history.SaveVideoAsync(
-            context.Owner, prompt, result, cancellationToken);
-        var relative = await _store.ImportAssetAsync(
-            context.Owner, context.ProjectId, context.Segment.Id, history.FilePath, true, cancellationToken);
-        EnsureContext(context);
-        context.Segment.SetVideo(
-            relative, _store.ResolveAssetPath(context.Owner, context.ProjectId, relative)!);
-        await PersistCurrentAsync(cancellationToken);
-        VideoProgress = new VideoGenerationProgress("completed", 100, result.Id);
         NotifyBatchPlanChanged();
     }
 
