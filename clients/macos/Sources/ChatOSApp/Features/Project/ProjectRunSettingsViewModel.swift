@@ -1,6 +1,15 @@
 import ChatOSCore
 import Foundation
 
+enum ProjectRunMonitoringPolicy {
+    static func shouldRefresh(_ state: ProjectRunState?) -> Bool {
+        guard let state else { return false }
+        return state.isBusy
+            || state.isRunning
+            || state.instances.contains { $0.isBusy || $0.isRunning }
+    }
+}
+
 @MainActor
 final class ProjectRunSettingsViewModel: ObservableObject {
     enum Notice: Equatable {
@@ -64,9 +73,12 @@ final class ProjectRunSettingsViewModel: ObservableObject {
     func monitorRuns() async {
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(1))
-            guard !Task.isCancelled, !instances.isEmpty else { continue }
+            guard !Task.isCancelled,
+                  ProjectRunMonitoringPolicy.shouldRefresh(state) else { continue }
             if let refreshed = try? await service.fetchState(projectID: projectID) {
-                state = refreshed
+                if state != refreshed {
+                    state = refreshed
+                }
                 if selectedInstanceID == nil { selectedInstanceID = refreshed.instances.first?.id }
             }
         }

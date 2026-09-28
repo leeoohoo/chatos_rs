@@ -1,3 +1,4 @@
+import ChatOSCore
 import Foundation
 import Testing
 @testable import ChatOSApp
@@ -115,6 +116,45 @@ struct PerformancePolicyTests {
             .image(data: Data(repeating: 1, count: 8), pasteboardType: "public.png"),
             maximumPayloadBytes: 4
         ) == nil)
+    }
+
+    @Test("project run monitoring sleeps once all instances stop")
+    func projectRunMonitoringStopsRefreshingIdleInstances() {
+        let stopped = ProjectRunInstance(
+            id: "stopped",
+            name: "Stopped",
+            cwd: nil,
+            status: "stopped",
+            isBusy: false,
+            isRunning: false
+        )
+        let running = ProjectRunInstance(
+            id: "running",
+            name: "Running",
+            cwd: nil,
+            status: "running",
+            isBusy: false,
+            isRunning: true
+        )
+
+        let stoppedState = ProjectRunState(
+            projectID: "project",
+            status: "idle",
+            isBusy: false,
+            isRunning: false,
+            instances: [stopped]
+        )
+        let runningState = ProjectRunState(
+            projectID: "project",
+            status: "running",
+            isBusy: false,
+            isRunning: true,
+            instances: [running]
+        )
+
+        #expect(ProjectRunMonitoringPolicy.shouldRefresh(nil) == false)
+        #expect(ProjectRunMonitoringPolicy.shouldRefresh(stoppedState) == false)
+        #expect(ProjectRunMonitoringPolicy.shouldRefresh(runningState))
     }
 
     @Test("application activation keeps an existing artifact sync coordinator")
