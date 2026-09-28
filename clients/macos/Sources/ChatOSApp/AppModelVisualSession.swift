@@ -10,25 +10,41 @@ import SwiftUI
 enum VisualSessionPollingPolicy {
     static func interval(
         hasSessions: Bool,
-        hasSelectedConversation: Bool
+        hasSelectedConversation: Bool,
+        isSelectedSessionExpanded: Bool
     ) -> Duration {
         if !hasSessions { return .seconds(5) }
-        if !hasSelectedConversation { return .milliseconds(1_500) }
+        if !hasSelectedConversation || !isSelectedSessionExpanded {
+            return .seconds(2)
+        }
         return .milliseconds(450)
+    }
+
+    static func shouldLoadFrameData(
+        hasSelectedConversation: Bool,
+        isSelectedSessionExpanded: Bool
+    ) -> Bool {
+        hasSelectedConversation && isSelectedSessionExpanded
     }
 }
 
 @MainActor
 extension AppModel {
     func startVisualSessionMonitoring() {
-        guard visualSessionMonitorTask == nil else { return }
+        guard visualSessionMonitorTask == nil,
+              NSApplication.shared.isActive else { return }
         let service = localConnectorService
         visualSessionMonitorTask = Task { [weak self] in
             while !Task.isCancelled {
                 let hasSelectedConversation = self?.currentConversationID != nil
-                let selectedAdapterSessionID = hasSelectedConversation
-                    ? self?.visualSessionStore.selectedAdapterSessionID
+                let selectedPresentation = hasSelectedConversation
+                    ? self?.visualSessionStore.selectedPresentation
                     : nil
+                let isSelectedSessionExpanded = selectedPresentation?.isExpanded == true
+                let selectedAdapterSessionID = VisualSessionPollingPolicy.shouldLoadFrameData(
+                    hasSelectedConversation: hasSelectedConversation,
+                    isSelectedSessionExpanded: isSelectedSessionExpanded
+                ) ? selectedPresentation?.session.adapterSessionID : nil
                 let preferredAdapterSessionIDs = selectedAdapterSessionID.map { Set([$0]) } ?? []
                 let sessions = await service.fetchPluginVisualSessions(
                     loadFrameDataForAdapterSessionIDs: preferredAdapterSessionIDs
@@ -37,7 +53,8 @@ extension AppModel {
                 self?.applyPluginVisualSessions(sessions)
                 let interval = VisualSessionPollingPolicy.interval(
                     hasSessions: !sessions.isEmpty,
-                    hasSelectedConversation: hasSelectedConversation
+                    hasSelectedConversation: hasSelectedConversation,
+                    isSelectedSessionExpanded: isSelectedSessionExpanded
                 )
                 do {
                     try await Task.sleep(for: interval)

@@ -383,7 +383,12 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             .sink { [weak self] _ in
                 self?.recoverLocalConnector(forceReconnect: false)
                 self?.ensureAgentArtifactSyncCoordinator()
+                self?.startVisualSessionMonitoring()
             }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.stopVisualSessionMonitoring() }
             .store(in: &cancellables)
         NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)
             .receive(on: RunLoop.main)

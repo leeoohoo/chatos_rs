@@ -1,6 +1,12 @@
 import ChatOSCore
 import Foundation
 
+enum LocalConnectorApprovalMonitoringPolicy {
+    static func consistencyCheckInterval(hasStreamingService: Bool) -> Duration {
+        hasStreamingService ? .seconds(60) : .seconds(2)
+    }
+}
+
 @MainActor
 final class LocalConnectorControlCenterViewModel: ObservableObject {
     @Published var selectedTab: LocalConnectorControlTab = .connection
@@ -176,37 +182,54 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         load {
             async let settings = self.service.fetchApprovalSettings()
             async let pending = self.service.fetchPendingApprovals()
-            self.approvalSettings = try await settings
-            self.pendingApprovals = try await pending
+            let nextSettings = try await settings
+            let nextPendingApprovals = try await pending
+            if self.approvalSettings != nextSettings {
+                self.approvalSettings = nextSettings
+            }
+            self.applyPendingApprovalsIfChanged(nextPendingApprovals)
         }
     }
 
     func startApprovalMonitoring() {
-        if approvalStreamTask == nil,
-           let streamingService = service as? any LocalConnectorApprovalStreaming {
+        let streamingService = service as? any LocalConnectorApprovalStreaming
+        let hasStreamingService = streamingService != nil
+        if approvalStreamTask == nil, let streamingService {
             approvalStreamTask = Task { [weak self] in
                 let stream = await streamingService.approvalSnapshots()
                 for await approvals in stream {
                     guard let self, !Task.isCancelled else { return }
-                    self.pendingApprovals = approvals
+                    self.applyPendingApprovalsIfChanged(approvals)
                 }
             }
         }
-        if approvalEventStreamTask == nil,
-           let streamingService = service as? any LocalConnectorApprovalStreaming {
+        if approvalEventStreamTask == nil, let streamingService {
             approvalEventStreamTask = Task { [weak self] in
                 let stream = await streamingService.approvalEvents()
                 for await event in stream {
                     guard let self, !Task.isCancelled else { return }
-                    self.latestApprovalEvent = event
+                    if self.latestApprovalEvent != event {
+                        self.latestApprovalEvent = event
+                    }
                 }
             }
         }
         guard approvalMonitorTask == nil else { return }
+        let interval = LocalConnectorApprovalMonitoringPolicy.consistencyCheckInterval(
+            hasStreamingService: hasStreamingService
+        )
         approvalMonitorTask = Task { [weak self] in
-            while !Task.isCancelled {
+            if !hasStreamingService {
                 await self?.refreshPendingApprovalsSilently()
-                try? await Task.sleep(for: .seconds(2))
+            }
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: interval)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                await self?.refreshPendingApprovalsSilently()
             }
         }
     }
@@ -235,8 +258,12 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     func resolveApproval(id: String, decision: String) {
         performAction(successNotice: "审批已处理。") {
             try await self.service.resolveApproval(id: id, decision: decision)
-            self.pendingApprovals = try await self.service.fetchPendingApprovals()
-            self.approvalSettings = try await self.service.fetchApprovalSettings()
+            let nextPendingApprovals = try await self.service.fetchPendingApprovals()
+            let nextSettings = try await self.service.fetchApprovalSettings()
+            self.applyPendingApprovalsIfChanged(nextPendingApprovals)
+            if self.approvalSettings != nextSettings {
+                self.approvalSettings = nextSettings
+            }
         }
     }
 
@@ -482,11 +509,19 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
 
     private func refreshPendingApprovalsSilently() async {
         do {
-            pendingApprovals = try await service.fetchPendingApprovals()
+            let nextPendingApprovals = try await service.fetchPendingApprovals()
+            applyPendingApprovalsIfChanged(nextPendingApprovals)
         } catch {
             // The native connector may briefly restart while the app stays open.
             // Keep the last known queue and let the next polling cycle retry.
         }
+    }
+
+    private func applyPendingApprovalsIfChanged(
+        _ nextPendingApprovals: [LocalConnectorPendingApproval]
+    ) {
+        guard pendingApprovals != nextPendingApprovals else { return }
+        pendingApprovals = nextPendingApprovals
     }
 
     private func performAction(

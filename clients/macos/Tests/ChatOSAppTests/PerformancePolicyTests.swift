@@ -42,16 +42,42 @@ struct PerformancePolicyTests {
     func visualSessionPollingBacksOff() {
         #expect(VisualSessionPollingPolicy.interval(
             hasSessions: false,
-            hasSelectedConversation: true
+            hasSelectedConversation: true,
+            isSelectedSessionExpanded: true
         ) == .seconds(5))
         #expect(VisualSessionPollingPolicy.interval(
             hasSessions: true,
-            hasSelectedConversation: false
-        ) == .milliseconds(1_500))
+            hasSelectedConversation: false,
+            isSelectedSessionExpanded: true
+        ) == .seconds(2))
         #expect(VisualSessionPollingPolicy.interval(
             hasSessions: true,
-            hasSelectedConversation: true
+            hasSelectedConversation: true,
+            isSelectedSessionExpanded: false
+        ) == .seconds(2))
+        #expect(VisualSessionPollingPolicy.interval(
+            hasSessions: true,
+            hasSelectedConversation: true,
+            isSelectedSessionExpanded: true
         ) == .milliseconds(450))
+        #expect(!VisualSessionPollingPolicy.shouldLoadFrameData(
+            hasSelectedConversation: true,
+            isSelectedSessionExpanded: false
+        ))
+        #expect(VisualSessionPollingPolicy.shouldLoadFrameData(
+            hasSelectedConversation: true,
+            isSelectedSessionExpanded: true
+        ))
+    }
+
+    @Test("approval events replace two-second consistency polling")
+    func approvalMonitoringUsesEventStreams() {
+        #expect(LocalConnectorApprovalMonitoringPolicy.consistencyCheckInterval(
+            hasStreamingService: true
+        ) == .seconds(60))
+        #expect(LocalConnectorApprovalMonitoringPolicy.consistencyCheckInterval(
+            hasStreamingService: false
+        ) == .seconds(2))
     }
 
     @Test("clipboard polling backs off and stays slower in background")
