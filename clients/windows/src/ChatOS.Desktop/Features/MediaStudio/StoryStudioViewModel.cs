@@ -38,6 +38,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             RefreshStoryRelations();
             RefreshContinuityAudit();
             RefreshProjectMedia();
+            NotifySegmentOrderChanged();
         };
         Resources.CollectionChanged += (_, _) =>
         {
@@ -146,6 +147,8 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanImportSegmentAsset))]
     [NotifyPropertyChangedFor(nameof(CanAutoFillContinuity))]
     [NotifyPropertyChangedFor(nameof(CanPlayStoryPlaylist))]
+    [NotifyPropertyChangedFor(nameof(CanMoveSegmentUp))]
+    [NotifyPropertyChangedFor(nameof(CanMoveSegmentDown))]
     private bool _isBusy;
     [ObservableProperty] private string _statusMessage = "剧情项目只保存在本机";
     [ObservableProperty] private string? _errorMessage;
@@ -267,13 +270,16 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     public void AddSegment()
     {
         if (_current is null || IsBusy || Segments.Count >= 200) return;
+        var previous = Segments.LastOrDefault();
         var number = Segments.Count + 1;
         var segment = new StorySegmentDocument(
             $"segment-{Guid.NewGuid():N}", $"分段 {number}", string.Empty, string.Empty, string.Empty,
             4, null, null, null);
         var editor = new StorySegmentEditor(segment, _ => null);
         Segments.Add(editor);
+        if (previous is not null) previous.ContinuityOut = string.Empty;
         SelectedSegment = editor;
+        RefreshContinuityAudit();
     }
 
     public void RemoveSelectedSegment()
@@ -282,6 +288,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         var index = Segments.IndexOf(SelectedSegment);
         Segments.Remove(SelectedSegment);
         SelectedSegment = Segments.Count == 0 ? null : Segments[Math.Clamp(index, 0, Segments.Count - 1)];
+        RepairContinuityRange(index - 1, index);
     }
 
     public void QuickSplit()
@@ -551,6 +558,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     {
         if (oldValue is not null) oldValue.PropertyChanged -= OnSelectedSegmentPropertyChanged;
         if (newValue is not null) newValue.PropertyChanged += OnSelectedSegmentPropertyChanged;
+        NotifySegmentOrderChanged();
         RefreshPromptAudit();
     }
 
@@ -566,6 +574,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         RefreshStoryRelations();
         RefreshContinuityAudit();
         RefreshProjectMedia();
+        NotifySegmentOrderChanged();
     }
 
     private void OnWorkspaceChanged()
@@ -582,6 +591,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         RefreshStoryRelations();
         RefreshContinuityAudit();
         RefreshProjectMedia();
+        NotifySegmentOrderChanged();
     }
 
     private async Task GenerateFrameCoreAsync(

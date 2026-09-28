@@ -68,6 +68,12 @@ public sealed partial class MediaStudioPage : Page
     private void OnAddStorySegmentClick(object sender, RoutedEventArgs e) =>
         StoryViewModel.AddSegment();
 
+    private void OnMoveStorySegmentUpClick(object sender, RoutedEventArgs e) =>
+        StoryViewModel.MoveSelectedSegmentUp();
+
+    private void OnMoveStorySegmentDownClick(object sender, RoutedEventArgs e) =>
+        StoryViewModel.MoveSelectedSegmentDown();
+
     private void OnRemoveStorySegmentClick(object sender, RoutedEventArgs e) =>
         StoryViewModel.RemoveSelectedSegment();
 

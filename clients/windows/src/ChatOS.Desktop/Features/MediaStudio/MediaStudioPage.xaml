@@ -520,6 +520,8 @@
                                                 <Grid Margin="0,0,0,10">
                                                     <TextBlock VerticalAlignment="Center" Text="拍摄分段" Style="{StaticResource ChatOSHeadlineTextStyle}" />
                                                     <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="5">
+                                                        <Button Click="OnMoveStorySegmentUpClick" Content="↑" IsEnabled="{x:Bind StoryViewModel.CanMoveSegmentUp, Mode=OneWay}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="上移并重建相邻衔接" />
+                                                        <Button Click="OnMoveStorySegmentDownClick" Content="↓" IsEnabled="{x:Bind StoryViewModel.CanMoveSegmentDown, Mode=OneWay}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="下移并重建相邻衔接" />
                                                         <Button Click="OnAddStorySegmentClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="添加分段"><FontIcon Glyph="&#xE710;" /></Button>
                                                         <Button Click="OnRemoveStorySegmentClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="移除所选分段"><FontIcon Glyph="&#xE74D;" /></Button>
                                                     </StackPanel>

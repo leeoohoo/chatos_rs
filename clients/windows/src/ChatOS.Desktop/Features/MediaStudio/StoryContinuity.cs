@@ -64,6 +64,7 @@ public sealed partial class StoryStudioViewModel
         for (var index = 0; index < Segments.Count; index++)
         {
             var segment = Segments[index];
+            if (string.IsNullOrWhiteSpace(segment.Narrative)) continue;
             if (string.IsNullOrWhiteSpace(segment.ContinuityIn))
             {
                 segment.ContinuityIn = index == 0
