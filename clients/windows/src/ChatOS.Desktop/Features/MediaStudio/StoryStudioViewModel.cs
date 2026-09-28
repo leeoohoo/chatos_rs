@@ -297,6 +297,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
 
     public void CloseProject()
     {
+        CancelPlanningForWorkspaceChange();
         _generationCancellation?.Cancel();
         _current = null;
         ClearOptimizationSuggestion();
@@ -466,6 +467,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
 
     private void Reset(string ownerUserId)
     {
+        CancelPlanningForWorkspaceChange();
         _generationCancellation?.Cancel();
         _generationCancellation?.Dispose();
         _generationCancellation = null;

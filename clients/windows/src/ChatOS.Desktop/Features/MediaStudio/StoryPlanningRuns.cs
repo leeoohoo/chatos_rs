@@ -8,8 +8,12 @@ namespace ChatOS.Desktop.Features.MediaStudio;
 public sealed partial class StoryStudioViewModel
 {
     private bool _planningRunsReady;
+    private CancellationTokenSource? _planningCancellation;
+    private bool _isPlanningRunning;
 
     public ObservableCollection<StoryPlanningRunCard> PlanningRuns { get; } = [];
+    public bool IsPlanningRunning => _isPlanningRunning;
+    public bool CanPausePlanning => _isPlanningRunning && _planningCancellation is not null;
 
     public StoryPlanningRunDocument? ResumablePlanningRun => PlanningRuns
         .Select(card => card.Run)
@@ -60,6 +64,13 @@ public sealed partial class StoryStudioViewModel
         await ExecutePlanningRunAsync(owner, run, cancellationToken);
     }
 
+    public void PausePlanning()
+    {
+        if (!CanPausePlanning) return;
+        StatusMessage = "正在暂停规划并保存恢复点…";
+        _planningCancellation?.Cancel();
+    }
+
     public async Task AbandonPlanningAsync(CancellationToken cancellationToken = default)
     {
         var owner = _ownerUserId;
@@ -94,6 +105,12 @@ public sealed partial class StoryStudioViewModel
         StoryPlanningRunDocument initial,
         CancellationToken cancellationToken)
     {
+        _planningCancellation?.Cancel();
+        _planningCancellation?.Dispose();
+        var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _planningCancellation = source;
+        var token = source.Token;
+        var session = _session;
         var run = initial with
         {
             Status = StoryPlanningRunStatus.Running,
@@ -102,29 +119,30 @@ public sealed partial class StoryStudioViewModel
         };
         var applied = false;
         IsBusy = true;
+        SetPlanningRunning(true);
         ErrorMessage = null;
         StatusMessage = run.Draft is null
             ? "文本模型正在生成可恢复的全剧规划…"
             : "正在应用已保存的规划草稿，不会再次调用模型…";
         try
         {
-            await _store.SavePlanningRunAsync(owner, run, cancellationToken);
+            await _store.SavePlanningRunAsync(owner, run, token);
             PublishPlanningRun(run);
             var result = run.Draft;
             if (result is null)
             {
-                result = await _planner.PlanAsync(run.Request, cancellationToken);
+                result = await _planner.PlanAsync(run.Request, token);
                 run = run with
                 {
                     Draft = result,
                     Status = StoryPlanningRunStatus.DraftReady,
                     UpdatedAt = DateTimeOffset.UtcNow,
                 };
-                await _store.SavePlanningRunAsync(owner, run, cancellationToken);
+                await _store.SavePlanningRunAsync(owner, run, token);
                 PublishPlanningRun(run);
             }
             EnsurePlanningRunCanApply(run);
-            await ApplyPlanningDraftAsync(result, cancellationToken);
+            await ApplyPlanningDraftAsync(result, token);
             applied = true;
             run = run with
             {
@@ -132,9 +150,10 @@ public sealed partial class StoryStudioViewModel
                 Error = null,
                 UpdatedAt = DateTimeOffset.UtcNow,
             };
-            await _store.SavePlanningRunAsync(owner, run, cancellationToken);
+            await _store.SavePlanningRunAsync(owner, run, token);
             PublishPlanningRun(run);
-            StatusMessage = $"AI 已完成全剧规划，共 {Segments.Count} 个分段";
+            if (_session == session)
+                StatusMessage = $"AI 已完成全剧规划，共 {Segments.Count} 个分段";
         }
         catch (OperationCanceledException)
         {
@@ -145,7 +164,8 @@ public sealed partial class StoryStudioViewModel
                 UpdatedAt = DateTimeOffset.UtcNow,
             };
             await SavePlanningRunBestEffortAsync(owner, run);
-            StatusMessage = applied ? "规划已应用" : "规划已暂停，可稍后恢复";
+            if (_session == session)
+                StatusMessage = applied ? "规划已应用" : "规划已暂停，可稍后恢复";
         }
         catch (Exception exception)
         {
@@ -156,15 +176,27 @@ public sealed partial class StoryStudioViewModel
                 UpdatedAt = DateTimeOffset.UtcNow,
             };
             await SavePlanningRunBestEffortAsync(owner, run);
-            ErrorMessage = exception.Message;
-            StatusMessage = applied
-                ? "规划已应用，但运行记录更新失败"
-                : "规划失败，运行记录和已有草稿已保留";
+            if (_session == session)
+            {
+                ErrorMessage = exception.Message;
+                StatusMessage = applied
+                    ? "规划已应用，但运行记录更新失败"
+                    : "规划失败，运行记录和已有草稿已保留";
+            }
         }
         finally
         {
-            IsBusy = false;
-            NotifyPlanningRunsChanged();
+            if (ReferenceEquals(_planningCancellation, source))
+            {
+                _planningCancellation = null;
+                SetPlanningRunning(false);
+            }
+            source.Dispose();
+            if (_session == session)
+            {
+                IsBusy = false;
+                NotifyPlanningRunsChanged();
+            }
         }
     }
 
@@ -248,11 +280,12 @@ public sealed partial class StoryStudioViewModel
     {
         try { await _store.SavePlanningRunAsync(owner, run); }
         catch { /* The project or provider error remains the primary user-facing failure. */ }
-        PublishPlanningRun(run);
+        if (_current?.Id == run.ProjectId) PublishPlanningRun(run);
     }
 
     private void PublishPlanningRun(StoryPlanningRunDocument run)
     {
+        if (_current?.Id != run.ProjectId) return;
         var index = PlanningRuns.ToList().FindIndex(card => card.Id == run.Id);
         if (index >= 0) PlanningRuns.RemoveAt(index);
         PlanningRuns.Insert(0, new StoryPlanningRunCard(run));
@@ -283,5 +316,21 @@ public sealed partial class StoryStudioViewModel
         OnPropertyChanged(nameof(CanPlan));
         OnPropertyChanged(nameof(CanOptimizeStorySource));
         OnPropertyChanged(nameof(CanOptimizeVisualStyle));
+    }
+
+    private void SetPlanningRunning(bool value)
+    {
+        if (_isPlanningRunning == value) return;
+        _isPlanningRunning = value;
+        OnPropertyChanged(nameof(IsPlanningRunning));
+        OnPropertyChanged(nameof(CanPausePlanning));
+    }
+
+    private void CancelPlanningForWorkspaceChange()
+    {
+        var source = _planningCancellation;
+        _planningCancellation = null;
+        source?.Cancel();
+        SetPlanningRunning(false);
     }
 }

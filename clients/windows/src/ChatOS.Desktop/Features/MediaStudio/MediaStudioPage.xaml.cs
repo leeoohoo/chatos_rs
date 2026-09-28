@@ -80,6 +80,9 @@ public sealed partial class MediaStudioPage : Page
     private async void OnResumeStoryPlanningClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.ResumePlanningAsync();
 
+    private void OnPauseStoryPlanningClick(object sender, RoutedEventArgs e) =>
+        StoryViewModel.PausePlanning();
+
     private async void OnAbandonStoryPlanningClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.AbandonPlanningAsync();
 
