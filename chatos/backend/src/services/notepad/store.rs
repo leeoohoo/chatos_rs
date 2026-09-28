@@ -4,7 +4,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use serde_json::{json, Value};
 use tokio::fs;
 use uuid::Uuid;
 use walkdir::WalkDir;
@@ -14,16 +13,21 @@ use super::store_normalize::{
     extract_title_from_markdown, normalize_folder_path, normalize_string, normalize_title, now_iso,
     split_folder, ts_to_rfc3339, unique_tags,
 };
-use super::types::{NoteIndexEntry, NoteOutput, NotesIndex, INDEX_VERSION};
-
-mod folder_ops;
-mod note_ops;
+use super::types::{NoteIndexEntry, NotesIndex, INDEX_VERSION};
 
 const MAX_NOTE_CONTENT_BYTES: u64 = 1024 * 1024;
 const MAX_NOTEPAD_INDEX_BYTES: u64 = 4 * 1024 * 1024;
 
-fn entry_to_output(entry: &NoteIndexEntry) -> NoteOutput {
-    NoteOutput::from_entry(entry)
+#[derive(Debug, Clone)]
+pub(super) struct LegacyNote {
+    pub entry: NoteIndexEntry,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(super) struct LegacyNotepadExport {
+    pub folders: Vec<String>,
+    pub notes: Vec<LegacyNote>,
 }
 
 fn normalize_index(mut index: NotesIndex) -> NotesIndex {
@@ -152,10 +156,6 @@ impl NotepadStore {
     ) -> Result<(), String> {
         Self::ensure_text_size_within_limit(path, text.len() as u64, max_bytes)?;
         Self::atomic_write_text(path, text).await
-    }
-
-    async fn atomic_write_note_content(path: &Path, text: &str) -> Result<(), String> {
-        Self::atomic_write_text_limited(path, text, MAX_NOTE_CONTENT_BYTES).await
     }
 
     async fn read_text_file_limited(path: &Path, max_bytes: u64) -> Result<String, String> {
@@ -346,15 +346,44 @@ impl NotepadStore {
             .await
     }
 
-    pub async fn init(&self) -> Result<Value, String> {
+    pub(super) async fn export_all(&self) -> Result<LegacyNotepadExport, String> {
+        if !self.data_dir.exists() {
+            return Ok(LegacyNotepadExport::default());
+        }
+
         let snapshot = self.get_index_snapshot().await?;
-        Ok(json!({
-            "ok": true,
-            "data_dir": self.data_dir.to_string_lossy().to_string(),
-            "notes_root": self.notes_root.to_string_lossy().to_string(),
-            "index_path": self.index_path.to_string_lossy().to_string(),
-            "version": INDEX_VERSION,
-            "notes": snapshot.notes.len()
-        }))
+        let mut folders = Vec::new();
+        if self.notes_root.exists() {
+            for entry in WalkDir::new(&self.notes_root)
+                .into_iter()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.file_type().is_dir())
+            {
+                if entry.path() == self.notes_root {
+                    continue;
+                }
+                let Ok(relative) = entry.path().strip_prefix(&self.notes_root) else {
+                    continue;
+                };
+                let folder = relative
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .trim_matches('/')
+                    .to_string();
+                if !folder.is_empty() {
+                    folders.push(folder);
+                }
+            }
+        }
+
+        let mut notes = Vec::with_capacity(snapshot.notes.len());
+        for entry in snapshot.notes {
+            let path = self.note_abs_path(entry.folder.as_str(), entry.id.as_str());
+            let content = Self::read_text_file_limited(&path, MAX_NOTE_CONTENT_BYTES).await?;
+            notes.push(LegacyNote { entry, content });
+        }
+        folders.sort();
+        folders.dedup();
+        Ok(LegacyNotepadExport { folders, notes })
     }
 }

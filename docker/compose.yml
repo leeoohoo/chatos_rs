@@ -1212,6 +1212,7 @@ services:
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-dev-only-change-me-please}
       AUTH_ACCESS_TOKEN_TTL_SECONDS: ${AUTH_ACCESS_TOKEN_TTL_SECONDS:-43200}
       CHATOS_WORKSPACE_DIR: /data/chatos/workspace
+      NOTEPAD_DATA_DIR: /data/chatos/notepad
       CHATOS_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       CHATOS_USER_SERVICE_INTERNAL_BASE_URL: https://user-service-backend:39192
       CHATOS_USER_SERVICE_INTERNAL_API_SECRET: ${CHATOS_USER_SERVICE_INTERNAL_API_SECRET:-change_me_chatos_user_service_secret}
