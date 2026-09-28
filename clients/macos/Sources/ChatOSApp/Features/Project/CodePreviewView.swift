@@ -188,7 +188,7 @@ private struct NativeCodeTextView: NSViewRepresentable {
         let selectedRanges = textView.selectedRanges
         let scrollView = textView.enclosingScrollView
         let viewportOrigin = scrollView?.contentView.bounds.origin
-        let attributed = CodeSyntaxHighlighter.highlight(text, fileName: fileName, fontSize: fontSize)
+        let attributed = CodeSyntaxHighlighter.plainText(text, fontSize: fontSize)
         if let targetLine, let range = lineRange(targetLine, in: attributed.string) {
             attributed.addAttribute(
                 .backgroundColor,
@@ -213,6 +213,14 @@ private struct NativeCodeTextView: NSViewRepresentable {
         }
         coordinator.isApplyingText = false
         coordinator.ruler?.update(text: attributed.string, fontSize: fontSize)
+        coordinator.scheduleHighlight(
+            text: text,
+            fileName: fileName,
+            fontSize: fontSize,
+            in: textView,
+            debounce: nil,
+            resetsExistingStyles: false
+        )
         (textView.enclosingScrollView as? CodeScrollView)?.synchronizeDocumentFrame()
         if preservingViewport, let viewportOrigin, let scrollView {
             scrollView.contentView.scroll(to: viewportOrigin)
@@ -306,6 +314,7 @@ private struct NativeCodeTextView: NSViewRepresentable {
         return (text as NSString).lineRange(for: NSRange(location: start, length: 0))
     }
 
+    @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: NativeCodeTextView
         weak var ruler: CodeLineNumberRulerView?
@@ -314,22 +323,78 @@ private struct NativeCodeTextView: NSViewRepresentable {
         var lastTargetLine: Int?
         var lastFontSize: CGFloat = 0
         var positionGeneration = 0
+        var highlightGeneration = 0
+        var highlightTask: Task<Void, Never>?
+        var highlightWorker: Task<[CodeSyntaxHighlighter.Span], Never>?
 
         init(parent: NativeCodeTextView) { self.parent = parent }
+
+        deinit {
+            highlightTask?.cancel()
+            highlightWorker?.cancel()
+        }
 
         func textDidChange(_ notification: Notification) {
             guard !isApplyingText,
                   parent.isEditable,
                   let textView = notification.object as? NSTextView else { return }
             parent.text = textView.string
-            parent.apply(
+            scheduleHighlight(
                 text: textView.string,
                 fileName: parent.fileName,
-                targetLine: parent.targetLine,
-                to: textView,
-                coordinator: self,
-                preservingViewport: true
+                fontSize: parent.fontSize,
+                in: textView,
+                debounce: .milliseconds(120),
+                resetsExistingStyles: true
             )
+        }
+
+        func scheduleHighlight(
+            text: String,
+            fileName: String,
+            fontSize: CGFloat,
+            in textView: NSTextView,
+            debounce: Duration?,
+            resetsExistingStyles: Bool
+        ) {
+            highlightGeneration += 1
+            let generation = highlightGeneration
+            highlightTask?.cancel()
+            highlightWorker?.cancel()
+            highlightWorker = nil
+
+            highlightTask = Task { @MainActor [weak self, weak textView] in
+                if let debounce {
+                    do {
+                        try await Task.sleep(for: debounce)
+                    } catch {
+                        return
+                    }
+                }
+                guard !Task.isCancelled,
+                      let self,
+                      let textView,
+                      self.highlightGeneration == generation else { return }
+                let worker = Task.detached(priority: .userInitiated) {
+                    CodeSyntaxHighlighter.spans(in: text, fileName: fileName)
+                }
+                self.highlightWorker = worker
+                let spans = await worker.value
+                guard !Task.isCancelled,
+                      self.highlightGeneration == generation,
+                      textView.string == text else { return }
+                self.highlightWorker = nil
+                if !spans.isEmpty || resetsExistingStyles {
+                    self.isApplyingText = true
+                    CodeSyntaxHighlighter.apply(
+                        spans,
+                        to: textView.textStorage,
+                        fontSize: fontSize
+                    )
+                    self.isApplyingText = false
+                }
+                self.ruler?.update(text: text, fontSize: fontSize)
+            }
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -488,13 +553,30 @@ private final class CodeLineNumberRulerView: NSRulerView {
     }
 }
 
-private enum CodeSyntaxHighlighter {
-    static func highlight(_ content: String, fileName: String, fontSize: CGFloat) -> NSMutableAttributedString {
+enum CodeSyntaxHighlighter {
+    static let maximumHighlightedUTF16Count = 200_000
+    static let maximumSpanCount = 20_000
+
+    enum Style: Sendable, Equatable {
+        case number
+        case keyword
+        case string
+        case comment
+    }
+
+    struct Span: Sendable, Equatable {
+        let location: Int
+        let length: Int
+        let style: Style
+    }
+
+    @MainActor
+    static func plainText(_ content: String, fontSize: CGFloat) -> NSMutableAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = 2
         paragraph.tabStops = []
         paragraph.defaultTabInterval = 32
-        let result = NSMutableAttributedString(
+        return NSMutableAttributedString(
             string: content,
             attributes: [
                 .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular),
@@ -502,38 +584,85 @@ private enum CodeSyntaxHighlighter {
                 .paragraphStyle: paragraph,
             ]
         )
-        guard !content.isEmpty, content.utf16.count <= 600_000 else { return result }
+    }
+
+    nonisolated static func spans(in content: String, fileName: String) -> [Span] {
+        let utf16Count = content.utf16.count
+        guard !content.isEmpty,
+              utf16Count <= maximumHighlightedUTF16Count,
+              !Task.isCancelled else { return [] }
         let language = language(for: fileName)
-        apply(pattern: numberPattern, color: .systemOrange, fontSize: fontSize, to: result)
-        apply(pattern: keywordPattern(language), color: .systemPurple, fontSize: fontSize, weight: .semibold, to: result)
-        apply(pattern: stringPattern(language), color: .systemRed, fontSize: fontSize, to: result)
-        apply(pattern: commentPattern(language), color: .secondaryLabelColor, fontSize: fontSize, to: result)
+        let rules: [(String, Style)] = [
+            (numberPattern, .number),
+            (keywordPattern(language), .keyword),
+            (stringPattern(language), .string),
+            (commentPattern(language), .comment),
+        ]
+        var result: [Span] = []
+        result.reserveCapacity(min(utf16Count / 12, maximumSpanCount))
+        let range = NSRange(location: 0, length: utf16Count)
+        for (pattern, style) in rules {
+            guard !Task.isCancelled,
+                  result.count < maximumSpanCount,
+                  let regex = try? NSRegularExpression(
+                      pattern: pattern,
+                      options: [.anchorsMatchLines]
+                  ) else { break }
+            regex.enumerateMatches(in: content, range: range) { match, _, stop in
+                guard !Task.isCancelled,
+                      result.count < maximumSpanCount else {
+                    stop.pointee = true
+                    return
+                }
+                guard let match else { return }
+                result.append(Span(
+                    location: match.range.location,
+                    length: match.range.length,
+                    style: style
+                ))
+            }
+        }
         return result
     }
 
-    private static func apply(
-        pattern: String,
-        color: NSColor,
-        fontSize: CGFloat,
-        weight: NSFont.Weight = .regular,
-        to text: NSMutableAttributedString
+    @MainActor
+    static func apply(
+        _ spans: [Span],
+        to textStorage: NSTextStorage?,
+        fontSize: CGFloat
     ) {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines]) else { return }
-        for match in regex.matches(in: text.string, range: NSRange(location: 0, length: text.length)) {
-            text.addAttribute(.foregroundColor, value: color, range: match.range)
-            if weight != .regular {
-                text.addAttribute(
+        guard let textStorage else { return }
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        let baseFont = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        textStorage.beginEditing()
+        textStorage.addAttributes(
+            [.font: baseFont, .foregroundColor: NSColor.labelColor],
+            range: fullRange
+        )
+        for span in spans {
+            let range = NSRange(location: span.location, length: span.length)
+            guard NSMaxRange(range) <= textStorage.length else { continue }
+            let color: NSColor = switch span.style {
+            case .number: .systemOrange
+            case .keyword: .systemPurple
+            case .string: .systemRed
+            case .comment: .secondaryLabelColor
+            }
+            textStorage.addAttribute(.foregroundColor, value: color, range: range)
+            if span.style == .keyword {
+                textStorage.addAttribute(
                     .font,
-                    value: NSFont.monospacedSystemFont(ofSize: fontSize, weight: weight),
-                    range: match.range
+                    value: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .semibold),
+                    range: range
                 )
             }
         }
+        textStorage.endEditing()
     }
 
     private static let numberPattern = #"(?<![A-Za-z_])(?:0x[0-9A-Fa-f]+|\d+(?:\.\d+)?)(?![A-Za-z_])"#
 
-    private static func stringPattern(_ language: Language) -> String {
+    nonisolated private static func stringPattern(_ language: Language) -> String {
         switch language {
         case .shell, .python, .generic:
             #"\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'"#
@@ -544,7 +673,7 @@ private enum CodeSyntaxHighlighter {
         }
     }
 
-    private static func commentPattern(_ language: Language) -> String {
+    nonisolated private static func commentPattern(_ language: Language) -> String {
         switch language {
         case .python, .shell, .yaml: #"#.*$"#
         case .json: #"(?!)"#
@@ -552,7 +681,7 @@ private enum CodeSyntaxHighlighter {
         }
     }
 
-    private static func keywordPattern(_ language: Language) -> String {
+    nonisolated private static func keywordPattern(_ language: Language) -> String {
         let words: [String]
         switch language {
         case .swift:
@@ -575,7 +704,7 @@ private enum CodeSyntaxHighlighter {
         return #"\b(?:"# + words.map(NSRegularExpression.escapedPattern(for:)).joined(separator: "|") + #")\b"#
     }
 
-    private static func language(for fileName: String) -> Language {
+    nonisolated private static func language(for fileName: String) -> Language {
         switch URL(fileURLWithPath: fileName).pathExtension.lowercased() {
         case "swift": .swift
         case "js", "jsx", "mjs", "cjs", "ts", "tsx": .javascript
@@ -590,7 +719,9 @@ private enum CodeSyntaxHighlighter {
         }
     }
 
-    private enum Language { case swift, javascript, rust, python, go, java, shell, json, yaml, generic }
+    private enum Language: Sendable {
+        case swift, javascript, rust, python, go, java, shell, json, yaml, generic
+    }
 }
 
 private enum CodeFontMetrics {
