@@ -52,6 +52,11 @@ public sealed partial class ProjectFeatureHubPage : Page
     }
 }
 
-public sealed record ProjectFeatureRequestedEventArgs(
-    ShellResourceViewModel Project,
-    string Tab) : EventArgs;
+public sealed class ProjectFeatureRequestedEventArgs(
+    ShellResourceViewModel project,
+    string tab) : EventArgs
+{
+    public ShellResourceViewModel Project { get; } = project;
+
+    public string Tab { get; } = tab;
+}
