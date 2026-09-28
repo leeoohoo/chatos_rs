@@ -8,6 +8,11 @@ public sealed partial class StoryStudioViewModel
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStartBatch))]
     [NotifyPropertyChangedFor(nameof(BatchPlanLabel))]
+    private bool _batchRefinements = true;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStartBatch))]
+    [NotifyPropertyChangedFor(nameof(BatchPlanLabel))]
     private bool _batchResources = true;
 
     [ObservableProperty]
@@ -61,8 +66,10 @@ public sealed partial class StoryStudioViewModel
         var project = _current;
         var imageModel = ProjectImageModel;
         var videoModel = ProjectVideoModel;
+        var textModel = ProjectTextModel;
         var session = _session;
-        if (!CanStartBatch || owner is null || project is null || imageModel is null || videoModel is null) return;
+        if (!CanStartBatch || owner is null || project is null || imageModel is null ||
+            videoModel is null || textModel is null) return;
 
         _generationCancellation?.Cancel();
         _generationCancellation?.Dispose();
@@ -77,6 +84,7 @@ public sealed partial class StoryStudioViewModel
         BatchSkipped = 0;
         try
         {
+            ClearSegmentRefinement();
             await PersistCurrentAsync(token);
             var work = CreateBatchWork();
             BatchTotal = work.Count;
@@ -97,7 +105,8 @@ public sealed partial class StoryStudioViewModel
 
                 try
                 {
-                    await ExecuteBatchItemAsync(item, owner, project.Id, session, imageModel, videoModel, token);
+                    await ExecuteBatchItemAsync(
+                        item, owner, project.Id, session, textModel, imageModel, videoModel, token);
                     BatchCompleted++;
                 }
                 catch (OperationCanceledException)
@@ -141,12 +150,17 @@ public sealed partial class StoryStudioViewModel
         string owner,
         Guid projectId,
         Guid session,
+        MediaGenerationModel textModel,
         MediaGenerationModel imageModel,
         MediaGenerationModel videoModel,
         CancellationToken cancellationToken)
     {
         switch (item.Kind)
         {
+            case BatchWorkKind.Refinement:
+                await RefineSegmentCoreAsync(
+                    item.Segment!, owner, projectId, session, textModel, cancellationToken);
+                break;
             case BatchWorkKind.Resource:
                 await GenerateResourceImageCoreAsync(
                     new ResourceGenerationContext(owner, projectId, item.Resource!, session),
@@ -180,6 +194,17 @@ public sealed partial class StoryStudioViewModel
     {
         if (_current is null) return [];
         var work = new List<BatchWorkItem>();
+        if (BatchRefinements)
+        {
+            work.AddRange(Segments
+                .Where(segment => !segment.IsRefined && SegmentHasNoMedia(segment))
+                .Select(segment => new BatchWorkItem(
+                    BatchWorkKind.Refinement,
+                    $"镜头细化 · {segment.NumberLabel} {segment.Title}",
+                    !string.IsNullOrWhiteSpace(segment.Narrative),
+                    null,
+                    segment)));
+        }
         if (BatchResources)
         {
             work.AddRange(Resources
@@ -235,12 +260,14 @@ public sealed partial class StoryStudioViewModel
     private void NotifyBatchProgressChanged() => OnPropertyChanged(nameof(BatchProgressLabel));
 
     partial void OnBatchResourcesChanged(bool value) => NotifyBatchPlanChanged();
+    partial void OnBatchRefinementsChanged(bool value) => NotifyBatchPlanChanged();
     partial void OnBatchFirstFramesChanged(bool value) => NotifyBatchPlanChanged();
     partial void OnBatchLastFramesChanged(bool value) => NotifyBatchPlanChanged();
     partial void OnBatchVideosChanged(bool value) => NotifyBatchPlanChanged();
 
     private enum BatchWorkKind
     {
+        Refinement,
         Resource,
         FirstFrame,
         LastFrame,

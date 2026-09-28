@@ -61,6 +61,7 @@ public sealed record StorySegmentDocument(
     string? VideoAsset)
 {
     public StorySegmentKind Kind { get; init; } = StorySegmentKind.Story;
+    public bool IsRefined { get; init; }
     public IReadOnlyList<string> ResourceIds { get; init; } = [];
     public string ContinuityIn { get; init; } = string.Empty;
     public string ContinuityOut { get; init; } = string.Empty;

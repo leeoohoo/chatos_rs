@@ -175,6 +175,8 @@ public sealed partial class StoryStudioViewModel
 
     partial void OnProjectSummaryChanged(string value)
     {
+        foreach (var segment in Segments) segment.IsRefined = false;
+        NotifyBatchPlanChanged();
         RefreshPromptAudit();
         RefreshContinuityAudit();
         NotifySegmentRefinementChanged();

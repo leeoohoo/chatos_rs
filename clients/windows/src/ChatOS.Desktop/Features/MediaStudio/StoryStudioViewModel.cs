@@ -16,6 +16,9 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     private Guid _session = Guid.NewGuid();
     private StoryProjectDocument? _current;
     private CancellationTokenSource? _generationCancellation;
+    private string? _lockedPlanningSource;
+    private string? _lockedPlanningStyle;
+    private string? _lockedPlanningRatio;
 
     public StoryStudioViewModel(
         IMediaGenerationService media,
@@ -29,6 +32,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         _store = store;
         Segments.CollectionChanged += (_, _) =>
         {
+            UpdatePlanningInputLock();
             RenumberSegments();
             OnPropertyChanged(nameof(CanQuickSplit));
             OnPropertyChanged(nameof(CanPlan));
@@ -42,6 +46,9 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             NotifyPlanningRunsChanged();
             NotifyOptimizationChanged();
             NotifySegmentRefinementChanged();
+            OnPropertyChanged(nameof(IsPlanningInputsLocked));
+            OnPropertyChanged(nameof(CanEditPlanningInputs));
+            OnPropertyChanged(nameof(PlanningInputsLockLabel));
         };
         Resources.CollectionChanged += (_, _) =>
         {
@@ -71,6 +78,11 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     ];
 
     public bool IsWorkspaceOpen => _current is not null;
+    public bool IsPlanningInputsLocked => Segments.Count > 0;
+    public bool CanEditPlanningInputs => !IsBusy && !IsPlanningInputsLocked;
+    public string PlanningInputsLockLabel => IsPlanningInputsLocked
+        ? "全剧计划已建立，剧情原文、画面风格和画面比例已锁定；先删除全部分段才能重新规划。"
+        : string.Empty;
     public bool CanCreate => !IsBusy && !string.IsNullOrWhiteSpace(NewTitle) &&
         NewTextModel is not null && NewImageModel is not null && NewVideoModel is not null;
     public bool CanSave => !IsBusy && _current is not null && !string.IsNullOrWhiteSpace(ProjectTitle) &&
@@ -174,6 +186,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanApplyOptimization))]
     [NotifyPropertyChangedFor(nameof(CanRefineSelectedSegment))]
     [NotifyPropertyChangedFor(nameof(CanApplySegmentRefinement))]
+    [NotifyPropertyChangedFor(nameof(CanEditPlanningInputs))]
     private bool _isBusy;
     [ObservableProperty] private string _statusMessage = "剧情项目只保存在本机";
     [ObservableProperty] private string? _errorMessage;
@@ -414,6 +427,13 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         var current = _current ?? throw new InvalidOperationException("请先打开剧情项目。");
         if (ProjectTextModel is null || ProjectImageModel is null || ProjectVideoModel is null)
             throw new InvalidOperationException("请选择文本、图片和视频模型。");
+        if (IsPlanningInputsLocked &&
+            (!string.Equals(ProjectSource.Trim(), _lockedPlanningSource, StringComparison.Ordinal) ||
+             !string.Equals(VisualStyle.Trim(), _lockedPlanningStyle, StringComparison.Ordinal) ||
+             !string.Equals(ProjectRatio, _lockedPlanningRatio, StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException("全剧计划建立后不能修改剧情原文、画面风格或画面比例；请先删除全部分段再重新规划。");
+        }
         var project = current with
         {
             Title = ProjectTitle.Trim(),
@@ -461,6 +481,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         _session = Guid.NewGuid();
         _ownerUserId = ownerUserId;
         _current = null;
+        ClearPlanningInputLock();
         ClearOptimizationSuggestion();
         ClearSegmentRefinement();
         _planningRunsReady = false;
@@ -567,6 +588,9 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         OnPropertyChanged(nameof(CanGenerateFrame));
         OnPropertyChanged(nameof(CanGenerateVideo));
         OnPropertyChanged(nameof(WorkspaceSummary));
+        OnPropertyChanged(nameof(IsPlanningInputsLocked));
+        OnPropertyChanged(nameof(CanEditPlanningInputs));
+        OnPropertyChanged(nameof(PlanningInputsLockLabel));
         NotifyBatchPlanChanged();
         RefreshPromptAudit();
         RefreshStoryRelations();
@@ -574,6 +598,25 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         RefreshProjectMedia();
         NotifySegmentOrderChanged();
         NotifySegmentRefinementChanged();
+    }
+
+    private void UpdatePlanningInputLock()
+    {
+        if (Segments.Count == 0)
+        {
+            ClearPlanningInputLock();
+            return;
+        }
+        _lockedPlanningSource ??= ProjectSource.Trim();
+        _lockedPlanningStyle ??= VisualStyle.Trim();
+        _lockedPlanningRatio ??= ProjectRatio;
+    }
+
+    private void ClearPlanningInputLock()
+    {
+        _lockedPlanningSource = null;
+        _lockedPlanningStyle = null;
+        _lockedPlanningRatio = null;
     }
 
     private async Task GenerateFrameCoreAsync(

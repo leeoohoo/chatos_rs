@@ -17,6 +17,7 @@ public sealed partial class StorySegmentEditor : ObservableObject
         _videoAsset = document.VideoAsset;
         _resourceIdsText = string.Join(", ", document.ResourceIds);
         _kind = document.Kind;
+        _isRefined = document.IsRefined;
         _continuityIn = document.ContinuityIn ?? string.Empty;
         _continuityOut = document.ContinuityOut ?? string.Empty;
         _shotPlan = document.ShotPlan ?? string.Empty;
@@ -42,6 +43,7 @@ public sealed partial class StorySegmentEditor : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(KindLabel))]
     private StorySegmentKind _kind;
+    [ObservableProperty] private bool _isRefined;
     [ObservableProperty] private string _title;
     [ObservableProperty] private string _narrative;
     [ObservableProperty] private string _imagePrompt;
@@ -67,6 +69,7 @@ public sealed partial class StorySegmentEditor : ObservableObject
         _videoAsset)
     {
         Kind = this.Kind,
+        IsRefined = IsRefined,
         ResourceIds = ParseResourceIds(ResourceIdsText),
         ContinuityIn = ContinuityIn.Trim(),
         ContinuityOut = ContinuityOut.Trim(),
@@ -114,4 +117,20 @@ public sealed partial class StorySegmentEditor : ObservableObject
         NumberLabel = value;
         OnPropertyChanged(nameof(NumberLabel));
     }
+
+    private void MarkRefinementStale()
+    {
+        if (IsRefined) IsRefined = false;
+    }
+
+    partial void OnKindChanged(StorySegmentKind value) => MarkRefinementStale();
+    partial void OnTitleChanged(string value) => MarkRefinementStale();
+    partial void OnNarrativeChanged(string value) => MarkRefinementStale();
+    partial void OnImagePromptChanged(string value) => MarkRefinementStale();
+    partial void OnVideoPromptChanged(string value) => MarkRefinementStale();
+    partial void OnSecondsChanged(int value) => MarkRefinementStale();
+    partial void OnResourceIdsTextChanged(string value) => MarkRefinementStale();
+    partial void OnContinuityInChanged(string value) => MarkRefinementStale();
+    partial void OnContinuityOutChanged(string value) => MarkRefinementStale();
+    partial void OnShotPlanChanged(string value) => MarkRefinementStale();
 }

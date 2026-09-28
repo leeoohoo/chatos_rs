@@ -359,12 +359,13 @@
                                             <StackPanel Spacing="13">
                                                 <TextBox Header="项目标题" MaxLength="120" Text="{x:Bind StoryViewModel.ProjectTitle, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                                 <TextBox Header="项目描述" AcceptsReturn="True" MaxLength="4000" MinHeight="60" Text="{x:Bind StoryViewModel.ProjectDescription, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
-                                                <TextBox Header="剧情原文" AcceptsReturn="True" MaxLength="80000" MinHeight="210" PlaceholderText="粘贴完整剧情；快速分段只生成可编辑草稿，不会调用模型。" Text="{x:Bind StoryViewModel.ProjectSource, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
+                                                <TextBox Header="剧情原文" AcceptsReturn="True" IsEnabled="{x:Bind StoryViewModel.CanEditPlanningInputs, Mode=OneWay}" MaxLength="80000" MinHeight="210" PlaceholderText="粘贴完整剧情；快速分段只生成可编辑草稿，不会调用模型。" Text="{x:Bind StoryViewModel.ProjectSource, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                 <Button Click="OnOptimizeStorySourceClick" Content="AI 优化剧情原文（先生成候选）" IsEnabled="{x:Bind StoryViewModel.CanOptimizeStorySource, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                 <TextBox Header="全剧摘要" AcceptsReturn="True" MaxLength="16000" MinHeight="80" PlaceholderText="AI 规划完成后会保存在这里，也可以手动编辑。" Text="{x:Bind StoryViewModel.ProjectSummary, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
-                                                <TextBox Header="画面风格" AcceptsReturn="True" MaxLength="2000" MinHeight="90" Text="{x:Bind StoryViewModel.VisualStyle, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
+                                                <TextBox Header="画面风格" AcceptsReturn="True" IsEnabled="{x:Bind StoryViewModel.CanEditPlanningInputs, Mode=OneWay}" MaxLength="2000" MinHeight="90" Text="{x:Bind StoryViewModel.VisualStyle, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                 <Button Click="OnOptimizeVisualStyleClick" Content="AI 优化画面风格（先生成候选）" IsEnabled="{x:Bind StoryViewModel.CanOptimizeVisualStyle, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
-                                                <ComboBox Header="画面比例" ItemsSource="{x:Bind StoryViewModel.Ratios}" SelectedItem="{x:Bind StoryViewModel.ProjectRatio, Mode=TwoWay}" />
+                                                <ComboBox Header="画面比例" IsEnabled="{x:Bind StoryViewModel.CanEditPlanningInputs, Mode=OneWay}" ItemsSource="{x:Bind StoryViewModel.Ratios}" SelectedItem="{x:Bind StoryViewModel.ProjectRatio, Mode=TwoWay}" />
+                                                <TextBlock Text="{x:Bind StoryViewModel.PlanningInputsLockLabel, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                 <ComboBox Header="文本模型" DisplayMemberPath="Name" ItemsSource="{x:Bind StoryViewModel.Models}" SelectedItem="{x:Bind StoryViewModel.ProjectTextModel, Mode=TwoWay}" />
                                                 <ComboBox Header="图片模型" DisplayMemberPath="Name" ItemsSource="{x:Bind StoryViewModel.ImageModels}" SelectedItem="{x:Bind StoryViewModel.ProjectImageModel, Mode=TwoWay}" />
                                                 <ComboBox Header="视频模型" DisplayMemberPath="Name" ItemsSource="{x:Bind StoryViewModel.VideoModels}" SelectedItem="{x:Bind StoryViewModel.ProjectVideoModel, Mode=TwoWay}" />
@@ -419,11 +420,12 @@
                                                         </StackPanel>
                                                         <Grid ColumnSpacing="10" RowSpacing="6">
                                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                                            <CheckBox Content="素材参考图" IsChecked="{x:Bind StoryViewModel.BatchResources, Mode=TwoWay}" />
-                                                            <CheckBox Grid.Column="1" Content="分段首帧" IsChecked="{x:Bind StoryViewModel.BatchFirstFrames, Mode=TwoWay}" />
-                                                            <CheckBox Grid.Row="1" Content="分段尾帧" IsChecked="{x:Bind StoryViewModel.BatchLastFrames, Mode=TwoWay}" />
-                                                            <CheckBox Grid.Row="1" Grid.Column="1" Content="分段视频" IsChecked="{x:Bind StoryViewModel.BatchVideos, Mode=TwoWay}" />
+                                                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                                            <CheckBox Grid.ColumnSpan="2" Content="AI 细化未完成分段（调用文本模型）" IsChecked="{x:Bind StoryViewModel.BatchRefinements, Mode=TwoWay}" />
+                                                            <CheckBox Grid.Row="1" Content="素材参考图" IsChecked="{x:Bind StoryViewModel.BatchResources, Mode=TwoWay}" />
+                                                            <CheckBox Grid.Row="1" Grid.Column="1" Content="分段首帧" IsChecked="{x:Bind StoryViewModel.BatchFirstFrames, Mode=TwoWay}" />
+                                                            <CheckBox Grid.Row="2" Content="分段尾帧" IsChecked="{x:Bind StoryViewModel.BatchLastFrames, Mode=TwoWay}" />
+                                                            <CheckBox Grid.Row="2" Grid.Column="1" Content="分段视频" IsChecked="{x:Bind StoryViewModel.BatchVideos, Mode=TwoWay}" />
                                                         </Grid>
                                                         <TextBlock Text="{x:Bind StoryViewModel.BatchPlanLabel, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                         <Grid ColumnSpacing="8">

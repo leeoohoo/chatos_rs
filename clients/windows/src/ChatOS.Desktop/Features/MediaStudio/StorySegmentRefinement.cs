@@ -73,6 +73,7 @@ public sealed partial class StoryStudioViewModel
         var previous = new StorySegmentRefinementSuggestion(
             segment.ImagePrompt, segment.VideoPrompt, segment.ContinuityIn,
             segment.ContinuityOut, segment.ShotPlan, string.Empty);
+        var wasRefined = segment.IsRefined;
         IsBusy = true;
         ErrorMessage = null;
         try
@@ -84,12 +85,12 @@ public sealed partial class StoryStudioViewModel
         }
         catch (OperationCanceledException)
         {
-            ApplySegmentRefinement(segment, previous);
+            ApplySegmentRefinement(segment, previous, wasRefined);
             StatusMessage = "已停止保存镜头计划，并恢复修改前内容";
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            ApplySegmentRefinement(segment, previous);
+            ApplySegmentRefinement(segment, previous, wasRefined);
             ErrorMessage = exception.Message;
             StatusMessage = "镜头计划保存失败，已恢复修改前内容";
         }
@@ -107,18 +108,51 @@ public sealed partial class StoryStudioViewModel
         NotifySegmentRefinementChanged();
     }
 
+    private async Task RefineSegmentCoreAsync(
+        StorySegmentEditor segment,
+        string owner,
+        Guid projectId,
+        Guid session,
+        MediaGenerationModel textModel,
+        CancellationToken cancellationToken)
+    {
+        EnsureBatchContext(owner, projectId, session);
+        if (!Segments.Contains(segment) || segment.IsRefined || !SegmentHasNoMedia(segment)) return;
+        var previous = new StorySegmentRefinementSuggestion(
+            segment.ImagePrompt, segment.VideoPrompt, segment.ContinuityIn,
+            segment.ContinuityOut, segment.ShotPlan, string.Empty);
+        var wasRefined = segment.IsRefined;
+        try
+        {
+            var request = BuildSegmentRefinementRequest(segment, textModel.Id);
+            var suggestion = await _planner.RefineSegmentAsync(request, cancellationToken);
+            EnsureBatchContext(owner, projectId, session);
+            if (!Segments.Contains(segment) || !SegmentHasNoMedia(segment))
+                throw new OperationCanceledException("分段或媒体状态已改变。");
+            ApplySegmentRefinement(segment, suggestion);
+            await PersistCurrentAsync(cancellationToken);
+        }
+        catch
+        {
+            ApplySegmentRefinement(segment, previous, wasRefined);
+            throw;
+        }
+    }
+
     private static bool SegmentHasNoMedia(StorySegmentEditor segment) =>
         segment.FirstFramePath is null && segment.LastFramePath is null && segment.VideoPath is null;
 
     private static void ApplySegmentRefinement(
         StorySegmentEditor segment,
-        StorySegmentRefinementSuggestion suggestion)
+        StorySegmentRefinementSuggestion suggestion,
+        bool isRefined = true)
     {
         segment.ImagePrompt = suggestion.ImagePrompt;
         segment.VideoPrompt = suggestion.VideoPrompt;
         segment.ContinuityIn = suggestion.ContinuityIn;
         segment.ContinuityOut = suggestion.ContinuityOut;
         segment.ShotPlan = suggestion.ShotPlan;
+        segment.IsRefined = isRefined;
     }
 
     private string BuildSegmentResourceContext(StorySegmentEditor segment)
