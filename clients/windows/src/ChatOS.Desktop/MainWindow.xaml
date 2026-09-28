@@ -205,12 +205,13 @@
                     </ScrollViewer>
 
                     <Border
+                        x:Name="SidebarErrorCard"
                         Grid.Row="2"
                         Margin="10,0,10,12"
                         Padding="11"
                         Background="{StaticResource ChatOSWarningSoftBrush}"
                         CornerRadius="10"
-                        Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}">
+                        Visibility="Collapsed">
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />

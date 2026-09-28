@@ -536,6 +536,9 @@ public sealed partial class MainWindow : Window
         LoginErrorText.Visibility = string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)
             ? Visibility.Collapsed
             : Visibility.Visible;
+        SidebarErrorCard.Visibility = string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
         if (ViewModel.Password.Length == 0 && LoginPasswordBox.Password.Length != 0)
         {
             LoginPasswordBox.Password = string.Empty;
