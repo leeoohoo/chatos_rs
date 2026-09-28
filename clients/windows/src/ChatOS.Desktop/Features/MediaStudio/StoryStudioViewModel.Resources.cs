@@ -55,12 +55,14 @@ public sealed partial class StoryStudioViewModel
     {
         if (oldValue is not null) oldValue.PropertyChanged -= OnSelectedResourcePropertyChanged;
         if (newValue is not null) newValue.PropertyChanged += OnSelectedResourcePropertyChanged;
+        RefreshPromptAudit();
     }
 
     private void OnSelectedResourcePropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         OnPropertyChanged(nameof(CanGenerateResourceImage));
         NotifyBatchPlanChanged();
+        RefreshPromptAudit();
     }
 
     public void AddResource()
@@ -115,7 +117,8 @@ public sealed partial class StoryStudioViewModel
     {
         EnsureResourceContext(context);
         var resource = context.Resource;
-        var prompt = $"{VisualStyle}\n{resource.ImagePrompt.Trim()}\n生成{resource.KindLabel}“{resource.Name}”的一致性参考图，画面比例 {ProjectRatio}。";
+        var prompt = StoryPromptCatalog.RenderResourceImage(
+            VisualStyle, resource.ImagePrompt, resource.KindLabel, resource.Name, ProjectRatio);
         var result = await _media.GenerateImageAsync(
             new ImageGenerationRequest(imageModel.Id, prompt, ImageSize(ProjectRatio), 1, []),
             cancellationToken);

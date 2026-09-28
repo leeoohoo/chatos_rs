@@ -74,12 +74,12 @@ public sealed class StoryPlanningService(
             new
             {
                 role = "developer",
-                content = "你是影视剧情规划师。只返回满足 JSON Schema 的计划。先建立可复用的角色、场景、道具表，再按原文顺序连续覆盖故事，不添加原文没有的事实。每段必须引用实际使用的素材 ID，并能独立制作成 2-15 秒视频；图片提示词描述静态画面，视频提示词描述动作、镜头和节奏。",
+                content = StoryPromptCatalog.PlanningSystem,
             },
             new
             {
                 role = "user",
-                content = $"标题：{request.Title}\n描述：{request.Description}\n画面风格：{request.VisualStyle}\n比例：{request.Ratio}\n最多分段：{request.MaximumSegments}\n\n剧情原文：\n{request.Source}",
+                content = StoryPromptCatalog.RenderPlanningUser(request),
             },
         },
         text = new

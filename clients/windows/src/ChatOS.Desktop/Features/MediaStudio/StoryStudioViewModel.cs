@@ -133,11 +133,13 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             OnPropertyChanged(nameof(CanPlan));
             OnPropertyChanged(nameof(WorkspaceSummary));
             NotifyBatchPlanChanged();
+            RefreshPromptAudit();
         };
         Resources.CollectionChanged += (_, _) =>
         {
             OnPropertyChanged(nameof(CanGenerateResourceImage));
             NotifyBatchPlanChanged();
+            RefreshPromptAudit();
         };
     }
 
@@ -635,6 +637,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     {
         if (oldValue is not null) oldValue.PropertyChanged -= OnSelectedSegmentPropertyChanged;
         if (newValue is not null) newValue.PropertyChanged += OnSelectedSegmentPropertyChanged;
+        RefreshPromptAudit();
     }
 
     private void OnSelectedSegmentPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -645,6 +648,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         if (e.PropertyName == nameof(StorySegmentEditor.Seconds))
             OnPropertyChanged(nameof(WorkspaceSummary));
         NotifyBatchPlanChanged();
+        RefreshPromptAudit();
     }
 
     private void OnWorkspaceChanged()
@@ -657,6 +661,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         OnPropertyChanged(nameof(CanGenerateVideo));
         OnPropertyChanged(nameof(WorkspaceSummary));
         NotifyBatchPlanChanged();
+        RefreshPromptAudit();
     }
 
     private async Task GenerateFrameCoreAsync(
@@ -666,8 +671,8 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         CancellationToken cancellationToken)
     {
         EnsureContext(context);
-        var role = lastFrame ? "尾帧" : "首帧";
-        var prompt = $"{VisualStyle}\n{context.Segment.ImagePrompt.Trim()}\n生成该分段的{role}，画面比例 {ProjectRatio}。";
+        var prompt = StoryPromptCatalog.RenderFrame(
+            VisualStyle, context.Segment.ImagePrompt, lastFrame, ProjectRatio);
         var references = await LoadSegmentReferencesAsync(context, lastFrame, cancellationToken);
         var result = await _media.GenerateImageAsync(
             new ImageGenerationRequest(imageModel.Id, prompt, ImageSize(ProjectRatio), 1, references),
@@ -696,14 +701,15 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         var last = profile.SupportsLastFrame
             ? await LoadFrameAsync(context.Segment.LastFramePath, cancellationToken)
             : null;
+        var prompt = StoryPromptCatalog.RenderVideo(context.Segment.VideoPrompt);
         var result = await _media.GenerateVideoAsync(
             new VideoGenerationRequest(
-                videoModel.Id, context.Segment.VideoPrompt.Trim(), profile.Sizes[0], seconds,
+                videoModel.Id, prompt, profile.Sizes[0], seconds,
                 first, last, null, ProjectRatio),
             new Progress<VideoGenerationProgress>(value => VideoProgress = value),
             cancellationToken);
         var history = await _history.SaveVideoAsync(
-            context.Owner, context.Segment.VideoPrompt, result, cancellationToken);
+            context.Owner, prompt, result, cancellationToken);
         var relative = await _store.ImportAssetAsync(
             context.Owner, context.ProjectId, context.Segment.Id, history.FilePath, true, cancellationToken);
         EnsureContext(context);

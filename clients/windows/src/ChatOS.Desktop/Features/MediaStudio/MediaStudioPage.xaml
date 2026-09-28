@@ -394,6 +394,25 @@
                                                         <TextBlock Text="{x:Bind StoryViewModel.BatchProgressLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                     </StackPanel>
                                                 </Border>
+                                                <Expander Header="提示词审计（只读）">
+                                                    <StackPanel Padding="0,8,0,0" Spacing="8">
+                                                        <TextBlock Text="这里展示生产代码当前实际使用的稳定提示词，不会调用模型。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        <ItemsControl ItemsSource="{x:Bind StoryViewModel.PromptAuditItems}">
+                                                            <ItemsControl.ItemTemplate>
+                                                                <DataTemplate x:DataType="media:StoryPromptAuditItem">
+                                                                    <Border Margin="0,0,0,8" Padding="10" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="8">
+                                                                        <StackPanel Spacing="4">
+                                                                            <TextBlock Text="{x:Bind Name}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                                            <TextBlock Text="{x:Bind Key}" Foreground="{StaticResource ChatOSPurpleBrush}" IsTextSelectionEnabled="True" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                            <TextBlock Text="{x:Bind Purpose}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                            <TextBox AcceptsReturn="True" IsReadOnly="True" MaxHeight="180" Text="{x:Bind Content}" TextWrapping="Wrap" />
+                                                                        </StackPanel>
+                                                                    </Border>
+                                                                </DataTemplate>
+                                                            </ItemsControl.ItemTemplate>
+                                                        </ItemsControl>
+                                                    </StackPanel>
+                                                </Expander>
                                                 <Rectangle Height="1" Fill="{StaticResource ChatOSBorderBrush}" />
                                                 <Grid>
                                                     <StackPanel><TextBlock Text="角色 · 场景 · 道具" Style="{StaticResource ChatOSHeadlineTextStyle}" /><TextBlock Text="分段通过稳定素材 ID 复用一致性参考" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
