@@ -370,6 +370,31 @@
                                                 <Button Click="OnQuickSplitStoryClick" Content="不调用模型：按段落快速分段" IsEnabled="{x:Bind StoryViewModel.CanQuickSplit, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                 <TextBlock Text="AI 规划会调用所选文本模型并产生相应费用；不会自动生成图片或视频。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                 <Rectangle Height="1" Fill="{StaticResource ChatOSBorderBrush}" />
+                                                <Border Padding="12" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="10">
+                                                    <StackPanel Spacing="10">
+                                                        <StackPanel Spacing="3">
+                                                            <TextBlock Text="批量生产" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                                            <TextBlock Text="选择阶段后手动启动；只补缺失项，停止或失败后可继续。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        </StackPanel>
+                                                        <Grid ColumnSpacing="10" RowSpacing="6">
+                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                                            <CheckBox Content="素材参考图" IsChecked="{x:Bind StoryViewModel.BatchResources, Mode=TwoWay}" />
+                                                            <CheckBox Grid.Column="1" Content="分段首帧" IsChecked="{x:Bind StoryViewModel.BatchFirstFrames, Mode=TwoWay}" />
+                                                            <CheckBox Grid.Row="1" Content="分段尾帧" IsChecked="{x:Bind StoryViewModel.BatchLastFrames, Mode=TwoWay}" />
+                                                            <CheckBox Grid.Row="1" Grid.Column="1" Content="分段视频" IsChecked="{x:Bind StoryViewModel.BatchVideos, Mode=TwoWay}" />
+                                                        </Grid>
+                                                        <TextBlock Text="{x:Bind StoryViewModel.BatchPlanLabel, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        <Grid ColumnSpacing="8">
+                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                            <Button Click="OnRunStoryBatchClick" Content="开始批量生产" IsEnabled="{x:Bind StoryViewModel.CanStartBatch, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" HorizontalAlignment="Stretch" />
+                                                            <Button Grid.Column="1" Click="OnCancelStoryGenerationClick" Content="停止" IsEnabled="{x:Bind StoryViewModel.IsBatchRunning, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                        </Grid>
+                                                        <TextBlock Text="{x:Bind StoryViewModel.BatchCurrentLabel, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                        <TextBlock Text="{x:Bind StoryViewModel.BatchProgressLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                    </StackPanel>
+                                                </Border>
+                                                <Rectangle Height="1" Fill="{StaticResource ChatOSBorderBrush}" />
                                                 <Grid>
                                                     <StackPanel><TextBlock Text="角色 · 场景 · 道具" Style="{StaticResource ChatOSHeadlineTextStyle}" /><TextBlock Text="分段通过稳定素材 ID 复用一致性参考" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
                                                     <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="5">

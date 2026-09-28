@@ -132,8 +132,13 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             OnPropertyChanged(nameof(CanQuickSplit));
             OnPropertyChanged(nameof(CanPlan));
             OnPropertyChanged(nameof(WorkspaceSummary));
+            NotifyBatchPlanChanged();
         };
-        Resources.CollectionChanged += (_, _) => OnPropertyChanged(nameof(CanGenerateResourceImage));
+        Resources.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(CanGenerateResourceImage));
+            NotifyBatchPlanChanged();
+        };
     }
 
     public ObservableCollection<StoryProjectCard> Projects { get; } = [];
@@ -203,11 +208,13 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanSave))]
     [NotifyPropertyChangedFor(nameof(CanQuickSplit))]
     [NotifyPropertyChangedFor(nameof(CanPlan))]
+    [NotifyPropertyChangedFor(nameof(CanStartBatch))]
     private MediaGenerationModel? _projectImageModel;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanSave))]
     [NotifyPropertyChangedFor(nameof(CanQuickSplit))]
     [NotifyPropertyChangedFor(nameof(CanPlan))]
+    [NotifyPropertyChangedFor(nameof(CanStartBatch))]
     private MediaGenerationModel? _projectVideoModel;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanGenerateFrame))]
@@ -224,6 +231,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanGenerateFrame))]
     [NotifyPropertyChangedFor(nameof(CanGenerateVideo))]
     [NotifyPropertyChangedFor(nameof(CanGenerateResourceImage))]
+    [NotifyPropertyChangedFor(nameof(CanStartBatch))]
     private bool _isBusy;
     [ObservableProperty] private string _statusMessage = "剧情项目只保存在本机";
     [ObservableProperty] private string? _errorMessage;
@@ -467,26 +475,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         try
         {
             await PersistCurrentAsync(token);
-            var profile = VideoGenerationProfile.ForModel(ProjectVideoModel.ModelName);
-            var seconds = profile.Durations.OrderBy(value => Math.Abs(value - context.Segment.Seconds)).First();
-            context.Segment.Seconds = seconds;
-            var first = await LoadFrameAsync(context.Segment.FirstFramePath, token);
-            var last = profile.SupportsLastFrame
-                ? await LoadFrameAsync(context.Segment.LastFramePath, token)
-                : null;
-            var result = await _media.GenerateVideoAsync(
-                new VideoGenerationRequest(
-                    ProjectVideoModel.Id, context.Segment.VideoPrompt.Trim(), profile.Sizes[0], seconds,
-                    first, last, null, ProjectRatio),
-                new Progress<VideoGenerationProgress>(value => VideoProgress = value),
-                token);
-            var history = await _history.SaveVideoAsync(context.Owner, context.Segment.VideoPrompt, result, token);
-            var relative = await _store.ImportAssetAsync(
-                context.Owner, context.ProjectId, context.Segment.Id, history.FilePath, true, token);
-            EnsureContext(context);
-            context.Segment.SetVideo(relative, _store.ResolveAssetPath(context.Owner, context.ProjectId, relative)!);
-            await PersistCurrentAsync(token);
-            VideoProgress = new VideoGenerationProgress("completed", 100, result.Id);
+            await GenerateVideoCoreAsync(context, ProjectVideoModel, token);
             StatusMessage = $"{context.Segment.Title} 的视频已生成";
         }
         catch (OperationCanceledException)
@@ -513,19 +502,8 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         try
         {
             await PersistCurrentAsync(cancellationToken);
+            await GenerateFrameCoreAsync(context, ProjectImageModel, lastFrame, cancellationToken);
             var role = lastFrame ? "尾帧" : "首帧";
-            var prompt = $"{VisualStyle}\n{context.Segment.ImagePrompt.Trim()}\n生成该分段的{role}，画面比例 {ProjectRatio}。";
-            var result = await _media.GenerateImageAsync(
-                new ImageGenerationRequest(ProjectImageModel.Id, prompt, ImageSize(ProjectRatio), 1, []),
-                cancellationToken);
-            var history = await _history.SaveAsync(context.Owner, prompt, result, cancellationToken);
-            var source = history.Images.First().FilePath;
-            var relative = await _store.ImportAssetAsync(
-                context.Owner, context.ProjectId, context.Segment.Id, source, false, cancellationToken);
-            EnsureContext(context);
-            context.Segment.SetFrame(
-                lastFrame, relative, _store.ResolveAssetPath(context.Owner, context.ProjectId, relative)!);
-            await PersistCurrentAsync(cancellationToken);
             StatusMessage = $"{context.Segment.Title} 的{role}已生成";
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -666,6 +644,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         OnPropertyChanged(nameof(CanGenerateResourceImage));
         if (e.PropertyName == nameof(StorySegmentEditor.Seconds))
             OnPropertyChanged(nameof(WorkspaceSummary));
+        NotifyBatchPlanChanged();
     }
 
     private void OnWorkspaceChanged()
@@ -677,6 +656,82 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         OnPropertyChanged(nameof(CanGenerateFrame));
         OnPropertyChanged(nameof(CanGenerateVideo));
         OnPropertyChanged(nameof(WorkspaceSummary));
+        NotifyBatchPlanChanged();
+    }
+
+    private async Task GenerateFrameCoreAsync(
+        GenerationContext context,
+        MediaGenerationModel imageModel,
+        bool lastFrame,
+        CancellationToken cancellationToken)
+    {
+        EnsureContext(context);
+        var role = lastFrame ? "尾帧" : "首帧";
+        var prompt = $"{VisualStyle}\n{context.Segment.ImagePrompt.Trim()}\n生成该分段的{role}，画面比例 {ProjectRatio}。";
+        var references = await LoadSegmentReferencesAsync(context, lastFrame, cancellationToken);
+        var result = await _media.GenerateImageAsync(
+            new ImageGenerationRequest(imageModel.Id, prompt, ImageSize(ProjectRatio), 1, references),
+            cancellationToken);
+        var history = await _history.SaveAsync(context.Owner, prompt, result, cancellationToken);
+        var source = history.Images.First().FilePath;
+        var relative = await _store.ImportAssetAsync(
+            context.Owner, context.ProjectId, context.Segment.Id, source, false, cancellationToken);
+        EnsureContext(context);
+        context.Segment.SetFrame(
+            lastFrame, relative, _store.ResolveAssetPath(context.Owner, context.ProjectId, relative)!);
+        await PersistCurrentAsync(cancellationToken);
+        NotifyBatchPlanChanged();
+    }
+
+    private async Task GenerateVideoCoreAsync(
+        GenerationContext context,
+        MediaGenerationModel videoModel,
+        CancellationToken cancellationToken)
+    {
+        EnsureContext(context);
+        var profile = VideoGenerationProfile.ForModel(videoModel.ModelName);
+        var seconds = profile.Durations.OrderBy(value => Math.Abs(value - context.Segment.Seconds)).First();
+        context.Segment.Seconds = seconds;
+        var first = await LoadFrameAsync(context.Segment.FirstFramePath, cancellationToken);
+        var last = profile.SupportsLastFrame
+            ? await LoadFrameAsync(context.Segment.LastFramePath, cancellationToken)
+            : null;
+        var result = await _media.GenerateVideoAsync(
+            new VideoGenerationRequest(
+                videoModel.Id, context.Segment.VideoPrompt.Trim(), profile.Sizes[0], seconds,
+                first, last, null, ProjectRatio),
+            new Progress<VideoGenerationProgress>(value => VideoProgress = value),
+            cancellationToken);
+        var history = await _history.SaveVideoAsync(
+            context.Owner, context.Segment.VideoPrompt, result, cancellationToken);
+        var relative = await _store.ImportAssetAsync(
+            context.Owner, context.ProjectId, context.Segment.Id, history.FilePath, true, cancellationToken);
+        EnsureContext(context);
+        context.Segment.SetVideo(
+            relative, _store.ResolveAssetPath(context.Owner, context.ProjectId, relative)!);
+        await PersistCurrentAsync(cancellationToken);
+        VideoProgress = new VideoGenerationProgress("completed", 100, result.Id);
+        NotifyBatchPlanChanged();
+    }
+
+    private async Task<IReadOnlyList<ImageGenerationInput>> LoadSegmentReferencesAsync(
+        GenerationContext context,
+        bool includeFirstFrame,
+        CancellationToken cancellationToken)
+    {
+        var resourceIds = context.Segment.ToDocument().ResourceIds.ToHashSet(StringComparer.Ordinal);
+        var inputs = new List<ImageGenerationInput>();
+        if (includeFirstFrame)
+        {
+            var firstFrame = await LoadFrameAsync(context.Segment.FirstFramePath, cancellationToken);
+            if (firstFrame is not null) inputs.Add(firstFrame);
+        }
+        foreach (var resource in Resources.Where(resource => resourceIds.Contains(resource.Id)).Take(8 - inputs.Count))
+        {
+            var input = await LoadFrameAsync(resource.ImagePath, cancellationToken);
+            if (input is not null) inputs.Add(input);
+        }
+        return inputs;
     }
 
     private sealed record GenerationContext(

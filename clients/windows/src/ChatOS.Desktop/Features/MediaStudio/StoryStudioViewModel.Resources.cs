@@ -57,8 +57,11 @@ public sealed partial class StoryStudioViewModel
         if (newValue is not null) newValue.PropertyChanged += OnSelectedResourcePropertyChanged;
     }
 
-    private void OnSelectedResourcePropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) =>
+    private void OnSelectedResourcePropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
         OnPropertyChanged(nameof(CanGenerateResourceImage));
+        NotifyBatchPlanChanged();
+    }
 
     public void AddResource()
     {
@@ -92,18 +95,10 @@ public sealed partial class StoryStudioViewModel
         try
         {
             await PersistCurrentAsync(cancellationToken);
-            var prompt = $"{VisualStyle}\n{resource.ImagePrompt.Trim()}\n生成{resource.KindLabel}“{resource.Name}”的一致性参考图，画面比例 {ProjectRatio}。";
-            var result = await _media.GenerateImageAsync(
-                new ImageGenerationRequest(ProjectImageModel.Id, prompt, ImageSize(ProjectRatio), 1, []),
+            await GenerateResourceImageCoreAsync(
+                new ResourceGenerationContext(owner, project.Id, resource, session),
+                ProjectImageModel,
                 cancellationToken);
-            var history = await _history.SaveAsync(owner, prompt, result, cancellationToken);
-            var relative = await _store.ImportAssetAsync(
-                owner, project.Id, $"resource-{resource.Id}", history.Images.First().FilePath,
-                false, cancellationToken);
-            if (session != _session || _current?.Id != project.Id || !Resources.Contains(resource))
-                throw new OperationCanceledException("剧情项目或登录账户已切换。");
-            resource.SetImage(relative, _store.ResolveAssetPath(owner, project.Id, relative)!);
-            await PersistCurrentAsync(cancellationToken);
             StatusMessage = $"{resource.KindLabel}“{resource.Name}”的参考图已生成";
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -112,4 +107,38 @@ public sealed partial class StoryStudioViewModel
         }
         finally { IsBusy = false; }
     }
+
+    private async Task GenerateResourceImageCoreAsync(
+        ResourceGenerationContext context,
+        MediaGenerationModel imageModel,
+        CancellationToken cancellationToken)
+    {
+        EnsureResourceContext(context);
+        var resource = context.Resource;
+        var prompt = $"{VisualStyle}\n{resource.ImagePrompt.Trim()}\n生成{resource.KindLabel}“{resource.Name}”的一致性参考图，画面比例 {ProjectRatio}。";
+        var result = await _media.GenerateImageAsync(
+            new ImageGenerationRequest(imageModel.Id, prompt, ImageSize(ProjectRatio), 1, []),
+            cancellationToken);
+        var history = await _history.SaveAsync(context.Owner, prompt, result, cancellationToken);
+        var relative = await _store.ImportAssetAsync(
+            context.Owner, context.ProjectId, $"resource-{resource.Id}", history.Images.First().FilePath,
+            false, cancellationToken);
+        EnsureResourceContext(context);
+        resource.SetImage(relative, _store.ResolveAssetPath(context.Owner, context.ProjectId, relative)!);
+        await PersistCurrentAsync(cancellationToken);
+        NotifyBatchPlanChanged();
+    }
+
+    private void EnsureResourceContext(ResourceGenerationContext context)
+    {
+        if (context.Session != _session || _ownerUserId != context.Owner ||
+            _current?.Id != context.ProjectId || !Resources.Contains(context.Resource))
+            throw new OperationCanceledException("剧情项目或登录账户已切换。");
+    }
+
+    private sealed record ResourceGenerationContext(
+        string Owner,
+        Guid ProjectId,
+        StoryResourceEditor Resource,
+        Guid Session);
 }

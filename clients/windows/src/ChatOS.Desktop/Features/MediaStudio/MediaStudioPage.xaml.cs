@@ -87,6 +87,9 @@ public sealed partial class MediaStudioPage : Page
     private async void OnGenerateStoryVideoClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.GenerateVideoAsync();
 
+    private async void OnRunStoryBatchClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.RunBatchAsync();
+
     private void OnCancelStoryGenerationClick(object sender, RoutedEventArgs e) =>
         StoryViewModel.CancelGeneration();
 
