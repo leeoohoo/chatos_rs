@@ -1,0 +1,67 @@
+name: Windows Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 3.0.7
+    paths:
+      - "clients/windows/**"
+      - "scripts/install-windows-client.cmd"
+      - ".github/workflows/windows-installer.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-x64:
+    name: Package self-contained x64 installer
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
+
+      - name: Build self-contained installer
+        shell: pwsh
+        run: >-
+          ./clients/windows/scripts/package-client.ps1
+          -Platform x64
+          -Version 3.0.7
+          -SkipTests
+          -SkipToolInstall
+
+      - name: Verify installer payload
+        shell: pwsh
+        run: |
+          $installer = "clients/windows/BundleArtifacts/installer-x64/ChatOS-Setup-x64.exe"
+          $metadata = "clients/windows/BundleArtifacts/payload-x64/package-metadata.json"
+          if (-not (Test-Path $installer -PathType Leaf)) { throw "Installer was not created." }
+          if ((Get-Item $installer).Length -lt 1MB) { throw "Installer is unexpectedly small." }
+          if (-not (Test-Path $metadata -PathType Leaf)) { throw "Package metadata was not created." }
+          $package = Get-Content $metadata -Raw | ConvertFrom-Json
+          if ($package.app_version -ne "3.0.7" -or $package.runtime_identifier -ne "win-x64" -or
+              $package.self_contained -ne $true -or [string]::IsNullOrWhiteSpace($package.executable_sha256)) {
+            throw "Package metadata is incomplete or incorrect."
+          }
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChatOS-Windows-x64-3.0.7
+          path: clients/windows/BundleArtifacts/installer-x64/ChatOS-Setup-x64.exe
+          if-no-files-found: error
+          retention-days: 14
