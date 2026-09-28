@@ -14,6 +14,9 @@ final class PetOverlayInteractionState: ObservableObject {
     @Published var inspectedTaskActivity: PetActivity?
     @Published var isQuickChatPresented = false
     @Published var selectedQuickChatResourceID: String?
+    @Published var isTranslationPresented = false
+    @Published var isNotepadPresented = false
+    @Published var translationAnimationState: PetAnimationState?
     @Published var isAnimationActive = false
 }
 
@@ -38,7 +41,8 @@ struct PetCharacterView: View {
 
     var body: some View {
         PetSpriteAnimationView(
-            animationState: store.presentation.animationState,
+            animationState: interactionState.translationAnimationState
+                ?? store.presentation.animationState,
             isDragging: interactionState.isDragging,
             dragDirection: interactionState.dragDirection,
             isAnimationActive: interactionState.isAnimationActive

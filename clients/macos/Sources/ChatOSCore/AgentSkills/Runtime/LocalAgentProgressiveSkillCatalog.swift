@@ -53,6 +53,17 @@ public enum ProgressiveSkillFileLoader {
         return path
     }
 
+    public static func relativePath(
+        of fileURL: URL,
+        beneath directoryURL: URL
+    ) throws -> String {
+        let directory = directoryURL.resolvingSymlinksInPath().standardizedFileURL
+        let file = fileURL.resolvingSymlinksInPath().standardizedFileURL
+        let prefix = directory.path + "/"
+        guard file.path.hasPrefix(prefix) else { throw LoaderError.invalidPath }
+        return try normalizedRelativePath(String(file.path.dropFirst(prefix.count)))
+    }
+
     public static func validateDirectory(
         _ directoryURL: URL,
         beneath rootURL: URL,
@@ -308,7 +319,10 @@ public enum LocalAgentProgressiveSkillCatalog {
                 .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
             ])
             guard values.isRegularFile == true, values.isSymbolicLink != true else { continue }
-            let relativePath = String(url.path.dropFirst(root.path.count + 1))
+            let relativePath = try ProgressiveSkillFileLoader.relativePath(
+                of: url,
+                beneath: root
+            )
             let data = try ProgressiveSkillFileLoader.readRegularFile(
                 url,
                 beneath: root.deletingLastPathComponent(),

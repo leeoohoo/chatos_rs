@@ -74,34 +74,78 @@ impl PostgresStore {
         rows.into_iter().map(decode_json).collect()
     }
 
-    pub(in crate::store) async fn list_runs_filtered(
+    pub(in crate::store) async fn latest_run_for_task_by_statuses(
         &self,
-        filters: &RunListFilters,
-    ) -> Result<Vec<TaskRunRecord>, String> {
-        load_filtered_runs(&self.pool, filters).await
+        task_id: &str,
+        statuses: &[TaskRunStatus],
+    ) -> Result<Option<TaskRunRecord>, String> {
+        if statuses.is_empty() {
+            return Ok(None);
+        }
+        let statuses = statuses
+            .iter()
+            .map(enum_text)
+            .collect::<Result<Vec<_>, _>>()?;
+        sqlx::query_scalar::<_, Json<serde_json::Value>>(
+            "SELECT data FROM task_runs WHERE task_id=$1 AND status=ANY($2) \
+             ORDER BY created_at DESC,id DESC LIMIT 1",
+        )
+        .bind(task_id)
+        .bind(statuses)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_error)?
+        .map(decode_json)
+        .transpose()
     }
 
+    pub(in crate::store) async fn list_runs_filtered_scoped(
+        &self,
+        filters: &RunListFilters,
+        owner_user_id: Option<&str>,
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        load_filtered_runs(&self.pool, filters, owner_user_id).await
+    }
+
+    #[cfg(test)]
     pub(in crate::store) async fn list_runs_page(
         &self,
         filters: &RunListFilters,
     ) -> Result<PaginatedResponse<TaskRunRecord>, String> {
+        self.list_runs_page_scoped(filters, None).await
+    }
+
+    pub(in crate::store) async fn list_runs_page_scoped(
+        &self,
+        filters: &RunListFilters,
+        owner_user_id: Option<&str>,
+    ) -> Result<PaginatedResponse<TaskRunRecord>, String> {
         let limit = filters.limit.unwrap_or(DEFAULT_PAGE_LIMIT);
         let offset = filters.offset.unwrap_or(0);
-        let total = count_filtered_runs(&self.pool, filters).await?;
+        let total = count_filtered_runs(&self.pool, filters, owner_user_id).await?;
         let mut page_filters = filters.clone();
         page_filters.limit = Some(limit);
         page_filters.offset = Some(offset);
         Ok(build_page_response(
-            load_filtered_runs(&self.pool, &page_filters).await?,
+            load_filtered_runs(&self.pool, &page_filters, owner_user_id).await?,
             total,
             limit,
             offset,
         ))
     }
 
+    #[cfg(test)]
     pub(in crate::store) async fn list_run_summaries_filtered(
         &self,
         filters: &RunListFilters,
+    ) -> Result<Vec<RunSummaryRecord>, String> {
+        self.list_run_summaries_filtered_scoped(filters, None).await
+    }
+
+    pub(in crate::store) async fn list_run_summaries_filtered_scoped(
+        &self,
+        filters: &RunListFilters,
+        owner_user_id: Option<&str>,
     ) -> Result<Vec<RunSummaryRecord>, String> {
         let status = filters.status.map(|value| enum_text(&value)).transpose()?;
         let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
@@ -114,12 +158,16 @@ impl PostgresStore {
                  OR lower(model_config_id) LIKE '%'||$4||'%' \
                  OR lower(coalesce(data->>'result_summary','')) LIKE '%'||$4||'%' \
                  OR lower(coalesce(data->>'error_message','')) LIKE '%'||$4||'%') \
-             ORDER BY created_at DESC,id LIMIT $5 OFFSET $6",
+             AND ($5::text IS NULL OR EXISTS (SELECT 1 FROM tasks \
+                 WHERE tasks.id=task_runs.task_id \
+                 AND coalesce(nullif(btrim(tasks.owner_user_id),''),tasks.creator_user_id)=$5)) \
+             ORDER BY created_at DESC,id LIMIT $6 OFFSET $7",
         )
         .bind(filters.task_id.as_deref())
         .bind(status)
         .bind(filters.model_config_id.as_deref())
         .bind(filters.keyword.as_deref())
+        .bind(owner_user_id)
         .bind(optional_usize_as_i64(filters.limit))
         .bind(i64::try_from(filters.offset.unwrap_or(0)).unwrap_or(i64::MAX))
         .fetch_all(&self.pool)
@@ -139,6 +187,23 @@ impl PostgresStore {
             "SELECT jsonb_build_object('id',id,'task_id',task_id,'status',status, \
                  'model_config_id',model_config_id,'updated_at',data->'updated_at') \
              FROM task_runs WHERE id=ANY($1) ORDER BY updated_at DESC,id",
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?;
+        rows.into_iter().map(decode_json).collect()
+    }
+
+    pub(in crate::store) async fn get_runs_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
+            "SELECT data FROM task_runs WHERE id=ANY($1)",
         )
         .bind(ids)
         .fetch_all(&self.pool)
@@ -443,6 +508,7 @@ impl PostgresStore {
 async fn load_filtered_runs(
     pool: &chatos_postgres::PgPool,
     filters: &RunListFilters,
+    owner_user_id: Option<&str>,
 ) -> Result<Vec<TaskRunRecord>, String> {
     let status = filters.status.map(|value| enum_text(&value)).transpose()?;
     let rows = sqlx::query_scalar::<_, Json<serde_json::Value>>(
@@ -453,12 +519,16 @@ async fn load_filtered_runs(
              OR lower(model_config_id) LIKE '%'||$4||'%' \
              OR lower(coalesce(data->>'result_summary','')) LIKE '%'||$4||'%' \
              OR lower(coalesce(data->>'error_message','')) LIKE '%'||$4||'%') \
-         ORDER BY created_at DESC,id LIMIT $5 OFFSET $6",
+         AND ($5::text IS NULL OR EXISTS (SELECT 1 FROM tasks \
+             WHERE tasks.id=task_runs.task_id \
+             AND coalesce(nullif(btrim(tasks.owner_user_id),''),tasks.creator_user_id)=$5)) \
+         ORDER BY created_at DESC,id LIMIT $6 OFFSET $7",
     )
     .bind(filters.task_id.as_deref())
     .bind(status)
     .bind(filters.model_config_id.as_deref())
     .bind(filters.keyword.as_deref())
+    .bind(owner_user_id)
     .bind(optional_usize_as_i64(filters.limit))
     .bind(i64::try_from(filters.offset.unwrap_or(0)).unwrap_or(i64::MAX))
     .fetch_all(pool)
@@ -470,6 +540,7 @@ async fn load_filtered_runs(
 async fn count_filtered_runs(
     pool: &chatos_postgres::PgPool,
     filters: &RunListFilters,
+    owner_user_id: Option<&str>,
 ) -> Result<usize, String> {
     let status = filters.status.map(|value| enum_text(&value)).transpose()?;
     let total: i64 = sqlx::query_scalar(
@@ -479,12 +550,16 @@ async fn count_filtered_runs(
              OR lower(task_id) LIKE '%'||$4||'%' \
              OR lower(model_config_id) LIKE '%'||$4||'%' \
              OR lower(coalesce(data->>'result_summary','')) LIKE '%'||$4||'%' \
-             OR lower(coalesce(data->>'error_message','')) LIKE '%'||$4||'%')",
+             OR lower(coalesce(data->>'error_message','')) LIKE '%'||$4||'%') \
+         AND ($5::text IS NULL OR EXISTS (SELECT 1 FROM tasks \
+             WHERE tasks.id=task_runs.task_id \
+             AND coalesce(nullif(btrim(tasks.owner_user_id),''),tasks.creator_user_id)=$5))",
     )
     .bind(filters.task_id.as_deref())
     .bind(status)
     .bind(filters.model_config_id.as_deref())
     .bind(filters.keyword.as_deref())
+    .bind(owner_user_id)
     .fetch_one(pool)
     .await
     .map_err(db_error)?;

@@ -1,9 +1,18 @@
 import { authService } from '../../services/auth-service'
 import { ApiError } from '../../services/api-client'
 import { isDevelopmentEnvironment } from '../../config/runtime'
+import { beginTabSwitch, cancelTabSwitch } from '../../services/tab-navigation'
 import { sessionStore } from '../../stores/session-store'
 
 type BindState = 'ready' | 'claiming' | 'development_login' | 'waiting' | 'failed'
+
+function openDevices(): void {
+  beginTabSwitch()
+  wx.switchTab({
+    url: '/pages/devices/index',
+    fail: () => cancelTabSwitch(),
+  })
+}
 
 Page({
   data: {
@@ -24,7 +33,7 @@ Page({
 
   onLoad(query: Record<string, string | undefined>) {
     if (sessionStore.hasToken()) {
-      void wx.switchTab({ url: '/pages/devices/index' })
+      openDevices()
       return
     }
     const app = getApp<IAppOption>()
@@ -54,7 +63,7 @@ Page({
       if (result.status !== 'authenticated') {
         throw new Error('服务器测试登录未返回有效会话')
       }
-      wx.switchTab({ url: '/pages/devices/index' })
+      openDevices()
     } catch (error) {
       const message =
         error instanceof ApiError && error.statusCode === 404
@@ -89,7 +98,7 @@ Page({
     try {
       const existing = await authService.login()
       if (existing.status === 'authenticated') {
-        wx.switchTab({ url: '/pages/devices/index' })
+        openDevices()
         return
       }
       const claim = await authService.claim(this.data.scene)
@@ -116,7 +125,7 @@ Page({
       const result = await authService.claimResult(this.claimId, this.claimSecret)
       if (result.status === 'authenticated') {
         this.stopPolling()
-        wx.switchTab({ url: '/pages/devices/index' })
+        openDevices()
         return
       }
       this.pollFailures = 0
@@ -141,7 +150,7 @@ Page({
       const login = await authService.login()
       if (login.status === 'authenticated') {
         this.stopPolling()
-        wx.switchTab({ url: '/pages/devices/index' })
+        openDevices()
         return
       }
     } catch {

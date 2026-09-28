@@ -8,6 +8,8 @@ mod policy_paths;
 #[path = "policy_roots.rs"]
 mod policy_roots;
 
+pub(crate) use policy_roots::log_host_fs_roots_configuration;
+
 use crate::core::auth::AuthUser;
 use axum::http::StatusCode;
 
@@ -19,6 +21,9 @@ pub(crate) const WRITE_NOT_ALLOWED: &str = "当前目录不允许写入";
 pub(super) struct FsAllowedRoot {
     path: PathBuf,
     kind: FsAllowedRootKind,
+    can_write: bool,
+    #[cfg(unix)]
+    prepared_directory: Option<std::sync::Arc<std::fs::File>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -62,6 +67,10 @@ pub(crate) struct FsPathPolicy {
 pub(crate) struct AuthorizedPath {
     pub(crate) path: PathBuf,
     pub(crate) can_write: bool,
+    // Keep the authorized directory alive across clones and write checks, so
+    // another real directory at the same path cannot inherit its grant.
+    #[cfg(unix)]
+    directory: Option<std::sync::Arc<std::fs::File>>,
 }
 
 #[derive(Debug, Clone)]
@@ -112,6 +121,15 @@ impl FsPathPolicy {
         if !authorized.path.is_dir() {
             return Err(FsPolicyError::BadRequest(not_dir_message.to_string()));
         }
+        #[cfg(unix)]
+        let authorized = AuthorizedPath {
+            directory: Some(std::sync::Arc::new(
+                policy_roots::open_directory_without_symlinks(&authorized.path).map_err(|_| {
+                    FsPolicyError::Forbidden(PATH_OUTSIDE_ALLOWED_ROOTS.to_string())
+                })?,
+            )),
+            ..authorized
+        };
         Ok(authorized)
     }
 
@@ -129,8 +147,32 @@ impl FsPathPolicy {
     }
 
     pub(crate) fn require_write(&self, path: &AuthorizedPath) -> Result<(), FsPolicyError> {
-        if !path.can_write {
+        // Authorization and the write check are separate operations. Recheck
+        // the selected root's identity before trusting an earlier write grant.
+        // This does not make subsequent path-based filesystem use atomic.
+        if !path.can_write || !self.authorized_path_for(path.path.clone())?.can_write {
             return Err(FsPolicyError::Forbidden(WRITE_NOT_ALLOWED.to_string()));
+        }
+        // The root can remain unchanged while a descendant becomes a symlink.
+        // Callers keep using the original canonical path, so reject redirects
+        // and failed resolution rather than silently authorizing a new target.
+        let canonical = policy_paths::canonicalize_existing_path(&path.path, WRITE_NOT_ALLOWED)
+            .map_err(|_| FsPolicyError::Forbidden(WRITE_NOT_ALLOWED.to_string()))?;
+        if canonical != path.path {
+            return Err(FsPolicyError::Forbidden(WRITE_NOT_ALLOWED.to_string()));
+        }
+        #[cfg(unix)]
+        if let Some(directory) = &path.directory {
+            use std::os::unix::fs::MetadataExt;
+
+            let denied = |_| FsPolicyError::Forbidden(WRITE_NOT_ALLOWED.to_string());
+            let current =
+                policy_roots::open_directory_without_symlinks(&path.path).map_err(denied)?;
+            let original = directory.metadata().map_err(denied)?;
+            let current = current.metadata().map_err(denied)?;
+            if (original.dev(), original.ino()) != (current.dev(), current.ino()) {
+                return Err(FsPolicyError::Forbidden(WRITE_NOT_ALLOWED.to_string()));
+            }
         }
         Ok(())
     }
@@ -163,6 +205,11 @@ impl FsPathPolicy {
         }
 
         if let Some(resolved) = self.resolve_user_visible_path(trimmed) {
+            // Virtual paths map backslashes to separators, which can introduce
+            // parent components that were not components of the native input.
+            if contains_parent_dir(&resolved) {
+                return Err(FsPolicyError::Forbidden(PATH_TRAVERSAL_BLOCKED.to_string()));
+            }
             return Ok(resolved);
         }
 
@@ -215,9 +262,19 @@ impl FsPathPolicy {
         let root = self
             .find_navigation_root(path.as_path())
             .ok_or_else(|| FsPolicyError::Forbidden(PATH_OUTSIDE_ALLOWED_ROOTS.to_string()))?;
+        // Check after selecting the most specific root: a stale user root must
+        // not fall back to a broader configured root's permissions.
+        #[cfg(unix)]
+        if !policy_roots::root_directory_matches(root) {
+            return Err(FsPolicyError::Forbidden(
+                PATH_OUTSIDE_ALLOWED_ROOTS.to_string(),
+            ));
+        }
         Ok(AuthorizedPath {
             path,
-            can_write: root.kind.can_write(),
+            can_write: root.can_write,
+            #[cfg(unix)]
+            directory: None,
         })
     }
 
@@ -225,7 +282,15 @@ impl FsPathPolicy {
         self.roots
             .iter()
             .filter(|root| policy_paths::path_is_within_root(candidate, root.path.as_path()))
-            .max_by_key(|root| policy_paths::normalize_path_for_compare(root.path.as_path()).len())
+            .max_by_key(|root| {
+                if cfg!(unix) {
+                    // Compatibility normalization can erase literal backslash
+                    // components. Native depth preserves the most specific root.
+                    root.path.components().count()
+                } else {
+                    policy_paths::normalize_path_for_compare(root.path.as_path()).len()
+                }
+            })
     }
 }
 
@@ -233,3 +298,7 @@ fn contains_parent_dir(path: &Path) -> bool {
     path.components()
         .any(|component| matches!(component, Component::ParentDir))
 }
+
+#[cfg(test)]
+#[path = "policy_traversal_tests.rs"]
+mod traversal_tests;

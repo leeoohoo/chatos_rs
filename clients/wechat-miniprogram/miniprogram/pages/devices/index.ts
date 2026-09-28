@@ -1,6 +1,7 @@
 import type { DeviceSummary } from '../../models/api'
 import { deviceService } from '../../services/device-service'
 import { companionListCache } from '../../services/companion-list-cache'
+import { beginTabSwitch, cancelTabSwitch, finishTabSwitch } from '../../services/tab-navigation'
 import { sessionStore } from '../../stores/session-store'
 import { deviceSelectionStore } from '../../stores/device-selection-store'
 import { relativeTime } from '../../utils/presentation'
@@ -22,6 +23,7 @@ Page({
 
   onShow() {
     this.pageVisible = true
+    finishTabSwitch(this, 0)
     void this.activate()
   },
 
@@ -98,12 +100,16 @@ Page({
     if (!device || this.data.openingDeviceId) return
     deviceSelectionStore.set(id, device)
     this.setData({ openingDeviceId: id, error: '' })
+    beginTabSwitch()
     wx.switchTab({
       url: '/pages/conversations/index',
       success: () => this.setData({ openingDeviceId: '' }),
       fail: () => {
+        cancelTabSwitch()
+        beginTabSwitch()
         wx.reLaunch({
           url: '/pages/conversations/index',
+          fail: () => cancelTabSwitch(),
           complete: () => this.setData({ openingDeviceId: '' }),
         })
       },

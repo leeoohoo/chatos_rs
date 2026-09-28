@@ -16,6 +16,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  source-quality:
+    name: Owned Source Size
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Test source-quality policies
+        run: python3 -m unittest discover -s scripts/tests -p "test_code_quality_*.py"
+
+      - name: Reject new oversized source and baseline growth
+        env:
+          CODE_QUALITY_DIFF_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          CODE_QUALITY_DIFF_HEAD: ${{ github.sha }}
+        run: python3 scripts/check_source_size_policy.py --scope owned
+
+      - name: Reject hand-edited registry generated output
+        run: node plugins/web-design-studio/scripts/registry-generated-integrity.mjs --check
+
   static-security:
     name: Secret and Container Config Scan
     if: github.event_name == 'workflow_dispatch'
@@ -294,7 +320,7 @@ jobs:
           - platform: windows-x64
             runner: windows-latest
           - platform: macos-arm64
-            runner: macos-15
+            runner: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -304,6 +330,12 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
+
+      - name: Select current Xcode toolchain
+        if: runner.os == 'macOS'
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.6.app/Contents/Developer
+          swift --version
 
       - name: Verify native platform contracts
         shell: bash

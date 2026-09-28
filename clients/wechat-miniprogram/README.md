@@ -5,7 +5,7 @@
 ## 本地开发
 
 1. 在微信开发者工具中导入本目录。
-2. 在本机创建 `project.private.config.json`，填入正式或测试小程序 AppID；该文件不会提交。
+2. 在本机创建 `project.private.config.json`，填入正式或测试小程序 AppID；该文件不会提交。仓库内的 `project.config.json` 固定使用微信游客 AppID，避免把真实 AppID 提交到公开仓库。
 3. 在微信公众平台把 API Gateway 的 HTTPS/WSS 域名加入 request/socket 合法域名。
 4. 体验版联调时将 User Service 的 `USER_SERVICE_WECHAT_MINI_PROGRAM_ENV_VERSION` 设为 `trial`；生产发布使用默认值 `release`。
 5. 执行 `npm install && npm run check` 做 TypeScript 校验。

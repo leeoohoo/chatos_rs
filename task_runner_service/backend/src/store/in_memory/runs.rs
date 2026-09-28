@@ -3,11 +3,22 @@
 
 use super::*;
 use crate::models::WorkspaceIntegrationStatus;
+#[cfg(test)]
+use std::sync::atomic::Ordering;
 #[path = "runs/events.rs"]
 mod events;
 #[cfg(test)]
 #[path = "runs/tests.rs"]
 mod tests;
+
+fn sort_runs_for_listing(runs: &mut [TaskRunRecord]) {
+    runs.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+}
 
 impl InMemoryStore {
     pub(in crate::store) fn run_execution_stats(&self) -> RunExecutionStats {
@@ -68,6 +79,10 @@ impl InMemoryStore {
     }
 
     pub(in crate::store) fn list_runs(&self, task_id: Option<&str>) -> Vec<TaskRunRecord> {
+        #[cfg(test)]
+        self.run_lookup_query_counts
+            .full_lists
+            .fetch_add(1, Ordering::Relaxed);
         let data = self.inner.read();
         let mut items = data
             .runs
@@ -75,18 +90,63 @@ impl InMemoryStore {
             .filter(|run| task_id.is_none_or(|value| run.task_id == value))
             .cloned()
             .collect::<Vec<_>>();
-        items.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        sort_runs_for_listing(&mut items);
         items
     }
 
-    pub(in crate::store) fn list_runs_filtered(
+    pub(in crate::store) fn latest_run_for_task_by_statuses(
+        &self,
+        task_id: &str,
+        statuses: &[TaskRunStatus],
+    ) -> Option<TaskRunRecord> {
+        #[cfg(test)]
+        self.run_lookup_query_counts
+            .latest
+            .fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .read()
+            .runs
+            .values()
+            .filter(|run| run.task_id == task_id && statuses.contains(&run.status))
+            .max_by(|left, right| {
+                left.created_at
+                    .cmp(&right.created_at)
+                    .then_with(|| left.id.cmp(&right.id))
+            })
+            .cloned()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn run_lookup_query_counts(&self) -> (usize, usize) {
+        (
+            self.run_lookup_query_counts
+                .full_lists
+                .load(Ordering::Relaxed),
+            self.run_lookup_query_counts.latest.load(Ordering::Relaxed),
+        )
+    }
+
+    pub(in crate::store) fn list_runs_filtered_scoped(
         &self,
         filters: &RunListFilters,
+        owner_user_id: Option<&str>,
     ) -> Vec<TaskRunRecord> {
         let data = self.inner.read();
         let mut items = data
             .runs
             .values()
+            .filter(|run| {
+                owner_user_id.is_none_or(|owner_user_id| {
+                    data.tasks.get(&run.task_id).is_some_and(|task| {
+                        task.owner_user_id
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .or(task.creator_user_id.as_deref())
+                            == Some(owner_user_id)
+                    })
+                })
+            })
             .filter(|run| {
                 filters
                     .task_id
@@ -121,32 +181,44 @@ impl InMemoryStore {
             })
             .cloned()
             .collect::<Vec<_>>();
-        items.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        sort_runs_for_listing(&mut items);
         apply_offset_limit(&mut items, filters.offset, filters.limit);
         items
     }
 
+    #[cfg(test)]
     pub(in crate::store) fn list_runs_page(
         &self,
         filters: &RunListFilters,
     ) -> PaginatedResponse<TaskRunRecord> {
+        self.list_runs_page_scoped(filters, None)
+    }
+
+    pub(in crate::store) fn list_runs_page_scoped(
+        &self,
+        filters: &RunListFilters,
+        owner_user_id: Option<&str>,
+    ) -> PaginatedResponse<TaskRunRecord> {
         let mut count_filters = filters.clone();
         count_filters.limit = None;
         count_filters.offset = None;
-        let total = self.list_runs_filtered(&count_filters).len();
+        let total = self
+            .list_runs_filtered_scoped(&count_filters, owner_user_id)
+            .len();
         build_page_response(
-            self.list_runs_filtered(filters),
+            self.list_runs_filtered_scoped(filters, owner_user_id),
             total,
             filters.limit.unwrap_or(DEFAULT_PAGE_LIMIT),
             filters.offset.unwrap_or(0),
         )
     }
 
-    pub(in crate::store) fn list_run_summaries_filtered(
+    pub(in crate::store) fn list_run_summaries_filtered_scoped(
         &self,
         filters: &RunListFilters,
+        owner_user_id: Option<&str>,
     ) -> Vec<RunSummaryRecord> {
-        self.list_runs_filtered(filters)
+        self.list_runs_filtered_scoped(filters, owner_user_id)
             .iter()
             .map(RunSummaryRecord::from)
             .collect()
@@ -164,8 +236,23 @@ impl InMemoryStore {
             .filter(|run| wanted.contains(&run.id))
             .map(RunSummaryRecord::from)
             .collect::<Vec<_>>();
-        items.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        items.sort_by(|left, right| {
+            right
+                .updated_at
+                .cmp(&left.updated_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
         items
+    }
+
+    pub(in crate::store) fn get_runs_by_ids(&self, ids: &[String]) -> Vec<TaskRunRecord> {
+        let wanted = ids.iter().collect::<std::collections::HashSet<_>>();
+        let data = self.inner.read();
+        data.runs
+            .values()
+            .filter(|run| wanted.contains(&run.id))
+            .cloned()
+            .collect()
     }
 
     pub(in crate::store) fn get_run(&self, id: &str) -> Option<TaskRunRecord> {

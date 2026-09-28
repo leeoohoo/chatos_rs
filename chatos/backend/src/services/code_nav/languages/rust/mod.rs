@@ -267,7 +267,7 @@ mod tests {
             "[package]\nname = 'demo'\nversion = '0.1.0'\n",
         )
         .expect("write cargo");
-        root
+        fs::canonicalize(root).expect("canonical project fixture")
     }
 
     #[test]

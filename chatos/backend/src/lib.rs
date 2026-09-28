@@ -44,6 +44,7 @@ pub async fn run_server_from_env() -> Result<(), String> {
         .map_err(|err| format!("apply managed config failed: {err}"))?;
     let cfg = config::Config::init_global()?;
     logger::init_logger(cfg).map_err(|err| format!("Failed to init logger: {err}"))?;
+    api::fs::policy::log_host_fs_roots_configuration();
 
     if let Err(err) = modules::app_startup::initialize_runtime(cfg).await {
         error!("{err}");

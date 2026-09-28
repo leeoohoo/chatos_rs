@@ -123,8 +123,6 @@ public actor AgentResponsesModelClient: AgentModelClient {
         var payload: [String: Any] = [
             "model": model,
             "input": try Self.inputItems(messages),
-            "tools": try tools.map(Self.responseTool),
-            "tool_choice": "auto",
             "stream": stream,
             "store": false,
             "prompt_cache_key": promptCacheKey,
@@ -133,6 +131,10 @@ public actor AgentResponsesModelClient: AgentModelClient {
                 "compact_threshold": Self.compactionThreshold,
             ]],
         ]
+        if !tools.isEmpty {
+            payload["tools"] = try tools.map(Self.responseTool)
+            payload["tool_choice"] = "auto"
+        }
         if let maximumOutputTokens { payload["max_output_tokens"] = maximumOutputTokens }
         if let temperature { payload["temperature"] = temperature }
         if let thinking = thinking?.trimmingCharacters(in: .whitespacesAndNewlines),

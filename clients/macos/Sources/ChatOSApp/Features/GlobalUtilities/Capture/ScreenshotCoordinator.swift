@@ -140,6 +140,12 @@ final class ScreenshotCoordinator {
             )
             self.finishWorkflow()
         }
+        controller.onSendToTranslation = { [weak self] renderedImage in
+            guard let self else { return }
+            self.annotationController = nil
+            self.finishWorkflow()
+            self.sendToPetTranslation(renderedImage)
+        }
         controller.onCancel = { [weak self] in
             self?.annotationController = nil
             self?.finishWorkflow()
@@ -224,6 +230,21 @@ final class ScreenshotCoordinator {
                 )
             )
         }
+    }
+
+    private func sendToPetTranslation(_ image: CGImage) {
+        let bitmap = NSBitmapImageRep(cgImage: image)
+        guard let pngData = bitmap.representation(using: .png, properties: [:]) else {
+            presentError(localized(
+                "无法把截图发送到快速翻译：图片编码失败。",
+                "Unable to send the screenshot to Quick Translate: image encoding failed."
+            ))
+            return
+        }
+        model?.openPetTranslationImage(
+            data: pngData,
+            suggestedName: Self.screenshotFilename()
+        )
     }
 
     @discardableResult

@@ -213,26 +213,60 @@ impl RunService {
         &self,
         filters: RunListFilters,
     ) -> Result<Vec<TaskRunRecord>, String> {
-        let filters = sanitize_run_list_filters(filters);
-        self.store.list_runs_filtered(&filters).await
+        self.list_runs_filtered_scoped(filters, None).await
     }
 
-    pub async fn list_runs_page(
+    pub async fn list_runs_filtered_scoped(
         &self,
         filters: RunListFilters,
+        owner_user_id: Option<&str>,
+    ) -> Result<Vec<TaskRunRecord>, String> {
+        let filters = sanitize_run_list_filters(filters);
+        let owner_user_id = owner_user_id.map(str::trim);
+        if owner_user_id == Some("") {
+            return Ok(Vec::new());
+        }
+        self.store
+            .list_runs_filtered_scoped(&filters, owner_user_id)
+            .await
+    }
+
+    pub async fn list_runs_page_scoped(
+        &self,
+        filters: RunListFilters,
+        owner_user_id: Option<&str>,
     ) -> Result<PaginatedResponse<TaskRunRecord>, String> {
         let mut filters = sanitize_run_list_filters(filters);
         filters.limit = Some(filters.limit.unwrap_or(20));
         filters.offset = Some(filters.offset.unwrap_or(0));
-        self.store.list_runs_page(&filters).await
+        let owner_user_id = owner_user_id.map(str::trim);
+        if owner_user_id == Some("") {
+            return Ok(PaginatedResponse {
+                items: Vec::new(),
+                total: 0,
+                limit: filters.limit.unwrap_or(20),
+                offset: filters.offset.unwrap_or(0),
+                has_more: false,
+            });
+        }
+        self.store
+            .list_runs_page_scoped(&filters, owner_user_id)
+            .await
     }
 
-    pub async fn run_index(
+    pub async fn run_index_scoped(
         &self,
         filters: RunListFilters,
+        owner_user_id: Option<&str>,
     ) -> Result<Vec<RunSummaryRecord>, String> {
         let filters = sanitize_run_list_filters(filters);
-        self.store.list_run_summaries_filtered(&filters).await
+        let owner_user_id = owner_user_id.map(str::trim);
+        if owner_user_id == Some("") {
+            return Ok(Vec::new());
+        }
+        self.store
+            .list_run_summaries_filtered_scoped(&filters, owner_user_id)
+            .await
     }
 
     pub async fn get_run_summaries_by_ids(

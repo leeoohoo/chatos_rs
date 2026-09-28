@@ -64,10 +64,14 @@ function compressSnapshot(document: SceneDocument): CompressedSceneSnapshot {
   };
 }
 
-function decompressSnapshot(snapshot: CompressedSceneSnapshot): SceneDocument {
+function assertCompressedSnapshot(snapshot: CompressedSceneSnapshot): void {
   if (!snapshot || snapshot.encoding !== 'gzip-base64' || typeof snapshot.sha256 !== 'string' || typeof snapshot.data !== 'string') {
     throw new Error('Scene history snapshot is invalid.');
   }
+}
+
+function decompressSnapshot(snapshot: CompressedSceneSnapshot): SceneDocument {
+  assertCompressedSnapshot(snapshot);
   let source: Buffer;
   try {
     source = gunzipSync(Buffer.from(snapshot.data, 'base64'));
@@ -78,6 +82,21 @@ function decompressSnapshot(snapshot: CompressedSceneSnapshot): SceneDocument {
   const document = JSON.parse(source.toString('utf8')) as SceneDocument;
   assertSceneDocument(document);
   return document;
+}
+
+function assertHistoryEntry(entry: SceneHistoryEntry): void {
+  if (!entry || typeof entry !== 'object' || !entry.transaction || !entry.summary) {
+    throw new Error('Scene store history entry is invalid.');
+  }
+  if (typeof entry.transaction.transactionId !== 'string' || entry.summary.transactionId !== entry.transaction.transactionId) {
+    throw new Error('Scene store history transaction identity mismatch.');
+  }
+  assertCompressedSnapshot(entry.before);
+  assertCompressedSnapshot(entry.after);
+}
+
+function assertSnapshotIdentity(snapshot: SceneDocument, documentId: string): void {
+  if (snapshot.documentId !== documentId) throw new Error('Scene store history identity mismatch.');
 }
 
 function historyEntryBytes(entry: SceneHistoryEntry): number {
@@ -93,18 +112,26 @@ function trimHistory(
 ): { past: SceneHistoryEntry[]; future: SceneHistoryEntry[] } {
   const past = pastSource.slice();
   const future = futureSource.slice();
+  const byteCounts = new Map<SceneHistoryEntry, number>();
+  const cachedHistoryEntryBytes = (entry: SceneHistoryEntry): number => {
+    const cached = byteCounts.get(entry);
+    if (cached !== undefined) return cached;
+    const measured = historyEntryBytes(entry);
+    byteCounts.set(entry, measured);
+    return measured;
+  };
   while (past.length + future.length > historyLimit) {
     if (past.length >= future.length && past.length > 0) past.shift();
     else future.shift();
   }
-  let storedBytes = [...past, ...future].reduce((total, entry) => total + historyEntryBytes(entry), 0);
+  let storedBytes = [...past, ...future].reduce((total, entry) => total + cachedHistoryEntryBytes(entry), 0);
   while (storedBytes > historyByteLimit && past.length + future.length > 1) {
     const pastCandidate = past[0];
     const futureCandidate = future[0];
-    if (pastCandidate && (!futureCandidate || historyEntryBytes(pastCandidate) >= historyEntryBytes(futureCandidate))) {
-      storedBytes -= historyEntryBytes(past.shift()!);
+    if (pastCandidate && (!futureCandidate || cachedHistoryEntryBytes(pastCandidate) >= cachedHistoryEntryBytes(futureCandidate))) {
+      storedBytes -= cachedHistoryEntryBytes(past.shift()!);
     } else if (futureCandidate) {
-      storedBytes -= historyEntryBytes(future.shift()!);
+      storedBytes -= cachedHistoryEntryBytes(future.shift()!);
     }
   }
   return { past, future };
@@ -122,8 +149,8 @@ export class SceneDocumentStore {
   async create(source: SceneDocument): Promise<SceneDocument> {
     assertSceneDocument(source);
     if (source.revision !== 0) throw new Error('A new scene document must start at revision 0.');
-    return this.files.withLock(async () => {
-      const fileName = fileNameFor(source.documentId);
+    const fileName = fileNameFor(source.documentId);
+    return this.files.withFileLock(fileName, async () => {
       try {
         await this.files.read<SceneStoreRecord>(fileName);
         throw new Error(`Scene document already exists: ${source.documentId}`);
@@ -144,7 +171,8 @@ export class SceneDocumentStore {
   }
 
   async apply(documentId: string, transaction: SceneTransaction): Promise<{ document: SceneDocument; summary: SceneTransactionSummary }> {
-    return this.files.withLock(async () => {
+    const fileName = fileNameFor(documentId);
+    return this.files.withFileLock(fileName, async () => {
       const record = await this.readRecord(documentId);
       if (transaction.baseRevision !== record.document.revision) throw new SceneRevisionConflictError(record.document.revision);
       if (record.past.some((entry) => entry.transaction.transactionId === transaction.transactionId)) {
@@ -164,20 +192,23 @@ export class SceneDocumentStore {
         document: result.document,
         ...history
       };
-      await this.files.write(fileNameFor(documentId), next);
+      await this.files.write(fileName, next);
       return { document: structuredClone(result.document), summary: structuredClone(result.summary) };
     });
   }
 
   async undo(documentId: string, expectedRevision: number, _author: SceneCreator = 'human'): Promise<SceneDocument> {
-    return this.files.withLock(async () => {
+    const fileName = fileNameFor(documentId);
+    return this.files.withFileLock(fileName, async () => {
       const record = await this.readRecord(documentId);
       if (record.document.revision !== expectedRevision) throw new SceneRevisionConflictError(record.document.revision);
       const entry = record.past.at(-1);
       if (!entry) throw new Error('Scene history has nothing to undo.');
-      const document = restoredSnapshot(decompressSnapshot(entry.before), record.document, new Date().toISOString());
+      const before = decompressSnapshot(entry.before);
+      assertSnapshotIdentity(before, documentId);
+      const document = restoredSnapshot(before, record.document, new Date().toISOString());
       const history = trimHistory(record.past.slice(0, -1), [...record.future, entry], this.historyLimit, this.historyByteLimit);
-      await this.files.write(fileNameFor(documentId), {
+      await this.files.write(fileName, {
         formatVersion: 2,
         document,
         ...history
@@ -187,14 +218,17 @@ export class SceneDocumentStore {
   }
 
   async redo(documentId: string, expectedRevision: number, _author: SceneCreator = 'human'): Promise<SceneDocument> {
-    return this.files.withLock(async () => {
+    const fileName = fileNameFor(documentId);
+    return this.files.withFileLock(fileName, async () => {
       const record = await this.readRecord(documentId);
       if (record.document.revision !== expectedRevision) throw new SceneRevisionConflictError(record.document.revision);
       const entry = record.future.at(-1);
       if (!entry) throw new Error('Scene history has nothing to redo.');
-      const document = restoredSnapshot(decompressSnapshot(entry.after), record.document, new Date().toISOString());
+      const after = decompressSnapshot(entry.after);
+      assertSnapshotIdentity(after, documentId);
+      const document = restoredSnapshot(after, record.document, new Date().toISOString());
       const history = trimHistory([...record.past, entry], record.future.slice(0, -1), this.historyLimit, this.historyByteLimit);
-      await this.files.write(fileNameFor(documentId), {
+      await this.files.write(fileName, {
         formatVersion: 2,
         document,
         ...history
@@ -220,8 +254,19 @@ export class SceneDocumentStore {
     return { transaction: structuredClone(entry.transaction), summary: structuredClone(entry.summary) };
   }
 
+  async auditHistory(documentId: string): Promise<void> {
+    const record = await this.readRecord(documentId);
+    for (const entry of [...record.past, ...record.future]) {
+      const before = decompressSnapshot(entry.before);
+      const after = decompressSnapshot(entry.after);
+      assertSnapshotIdentity(before, documentId);
+      assertSnapshotIdentity(after, documentId);
+    }
+  }
+
   async remove(documentId: string): Promise<void> {
-    await this.files.withLock(() => this.files.remove(fileNameFor(documentId)));
+    const fileName = fileNameFor(documentId);
+    await this.files.withFileLock(fileName, () => this.files.remove(fileName));
   }
 
   private async readRecord(documentId: string): Promise<SceneStoreRecord> {
@@ -231,11 +276,7 @@ export class SceneDocumentStore {
     if (record.document.documentId !== documentId) throw new Error('Scene store document identity mismatch.');
     if (!Array.isArray(record.past) || !Array.isArray(record.future)) throw new Error('Scene store history is invalid.');
     for (const entry of [...record.past, ...record.future]) {
-      if (!entry || typeof entry !== 'object' || !entry.transaction || !entry.summary) throw new Error('Scene store history entry is invalid.');
-      const before = decompressSnapshot(entry.before);
-      const after = decompressSnapshot(entry.after);
-      if (before.documentId !== documentId || after.documentId !== documentId) throw new Error('Scene store history identity mismatch.');
-      if (entry.summary.transactionId !== entry.transaction.transactionId) throw new Error('Scene store history transaction identity mismatch.');
+      assertHistoryEntry(entry);
     }
     return record;
   }

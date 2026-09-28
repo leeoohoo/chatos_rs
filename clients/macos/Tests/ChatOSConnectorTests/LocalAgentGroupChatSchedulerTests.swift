@@ -1415,9 +1415,11 @@ private struct SchedulerOfflineMemory: AgentMemoryServicing {
 
 private struct SchedulerTestServices: AgentServiceProviding {
     var expectedThinkingLevel: String?
+    private let memoryRegistry: SchedulerTestMemoryRegistry
 
     init(expectedThinkingLevel: String? = nil) {
         self.expectedThinkingLevel = expectedThinkingLevel
+        self.memoryRegistry = SchedulerTestMemoryRegistry()
     }
 
     func makeAgentModel(
@@ -1439,20 +1441,47 @@ private struct SchedulerTestServices: AgentServiceProviding {
     }
 
     func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
-        SchedulerTestMemory()
+        await memoryRegistry.memory(for: scope)
     }
 }
 
-private struct SchedulerTestMemory: AgentMemoryServicing {
+/// The production Memory service reconnects to the same durable thread when a Run resumes.
+/// Keep that contract in scheduler tests while isolating concurrently executing Runs.
+private actor SchedulerTestMemoryRegistry {
+    private var memoriesByRunID: [UUID: SchedulerTestMemory] = [:]
+
+    func memory(for scope: AgentMemoryScope) -> SchedulerTestMemory {
+        if let memory = memoriesByRunID[scope.runID] {
+            return memory
+        }
+        let memory = SchedulerTestMemory()
+        memoriesByRunID[scope.runID] = memory
+        return memory
+    }
+}
+
+private actor SchedulerTestMemory: AgentMemoryServicing {
+    private var records: [Int: AgentMemoryContextRecord] = [:]
+
     func ensureThread() async throws {}
-    func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {}
+
+    func sync(_ entries: [AgentMemoryEntry], reconciling: Bool) async throws {
+        for entry in entries {
+            records[entry.index] = .init(id: entry.id, message: entry.message)
+        }
+    }
+
     func compose() async throws -> AgentMemoryContext {
-        .init(blocks: [], recentRecords: [])
+        .init(
+            blocks: [],
+            recentRecords: records.keys.sorted().compactMap { records[$0] }
+        )
     }
 }
 
 private struct TodoRetrySchedulerTestServices: AgentServiceProviding {
     let model: TodoRetrySchedulerTestModel
+    private let memoryRegistry = SchedulerTestMemoryRegistry()
 
     func makeAgentModel(
         configID: String,
@@ -1463,7 +1492,7 @@ private struct TodoRetrySchedulerTestServices: AgentServiceProviding {
     }
 
     func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
-        SchedulerTestMemory()
+        await memoryRegistry.memory(for: scope)
     }
 }
 
@@ -1542,6 +1571,7 @@ private actor SchedulerTestModel: AgentModelClient {
 
 private struct ParallelSchedulerTestServices: AgentServiceProviding {
     let probe: SchedulerConcurrencyProbe
+    private let memoryRegistry = SchedulerTestMemoryRegistry()
 
     func makeAgentModel(
         configID: String,
@@ -1552,7 +1582,7 @@ private struct ParallelSchedulerTestServices: AgentServiceProviding {
     }
 
     func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
-        SchedulerTestMemory()
+        await memoryRegistry.memory(for: scope)
     }
 }
 
@@ -1620,6 +1650,7 @@ private actor ParallelSchedulerTestModel: AgentModelClient {
 
 private struct LaneSchedulerTestServices: AgentServiceProviding {
     let probe: SchedulerConcurrencyProbe
+    private let memoryRegistry = SchedulerTestMemoryRegistry()
 
     func makeAgentModel(
         configID: String,
@@ -1630,12 +1661,13 @@ private struct LaneSchedulerTestServices: AgentServiceProviding {
     }
 
     func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
-        SchedulerTestMemory()
+        await memoryRegistry.memory(for: scope)
     }
 }
 
 private struct CommunicationFastLaneServices: AgentServiceProviding {
     let probe: CommunicationFastLaneProbe
+    private let memoryRegistry = SchedulerTestMemoryRegistry()
 
     func makeAgentModel(
         configID: String,
@@ -1646,7 +1678,7 @@ private struct CommunicationFastLaneServices: AgentServiceProviding {
     }
 
     func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
-        SchedulerTestMemory()
+        await memoryRegistry.memory(for: scope)
     }
 }
 
@@ -1810,6 +1842,7 @@ private struct CancellationSchedulerTestServices: AgentServiceProviding {
     let store: SQLiteAgentGroupChatStore
     let agentID: String
     let todoID: String
+    private let memoryRegistry = SchedulerTestMemoryRegistry()
 
     func makeAgentModel(
         configID: String,
@@ -1820,7 +1853,7 @@ private struct CancellationSchedulerTestServices: AgentServiceProviding {
     }
 
     func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
-        SchedulerTestMemory()
+        await memoryRegistry.memory(for: scope)
     }
 }
 
@@ -1859,6 +1892,8 @@ private actor CancellationSchedulerTestModel: AgentModelClient {
 }
 
 private struct ActiveCancellationSchedulerTestServices: AgentServiceProviding {
+    private let memoryRegistry = SchedulerTestMemoryRegistry()
+
     func makeAgentModel(
         configID: String,
         policy: AgentRunPolicy
@@ -1868,7 +1903,7 @@ private struct ActiveCancellationSchedulerTestServices: AgentServiceProviding {
     }
 
     func makeAgentMemory(scope: AgentMemoryScope) async throws -> any AgentMemoryServicing {
-        SchedulerTestMemory()
+        await memoryRegistry.memory(for: scope)
     }
 }
 
@@ -1880,7 +1915,10 @@ private actor ActiveCancellationSchedulerTestModel: AgentModelClient {
         tools: [AgentToolDefinition],
         timeout: TimeInterval
     ) async throws -> AgentMessage {
-        if tools.contains(where: { $0.name == LocalAgentChatToolProvider.todoCompleteToolName }) {
+        let isExecutorLane = messages.contains {
+            $0.role == .user && $0.content.contains("- trigger_kind: todo\n")
+        }
+        if isExecutorLane {
             try await Task.sleep(for: .seconds(30))
             return .init(role: .assistant, content: "不应自然结束")
         }
@@ -1888,11 +1926,17 @@ private actor ActiveCancellationSchedulerTestModel: AgentModelClient {
         switch requestCount {
         case 1:
             return .init(role: .assistant, toolCalls: [.init(
+                id: "activate-todo-planning",
+                name: LocalAgentChatToolProvider.agentSkillActivateToolName,
+                arguments: #"{"skill_ref":"product-skill:chatos-todo-planning"}"#
+            )])
+        case 2:
+            return .init(role: .assistant, toolCalls: [.init(
                 id: "list-todos-before-cancel",
                 name: LocalAgentChatToolProvider.todoListToolName,
                 arguments: "{}"
             )])
-        case 2:
+        case 3:
             let toolContent = messages.last(where: { $0.role == .tool })?.content ?? "[]"
             let data = Data(toolContent.utf8)
             let values = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
@@ -1908,6 +1952,12 @@ private actor ActiveCancellationSchedulerTestModel: AgentModelClient {
                 id: "cancel-running-todo",
                 name: LocalAgentChatToolProvider.todoUpdateToolName,
                 arguments: arguments
+            )])
+        case 4:
+            return .init(role: .assistant, toolCalls: [.init(
+                id: "activate-collaboration-messaging",
+                name: LocalAgentChatToolProvider.agentSkillActivateToolName,
+                arguments: #"{"skill_ref":"product-skill:chatos-collaboration-messaging"}"#
             )])
         default:
             return .init(role: .assistant, toolCalls: [.init(

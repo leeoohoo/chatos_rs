@@ -26,6 +26,54 @@ struct PetAnimationActivityPolicyTests {
     }
 }
 
+@Suite("Pet quick action sizing")
+@MainActor
+struct PetQuickActionSizingTests {
+    @Test("uses conversation size while quick translation is open")
+    func translationUsesConversationSize() {
+        let size = PetOverlaySizing.quickChatMessageSize(
+            selectedResourceID: nil,
+            isTranslationPresented: true,
+            isNotepadPresented: false,
+            resources: []
+        )
+
+        #expect(size == PetOverlayLayout.quickTranslationSize)
+    }
+
+    @Test("uses a dedicated editor size while quick notepad is open")
+    func notepadUsesEditorSize() {
+        let size = PetOverlaySizing.quickChatMessageSize(
+            selectedResourceID: nil,
+            isTranslationPresented: false,
+            isNotepadPresented: true,
+            resources: []
+        )
+
+        #expect(size == PetOverlayLayout.quickNotepadSize)
+    }
+
+    @Test("reserves launcher rows for quick translation and notepad")
+    func launcherIncludesQuickActionRows() {
+        let resource = PetQuickChatResource(
+            id: "contact:1",
+            sourceID: "1",
+            kind: .contact,
+            title: "Translator",
+            subtitle: nil,
+            conversationID: "conversation"
+        )
+        let size = PetOverlaySizing.quickChatMessageSize(
+            selectedResourceID: nil,
+            isTranslationPresented: false,
+            isNotepadPresented: false,
+            resources: [resource]
+        )
+
+        #expect(size.height == 300)
+    }
+}
+
 @Suite("Pet task inspector placement")
 struct PetTaskInspectorPlacementTests {
     @Test("places the inspector to the left and shifts the conversation when needed")

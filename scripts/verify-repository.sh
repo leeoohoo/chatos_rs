@@ -63,6 +63,7 @@ run_quality() {
   cd "$ROOT_DIR"
   python3 -m unittest discover -s scripts/tests -p "test_code_quality_*.py"
   python3 scripts/check_source_size_policy.py
+  python3 scripts/check_source_size_policy.py --scope owned
   python3 scripts/check_new_code_clones.py --min-lines 25
   python3 scripts/check-agent-tool-plane-boundaries.py
   python3 scripts/check-non-test-unwrap-expect.py

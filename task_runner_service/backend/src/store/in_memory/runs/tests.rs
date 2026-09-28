@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use crate::models::{TaskMcpConfig, TaskScheduleConfig, TaskStatus, TaskToolState};
 
 fn test_store() -> InMemoryStore {
     let (sender, _) = broadcast::channel(16);
@@ -52,6 +53,415 @@ fn queued_run() -> TaskRunRecord {
         chatos_callback_delivery: None,
         created_at: now.clone(),
         updated_at: now,
+    }
+}
+
+fn owned_task(id: &str, owner_user_id: Option<&str>, creator_user_id: &str) -> TaskRecord {
+    TaskRecord {
+        id: id.to_string(),
+        title: id.to_string(),
+        description: None,
+        objective: format!("run {id}"),
+        input_payload: None,
+        status: TaskStatus::Ready,
+        priority: 0,
+        tags: Vec::new(),
+        default_model_config_id: None,
+        memory_thread_id: format!("thread-{id}"),
+        tenant_id: owner_user_id.unwrap_or(creator_user_id).to_string(),
+        subject_id: "subject".to_string(),
+        project_id: None,
+        project_context: None,
+        task_profile: crate::models::TASK_PROFILE_DEFAULT.to_string(),
+        creator_user_id: Some(creator_user_id.to_string()),
+        creator_username: None,
+        creator_display_name: None,
+        owner_user_id: owner_user_id.map(ToOwned::to_owned),
+        owner_username: None,
+        owner_display_name: None,
+        result_summary: None,
+        process_log: None,
+        last_run_id: None,
+        schedule: TaskScheduleConfig::default(),
+        parent_task_id: None,
+        source_run_id: None,
+        source_session_id: None,
+        source_turn_id: None,
+        source_user_message_id: None,
+        remote_connection_id: None,
+        prerequisite_task_ids: Vec::new(),
+        task_tool_state: TaskToolState::default(),
+        plugin_config: Default::default(),
+        plugin_selection_audit: None,
+        mcp_config: TaskMcpConfig::default(),
+        created_at: now_rfc3339(),
+        updated_at: now_rfc3339(),
+        deleted_at: None,
+    }
+}
+
+#[test]
+fn batch_run_lookup_returns_complete_requested_records() {
+    let store = test_store();
+    for (task_id, run_id) in [("task-a", "run-a"), ("task-b", "run-b")] {
+        store.save_task(owned_task(task_id, Some("user-a"), "user-a"));
+        let mut run = queued_run();
+        run.id = run_id.to_string();
+        run.task_id = task_id.to_string();
+        run.status = TaskRunStatus::Failed;
+        run.result_summary = Some(format!("summary-{run_id}"));
+        store.save_run(run).expect("save run");
+    }
+
+    let runs = store.get_runs_by_ids(&[
+        "run-b".to_string(),
+        "missing".to_string(),
+        "run-a".to_string(),
+    ]);
+
+    assert_eq!(runs.len(), 2);
+    let run_b = runs
+        .iter()
+        .find(|run| run.id == "run-b")
+        .expect("run-b returned");
+    assert_eq!(run_b.result_summary.as_deref(), Some("summary-run-b"));
+    assert!(runs.iter().any(|run| run.id == "run-a"));
+}
+
+#[test]
+fn latest_run_for_task_by_statuses_returns_most_recent_matching_run() {
+    let store = test_store();
+    store.save_task(owned_task("task-latest", Some("user-a"), "user-a"));
+    for (id, created_at) in [
+        ("run-older", "2026-09-26T00:00:00Z"),
+        ("run-newer", "2026-09-26T00:01:00Z"),
+    ] {
+        let mut run = queued_run();
+        run.id = id.to_string();
+        run.task_id = "task-latest".to_string();
+        run.status = TaskRunStatus::Succeeded;
+        run.created_at = created_at.to_string();
+        store.save_run(run).expect("save terminal run");
+    }
+
+    let latest = store
+        .latest_run_for_task_by_statuses("task-latest", &[TaskRunStatus::Succeeded])
+        .expect("latest run");
+
+    assert_eq!(latest.id, "run-newer");
+}
+
+#[test]
+fn visible_run_query_uses_task_owner_then_creator_fallback() {
+    let store = test_store();
+    for task in [
+        owned_task("owned", Some("user-a"), "creator-other"),
+        owned_task("creator-fallback", None, "user-a"),
+        owned_task("foreign", Some("user-b"), "user-a"),
+    ] {
+        let task_id = task.id.clone();
+        store.save_task(task);
+        let mut run = queued_run();
+        run.id = format!("run-{task_id}");
+        run.task_id = task_id;
+        store.save_run(run).expect("save run");
+    }
+
+    let visible = store.list_runs_filtered_scoped(&RunListFilters::default(), Some("user-a"));
+
+    assert_eq!(
+        visible
+            .into_iter()
+            .map(|run| run.id)
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([
+            "run-creator-fallback".to_string(),
+            "run-owned".to_string(),
+        ])
+    );
+}
+
+#[test]
+fn visible_run_page_applies_all_filters_before_count_and_pagination() {
+    let store = test_store();
+    for (index, task_id, owner, status, model, summary) in [
+        (
+            1,
+            "visible-older",
+            "user-a",
+            TaskRunStatus::Queued,
+            "model-visible",
+            "needle one",
+        ),
+        (
+            2,
+            "visible-newer",
+            "user-a",
+            TaskRunStatus::Queued,
+            "model-visible",
+            "needle two",
+        ),
+        (
+            3,
+            "foreign",
+            "user-b",
+            TaskRunStatus::Queued,
+            "model-visible",
+            "needle foreign",
+        ),
+        (
+            4,
+            "wrong-status",
+            "user-a",
+            TaskRunStatus::Failed,
+            "model-visible",
+            "needle status",
+        ),
+        (
+            5,
+            "wrong-model",
+            "user-a",
+            TaskRunStatus::Queued,
+            "model-other",
+            "needle model",
+        ),
+        (
+            6,
+            "wrong-keyword",
+            "user-a",
+            TaskRunStatus::Queued,
+            "model-visible",
+            "other",
+        ),
+    ] {
+        store.save_task(owned_task(task_id, Some(owner), owner));
+        let mut run = queued_run();
+        run.id = format!("run-{task_id}");
+        run.task_id = task_id.to_string();
+        run.status = status;
+        run.model_config_id = model.to_string();
+        run.result_summary = Some(summary.to_string());
+        run.created_at = format!("2026-09-26T00:00:0{index}Z");
+        store.save_run(run).expect("save run");
+    }
+
+    let page = store.list_runs_page_scoped(
+        &RunListFilters {
+            status: Some(TaskRunStatus::Queued),
+            model_config_id: Some("model-visible".to_string()),
+            keyword: Some("needle".to_string()),
+            limit: Some(1),
+            offset: Some(1),
+            ..RunListFilters::default()
+        },
+        Some("user-a"),
+    );
+
+    assert_eq!(page.total, 2);
+    assert_eq!(page.limit, 1);
+    assert_eq!(page.offset, 1);
+    assert!(!page.has_more);
+    assert_eq!(page.items[0].id, "run-visible-older");
+
+    let task_page = store.list_runs_page_scoped(
+        &RunListFilters {
+            task_id: Some("visible-newer".to_string()),
+            limit: Some(10),
+            offset: Some(0),
+            ..RunListFilters::default()
+        },
+        Some("user-a"),
+    );
+    assert_eq!(task_page.total, 1);
+    assert_eq!(task_page.items[0].id, "run-visible-newer");
+}
+
+#[test]
+fn run_listing_sort_uses_id_as_the_stable_tie_breaker() {
+    let mut id_b = queued_run();
+    id_b.id = "run-b".to_string();
+    id_b.created_at = "2026-09-26T02:00:00Z".to_string();
+    let mut newer = queued_run();
+    newer.id = "run-newer".to_string();
+    newer.created_at = "2026-09-26T03:00:00Z".to_string();
+    let mut id_a = queued_run();
+    id_a.id = "run-a".to_string();
+    id_a.created_at = "2026-09-26T02:00:00Z".to_string();
+    let mut runs = vec![id_b, newer, id_a];
+
+    sort_runs_for_listing(&mut runs);
+
+    assert_eq!(
+        runs.into_iter().map(|run| run.id).collect::<Vec<_>>(),
+        vec!["run-newer", "run-a", "run-b"]
+    );
+
+    let store = test_store();
+    for id in ["run-d", "run-b", "run-c", "run-a"] {
+        let mut run = queued_run();
+        run.id = id.to_string();
+        run.task_id = format!("task-{id}");
+        run.status = TaskRunStatus::Succeeded;
+        run.created_at = "2026-09-26T04:00:00Z".to_string();
+        store.save_run(run).expect("save tied run");
+    }
+    let first = store.list_runs_page(&RunListFilters {
+        limit: Some(2),
+        offset: Some(0),
+        ..RunListFilters::default()
+    });
+    let second = store.list_runs_page(&RunListFilters {
+        limit: Some(2),
+        offset: Some(2),
+        ..RunListFilters::default()
+    });
+    let page_ids = first
+        .items
+        .into_iter()
+        .chain(second.items)
+        .map(|run| run.id)
+        .collect::<Vec<_>>();
+    assert_eq!(page_ids, vec!["run-a", "run-b", "run-c", "run-d"]);
+}
+
+#[test]
+fn scoped_run_queries_share_filters_and_only_change_the_owner_predicate() {
+    let store = test_store();
+    for (task_id, owner, status, summary) in [
+        (
+            "owned-match",
+            "user-a",
+            TaskRunStatus::Succeeded,
+            "needle owned",
+        ),
+        (
+            "foreign-match",
+            "user-b",
+            TaskRunStatus::Succeeded,
+            "needle foreign",
+        ),
+        (
+            "owned-status",
+            "user-a",
+            TaskRunStatus::Failed,
+            "needle status",
+        ),
+        ("owned-keyword", "user-a", TaskRunStatus::Succeeded, "other"),
+    ] {
+        store.save_task(owned_task(task_id, Some(owner), owner));
+        let mut run = queued_run();
+        run.id = format!("run-{task_id}");
+        run.task_id = task_id.to_string();
+        run.status = status;
+        run.result_summary = Some(summary.to_string());
+        store.save_run(run).expect("save scoped run");
+    }
+    let filters = RunListFilters {
+        status: Some(TaskRunStatus::Succeeded),
+        keyword: Some("needle".to_string()),
+        limit: Some(10),
+        offset: Some(0),
+        ..RunListFilters::default()
+    };
+
+    let admin_page = store.list_runs_page_scoped(&filters, None);
+    let user_page = store.list_runs_page_scoped(&filters, Some("user-a"));
+    assert_eq!(admin_page.total, 2);
+    assert_eq!(user_page.total, 1);
+    assert_eq!(user_page.items[0].id, "run-owned-match");
+
+    let admin_summaries = store.list_run_summaries_filtered_scoped(&filters, None);
+    let user_summaries = store.list_run_summaries_filtered_scoped(&filters, Some("user-a"));
+    assert_eq!(admin_summaries.len(), 2);
+    assert_eq!(user_summaries.len(), 1);
+    assert_eq!(user_summaries[0].id, "run-owned-match");
+}
+
+#[test]
+fn thousands_of_cross_user_runs_keep_totals_isolation_and_page_boundaries() {
+    const RUN_COUNT: usize = 4_096;
+    const PAGE_LIMIT: usize = 17;
+    let store = test_store();
+    let mut expected_admin = Vec::new();
+    let mut expected_user = Vec::new();
+
+    for index in 0..RUN_COUNT {
+        let task_id = format!("bulk-task-{index:04}");
+        let run_id = format!("bulk-run-{index:04}");
+        let owner = format!("user-{}", index % 4);
+        let owner_field = (index % 11 != 0).then_some(owner.as_str());
+        store.save_task(owned_task(&task_id, owner_field, &owner));
+
+        let matches = index % 2 == 0 && index % 3 == 1 && index % 5 == 0;
+        let mut run = queued_run();
+        run.id = run_id.clone();
+        run.task_id = task_id;
+        run.status = if index % 2 == 0 {
+            TaskRunStatus::Succeeded
+        } else {
+            TaskRunStatus::Failed
+        };
+        run.model_config_id = format!("model-{}", index % 3);
+        run.result_summary = Some(if index % 5 == 0 {
+            "needle bulk result".to_string()
+        } else {
+            "other bulk result".to_string()
+        });
+        run.created_at = format!(
+            "2026-09-26T{:02}:{:02}:{:02}Z",
+            index / 3_600,
+            (index / 60) % 60,
+            index % 60
+        );
+        store.save_run(run).expect("save bulk run");
+        if matches {
+            expected_admin.push(run_id.clone());
+            if owner == "user-0" {
+                expected_user.push(run_id);
+            }
+        }
+    }
+    expected_admin.reverse();
+    expected_user.reverse();
+
+    let base_filters = RunListFilters {
+        status: Some(TaskRunStatus::Succeeded),
+        model_config_id: Some("model-1".to_string()),
+        keyword: Some("needle".to_string()),
+        ..RunListFilters::default()
+    };
+    for (owner_scope, expected) in [
+        (None, expected_admin.as_slice()),
+        (Some("user-0"), expected_user.as_slice()),
+    ] {
+        let mut actual = Vec::new();
+        loop {
+            let offset = actual.len();
+            let page = store.list_runs_page_scoped(
+                &RunListFilters {
+                    limit: Some(PAGE_LIMIT),
+                    offset: Some(offset),
+                    ..base_filters.clone()
+                },
+                owner_scope,
+            );
+            assert_eq!(page.total, expected.len());
+            assert_eq!(page.limit, PAGE_LIMIT);
+            assert_eq!(page.offset, offset);
+            assert_eq!(page.has_more, offset + page.items.len() < page.total);
+            actual.extend(page.items.into_iter().map(|run| run.id));
+            if !page.has_more {
+                break;
+            }
+        }
+        assert_eq!(actual, expected);
+        assert_eq!(
+            actual
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            actual.len()
+        );
     }
 }
 

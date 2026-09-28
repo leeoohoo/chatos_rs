@@ -136,6 +136,40 @@ fn failed_run_for_task(task: &TaskRecord, run_id: &str) -> TaskRunRecord {
     }
 }
 
+#[test]
+fn chatos_source_query_filters_include_identifiers_and_active_status() {
+    let filters = chatos_source_task_filters(
+        Some("session-1".to_string()),
+        vec!["message-1".to_string()],
+        vec!["turn-1".to_string()],
+        Some(TaskStatus::Running),
+    );
+
+    assert_eq!(filters.status, Some(TaskStatus::Running));
+    assert_eq!(filters.source_session_id.as_deref(), Some("session-1"));
+    assert_eq!(filters.source_user_message_ids, ["message-1"]);
+    assert_eq!(filters.source_turn_ids, ["turn-1"]);
+    assert_eq!(filters.include_subtasks, Some(false));
+}
+
+#[tokio::test]
+async fn stale_active_task_repair_is_a_pure_decision() {
+    let service = test_service().await;
+    let mut task = create_chatos_task(&service, "pure repair").await;
+    task.status = TaskStatus::Running;
+    task.last_run_id = Some("run-failed".to_string());
+    let run = failed_run_for_task(&task, "run-failed");
+
+    let repaired =
+        stale_active_task_repair(&task, Some(&run), "2026-09-26T00:00:00Z").expect("repair needed");
+
+    assert_eq!(task.status, TaskStatus::Running);
+    assert!(task.result_summary.is_none());
+    assert_eq!(repaired.status, TaskStatus::Failed);
+    assert_eq!(repaired.result_summary.as_deref(), Some("run failed"));
+    assert_eq!(repaired.updated_at, "2026-09-26T00:00:00Z");
+}
+
 #[tokio::test]
 async fn active_message_sources_repair_stale_running_task_from_failed_last_run() {
     let service = test_service().await;

@@ -50,7 +50,15 @@ export default defineConfig({
     emptyOutDir: false,
     sourcemap: false,
     assetsInlineLimit: 4096,
+    chunkSizeWarningLimit: 2200,
     rollupOptions: {
+      onwarn(warning, warn) {
+        if (
+          warning.code === 'INVALID_ANNOTATION'
+          && warning.id?.includes('/node_modules/zod/v4/core/')
+        ) return;
+        warn(warning);
+      },
       output: {
         entryFileNames: 'assets/app.js',
         chunkFileNames: 'assets/[name].js',

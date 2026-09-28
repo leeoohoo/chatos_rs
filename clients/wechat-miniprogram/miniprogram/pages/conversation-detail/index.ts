@@ -9,6 +9,7 @@ import { parseMarkdown } from '../../components/markdown-view/index'
 import { ApiError } from '../../services/api-client'
 import { approvalService } from '../../services/approval-service'
 import { askUserService } from '../../services/ask-user-service'
+import { companionListCache } from '../../services/companion-list-cache'
 import { conversationService } from '../../services/conversation-service'
 import { realtimeClient } from '../../services/realtime-client'
 import { sessionStore } from '../../stores/session-store'
@@ -62,18 +63,47 @@ type DatasetEvent = WechatMiniprogram.TouchEvent
 
 const INTERVENTION_POLL_INTERVAL_MS = 10_000
 
-function messageView(message: ConversationMessage): MessageView {
+function messageView(message: ConversationMessage, previous?: MessageView): MessageView {
   const text = messageText(message.content)
+  const canReuse = previous
+    && !previous.pending
+    && previous.role === message.role
+    && previous.content === message.content
+    && previous.revision === message.revision
+    && previous.sequence_no === message.sequence_no
+    && previous.message_mode === message.message_mode
+    && previous.message_source === message.message_source
+    && previous.task_id === message.task_id
+    && previous.created_at === message.created_at
+  if (canReuse) return previous
   return {
     ...message,
     text,
-    markdownNodes: parseMarkdown(text),
+    markdownNodes: previous?.text === text ? previous.markdownNodes : parseMarkdown(text),
     isUser: message.role === 'user',
     isAssistant: message.role === 'assistant',
     canInspectTask:
       message.role === 'assistant' &&
       message.message_mode === 'task_runner_callback' &&
       Boolean(message.task_id),
+  }
+}
+
+function messageViews(messages: ConversationMessage[], existing: MessageView[]): MessageView[] {
+  const existingById = new Map(existing.map((message) => [message.id, message]))
+  return messages.map((message) => messageView(message, existingById.get(message.id)))
+}
+
+function sameMessageSequence(left: MessageView[], right: MessageView[]): boolean {
+  return left.length === right.length && left.every((message, index) => message === right[index])
+}
+
+function sameData(left: unknown, right: unknown): boolean {
+  if (left === right) return true
+  try {
+    return JSON.stringify(left) === JSON.stringify(right)
+  } catch {
+    return false
   }
 }
 
@@ -294,16 +324,15 @@ Page({
       this.loadedOlder = false
       this.setData({
         conversation,
-        messages: history.items.map(messageView),
+        messages: messageViews(history.items, this.data.messages),
         hasMore: history.has_more,
         loading: false,
-      })
+      }, () => this.scrollToBottom())
       wx.setNavigationBarTitle({ title: conversation.title || '会话' })
       // onLoad starts the intervention poller, including its immediate refresh.
       // Repeating those relay calls here made the cold path issue two identical
       // approval/prompt queries and increased contention on remote devices.
       await this.refreshRuntime()
-      this.scrollToBottom()
     } catch (error) {
       this.setData({ loading: false, error: error instanceof Error ? error.message : '加载会话失败' })
     }
@@ -317,7 +346,7 @@ Page({
       this.nextBefore = history.next_before
       this.loadedOlder = true
       this.setData({
-        messages: dedupeMessages([...history.items.map(messageView), ...this.data.messages]),
+        messages: dedupeMessages([...messageViews(history.items, this.data.messages), ...this.data.messages]),
         hasMore: history.has_more,
         loadingOlder: false,
       })
@@ -333,15 +362,20 @@ Page({
     if (!this.conversationId) return
     try {
       const history = await conversationService.history(this.conversationId)
-      const serverMessages = history.items.map(messageView)
+      const serverMessages = messageViews(history.items, this.data.messages)
       if (!this.loadedOlder) this.nextBefore = history.next_before
-      this.setData({
-        messages: mergeReconciledMessages(this.data.messages, serverMessages),
-        hasMore: this.loadedOlder ? this.data.hasMore : history.has_more,
-        actionError: '',
-      })
+      const messages = mergeReconciledMessages(this.data.messages, serverMessages)
+      const messagesChanged = !sameMessageSequence(this.data.messages, messages)
+      const hasMore = this.loadedOlder ? this.data.hasMore : history.has_more
+      if (messagesChanged || this.data.hasMore !== hasMore || this.data.actionError) {
+        this.setData({
+          ...(messagesChanged ? { messages } : {}),
+          ...(this.data.hasMore !== hasMore ? { hasMore } : {}),
+          ...(this.data.actionError ? { actionError: '' } : {}),
+        })
+      }
       await Promise.all([this.refreshRuntime(), this.refreshPrompts(), this.refreshApprovals()])
-      this.scrollToBottom()
+      if (messagesChanged) this.scrollToBottom()
     } catch (error) {
       if (error instanceof ApiError && error.statusCode === 401) {
         wx.reLaunch({ url: '/pages/bind/index' })
@@ -352,7 +386,8 @@ Page({
   async refreshRuntime() {
     const context = await conversationService.runtimeContext(this.conversationId)
     const turnId = context?.turn_id ?? context?.conversation_turn_id ?? ''
-    this.setData({ activeTurnId: context?.active_in_runtime === true ? turnId : '' })
+    const activeTurnId = context?.active_in_runtime === true ? turnId : ''
+    if (activeTurnId !== this.data.activeTurnId) this.setData({ activeTurnId })
   },
 
   async refreshPrompts(quiet = false) {
@@ -378,16 +413,15 @@ Page({
   async refreshApprovals() {
     if (this.refreshingApprovals) return
     if (!this.deviceId) {
-      this.setData({ approvals: [] })
+      if (this.data.approvals.length) this.setData({ approvals: [] })
       return
     }
     this.refreshingApprovals = true
     try {
       const approvals = await approvalService.list(this.deviceId)
-      this.setData({
-        approvals: approvals.map((approval) =>
-          approvalView(approval, this.resolvingApprovalIds.includes(approval.id))),
-      })
+      const views = approvals.map((approval) =>
+        approvalView(approval, this.resolvingApprovalIds.includes(approval.id)))
+      if (!sameData(this.data.approvals, views)) this.setData({ approvals: views })
     } catch (error) {
       if (error instanceof ApiError && error.statusCode === 401) {
         wx.reLaunch({ url: '/pages/bind/index' })
@@ -495,14 +529,13 @@ Page({
   },
 
   rebuildPromptViews() {
-    this.setData({
-      prompts: this.promptRecords.map((record) => promptView(
-        record,
-        this.promptValues[record.id],
-        this.promptSelections[record.id],
-        this.submittingPromptIds.includes(record.id),
-      )),
-    })
+    const prompts = this.promptRecords.map((record) => promptView(
+      record,
+      this.promptValues[record.id],
+      this.promptSelections[record.id],
+      this.submittingPromptIds.includes(record.id),
+    ))
+    if (!sameData(this.data.prompts, prompts)) this.setData({ prompts })
   },
 
   onInput(event: InputEvent) {
@@ -556,6 +589,7 @@ Page({
         this.adoptOptimisticMessageId(optimistic.id, response.user_message_id)
         this.setData({ activeTurnId: response.turn_id ?? '' })
       }
+      if (this.deviceId) companionListCache.invalidateResources(this.deviceId)
       this.schedulePostSendReconciliation()
     } catch (error) {
       this.setData({
@@ -667,10 +701,11 @@ Page({
   },
 
   adoptOptimisticMessageId(temporaryId: string, authoritativeId?: string) {
-    if (!authoritativeId) return
     this.setData({
       messages: this.data.messages.map((message) =>
-        message.id === temporaryId ? { ...message, id: authoritativeId } : message,
+        message.id === temporaryId
+          ? { ...message, id: authoritativeId || temporaryId, pending: false }
+          : message,
       ),
     })
   },
@@ -684,7 +719,7 @@ Page({
 
   scrollToBottom() {
     this.setData({ scrollTarget: '' }, () => {
-      this.setData({ scrollTarget: 'timeline-bottom' })
+      wx.nextTick(() => this.setData({ scrollTarget: 'timeline-bottom' }))
     })
   },
 })

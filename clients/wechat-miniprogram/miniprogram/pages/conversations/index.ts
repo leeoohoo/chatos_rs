@@ -2,6 +2,7 @@ import type { CompanionResource, DeviceSummary } from '../../models/api'
 import { companionListCache } from '../../services/companion-list-cache'
 import { conversationService } from '../../services/conversation-service'
 import { deviceService } from '../../services/device-service'
+import { finishTabSwitch } from '../../services/tab-navigation'
 import { deviceSelectionStore } from '../../stores/device-selection-store'
 import { sessionStore } from '../../stores/session-store'
 import { relativeTime } from '../../utils/presentation'
@@ -23,6 +24,15 @@ function resourceViews(rawResources: CompanionResource[]): ResourceView[] {
   }))
 }
 
+function sameDevice(left: DeviceSummary | undefined, right: DeviceSummary | undefined): boolean {
+  if (!left || !right) return left === right
+  return left.id === right.id
+    && left.display_name === right.display_name
+    && left.is_online === right.is_online
+    && left.status === right.status
+    && left.updated_at === right.updated_at
+}
+
 Page({
   data: {
     resources: [] as ResourceView[],
@@ -34,16 +44,30 @@ Page({
 
   pageVisible: false,
   requestInFlight: false,
+  renderedResources: undefined as CompanionResource[] | undefined,
 
   onShow() {
     this.pageVisible = true
-    const cachedDevice = deviceSelectionStore.snapshot()
+    finishTabSwitch(this, 1)
+    if (!sessionStore.hasToken()) {
+      void this.activate()
+      return
+    }
+    const cachedDevice = deviceSelectionStore.staleSnapshot()
     if (cachedDevice) {
       const cachedResources = companionListCache.peekResources(cachedDevice.id)
-      this.setData({
-        device: cachedDevice,
-        ...(cachedResources ? { resources: resourceViews(cachedResources), loading: false } : {}),
-      })
+      const deviceChanged = !sameDevice(this.data.device, cachedDevice)
+      const resourcesChanged = Boolean(cachedResources && cachedResources !== this.renderedResources)
+      if (deviceChanged || resourcesChanged || (cachedResources && this.data.loading)) {
+        if (cachedResources) this.renderedResources = cachedResources
+        else if (this.data.device?.id !== cachedDevice.id) this.renderedResources = undefined
+        this.setData({
+          ...(deviceChanged ? { device: cachedDevice } : {}),
+          ...(resourcesChanged ? { resources: resourceViews(cachedResources!) } : {}),
+          ...(deviceChanged && !cachedResources ? { resources: [], loading: true } : {}),
+          ...(cachedResources && this.data.loading ? { loading: false } : {}),
+        })
+      }
     }
     void this.activate()
   },
@@ -83,28 +107,39 @@ Page({
   async loadResources(force = false) {
     if (this.requestInFlight) return
     this.requestInFlight = true
-    this.setData({ loading: this.data.resources.length === 0, error: '' })
+    const loading = this.data.resources.length === 0
+    if (this.data.loading !== loading || this.data.error) this.setData({ loading, error: '' })
     try {
       const cachedDevice = deviceSelectionStore.snapshot()
       const device = cachedDevice ?? await this.selectedDevice()
       const refreshedDevice = cachedDevice ? this.selectedDevice().catch(() => undefined) : undefined
       if (!device) {
+        this.renderedResources = undefined
         this.setData({ resources: [], device: undefined, loading: false })
         return
       }
       if (!device.is_online) {
+        this.renderedResources = undefined
         this.setData({ resources: [], device, loading: false, error: '所选电脑当前离线' })
         return
       }
       const rawResources = await companionListCache.resources(device.id, force)
       if (!this.pageVisible) return
-      const resources = resourceViews(rawResources)
-      this.setData({ resources, device, loading: false })
+      const resourcesChanged = rawResources !== this.renderedResources
+      if (resourcesChanged) this.renderedResources = rawResources
+      if (resourcesChanged || !sameDevice(this.data.device, device) || this.data.loading || this.data.error) {
+        this.setData({
+          ...(resourcesChanged ? { resources: resourceViews(rawResources) } : {}),
+          ...(!sameDevice(this.data.device, device) ? { device } : {}),
+          ...(this.data.loading ? { loading: false } : {}),
+          ...(this.data.error ? { error: '' } : {}),
+        })
+      }
       if (refreshedDevice) {
         void refreshedDevice.then((latest) => {
           if (!this.pageVisible || !latest) return
           if (latest.id !== device.id) void this.loadResources(true)
-          else this.setData({ device: latest })
+          else if (!sameDevice(this.data.device, latest)) this.setData({ device: latest })
         })
       }
     } catch (error) {

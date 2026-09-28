@@ -5,6 +5,7 @@ using ChatOS.Api.Http;
 using ChatOS.Connector.AgentTeams;
 using ChatOS.Connector.Persistence;
 using ChatOS.Core.Domain;
+using Microsoft.Data.Sqlite;
 
 namespace ChatOS.Connector.Tests;
 
@@ -23,6 +24,9 @@ public sealed class AgentTeamSchedulerTests : IAsyncLifetime
 
     public Task DisposeAsync()
     {
+        // A disposed SQLite connection may remain pooled briefly on Windows and keep
+        // state.db open. Clear the pool before removing this test's temporary files.
+        SqliteConnection.ClearAllPools();
         if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true);
         return Task.CompletedTask;
     }

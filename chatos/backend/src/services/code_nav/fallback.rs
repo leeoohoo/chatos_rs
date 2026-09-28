@@ -456,7 +456,7 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         fs::write(&path, content).expect("write temp file");
-        path
+        fs::canonicalize(path).expect("canonical temp file")
     }
 
     #[test]

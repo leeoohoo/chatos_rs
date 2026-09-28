@@ -24,7 +24,7 @@ const initialRegistration: RegistrationForm = { email: '', displayName: '', invi
 const transitionText = '想要做好一件事，要学会让自己慢下来。';
 
 function buildInitialHeroPath() {
-  return 'M .08 0 L .31 0 L .31 .58 C .31 .78 .39 .87 .5 .87 C .61 .87 .69 .78 .69 .58 L .69 0 L .92 0 L .92 .58 C .92 .86 .74 1 .5 1 C .26 1 .08 .86 .08 .58 L .08 0 Z';
+  return 'M .5 0 L .5 0 C .78 0 .95 .18 .95 .5 C .95 .82 .78 1 .5 1 L .5 1 C .22 1 .05 .82 .05 .5 C .05 .18 .22 0 .5 0 Z M .5 .22 C .35 .22 .26 .32 .26 .5 C .26 .68 .35 .78 .5 .78 C .65 .78 .74 .68 .74 .5 C .74 .32 .65 .22 .5 .22 Z';
 }
 
 const capabilities = [
@@ -80,7 +80,7 @@ function CreationStudioPreview() {
   return <div className="client-mock compact-mock creation-mock" aria-label="叽咕狸客户端 AI 创作工作台示意图">
     <MockWindowBar title="叽咕狸 · AI 创作" />
     <div className="mock-studio-head"><b>✦ AI 创作</b><span>图片</span><span>视频</span><span className="active">剧情模式</span><span>记录</span></div>
-    <div className="mock-studio-body"><aside><small>剧情时间线</small><b>01　清晨的工作室</b><b className="active">02　灵感变成画面</b><b>03　狐狸进入镜头</b><b>04　团队开始协作</b><b>05　交付完成</b><div className="studio-count"><span>5 个分段</span><span>总时长 00:28</span></div><button>＋ 添加分段</button></aside><div className="mock-frame"><div className="frame-toolbar"><span>第二段 · 预览</span><span>16:9　1080P　5 秒</span></div><div className="frame-picture"><span>JIGULI STORY　/　SCENE 02</span><strong>让想法<br />开始流动</strong><i>▶</i><small>首帧</small></div><div className="frame-status"><span>首帧已确认</span><span>尾帧已确认</span><span>运镜 · 缓慢推进</span><b>生成本段视频 →</b></div><div className="frame-progress"><div><span>生成队列</span><b>场景 02 正在渲染</b></div><strong>68%</strong><i><em /></i></div></div></div>
+      <div className="mock-studio-body"><aside><small>剧情时间线</small><b>01　清晨的工作室</b><b className="active">02　灵感变成画面</b><b>03　狐狸进入镜头</b><b>04　团队开始协作</b><b>05　交付完成</b><div className="studio-count"><span>5 个分段</span><span>总时长 00:28</span></div><button>＋ 添加分段</button></aside><div className="mock-frame"><div className="frame-toolbar"><span>第二段 · 预览</span><span>16:9　1080P　5 秒</span></div><div className="frame-picture"><span>CHATTERFOX STORY　/　SCENE 02</span><strong>让想法<br />开始流动</strong><i>▶</i><small>首帧</small></div><div className="frame-status"><span>首帧已确认</span><span>尾帧已确认</span><span>运镜 · 缓慢推进</span><b>生成本段视频 →</b></div><div className="frame-progress"><div><span>生成队列</span><b>场景 02 正在渲染</b></div><strong>68%</strong><i><em /></i></div></div></div>
   </div>;
 }
 
@@ -130,30 +130,39 @@ function App() {
       const amount = clamp01((value - from) / (to - from));
       return amount * amount * (3 - 2 * amount);
     };
-    const uPathValues = [
-      .08, 0, .31, 0, .31, .58,
-      .31, .78, .39, .87, .5, .87,
-      .61, .87, .69, .78, .69, .58,
-      .69, 0, .92, 0, .92, .58,
-      .92, .86, .74, 1, .5, 1,
-      .26, 1, .08, .86, .08, .58,
-      .08, 0,
+    const oOuterPathValues = [
+      .5, 0, .5, 0,
+      .78, 0, .95, .18, .95, .5,
+      .95, .82, .78, 1, .5, 1,
+      .5, 1,
+      .22, 1, .05, .82, .05, .5,
+      .05, .18, .22, 0, .5, 0,
     ];
-    const capsulePathValues = [
-      .06, 0, .2, 0, .36, 0,
-      .4, 0, .45, 0, .5, 0,
-      .55, 0, .6, 0, .64, 0,
-      .8, 0, .94, 0, 1, .5,
-      1, .82, .76, 1, .5, 1,
-      .24, 1, 0, .82, 0, .5,
-      .06, 0,
+    const capsuleOuterPathValues = [
+      .24, 0, .76, 0,
+      .9, 0, 1, .2, 1, .5,
+      1, .8, .9, 1, .76, 1,
+      .24, 1,
+      .1, 1, 0, .8, 0, .5,
+      0, .2, .1, 0, .24, 0,
+    ];
+    const oInnerPathValues = [
+      .5, .22,
+      .35, .22, .26, .32, .26, .5,
+      .26, .68, .35, .78, .5, .78,
+      .65, .78, .74, .68, .74, .5,
+      .74, .32, .65, .22, .5, .22,
     ];
     const buildMorphPath = (phase: number) => {
-      const value = (index: number) => {
-        const result = uPathValues[index] + (capsulePathValues[index] - uPathValues[index]) * phase;
+      const outerValue = (index: number) => {
+        const result = oOuterPathValues[index] + (capsuleOuterPathValues[index] - oOuterPathValues[index]) * phase;
         return result.toFixed(4);
       };
-      return `M ${value(0)} ${value(1)} L ${value(2)} ${value(3)} L ${value(4)} ${value(5)} C ${value(6)} ${value(7)} ${value(8)} ${value(9)} ${value(10)} ${value(11)} C ${value(12)} ${value(13)} ${value(14)} ${value(15)} ${value(16)} ${value(17)} L ${value(18)} ${value(19)} L ${value(20)} ${value(21)} L ${value(22)} ${value(23)} C ${value(24)} ${value(25)} ${value(26)} ${value(27)} ${value(28)} ${value(29)} C ${value(30)} ${value(31)} ${value(32)} ${value(33)} ${value(34)} ${value(35)} L ${value(36)} ${value(37)} Z`;
+      const innerValue = (index: number) => {
+        const result = oInnerPathValues[index] + (.5 - oInnerPathValues[index]) * phase;
+        return result.toFixed(4);
+      };
+      return `M ${outerValue(0)} ${outerValue(1)} L ${outerValue(2)} ${outerValue(3)} C ${outerValue(4)} ${outerValue(5)} ${outerValue(6)} ${outerValue(7)} ${outerValue(8)} ${outerValue(9)} C ${outerValue(10)} ${outerValue(11)} ${outerValue(12)} ${outerValue(13)} ${outerValue(14)} ${outerValue(15)} L ${outerValue(16)} ${outerValue(17)} C ${outerValue(18)} ${outerValue(19)} ${outerValue(20)} ${outerValue(21)} ${outerValue(22)} ${outerValue(23)} C ${outerValue(24)} ${outerValue(25)} ${outerValue(26)} ${outerValue(27)} ${outerValue(28)} ${outerValue(29)} Z M ${innerValue(0)} ${innerValue(1)} C ${innerValue(2)} ${innerValue(3)} ${innerValue(4)} ${innerValue(5)} ${innerValue(6)} ${innerValue(7)} C ${innerValue(8)} ${innerValue(9)} ${innerValue(10)} ${innerValue(11)} ${innerValue(12)} ${innerValue(13)} C ${innerValue(14)} ${innerValue(15)} ${innerValue(16)} ${innerValue(17)} ${innerValue(18)} ${innerValue(19)} C ${innerValue(20)} ${innerValue(21)} ${innerValue(22)} ${innerValue(23)} ${innerValue(24)} ${innerValue(25)} Z`;
     };
     const updateHero = () => {
       animationFrame = 0;
@@ -162,11 +171,26 @@ function App() {
       const progress = Math.min(1, Math.max(0, -rect.top / scrollRange));
       const compact = window.innerWidth <= 820;
       const brandInset = compact ? 28 : 72;
-      const wordmarkSize = compact
-        ? Math.max(70, Math.min(138, (window.innerWidth - 42) / 3.35))
-        : Math.max(132, Math.min(390, (window.innerWidth - brandInset) / 3.05));
-      const uWidth = wordmarkSize * (compact ? 0.72 : 0.76);
-      const uHeight = wordmarkSize * 0.98;
+      let wordmarkSize = compact ? 120 : 300;
+      hero.style.setProperty('--hero-word-size', `${wordmarkSize}px`);
+      const leftWord = hero.querySelector<HTMLElement>('.hero-wordmark > span:first-child');
+      const rightWord = hero.querySelector<HTMLElement>('.hero-wordmark > span:last-child');
+      let leftWordWidth = leftWord?.getBoundingClientRect().width ?? wordmarkSize * 4.8;
+      let rightWordWidth = rightWord?.getBoundingClientRect().width ?? wordmarkSize * .65;
+      let oWidth = wordmarkSize * (compact ? .78 : .82);
+      let wordmarkGap = Math.max(8, Math.min(22, wordmarkSize * .045));
+      const availableWordWidth = window.innerWidth - brandInset;
+      const measuredWordWidth = leftWordWidth + rightWordWidth + oWidth + wordmarkGap * 2;
+      if (measuredWordWidth > availableWordWidth) {
+        wordmarkSize *= availableWordWidth / measuredWordWidth;
+        hero.style.setProperty('--hero-word-size', `${wordmarkSize}px`);
+        leftWordWidth = leftWord?.getBoundingClientRect().width ?? wordmarkSize * 4.8;
+        rightWordWidth = rightWord?.getBoundingClientRect().width ?? wordmarkSize * .65;
+        oWidth = wordmarkSize * (compact ? .78 : .82);
+        wordmarkGap = Math.max(8, Math.min(22, wordmarkSize * .045));
+      }
+      const oHeight = wordmarkSize * (compact ? .8 : .84);
+      const initialWordShift = (leftWordWidth - rightWordWidth) / 2;
       const capsuleWidth = compact ? window.innerWidth * 0.9 : Math.min(window.innerWidth * 0.62, 1400);
       const capsuleHeight = compact ? Math.min(window.innerHeight * 0.7, 600) : Math.max(340, Math.min(window.innerHeight * 0.46, 400));
       const capsuleRadius = compact ? 90 : capsuleHeight / 2;
@@ -176,13 +200,15 @@ function App() {
       let height: number;
       let radius: number;
       let shift: number;
+      let yShift: number;
       let clipPath: string;
       if (progress <= 0.24) {
         const phase = smoothstep(0, 0.24, progress);
-        width = uWidth + (capsuleWidth - uWidth) * phase;
-        height = uHeight + (capsuleHeight - uHeight) * phase;
+        width = oWidth + (capsuleWidth - oWidth) * phase;
+        height = oHeight + (capsuleHeight - oHeight) * phase;
         radius = capsuleRadius * phase;
-        shift = 0;
+        shift = initialWordShift * (1 - phase);
+        yShift = -wordmarkSize * (compact ? .16 : .20) * (1 - phase);
         if (heroClipPathRef.current) heroClipPathRef.current.setAttribute('d', buildMorphPath(phase));
         clipPath = 'url(#heroMorphClip)';
       } else if (progress <= 0.58) {
@@ -192,6 +218,7 @@ function App() {
         height = capsuleHeight + (window.innerHeight - capsuleHeight) * eased;
         radius = capsuleRadius * (1 - eased);
         shift = 0;
+        yShift = 0;
         clipPath = `inset(0 round ${radius}px)`;
       } else {
         const phase = (progress - 0.58) / 0.42;
@@ -200,19 +227,19 @@ function App() {
         height = window.innerHeight - (window.innerHeight - finalHeight) * eased;
         radius = 190 * eased;
         shift = (compact ? 0 : window.innerWidth * 0.28) * eased;
+        yShift = 0;
         clipPath = `inset(0 round ${radius}px)`;
       }
       const leftEdge = window.innerWidth / 2 + shift - width / 2;
       const rightEdge = window.innerWidth / 2 + shift + width / 2;
-      const wordmarkGap = Math.max(10, Math.min(24, wordmarkSize * 0.055));
       hero.style.setProperty('--hero-width', `${width}px`);
       hero.style.setProperty('--hero-height', `${height}px`);
       hero.style.setProperty('--hero-radius', `${radius}px`);
       hero.style.setProperty('--hero-clip', clipPath);
       hero.style.setProperty('--hero-shift', `${shift}px`);
+      hero.style.setProperty('--hero-y-shift', `${yShift}px`);
       hero.style.setProperty('--hero-left-edge', `${leftEdge}px`);
       hero.style.setProperty('--hero-right-edge', `${rightEdge}px`);
-      hero.style.setProperty('--hero-word-size', `${wordmarkSize}px`);
       hero.style.setProperty('--hero-word-gap', `${wordmarkGap}px`);
       const copyOpacity = smoothstep(0.21, 0.3, progress) * (1 - smoothstep(0.43, 0.56, progress));
       hero.style.setProperty('--hero-copy-opacity', `${copyOpacity}`);
@@ -342,18 +369,18 @@ function App() {
   return (
     <main className="jiguli-home" id="top">
       <header className="jiguli-header">
-        <a className="jiguli-brand" href="#top" aria-label="叽咕狸首页"><BrandMark /><span className="brand-word"><b>叽咕狸</b><small>JIGULI</small></span></a>
+        <a className="jiguli-brand" href="#top" aria-label="叽咕狸首页"><BrandMark /><span className="brand-word"><b>叽咕狸</b><small>CHATTERFOX</small></span></a>
         <nav className="jiguli-nav" aria-label="主导航"><a href="#capability">产品原则</a><a href="#scene">使用场景</a><a href="#download">客户端下载</a><a href="#register">开始使用</a></nav>
         <div className="header-actions"><a className="header-pill dark" href={manifest.app_url}>进入应用</a><a className="header-pill" href="#register"><span>+</span> 加入测试</a></div>
       </header>
 
       <section className="jiguli-hero" ref={heroRef}>
         <svg className="hero-clip-defs" aria-hidden="true" focusable="false">
-          <defs><clipPath id="heroMorphClip" clipPathUnits="objectBoundingBox"><path ref={heroClipPathRef} d={buildInitialHeroPath()} /></clipPath></defs>
+          <defs><clipPath id="heroMorphClip" clipPathUnits="objectBoundingBox"><path ref={heroClipPathRef} d={buildInitialHeroPath()} clipRule="evenodd" /></clipPath></defs>
         </svg>
         <div className="hero-sticky">
           <div className="hero-index">TOOLS FOR REAL WORK · 001</div>
-          <div className="hero-wordmark" aria-hidden="true"><span>JIG</span><span className="wordmark-u">U</span><span>LI</span></div>
+          <div className="hero-wordmark" aria-hidden="true"><span className="wordmark-left">CHA<span className="wordmark-twins"><span className="twin-bubble twin-bubble-left">⌁　ᚷ　✦</span><span className="twin-bubble twin-bubble-right">⟡　∴　⌬</span><span className="wordmark-twin wordmark-twin-left">T</span><span className="wordmark-twin wordmark-twin-right">T</span></span><span className="wordmark-rest">ER</span><span className="wordmark-fox-f">F</span></span><span className="wordmark-o">O</span><span>X</span></div>
           <div className="hero-capsule">
             <div className="hero-video-reel" aria-label="叽咕狸工作场景视频">
               {heroVideos.map((video, index) => <video key={video.src} className={index === activeVideo ? 'active' : ''} src={video.src} poster={video.poster} autoPlay muted loop playsInline preload={index === 0 ? 'auto' : 'metadata'} />)}
@@ -381,7 +408,7 @@ function App() {
       <section className="scene-section" id="scene" ref={sceneRef}>
         <div className="scene-sticky">
           <div className="platform-showcase">
-            <header className="platform-heading"><span>02　JIGULI DESKTOP</span><h2>Inside Jiguli</h2><p>不是把功能堆在一起，<br />而是让每一步自然接上。</p></header>
+            <header className="platform-heading"><span>02　CHATTERFOX DESKTOP</span><h2>Inside Chatterfox</h2><p>不是把功能堆在一起，<br />而是让每一步自然接上。</p></header>
             <div className="platform-list">
               <article className="platform-item project-item"><i>✦</i><div><h3>项目工作台</h3><p>文件、对话、终端与 Git，围绕同一个项目展开。</p></div></article>
               <article className="platform-item creation-item"><i>♥</i><div><h3>AI 创作</h3><p>图片、视频与剧情分段，在一处连续完成。</p></div></article>
@@ -410,7 +437,7 @@ function App() {
       </section>
 
       <section className="access-section" id="download">
-        <div className="access-copy"><span className="access-label">JIGULI DESKTOP APP</span><h2>把顺手的工具，<br />装进你的电脑。</h2><p>项目、对话、文件、Git、终端、Agent 协作与 AI 创作，不是功能清单，而是一组为真实工作认真打磨的桌面工具。</p><div className="access-points"><span><Laptop size={18} /> 原生桌面体验，打开就能使用</span><span><Workflow size={18} /> 项目、消息与任务各归其位</span><span><Sparkles size={18} /> 创作与协作过程随时看得见</span></div></div>
+        <div className="access-copy"><span className="access-label">CHATTERFOX DESKTOP APP</span><h2>把顺手的工具，<br />装进你的电脑。</h2><p>项目、对话、文件、Git、终端、Agent 协作与 AI 创作，不是功能清单，而是一组为真实工作认真打磨的桌面工具。</p><div className="access-points"><span><Laptop size={18} /> 原生桌面体验，打开就能使用</span><span><Workflow size={18} /> 项目、消息与任务各归其位</span><span><Sparkles size={18} /> 创作与协作过程随时看得见</span></div></div>
         <div className="download-panel"><div className="download-title"><span className="platform-icon"><MonitorDown size={26} /></span><div><small>DESKTOP APP</small><strong>Windows 客户端</strong><em>Windows 10 / 11 · 64 位</em></div></div>
           {windowsArtifact ? <><a className="j-button primary wide" href={windowsArtifact.download_url}><Download size={18} /> 下载 {downloads?.release?.version}</a><div className="release-meta"><span>{formatBytes(windowsArtifact.size_bytes)}</span><span>SHA-256 {windowsArtifact.sha256.slice(0, 12)}…</span></div></> : <><button className="j-button disabled wide" type="button" disabled><Download size={18} /> {downloads?.message ?? '正在读取最新版本'}</button><div className="release-meta"><span>Windows 版本即将开放下载</span></div></>}
           <ol className="install-list"><li><span>1</span>下载并安装桌面客户端</li><li><span>2</span>登录叽咕狸账号</li><li><span>3</span>创建或打开本机项目</li></ol><p className="coming-soon">macOS 原生客户端正在持续测试中</p>
@@ -433,7 +460,7 @@ function App() {
 
       <section className="faq-section-new"><div className="editorial-heading"><div><span>04</span><small>FAQ</small></div><h2>开始之前，<br />你可能还想知道。</h2></div><div className="faq-list-new">{faqs.map((item, index) => <details key={item.question}><summary><span>0{index + 1}</span>{item.question}<ChevronRight size={20} /></summary><p>{item.answer}</p></details>)}</div></section>
 
-      <footer className="jiguli-footer"><div className="footer-main"><div className="footer-name"><PetSprite className="footer-pet" /><h2>叽咕狸</h2><span>JIGULI</span></div><p>把每一个工具做好，<br />陪你把每一件事做好。</p><a className="j-button light" href="#register">开始使用 <ArrowRight size={17} /></a></div><div className="footer-bottom"><span>© 2025–2026 叽咕狸</span><nav><a href="#capability">产品原则</a><a href="#download">客户端下载</a><a href="#register">注册</a><a href={manifest.app_url}>登录</a><a href="/privacy/browser-bridge">隐私政策</a></nav><a href="#top">BACK TO TOP ↑</a></div></footer>
+      <footer className="jiguli-footer"><div className="footer-main"><div className="footer-name"><PetSprite className="footer-pet" /><h2>叽咕狸</h2><span>CHATTERFOX</span></div><p>把每一个工具做好，<br />陪你把每一件事做好。</p><a className="j-button light" href="#register">开始使用 <ArrowRight size={17} /></a></div><div className="footer-bottom"><span>© 2025–2026 叽咕狸</span><nav><a href="#capability">产品原则</a><a href="#download">客户端下载</a><a href="#register">注册</a><a href={manifest.app_url}>登录</a><a href="/privacy/browser-bridge">隐私政策</a></nav><a href="#top">BACK TO TOP ↑</a></div></footer>
     </main>
   );
 }

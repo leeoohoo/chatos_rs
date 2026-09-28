@@ -107,7 +107,7 @@ extension ConversationSessionViewModel {
         attachmentError = messages.isEmpty ? nil : messages.joined(separator: "；")
     }
 
-    nonisolated private static func loadAttachmentFiles(
+    nonisolated static func loadAttachmentFiles(
         _ urls: [URL]
     ) -> (attachments: [ConversationAttachmentDraft], errors: [String]) {
         var attachments: [ConversationAttachmentDraft] = []
@@ -148,7 +148,7 @@ extension ConversationSessionViewModel {
         return .file
     }
 
-    private static func pastedName(prefix: String, extension fileExtension: String) -> String {
+    static func pastedName(prefix: String, extension fileExtension: String) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
         return "\(prefix) \(formatter.string(from: Date())).\(fileExtension)"

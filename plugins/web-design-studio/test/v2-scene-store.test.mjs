@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { promises as fs } from 'node:fs';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -37,6 +38,56 @@ test('v2 scene store persists atomic transactions with monotonic revisions', asy
     assert.equal(record.document.revision, 2);
     assert.equal(record.past.length, 1);
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('scene commits preserve fsync and atomic rename recovery semantics', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-atomic-commit-'));
+  const store = new SceneDocumentStore(root);
+  const open = fs.open;
+  const rename = fs.rename;
+  try {
+    const created = await store.create(nestedWebsite());
+    const events = [];
+    fs.open = async (target, ...argumentsValue) => {
+      const handle = await open.call(fs, target, ...argumentsValue);
+      const resolved = String(target);
+      if (!resolved.startsWith(root)) return handle;
+      return new Proxy(handle, {
+        get(source, property) {
+          if (property === 'sync') {
+            return async () => {
+              events.push(resolved === root ? 'directory-fsync' : 'temporary-file-fsync');
+              return source.sync();
+            };
+          }
+          const value = Reflect.get(source, property, source);
+          return typeof value === 'function' ? value.bind(source) : value;
+        }
+      });
+    };
+    fs.rename = async (temporary, destination) => {
+      events.push('rename');
+      return rename.call(fs, temporary, destination);
+    };
+
+    const applied = await store.apply(created.documentId, headlineTransaction(1, 'Atomic commit', 'transaction-atomic-commit'));
+    assert.deepEqual(events, ['temporary-file-fsync', 'rename', 'directory-fsync']);
+
+    fs.rename = async () => {
+      throw Object.assign(new Error('injected rename failure'), { code: 'EIO' });
+    };
+    await assert.rejects(
+      () => store.apply(applied.document.documentId, headlineTransaction(2, 'Must not commit', 'transaction-atomic-failure')),
+      /injected rename failure/
+    );
+    assert.equal((await store.read(created.documentId)).revision, 2);
+    assert.equal((await store.history(created.documentId)).nextUndoTransactionId, 'transaction-atomic-commit');
+    assert.equal((await readdir(root)).some((file) => file.endsWith('.tmp')), false);
+  } finally {
+    fs.open = open;
+    fs.rename = rename;
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -79,7 +130,7 @@ test('a new transaction after undo clears the redo branch', async () => {
   }
 });
 
-test('the directory lock allows only one concurrent writer at the same revision', async () => {
+test('the file-scoped lock allows only one concurrent writer for the same scene', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-concurrency-'));
   const store = new SceneDocumentStore(root);
   try {
@@ -92,6 +143,63 @@ test('the directory lock allows only one concurrent writer at the same revision'
     const rejection = attempts.find((attempt) => attempt.status === 'rejected');
     assert.ok(rejection.reason instanceof SceneRevisionConflictError);
     assert.equal((await store.read(created.documentId)).revision, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('file-scoped locks allow concurrent writes to different scene documents', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-cross-document-concurrency-'));
+  const store = new SceneDocumentStore(root);
+  try {
+    const firstSource = nestedWebsite();
+    firstSource.documentId = 'scene-concurrent-first';
+    const secondSource = nestedWebsite();
+    secondSource.documentId = 'scene-concurrent-second';
+    const first = await store.create(firstSource);
+    const second = await store.create(secondSource);
+
+    const originalWithFileLock = store.files.withFileLock.bind(store.files);
+    let activeCriticalSections = 0;
+    let maximumActiveCriticalSections = 0;
+    store.files.withFileLock = async (fileName, task) => {
+      return originalWithFileLock(fileName, async () => {
+        activeCriticalSections += 1;
+        maximumActiveCriticalSections = Math.max(maximumActiveCriticalSections, activeCriticalSections);
+        try {
+          for (let turn = 0; turn < 100 && maximumActiveCriticalSections < 2; turn += 1) {
+            await new Promise((resolve) => setImmediate(resolve));
+          }
+          return await task();
+        } finally {
+          activeCriticalSections -= 1;
+        }
+      });
+    };
+
+    const [firstApplied, secondApplied] = await Promise.all([
+      store.apply(first.documentId, headlineTransaction(first.revision, 'First document write', 'transaction-first-document')),
+      store.apply(second.documentId, headlineTransaction(second.revision, 'Second document write', 'transaction-second-document'))
+    ]);
+
+    assert.equal(maximumActiveCriticalSections, 2);
+    assert.equal(firstApplied.document.revision, 2);
+    assert.equal(secondApplied.document.revision, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('file-scoped locks reject unsafe file names before entering the critical section', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-file-lock-name-'));
+  const store = new SceneDocumentStore(root);
+  let entered = false;
+  try {
+    await assert.rejects(
+      () => store.files.withFileLock('../outside.json', async () => { entered = true; }),
+      /file name is invalid/
+    );
+    assert.equal(entered, false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -137,6 +245,50 @@ test('history uses checksummed compressed snapshots and enforces count and byte 
   }
 });
 
+test('common paths skip unused snapshot payloads while explicit history audit checks all snapshots', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-history-audit-'));
+  const store = new SceneDocumentStore(root);
+  try {
+    let document = await store.create(nestedWebsite());
+    document = (await store.apply(document.documentId, headlineTransaction(document.revision, 'First version', 'transaction-audit-first'))).document;
+    document = (await store.apply(document.documentId, headlineTransaction(document.revision, 'Second version', 'transaction-audit-second'))).document;
+
+    const files = await readdir(root);
+    const file = path.join(root, files.find((candidate) => candidate.endsWith('.json')));
+    const record = JSON.parse(await readFile(file, 'utf8'));
+    record.past[0].before.data = 'corrupted-unused-snapshot';
+    await writeFile(file, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+
+    assert.equal((await store.read(document.documentId)).revision, document.revision);
+    assert.equal((await store.history(document.documentId)).undoCount, 2);
+    await assert.rejects(() => store.auditHistory(document.documentId), /cannot be decompressed/);
+    const undone = await store.undo(document.documentId, document.revision);
+    assert.equal(indexSceneDocument(undone).get('text-hero-heading').node.content, 'First version');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('undo still deeply validates the exact snapshot it restores', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-target-snapshot-'));
+  const store = new SceneDocumentStore(root);
+  try {
+    let document = await store.create(nestedWebsite());
+    document = (await store.apply(document.documentId, headlineTransaction(document.revision, 'Changed version', 'transaction-target-snapshot'))).document;
+
+    const files = await readdir(root);
+    const file = path.join(root, files.find((candidate) => candidate.endsWith('.json')));
+    const record = JSON.parse(await readFile(file, 'utf8'));
+    record.past.at(-1).before.sha256 = '0'.repeat(64);
+    await writeFile(file, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+
+    assert.equal((await store.read(document.documentId)).revision, document.revision);
+    await assert.rejects(() => store.undo(document.documentId, document.revision), /checksum mismatch/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('history count trimming keeps the newest exact undo chain', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-history-limit-'));
   const store = new SceneDocumentStore(root, 2);
@@ -156,6 +308,47 @@ test('history count trimming keeps the newest exact undo chain', async () => {
     document = await store.undo(document.documentId, document.revision);
     assert.equal(indexSceneDocument(document).get('text-hero-heading').node.content, 'Version 1');
     await assert.rejects(() => store.undo(document.documentId, document.revision), /nothing to undo/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('history byte trimming measures each transaction and summary at most once', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-scene-history-byte-cache-'));
+  try {
+    const seedStore = new SceneDocumentStore(root);
+    let document = await seedStore.create(nestedWebsite());
+    for (let index = 0; index < 8; index += 1) {
+      const content = Array.from({ length: 700 }, (_, character) => String.fromCharCode(33 + ((character * 31 + index * 17) % 90))).join('');
+      document = (await seedStore.apply(document.documentId, headlineTransaction(document.revision, content, `transaction-byte-cache-${index}`))).document;
+    }
+
+    const stringify = JSON.stringify;
+    const measurements = new Map();
+    JSON.stringify = (value, ...argumentsValue) => {
+      if (value && typeof value === 'object' && typeof value.transactionId === 'string') {
+        const kind = Array.isArray(value.operations) ? 'transaction' : 'summary';
+        const key = `${kind}:${value.transactionId}`;
+        measurements.set(key, (measurements.get(key) ?? 0) + 1);
+      }
+      return stringify(value, ...argumentsValue);
+    };
+    try {
+      const constrainedStore = new SceneDocumentStore(root, 60, 1024);
+      await constrainedStore.apply(document.documentId, headlineTransaction(
+        document.revision,
+        'Trigger byte trimming',
+        'transaction-byte-cache-trigger'
+      ));
+    } finally {
+      JSON.stringify = stringify;
+    }
+
+    assert.ok(measurements.size > 2, 'Expected multiple history entries to be measured.');
+    assert.ok(
+      [...measurements.entries()].every(([, count]) => count === 1),
+      `History entry byte measurements were repeated: ${JSON.stringify([...measurements.entries()])}`
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

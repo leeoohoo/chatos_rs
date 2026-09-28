@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "generatedBy": "scripts/registry-generated-integrity.mjs --write",
+  "registries": {
+    "antd": {
+      "generator": "scripts/sync-antd-registry.mjs",
+      "outputs": [
+        "src/antd-registry.generated.ts",
+        "ui-src/library-runtime/antd-registry.generated.ts",
+        "ui-src/library-runtime/vendor/antd"
+      ],
+      "sha256": "a9bfc8a2a66386f843ad083e4d109bf455a3684de70e2be85d643107e6ce0f44"
+    },
+    "chakra": {
+      "generator": "scripts/sync-chakra-registry.mjs",
+      "outputs": [
+        "src/chakra-registry.generated.ts",
+        "ui-src/library-runtime/chakra-registry.generated.ts",
+        "ui-src/library-runtime/vendor/chakra"
+      ],
+      "sha256": "38769a71cc021158b19746e09c5cf14b693d3b8621b62058c65a1c8f1c4b9ce0"
+    },
+    "shadcn": {
+      "generator": "scripts/sync-shadcn-registry.mjs",
+      "outputs": [
+        "src/shadcn-registry.generated.ts",
+        "ui-src/library-runtime/shadcn-registry.generated.ts",
+        "ui-src/library-runtime/shadcn-registry.generated.css",
+        "ui-src/library-runtime/vendor/shadcn"
+      ],
+      "sha256": "fa88fe2ff8238f36c55f72956fddc037d2abd7d3b02617f7441a1130e50361cf"
+    },
+    "magicui": {
+      "generator": "scripts/sync-magicui-registry.mjs",
+      "outputs": [
+        "src/magicui-registry.generated.ts",
+        "ui-src/library-runtime/magicui-registry.generated.ts",
+        "ui-src/library-runtime/magicui-registry.generated.css",
+        "ui-src/library-runtime/vendor/magicui"
+      ],
+      "sha256": "c0c431465b7c4c02ffd42bc830f286faca6c507c46bd4172542a20fa9ff0eeb7"
+    },
+    "spell": {
+      "generator": "scripts/sync-spell-registry.mjs",
+      "outputs": [
+        "src/spell-registry.generated.ts",
+        "ui-src/library-runtime/spell-registry.generated.ts",
+        "ui-src/library-runtime/spell-registry.generated.css",
+        "ui-src/library-runtime/vendor/spell"
+      ],
+      "sha256": "5b0398597a48b81086322327391432708d50b07cc94d5730f3ade2301393336c"
+    },
+    "inspira": {
+      "generator": "scripts/sync-inspira-registry.mjs",
+      "outputs": [
+        "src/inspira-registry.generated.ts",
+        "ui-src/library-runtime/inspira-registry.generated.ts",
+        "ui-src/library-runtime/vendor/inspira"
+      ],
+      "sha256": "a627bc77db5e5c3e24cbdc6916136cf62ccd29889339a23223ca3f4eff55d83c"
+    },
+    "daisyui": {
+      "generator": "scripts/sync-daisyui-registry.mjs",
+      "outputs": [
+        "src/daisyui-registry.generated.ts",
+        "ui-src/library-runtime/daisyui-registry.generated.ts",
+        "ui-src/public/daisyui"
+      ],
+      "sha256": "9b97ff6744cde10a6d1e65f8be0b2604d39d7391e96500b3ce4bffe885363338"
+    }
+  }
+}

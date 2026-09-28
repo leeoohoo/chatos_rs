@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 
 use chatos_local_workspace::LOCAL_CONNECTOR_ROOT_PREFIX;
@@ -65,10 +66,73 @@ where
     if !path.is_file() {
         return Ok(None);
     }
-    let bytes = fs::read(path).map_err(|err| err.to_string())?;
+    #[cfg(unix)]
+    let mut file = open_cache_file_without_symlinks(&path).map_err(|err| err.to_string())?;
+    #[cfg(not(unix))]
+    let mut file = fs::File::open(&path).map_err(|err| err.to_string())?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|err| err.to_string())?;
     serde_json::from_slice::<T>(&bytes)
         .map(Some)
         .map_err(|err| err.to_string())
+}
+
+#[cfg(unix)]
+fn open_cache_file_without_symlinks(path: &Path) -> std::io::Result<fs::File> {
+    use crate::core::fs_open::open_directory_without_symlinks;
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::MetadataExt;
+
+    // The project context is already canonical. Resolving it again here would
+    // follow replaced ancestors; instead hold each directory while opening the next.
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "expected a cache parent")
+    })?;
+    let name = path.file_name().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "expected a cache file name",
+        )
+    })?;
+    let name = CString::new(name.as_bytes())?;
+    let directory = open_directory_without_symlinks(parent)?;
+    // SAFETY: directory owns a live descriptor and name is one NUL-terminated
+    // component. O_CREAT is absent, so no mode argument is required.
+    let fd = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            // A replaced FIFO must not wait for a writer before type validation.
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
+        )
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: successful openat returns a fresh descriptor owned only here.
+    let file = unsafe { fs::File::from_raw_fd(fd) };
+    let metadata = file.metadata()?;
+    // The earlier is_file precheck may race. Validate the actual object before
+    // returning its handle for JSON reads; RAII closes rejected descriptors.
+    if !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "cache target is not a regular file",
+        ));
+    }
+    // O_NOFOLLOW does not reject hard links. Inspect the opened inode before
+    // reading JSON shared with another path. This does not prevent concurrent
+    // link creation after the check.
+    if metadata.nlink() > 1 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "cache target has multiple hard links",
+        ));
+    }
+    Ok(file)
 }
 
 pub fn write_cache_json<T>(project_root: &str, relative_path: &str, value: &T) -> Result<(), String>
@@ -79,11 +143,109 @@ where
         return Ok(());
     }
     let path = project_cache_file_path(project_root, relative_path)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
-    }
     let bytes = serde_json::to_vec_pretty(value).map_err(|err| err.to_string())?;
-    fs::write(path, bytes).map_err(|err| err.to_string())
+    #[cfg(unix)]
+    let opened = open_cache_file_for_write(Path::new(project_root), &path);
+    #[cfg(not(unix))]
+    let opened = {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+    };
+    opened
+        .and_then(|mut file| {
+            let metadata = file.metadata()?;
+            if !metadata.is_file() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "cache target is not a regular file",
+                ));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                // O_NOFOLLOW does not reject hard links. Check the opened
+                // inode before truncating any file with another name. This
+                // does not prevent concurrent link creation after the check.
+                if metadata.nlink() > 1 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "cache target has multiple hard links",
+                    ));
+                }
+            }
+            // Validate before truncating, then write through the same handle.
+            file.set_len(0)?;
+            file.write_all(&bytes)
+        })
+        .map_err(|err| err.to_string())
+}
+
+#[cfg(unix)]
+fn open_cache_file_for_write(project_root: &Path, path: &Path) -> std::io::Result<fs::File> {
+    use crate::core::fs_open::open_directory_without_symlinks;
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+
+    let invalid =
+        || std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid cache write path");
+    let relative = path.strip_prefix(project_root).map_err(|_| invalid())?;
+    let parent = relative.parent().ok_or_else(invalid)?;
+    let name = CString::new(relative.file_name().ok_or_else(invalid)?.as_bytes())?;
+    // The caller supplies an existing canonical project root. Do not resolve
+    // replaced ancestors again, or create the project itself as a cache side effect.
+    let mut directory = open_directory_without_symlinks(project_root)?;
+    for component in parent.components() {
+        let Component::Normal(component) = component else {
+            return Err(invalid());
+        };
+        let component = CString::new(component.as_bytes())?;
+        // SAFETY: the descriptor is live, and component is one NUL-terminated
+        // name. Preserve create_dir_all's mode, restricted by the process umask.
+        let result = unsafe { libc::mkdirat(directory.as_raw_fd(), component.as_ptr(), 0o777) };
+        if result != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() != std::io::ErrorKind::AlreadyExists {
+                return Err(error);
+            }
+        }
+        // EEXIST alone proves nothing: reject symlinks and non-directories at
+        // open, then retain this handle for all subsequent creation/open calls.
+        // SAFETY: live descriptor, single component; no O_CREAT mode required.
+        let fd = unsafe {
+            libc::openat(
+                directory.as_raw_fd(),
+                component.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: successful openat returns a new descriptor owned only here.
+        directory = unsafe { fs::File::from_raw_fd(fd) };
+    }
+    // SAFETY: live parent descriptor and one NUL-terminated file name. O_CREAT
+    // uses the same 0666/umask mode as OpenOptions; defer truncation to validation.
+    let fd = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
+            0o666 as libc::c_uint,
+        )
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: successful openat returns a new descriptor owned only here.
+    Ok(unsafe { fs::File::from_raw_fd(fd) })
 }
 
 pub fn cache_key(value: &str) -> String {
@@ -92,6 +254,18 @@ pub fn cache_key(value: &str) -> String {
     let hex = hex::encode(hasher.finalize());
     hex.chars().take(24).collect()
 }
+
+#[cfg(test)]
+#[path = "project_local_cache_read_tests.rs"]
+mod read_tests;
+
+#[cfg(test)]
+#[path = "project_local_cache_write_tests.rs"]
+mod write_tests;
+
+#[cfg(all(test, unix))]
+#[path = "project_local_cache_special_tests.rs"]
+mod special_tests;
 
 #[cfg(test)]
 mod tests {

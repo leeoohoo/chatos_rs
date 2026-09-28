@@ -53,7 +53,7 @@ impl ToolingStateService {
         user_id: Option<&str>,
         note_id: &str,
     ) -> Result<Value, String> {
-        self.notepad_store(user_id)?.read_note(note_id).await
+        self.notepad_store(user_id)?.read_note(note_id, 0).await
     }
 
     pub async fn list_notepad_tags(&self, user_id: Option<&str>) -> Result<Value, String> {

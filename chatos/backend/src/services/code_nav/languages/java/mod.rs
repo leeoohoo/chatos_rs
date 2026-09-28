@@ -250,7 +250,7 @@ mod tests {
         ));
         fs::create_dir_all(root.join("src/main/java/com/example")).expect("create source dir");
         fs::write(root.join("pom.xml"), "<project/>").expect("write pom");
-        root
+        fs::canonicalize(root).expect("canonical project fixture")
     }
 
     #[test]

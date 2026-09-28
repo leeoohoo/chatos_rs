@@ -4,9 +4,9 @@
 use super::*;
 
 pub(super) struct NormalizedChatosSource {
-    source_session_id: String,
-    source_user_message_id: Option<String>,
-    source_turn_id: Option<String>,
+    pub(super) source_session_id: String,
+    pub(super) source_user_message_id: Option<String>,
+    pub(super) source_turn_id: Option<String>,
 }
 
 pub(super) fn normalize_source_id(value: &str) -> Option<String> {
@@ -29,13 +29,6 @@ pub(super) fn normalized_chatos_source(
         source_user_message_id,
         source_turn_id,
     })
-}
-
-pub(super) fn task_matches_source_user_message(
-    task: &TaskRecord,
-    source_user_message_id: &str,
-) -> bool {
-    task.source_user_message_id.as_deref() == Some(source_user_message_id)
 }
 
 impl NormalizedChatosSource {

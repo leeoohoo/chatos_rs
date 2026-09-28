@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use chatos_service_runtime::http_body::{
     read_response_json_limited, read_response_preview_text_limited_or_message,
     ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
@@ -15,12 +17,12 @@ use crate::models::{
     HarnessProvisioningRecord, UserRecord, HARNESS_PROVISIONING_STATUS_FAILED,
     HARNESS_PROVISIONING_STATUS_PENDING, HARNESS_PROVISIONING_STATUS_PROVISIONED,
 };
-use crate::secrets::encrypt_secret;
+use crate::secrets::{decrypt_secret, encrypt_secret};
 use crate::state::AppState;
 use crate::store::now_rfc3339;
 use crate::trace_context::InternalTraceContextExt;
 
-use super::http::{build_client_with_timeout, extract_error_message, normalized_url};
+use super::http::{build_harness_client_with_timeout, extract_error_message, normalized_url};
 
 mod identifiers;
 
@@ -29,6 +31,12 @@ use identifiers::{
     harness_uid_for_user, truncate_error,
 };
 
+const HARNESS_PROVISIONING_CREDENTIAL_KIND_GENERATED_V1: &str = "generated_v1";
+const HARNESS_PROVISIONING_CREDENTIAL_KIND_LEGACY_REMOVED_V1: &str =
+    "legacy_user_password_removed_v1";
+const HARNESS_LEGACY_CREDENTIAL_RECOVERY_ERROR: &str =
+    "legacy Harness provisioning credential requires administrator recovery";
+
 #[derive(Debug, Clone)]
 struct HarnessProvisioningIdentity {
     uid: String,
@@ -36,7 +44,7 @@ struct HarnessProvisioningIdentity {
     space_identifier: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 struct HarnessRegisterRequest<'a> {
     uid: &'a str,
     email: &'a str,
@@ -44,7 +52,7 @@ struct HarnessRegisterRequest<'a> {
     password: &'a str,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 struct HarnessLoginRequest<'a> {
     login_identifier: &'a str,
     password: &'a str,
@@ -63,11 +71,34 @@ struct HarnessCreateAccessTokenRequest<'a> {
     identifier: &'a str,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct HarnessTokenResponse {
     access_token: String,
     #[serde(default)]
     token: Option<HarnessTokenRecord>,
+}
+
+// Credential-bearing payloads expose only their type in diagnostics. Keep
+// serde independent: Debug redaction must not alter the Harness wire format.
+impl fmt::Debug for HarnessRegisterRequest<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HarnessRegisterRequest")
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for HarnessLoginRequest<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HarnessLoginRequest")
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for HarnessTokenResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HarnessTokenResponse")
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,20 +120,26 @@ struct HarnessAuthenticatedUser {
 struct HarnessRequestError {
     status: Option<StatusCode>,
     message: String,
+    already_exists: bool,
 }
 
 impl HarnessRequestError {
     fn from_error(message: impl Into<String>) -> Self {
+        let message = message.into();
         Self {
             status: None,
-            message: message.into(),
+            already_exists: Self::message_indicates_already_exists(&message),
+            message,
         }
     }
 
     fn is_already_exists(&self) -> bool {
-        let message = self.message.to_ascii_lowercase();
-        self.status == Some(StatusCode::CONFLICT)
-            || message.contains("already")
+        self.status == Some(StatusCode::CONFLICT) || self.already_exists
+    }
+
+    fn message_indicates_already_exists(message: &str) -> bool {
+        let message = message.to_ascii_lowercase();
+        message.contains("already")
             || message.contains("exist")
             || message.contains("duplicate")
             || message.contains("unique")
@@ -122,9 +159,8 @@ impl fmt::Display for HarnessRequestError {
 pub async fn provision_harness_user_public_register(
     state: &AppState,
     user: &UserRecord,
-    password: &str,
 ) -> Vec<String> {
-    match provision_harness_user_public_register_result(state, user, password).await {
+    match provision_harness_user_public_register_result(state, user).await {
         Ok(()) => Vec::new(),
         Err(err) => vec![format!("harness provisioning failed: {err}")],
     }
@@ -133,7 +169,6 @@ pub async fn provision_harness_user_public_register(
 pub async fn ensure_harness_user_public_register_on_login(
     state: &AppState,
     user: &UserRecord,
-    password: &str,
 ) -> Vec<String> {
     if !state.config.harness_provisioning_enabled {
         return Vec::new();
@@ -153,7 +188,7 @@ pub async fn ensure_harness_user_public_register_on_login(
         {
             Vec::new()
         }
-        Ok(_) => provision_harness_user_public_register(state, user, password).await,
+        Ok(_) => provision_harness_user_public_register(state, user).await,
         Err(err) => vec![format!("harness provisioning lookup failed: {err}")],
     }
 }
@@ -161,14 +196,14 @@ pub async fn ensure_harness_user_public_register_on_login(
 pub async fn provision_harness_user_public_register_result(
     state: &AppState,
     user: &UserRecord,
-    password: &str,
 ) -> Result<(), String> {
     if !state.config.harness_provisioning_enabled {
         return Ok(());
     }
 
     let identity = HarnessProvisioningIdentity::from_user(user, state);
-    let attempt = begin_harness_provisioning_attempt(state, user, &identity, password).await?;
+    let (attempt, provisioning_password) =
+        begin_harness_provisioning_attempt(state, user, &identity).await?;
     let Some(base_url) = normalized_url(state.config.harness_base_url.as_deref()) else {
         warn!("harness provisioning enabled but HARNESS_BASE_URL is not configured");
         let err = "HARNESS_BASE_URL is not configured".to_string();
@@ -181,7 +216,7 @@ pub async fn provision_harness_user_public_register_result(
         base_url.as_str(),
         &identity,
         user,
-        password,
+        provisioning_password.as_str(),
     )
     .await;
 
@@ -238,19 +273,26 @@ async fn begin_harness_provisioning_attempt(
     state: &AppState,
     user: &UserRecord,
     identity: &HarnessProvisioningIdentity,
-    password: &str,
-) -> Result<HarnessProvisioningRecord, String> {
+) -> Result<(HarnessProvisioningRecord, String), String> {
     let now = now_rfc3339();
-    let prior = state
+    let mut prior = state
         .store
         .find_harness_provisioning_by_user_id(user.id.as_str())
         .await?;
+    if let Some(record) = prior.as_mut() {
+        if retire_legacy_harness_provisioning_credential(record) {
+            record.updated_at = now.clone();
+            state.store.save_harness_provisioning(record).await?;
+            return Err(HARNESS_LEGACY_CREDENTIAL_RECOVERY_ERROR.to_string());
+        }
+    }
     let attempts = prior.as_ref().map(|item| item.attempts + 1).unwrap_or(1);
     let created_at = prior
         .as_ref()
         .map(|item| item.created_at.clone())
         .unwrap_or_else(|| now.clone());
-    let encrypted_password = encrypt_secret(password)?;
+    let provisioning_password = resolve_harness_provisioning_password(prior.as_ref())?;
+    let encrypted_provisioning_secret = encrypt_secret(provisioning_password.as_str())?;
     let record = HarnessProvisioningRecord {
         user_id: user.id.clone(),
         username: user.username.clone(),
@@ -259,7 +301,8 @@ async fn begin_harness_provisioning_attempt(
         space_identifier: identity.space_identifier.clone(),
         status: HARNESS_PROVISIONING_STATUS_PENDING.to_string(),
         attempts,
-        encrypted_password: Some(encrypted_password),
+        credential_kind: Some(HARNESS_PROVISIONING_CREDENTIAL_KIND_GENERATED_V1.to_string()),
+        encrypted_provisioning_secret: Some(encrypted_provisioning_secret),
         encrypted_access_token: prior
             .as_ref()
             .and_then(|item| item.encrypted_access_token.clone()),
@@ -275,7 +318,48 @@ async fn begin_harness_provisioning_attempt(
         created_at,
         updated_at: now,
     };
-    state.store.save_harness_provisioning(&record).await
+    let record = state.store.save_harness_provisioning(&record).await?;
+    Ok((record, provisioning_password))
+}
+
+fn generated_harness_provisioning_password() -> String {
+    let mut random = [0u8; 32];
+    rand::fill(&mut random);
+    format!("chatos_harness_{}", URL_SAFE_NO_PAD.encode(random))
+}
+
+fn retire_legacy_harness_provisioning_credential(record: &mut HarnessProvisioningRecord) -> bool {
+    if record.credential_kind.is_some() || record.encrypted_provisioning_secret.is_none() {
+        return false;
+    }
+    record.credential_kind =
+        Some(HARNESS_PROVISIONING_CREDENTIAL_KIND_LEGACY_REMOVED_V1.to_string());
+    record.encrypted_provisioning_secret = None;
+    record.status = HARNESS_PROVISIONING_STATUS_FAILED.to_string();
+    record.last_error = Some(HARNESS_LEGACY_CREDENTIAL_RECOVERY_ERROR.to_string());
+    true
+}
+
+fn resolve_harness_provisioning_password(
+    prior: Option<&HarnessProvisioningRecord>,
+) -> Result<String, String> {
+    let Some(record) = prior else {
+        return Ok(generated_harness_provisioning_password());
+    };
+    if record.credential_kind.as_deref()
+        == Some(HARNESS_PROVISIONING_CREDENTIAL_KIND_LEGACY_REMOVED_V1)
+    {
+        return Err(HARNESS_LEGACY_CREDENTIAL_RECOVERY_ERROR.to_string());
+    }
+    let Some(encrypted_provisioning_secret) = record.encrypted_provisioning_secret.as_deref()
+    else {
+        return Ok(generated_harness_provisioning_password());
+    };
+    if record.credential_kind.as_deref() != Some(HARNESS_PROVISIONING_CREDENTIAL_KIND_GENERATED_V1)
+    {
+        return Err(HARNESS_LEGACY_CREDENTIAL_RECOVERY_ERROR.to_string());
+    }
+    decrypt_secret(encrypted_provisioning_secret)
 }
 
 async fn finish_harness_provisioning_success(
@@ -288,7 +372,7 @@ async fn finish_harness_provisioning_success(
     if !token.resolved_harness_uid.trim().is_empty() {
         record.harness_uid = token.resolved_harness_uid;
     }
-    record.encrypted_password = None;
+    record.encrypted_provisioning_secret = None;
     record.encrypted_access_token = Some(encrypt_secret(token.access_token.as_str())?);
     record.access_token_identifier = Some(token.identifier);
     record.access_token_created_at = Some(now.clone());
@@ -586,24 +670,53 @@ where
     TResp: serde::de::DeserializeOwned,
     TBody: Serialize + ?Sized,
 {
-    let client = build_client_with_timeout(state.config.harness_request_timeout_ms)
+    let client = build_harness_client_with_timeout(state.config.harness_request_timeout_ms)
         .map_err(HarnessRequestError::from_error)?;
+    let request = build_harness_request(&client, method, endpoint, bearer_token, body);
+    let response = send_harness_request(request).await?;
+    decode_harness_response(response).await
+}
+
+fn build_harness_request<TBody: Serialize + ?Sized>(
+    client: &reqwest::Client,
+    method: Method,
+    endpoint: &str,
+    bearer_token: Option<&str>,
+    body: Option<&TBody>,
+) -> reqwest::RequestBuilder {
     let mut request = client.request(method, endpoint);
     if let Some(token) = bearer_token
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        request = request.header("Authorization", format!("Bearer {token}"));
+        // Mark the header sensitive so request/header diagnostics redact the token.
+        request = request.bearer_auth(token);
     }
     if let Some(body) = body {
         request = request.json(body);
     }
 
-    let response = request
+    request
+}
+
+async fn send_harness_request(
+    request: reqwest::RequestBuilder,
+) -> Result<reqwest::Response, HarnessRequestError> {
+    request
         .with_internal_trace_context()
         .send()
         .await
-        .map_err(|err| HarnessRequestError::from_error(err.to_string()))?;
+        .map_err(|_| {
+            // Transport diagnostics may include credential-bearing URLs or
+            // source errors. They must not reach logs, last_error, or influence
+            // the existing-account fallback via untrusted diagnostic text.
+            HarnessRequestError::from_error("send harness request failed")
+        })
+}
+
+async fn decode_harness_response<TResp: serde::de::DeserializeOwned>(
+    response: reqwest::Response,
+) -> Result<TResp, HarnessRequestError> {
     let status = response.status();
     if !status.is_success() {
         let body_text =
@@ -611,12 +724,40 @@ where
                 .await;
         return Err(HarnessRequestError {
             status: Some(status),
-            message: extract_error_message(body_text.as_str()),
+            // Keep only the fallback decision. Downstream bodies may echo
+            // credentials and must never reach logs or persisted last_error.
+            // A refused redirect is not evidence that the account exists.
+            already_exists: !status.is_redirection()
+                && HarnessRequestError::message_indicates_already_exists(&extract_error_message(
+                    body_text.as_str(),
+                )),
+            message: "harness request rejected".to_string(),
         });
     }
     read_response_json_limited::<TResp>(response, JSON_BODY_LIMIT_BYTES)
         .await
-        .map_err(|err| {
-            HarnessRequestError::from_error(format!("decode harness response failed: {err}"))
+        .map_err(|_| {
+            // Serde diagnostics can quote response values on type mismatches.
+            HarnessRequestError::from_error("decode harness response failed")
         })
 }
+
+#[cfg(test)]
+#[path = "harness/response_tests.rs"]
+mod response_tests;
+
+#[cfg(test)]
+#[path = "harness/request_tests.rs"]
+mod request_tests;
+
+#[cfg(test)]
+#[path = "harness/debug_tests.rs"]
+mod debug_tests;
+
+#[cfg(test)]
+#[path = "harness/redirect_tests.rs"]
+mod redirect_tests;
+
+#[cfg(test)]
+#[path = "harness/credential_tests.rs"]
+mod credential_tests;

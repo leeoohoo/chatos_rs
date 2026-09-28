@@ -1,12 +1,15 @@
 import type { DeviceSummary } from '../models/api'
+import { sessionStore } from './session-store'
 
 const SELECTED_DEVICE_KEY = 'chatos.companion.selected-device.v1'
 const SELECTED_DEVICE_SNAPSHOT_KEY = 'chatos.companion.selected-device-snapshot.v1'
 const SNAPSHOT_MAX_AGE_MS = 2 * 60 * 1_000
+const STALE_SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1_000
 
 type DeviceSnapshot = {
   device: DeviceSummary
   cachedAt: number
+  ownerUserId: string
 }
 
 class DeviceSelectionStore {
@@ -15,21 +18,32 @@ class DeviceSelectionStore {
     return typeof value === 'string' && value.trim() ? value : undefined
   }
 
-  snapshot(): DeviceSummary | undefined {
+  snapshot(maxAgeMs = SNAPSHOT_MAX_AGE_MS): DeviceSummary | undefined {
     const value = wx.getStorageSync<DeviceSnapshot>(SELECTED_DEVICE_SNAPSHOT_KEY)
-    if (!value || typeof value !== 'object' || !value.device || typeof value.cachedAt !== 'number') {
+    const ownerUserId = sessionStore.user()?.id
+    if (!ownerUserId
+      || !value
+      || typeof value !== 'object'
+      || !value.device
+      || typeof value.cachedAt !== 'number'
+      || value.ownerUserId !== ownerUserId) {
       return undefined
     }
-    if (Date.now() - value.cachedAt > SNAPSHOT_MAX_AGE_MS || value.device.id !== this.get()) {
+    if (Date.now() - value.cachedAt > maxAgeMs || value.device.id !== this.get()) {
       return undefined
     }
     return value.device
   }
 
+  staleSnapshot(): DeviceSummary | undefined {
+    return this.snapshot(STALE_SNAPSHOT_MAX_AGE_MS)
+  }
+
   set(deviceId: string, device?: DeviceSummary): void {
     wx.setStorageSync(SELECTED_DEVICE_KEY, deviceId)
-    if (device?.id === deviceId) {
-      wx.setStorageSync(SELECTED_DEVICE_SNAPSHOT_KEY, { device, cachedAt: Date.now() })
+    const ownerUserId = sessionStore.user()?.id
+    if (device?.id === deviceId && ownerUserId) {
+      wx.setStorageSync(SELECTED_DEVICE_SNAPSHOT_KEY, { device, cachedAt: Date.now(), ownerUserId })
     }
   }
 

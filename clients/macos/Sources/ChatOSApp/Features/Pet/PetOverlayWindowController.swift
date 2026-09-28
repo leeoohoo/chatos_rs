@@ -1,4 +1,5 @@
 @preconcurrency import AppKit
+import ChatOSConnector
 import ChatOSCore
 import Combine
 import SwiftUI
@@ -6,23 +7,25 @@ import SwiftUI
 @MainActor
 final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
 
-    private let store: PetOverlayStore
+    let store: PetOverlayStore
     private let preferences: PetPreferencesStore
-    private weak var model: AppModel?
-    private let messagePanel: NSPanel
-    private let activityPanel: NSPanel
-    private let runningActivityPanel: NSPanel
-    private let fileWorkbenchPanel: NSPanel
-    private let fileWorkbenchStore: PetFileWorkbenchStore
-    private let interactionState = PetOverlayInteractionState()
-    private let activityInteractionState = PetOverlayInteractionState()
-    private let runningActivityInteractionState = PetOverlayInteractionState()
+    weak var model: AppModel?
+    let messagePanel: NSPanel
+    let activityPanel: NSPanel
+    let runningActivityPanel: NSPanel
+    let fileWorkbenchPanel: NSPanel
+    let fileWorkbenchStore: PetFileWorkbenchStore
+    let translationViewModel: PetTranslationViewModel
+    private let notepadViewModel: NotepadViewModel
+    let interactionState = PetOverlayInteractionState()
+    let activityInteractionState = PetOverlayInteractionState()
+    let runningActivityInteractionState = PetOverlayInteractionState()
     private let onOpen: (PetActivity) -> Void
     private var taskInspectorPanel: NSPanel?
     private var cancellables = Set<AnyCancellable>()
-    private var isProgrammaticMove = false
-    private var isDraggingPet = false
-    private var lastDragOriginX: CGFloat?
+    var isProgrammaticMove = false
+    var isDraggingPet = false
+    var lastDragOriginX: CGFloat?
     private var isPetRequestedVisible = false
     private var isScreenAwake = true
 
@@ -59,6 +62,19 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         )
         let fileWorkbenchStore = PetFileWorkbenchStore(service: model.projectFilesystemService)
         self.fileWorkbenchStore = fileWorkbenchStore
+        self.translationViewModel = PetTranslationViewModel(
+            agent: PetTranslationAgent(services: model.agentServices),
+            historyStore: PetTranslationHistoryStore(
+                fileURL: RuntimeConfiguration.nativeConnectorStateURL
+                    .deletingLastPathComponent()
+                    .appendingPathComponent("PetTranslationHistory.json")
+            ),
+            modelProvider: { [weak model] in
+                guard let model else { throw CancellationError() }
+                return try await model.localConnectorControl.availableTaskModels()
+            }
+        )
+        self.notepadViewModel = NotepadViewModel(service: model.notepadService)
         self.fileWorkbenchPanel = PetOverlayPanelFactory.makeFileWorkbenchPanel(size: PetOverlayLayout.fileWorkbenchSize)
         super.init(window: petPanel)
 
@@ -84,6 +100,8 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
                 model: model,
                 content: PetQuickChatView(
                     interactionState: interactionState,
+                    translationViewModel: translationViewModel,
+                    notepadViewModel: notepadViewModel,
                     onInspectTaskReply: { [weak self] selection, service in
                         self?.presentTaskInspector(selection: selection, service: service)
                     }
@@ -190,6 +208,13 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func bindAnimationActivity() {
+        translationViewModel.$petAnimationState
+            .receive(on: RunLoop.main)
+            .sink { [weak self] state in
+                self?.interactionState.translationAnimationState = state
+            }
+            .store(in: &cancellables)
+
         NSWorkspace.shared.notificationCenter.publisher(
             for: NSWorkspace.screensDidSleepNotification
         )
@@ -214,12 +239,37 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
 
     func openFile(_ request: PetFileOpenRequest) {
         interactionState.isQuickChatPresented = false
+        interactionState.isTranslationPresented = false
+        interactionState.isNotepadPresented = false
+        translationViewModel.cancel()
         dismissTaskInspector()
         fileWorkbenchStore.open(request)
         updateMessageVisibility()
         updateFileWorkbenchVisibility()
         updateRunningActivityVisibility()
         updateActivityVisibility()
+    }
+
+    func openTranslationImage(data: Data, suggestedName: String) {
+        fileWorkbenchStore.requestDismiss()
+        dismissTaskInspector()
+        translationViewModel.cancel()
+        translationViewModel.selectHistoryRecord(nil)
+        translationViewModel.addPastedImage(
+            data: data,
+            mimeType: "image/png",
+            suggestedName: suggestedName
+        )
+        interactionState.selectedQuickChatResourceID = nil
+        interactionState.isNotepadPresented = false
+        interactionState.isTranslationPresented = true
+        interactionState.isQuickChatPresented = true
+        applyQuickChatSize(preferredQuickChatMessageSize())
+        updateMessageVisibility()
+        updateFileWorkbenchVisibility()
+        updateRunningActivityVisibility()
+        updateActivityVisibility()
+        translationViewModel.translateWhenReady()
     }
 
     func windowDidMove(_ notification: Notification) {
@@ -323,6 +373,30 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
             .store(in: &cancellables)
 
         interactionState.$selectedQuickChatResourceID
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self, self.interactionState.isQuickChatPresented else { return }
+                self.dismissTaskInspector()
+                self.applyQuickChatSize(self.preferredQuickChatMessageSize())
+                self.updateRunningActivityVisibility()
+                self.updateActivityVisibility()
+            }
+            .store(in: &cancellables)
+
+        interactionState.$isTranslationPresented
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self, self.interactionState.isQuickChatPresented else { return }
+                self.dismissTaskInspector()
+                self.applyQuickChatSize(self.preferredQuickChatMessageSize())
+                self.updateRunningActivityVisibility()
+                self.updateActivityVisibility()
+            }
+            .store(in: &cancellables)
+
+        interactionState.$isNotepadPresented
             .removeDuplicates()
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
@@ -439,7 +513,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         clampToVisibleScreen()
     }
 
-    private func updateMessageVisibility() {
+    func updateMessageVisibility() {
         guard window?.isVisible == true,
               interactionState.isQuickChatPresented else {
             messagePanel.orderOut(nil)
@@ -460,7 +534,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         fileWorkbenchPanel.makeKeyAndOrderFront(nil)
     }
 
-    private func updateRunningActivityVisibility() {
+    func updateRunningActivityVisibility() {
         guard window?.isVisible == true,
               store.activities.contains(where: Self.isRunningActivity) else {
             runningActivityInteractionState.isMessageExpanded = false
@@ -480,7 +554,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         positionActivityPanel()
     }
 
-    private func updateActivityVisibility() {
+    func updateActivityVisibility() {
         guard window?.isVisible == true,
               activityInteractionState.inspectedTaskActivity != nil
                 || store.presentation.primaryActivity.map({ !Self.isRunningActivity($0) }) == true else {
@@ -582,207 +656,4 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    private func applyQuickChatSize(_ size: NSSize) {
-        applyPanelSize(size, to: messagePanel)
-        if messagePanel.isVisible {
-            positionMessagePanel()
-            positionRunningActivityPanel()
-            positionActivityPanel()
-        }
-    }
-
-    private func applyRunningActivitySize(_ size: NSSize) {
-        applyPanelSize(size, to: runningActivityPanel)
-        if runningActivityPanel.isVisible {
-            positionRunningActivityPanel()
-            positionActivityPanel()
-        }
-    }
-
-    private func applyActivitySize(_ size: NSSize) {
-        applyPanelSize(size, to: activityPanel)
-        if activityPanel.isVisible {
-            positionActivityPanel()
-        }
-    }
-
-    private func applyPanelSize(_ size: NSSize, to panel: NSPanel) {
-        let currentSize = panel.contentView?.frame.size
-            ?? panel.contentRect(forFrameRect: panel.frame).size
-        let sizeMatches = abs(currentSize.width - size.width) <= 0.5
-            && abs(currentSize.height - size.height) <= 0.5
-        let constraintsMatch = abs(panel.contentMinSize.width - size.width) <= 0.5
-            && abs(panel.contentMinSize.height - size.height) <= 0.5
-            && abs(panel.contentMaxSize.width - size.width) <= 0.5
-            && abs(panel.contentMaxSize.height - size.height) <= 0.5
-        guard !sizeMatches || !constraintsMatch else {
-            return
-        }
-        panel.contentMinSize = size
-        panel.contentMaxSize = size
-        panel.setContentSize(size)
-        panel.contentView?.frame = NSRect(origin: .zero, size: size)
-    }
-
-    private func preferredExpandedMessageSize(scope: PetMessageActivityScope) -> NSSize {
-        PetOverlaySizing.expandedMessageSize(
-            scope: scope,
-            store: store,
-            interactionState: scope == .primary
-                ? activityInteractionState
-                : runningActivityInteractionState
-        )
-    }
-
-    private func preferredQuickChatMessageSize() -> NSSize {
-        PetOverlaySizing.quickChatMessageSize(
-            selectedResourceID: interactionState.selectedQuickChatResourceID,
-            resources: model?.petQuickChatResources ?? []
-        )
-    }
-
-    private func beginMovingPet() {
-        isDraggingPet = true
-        lastDragOriginX = window?.frame.origin.x
-        interactionState.isDragging = true
-    }
-
-    private func finishPetInteraction(didDrag: Bool) {
-        interactionState.isDragging = false
-        isDraggingPet = false
-        lastDragOriginX = nil
-        if didDrag {
-            clampToVisibleScreen()
-            savePosition()
-        } else if fileWorkbenchStore.isPresented {
-            fileWorkbenchStore.requestDismiss()
-        } else {
-            interactionState.isQuickChatPresented.toggle()
-            if !interactionState.isQuickChatPresented {
-                interactionState.selectedQuickChatResourceID = nil
-            }
-        }
-        updateMessageVisibility()
-        updateRunningActivityVisibility()
-        updateActivityVisibility()
-    }
-
-    private func positionMessagePanel() {
-        guard let petWindow = window,
-              let screen = petWindow.screen ?? NSScreen.main else { return }
-        let visible = screen.visibleFrame
-        let bubble = messagePanel.frame.size
-        let pet = petWindow.frame
-        let preferredAbove = pet.maxY + 10
-        let y = preferredAbove + bubble.height <= visible.maxY
-            ? preferredAbove
-            : pet.minY - bubble.height - 10
-        let centeredX = pet.midX - bubble.width / 2
-        let x = min(max(centeredX, visible.minX + 8), visible.maxX - bubble.width - 8)
-        messagePanel.setFrameOrigin(NSPoint(x: x, y: y))
-    }
-
-    private func positionFileWorkbenchPanel() {
-        guard let petWindow = window,
-              let screen = petWindow.screen ?? NSScreen.main else { return }
-        let visible = screen.visibleFrame
-        let workbench = fileWorkbenchPanel.frame.size
-        let pet = petWindow.frame
-        let preferredAbove = pet.maxY + 12
-        let y = preferredAbove + workbench.height <= visible.maxY
-            ? preferredAbove
-            : max(visible.minY + 8, pet.minY - workbench.height - 12)
-        let centeredX = pet.midX - workbench.width / 2
-        let x = min(max(centeredX, visible.minX + 8), visible.maxX - workbench.width - 8)
-        fileWorkbenchPanel.setFrameOrigin(NSPoint(x: x, y: y))
-    }
-
-    private func positionRunningActivityPanel() {
-        guard let petWindow = window,
-              let screen = petWindow.screen ?? NSScreen.main else { return }
-        runningActivityPanel.setFrameOrigin(PetStackedPanelPlacement.origin(
-            size: runningActivityPanel.frame.size,
-            anchorFrame: activityBaseAnchorFrame(petWindow: petWindow),
-            visibleFrame: screen.visibleFrame
-        ))
-    }
-
-    private func positionActivityPanel() {
-        guard let petWindow = window,
-              let screen = petWindow.screen ?? NSScreen.main else { return }
-        let anchorFrame = runningActivityPanel.isVisible
-            ? runningActivityPanel.frame
-            : activityBaseAnchorFrame(petWindow: petWindow)
-        activityPanel.setFrameOrigin(PetStackedPanelPlacement.origin(
-            size: activityPanel.frame.size,
-            anchorFrame: anchorFrame,
-            visibleFrame: screen.visibleFrame
-        ))
-    }
-
-    private func activityBaseAnchorFrame(petWindow: NSWindow) -> NSRect {
-        if fileWorkbenchPanel.isVisible {
-            return fileWorkbenchPanel.frame
-        }
-        if messagePanel.isVisible {
-            return messagePanel.frame
-        }
-        return petWindow.frame
-    }
-
-    private func restoreOrPlaceDefault() {
-        let defaults = UserDefaults.standard
-        guard defaults.object(forKey: PetOverlayPositionKey.x) != nil,
-              defaults.object(forKey: PetOverlayPositionKey.y) != nil,
-              let window else {
-            placeDefault()
-            return
-        }
-        window.setFrameOrigin(NSPoint(
-            x: defaults.double(forKey: PetOverlayPositionKey.x),
-            y: defaults.double(forKey: PetOverlayPositionKey.y)
-        ))
-        clampToVisibleScreen()
-    }
-
-    private func placeDefault() {
-        guard let window, let screen = NSScreen.main else { return }
-        let visible = screen.visibleFrame
-        isProgrammaticMove = true
-        window.setFrameOrigin(NSPoint(
-            x: visible.maxX - window.frame.width - 30,
-            y: visible.minY + 48
-        ))
-        isProgrammaticMove = false
-        savePosition()
-        positionMessagePanel()
-        positionFileWorkbenchPanel()
-        positionRunningActivityPanel()
-        positionActivityPanel()
-    }
-
-    private func clampToVisibleScreen() {
-        guard let window else { return }
-        let center = NSPoint(x: window.frame.midX, y: window.frame.midY)
-        let screen = NSScreen.screens.first(where: { $0.visibleFrame.contains(center) })
-            ?? window.screen
-            ?? NSScreen.main
-        guard let visible = screen?.visibleFrame else { return }
-        let x = min(max(window.frame.minX, visible.minX), visible.maxX - window.frame.width)
-        let y = min(max(window.frame.minY, visible.minY), visible.maxY - window.frame.height)
-        isProgrammaticMove = true
-        window.setFrameOrigin(NSPoint(x: x, y: y))
-        isProgrammaticMove = false
-        savePosition()
-        positionMessagePanel()
-        positionFileWorkbenchPanel()
-        positionRunningActivityPanel()
-        positionActivityPanel()
-    }
-
-    private func savePosition() {
-        guard let origin = window?.frame.origin else { return }
-        UserDefaults.standard.set(origin.x, forKey: PetOverlayPositionKey.x)
-        UserDefaults.standard.set(origin.y, forKey: PetOverlayPositionKey.y)
-    }
 }

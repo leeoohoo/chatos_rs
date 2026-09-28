@@ -28,10 +28,10 @@
 .attachment-list { margin-top: 10rpx; padding-top: 9rpx; border-top: 1rpx solid rgba(128,128,128,.22); font-size: 19rpx; opacity: .82; }
 .timeline-bottom { height: 2rpx; }
 .read-only-banner { padding: 17rpx; border-top: 1rpx solid rgba(60,60,67,.1); background: #f9f9fb; color: #8e8e93; font-size: 21rpx; text-align: center; }
-.agent-composer-shell { z-index: 3; padding: 9rpx 14rpx calc(9rpx + env(safe-area-inset-bottom)); border-top: 1rpx solid rgba(60,60,67,.1); background: rgba(249,249,251,.97); }
-.agent-composer { display: flex; padding: 7rpx 7rpx 7rpx 17rpx; align-items: flex-end; border: 1rpx solid #d2d2d7; border-radius: 22rpx; background: #fff; }
-.agent-composer-input { min-height: 45rpx; max-height: 180rpx; padding: 7rpx 7rpx 4rpx 0; flex: 1; font-size: 25rpx; line-height: 1.4; }
-.agent-send-button { display: flex; width: 54rpx; height: 54rpx; margin: 0; padding: 0; align-items: center; justify-content: center; border-radius: 50%; background: #0a84ff; color: #fff; font-size: 29rpx; font-weight: 700; line-height: 54rpx; }
-.agent-send-button[disabled] { background: #c7c7cc; }
+.agent-composer-shell { z-index: 3; padding: 12rpx 16rpx calc(12rpx + env(safe-area-inset-bottom)); border-top: 1rpx solid rgba(60,60,67,.1); background: rgba(249,249,251,.97); }
+.agent-composer { display: flex; align-items: flex-end; gap: 12rpx; }
+.agent-composer-input { box-sizing: border-box; width: 0; min-width: 0; min-height: 62rpx; max-height: 190rpx; padding: 13rpx 18rpx; flex: 1 1 0; border: 1rpx solid #d1d1d6; border-radius: 31rpx; background: #fff; font-size: 25rpx; line-height: 36rpx; }
+.agent-send-button { display: flex; width: 62rpx; min-width: 62rpx; max-width: 62rpx; height: 62rpx; margin: 0; padding: 0; flex: 0 0 62rpx; align-items: center; justify-content: center; border-radius: 50%; background: #0a84ff; color: #fff; font-size: 29rpx; font-weight: 700; line-height: 62rpx; box-shadow: 0 3rpx 9rpx rgba(10,132,255,.20); }
+.agent-send-button[disabled] { background: #d1d1d6; box-shadow: none; }
 .action-error { margin: 0 6rpx 8rpx; color: #d70015; font-size: 20rpx; text-align: center; }
 .selected-mentions { margin: 0 7rpx 7rpx; color: #0a78e8; font-size: 19rpx; }

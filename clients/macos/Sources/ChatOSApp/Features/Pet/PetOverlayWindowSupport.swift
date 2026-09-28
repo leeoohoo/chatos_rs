@@ -238,6 +238,8 @@ enum PetOverlayLayout {
     static let expandedMessageWidth: CGFloat = 400
     static let quickChatWidth: CGFloat = 420
     static let quickChatConversationHeight: CGFloat = 500
+    static let quickTranslationSize = NSSize(width: 900, height: 680)
+    static let quickNotepadSize = NSSize(width: 780, height: 640)
     static let fileWorkbenchSize = NSSize(width: 760, height: 560)
     // Keep the process inspector compact and stable. Its timeline already scrolls,
     // so reserving space for several hypothetical nodes only creates empty space
@@ -357,8 +359,16 @@ enum PetOverlaySizing {
 
     static func quickChatMessageSize(
         selectedResourceID: String?,
+        isTranslationPresented: Bool,
+        isNotepadPresented: Bool,
         resources: [PetQuickChatResource]
     ) -> NSSize {
+        if isTranslationPresented {
+            return PetOverlayLayout.quickTranslationSize
+        }
+        if isNotepadPresented {
+            return PetOverlayLayout.quickNotepadSize
+        }
         guard selectedResourceID == nil else {
             return NSSize(
                 width: PetOverlayLayout.quickChatWidth,
@@ -366,7 +376,8 @@ enum PetOverlaySizing {
             )
         }
 
-        let rowCount = max(1, resources.count)
+        // Quick Translate and Quick Notepad are permanent rows before resources.
+        let rowCount = max(2, resources.count + 2)
         let rowHeight = CGFloat(rowCount) * 56
         let rowSpacing = CGFloat(max(0, rowCount - 1)) * 8
         let favoriteHintHeight: CGFloat = resources.allSatisfy { $0.kind == .contact } ? 38 : 0

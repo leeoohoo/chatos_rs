@@ -231,7 +231,7 @@ pub const HARNESS_PROVISIONING_STATUS_PENDING: &str = "pending";
 pub const HARNESS_PROVISIONING_STATUS_PROVISIONED: &str = "provisioned";
 pub const HARNESS_PROVISIONING_STATUS_FAILED: &str = "failed";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct HarnessProvisioningRecord {
     pub user_id: String,
     pub username: String,
@@ -240,7 +240,10 @@ pub struct HarnessProvisioningRecord {
     pub space_identifier: String,
     pub status: String,
     pub attempts: i64,
-    pub encrypted_password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_kind: Option<String>,
+    #[serde(default, alias = "encrypted_password")]
+    pub encrypted_provisioning_secret: Option<String>,
     #[serde(default)]
     pub encrypted_access_token: Option<String>,
     #[serde(default)]
@@ -275,7 +278,12 @@ impl From<HarnessProvisioningRecord> for HarnessProvisioningSummaryRecord {
             harness_email: value.harness_email,
             space_identifier: value.space_identifier,
             attempts: value.attempts,
-            last_error: value.last_error,
+            // Legacy errors can contain downstream password/token echoes. The
+            // public summary must never trust stored diagnostic text, even if
+            // newer request failures are sanitized before persistence.
+            last_error: value
+                .last_error
+                .map(|_| "harness provisioning failed".to_string()),
             last_attempt_at: value.last_attempt_at,
             provisioned_at: value.provisioned_at,
             updated_at: value.updated_at,
@@ -392,7 +400,7 @@ pub struct AuthUser {
     pub principal_type: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
@@ -507,7 +515,7 @@ pub struct SendRegisterEmailCodeResponse {
     pub resend_after_seconds: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RegisterRequest {
     pub username: Option<String>,
     pub email: Option<String>,
@@ -578,7 +586,7 @@ pub struct TokenVerifyResponse {
     pub principal: VerifiedPrincipal,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CreateUserRequest {
     pub username: String,
     pub display_name: Option<String>,
@@ -595,7 +603,7 @@ pub struct UpdateUserRequest {
     pub enabled: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ProvisionHarnessUserRequest {
     pub password: String,
 }
@@ -749,6 +757,8 @@ pub struct SystemConfigResponse {
     pub user_access_ttl_seconds: i64,
     pub task_runner_access_ttl_seconds: i64,
 }
+
+mod harness_credentials;
 
 #[cfg(test)]
 mod tests {

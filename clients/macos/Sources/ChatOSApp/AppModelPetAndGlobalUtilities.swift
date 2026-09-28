@@ -70,6 +70,17 @@ extension AppModel {
         }
     }
 
+    func openPetTranslationImage(data: Data, suggestedName: String) {
+        startPetOverlayIfNeeded()
+        if !petPreferences.isEnabled {
+            petPreferences.isEnabled = true
+        }
+        petOverlayCoordinator?.openTranslationImage(
+            data: data,
+            suggestedName: suggestedName
+        )
+    }
+
     @discardableResult
     func openPetFileLink(_ url: URL, projectRootPath: String?) -> Bool {
         guard let resolved = PetFileLinkResolver.resolve(

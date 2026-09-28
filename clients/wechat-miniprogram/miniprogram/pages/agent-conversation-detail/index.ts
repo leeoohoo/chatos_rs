@@ -5,6 +5,7 @@ import type {
 } from '../../models/api'
 import { parseMarkdown } from '../../components/markdown-view/index'
 import { agentTeamService, createAgentClientMessageId } from '../../services/agent-team-service'
+import { companionListCache } from '../../services/companion-list-cache'
 import { deviceSelectionStore } from '../../stores/device-selection-store'
 import { sessionStore } from '../../stores/session-store'
 
@@ -136,8 +137,7 @@ Page({
         hasMore: page.has_more,
         canSend: detail.conversation.can_send && this.data.input.trim().length > 0,
         loading: false,
-        scrollTarget: 'agent-timeline-bottom',
-      })
+      }, () => this.scrollToBottom())
       wx.setNavigationBarTitle({ title: detail.conversation.title || 'Agent 会话' })
       this.startPolling()
     } catch (error) {
@@ -220,6 +220,7 @@ Page({
       this.pendingClientMessageId = ''
       this.pendingContent = ''
       this.pendingMentionKey = ''
+      companionListCache.invalidateWorkspace(this.deviceId)
       this.setData({
         input: '',
         canSend: false,
@@ -227,8 +228,7 @@ Page({
         selectedMentionCount: 0,
         members: this.data.members.map((member) => ({ ...member, selected: false })),
         messages: dedupe([...this.data.messages, message]),
-        scrollTarget: 'agent-timeline-bottom',
-      })
+      }, () => this.scrollToBottom())
       setTimeout(() => void this.pollMessages(), 600)
     } catch (error) {
       this.setData({ submitting: false, actionError: error instanceof Error ? error.message : '发送失败' })
@@ -249,14 +249,14 @@ Page({
         if (this.data.actionError) this.setData({ actionError: '' })
         return
       }
+      companionListCache.invalidateWorkspace(this.deviceId)
       this.setData({
         messages: dedupe([
           ...this.data.messages,
           ...page.messages.map((message) => this.messageView(message)),
         ]),
         actionError: '',
-        scrollTarget: 'agent-timeline-bottom',
-      })
+      }, () => this.scrollToBottom())
     } catch (error) {
       if (this.pageVisible) this.setData({ actionError: error instanceof Error ? error.message : '刷新消息失败' })
     } finally {
@@ -272,5 +272,11 @@ Page({
   stopPolling() {
     if (this.pollTimer) clearInterval(this.pollTimer)
     this.pollTimer = undefined
+  },
+
+  scrollToBottom() {
+    this.setData({ scrollTarget: '' }, () => {
+      wx.nextTick(() => this.setData({ scrollTarget: 'agent-timeline-bottom' }))
+    })
   },
 })

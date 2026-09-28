@@ -37,6 +37,25 @@ function storedPath(url, file) {
   return file.path;
 }
 
+function normalizeBundledSource(filePath, content) {
+  if (filePath !== 'registry/magicui/code-comparison.tsx') return content;
+  const withoutDuplicateImport = content.replace(
+    /\s*const \{ transformerNotationHighlight \} =\s*await import\(["']@shikijs\/transformers["']\)\s*/,
+    '\n'
+  );
+  const normalized = withoutDuplicateImport.replace(
+    /(transformerNotationFocus,\s*\n)(\} from ["']@shikijs\/transformers["'])/,
+    '$1  transformerNotationHighlight,\n$2'
+  );
+  if (
+    /await import\(["']@shikijs\/transformers["']\)/.test(normalized)
+    || !/transformerNotationHighlight,\s*\n\} from ["']@shikijs\/transformers["']/.test(normalized)
+  ) {
+    throw new Error('Magic UI code comparison import normalization no longer matches upstream source.');
+  }
+  return normalized;
+}
+
 async function collect(reference) {
   const name = dependencyName(reference);
   const official = officialItems.get(name);
@@ -58,6 +77,7 @@ async function collect(reference) {
         if (response.ok) content = await response.text();
       }
       if (typeof content === 'string') {
+        content = normalizeBundledSource(storedPath(url, file), content);
         files.set(storedPath(url, file), content);
         if (url.startsWith(shadcnRoot)) {
           files.set(file.path, content);

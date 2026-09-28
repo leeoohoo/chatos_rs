@@ -7,6 +7,18 @@ use std::path::Path;
 
 pub(crate) const CODE_NAV_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 
+#[cfg(all(test, unix))]
+#[path = "file_limits_symlink_tests.rs"]
+mod symlink_tests;
+
+#[cfg(all(test, unix))]
+#[path = "file_limits_special_tests.rs"]
+mod special_tests;
+
+#[cfg(all(test, unix))]
+#[path = "file_limits_hardlink_tests.rs"]
+mod hardlink_tests;
+
 pub(crate) fn read_code_nav_file_to_string(path: &Path) -> Result<String, String> {
     let file = open_code_nav_file(path)?;
     let mut bytes = Vec::new();
@@ -28,12 +40,26 @@ pub(crate) fn read_code_nav_line_preview(
     }
 
     let file = open_code_nav_file(path)?;
-    let mut reader = BufReader::new(file);
+    read_code_nav_line_preview_from_reader(path, file, line, max_chars)
+}
+
+fn read_code_nav_line_preview_from_reader(
+    path: &Path,
+    source: impl Read,
+    line: usize,
+    max_chars: usize,
+) -> Result<String, String> {
+    // The file can grow after the opener's metadata check. Bound the source
+    // before buffering and share one budget across all scanned lines.
+    let mut reader = BufReader::new(source.take(CODE_NAV_MAX_FILE_BYTES + 1));
+    let mut total_bytes = 0;
     for current_line in 1..=line {
         let mut bytes = Vec::new();
         let read = reader
             .read_until(b'\n', &mut bytes)
             .map_err(|err| format!("read code-nav line failed: {err}"))?;
+        total_bytes += read as u64;
+        ensure_code_nav_file_within_limit(path, total_bytes)?;
         if read == 0 {
             return Ok(String::new());
         }
@@ -54,11 +80,61 @@ pub(crate) fn truncate_preview(value: &str, max_chars: usize) -> String {
 }
 
 fn open_code_nav_file(path: &Path) -> Result<File, String> {
+    #[cfg(unix)]
+    let file = open_canonical_code_nav_file(path).map_err(|err| err.to_string())?;
+    #[cfg(not(unix))]
     let file = File::open(path).map_err(|err| err.to_string())?;
-    if let Ok(metadata) = file.metadata() {
-        ensure_code_nav_file_within_limit(path, metadata.len())?;
+    let metadata = file.metadata().map_err(|err| err.to_string())?;
+    if !metadata.is_file() {
+        return Err("code-nav path is not a regular file".to_string());
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // Canonical paths and O_NOFOLLOW cannot distinguish hard links to
+        // files outside the project. Check the opened inode before reading;
+        // this does not prevent links created after the metadata check.
+        if metadata.nlink() > 1 {
+            return Err("code-nav file has multiple hard links".to_string());
+        }
+    }
+    ensure_code_nav_file_within_limit(path, metadata.len())?;
     Ok(file)
+}
+
+#[cfg(unix)]
+fn open_canonical_code_nav_file(path: &Path) -> std::io::Result<File> {
+    use crate::core::fs_open::open_directory_without_symlinks;
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+
+    // Callers supply paths from the validated canonical project context. Do
+    // not canonicalize again: that could follow a replaced ancestor outside it.
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "expected a file parent")
+    })?;
+    let name = path.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "expected a file name")
+    })?;
+    let name = CString::new(name.as_bytes())?;
+    let directory = open_directory_without_symlinks(parent)?;
+    // SAFETY: directory owns a live descriptor and name is one NUL-terminated
+    // component. O_CREAT is absent, so no mode argument is required.
+    let fd = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            // Do not wait for a FIFO peer before the handle's type can be
+            // checked. O_NONBLOCK does not change regular-file reads.
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
+        )
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: successful openat returns a fresh descriptor owned only here.
+    Ok(unsafe { File::from_raw_fd(fd) })
 }
 
 fn ensure_code_nav_file_within_limit(path: &Path, actual_bytes: u64) -> Result<(), String> {
@@ -72,6 +148,10 @@ fn ensure_code_nav_file_within_limit(path: &Path, actual_bytes: u64) -> Result<(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "file_limits_growth_tests.rs"]
+mod growth_tests;
 
 #[cfg(test)]
 mod tests {
@@ -88,7 +168,7 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         fs::write(&path, content).expect("write temp file");
-        path
+        fs::canonicalize(path).expect("canonical temp file")
     }
 
     #[test]

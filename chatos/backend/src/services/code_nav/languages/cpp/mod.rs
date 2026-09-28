@@ -440,7 +440,7 @@ mod tests {
         ));
         fs::create_dir_all(root.join("src")).expect("create source dir");
         fs::write(root.join("CMakeLists.txt"), "project(demo CXX)\n").expect("write cmake");
-        root
+        fs::canonicalize(root).expect("canonical project fixture")
     }
 
     #[test]

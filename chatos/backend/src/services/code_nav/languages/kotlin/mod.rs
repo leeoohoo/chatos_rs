@@ -287,7 +287,7 @@ mod tests {
             "plugins { kotlin(\"jvm\") }\n",
         )
         .expect("write gradle file");
-        root
+        fs::canonicalize(root).expect("canonical project fixture")
     }
 
     #[test]

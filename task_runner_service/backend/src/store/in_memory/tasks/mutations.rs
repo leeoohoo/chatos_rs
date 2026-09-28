@@ -10,6 +10,17 @@ impl InMemoryStore {
         task
     }
 
+    pub(in crate::store) fn update_tasks_batch(&self, tasks: &[TaskRecord]) -> Result<(), String> {
+        let mut data = self.inner.write();
+        if let Some(task) = tasks.iter().find(|task| !data.tasks.contains_key(&task.id)) {
+            return Err(format!("task not found during batch update: {}", task.id));
+        }
+        for task in tasks {
+            data.tasks.insert(task.id.clone(), task.clone());
+        }
+        Ok(())
+    }
+
     pub(in crate::store) fn save_task_and_set_prerequisites_if_revision(
         &self,
         mut task: TaskRecord,
@@ -346,6 +357,32 @@ mod tests {
         assert_eq!(
             store.get_task("target").expect("stored task").title,
             "atomic update"
+        );
+    }
+
+    #[test]
+    fn batch_task_update_persists_all_candidates_together() {
+        let store = test_store();
+        let mut first = scheduled_task("2026-09-17T01:00:00Z");
+        first.id = "first".to_string();
+        let mut second = scheduled_task("2026-09-17T01:00:00Z");
+        second.id = "second".to_string();
+        store.save_task(first.clone());
+        store.save_task(second.clone());
+
+        first.status = TaskStatus::Failed;
+        second.status = TaskStatus::Cancelled;
+        store
+            .update_tasks_batch(&[first, second])
+            .expect("batch update");
+
+        assert_eq!(
+            store.get_task("first").expect("first task").status,
+            TaskStatus::Failed
+        );
+        assert_eq!(
+            store.get_task("second").expect("second task").status,
+            TaskStatus::Cancelled
         );
     }
 }

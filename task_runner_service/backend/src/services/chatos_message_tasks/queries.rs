@@ -3,9 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::matching::{
-    normalize_source_id, normalized_chatos_source, task_matches_source_user_message,
-};
+use super::matching::{normalize_source_id, normalized_chatos_source};
 use super::*;
 use crate::models::now_rfc3339;
 
@@ -13,6 +11,22 @@ mod graph;
 
 #[cfg(test)]
 mod tests;
+
+fn chatos_source_task_filters(
+    source_session_id: Option<String>,
+    source_user_message_ids: Vec<String>,
+    source_turn_ids: Vec<String>,
+    status: Option<TaskStatus>,
+) -> TaskListFilters {
+    TaskListFilters {
+        status,
+        source_session_id,
+        source_user_message_ids,
+        source_turn_ids,
+        include_subtasks: Some(false),
+        ..TaskListFilters::default()
+    }
+}
 
 impl TaskService {
     pub async fn list_tasks_for_source_user_message(
@@ -23,17 +37,12 @@ impl TaskService {
         let Some(source_user_message_id) = normalize_source_id(source_user_message_id) else {
             return Ok(Vec::new());
         };
-        let filters = sanitize_task_list_filters(TaskListFilters {
-            creator_user_id: creator
-                .and_then(|user| user.effective_owner_user_id().map(ToOwned::to_owned)),
-            include_subtasks: Some(false),
-            ..TaskListFilters::default()
-        });
+        let mut filters =
+            chatos_source_task_filters(None, vec![source_user_message_id], Vec::new(), None);
+        filters.creator_user_id =
+            creator.and_then(|user| user.effective_owner_user_id().map(ToOwned::to_owned));
+        let filters = sanitize_task_list_filters(filters);
         let tasks = self.store.list_tasks_filtered(&filters).await?;
-        let tasks = tasks
-            .into_iter()
-            .filter(|task| task_matches_source_user_message(task, source_user_message_id.as_str()))
-            .collect::<Vec<_>>();
         self.hydrate_tasks_prerequisites(tasks).await
     }
 
@@ -57,12 +66,15 @@ impl TaskService {
         else {
             return Ok(Vec::new());
         };
+        let filters = chatos_source_task_filters(
+            Some(source.source_session_id.clone()),
+            source.source_user_message_id.iter().cloned().collect(),
+            source.source_turn_id.iter().cloned().collect(),
+            None,
+        );
         let mut tasks = self
             .store
-            .list_tasks_filtered(&TaskListFilters {
-                include_subtasks: Some(false),
-                ..TaskListFilters::default()
-            })
+            .list_tasks_filtered(&filters)
             .await?
             .into_iter()
             .filter(|task| source.matches_task(task))
@@ -123,66 +135,63 @@ impl TaskService {
         let source_turn_id_set = source_turn_ids.iter().cloned().collect::<HashSet<_>>();
         let has_source_filters = !source_user_message_ids.is_empty() || !source_turn_ids.is_empty();
         let mut source_by_key = HashMap::<String, ChatosActiveMessageTaskSource>::new();
+        let mut active_tasks = Vec::new();
 
         for status in [TaskStatus::Ready, TaskStatus::Queued, TaskStatus::Running] {
-            let tasks = self
-                .store
-                .list_tasks_filtered(&TaskListFilters {
-                    status: Some(status),
-                    source_session_id: Some(source_session_id.clone()),
-                    source_user_message_ids: source_user_message_ids.clone(),
-                    source_turn_ids: source_turn_ids.clone(),
-                    include_subtasks: Some(false),
-                    ..TaskListFilters::default()
-                })
-                .await?;
-            for task in tasks {
-                let task = self.reconcile_stale_active_message_task(task).await?;
-                if !is_active_task_status(task.status) {
-                    continue;
-                }
-                if task.source_session_id.as_deref().map(str::trim)
-                    != Some(source_session_id.as_str())
-                {
-                    continue;
-                }
-                let source_user_message_id = task
-                    .source_user_message_id
-                    .as_deref()
-                    .and_then(normalize_source_id);
-                let source_turn_id = task.source_turn_id.as_deref().and_then(normalize_source_id);
-                if source_user_message_id.is_none() && source_turn_id.is_none() {
-                    continue;
-                }
-                if has_source_filters {
-                    let message_matches = source_user_message_id
-                        .as_ref()
-                        .is_some_and(|id| source_user_message_id_set.contains(id));
-                    let turn_matches = source_turn_id
-                        .as_ref()
-                        .is_some_and(|id| source_turn_id_set.contains(id));
-                    if !message_matches && !turn_matches {
-                        continue;
-                    }
-                }
-                let key = source_user_message_id
-                    .clone()
-                    .or_else(|| source_turn_id.as_ref().map(|id| format!("turn:{id}")))
-                    .unwrap_or_default();
-                let entry =
-                    source_by_key
-                        .entry(key)
-                        .or_insert_with(|| ChatosActiveMessageTaskSource {
-                            source_user_message_id: source_user_message_id.clone(),
-                            source_turn_id: source_turn_id.clone(),
-                            running_count: 0,
-                            active_count: 0,
-                        });
-                if is_running_task_status(task.status) {
-                    entry.running_count += 1;
-                }
-                entry.active_count += 1;
+            let filters = chatos_source_task_filters(
+                Some(source_session_id.clone()),
+                source_user_message_ids.clone(),
+                source_turn_ids.clone(),
+                Some(status),
+            );
+            active_tasks.extend(self.store.list_tasks_filtered(&filters).await?);
+        }
+        for task in self
+            .reconcile_stale_active_message_tasks(active_tasks)
+            .await?
+        {
+            if !is_active_task_status(task.status) {
+                continue;
             }
+            if task.source_session_id.as_deref().map(str::trim) != Some(source_session_id.as_str())
+            {
+                continue;
+            }
+            let source_user_message_id = task
+                .source_user_message_id
+                .as_deref()
+                .and_then(normalize_source_id);
+            let source_turn_id = task.source_turn_id.as_deref().and_then(normalize_source_id);
+            if source_user_message_id.is_none() && source_turn_id.is_none() {
+                continue;
+            }
+            if has_source_filters {
+                let message_matches = source_user_message_id
+                    .as_ref()
+                    .is_some_and(|id| source_user_message_id_set.contains(id));
+                let turn_matches = source_turn_id
+                    .as_ref()
+                    .is_some_and(|id| source_turn_id_set.contains(id));
+                if !message_matches && !turn_matches {
+                    continue;
+                }
+            }
+            let key = source_user_message_id
+                .clone()
+                .or_else(|| source_turn_id.as_ref().map(|id| format!("turn:{id}")))
+                .unwrap_or_default();
+            let entry = source_by_key
+                .entry(key)
+                .or_insert_with(|| ChatosActiveMessageTaskSource {
+                    source_user_message_id: source_user_message_id.clone(),
+                    source_turn_id: source_turn_id.clone(),
+                    running_count: 0,
+                    active_count: 0,
+                });
+            if is_running_task_status(task.status) {
+                entry.running_count += 1;
+            }
+            entry.active_count += 1;
         }
 
         let mut items = source_by_key.into_values().collect::<Vec<_>>();
@@ -198,58 +207,39 @@ impl TaskService {
         &self,
         tasks: Vec<TaskRecord>,
     ) -> Result<Vec<TaskRecord>, String> {
-        let mut repaired = Vec::with_capacity(tasks.len());
-        for task in tasks {
-            repaired.push(self.reconcile_stale_active_message_task(task).await?);
-        }
-        Ok(repaired)
-    }
-
-    async fn reconcile_stale_active_message_task(
-        &self,
-        task: TaskRecord,
-    ) -> Result<TaskRecord, String> {
-        if !is_active_task_status(task.status) {
-            return Ok(task);
-        }
-        let Some(last_run_id) = task
-            .last_run_id
-            .as_deref()
+        let last_run_ids = tasks
+            .iter()
+            .filter(|task| is_active_task_status(task.status))
+            .filter_map(|task| task.last_run_id.as_deref())
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)
-        else {
-            return Ok(task);
-        };
-        let Some(last_run) = self.store.get_run(last_run_id.as_str()).await? else {
-            return Ok(task);
-        };
-        if last_run.task_id.trim() != task.id.trim() {
-            return Ok(task);
+            .collect::<Vec<_>>();
+        let runs_by_id = self
+            .store
+            .get_runs_by_ids(&last_run_ids)
+            .await?
+            .into_iter()
+            .map(|run| (run.id.clone(), run))
+            .collect::<HashMap<_, _>>();
+        let repaired_at = now_rfc3339();
+        let mut repairs = Vec::new();
+        let mut repaired = Vec::with_capacity(tasks.len());
+        for task in tasks {
+            let last_run = task
+                .last_run_id
+                .as_deref()
+                .map(str::trim)
+                .and_then(|run_id| runs_by_id.get(run_id));
+            if let Some(repair) = stale_active_task_repair(&task, last_run, &repaired_at) {
+                repairs.push(repair.clone());
+                repaired.push(repair);
+            } else {
+                repaired.push(task);
+            }
         }
-        let Some(next_status) = terminal_task_status_for_run_status(last_run.status) else {
-            return Ok(task);
-        };
-        if !should_reconcile_stale_active_task(&task, &last_run) {
-            return Ok(task);
-        }
-
-        let mut repaired = task;
-        repaired.status = next_status;
-        repaired.last_run_id = Some(last_run.id.clone());
-        if repaired
-            .result_summary
-            .as_deref()
-            .map(str::trim)
-            .is_none_or(str::is_empty)
-        {
-            repaired.result_summary = last_run
-                .result_summary
-                .clone()
-                .or_else(|| last_run.error_message.clone());
-        }
-        repaired.updated_at = now_rfc3339();
-        self.store.save_task(repaired).await
+        self.store.update_tasks_batch(&repairs).await?;
+        Ok(repaired)
     }
 
     pub async fn get_task_for_chatos_message(
@@ -467,6 +457,41 @@ fn is_active_task_status(status: TaskStatus) -> bool {
 
 fn is_running_task_status(status: TaskStatus) -> bool {
     matches!(status, TaskStatus::Queued | TaskStatus::Running)
+}
+
+fn stale_active_task_repair(
+    task: &TaskRecord,
+    last_run: Option<&TaskRunRecord>,
+    repaired_at: &str,
+) -> Option<TaskRecord> {
+    if !is_active_task_status(task.status) {
+        return None;
+    }
+    let last_run = last_run?;
+    if last_run.task_id.trim() != task.id.trim() {
+        return None;
+    }
+    let next_status = terminal_task_status_for_run_status(last_run.status)?;
+    if !should_reconcile_stale_active_task(task, last_run) {
+        return None;
+    }
+
+    let mut repaired = task.clone();
+    repaired.status = next_status;
+    repaired.last_run_id = Some(last_run.id.clone());
+    if repaired
+        .result_summary
+        .as_deref()
+        .map(str::trim)
+        .is_none_or(str::is_empty)
+    {
+        repaired.result_summary = last_run
+            .result_summary
+            .clone()
+            .or_else(|| last_run.error_message.clone());
+    }
+    repaired.updated_at = repaired_at.to_string();
+    Some(repaired)
 }
 
 fn terminal_task_status_for_run_status(status: TaskRunStatus) -> Option<TaskStatus> {

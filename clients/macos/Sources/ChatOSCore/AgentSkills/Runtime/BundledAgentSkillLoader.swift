@@ -109,7 +109,7 @@ public enum BundledAgentSkillLoader {
         guard markdown.hasPrefix("---\n"),
               let end = markdown.dropFirst(4).range(of: "\n---") else { return nil }
         let prefix = key + ":"
-        return markdown[..<end.lowerBound].split(separator: "\n").compactMap { line in
+        return markdown[..<end.lowerBound].split(separator: "\n").compactMap { line -> String? in
             let value = line.trimmingCharacters(in: .whitespaces)
             guard value.hasPrefix(prefix) else { return nil }
             return String(value.dropFirst(prefix.count))
@@ -118,8 +118,6 @@ public enum BundledAgentSkillLoader {
     }
 
     private static func resourcePaths(in directory: URL, beneath root: URL) throws -> [String] {
-        let resolvedDirectory = directory.resolvingSymlinksInPath().standardizedFileURL
-        let resolvedDirectoryPrefix = resolvedDirectory.path + "/"
         guard let enumerator = FileManager.default.enumerator(
             at: directory,
             includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
@@ -134,11 +132,7 @@ public enum BundledAgentSkillLoader {
                 beneath: root,
                 maximumBytes: 1_024 * 1_024
             )
-            let resolvedPath = url.resolvingSymlinksInPath().standardizedFileURL.path
-            guard resolvedPath.hasPrefix(resolvedDirectoryPrefix) else {
-                throw LoaderError.invalidEntrypoint(url.path)
-            }
-            paths.append(String(resolvedPath.dropFirst(resolvedDirectoryPrefix.count)))
+            paths.append(try ProgressiveSkillFileLoader.relativePath(of: url, beneath: directory))
         }
         return paths.sorted()
     }
