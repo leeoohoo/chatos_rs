@@ -28,6 +28,9 @@ public sealed class LocalStateDatabaseTests
                 Assert.Equal(1L, await command.ExecuteScalarAsync());
             }
 
+            // Microsoft.Data.Sqlite can retain a native handle until its pool is
+            // cleared on Windows, even after the managed connection is disposed.
+            SqliteConnection.ClearAllPools();
             File.Delete(databasePath);
             Assert.False(File.Exists(databasePath));
         }
