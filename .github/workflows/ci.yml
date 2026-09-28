@@ -25,6 +25,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
       - name: Test source-quality policies
         run: python3 -m unittest discover -s scripts/tests -p "test_code_quality_*.py"
 
@@ -33,6 +38,9 @@ jobs:
           CODE_QUALITY_DIFF_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           CODE_QUALITY_DIFF_HEAD: ${{ github.sha }}
         run: python3 scripts/check_source_size_policy.py --scope owned
+
+      - name: Reject hand-edited registry generated output
+        run: node plugins/web-design-studio/scripts/registry-generated-integrity.mjs --check
 
   static-security:
     name: Secret and Container Config Scan
