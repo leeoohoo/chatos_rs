@@ -496,6 +496,24 @@
                                                             <Button Grid.Column="1" Click="OnStopStoryPlaylistClick" Content="停止连播" IsEnabled="{x:Bind StoryViewModel.IsPlaylistActive, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                         </Grid>
                                                         <TextBlock Text="{x:Bind StoryViewModel.PlaylistStatusLabel, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        <TextBlock Text="项目图片" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                        <ListView MaxHeight="260" Background="Transparent" BorderThickness="0" IsItemClickEnabled="True" ItemClick="OnStoryProjectImageClick" ItemsSource="{x:Bind StoryViewModel.ProjectImages}" SelectionMode="None">
+                                                            <ListView.ItemTemplate>
+                                                                <DataTemplate x:DataType="media:StoryProjectImageItem">
+                                                                    <Border Margin="0,0,0,6" Padding="7" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="8">
+                                                                        <Grid ColumnSpacing="9">
+                                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="68" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                                            <Image Width="68" Height="48" Source="{Binding FilePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="UniformToFill" />
+                                                                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                                                                <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                                                <TextBlock Text="{x:Bind KindLabel}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                            </StackPanel>
+                                                                        </Grid>
+                                                                    </Border>
+                                                                </DataTemplate>
+                                                            </ListView.ItemTemplate>
+                                                        </ListView>
+                                                        <TextBlock Text="分段视频" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
                                                         <ListView MaxHeight="220" Background="Transparent" BorderThickness="0" IsItemClickEnabled="True" ItemClick="OnStoryProjectVideoClick" ItemsSource="{x:Bind StoryViewModel.ProjectVideos}" SelectionMode="None">
                                                             <ListView.ItemTemplate>
                                                                 <DataTemplate x:DataType="media:StoryProjectVideoItem">

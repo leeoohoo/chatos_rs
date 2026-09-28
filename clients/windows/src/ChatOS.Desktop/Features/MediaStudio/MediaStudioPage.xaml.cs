@@ -142,6 +142,12 @@ public sealed partial class MediaStudioPage : Page
         StoryVideoPlayer.MediaPlayer.Play();
     }
 
+    private void OnStoryProjectImageClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is StoryProjectImageItem item)
+            StoryViewModel.SelectProjectImage(item);
+    }
+
     private void OnStoryPlaylistItemChanged(
         MediaPlaybackList sender,
         CurrentMediaPlaybackItemChangedEventArgs args)
