@@ -13,7 +13,8 @@ use chatos_local_agent_protocol::{
     LocalAgentToolOutcome, LocalConversationDetail, LocalConversationHistoryPage,
     LocalConversationRecord, LocalConversationTurnStart, LocalConversationTurnUpdate,
     LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalTaskGraph,
-    ResumeConversationTurnCommand, StartConversationTurnCommand,
+    LocalTaskGraphListScope, LocalTaskGraphPage, ResumeConversationTurnCommand,
+    StartConversationTurnCommand,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -181,11 +182,22 @@ pub trait LocalAgentTaskStore: Send + Sync {
 
     async fn get_task_graph(
         &self,
+        owner_user_id: &str,
         graph_id: &str,
     ) -> Result<Option<LocalTaskGraph>, ClientStorageError>;
 
+    async fn list_task_graphs(
+        &self,
+        owner_user_id: &str,
+        scope: LocalTaskGraphListScope,
+        before_updated_at_unix_ms: Option<i64>,
+        before_graph_id: Option<&str>,
+        limit: u32,
+    ) -> Result<LocalTaskGraphPage, ClientStorageError>;
+
     async fn list_task_runs(
         &self,
+        owner_user_id: &str,
         task_id: &str,
         limit: u32,
     ) -> Result<Vec<LocalAgentRunRecord>, ClientStorageError>;
@@ -201,6 +213,7 @@ pub trait LocalAgentTaskStore: Send + Sync {
     async fn cancel_task(
         &self,
         command: &IdempotentCommand,
+        owner_user_id: &str,
         task_id: &str,
         expected_version: Option<u64>,
         reason: &str,
@@ -211,6 +224,7 @@ pub trait LocalAgentTaskStore: Send + Sync {
     async fn retry_task(
         &self,
         command: &IdempotentCommand,
+        owner_user_id: &str,
         task_id: &str,
         expected_version: u64,
         now_unix_ms: i64,
@@ -220,6 +234,7 @@ pub trait LocalAgentTaskStore: Send + Sync {
     async fn restart_task(
         &self,
         command: &IdempotentCommand,
+        owner_user_id: &str,
         task_id: &str,
         expected_version: u64,
         reason: &str,

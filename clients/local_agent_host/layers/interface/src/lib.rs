@@ -43,8 +43,9 @@ pub use run_query::{ListRunsCommand, LocalAgentRunListScope, LocalAgentRunPage};
 
 pub use task::{
     CancelTaskCommand, CreateTaskGraphCommand, GetTaskGraphCommand, GetTaskRunsCommand,
-    LocalTaskDependency, LocalTaskGraph, LocalTaskGraphStatus, LocalTaskRecord, LocalTaskSpec,
-    LocalTaskStatus, RestartTaskCommand, RetryTaskCommand,
+    ListTaskGraphsCommand, LocalTaskDependency, LocalTaskGraph, LocalTaskGraphListScope,
+    LocalTaskGraphPage, LocalTaskGraphStatus, LocalTaskGraphSummary, LocalTaskRecord,
+    LocalTaskSpec, LocalTaskStatus, RestartTaskCommand, RetryTaskCommand,
 };
 pub use tool::{
     ClaimNextToolCommand, CommitToolCommand, DecideToolApprovalCommand,
@@ -54,7 +55,7 @@ pub use tool::{
     LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 18;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 19;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -102,6 +103,7 @@ pub enum HostCommand {
     ListEvents(ListEventsCommand),
     WaitEvents(WaitEventsCommand),
     CreateTaskGraph(CreateTaskGraphCommand),
+    ListTaskGraphs(ListTaskGraphsCommand),
     GetTaskGraph(GetTaskGraphCommand),
     GetTaskRuns(GetTaskRunsCommand),
     CancelTask(CancelTaskCommand),
@@ -144,6 +146,7 @@ impl HostCommand {
             Self::ListEvents(command) => command.validate(),
             Self::WaitEvents(command) => command.validate(),
             Self::CreateTaskGraph(command) => command.validate(),
+            Self::ListTaskGraphs(command) => command.validate(),
             Self::GetTaskGraph(command) => command.validate(),
             Self::GetTaskRuns(command) => command.validate(),
             Self::CancelTask(command) => command.validate(),
@@ -621,6 +624,9 @@ pub enum HostResult {
     },
     TaskGraph {
         graph: LocalTaskGraph,
+    },
+    TaskGraphs {
+        page: LocalTaskGraphPage,
     },
     TaskRuns {
         task_id: String,

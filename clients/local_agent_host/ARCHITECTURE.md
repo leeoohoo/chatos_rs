@@ -56,6 +56,8 @@ IPC v17 exposes owner-scoped Run discovery for native recovery and inspector vie
 
 Tool authorization is a Host-owned durable state machine in IPC v18 and SQLite v16. A model call records `requires_approval` independently from `side_effecting`: the former gates first execution, while the latter controls unknown-result crash recovery. Approval-pending rows cannot be claimed. Pending approval discovery and decisions are account-scoped, decisions use version/CAS plus command receipts, and rejection becomes a durable failed tool result rather than executing the tool. Built-in Task creation is explicitly exempt from first-execution approval but remains locally idempotent and crash-safe.
 
+IPC v19 makes the local Task Graph repository independently discoverable after restart. The owner-scoped index returns bounded Graph summaries with active/terminal/all filtering and a stable `(updated_at_unix_ms, graph_id)` cursor; complete DAGs remain an explicit detail read. Every external Task Graph read and mutation carries the owner account, so account switching cannot expose or mutate another account's local Task data by identifier.
+
 ## Server-removal boundary
 
 The completed client localization must allow these directories to be physically deleted:

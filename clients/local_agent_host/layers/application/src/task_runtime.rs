@@ -5,7 +5,8 @@ use super::{LocalAgentRuntime, LocalAgentRuntimeError};
 use chatos_local_agent_ports::{ClientStorageError, IdempotentCommand};
 use chatos_local_agent_protocol::{
     CancelTaskCommand, CreateTaskGraphCommand, GetTaskRunsCommand, HostCommand, HostResult,
-    LocalAgentRunRecord, LocalTaskGraph, RestartTaskCommand, RetryTaskCommand,
+    ListTaskGraphsCommand, LocalAgentRunRecord, LocalTaskGraph, LocalTaskGraphPage,
+    RestartTaskCommand, RetryTaskCommand,
 };
 use uuid::Uuid;
 
@@ -19,8 +20,13 @@ impl LocalAgentRuntime {
             HostCommand::CreateTaskGraph(command) => Ok(HostResult::TaskGraph {
                 graph: self.create_task_graph(idempotency, command).await?,
             }),
+            HostCommand::ListTaskGraphs(command) => Ok(HostResult::TaskGraphs {
+                page: self.list_task_graphs(command).await?,
+            }),
             HostCommand::GetTaskGraph(command) => Ok(HostResult::TaskGraph {
-                graph: self.get_task_graph(&command.graph_id).await?,
+                graph: self
+                    .get_task_graph(&command.owner_user_id, &command.graph_id)
+                    .await?,
             }),
             HostCommand::GetTaskRuns(command) => {
                 let task_id = command.task_id.clone();
@@ -67,13 +73,30 @@ impl LocalAgentRuntime {
 
     pub(super) async fn get_task_graph(
         &self,
+        owner_user_id: &str,
         graph_id: &str,
     ) -> Result<LocalTaskGraph, LocalAgentRuntimeError> {
         Ok(self
             .store
-            .get_task_graph(graph_id)
+            .get_task_graph(owner_user_id, graph_id)
             .await?
             .ok_or_else(|| ClientStorageError::NotFound(graph_id.to_string()))?)
+    }
+
+    pub(super) async fn list_task_graphs(
+        &self,
+        command: ListTaskGraphsCommand,
+    ) -> Result<LocalTaskGraphPage, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .list_task_graphs(
+                &command.owner_user_id,
+                command.scope,
+                command.before_updated_at_unix_ms,
+                command.before_graph_id.as_deref(),
+                command.limit,
+            )
+            .await?)
     }
 
     pub(super) async fn get_task_runs(
@@ -82,7 +105,7 @@ impl LocalAgentRuntime {
     ) -> Result<Vec<LocalAgentRunRecord>, LocalAgentRuntimeError> {
         Ok(self
             .store
-            .list_task_runs(&command.task_id, command.limit)
+            .list_task_runs(&command.owner_user_id, &command.task_id, command.limit)
             .await?)
     }
 
@@ -95,6 +118,7 @@ impl LocalAgentRuntime {
             .store
             .cancel_task(
                 idempotency,
+                &command.owner_user_id,
                 &command.task_id,
                 command.expected_version,
                 &command.reason,
@@ -113,6 +137,7 @@ impl LocalAgentRuntime {
             .store
             .retry_task(
                 idempotency,
+                &command.owner_user_id,
                 &command.task_id,
                 command.expected_version,
                 self.now()?,
@@ -129,6 +154,7 @@ impl LocalAgentRuntime {
             .store
             .restart_task(
                 idempotency,
+                &command.owner_user_id,
                 &command.task_id,
                 command.expected_version,
                 &command.reason,
@@ -203,6 +229,7 @@ mod tests {
             .handle(request(
                 "get-graph-1",
                 HostCommand::GetTaskGraph(GetTaskGraphCommand {
+                    owner_user_id: "user-1".to_string(),
                     graph_id: "graph-1".to_string(),
                 }),
             ))
@@ -220,6 +247,7 @@ mod tests {
             .handle(request(
                 "get-task-runs-1",
                 HostCommand::GetTaskRuns(GetTaskRunsCommand {
+                    owner_user_id: "user-1".to_string(),
                     task_id: "task-1".to_string(),
                     limit: 10,
                 }),
@@ -252,6 +280,7 @@ mod tests {
         let cancel = request(
             "cancel-task-1",
             HostCommand::CancelTask(CancelTaskCommand {
+                owner_user_id: "user-1".to_string(),
                 task_id: "task-1".to_string(),
                 expected_version: Some(1),
                 reason: "stop".to_string(),
@@ -270,6 +299,7 @@ mod tests {
             .handle(request(
                 "retry-task-1",
                 HostCommand::RetryTask(RetryTaskCommand {
+                    owner_user_id: "user-1".to_string(),
                     task_id: "task-1".to_string(),
                     expected_version: 2,
                 }),
@@ -288,7 +318,7 @@ mod tests {
             .expect("start task")
             .expect("task Run");
         let running = runtime
-            .get_task_graph("graph-1")
+            .get_task_graph("user-1", "graph-1")
             .await
             .expect("running graph");
         let root = running
@@ -299,6 +329,7 @@ mod tests {
         let restart = request(
             "restart-task-1",
             HostCommand::RestartTask(RestartTaskCommand {
+                owner_user_id: "user-1".to_string(),
                 task_id: "task-1".to_string(),
                 expected_version: root.version,
                 reason: "restart active task".to_string(),

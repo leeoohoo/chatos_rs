@@ -321,7 +321,7 @@ mod tests {
 
         finish_next(&storage, "run-a", LocalAgentRunStatus::Succeeded, 2_000).await;
         let after_success = storage
-            .get_task_graph("graph-lifecycle")
+            .get_task_graph("user-1", "graph-lifecycle")
             .await
             .expect("get graph")
             .expect("graph");
@@ -332,7 +332,7 @@ mod tests {
 
         finish_next(&storage, "run-b", LocalAgentRunStatus::Failed, 3_000).await;
         let after_failure = storage
-            .get_task_graph("graph-lifecycle")
+            .get_task_graph("user-1", "graph-lifecycle")
             .await
             .expect("get graph")
             .expect("graph");
@@ -374,7 +374,7 @@ mod tests {
             .expect("cancel Run");
 
         let graph = storage
-            .get_task_graph("graph-lifecycle")
+            .get_task_graph("user-1", "graph-lifecycle")
             .await
             .expect("get graph")
             .expect("graph");

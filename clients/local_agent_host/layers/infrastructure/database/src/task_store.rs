@@ -8,7 +8,8 @@ use super::{
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     CreateTaskGraphCommand, LocalAgentRunRecord, LocalTaskDependency, LocalTaskGraph,
-    LocalTaskGraphStatus, LocalTaskRecord, LocalTaskStatus,
+    LocalTaskGraphListScope, LocalTaskGraphPage, LocalTaskGraphStatus, LocalTaskRecord,
+    LocalTaskStatus,
 };
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 use std::{collections::HashSet, str::FromStr};
@@ -46,14 +47,35 @@ impl LocalAgentTaskStore for SqliteClientStorage {
 
     async fn get_task_graph(
         &self,
+        owner_user_id: &str,
         graph_id: &str,
     ) -> Result<Option<LocalTaskGraph>, ClientStorageError> {
         let mut connection = self.pool.acquire().await.db()?;
-        fetch_graph(&mut connection, graph_id).await
+        fetch_graph_for_owner(&mut connection, owner_user_id, graph_id).await
+    }
+
+    async fn list_task_graphs(
+        &self,
+        owner_user_id: &str,
+        scope: LocalTaskGraphListScope,
+        before_updated_at_unix_ms: Option<i64>,
+        before_graph_id: Option<&str>,
+        limit: u32,
+    ) -> Result<LocalTaskGraphPage, ClientStorageError> {
+        super::task_query_store::list_graphs(
+            self,
+            owner_user_id,
+            scope,
+            before_updated_at_unix_ms,
+            before_graph_id,
+            limit,
+        )
+        .await
     }
 
     async fn list_task_runs(
         &self,
+        owner_user_id: &str,
         task_id: &str,
         limit: u32,
     ) -> Result<Vec<LocalAgentRunRecord>, ClientStorageError> {
@@ -63,12 +85,15 @@ impl LocalAgentTaskStore for SqliteClientStorage {
             ));
         }
         let mut connection = self.pool.acquire().await.db()?;
-        let exists =
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM local_tasks WHERE task_id = ?")
-                .bind(task_id)
-                .fetch_one(&mut *connection)
-                .await
-                .db()?;
+        let exists = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM local_tasks t JOIN local_task_graphs g \
+             ON g.graph_id = t.graph_id WHERE t.task_id = ? AND g.owner_user_id = ?",
+        )
+        .bind(task_id)
+        .bind(owner_user_id)
+        .fetch_one(&mut *connection)
+        .await
+        .db()?;
         if exists == 0 {
             return Err(ClientStorageError::NotFound(task_id.to_string()));
         }
@@ -79,9 +104,10 @@ impl LocalAgentTaskStore for SqliteClientStorage {
              claim_until_unix_ms, next_attempt_at_unix_ms, pending_tool_batch_json, \
              terminal_outcome_json, checkpoint_json, continuation_input_json, \
              created_at_unix_ms, updated_at_unix_ms FROM local_agent_runs \
-             WHERE owner_entity_type = 'task' AND owner_entity_id = ? \
+             WHERE owner_user_id = ? AND owner_entity_type = 'task' AND owner_entity_id = ? \
              ORDER BY created_at_unix_ms DESC, run_id DESC LIMIT ?",
         )
+        .bind(owner_user_id)
         .bind(task_id)
         .bind(i64::from(limit))
         .fetch_all(&mut *connection)
@@ -113,6 +139,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
     async fn cancel_task(
         &self,
         command: &IdempotentCommand,
+        owner_user_id: &str,
         task_id: &str,
         expected_version: Option<u64>,
         reason: &str,
@@ -124,6 +151,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         let result = super::task_commands::cancel_task(
             &mut connection,
             command,
+            owner_user_id,
             task_id,
             expected_version,
             reason,
@@ -137,6 +165,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
     async fn retry_task(
         &self,
         command: &IdempotentCommand,
+        owner_user_id: &str,
         task_id: &str,
         expected_version: u64,
         now_unix_ms: i64,
@@ -146,6 +175,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         let result = super::task_commands::retry_task(
             &mut connection,
             command,
+            owner_user_id,
             task_id,
             expected_version,
             now_unix_ms,
@@ -157,6 +187,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
     async fn restart_task(
         &self,
         command: &IdempotentCommand,
+        owner_user_id: &str,
         task_id: &str,
         expected_version: u64,
         reason: &str,
@@ -168,6 +199,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         let result = super::task_commands::restart_task(
             &mut connection,
             command,
+            owner_user_id,
             task_id,
             expected_version,
             reason,
@@ -322,6 +354,25 @@ pub(super) async fn fetch_graph(
     }))
 }
 
+async fn fetch_graph_for_owner(
+    connection: &mut SqliteConnection,
+    owner_user_id: &str,
+    graph_id: &str,
+) -> Result<Option<LocalTaskGraph>, ClientStorageError> {
+    let owned = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM local_task_graphs WHERE graph_id = ? AND owner_user_id = ?",
+    )
+    .bind(graph_id)
+    .bind(owner_user_id)
+    .fetch_one(&mut *connection)
+    .await
+    .db()?;
+    if owned == 0 {
+        return Ok(None);
+    }
+    fetch_graph(connection, graph_id).await
+}
+
 fn decode_task(row: SqliteRow, graph: &SqliteRow) -> Result<LocalTaskRecord, ClientStorageError> {
     let input: String = row.try_get("input_json").db()?;
     let status: String = row.try_get("status").db()?;
@@ -412,7 +463,7 @@ mod tests {
         assert_eq!(created.created_at_unix_ms, 10_000);
 
         let loaded = storage
-            .get_task_graph("graph-1")
+            .get_task_graph("user-1", "graph-1")
             .await
             .expect("get graph")
             .expect("stored graph");
@@ -424,7 +475,7 @@ mod tests {
             .expect("start task")
             .expect("ready task");
         let running = storage
-            .get_task_graph("graph-1")
+            .get_task_graph("user-1", "graph-1")
             .await
             .expect("get graph")
             .expect("stored graph");
@@ -454,7 +505,7 @@ mod tests {
             .expect_err("duplicate task must conflict");
         assert!(matches!(duplicate_task, ClientStorageError::Conflict(_)));
         assert!(storage
-            .get_task_graph("graph-2")
+            .get_task_graph("user-1", "graph-2")
             .await
             .expect("get graph")
             .is_none());
@@ -466,11 +517,11 @@ mod tests {
             .await
             .expect("storage");
         assert!(matches!(
-            storage.list_task_runs("missing-task", 10).await,
+            storage.list_task_runs("user-1", "missing-task", 10).await,
             Err(ClientStorageError::NotFound(_))
         ));
         assert!(matches!(
-            storage.list_task_runs("missing-task", 0).await,
+            storage.list_task_runs("user-1", "missing-task", 0).await,
             Err(ClientStorageError::InvalidState(_))
         ));
     }

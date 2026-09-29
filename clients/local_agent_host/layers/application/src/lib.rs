@@ -29,6 +29,8 @@ mod conversation_runtime;
 mod plugin_runtime;
 mod profile;
 mod run_factory;
+#[cfg(test)]
+mod task_query_tests;
 mod task_runtime;
 
 pub use profile::{LocalAgentProfile, LocalAgentProfileRegistry};
@@ -356,6 +358,7 @@ impl LocalAgentRuntime {
                 })
             }
             command @ (HostCommand::CreateTaskGraph(_)
+            | HostCommand::ListTaskGraphs(_)
             | HostCommand::GetTaskGraph(_)
             | HostCommand::GetTaskRuns(_)
             | HostCommand::CancelTask(_)

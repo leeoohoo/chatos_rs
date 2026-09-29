@@ -157,17 +157,61 @@ fn validate_dependencies(
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetTaskGraphCommand {
+    pub owner_user_id: String,
     pub graph_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetTaskRunsCommand {
+    pub owner_user_id: String,
     pub task_id: String,
     pub limit: u32,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalTaskGraphListScope {
+    Active,
+    Terminal,
+    #[default]
+    All,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListTaskGraphsCommand {
+    pub owner_user_id: String,
+    #[serde(default)]
+    pub scope: LocalTaskGraphListScope,
+    pub before_updated_at_unix_ms: Option<i64>,
+    pub before_graph_id: Option<String>,
+    pub limit: u32,
+}
+
+impl ListTaskGraphsCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
+        if !(1..=100).contains(&self.limit) {
+            return Err("limit must be between 1 and 100".to_string());
+        }
+        match (
+            self.before_updated_at_unix_ms,
+            self.before_graph_id.as_deref(),
+        ) {
+            (None, None) => Ok(()),
+            (Some(timestamp), Some(graph_id)) if timestamp >= 0 => {
+                validate_identifier("before_graph_id", graph_id)
+            }
+            _ => Err(
+                "before_updated_at_unix_ms and before_graph_id must be supplied together"
+                    .to_string(),
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CancelTaskCommand {
+    pub owner_user_id: String,
     pub task_id: String,
     pub expected_version: Option<u64>,
     pub reason: String,
@@ -175,6 +219,7 @@ pub struct CancelTaskCommand {
 
 impl CancelTaskCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("task_id", &self.task_id)?;
         if self.expected_version == Some(0) {
             return Err("expected_version must be greater than zero".to_string());
@@ -185,12 +230,14 @@ impl CancelTaskCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RetryTaskCommand {
+    pub owner_user_id: String,
     pub task_id: String,
     pub expected_version: u64,
 }
 
 impl RetryTaskCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("task_id", &self.task_id)?;
         if self.expected_version == 0 {
             return Err("expected_version must be greater than zero".to_string());
@@ -201,6 +248,7 @@ impl RetryTaskCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RestartTaskCommand {
+    pub owner_user_id: String,
     pub task_id: String,
     pub expected_version: u64,
     pub reason: String,
@@ -208,6 +256,7 @@ pub struct RestartTaskCommand {
 
 impl RestartTaskCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("task_id", &self.task_id)?;
         if self.expected_version == 0 {
             return Err("expected_version must be greater than zero".to_string());
@@ -218,12 +267,14 @@ impl RestartTaskCommand {
 
 impl GetTaskGraphCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("graph_id", &self.graph_id)
     }
 }
 
 impl GetTaskRunsCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("task_id", &self.task_id)?;
         if !(1..=100).contains(&self.limit) {
             return Err("limit must be between 1 and 100".to_string());
@@ -255,6 +306,16 @@ pub enum LocalTaskGraphStatus {
 }
 
 impl LocalTaskGraphStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Running => "running",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
     pub fn derive(tasks: &[LocalTaskRecord]) -> Self {
         if tasks
             .iter()
@@ -293,6 +354,21 @@ impl LocalTaskGraphStatus {
             Self::Cancelled
         } else {
             Self::Failed
+        }
+    }
+}
+
+impl FromStr for LocalTaskGraphStatus {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "running" => Ok(Self::Running),
+            "succeeded" => Ok(Self::Succeeded),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err(format!("unknown local task graph status: {value}")),
         }
     }
 }
@@ -359,6 +435,26 @@ pub struct LocalTaskGraph {
     pub tasks: Vec<LocalTaskRecord>,
     pub dependencies: Vec<LocalTaskDependency>,
     pub created_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LocalTaskGraphSummary {
+    pub graph_id: String,
+    pub owner_user_id: String,
+    pub source_entity_type: String,
+    pub source_entity_id: String,
+    pub status: LocalTaskGraphStatus,
+    pub task_count: u32,
+    pub succeeded_task_count: u32,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LocalTaskGraphPage {
+    pub graphs: Vec<LocalTaskGraphSummary>,
+    pub next_before_updated_at_unix_ms: Option<i64>,
+    pub next_before_graph_id: Option<String>,
 }
 
 #[cfg(test)]
@@ -468,12 +564,14 @@ mod tests {
     #[test]
     fn validates_task_run_page_limit() {
         assert!(GetTaskRunsCommand {
+            owner_user_id: "user-1".to_string(),
             task_id: "task-1".to_string(),
             limit: 100,
         }
         .validate()
         .is_ok());
         assert!(GetTaskRunsCommand {
+            owner_user_id: "user-1".to_string(),
             task_id: "task-1".to_string(),
             limit: 0,
         }
@@ -482,8 +580,39 @@ mod tests {
     }
 
     #[test]
+    fn validates_task_graph_list_cursor_and_owner() {
+        let valid = ListTaskGraphsCommand {
+            owner_user_id: "user-1".to_string(),
+            scope: LocalTaskGraphListScope::Active,
+            before_updated_at_unix_ms: Some(1_000),
+            before_graph_id: Some("graph-1".to_string()),
+            limit: 25,
+        };
+        assert!(valid.validate().is_ok());
+        assert!(ListTaskGraphsCommand {
+            before_graph_id: None,
+            ..valid.clone()
+        }
+        .validate()
+        .is_err());
+        assert!(ListTaskGraphsCommand {
+            owner_user_id: String::new(),
+            ..valid.clone()
+        }
+        .validate()
+        .is_err());
+        assert!(ListTaskGraphsCommand {
+            limit: 101,
+            ..valid
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
     fn validates_force_restart_reason_and_version() {
         assert!(RestartTaskCommand {
+            owner_user_id: "user-1".to_string(),
             task_id: "task-1".to_string(),
             expected_version: 2,
             reason: "rerun with fresh outputs".to_string(),
@@ -491,6 +620,7 @@ mod tests {
         .validate()
         .is_ok());
         assert!(RestartTaskCommand {
+            owner_user_id: "user-1".to_string(),
             task_id: "task-1".to_string(),
             expected_version: 0,
             reason: "rerun".to_string(),
@@ -498,6 +628,7 @@ mod tests {
         .validate()
         .is_err());
         assert!(RestartTaskCommand {
+            owner_user_id: "user-1".to_string(),
             task_id: "task-1".to_string(),
             expected_version: 2,
             reason: " ".to_string(),

@@ -398,7 +398,7 @@ mod tests {
         )
         .await;
         storage
-            .retry_task(&command("retry-task"), "task-1", 3, 6_000)
+            .retry_task(&command("retry-task"), "user-1", "task-1", 3, 6_000)
             .await
             .expect("retry Task");
         finish_task_run(
@@ -436,6 +436,7 @@ mod tests {
         storage
             .cancel_task(
                 &command("cancel-task"),
+                "user-1",
                 "task-cancelled",
                 Some(1),
                 "no longer needed",

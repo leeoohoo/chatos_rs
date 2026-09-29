@@ -52,6 +52,8 @@ IPC v17 adds `list_runs` for native recovery and inspector screens. Queries are 
 
 IPC v18 and SQLite v16 add the durable tool-approval gate. Side-effecting model tool calls are inserted as approval-pending and are excluded from every worker claim until an owner-scoped `decide_tool_approval` approves them. Native UI discovers them through `list_pending_tool_approvals`. Rejection is persisted as a deterministic failed tool result and lets the batch continue back to the model; approval and rejection are CAS/version protected and idempotent. The two built-in local Task creation tools are explicitly approval-exempt because they only create durable local work, while their unknown-result recovery remains conservative.
 
+IPC v19 adds `list_task_graphs` as the account-scoped Task Inspector index. Active, terminal, and complete views use a stable descending `(updated_at_unix_ms, graph_id)` cursor and return bounded summaries instead of complete DAGs; `get_task_graph` loads one selected DAG. Task Graph detail, Task Run history, cancel, retry, and restart commands now all require the owner account and treat a cross-account identifier as not found.
+
 Native clients may choose `LocalAgentHostAssembly::with_external_tool_worker`. In that mode Swift or C# claims and commits platform tools through IPC, while Rust still owns model scheduling plus the two Task creation tools and wakes immediately after each native tool receipt. This keeps platform permissions and UI-bound tools in the native process without duplicating the Agent loop.
 
 Protocol v15 retains the optional `include_tool_names` and `exclude_tool_names` Tool claim filters. The Assembly's Rust worker includes only the two reserved Task tools, and Coordinator IPC automatically excludes them from native claims. Explicit overlapping filters are rejected.
@@ -127,7 +129,7 @@ Example health request:
 
 ```json
 {
-  "protocol_version": 18,
+  "protocol_version": 19,
   "command_id": "health-019",
   "command": {
     "type": "health"

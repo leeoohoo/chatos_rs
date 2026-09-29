@@ -372,6 +372,7 @@ mod tests {
         let graph = runtime
             .try_handle(envelope(
                 HostCommand::GetTaskGraph(GetTaskGraphCommand {
+                    owner_user_id: "user-1".to_string(),
                     graph_id: "graph-scheduler".to_string(),
                 }),
                 "get-task-graph",
