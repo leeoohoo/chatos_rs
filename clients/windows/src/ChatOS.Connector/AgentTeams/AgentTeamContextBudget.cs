@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ChatOS.Connector.Gateway;
+using ChatOS.Core.Domain;
 
 namespace ChatOS.Connector.AgentTeams;
 
