@@ -232,22 +232,15 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         let system = savedRun?.checkpoint.messages.first?.content ?? ""
         XCTAssertTrue(system.contains(#"name="chatos-profession-desktop-engineer""#))
         XCTAssertFalse(system.contains("AS-project_type-desktop_application"))
-        XCTAssertEqual(
-            savedRun?.progressiveSkillSnapshot?.skills.map(\.name),
-            ["chatos-profession-desktop-engineer"]
-        )
+        XCTAssertEqual(savedRun?.progressiveSkillSnapshot?.skills.map(\.name), [
+            "chatos-profession-desktop-engineer",
+        ])
         XCTAssertFalse(system.contains("Desktop Application Playbook"))
         XCTAssertTrue(system.contains(#"name="chatos-compact-communication""#))
-        XCTAssertEqual(
-            savedRun?.checkpoint.instructionBundleItems.first?.audience,
-            "manager"
-        )
-        XCTAssertTrue(
-            savedRun?.checkpoint.messages.dropFirst().first?.content.contains("读取全部未读") == true
-        )
-        XCTAssertFalse(
-            savedRun?.checkpoint.messages.dropFirst().first?.content.contains("开始实现") == true
-        )
+        XCTAssertEqual(savedRun?.checkpoint.instructionBundleItems.first?.audience, "manager")
+        let wakeMessage = savedRun?.checkpoint.messages.dropFirst().first?.content ?? ""
+        XCTAssertTrue(wakeMessage.contains("读取全部未读"))
+        XCTAssertFalse(wakeMessage.contains("开始实现"))
     }
 
     func testFailedTodoRetryResumesItsDurableRunAndCompletes() async throws {
