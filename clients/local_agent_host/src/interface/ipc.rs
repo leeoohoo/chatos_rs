@@ -313,7 +313,7 @@ mod tests {
                 .expect("storage"),
         );
         let runtime = Arc::new(LocalAgentRuntime::new(storage));
-        runtime.initialize().await.expect("runtime");
+        runtime.initialize("user-1").await.expect("runtime");
         let (mut client, server) = tokio::io::duplex(16 * 1024);
         let server_task = tokio::spawn(serve_stream(server, runtime));
 

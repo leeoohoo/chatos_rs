@@ -42,7 +42,7 @@ async fn tool_batch_is_durable_and_resumes_after_all_results() {
             .expect("storage"),
     );
     let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
-    runtime.initialize().await.expect("initialize");
+    runtime.initialize("user-1").await.expect("initialize");
     runtime.handle(envelope("create-1", create_command())).await;
     let claimed = runtime
         .handle(envelope(

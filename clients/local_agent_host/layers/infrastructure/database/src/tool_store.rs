@@ -77,11 +77,12 @@ pub(crate) async fn fail_open_invocations_for_cancelled_run(
 impl LocalAgentToolStore for SqliteClientStorage {
     async fn recover_expired_tool_claims(
         &self,
+        owner_user_id: &str,
         now_unix_ms: i64,
     ) -> Result<u64, ClientStorageError> {
         let mut connection = self.pool.acquire().await.db()?;
         Self::begin_immediate(&mut connection).await.db()?;
-        let result = recover_expired_on(&mut connection, now_unix_ms).await;
+        let result = recover_expired_on(&mut connection, owner_user_id, now_unix_ms).await;
         Self::finish_write(&mut connection, result).await
     }
 
@@ -103,7 +104,7 @@ impl LocalAgentToolStore for SqliteClientStorage {
             if let Some(replay) = Self::replay(&mut connection, command).await.db()? {
                 return Ok(replay);
             }
-            recover_expired_on(&mut connection, now_unix_ms)
+            recover_expired_on(&mut connection, owner_user_id, now_unix_ms)
                 .await
                 .db()?;
             let candidates = sqlx::query(
@@ -322,15 +323,18 @@ impl LocalAgentToolStore for SqliteClientStorage {
 
 async fn recover_expired_on(
     connection: &mut SqliteConnection,
+    owner_user_id: &str,
     now_unix_ms: i64,
 ) -> Result<u64, ClientStorageError> {
     let rows = sqlx::query(
         "SELECT invocation_id, run_id, call_id, side_effecting, version \
          FROM local_agent_tool_invocations WHERE status = 'running' \
          AND claim_until_unix_ms IS NOT NULL AND claim_until_unix_ms <= ? \
+         AND run_id IN (SELECT run_id FROM local_agent_runs WHERE owner_user_id = ?) \
          ORDER BY invocation_id",
     )
     .bind(now_unix_ms)
+    .bind(owner_user_id)
     .fetch_all(&mut *connection)
     .await
     .db()?;
@@ -349,13 +353,16 @@ async fn recover_expired_on(
             "UPDATE local_agent_tool_invocations SET status = ?, version = version + 1, \
              claim_token = NULL, claim_until_unix_ms = NULL, error_text = ?, \
              updated_at_unix_ms = ? WHERE invocation_id = ? AND version = ? \
-             AND status = 'running'",
+             AND status = 'running' AND run_id IN (\
+               SELECT run_id FROM local_agent_runs WHERE owner_user_id = ?\
+             )",
         )
         .bind(next_status.as_str())
         .bind(side_effecting.then_some("tool result was unknown when its claim expired"))
         .bind(now_unix_ms)
         .bind(&invocation_id)
         .bind(version)
+        .bind(owner_user_id)
         .execute(&mut *connection)
         .await
         .db()?;

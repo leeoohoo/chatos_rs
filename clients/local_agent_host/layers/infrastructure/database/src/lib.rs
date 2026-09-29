@@ -35,6 +35,7 @@ mod run_commands;
 mod run_owner_store;
 mod run_query_store;
 mod run_record;
+mod run_recovery_store;
 mod schema;
 mod task_commands;
 mod task_conversation_writeback;
@@ -273,50 +274,6 @@ impl SqliteClientStorage {
         })?;
         Ok(())
     }
-
-    async fn recover_expired_claims_on(
-        connection: &mut SqliteConnection,
-        now_unix_ms: i64,
-    ) -> Result<u64, ClientStorageError> {
-        let rows = sqlx::query(
-            "SELECT run_id, version FROM local_agent_runs \
-             WHERE status = 'model_running' AND claim_until_unix_ms IS NOT NULL \
-             AND claim_until_unix_ms <= ? ORDER BY run_id",
-        )
-        .bind(now_unix_ms)
-        .fetch_all(&mut *connection)
-        .await
-        .db()?;
-        for row in &rows {
-            let run_id: String = row.try_get("run_id").db()?;
-            let version: i64 = row.try_get("version").db()?;
-            sqlx::query(
-                "UPDATE local_agent_runs SET status = 'needs_review', version = version + 1, \
-                 claim_token = NULL, claim_until_unix_ms = NULL, updated_at_unix_ms = ? \
-                 WHERE run_id = ? AND version = ? AND status = 'model_running'",
-            )
-            .bind(now_unix_ms)
-            .bind(&run_id)
-            .bind(version)
-            .execute(&mut *connection)
-            .await
-            .db()?;
-            let event_id = format!("recovery:{run_id}:{}", version + 1);
-            Self::insert_event(
-                connection,
-                &event_id,
-                &run_id,
-                "claim_expired_needs_review",
-                &serde_json::json!({
-                    "reason": "the host stopped while a step result was unknown"
-                }),
-                now_unix_ms,
-            )
-            .await
-            .db()?;
-        }
-        Ok(rows.len() as u64)
-    }
 }
 
 #[async_trait]
@@ -388,10 +345,16 @@ impl LocalAgentRunStore for SqliteClientStorage {
         .await
     }
 
-    async fn recover_expired_claims(&self, now_unix_ms: i64) -> Result<u64, ClientStorageError> {
+    async fn recover_expired_claims(
+        &self,
+        owner_user_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<u64, ClientStorageError> {
         let mut connection = self.pool.acquire().await.db()?;
         Self::begin_immediate(&mut connection).await.db()?;
-        let result = Self::recover_expired_claims_on(&mut connection, now_unix_ms).await;
+        let result =
+            run_recovery_store::recover_expired_claims(&mut connection, owner_user_id, now_unix_ms)
+                .await;
         Self::finish_write(&mut connection, result).await
     }
 
@@ -411,7 +374,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
             if let Some(replay) = Self::replay(&mut connection, command).await.db()? {
                 return Ok(replay);
             }
-            Self::recover_expired_claims_on(&mut connection, now_unix_ms)
+            run_recovery_store::recover_expired_claims(&mut connection, owner_user_id, now_unix_ms)
                 .await
                 .db()?;
             let candidate = sqlx::query(
@@ -493,12 +456,13 @@ impl LocalAgentRunStore for SqliteClientStorage {
         Self::finish_write(&mut connection, result).await
     }
 
-    async fn next_retry_at(&self) -> Result<Option<i64>, ClientStorageError> {
+    async fn next_retry_at(&self, owner_user_id: &str) -> Result<Option<i64>, ClientStorageError> {
         let mut connection = self.pool.acquire().await.db()?;
         Ok(sqlx::query_scalar::<_, Option<i64>>(
             "SELECT MIN(next_attempt_at_unix_ms) FROM local_agent_runs \
-             WHERE status = 'retry_scheduled'",
+             WHERE owner_user_id = ? AND status = 'retry_scheduled'",
         )
+        .bind(owner_user_id)
         .fetch_one(&mut *connection)
         .await
         .db()?)

@@ -115,7 +115,7 @@ mod tests {
                 .expect("storage"),
         );
         let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
-        runtime.initialize().await.expect("initialize");
+        runtime.initialize("user-1").await.expect("initialize");
         let put = HostCommand::PutModelConfigSnapshot(PutModelConfigSnapshotCommand {
             snapshot: snapshot("user-1", "model-a"),
         });

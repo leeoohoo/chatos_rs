@@ -48,9 +48,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
     let storage = Arc::new(SqliteClientStorage::connect_file(&options.database).await?);
     let runtime = Arc::new(LocalAgentRuntime::new(storage.clone()));
-    let recovered = runtime.initialize().await?;
+    let recovered = runtime.initialize(&options.owner_user_id).await?;
     if recovered > 0 {
-        eprintln!("Local Agent Host moved {recovered} expired claim(s) to needs_review");
+        eprintln!("Local Agent Host recovered {recovered} expired claim(s) for the active owner");
     }
     let (runner, memory_services) = match options.memory.as_ref() {
         Some(memory) => {

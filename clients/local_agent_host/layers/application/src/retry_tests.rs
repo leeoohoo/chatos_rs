@@ -31,7 +31,7 @@ async fn retry_preserves_the_next_model_attempt_across_claims() {
         storage,
         Arc::new(move || Ok(runtime_clock.load(Ordering::Acquire))),
     );
-    runtime.initialize().await.expect("initialize");
+    runtime.initialize("user-1").await.expect("initialize");
     runtime
         .handle(envelope(
             "create",

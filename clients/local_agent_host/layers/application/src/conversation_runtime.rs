@@ -244,7 +244,7 @@ mod tests {
                 .expect("storage"),
         );
         let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
-        runtime.initialize().await.expect("initialize");
+        runtime.initialize("user-1").await.expect("initialize");
 
         let created = runtime
             .try_handle(request(
@@ -346,7 +346,7 @@ mod tests {
                 .expect("storage"),
         );
         let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
-        runtime.initialize().await.expect("initialize");
+        runtime.initialize("user-1").await.expect("initialize");
         runtime
             .try_handle(request(
                 "create-conversation-control",
@@ -462,7 +462,7 @@ mod tests {
                 .expect("storage"),
         );
         let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
-        runtime.initialize().await.expect("initialize");
+        runtime.initialize("user-1").await.expect("initialize");
         runtime
             .try_handle(request(
                 "create-conversation-guidance",

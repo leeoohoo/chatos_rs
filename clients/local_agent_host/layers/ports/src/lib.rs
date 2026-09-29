@@ -125,7 +125,11 @@ pub trait LocalAgentRunStore: Send + Sync {
         limit: u32,
     ) -> Result<LocalAgentRunPage, ClientStorageError>;
 
-    async fn recover_expired_claims(&self, now_unix_ms: i64) -> Result<u64, ClientStorageError>;
+    async fn recover_expired_claims(
+        &self,
+        owner_user_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<u64, ClientStorageError>;
 
     async fn claim_next_run(
         &self,
@@ -138,7 +142,7 @@ pub trait LocalAgentRunStore: Send + Sync {
         event_id: &str,
     ) -> Result<Option<LocalAgentRunClaim>, ClientStorageError>;
 
-    async fn next_retry_at(&self) -> Result<Option<i64>, ClientStorageError>;
+    async fn next_retry_at(&self, owner_user_id: &str) -> Result<Option<i64>, ClientStorageError>;
 
     async fn apply_transition(
         &self,
@@ -288,6 +292,7 @@ pub trait LocalAgentTaskStore: Send + Sync {
 pub trait LocalAgentToolStore: Send + Sync {
     async fn recover_expired_tool_claims(
         &self,
+        owner_user_id: &str,
         now_unix_ms: i64,
     ) -> Result<u64, ClientStorageError>;
 

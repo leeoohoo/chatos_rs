@@ -241,7 +241,7 @@ mod tests {
                 .expect("storage"),
         );
         let runtime = Arc::new(LocalAgentRuntime::new(storage));
-        runtime.initialize().await.expect("initialize");
+        runtime.initialize("user-1").await.expect("initialize");
         runtime
             .try_handle(envelope(
                 HostCommand::CreateRun(CreateRunCommand {
@@ -287,7 +287,7 @@ mod tests {
                 .expect("storage"),
         );
         let runtime = Arc::new(LocalAgentRuntime::new(storage));
-        runtime.initialize().await.expect("initialize");
+        runtime.initialize("user-1").await.expect("initialize");
         runtime
             .try_handle(envelope(
                 HostCommand::CreateConversation(CreateConversationCommand {
@@ -356,7 +356,7 @@ mod tests {
                 .expect("storage"),
         );
         let runtime = Arc::new(LocalAgentRuntime::new(storage));
-        runtime.initialize().await.expect("initialize");
+        runtime.initialize("user-1").await.expect("initialize");
         runtime
             .try_handle(envelope(
                 HostCommand::CreateTaskGraph(CreateTaskGraphCommand {

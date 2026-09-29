@@ -219,7 +219,7 @@ mod tests {
                 .expect("storage"),
         );
         let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
-        runtime.initialize().await.expect("initialize");
+        runtime.initialize("user-1").await.expect("initialize");
         let created = runtime
             .handle(request(
                 "create-graph-1",
@@ -272,7 +272,7 @@ mod tests {
                 .expect("storage"),
         );
         let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
-        runtime.initialize().await.expect("initialize");
+        runtime.initialize("user-1").await.expect("initialize");
         runtime
             .handle(request(
                 "create-graph-1",

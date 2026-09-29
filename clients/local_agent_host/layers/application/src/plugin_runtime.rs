@@ -109,7 +109,7 @@ mod tests {
                 .expect("storage"),
         );
         let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
-        runtime.initialize().await.expect("initialize");
+        runtime.initialize("user-1").await.expect("initialize");
         let created = runtime
             .try_handle(request(
                 "put-plugin-1",

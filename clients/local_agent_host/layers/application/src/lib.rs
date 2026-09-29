@@ -10,8 +10,9 @@ use chatos_local_agent_ports::{
     ClientStorageError, IdempotentCommand, LocalAgentStore, RunTransition,
 };
 use chatos_local_agent_protocol::{
-    HostCommand, HostError, HostRequestEnvelope, HostResponseEnvelope, HostResult,
-    LocalAgentRunRecord, LocalAgentRunStatus, LocalAgentStepOutcome, LocalAgentToolBatch,
+    validate_identifier, HostCommand, HostError, HostRequestEnvelope, HostResponseEnvelope,
+    HostResult, LocalAgentRunRecord, LocalAgentRunStatus, LocalAgentStepOutcome,
+    LocalAgentToolBatch,
 };
 use serde_json::json;
 use std::{
@@ -90,11 +91,19 @@ impl LocalAgentRuntime {
         }
     }
 
-    pub async fn initialize(&self) -> Result<u64, LocalAgentRuntimeError> {
+    pub async fn initialize(&self, owner_user_id: &str) -> Result<u64, LocalAgentRuntimeError> {
+        validate_identifier("owner_user_id", owner_user_id)
+            .map_err(LocalAgentRuntimeError::InvalidRequest)?;
         self.store.health_check().await?;
         let now = self.now()?;
-        let recovered_runs = self.store.recover_expired_claims(now).await?;
-        let recovered_tools = self.store.recover_expired_tool_claims(now).await?;
+        let recovered_runs = self
+            .store
+            .recover_expired_claims(owner_user_id, now)
+            .await?;
+        let recovered_tools = self
+            .store
+            .recover_expired_tool_claims(owner_user_id, now)
+            .await?;
         let recovered = recovered_runs.saturating_add(recovered_tools);
         self.recovered_claims.store(recovered, Ordering::Release);
         Ok(recovered)
@@ -109,8 +118,13 @@ impl LocalAgentRuntime {
         }
     }
 
-    pub async fn next_retry_at(&self) -> Result<Option<i64>, LocalAgentRuntimeError> {
-        Ok(self.store.next_retry_at().await?)
+    pub async fn next_retry_at(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<Option<i64>, LocalAgentRuntimeError> {
+        validate_identifier("owner_user_id", owner_user_id)
+            .map_err(LocalAgentRuntimeError::InvalidRequest)?;
+        Ok(self.store.next_retry_at(owner_user_id).await?)
     }
 
     /// Trusted in-process worker lookup. Native callers must use the
@@ -613,7 +627,7 @@ mod tests {
                 .expect("storage"),
         );
         let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
-        runtime.initialize().await.expect("initialize");
+        runtime.initialize("user-1").await.expect("initialize");
 
         let created = runtime.handle(envelope("create-1", create_command())).await;
         assert!(created.ok);
@@ -680,7 +694,7 @@ mod tests {
                 .expect("storage"),
         );
         let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
-        runtime.initialize().await.expect("initialize");
+        runtime.initialize("user-1").await.expect("initialize");
         let mut command = match create_command() {
             HostCommand::CreateRun(command) => command,
             _ => unreachable!(),

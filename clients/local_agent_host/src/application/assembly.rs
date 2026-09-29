@@ -260,7 +260,7 @@ mod tests {
                 .expect("storage"),
         );
         let runtime = Arc::new(LocalAgentRuntime::new(storage));
-        runtime.initialize().await.expect("initialize");
+        runtime.initialize("user-1").await.expect("initialize");
         let mut tools = LocalToolRegistry::new();
         tools.register("read_file", ReadFile).expect("tool");
         let assembly = LocalAgentHostAssembly::new(
@@ -285,7 +285,7 @@ mod tests {
                 .expect("storage"),
         );
         let runtime = Arc::new(LocalAgentRuntime::new(storage));
-        runtime.initialize().await.expect("initialize");
+        runtime.initialize("user-1").await.expect("initialize");
         let assembly = LocalAgentHostAssembly::with_external_tool_worker(
             Arc::clone(&runtime),
             "user-1",

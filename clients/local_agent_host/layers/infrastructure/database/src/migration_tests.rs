@@ -127,7 +127,7 @@ async fn version_nineteen_discards_ownerless_control_plane_snapshots() {
             .fetch_one(&storage.pool)
             .await
             .expect("schema version");
-    assert_eq!(schema_version, 19);
+    assert_eq!(schema_version, 20);
 
     storage.pool.close().await;
     drop(storage);

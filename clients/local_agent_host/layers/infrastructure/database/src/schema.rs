@@ -422,3 +422,12 @@ pub(super) const SCHEMA_V19: &[&str] = &[
     "DELETE FROM local_agent_command_receipts \
        WHERE command_id LIKE 'internal-control-plane-%'",
 ];
+
+pub(super) const SCHEMA_V20: &[&str] = &[
+    "CREATE INDEX local_agent_runs_owner_runnable ON local_agent_runs(\
+       owner_user_id, status, next_attempt_at_unix_ms, created_at_unix_ms, run_id\
+     )",
+    "CREATE INDEX local_agent_tool_invocations_expired ON local_agent_tool_invocations(\
+       status, claim_until_unix_ms, run_id, invocation_id\
+     )",
+];

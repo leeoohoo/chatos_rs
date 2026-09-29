@@ -192,7 +192,7 @@ impl LocalAgentHostCoordinator {
     }
 
     async fn next_retry_delay(&self) -> Result<Duration, LocalAgentCoordinatorError> {
-        let run_retry_at = self.runtime.next_retry_at().await?;
+        let run_retry_at = self.runtime.next_retry_at(&self.owner_user_id).await?;
         let memory_retry_at = match self.memory_sync_worker.as_ref() {
             Some(worker) => worker.next_retry_at().await?,
             None => None,
@@ -373,7 +373,7 @@ mod tests {
                 .expect("storage"),
         );
         let runtime = Arc::new(LocalAgentRuntime::new(storage));
-        runtime.initialize().await.expect("initialize");
+        runtime.initialize("user-1").await.expect("initialize");
         let mut profiles = LocalAgentProfileRegistry::new();
         profiles
             .register("main_chat", ModelProfile)
@@ -430,7 +430,7 @@ mod tests {
                 .expect("storage"),
         );
         let runtime = Arc::new(LocalAgentRuntime::new(storage));
-        runtime.initialize().await.expect("initialize");
+        runtime.initialize("user-1").await.expect("initialize");
         let mut profiles = LocalAgentProfileRegistry::new();
         profiles
             .register("coordinator", ModelProfile)

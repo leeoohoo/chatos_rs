@@ -34,7 +34,7 @@ async fn prepare_claimed_tool(
         storage,
         Arc::new(move || Ok(runtime_clock.load(Ordering::Acquire))),
     );
-    runtime.initialize().await.expect("initialize");
+    runtime.initialize("user-1").await.expect("initialize");
     runtime
         .handle(envelope(
             "create",
@@ -115,7 +115,7 @@ async fn prepare_claimed_tool(
 async fn expired_side_effecting_tool_requires_review() {
     let (runtime, clock, _) = prepare_claimed_tool(true).await;
     clock.store(11_001, Ordering::Release);
-    assert_eq!(runtime.initialize().await.expect("recover"), 1);
+    assert_eq!(runtime.initialize("user-1").await.expect("recover"), 1);
     let response = runtime
         .handle(envelope(
             "get-run",
@@ -136,7 +136,7 @@ async fn expired_side_effecting_tool_requires_review() {
 async fn expired_read_only_tool_is_requeued() {
     let (runtime, clock, first_claim) = prepare_claimed_tool(false).await;
     clock.store(11_001, Ordering::Release);
-    assert_eq!(runtime.initialize().await.expect("recover"), 1);
+    assert_eq!(runtime.initialize("user-1").await.expect("recover"), 1);
     let response = runtime
         .handle(envelope(
             "claim-tool-again",
@@ -206,7 +206,7 @@ async fn tool_claim_filters_partition_reserved_and_platform_tools() {
             .expect("storage"),
     );
     let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
-    runtime.initialize().await.expect("initialize");
+    runtime.initialize("user-1").await.expect("initialize");
     runtime
         .handle(envelope(
             "create-filtered-run",
@@ -315,7 +315,7 @@ async fn waiting_user_resume_preserves_checkpoint_and_supplies_input() {
             .expect("storage"),
     );
     let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(20_000)));
-    runtime.initialize().await.expect("initialize");
+    runtime.initialize("user-1").await.expect("initialize");
     runtime
         .handle(envelope(
             "create-user-wait",

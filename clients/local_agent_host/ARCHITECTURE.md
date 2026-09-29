@@ -70,6 +70,8 @@ IPC v24 closes the same account boundary around control-plane state. Snapshot DT
 
 IPC v25 makes the standalone Coordinator an account-bound request gateway. Every stateful `HostCommand` reports its owner scope, including the Memory tenant and owner nested inside model, capability and Plugin publication DTOs. The Coordinator compares that scope with the owner selected at process launch before routing, waiting, waking schedulers or touching storage. Claim completion is included in this boundary: model and Tool commit commands carry owner explicitly, the application resolves Runs through the owner-scoped port, and SQLite verifies a Tool invocation's owning Run inside the commit transaction. Claim tokens remain concurrency capabilities, not substitutes for account authorization.
 
+SQLite v20 scopes maintenance work to that same active owner. Runtime initialization, model-claim recovery and Tool-claim recovery all pass the owner through the application ports into SQLite predicates; launching one account's Host never changes another account's expired lease. Durable Run retry discovery is owner-scoped as well, preventing a signed-out account's overdue retry from continuously waking the active Coordinator. The database adds owner-first Run runnable and expired-Tool indexes for these paths; no wire DTO or protocol version change is required.
+
 ## Server-removal boundary
 
 The completed client localization must allow these directories to be physically deleted:
