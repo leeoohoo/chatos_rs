@@ -5,9 +5,41 @@ import UniformTypeIdentifiers
 struct PetQuickChatView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var interactionState: PetOverlayInteractionState
+    let translationViewModel: PetTranslationViewModel
+    let notepadViewModel: NotepadViewModel
+    let onInspectTaskReply: (TaskReplySelection, any MessageTaskGraphServicing) -> Void
+
+    var body: some View {
+        let resources = model.petQuickChatResources
+        let selectedResource = interactionState.selectedQuickChatResourceID.flatMap { selectedID in
+            resources.first(where: { $0.id == selectedID })
+        }
+        let conversation = selectedResource.flatMap { model.petConversation(for: $0) }
+
+        PetQuickChatContentView(
+            interactionState: interactionState,
+            translationViewModel: translationViewModel,
+            notepadViewModel: notepadViewModel,
+            resources: resources,
+            selectedResource: selectedResource,
+            conversation: conversation,
+            onDeactivateConversation: { model.deactivatePetConversation($0) },
+            onInspectTaskReply: onInspectTaskReply
+        )
+        .equatable()
+    }
+}
+
+private struct PetQuickChatContentView: View {
+    @ObservedObject var interactionState: PetOverlayInteractionState
     @ObservedObject var translationViewModel: PetTranslationViewModel
     @ObservedObject var notepadViewModel: NotepadViewModel
+    let resources: [PetQuickChatResource]
+    let selectedResource: PetQuickChatResource?
+    let conversation: ConversationSessionViewModel?
+    let onDeactivateConversation: (ConversationSessionViewModel) -> Void
     let onInspectTaskReply: (TaskReplySelection, any MessageTaskGraphServicing) -> Void
+    @Environment(\.locale) private var locale
 
     var body: some View {
         Group {
@@ -26,9 +58,10 @@ struct PetQuickChatView: View {
             } else if let selectedResource {
                 PetQuickChatConversationView(
                     resource: selectedResource,
-                    conversation: model.petConversation(for: selectedResource),
+                    conversation: conversation,
                     onBack: { interactionState.selectedQuickChatResourceID = nil },
                     onClose: close,
+                    onDeactivateConversation: onDeactivateConversation,
                     onInspectTaskReply: onInspectTaskReply
                 )
             } else {
@@ -44,16 +77,6 @@ struct PetQuickChatView: View {
         .shadow(color: .black.opacity(0.28), radius: 18, y: 9)
     }
 
-    private var selectedResource: PetQuickChatResource? {
-        interactionState.selectedQuickChatResourceID.flatMap { selectedID in
-            resources.first(where: { $0.id == selectedID })
-        }
-    }
-
-    private var resources: [PetQuickChatResource] {
-        model.petQuickChatResources
-    }
-
     private var resourceList: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
@@ -62,9 +85,9 @@ struct PetQuickChatView: View {
                     .frame(width: 30, height: 30)
                     .background(Color.accentColor.opacity(0.11), in: Circle())
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(model.localized("快捷聊天", english: "Quick Chat"))
+                    Text(localized("快捷聊天", english: "Quick Chat"))
                         .font(.system(size: 14, weight: .semibold))
-                    Text(model.localized(
+                    Text(localized(
                         "选择快速功能、联系人或常用项目",
                         english: "Choose a quick action, contact, or favorite project"
                     ))
@@ -88,7 +111,7 @@ struct PetQuickChatView: View {
                     }
 
                     if resources.isEmpty || resources.allSatisfy({ $0.kind == .contact }) {
-                        Text(model.localized(
+                        Text(localized(
                             resources.isEmpty
                                 ? "可直接使用快速翻译；也可在项目设置中添加常用项目。"
                                 : "可在项目设置中开启“设为常用项目”。",
@@ -119,9 +142,9 @@ struct PetQuickChatView: View {
                     .frame(width: 34, height: 34)
                     .background(Color.purple.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(model.localized("快速翻译", english: "Quick Translate"))
+                    Text(localized("快速翻译", english: "Quick Translate"))
                         .font(.system(size: 13, weight: .semibold))
-                    Text(model.localized(
+                    Text(localized(
                         "粘贴文字、截图或拖入文件",
                         english: "Paste text, screenshots, or drop files"
                     ))
@@ -154,9 +177,9 @@ struct PetQuickChatView: View {
                     .frame(width: 34, height: 34)
                     .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(model.localized("快速记事本", english: "Quick Notepad"))
+                    Text(localized("快速记事本", english: "Quick Notepad"))
                         .font(.system(size: 13, weight: .semibold))
-                    Text(model.localized(
+                    Text(localized(
                         "快速记录，与完整记事本同步",
                         english: "Capture notes synced with the full notepad"
                     ))
@@ -195,7 +218,7 @@ struct PetQuickChatView: View {
                     Text(resource.title)
                         .font(.system(size: 13, weight: .semibold))
                         .lineLimit(1)
-                    Text(resource.subtitle ?? model.localized("最近会话", english: "Recent conversation"))
+                    Text(resource.subtitle ?? localized("最近会话", english: "Recent conversation"))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -225,7 +248,7 @@ struct PetQuickChatView: View {
                 .background(Color(nsColor: .controlBackgroundColor), in: Circle())
         }
         .buttonStyle(.plain)
-        .help(model.localized("关闭", english: "Close"))
+        .help(localized("关闭", english: "Close"))
     }
 
     private func close() {
@@ -244,15 +267,31 @@ struct PetQuickChatView: View {
     private func closeNotepad() {
         interactionState.isNotepadPresented = false
     }
+
+    private func localized(_ chinese: String, english: String) -> String {
+        locale.identifier.lowercased().hasPrefix("en") ? english : chinese
+    }
+}
+
+extension PetQuickChatContentView: @MainActor Equatable {
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.interactionState === rhs.interactionState
+            && lhs.translationViewModel === rhs.translationViewModel
+            && lhs.notepadViewModel === rhs.notepadViewModel
+            && lhs.resources == rhs.resources
+            && lhs.selectedResource == rhs.selectedResource
+            && lhs.conversation === rhs.conversation
+    }
 }
 
 private struct PetQuickChatConversationView: View {
-    @EnvironmentObject private var model: AppModel
     let resource: PetQuickChatResource
     let conversation: ConversationSessionViewModel?
     let onBack: () -> Void
     let onClose: () -> Void
+    let onDeactivateConversation: (ConversationSessionViewModel) -> Void
     let onInspectTaskReply: (TaskReplySelection, any MessageTaskGraphServicing) -> Void
+    @Environment(\.locale) private var locale
 
     var body: some View {
         VStack(spacing: 0) {
@@ -267,9 +306,9 @@ private struct PetQuickChatConversationView: View {
                 PetQuickChatComposer(conversation: conversation)
             } else {
                 ContentUnavailableView(
-                    model.localized("会话准备中", english: "Preparing Conversation"),
+                    localized("会话准备中", english: "Preparing Conversation"),
                     systemImage: "ellipsis.message",
-                    description: Text(model.localized(
+                    description: Text(localized(
                         "项目会话创建完成后即可在这里发送消息。",
                         english: "You can send messages here once the project conversation is ready."
                     ))
@@ -279,7 +318,7 @@ private struct PetQuickChatConversationView: View {
         }
         .onDisappear {
             if let conversation {
-                model.deactivatePetConversation(conversation)
+                onDeactivateConversation(conversation)
             }
         }
     }
@@ -297,14 +336,14 @@ private struct PetQuickChatConversationView: View {
                     .font(.system(size: 14, weight: .semibold))
                     .lineLimit(1)
                 Text(resource.kind == .contact
-                     ? model.localized("联系人会话", english: "Contact Conversation")
-                     : model.localized("项目会话", english: "Project Conversation"))
+                     ? localized("联系人会话", english: "Contact Conversation")
+                     : localized("项目会话", english: "Project Conversation"))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if conversation?.isRefreshing == true {
-                ProgressView().controlSize(.small)
+            if let conversation {
+                PetQuickChatRefreshIndicator(conversation: conversation)
             }
             Button(action: onClose) {
                 Image(systemName: "xmark")
@@ -316,22 +355,49 @@ private struct PetQuickChatConversationView: View {
         }
         .padding(13)
     }
+
+    private func localized(_ chinese: String, english: String) -> String {
+        locale.identifier.lowercased().hasPrefix("en") ? english : chinese
+    }
+}
+
+private struct PetQuickChatRefreshIndicator: View {
+    @ObservedObject var conversation: ConversationSessionViewModel
+
+    var body: some View {
+        if conversation.isRefreshing {
+            ProgressView().controlSize(.small)
+        }
+    }
 }
 
 private struct PetQuickChatTimeline: View {
-    @EnvironmentObject private var model: AppModel
-    @ObservedObject var conversation: ConversationSessionViewModel
+    let conversation: ConversationSessionViewModel
     let onInspectTaskReply: (TaskReplySelection, any MessageTaskGraphServicing) -> Void
+    @ObservedObject private var timelineObservationState: ConversationTimelineObservationState
+    @Environment(\.locale) private var locale
+
+    init(
+        conversation: ConversationSessionViewModel,
+        onInspectTaskReply: @escaping (
+            TaskReplySelection,
+            any MessageTaskGraphServicing
+        ) -> Void
+    ) {
+        self.conversation = conversation
+        self.onInspectTaskReply = onInspectTaskReply
+        _timelineObservationState = ObservedObject(
+            wrappedValue: conversation.timelineObservationState
+        )
+    }
 
     var body: some View {
+        let _ = timelineObservationState.revision
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 10) {
-                    if conversation.turns.isEmpty, !conversation.isRefreshing {
-                        Text(model.localized("还没有聊天记录", english: "No messages yet"))
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 80)
+                VStack(spacing: 10) {
+                    if conversation.turns.isEmpty {
+                        PetQuickChatEmptyState(conversation: conversation)
                     }
                     ForEach(Array(conversation.turns.suffix(6))) { turn in
                         messageBubble(turn.userMessage, isUser: true)
@@ -352,7 +418,7 @@ private struct PetQuickChatTimeline: View {
                         } else if turn.status == .streaming {
                             HStack(spacing: 7) {
                                 ProgressView().controlSize(.small)
-                                Text(model.localized("正在回复…", english: "Replying…"))
+                                Text(localized("正在回复…", english: "Replying…"))
                                     .font(.system(size: 11))
                                     .foregroundStyle(.secondary)
                                 Spacer()
@@ -403,14 +469,14 @@ private struct PetQuickChatTimeline: View {
                         onInspectTaskReply(taskSelection, service)
                     } label: {
                         Label(
-                            model.localized("查看详情与执行过程", english: "View Details and Execution"),
+                            localized("查看详情与执行过程", english: "View Details and Execution"),
                             systemImage: "doc.text.magnifyingglass"
                         )
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Color.accentColor)
                     }
                     .buttonStyle(.plain)
-                    .help(model.localized(
+                    .help(localized(
                         "直接在宠物窗口中查看任务详情和执行过程",
                         english: "View task details and execution without leaving the pet window"
                     ))
@@ -439,6 +505,28 @@ private struct PetQuickChatTimeline: View {
                 proxy.scrollTo("pet-chat-bottom", anchor: .bottom)
             }
         }
+    }
+
+    private func localized(_ chinese: String, english: String) -> String {
+        locale.identifier.lowercased().hasPrefix("en") ? english : chinese
+    }
+}
+
+private struct PetQuickChatEmptyState: View {
+    @ObservedObject var conversation: ConversationSessionViewModel
+    @Environment(\.locale) private var locale
+
+    var body: some View {
+        if !conversation.isRefreshing {
+            Text(localized("还没有聊天记录", english: "No messages yet"))
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .padding(.top, 80)
+        }
+    }
+
+    private func localized(_ chinese: String, english: String) -> String {
+        locale.identifier.lowercased().hasPrefix("en") ? english : chinese
     }
 }
 
@@ -546,9 +634,9 @@ struct PetQuickChatTaskInspectorView: View {
 }
 
 private struct PetQuickChatComposer: View {
-    @EnvironmentObject private var model: AppModel
     @ObservedObject var conversation: ConversationSessionViewModel
     @ObservedObject private var composerState: ConversationComposerState
+    @Environment(\.locale) private var locale
     @State private var showsFileImporter = false
     @State private var previewedAttachment: ConversationAttachmentDraft?
     @State private var isDropTargeted = false
@@ -588,11 +676,11 @@ private struct PetQuickChatComposer: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help(model.localized("添加附件", english: "Add Attachment"))
+                .help(localized("添加附件", english: "Add Attachment"))
 
                 ComposerPasteTextEditor(
                     text: $composerState.draft,
-                    placeholder: model.localized(
+                    placeholder: localized(
                         "发送消息，或粘贴图片和文件…",
                         english: "Send a message, or paste images and files…"
                     ),
@@ -620,7 +708,7 @@ private struct PetQuickChatComposer: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!conversation.canSendDraft)
-                .help(model.localized("发送", english: "Send"))
+                .help(localized("发送", english: "Send"))
             }
             .padding(.leading, 7)
             .padding(.trailing, 5)
@@ -680,5 +768,9 @@ private struct PetQuickChatComposer: View {
         case let .longText(text):
             conversation.addLongPastedText(text)
         }
+    }
+
+    private func localized(_ chinese: String, english: String) -> String {
+        locale.identifier.lowercased().hasPrefix("en") ? english : chinese
     }
 }
