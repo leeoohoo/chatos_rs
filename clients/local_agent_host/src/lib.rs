@@ -3,6 +3,7 @@
 
 //! IPC transport for the client-owned Local Agent Host.
 
+mod coordinator;
 mod scheduler;
 mod tool_scheduler;
 
@@ -11,6 +12,7 @@ pub use chatos_agent_profiles::{
     LocalAiStepExecutor, LocalAiStepPlanner, NamedReadOnlyTools, PreparedLocalAiStep,
     ToolSafetyPolicy,
 };
+pub use coordinator::{LocalAgentCoordinatorError, LocalAgentHostCoordinator};
 pub use scheduler::{LocalAgentScheduler, LocalAgentSchedulerError, SchedulerTick};
 pub use tool_scheduler::{
     LocalToolExecutor, LocalToolRegistry, LocalToolScheduler, LocalToolSchedulerError,
@@ -25,6 +27,18 @@ use std::{io, sync::Arc};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+#[async_trait::async_trait]
+pub trait HostRequestHandler: Send + Sync {
+    async fn handle_request(&self, request: HostRequestEnvelope) -> HostResponseEnvelope;
+}
+
+#[async_trait::async_trait]
+impl HostRequestHandler for LocalAgentRuntime {
+    async fn handle_request(&self, request: HostRequestEnvelope) -> HostResponseEnvelope {
+        self.handle(request).await
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum HostTransportError {
     #[error("IPC I/O failed: {0}")]
@@ -35,29 +49,28 @@ pub enum HostTransportError {
     InvalidJson(#[from] serde_json::Error),
 }
 
-pub async fn serve_stream<S>(
-    stream: S,
-    runtime: Arc<LocalAgentRuntime>,
-) -> Result<(), HostTransportError>
+pub async fn serve_stream<S, H>(stream: S, handler: Arc<H>) -> Result<(), HostTransportError>
 where
     S: AsyncRead + AsyncWrite + Unpin,
+    H: HostRequestHandler + ?Sized,
 {
     let (mut reader, mut writer) = tokio::io::split(stream);
-    serve_reader_writer(&mut reader, &mut writer, runtime).await
+    serve_reader_writer(&mut reader, &mut writer, handler).await
 }
 
-pub async fn serve_reader_writer<R, W>(
+pub async fn serve_reader_writer<R, W, H>(
     reader: &mut R,
     writer: &mut W,
-    runtime: Arc<LocalAgentRuntime>,
+    handler: Arc<H>,
 ) -> Result<(), HostTransportError>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
+    H: HostRequestHandler + ?Sized,
 {
     while let Some(frame) = read_frame(reader).await? {
         let request: HostRequestEnvelope = serde_json::from_slice(&frame)?;
-        let response = runtime.handle(request).await;
+        let response = handler.handle_request(request).await;
         write_frame(writer, &serde_json::to_vec(&response)?).await?;
     }
     Ok(())

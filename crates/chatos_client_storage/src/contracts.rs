@@ -92,6 +92,8 @@ pub trait LocalAgentRunStore: Send + Sync {
         event_id: &str,
     ) -> Result<Option<LocalAgentRunClaim>, ClientStorageError>;
 
+    async fn next_retry_at(&self) -> Result<Option<i64>, ClientStorageError>;
+
     async fn apply_transition(
         &self,
         command: &IdempotentCommand,

@@ -100,6 +100,10 @@ impl LocalAgentRuntime {
         }
     }
 
+    pub async fn next_retry_at(&self) -> Result<Option<i64>, LocalAgentRuntimeError> {
+        Ok(self.store.next_retry_at().await?)
+    }
+
     pub async fn try_handle(
         &self,
         request: HostRequestEnvelope,

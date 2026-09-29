@@ -48,6 +48,7 @@ async fn create_and_claim_are_atomic_and_idempotent() {
         .create_run(&command("create-1", "create"), &run(1_000), "event-created")
         .await
         .expect("create");
+    assert_eq!(storage.next_retry_at().await.expect("retry deadline"), None);
     let replay = storage
         .create_run(&command("create-1", "create"), &run(1_000), "ignored")
         .await
@@ -81,6 +82,33 @@ async fn create_and_claim_are_atomic_and_idempotent() {
         .await
         .expect("second claim")
         .is_none());
+
+    storage
+        .apply_transition(
+            &command("retry-1", "retry"),
+            &RunTransition {
+                run_id: claim.run.run_id,
+                claim_token: claim.claim_token,
+                expected_version: claim.run.version,
+                expected_status: LocalAgentRunStatus::ModelRunning,
+                next_status: LocalAgentRunStatus::RetryScheduled,
+                next_attempt_at_unix_ms: Some(20_000),
+                pending_tool_batch: None,
+                tool_batch: None,
+                checkpoint: None,
+                terminal_outcome: None,
+                event_id: "event-retry".to_string(),
+                event_type: "run_retry_scheduled".to_string(),
+                event_payload: serde_json::json!({"next_attempt_at_unix_ms": 20_000}),
+                occurred_at_unix_ms: 2_002,
+            },
+        )
+        .await
+        .expect("schedule retry");
+    assert_eq!(
+        storage.next_retry_at().await.expect("retry deadline"),
+        Some(20_000)
+    );
 }
 
 #[tokio::test]

@@ -12,13 +12,14 @@ The current milestone provides:
 - a durable Tool Invocation Ledger with per-call claims and results;
 - a `chatos_ai_runtime` single-step Profile adapter and conservative tool-safety policy;
 - a local tool registry and one-invocation Tool Scheduler;
+- an event-driven Host Coordinator that drains model and tool work to quiescence;
 - monotonic, replayable event cursors;
 - conservative crash recovery to `needs_review`;
 - length-prefixed JSON over Unix sockets, Windows named pipes, or stdio.
 
 The standalone binary does not yet ship a control-plane model planner or platform tool adapters, so it does not replace the production conversation path by itself. Main Chat and Task Runner planners resolve each model request without persisting credentials, while native tool workers consume the durable Tool Invocation Ledger.
 
-The library-level scheduler executes one registered Profile step at a time and commits its outcome through the same durable protocol. Wakeups and retry timers remain lifecycle concerns for the native client integration; the standalone binary does not poll an empty Profile registry.
+The library-level schedulers execute one registered Profile step or one tool invocation at a time and commit through the same durable protocol. `LocalAgentHostCoordinator` combines them into a long-running loop: successful IPC commands wake it immediately, each wake drains model and tool work until no durable progress remains, and `retry_scheduled` Runs arm a timer for the earliest persisted retry deadline. Idle operation does not poll. The standalone binary still uses an empty runtime because production Profile and platform-tool registration belongs to the native client integration.
 
 `ChatosAiRuntimeStepExecutor` executes a prepared `chatos_ai_runtime` request exactly once. `DurableAiProfile` converts final responses, continuations, retries and tool calls into durable Host outcomes. Tools are considered side-effecting unless an explicit `ToolSafetyPolicy` classifies them as read-only.
 

@@ -450,6 +450,16 @@ impl LocalAgentRunStore for SqliteClientStorage {
         Self::finish_write(&mut connection, result).await
     }
 
+    async fn next_retry_at(&self) -> Result<Option<i64>, ClientStorageError> {
+        let mut connection = self.pool.acquire().await?;
+        Ok(sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT MIN(next_attempt_at_unix_ms) FROM local_agent_runs \
+             WHERE status = 'retry_scheduled'",
+        )
+        .fetch_one(&mut *connection)
+        .await?)
+    }
+
     async fn apply_transition(
         &self,
         command: &IdempotentCommand,

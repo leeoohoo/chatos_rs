@@ -14,7 +14,7 @@ chatos_local_agent_protocol = { path = "../../crates/chatos_local_agent_protocol
 chatos_local_agent_runtime = { path = "../../crates/chatos_local_agent_runtime" }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync"] }
+tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(windows)'.dependencies]
