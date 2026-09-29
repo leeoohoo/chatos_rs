@@ -232,7 +232,10 @@ public sealed partial class MediaStudioPage : Page
     private async void OnGenerateStoryVideoClick(object sender, RoutedEventArgs e)
     {
         var segment = StoryViewModel.SelectedSegment;
-        if (segment?.VideoPath is not { Length: > 0 })
+        if (segment is null)
+            return;
+
+        if (segment.VideoPath is not { Length: > 0 })
         {
             if (!StoryViewModel.CanGenerateFromPreviousVideo)
             {
