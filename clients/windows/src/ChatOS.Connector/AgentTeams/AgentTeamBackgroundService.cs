@@ -8,7 +8,9 @@ internal sealed class AgentTeamBackgroundService(
     AgentTeamScheduler scheduler) : BackgroundService
 {
     protected override Task ExecuteAsync(CancellationToken stoppingToken) => Task.WhenAll(
-        RunLoopAsync(TimeSpan.FromSeconds(2), DrainCommunicationsAsync, stoppingToken),
+        // Interactive mutations queue an immediate, coalesced drain. This slower loop only
+        // recovers durable work left behind by a crash or an interrupted in-process drain.
+        RunLoopAsync(TimeSpan.FromSeconds(15), DrainCommunicationsAsync, stoppingToken),
         RunLoopAsync(TimeSpan.FromSeconds(30), DrainExecutorsAsync, stoppingToken));
 
     private async Task DrainCommunicationsAsync(CancellationToken cancellationToken)

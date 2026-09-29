@@ -8,6 +8,9 @@ internal sealed class AgentTeamCoordinator : IAgentTeamService
     private readonly IAgentTeamStore _store;
     private readonly IProjectRegistry _projects;
     private readonly AgentTeamScheduler _scheduler;
+    private readonly object _drainSync = new();
+    private readonly HashSet<string> _activeDrains = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _requestedDrains = new(StringComparer.Ordinal);
 
     public AgentTeamCoordinator(
         IAgentTeamStore store,
@@ -388,17 +391,40 @@ internal sealed class AgentTeamCoordinator : IAgentTeamService
         }
     }
 
-    private void QueueDrain(string ownerUserId) => _ = Task.Run(async () =>
+    private void QueueDrain(string ownerUserId)
     {
-        try
+        lock (_drainSync)
         {
-            await _scheduler.DrainAsync(ownerUserId, CancellationToken.None).ConfigureAwait(false);
+            _requestedDrains.Add(ownerUserId);
+            if (!_activeDrains.Add(ownerUserId)) return;
         }
-        catch
+
+        _ = Task.Run(() => DrainQueuedAsync(ownerUserId));
+    }
+
+    private async Task DrainQueuedAsync(string ownerUserId)
+    {
+        while (true)
         {
-            // Individual delivery failures are durable and visible through Agent runs.
+            lock (_drainSync) _requestedDrains.Remove(ownerUserId);
+            try
+            {
+                await _scheduler.DrainAsync(ownerUserId, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Individual delivery failures are durable and visible through Agent runs.
+            }
+
+            lock (_drainSync)
+            {
+                if (_requestedDrains.Remove(ownerUserId)) continue;
+                _activeDrains.Remove(ownerUserId);
+                return;
+            }
         }
-    });
+    }
 
     private void Raise(string ownerUserId, string? projectId, string? roomId, string kind) =>
         Changed?.Invoke(this, new AgentTeamChangedEventArgs(ownerUserId, projectId, roomId, kind));
