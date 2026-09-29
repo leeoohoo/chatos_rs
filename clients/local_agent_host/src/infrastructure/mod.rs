@@ -7,6 +7,7 @@ mod control_plane;
 #[cfg(test)]
 mod control_plane_tests;
 mod mcp;
+mod model_credentials;
 
 pub use chatos_client_storage::SqliteClientStorage;
 pub use chatos_local_agent_ports::{
@@ -19,3 +20,4 @@ pub use mcp::{
     LocalMcpServerConfig, LocalMcpStdioSession, LocalMcpToolDefinition, LocalMcpToolSet,
     LocalPluginSecretResolver,
 };
+pub use model_credentials::ChildEnvironmentModelCredentialResolver;

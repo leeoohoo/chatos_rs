@@ -28,9 +28,9 @@ The current milestone provides:
 - conservative crash recovery to `needs_review`;
 - length-prefixed JSON over Unix sockets, Windows named pipes, or stdio.
 
-The standalone binary does not yet wire authenticated production control-plane feeds or platform tool adapters, so it does not replace the production conversation path by itself. Main Chat and Task Runner planners resolve each model request without persisting credentials, while native tool workers consume the durable Tool Invocation Ledger.
+The standalone binary now assembles both production Profiles, the model Scheduler, the two Rust Task tools, the Tool Scheduler and the event-driven Coordinator. Authenticated native code publishes non-secret control-plane revisions through IPC and claims platform tools from the durable Tool Invocation Ledger. Native client lifecycle integration and production traffic switching are still required before the old conversation path can be retired.
 
-The library-level schedulers execute one registered Profile step or one tool invocation at a time and commit through the same durable protocol. `LocalAgentHostCoordinator` combines them into a long-running loop: successful IPC commands wake it immediately, each wake drains model and tool work until no durable progress remains, and `retry_scheduled` Runs arm a timer for the earliest persisted retry deadline. Idle operation does not poll. All stdio, Unix socket and Windows named-pipe transports accept the same `HostRequestHandler`, so an embedded client can route IPC directly through the Coordinator. The standalone binary still uses an empty runtime because production Profile and platform-tool registration belongs to the native client integration.
+The library-level schedulers execute one registered Profile step or one tool invocation at a time and commit through the same durable protocol. `LocalAgentHostCoordinator` combines them into a long-running loop: successful IPC commands wake it immediately, each wake drains model and tool work until no durable progress remains, and `retry_scheduled` Runs arm a timer for the earliest persisted retry deadline. Idle operation does not poll. All stdio, Unix socket and Windows named-pipe transports use the Coordinator as their `HostRequestHandler`. If the execution loop fails, the standalone process now terminates instead of continuing to accept work it cannot run.
 
 `ChatosAiRuntimeStepExecutor` executes a prepared `chatos_ai_runtime` request exactly once. `DurableAiProfile` converts final responses, continuations, retries and tool calls into durable Host outcomes. Tools are considered side-effecting unless an explicit `ToolSafetyPolicy` classifies them as read-only.
 
@@ -41,6 +41,8 @@ The library-level schedulers execute one registered Profile step or one tool inv
 The in-process assembly reserves `create_task` and `create_tasks_with_prerequisites` and routes them directly into the local Task DAG repository. IDs are derived from the durable tool invocation, so replay returns the original graph. New Tasks inherit the parent Run's exact model and capability revisions; an unresolved model switch and dependencies on Tasks outside the submitted graph are rejected instead of storing an ambiguous execution snapshot.
 
 `LocalControlPlaneSnapshot` is the default Resolver backing for native integration. Authenticated configuration code publishes exact model and capability revisions into it. Non-secret revisions are immutable and retained through the `LocalModelConfigSnapshotStore` and `LocalCapabilitySnapshotStore` ports in client SQLite, so a restarted Host can resolve the configuration frozen by an existing Run. The model snapshot stores a native `credential_ref`, never the credential value. At execution time `LocalModelCredentialResolver` reads that reference from Keychain/Credential Manager and constructs a transient `ModelRuntimeConfig` around the process-local runner. API keys never enter the Run or control-plane database; request-specific cache keys, response IDs, and working directories are also excluded from the durable configuration DTO.
+
+The standalone process uses `ChildEnvironmentModelCredentialResolver`. A persisted reference such as `env:CHATOS_MODEL_KEY` reads only that variable from the Host process environment when a model step starts. The native launcher should resolve Keychain/Credential Manager itself and set the variable only in the child environment. Secret values are never accepted as CLI arguments or snapshot fields. Embedded integrations can supply their own `LocalModelCredentialResolver` directly.
 
 Native clients may choose `LocalAgentHostAssembly::with_external_tool_worker`. In that mode Swift or C# claims and commits platform tools through IPC, while Rust still owns model scheduling plus the two Task creation tools and wakes immediately after each native tool receipt. This keeps platform permissions and UI-bound tools in the native process without duplicating the Agent loop.
 
@@ -73,6 +75,7 @@ On macOS or Linux:
 ```bash
 cargo run -p chatos_local_agent_host -- \
   --database /absolute/path/to/local-agent.sqlite \
+  --read-only-tool read_file \
   --socket /absolute/path/to/local-agent.sock
 ```
 
@@ -89,10 +92,13 @@ On Windows, use a per-user pipe in the reserved namespace:
 ```powershell
 cargo run -p chatos_local_agent_host -- `
   --database C:\absolute\path\local-agent.sqlite `
+  --read-only-tool read_file `
   --pipe \\.\pipe\chatos-local-agent-USER-SCOPE
 ```
 
 The native client must place the socket or pipe in a user-only security boundary. Unix socket permissions are set to `0600`. Windows pipes reject remote clients and use a protected DACL that grants access only to LocalSystem, administrators, and the creating object owner.
+
+Repeat `--read-only-tool <name>` for native tools whose interrupted execution is safe to retry. Tools not listed remain conservatively side-effecting. This option carries tool names only; never place credentials on the command line.
 
 ## Frame format
 

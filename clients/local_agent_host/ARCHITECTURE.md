@@ -44,6 +44,8 @@ After restart, the control-plane resolver loads both revision types from SQLite.
 
 IPC v15 exposes idempotent publication and exact-revision reads for both snapshot types. Their wire DTOs live in the interface layer, the application runtime routes validated commands into storage ports, and SQLite implements those ports with the common command-receipt transaction. The IPC DTOs contain credential references only; credential values are not accepted by these commands.
 
+The standalone composition root now wires SQLite, both control-plane stores, a process-local AI runner, both Profiles, the reserved Rust Task tools, model/tool Schedulers and the Coordinator. Platform tools stay in the native process and use the external Tool Worker IPC path. For child-process deployments, the native launcher resolves a model secret from Keychain/Credential Manager and injects it into a dedicated environment variable referenced as `env:NAME`; the standalone Host never accepts a secret CLI argument. Embedded clients may provide a native credential resolver instead.
+
 ## Server-removal boundary
 
 The completed client localization must allow these directories to be physically deleted:

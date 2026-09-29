@@ -20,10 +20,11 @@ pub use chatos_agent_profiles::{
     ToolSafetyPolicy, TransientLocalModelRuntime, MAIN_CHAT_PROFILE_KEY, TASK_RUNNER_PROFILE_KEY,
 };
 pub use infrastructure::{
-    LocalCapabilityPolicySnapshot, LocalCapabilitySnapshotStore, LocalControlPlaneSnapshot,
-    LocalJsonSchemaOutputFormat, LocalMcpServerConfig, LocalMcpStdioSession,
-    LocalMcpToolDefinition, LocalMcpToolSet, LocalModelConfigSnapshot,
-    LocalModelConfigSnapshotStore, LocalModelCredentialResolver, LocalPluginSecretResolver,
+    ChildEnvironmentModelCredentialResolver, LocalCapabilityPolicySnapshot,
+    LocalCapabilitySnapshotStore, LocalControlPlaneSnapshot, LocalJsonSchemaOutputFormat,
+    LocalMcpServerConfig, LocalMcpStdioSession, LocalMcpToolDefinition, LocalMcpToolSet,
+    LocalModelConfigSnapshot, LocalModelConfigSnapshotStore, LocalModelCredentialResolver,
+    LocalPluginSecretResolver,
 };
 pub use interface::{
     decode_response, read_frame, serve_reader_writer, serve_stream, write_frame,
