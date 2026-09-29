@@ -249,7 +249,7 @@ fn set_mode(target: &mut Option<IpcMode>, value: IpcMode) -> Result<(), String> 
 fn print_help() {
     eprintln!("ChatOS Local Agent Host");
     eprintln!("  --database <path>   Client-owned SQLite database");
-    eprintln!("  --owner-user-id <id>  Scope model and tool workers to the signed-in account");
+    eprintln!("  --owner-user-id <id>  Scope IPC and workers to the signed-in account");
     eprintln!("  --read-only-tool <name>  Mark a native tool as replay-safe; repeat as needed");
     eprintln!("  --memory-base-url <url>  Enable retained Memory compose and record sync");
     eprintln!("  --memory-source-id <id>  Memory source paired with --memory-base-url");

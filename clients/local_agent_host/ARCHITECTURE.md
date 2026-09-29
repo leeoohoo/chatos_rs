@@ -68,6 +68,8 @@ IPC v23 makes the authenticated account an execution boundary as well as a query
 
 IPC v24 closes the same account boundary around control-plane state. Snapshot DTOs and exact-revision reads carry `owner_user_id`; storage ports, SQLite queries, process-local cache keys and model credential resolution preserve it. The Planner derives this value from the claimed Run rather than caller-global state. SQLite v19 rebuilds only the model and capability snapshot tables with owner-first primary keys and deliberately drops the old ownerless cache rows, which the authenticated native configuration flow republishes. Run, Conversation, Task and Plugin facts are untouched, and model secrets remain outside DTOs, command receipts and SQLite.
 
+IPC v25 makes the standalone Coordinator an account-bound request gateway. Every stateful `HostCommand` reports its owner scope, including the Memory tenant and owner nested inside model, capability and Plugin publication DTOs. The Coordinator compares that scope with the owner selected at process launch before routing, waiting, waking schedulers or touching storage. Claim completion is included in this boundary: model and Tool commit commands carry owner explicitly, the application resolves Runs through the owner-scoped port, and SQLite verifies a Tool invocation's owning Run inside the commit transaction. Claim tokens remain concurrency capabilities, not substitutes for account authorization.
+
 ## Server-removal boundary
 
 The completed client localization must allow these directories to be physically deleted:

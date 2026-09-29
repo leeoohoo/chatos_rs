@@ -62,6 +62,7 @@ async fn tool_batch_is_durable_and_resumes_after_all_results() {
         .handle(envelope(
             "commit-model-1",
             HostCommand::CommitStep(CommitStepCommand {
+                owner_user_id: "user-1".to_string(),
                 run_id: claim.run.run_id,
                 claim_token: claim.claim_token,
                 expected_version: claim.run.version,
@@ -121,10 +122,26 @@ async fn tool_batch_is_durable_and_resumes_after_all_results() {
                 detail: json!({"code": "permission_denied"}),
             }
         };
+        if index == 0 {
+            let rejected = runtime
+                .handle(envelope(
+                    "commit-tool-wrong-owner",
+                    HostCommand::CommitTool(CommitToolCommand {
+                        owner_user_id: "user-2".to_string(),
+                        invocation_id: claim.invocation.invocation_id.clone(),
+                        claim_token: claim.claim_token.clone(),
+                        expected_version: claim.invocation.version,
+                        outcome: outcome.clone(),
+                    }),
+                ))
+                .await;
+            assert_eq!(rejected.error.expect("not found").code, "not_found");
+        }
         let committed = runtime
             .handle(envelope(
                 &format!("commit-tool-{index}"),
                 HostCommand::CommitTool(CommitToolCommand {
+                    owner_user_id: "user-1".to_string(),
                     invocation_id: claim.invocation.invocation_id,
                     claim_token: claim.claim_token,
                     expected_version: claim.invocation.version,

@@ -190,6 +190,10 @@ impl LocalMemorySyncWorker {
         Ok(self)
     }
 
+    pub(crate) fn tenant_id(&self) -> &str {
+        &self.tenant_id
+    }
+
     pub async fn run_once(&self) -> Result<MemorySyncTick, LocalMemorySyncError> {
         let now = (self.clock)().map_err(LocalMemorySyncError::Clock)?;
         let lease_ms = i64::try_from(self.lease_duration.as_millis()).unwrap_or(i64::MAX);

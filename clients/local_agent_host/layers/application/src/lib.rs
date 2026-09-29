@@ -215,7 +215,7 @@ impl LocalAgentRuntime {
             HostCommand::CommitStep(command) => {
                 let current = self
                     .store
-                    .get_run(&command.run_id)
+                    .get_run_for_owner(&command.owner_user_id, &command.run_id)
                     .await?
                     .ok_or_else(|| ClientStorageError::NotFound(command.run_id.clone()))?;
                 let now = self.now()?;
@@ -263,6 +263,7 @@ impl LocalAgentRuntime {
                     .store
                     .commit_tool(
                         &idempotency,
+                        &command.owner_user_id,
                         &command.invocation_id,
                         &command.claim_token,
                         command.expected_version,
@@ -637,6 +638,7 @@ mod tests {
             .handle(envelope(
                 "commit-1",
                 HostCommand::CommitStep(CommitStepCommand {
+                    owner_user_id: "user-1".to_string(),
                     run_id: claim.run.run_id.clone(),
                     claim_token: claim.claim_token.clone(),
                     expected_version: claim.run.version,
@@ -650,6 +652,7 @@ mod tests {
             .handle(envelope(
                 "commit-1",
                 HostCommand::CommitStep(CommitStepCommand {
+                    owner_user_id: "user-1".to_string(),
                     run_id: claim.run.run_id.clone(),
                     claim_token: claim.claim_token,
                     expected_version: claim.run.version,
@@ -704,6 +707,7 @@ mod tests {
             .handle(envelope(
                 "commit-1",
                 HostCommand::CommitStep(CommitStepCommand {
+                    owner_user_id: "user-1".to_string(),
                     run_id: claim.run.run_id.clone(),
                     claim_token: claim.claim_token,
                     expected_version: claim.run.version,

@@ -190,6 +190,7 @@ impl LocalAgentToolStore for SqliteClientStorage {
     async fn commit_tool(
         &self,
         command: &IdempotentCommand,
+        owner_user_id: &str,
         invocation_id: &str,
         claim_token: &str,
         expected_version: u64,
@@ -207,6 +208,11 @@ impl LocalAgentToolStore for SqliteClientStorage {
             let current = fetch_invocation(&mut connection, invocation_id)
                 .await
                 .db()?
+                .ok_or_else(|| ClientStorageError::NotFound(invocation_id.to_string()))?;
+            let owning_run = Self::fetch_run_on(&mut connection, &current.run_id)
+                .await
+                .db()?
+                .filter(|run| run.owner_user_id == owner_user_id)
                 .ok_or_else(|| ClientStorageError::NotFound(invocation_id.to_string()))?;
             let (status, result, error) = outcome_fields(outcome);
             let updated = sqlx::query(
@@ -262,7 +268,7 @@ impl LocalAgentToolStore for SqliteClientStorage {
             )
             .await
             .db()?;
-            let run = Self::fetch_run_on(&mut connection, &current.run_id)
+            let run = Self::fetch_run_on(&mut connection, &owning_run.run_id)
                 .await
                 .db()?
                 .ok_or_else(|| ClientStorageError::NotFound(current.run_id.clone()))?;

@@ -198,6 +198,7 @@ async fn model_and_tool_workers_claim_only_their_active_account() {
             .try_handle(request(
                 &format!("commit-{expected_run_id}"),
                 HostCommand::CommitStep(CommitStepCommand {
+                    owner_user_id: owner_user_id.to_string(),
                     run_id: claim.run.run_id,
                     claim_token: claim.claim_token,
                     expected_version: claim.run.version,
@@ -238,6 +239,85 @@ async fn model_and_tool_workers_claim_only_their_active_account() {
                 if claim.invocation.run_id == expected_run_id
         ));
     }
+}
+
+#[tokio::test]
+async fn model_commit_requires_the_claimed_run_owner() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(35_000)));
+    runtime
+        .try_handle(request("create-owned", create("run-owned", "user-1")))
+        .await
+        .expect("create Run");
+    let claimed = runtime
+        .try_handle(request(
+            "claim-owned",
+            HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                owner_user_id: "user-1".to_string(),
+                worker_id: "model-user-1".to_string(),
+                lease_duration_ms: 10_000,
+            }),
+        ))
+        .await
+        .expect("claim Run");
+    let HostResult::Claim { claim: Some(claim) } = claimed else {
+        panic!("expected Run claim")
+    };
+    let wrong_owner = runtime
+        .try_handle(request(
+            "commit-wrong-owner",
+            HostCommand::CommitStep(CommitStepCommand {
+                owner_user_id: "user-2".to_string(),
+                run_id: claim.run.run_id.clone(),
+                claim_token: claim.claim_token.clone(),
+                expected_version: claim.run.version,
+                outcome: LocalAgentStepOutcome::Succeed {
+                    output: json!({"wrong": true}),
+                },
+            }),
+        ))
+        .await;
+    assert!(wrong_owner.is_err());
+    let still_claimed = runtime
+        .try_handle(request(
+            "get-after-wrong-owner",
+            HostCommand::GetRun(GetRunCommand {
+                owner_user_id: "user-1".to_string(),
+                run_id: claim.run.run_id.clone(),
+            }),
+        ))
+        .await
+        .expect("get claimed Run");
+    assert!(matches!(
+        still_claimed,
+        HostResult::Run { run }
+            if run.status == LocalAgentRunStatus::ModelRunning
+                && run.version == claim.run.version
+    ));
+
+    let committed = runtime
+        .try_handle(request(
+            "commit-correct-owner",
+            HostCommand::CommitStep(CommitStepCommand {
+                owner_user_id: "user-1".to_string(),
+                run_id: claim.run.run_id,
+                claim_token: claim.claim_token,
+                expected_version: claim.run.version,
+                outcome: LocalAgentStepOutcome::Succeed {
+                    output: json!({"ok": true}),
+                },
+            }),
+        ))
+        .await
+        .expect("owner commit");
+    assert!(matches!(
+        committed,
+        HostResult::Run { run } if run.status == LocalAgentRunStatus::Succeeded
+    ));
 }
 
 #[tokio::test]

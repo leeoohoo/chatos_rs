@@ -164,7 +164,7 @@ impl LocalAgentHostAssembly {
         let mut tool_scheduler = LocalToolScheduler::new(
             Arc::clone(&runtime),
             tools,
-            owner_user_id,
+            owner_user_id.clone(),
             "local-tool-worker",
         )?;
         if external_tool_worker {
@@ -178,12 +178,13 @@ impl LocalAgentHostAssembly {
         }
         let mut coordinator = LocalAgentHostCoordinator::new(
             Arc::clone(&runtime),
+            owner_user_id.clone(),
             Some(model_scheduler),
             Some(tool_scheduler),
         )?
         .with_reserved_ipc_tools([CREATE_TASK_TOOL, CREATE_TASKS_TOOL])?;
         if let Some(worker) = memory_sync_worker {
-            coordinator = coordinator.with_memory_sync_worker(worker);
+            coordinator = coordinator.with_memory_sync_worker(worker)?;
         }
         let coordinator = Arc::new(coordinator);
         Ok(Self {

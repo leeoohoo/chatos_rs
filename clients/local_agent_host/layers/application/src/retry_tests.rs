@@ -67,6 +67,7 @@ async fn retry_preserves_the_next_model_attempt_across_claims() {
         .try_handle(envelope(
             "wait-user",
             HostCommand::CommitStep(CommitStepCommand {
+                owner_user_id: "user-1".to_string(),
                 run_id: claim.run.run_id,
                 claim_token: claim.claim_token,
                 expected_version: claim.run.version,
@@ -117,6 +118,7 @@ async fn retry_preserves_the_next_model_attempt_across_claims() {
         .try_handle(envelope(
             "retry-1",
             HostCommand::CommitStep(CommitStepCommand {
+                owner_user_id: "user-1".to_string(),
                 run_id: claim.run.run_id,
                 claim_token: claim.claim_token,
                 expected_version: claim.run.version,

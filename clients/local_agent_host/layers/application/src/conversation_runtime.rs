@@ -379,6 +379,7 @@ mod tests {
             .try_handle(request(
                 "wait-turn-control",
                 HostCommand::CommitStep(CommitStepCommand {
+                    owner_user_id: "user-1".to_string(),
                     run_id: claim.run.run_id,
                     claim_token: claim.claim_token,
                     expected_version: claim.run.version,

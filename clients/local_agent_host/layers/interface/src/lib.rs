@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{fmt, str::FromStr};
 
+mod account_scope;
 mod control_plane;
 mod conversation;
 mod memory;
@@ -56,7 +57,7 @@ pub use tool::{
     LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 24;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 25;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -246,6 +247,7 @@ impl ClaimNextRunCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CommitStepCommand {
+    pub owner_user_id: String,
     pub run_id: String,
     pub claim_token: String,
     pub expected_version: u64,
@@ -254,6 +256,7 @@ pub struct CommitStepCommand {
 
 impl CommitStepCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("run_id", &self.run_id)?;
         validate_identifier("claim_token", &self.claim_token)?;
         if self.expected_version == 0 {
@@ -742,6 +745,7 @@ mod tests {
     #[test]
     fn request_rejects_zero_version_and_unbounded_event_page() {
         let commit = CommitStepCommand {
+            owner_user_id: "user-1".to_string(),
             run_id: "run-1".to_string(),
             claim_token: "claim-1".to_string(),
             expected_version: 0,

@@ -65,6 +65,7 @@ async fn approval_gate_blocks_claim_and_persists_approve_or_reject() {
         .try_handle(request(
             "wait-tools",
             HostCommand::CommitStep(CommitStepCommand {
+                owner_user_id: "user-1".to_string(),
                 run_id: claim.run.run_id,
                 claim_token: claim.claim_token,
                 expected_version: claim.run.version,
@@ -198,6 +199,7 @@ async fn approval_gate_blocks_claim_and_persists_approve_or_reject() {
         .try_handle(request(
             "commit-approved",
             HostCommand::CommitTool(CommitToolCommand {
+                owner_user_id: "user-1".to_string(),
                 invocation_id: claim.invocation.invocation_id,
                 claim_token: claim.claim_token,
                 expected_version: claim.invocation.version,

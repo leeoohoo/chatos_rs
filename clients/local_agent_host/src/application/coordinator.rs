@@ -8,7 +8,8 @@ use crate::{
 };
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
-    validate_identifier, HostCommand, HostRequestEnvelope, HostResponseEnvelope, HostResult,
+    validate_identifier, HostCommand, HostError, HostRequestEnvelope, HostResponseEnvelope,
+    HostResult,
 };
 use chatos_local_agent_runtime::{LocalAgentRuntime, LocalAgentRuntimeError};
 use std::{sync::Arc, time::Duration};
@@ -31,6 +32,7 @@ pub enum LocalAgentCoordinatorError {
 
 pub struct LocalAgentHostCoordinator {
     runtime: Arc<LocalAgentRuntime>,
+    owner_user_id: String,
     model_scheduler: Option<LocalAgentScheduler>,
     tool_scheduler: Option<LocalToolScheduler>,
     memory_sync_worker: Option<LocalMemorySyncWorker>,
@@ -42,15 +44,30 @@ pub struct LocalAgentHostCoordinator {
 impl LocalAgentHostCoordinator {
     pub fn new(
         runtime: Arc<LocalAgentRuntime>,
+        owner_user_id: impl Into<String>,
         model_scheduler: Option<LocalAgentScheduler>,
         tool_scheduler: Option<LocalToolScheduler>,
     ) -> Result<Self, String> {
         if model_scheduler.is_none() && tool_scheduler.is_none() {
             return Err("Local Agent coordinator requires a model or tool scheduler".to_string());
         }
+        let owner_user_id = owner_user_id.into();
+        validate_identifier("owner_user_id", &owner_user_id)?;
+        if model_scheduler
+            .as_ref()
+            .is_some_and(|scheduler| scheduler.owner_user_id() != owner_user_id)
+            || tool_scheduler
+                .as_ref()
+                .is_some_and(|scheduler| scheduler.owner_user_id() != owner_user_id)
+        {
+            return Err(
+                "Local Agent coordinator and schedulers must use the same owner".to_string(),
+            );
+        }
         let (activity, _) = watch::channel(0);
         Ok(Self {
             runtime,
+            owner_user_id,
             model_scheduler,
             tool_scheduler,
             memory_sync_worker: None,
@@ -60,9 +77,17 @@ impl LocalAgentHostCoordinator {
         })
     }
 
-    pub fn with_memory_sync_worker(mut self, worker: LocalMemorySyncWorker) -> Self {
+    pub fn with_memory_sync_worker(
+        mut self,
+        worker: LocalMemorySyncWorker,
+    ) -> Result<Self, String> {
+        if worker.tenant_id() != self.owner_user_id {
+            return Err(
+                "Local Agent coordinator and Memory worker must use the same owner".to_string(),
+            );
+        }
         self.memory_sync_worker = Some(worker);
-        self
+        Ok(self)
     }
 
     pub fn with_reserved_ipc_tools<I, S>(mut self, tool_names: I) -> Result<Self, String>
@@ -233,6 +258,20 @@ impl LocalAgentHostCoordinator {
 #[async_trait]
 impl HostRequestHandler for LocalAgentHostCoordinator {
     async fn handle_request(&self, mut request: HostRequestEnvelope) -> HostResponseEnvelope {
+        if request
+            .command
+            .owner_user_id()
+            .is_some_and(|owner| owner != self.owner_user_id)
+        {
+            return HostResponseEnvelope::failure(
+                request.command_id,
+                HostError::new(
+                    "account_mismatch",
+                    "request account does not match the active Local Agent Host account",
+                    false,
+                ),
+            );
+        }
         if let HostCommand::WaitEvents(command) = &request.command {
             return self
                 .wait_for_events(request.clone(), command.timeout_ms)
@@ -327,6 +366,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn coordinator_rejects_requests_for_a_different_active_account() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = Arc::new(LocalAgentRuntime::new(storage));
+        runtime.initialize().await.expect("initialize");
+        let mut profiles = LocalAgentProfileRegistry::new();
+        profiles
+            .register("main_chat", ModelProfile)
+            .expect("profile");
+        let scheduler =
+            LocalAgentScheduler::new(Arc::clone(&runtime), profiles, "user-1", "model-worker")
+                .expect("scheduler");
+        let coordinator =
+            LocalAgentHostCoordinator::new(Arc::clone(&runtime), "user-1", Some(scheduler), None)
+                .expect("coordinator");
+        let rejected = coordinator
+            .handle_request(HostRequestEnvelope {
+                protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+                command_id: "cross-account-create".to_string(),
+                command: HostCommand::CreateRun(CreateRunCommand {
+                    run_id: "run-other".to_string(),
+                    owner_user_id: "user-2".to_string(),
+                    owner_entity_type: "test".to_string(),
+                    owner_entity_id: "entity-other".to_string(),
+                    profile_key: "main_chat".to_string(),
+                    model_config_ref: "default".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: json!({"message": "must not persist"}),
+                    max_iterations: 4,
+                }),
+            })
+            .await;
+        assert_eq!(
+            rejected.error.expect("account mismatch").code,
+            "account_mismatch"
+        );
+        assert!(runtime
+            .get_run_for_host_worker("run-other")
+            .await
+            .expect("lookup")
+            .is_none());
+
+        let health = coordinator
+            .handle_request(HostRequestEnvelope {
+                protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+                command_id: "health".to_string(),
+                command: HostCommand::Health,
+            })
+            .await;
+        assert!(health.ok);
+    }
+
+    #[tokio::test]
     async fn coordinator_drains_model_tool_model_without_polling() {
         let storage = Arc::new(
             SqliteClientStorage::connect_memory()
@@ -350,6 +446,7 @@ mod tests {
         let coordinator = Arc::new(
             LocalAgentHostCoordinator::new(
                 Arc::clone(&runtime),
+                "user-1",
                 Some(model_scheduler),
                 Some(tool_scheduler),
             )

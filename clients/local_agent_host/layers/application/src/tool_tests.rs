@@ -70,6 +70,7 @@ async fn prepare_claimed_tool(
         .handle(envelope(
             "commit-run",
             HostCommand::CommitStep(CommitStepCommand {
+                owner_user_id: "user-1".to_string(),
                 run_id: run_claim.run.run_id,
                 claim_token: run_claim.claim_token,
                 expected_version: run_claim.run.version,
@@ -183,6 +184,7 @@ async fn cancelling_run_invalidates_outstanding_tool_claim() {
         .handle(envelope(
             "late-tool-commit",
             HostCommand::CommitTool(CommitToolCommand {
+                owner_user_id: "user-1".to_string(),
                 invocation_id: tool_claim.invocation.invocation_id,
                 claim_token: tool_claim.claim_token,
                 expected_version: tool_claim.invocation.version,
@@ -240,6 +242,7 @@ async fn tool_claim_filters_partition_reserved_and_platform_tools() {
         .handle(envelope(
             "commit-filtered-run",
             HostCommand::CommitStep(CommitStepCommand {
+                owner_user_id: "user-1".to_string(),
                 run_id: claim.run.run_id,
                 claim_token: claim.claim_token,
                 expected_version: claim.run.version,
@@ -348,6 +351,7 @@ async fn waiting_user_resume_preserves_checkpoint_and_supplies_input() {
         .handle(envelope(
             "wait-user",
             HostCommand::CommitStep(CommitStepCommand {
+                owner_user_id: "user-1".to_string(),
                 run_id: claim.run.run_id,
                 claim_token: claim.claim_token,
                 expected_version: claim.run.version,

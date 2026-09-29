@@ -309,6 +309,7 @@ pub trait LocalAgentToolStore: Send + Sync {
     async fn commit_tool(
         &self,
         command: &IdempotentCommand,
+        owner_user_id: &str,
         invocation_id: &str,
         claim_token: &str,
         expected_version: u64,

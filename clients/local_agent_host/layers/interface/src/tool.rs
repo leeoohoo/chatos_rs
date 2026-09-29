@@ -194,6 +194,7 @@ fn validate_tool_names<'a>(
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CommitToolCommand {
+    pub owner_user_id: String,
     pub invocation_id: String,
     pub claim_token: String,
     pub expected_version: u64,
@@ -202,6 +203,7 @@ pub struct CommitToolCommand {
 
 impl CommitToolCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("invocation_id", &self.invocation_id)?;
         validate_identifier("claim_token", &self.claim_token)?;
         if self.expected_version == 0 {

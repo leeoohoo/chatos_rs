@@ -64,6 +64,8 @@ IPC v23 binds execution workers to the signed-in account. Model claims, Tool cla
 
 IPC v24 and SQLite v19 make the authenticated owner the first key of both control-plane snapshot types. Model configs, capability policies, process-local caches and credential resolution are selected by `owner_user_id` plus their existing reference/revision, and the Planner always supplies the owner frozen into the claimed Run. Two accounts may therefore publish identical references and revisions without collision, while a cross-account lookup is not found. Ownerless v11/v12 control-plane cache rows are intentionally discarded during v19 migration and are republished after authentication; no secret value is added to IPC or SQLite.
 
+IPC v25 binds the complete standalone IPC surface to the `--owner-user-id` selected at process launch. Every stateful command exposes one account scope, including Memory tenant requests and nested snapshot/install specifications; the Coordinator rejects a mismatch before database dispatch or long polling. `commit_step` and `commit_tool` now carry the owner explicitly, and the application/storage layers verify it before accepting a claim token. A stale worker from the previously signed-in account therefore cannot finish work through a Host restarted for another account.
+
 Native clients may choose `LocalAgentHostAssembly::with_external_tool_worker`. In that mode Swift or C# claims and commits platform tools through IPC, while Rust still owns model scheduling plus the two Task creation tools and wakes immediately after each native tool receipt. This keeps platform permissions and UI-bound tools in the native process without duplicating the Agent loop.
 
 Protocol v15 retains the optional `include_tool_names` and `exclude_tool_names` Tool claim filters. The Assembly's Rust worker includes only the two reserved Task tools, and Coordinator IPC automatically excludes them from native claims. Explicit overlapping filters are rejected.
@@ -142,7 +144,7 @@ Example health request:
 
 ```json
 {
-  "protocol_version": 24,
+  "protocol_version": 25,
   "command_id": "health-019",
   "command": {
     "type": "health"

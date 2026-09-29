@@ -74,6 +74,10 @@ impl LocalAgentScheduler {
         Ok(self)
     }
 
+    pub(crate) fn owner_user_id(&self) -> &str {
+        &self.owner_user_id
+    }
+
     /// Claims and executes at most one durable step. The caller owns wakeups
     /// and retry timers, so an idle Host does not create polling receipts.
     pub async fn run_once(&self) -> Result<SchedulerTick, LocalAgentSchedulerError> {
@@ -117,6 +121,7 @@ impl LocalAgentScheduler {
             .runtime
             .try_handle(envelope(
                 HostCommand::CommitStep(CommitStepCommand {
+                    owner_user_id: owner_user_id.clone(),
                     run_id: run_id.clone(),
                     claim_token: claim_token.clone(),
                     expected_version,

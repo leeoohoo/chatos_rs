@@ -132,6 +132,10 @@ impl LocalToolScheduler {
         Ok(self)
     }
 
+    pub(crate) fn owner_user_id(&self) -> &str {
+        &self.owner_user_id
+    }
+
     pub fn with_tool_filter(
         mut self,
         include_tool_names: Option<Vec<String>>,
@@ -193,6 +197,7 @@ impl LocalToolScheduler {
             .try_handle(envelope(
                 "tool-scheduler-commit",
                 HostCommand::CommitTool(CommitToolCommand {
+                    owner_user_id: self.owner_user_id.clone(),
                     invocation_id: claim.invocation.invocation_id,
                     claim_token: claim.claim_token,
                     expected_version: claim.invocation.version,
@@ -284,6 +289,7 @@ mod tests {
             .try_handle(envelope(
                 "commit-run",
                 HostCommand::CommitStep(CommitStepCommand {
+                    owner_user_id: "user-1".to_string(),
                     run_id: claim.run.run_id,
                     claim_token: claim.claim_token,
                     expected_version: claim.run.version,
