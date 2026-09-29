@@ -374,3 +374,9 @@ pub(super) const SCHEMA_V16: &[&str] = &[
 pub(super) const SCHEMA_V17: &[&str] =
     &["CREATE INDEX local_plugin_installations_owner_updated ON \
      local_plugin_installations(owner_user_id, updated_at_unix_ms DESC, installation_id DESC)"];
+
+pub(super) const SCHEMA_V18: &[&str] = &[
+    "CREATE INDEX local_memory_outbox_tenant_runnable ON local_memory_outbox(\
+       tenant_id, status, next_attempt_at_unix_ms, created_at_unix_ms, source_id, record_id\
+     )",
+];

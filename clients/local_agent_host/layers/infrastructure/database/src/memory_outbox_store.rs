@@ -69,10 +69,12 @@ impl LocalMemoryOutboxStore for SqliteClientStorage {
 
     async fn claim_next_memory_record(
         &self,
+        tenant_id: &str,
         claim_token: &str,
         now_unix_ms: i64,
         claim_until_unix_ms: i64,
     ) -> Result<Option<LocalMemoryOutboxRecord>, ClientStorageError> {
+        validate_scope_value("tenant_id", tenant_id)?;
         if claim_token.trim().is_empty() || claim_until_unix_ms <= now_unix_ms {
             return Err(ClientStorageError::InvalidState(
                 "Memory outbox claim requires a token and future lease".to_string(),
@@ -84,19 +86,23 @@ impl LocalMemoryOutboxStore for SqliteClientStorage {
             sqlx::query(
                 "UPDATE local_memory_outbox SET status = 'retry_scheduled', claim_token = NULL, \
                  claim_until_unix_ms = NULL, next_attempt_at_unix_ms = ?, version = version + 1, \
-                 updated_at_unix_ms = ? WHERE status = 'syncing' AND claim_until_unix_ms <= ?",
+                 updated_at_unix_ms = ? WHERE tenant_id = ? AND status = 'syncing' \
+                 AND claim_until_unix_ms <= ?",
             )
             .bind(now_unix_ms)
             .bind(now_unix_ms)
+            .bind(tenant_id)
             .bind(now_unix_ms)
             .execute(&mut *connection)
             .await
             .db()?;
             let candidate = sqlx::query(
-                "SELECT source_id, record_id FROM local_memory_outbox WHERE status = 'pending' OR \
-                 (status = 'retry_scheduled' AND next_attempt_at_unix_ms <= ?) \
+                "SELECT source_id, record_id FROM local_memory_outbox WHERE tenant_id = ? AND (\
+                 status = 'pending' OR \
+                 (status = 'retry_scheduled' AND next_attempt_at_unix_ms <= ?)) \
                  ORDER BY created_at_unix_ms, source_id, record_id LIMIT 1",
             )
+            .bind(tenant_id)
             .bind(now_unix_ms)
             .fetch_optional(&mut *connection)
             .await
@@ -109,11 +115,12 @@ impl LocalMemoryOutboxStore for SqliteClientStorage {
             sqlx::query(
                 "UPDATE local_memory_outbox SET status = 'syncing', claim_token = ?, \
                  claim_until_unix_ms = ?, next_attempt_at_unix_ms = NULL, version = version + 1, \
-                 updated_at_unix_ms = ? WHERE source_id = ? AND record_id = ?",
+                 updated_at_unix_ms = ? WHERE tenant_id = ? AND source_id = ? AND record_id = ?",
             )
             .bind(claim_token)
             .bind(claim_until_unix_ms)
             .bind(now_unix_ms)
+            .bind(tenant_id)
             .bind(&source_id)
             .bind(&record_id)
             .execute(&mut *connection)
@@ -176,12 +183,17 @@ impl LocalMemoryOutboxStore for SqliteClientStorage {
         .await
     }
 
-    async fn next_memory_retry_at(&self) -> Result<Option<i64>, ClientStorageError> {
+    async fn next_memory_retry_at(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Option<i64>, ClientStorageError> {
+        validate_scope_value("tenant_id", tenant_id)?;
         let mut connection = self.pool.acquire().await.db()?;
         sqlx::query_scalar(
             "SELECT MIN(next_attempt_at_unix_ms) FROM local_memory_outbox \
-             WHERE status = 'retry_scheduled'",
+             WHERE tenant_id = ? AND status = 'retry_scheduled'",
         )
+        .bind(tenant_id)
         .fetch_one(&mut *connection)
         .await
         .db()
@@ -257,11 +269,16 @@ fn non_negative_count(
 
 fn validate_scope(tenant_id: &str, source_id: &str) -> Result<(), ClientStorageError> {
     for (label, value) in [("tenant_id", tenant_id), ("source_id", source_id)] {
-        if value.trim().is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
-            return Err(ClientStorageError::InvalidState(format!(
-                "Memory {label} must contain 1..=256 non-control characters"
-            )));
-        }
+        validate_scope_value(label, value)?;
+    }
+    Ok(())
+}
+
+fn validate_scope_value(label: &str, value: &str) -> Result<(), ClientStorageError> {
+    if value.trim().is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
+        return Err(ClientStorageError::InvalidState(format!(
+            "Memory {label} must contain 1..=256 non-control characters"
+        )));
     }
     Ok(())
 }
@@ -442,7 +459,7 @@ mod tests {
             .is_err());
 
         let claimed = storage
-            .claim_next_memory_record("claim-1", 2_000, 12_000)
+            .claim_next_memory_record("user-1", "claim-1", 2_000, 12_000)
             .await
             .expect("claim")
             .expect("record");
@@ -489,17 +506,17 @@ mod tests {
             .await
             .expect("enqueue");
         let claimed = storage
-            .claim_next_memory_record("claim-1", 2_000, 3_000)
+            .claim_next_memory_record("user-1", "claim-1", 2_000, 3_000)
             .await
             .expect("claim")
             .expect("record");
         assert!(storage
-            .claim_next_memory_record("claim-2", 2_500, 3_500)
+            .claim_next_memory_record("user-1", "claim-2", 2_500, 3_500)
             .await
             .expect("no second claim")
             .is_none());
         let reclaimed = storage
-            .claim_next_memory_record("claim-3", 3_000, 4_000)
+            .claim_next_memory_record("user-1", "claim-3", 3_000, 4_000)
             .await
             .expect("reclaim")
             .expect("record");
@@ -518,19 +535,61 @@ mod tests {
             .expect("retry");
         assert_eq!(retry.status, LocalMemoryOutboxStatus::RetryScheduled);
         assert_eq!(
-            storage.next_memory_retry_at().await.expect("deadline"),
+            storage
+                .next_memory_retry_at("user-1")
+                .await
+                .expect("deadline"),
             Some(8_000)
         );
         assert!(storage
-            .claim_next_memory_record("claim-4", 7_999, 9_000)
+            .claim_next_memory_record("user-1", "claim-4", 7_999, 9_000)
             .await
             .expect("not due")
             .is_none());
         assert!(storage
-            .claim_next_memory_record("claim-5", 8_000, 9_000)
+            .claim_next_memory_record("user-1", "claim-5", 8_000, 9_000)
             .await
             .expect("due")
             .is_some());
+    }
+
+    #[tokio::test]
+    async fn claim_and_expired_lease_recovery_are_tenant_scoped() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        for (record_id, tenant_id) in [("other", "user-2"), ("owned", "user-1")] {
+            storage
+                .enqueue_memory_record(
+                    record_id,
+                    tenant_id,
+                    "local_agent",
+                    "conversation-1",
+                    &json!({"message_id": record_id}),
+                    1_000,
+                )
+                .await
+                .expect("enqueue");
+        }
+        let other = storage
+            .claim_next_memory_record("user-2", "claim-other", 2_000, 3_000)
+            .await
+            .expect("claim other")
+            .expect("other record");
+        assert_eq!(other.record_id, "other");
+
+        let owned = storage
+            .claim_next_memory_record("user-1", "claim-owned", 4_000, 14_000)
+            .await
+            .expect("claim owned")
+            .expect("owned record");
+        assert_eq!(owned.record_id, "owned");
+        let other_status = storage
+            .get_memory_sync_status("user-2", "local_agent")
+            .await
+            .expect("other status");
+        assert_eq!(other_status.syncing_count, 1);
+        assert_eq!(other_status.retry_scheduled_count, 0);
     }
 
     #[tokio::test]
@@ -556,7 +615,7 @@ mod tests {
                 .expect("enqueue");
         }
         let synced = storage
-            .claim_next_memory_record("claim-1", 4_000, 14_000)
+            .claim_next_memory_record("user-1", "claim-1", 4_000, 14_000)
             .await
             .expect("claim")
             .expect("record");
@@ -571,7 +630,7 @@ mod tests {
             .await
             .expect("complete");
         let failed = storage
-            .claim_next_memory_record("claim-2", 6_000, 16_000)
+            .claim_next_memory_record("user-1", "claim-2", 6_000, 16_000)
             .await
             .expect("claim")
             .expect("record");

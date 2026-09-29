@@ -30,9 +30,13 @@ impl MemoryRecordWriter for RemoteWriter {
 }
 
 fn user_record() -> SaveRecordInput {
+    scoped_user_record("user-1", "message-1")
+}
+
+fn scoped_user_record(tenant_id: &str, message_id: &str) -> SaveRecordInput {
     SaveRecordInput::user_message("conversation-1", "hello")
-        .with_message_id("message-1")
-        .with_metadata(json!({"tenant_id": "user-1"}))
+        .with_message_id(message_id)
+        .with_metadata(json!({"tenant_id": tenant_id}))
 }
 
 #[tokio::test]
@@ -79,7 +83,7 @@ async fn local_writer_enqueues_before_remote_sync() {
             .expect("writer");
     writer.save_record(user_record()).await.expect("enqueue");
     let queued = storage
-        .claim_next_memory_record("claim-1", 2_000, 12_000)
+        .claim_next_memory_record("user-1", "claim-1", 2_000, 12_000)
         .await
         .expect("claim")
         .expect("record");
@@ -110,8 +114,13 @@ async fn sync_worker_completes_success_and_schedules_network_failure() {
         fail: false,
         records: Mutex::new(Vec::new()),
     });
-    let worker =
-        LocalMemorySyncWorker::with_clock(success_store, remote.clone(), Arc::new(|| Ok(2_000)));
+    let worker = LocalMemorySyncWorker::with_clock(
+        success_store,
+        remote.clone(),
+        "user-1",
+        Arc::new(|| Ok(2_000)),
+    )
+    .expect("worker");
     assert_eq!(
         worker.run_once().await.expect("sync"),
         MemorySyncTick::Synced {
@@ -142,8 +151,10 @@ async fn sync_worker_completes_success_and_schedules_network_failure() {
             fail: true,
             records: Mutex::new(Vec::new()),
         }),
+        "user-1",
         Arc::new(|| Ok(2_000)),
-    );
+    )
+    .expect("worker");
     assert_eq!(
         worker.run_once().await.expect("schedule retry"),
         MemorySyncTick::RetryScheduled {
@@ -152,6 +163,63 @@ async fn sync_worker_completes_success_and_schedules_network_failure() {
         }
     );
     assert_eq!(worker.next_retry_at().await.expect("deadline"), Some(7_000));
+}
+
+#[tokio::test]
+async fn sync_worker_never_claims_another_accounts_outbox() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let writer =
+        LocalMemoryOutboxWriter::with_clock(storage.clone(), "local_agent", Arc::new(|| Ok(1_000)))
+            .expect("writer");
+    writer
+        .save_record(scoped_user_record("user-2", "message-other"))
+        .await
+        .expect("enqueue other account");
+    writer
+        .save_record(scoped_user_record("user-1", "message-owned"))
+        .await
+        .expect("enqueue active account");
+    let remote = Arc::new(RemoteWriter {
+        fail: false,
+        records: Mutex::new(Vec::new()),
+    });
+    let worker = LocalMemorySyncWorker::with_clock(
+        storage.clone(),
+        remote.clone(),
+        "user-1",
+        Arc::new(|| Ok(2_000)),
+    )
+    .expect("worker");
+
+    assert_eq!(
+        worker.run_once().await.expect("sync active account"),
+        MemorySyncTick::Synced {
+            record_id: "message-owned".to_string()
+        }
+    );
+    assert_eq!(worker.run_once().await.expect("idle"), MemorySyncTick::Idle);
+    {
+        let records = remote.records.lock().expect("records");
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0]
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("tenant_id"))
+                .and_then(serde_json::Value::as_str),
+            Some("user-1")
+        );
+    }
+    let other = storage
+        .get_memory_sync_status("user-2", "local_agent")
+        .await
+        .expect("other status");
+    assert_eq!(other.pending_count, 1);
+    assert_eq!(other.synced_count, 0);
 }
 
 #[tokio::test]
@@ -174,6 +242,7 @@ async fn retry_deadline_uses_request_completion_time() {
             fail: true,
             records: Mutex::new(Vec::new()),
         }),
+        "user-1",
         Arc::new(move || {
             Ok(if clock_calls.fetch_add(1, Ordering::SeqCst) == 0 {
                 2_000
@@ -181,7 +250,8 @@ async fn retry_deadline_uses_request_completion_time() {
                 10_000
             })
         }),
-    );
+    )
+    .expect("worker");
     assert_eq!(
         worker.run_once().await.expect("retry"),
         MemorySyncTick::RetryScheduled {
@@ -213,8 +283,13 @@ async fn malformed_local_record_becomes_visible_retry_instead_of_stopping_worker
         fail: false,
         records: Mutex::new(Vec::new()),
     });
-    let worker =
-        LocalMemorySyncWorker::with_clock(storage.clone(), remote.clone(), Arc::new(|| Ok(2_000)));
+    let worker = LocalMemorySyncWorker::with_clock(
+        storage.clone(),
+        remote.clone(),
+        "user-1",
+        Arc::new(|| Ok(2_000)),
+    )
+    .expect("worker");
     assert_eq!(
         worker.run_once().await.expect("retry malformed record"),
         MemorySyncTick::RetryScheduled {

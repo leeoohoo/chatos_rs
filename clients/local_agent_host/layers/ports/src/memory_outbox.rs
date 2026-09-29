@@ -75,6 +75,7 @@ pub trait LocalMemoryOutboxStore: Send + Sync {
 
     async fn claim_next_memory_record(
         &self,
+        tenant_id: &str,
         claim_token: &str,
         now_unix_ms: i64,
         claim_until_unix_ms: i64,
@@ -101,7 +102,10 @@ pub trait LocalMemoryOutboxStore: Send + Sync {
         now_unix_ms: i64,
     ) -> Result<LocalMemoryOutboxRecord, ClientStorageError>;
 
-    async fn next_memory_retry_at(&self) -> Result<Option<i64>, ClientStorageError>;
+    async fn next_memory_retry_at(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Option<i64>, ClientStorageError>;
 
     async fn get_memory_sync_status(
         &self,

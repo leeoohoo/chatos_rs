@@ -64,7 +64,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 non_empty_env("CHATOS_MEMORY_INTERNAL_CALLER"),
                 non_empty_env("CHATOS_MEMORY_INTERNAL_SECRET"),
             );
-            let services = config.build_services(storage.clone())?;
+            let services = config.build_services(storage.clone(), options.owner_user_id.clone())?;
             (
                 Arc::new(services.runner),
                 Some((services.source_id, services.sync_worker)),

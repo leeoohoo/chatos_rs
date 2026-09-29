@@ -64,7 +64,11 @@ impl LocalMemoryRuntimeConfig {
         self.source_id.trim()
     }
 
-    pub fn build_services<S>(&self, store: Arc<S>) -> Result<LocalMemoryRuntimeServices, String>
+    pub fn build_services<S>(
+        &self,
+        store: Arc<S>,
+        tenant_id: impl Into<String>,
+    ) -> Result<LocalMemoryRuntimeServices, String>
     where
         S: LocalMemoryOutboxStore + LocalMemoryContextCacheStore + 'static,
     {
@@ -86,7 +90,7 @@ impl LocalMemoryRuntimeConfig {
                 .with_memory_composer(composer)
                 .with_record_writer(outbox_writer)
                 .build_contextual_turn_runner(),
-            sync_worker: LocalMemorySyncWorker::new(outbox_store, remote_writer)
+            sync_worker: LocalMemorySyncWorker::new(outbox_store, remote_writer, tenant_id)?
                 .with_lease_duration(
                     self.timeout
                         .saturating_add(Duration::from_secs(5))

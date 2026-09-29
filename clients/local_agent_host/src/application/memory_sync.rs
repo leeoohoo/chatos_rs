@@ -147,6 +147,7 @@ pub enum LocalMemorySyncError {
 pub struct LocalMemorySyncWorker {
     store: Arc<dyn LocalMemoryOutboxStore>,
     remote: Arc<dyn MemoryRecordWriter>,
+    tenant_id: String,
     clock: SyncClock,
     lease_duration: Duration,
 }
@@ -155,21 +156,30 @@ impl LocalMemorySyncWorker {
     pub fn new(
         store: Arc<dyn LocalMemoryOutboxStore>,
         remote: Arc<dyn MemoryRecordWriter>,
-    ) -> Self {
-        Self::with_clock(store, remote, Arc::new(system_now_unix_ms))
+        tenant_id: impl Into<String>,
+    ) -> Result<Self, String> {
+        Self::with_clock(store, remote, tenant_id, Arc::new(system_now_unix_ms))
     }
 
     pub fn with_clock(
         store: Arc<dyn LocalMemoryOutboxStore>,
         remote: Arc<dyn MemoryRecordWriter>,
+        tenant_id: impl Into<String>,
         clock: SyncClock,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, String> {
+        let tenant_id = tenant_id.into();
+        let tenant_id = tenant_id.trim();
+        if tenant_id.is_empty() || tenant_id.len() > 256 || tenant_id.chars().any(char::is_control)
+        {
+            return Err("Memory sync tenant id must be 1..=256 non-control characters".to_string());
+        }
+        Ok(Self {
             store,
             remote,
+            tenant_id: tenant_id.to_string(),
             clock,
             lease_duration: Duration::from_secs(60),
-        }
+        })
     }
 
     pub fn with_lease_duration(mut self, lease_duration: Duration) -> Result<Self, String> {
@@ -186,7 +196,12 @@ impl LocalMemorySyncWorker {
         let claim_token = Uuid::new_v4().to_string();
         let Some(record) = self
             .store
-            .claim_next_memory_record(&claim_token, now, now.saturating_add(lease_ms))
+            .claim_next_memory_record(
+                &self.tenant_id,
+                &claim_token,
+                now,
+                now.saturating_add(lease_ms),
+            )
             .await?
         else {
             return Ok(MemorySyncTick::Idle);
@@ -255,7 +270,7 @@ impl LocalMemorySyncWorker {
     }
 
     pub async fn next_retry_at(&self) -> Result<Option<i64>, LocalMemorySyncError> {
-        Ok(self.store.next_memory_retry_at().await?)
+        Ok(self.store.next_memory_retry_at(&self.tenant_id).await?)
     }
 }
 
