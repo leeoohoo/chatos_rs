@@ -879,6 +879,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chatos_agent_profiles",
+ "chatos_ai_runtime",
  "chatos_client_storage",
  "chatos_local_agent_ports",
  "chatos_local_agent_protocol",

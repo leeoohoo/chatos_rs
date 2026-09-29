@@ -4,14 +4,17 @@
 //! Infrastructure adapters for durable storage and retained control planes.
 
 mod control_plane;
+#[cfg(test)]
+mod control_plane_tests;
 mod mcp;
 
 pub use chatos_client_storage::SqliteClientStorage;
 pub use chatos_local_agent_ports::{
     ClientStorageError, LocalAgentStore, LocalCapabilityPolicySnapshot,
-    LocalCapabilitySnapshotStore,
+    LocalCapabilitySnapshotStore, LocalJsonSchemaOutputFormat, LocalModelConfigSnapshot,
+    LocalModelConfigSnapshotStore,
 };
-pub use control_plane::LocalControlPlaneSnapshot;
+pub use control_plane::{LocalControlPlaneSnapshot, LocalModelCredentialResolver};
 pub use mcp::{
     LocalMcpServerConfig, LocalMcpStdioSession, LocalMcpToolDefinition, LocalMcpToolSet,
     LocalPluginSecretResolver,

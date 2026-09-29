@@ -276,7 +276,7 @@ async fn version_two_database_migrates_through_conversation_schema() {
             .fetch_one(&storage.pool)
             .await
             .expect("schema version");
-    assert_eq!(schema_version, 11);
+    assert_eq!(schema_version, 12);
     let task_tables: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (\
          'local_task_graphs', 'local_tasks', 'local_task_dependencies')",
@@ -333,6 +333,14 @@ async fn version_two_database_migrates_through_conversation_schema() {
     .await
     .expect("capability snapshot table");
     assert_eq!(capability_tables, 1);
+    let model_config_tables: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' \
+         AND name = 'local_model_config_snapshots'",
+    )
+    .fetch_one(&storage.pool)
+    .await
+    .expect("model config snapshot table");
+    assert_eq!(model_config_tables, 1);
     storage.pool.close().await;
     drop(storage);
     for path in [

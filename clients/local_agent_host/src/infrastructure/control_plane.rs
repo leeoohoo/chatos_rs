@@ -6,7 +6,11 @@ use crate::{
     TransientLocalModelRuntime,
 };
 use async_trait::async_trait;
-use chatos_local_agent_ports::{LocalCapabilityPolicySnapshot, LocalCapabilitySnapshotStore};
+use chatos_ai_runtime::{ContextualTurnRunner, JsonSchemaOutputFormat, ModelRuntimeConfig};
+use chatos_local_agent_ports::{
+    LocalCapabilityPolicySnapshot, LocalCapabilitySnapshotStore, LocalJsonSchemaOutputFormat,
+    LocalModelConfigSnapshot, LocalModelConfigSnapshotStore,
+};
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
@@ -14,6 +18,13 @@ use std::{
 };
 
 type RevisionKey = (String, String);
+
+#[async_trait]
+pub trait LocalModelCredentialResolver: Send + Sync {
+    /// Resolves one native credential-store reference for a single model
+    /// request. Implementations must not persist or log the returned secret.
+    async fn resolve_model_api_key(&self, credential_ref: &str) -> Result<String, String>;
+}
 
 /// Control-plane registry populated by the native client's authenticated
 /// configuration service. Credential-bearing model runtimes remain strictly
@@ -24,6 +35,9 @@ pub struct LocalControlPlaneSnapshot {
     models: RwLock<HashMap<RevisionKey, TransientLocalModelRuntime>>,
     capabilities: RwLock<HashMap<RevisionKey, ResolvedLocalCapabilities>>,
     capability_store: Option<Arc<dyn LocalCapabilitySnapshotStore>>,
+    model_store: Option<Arc<dyn LocalModelConfigSnapshotStore>>,
+    model_runner: Option<Arc<ContextualTurnRunner>>,
+    model_credentials: Option<Arc<dyn LocalModelCredentialResolver>>,
 }
 
 impl LocalControlPlaneSnapshot {
@@ -31,11 +45,35 @@ impl LocalControlPlaneSnapshot {
         Self::default()
     }
 
-    pub fn with_capability_store(store: Arc<dyn LocalCapabilitySnapshotStore>) -> Self {
-        Self {
-            capability_store: Some(store),
-            ..Self::default()
-        }
+    pub fn with_capability_store(mut self, store: Arc<dyn LocalCapabilitySnapshotStore>) -> Self {
+        self.capability_store = Some(store);
+        self
+    }
+
+    pub fn with_model_store(
+        mut self,
+        store: Arc<dyn LocalModelConfigSnapshotStore>,
+        runner: Arc<ContextualTurnRunner>,
+        credentials: Arc<dyn LocalModelCredentialResolver>,
+    ) -> Self {
+        self.model_store = Some(store);
+        self.model_runner = Some(runner);
+        self.model_credentials = Some(credentials);
+        self
+    }
+
+    pub async fn publish_model_config(
+        &self,
+        snapshot: &LocalModelConfigSnapshot,
+    ) -> Result<(), String> {
+        snapshot.validate()?;
+        let store = self.model_store.as_ref().ok_or_else(|| {
+            "model config storage is not configured for this control-plane resolver".to_string()
+        })?;
+        store
+            .put_model_config_snapshot(snapshot, now_unix_ms()?)
+            .await
+            .map_err(|error| error.to_string())
     }
 
     pub fn publish_model_runtime(
@@ -138,18 +176,41 @@ impl LocalModelRuntimeResolver for LocalControlPlaneSnapshot {
             "model_config_revision",
             model_config_revision.to_string(),
         )?;
-        let models = self
+        if let Some(runtime) = self
             .models
             .read()
-            .map_err(|_| "model control-plane snapshot lock is poisoned".to_string())?;
-        let runtime = models.get(&key).ok_or_else(|| {
-            format!(
+            .map_err(|_| "model control-plane snapshot lock is poisoned".to_string())?
+            .get(&key)
+        {
+            return Ok(TransientLocalModelRuntime {
+                runner: Arc::clone(&runtime.runner),
+                model_config: runtime.model_config.clone(),
+            });
+        }
+        let (Some(store), Some(runner), Some(credentials)) = (
+            &self.model_store,
+            &self.model_runner,
+            &self.model_credentials,
+        ) else {
+            return Err(format!(
                 "model runtime revision is not loaded: {model_config_ref}@{model_config_revision}"
-            )
-        })?;
+            ));
+        };
+        let snapshot = store
+            .get_model_config_snapshot(model_config_ref, model_config_revision)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| {
+                format!(
+                    "model config revision is not loaded: {model_config_ref}@{model_config_revision}"
+                )
+            })?;
+        let api_key = credentials
+            .resolve_model_api_key(&snapshot.credential_ref)
+            .await?;
         Ok(TransientLocalModelRuntime {
-            runner: Arc::clone(&runtime.runner),
-            model_config: runtime.model_config.clone(),
+            runner: Arc::clone(runner),
+            model_config: decode_model_config(snapshot, api_key)?,
         })
     }
 }
@@ -220,6 +281,45 @@ fn decode_capabilities(snapshot: LocalCapabilityPolicySnapshot) -> ResolvedLocal
     }
 }
 
+fn decode_model_config(
+    snapshot: LocalModelConfigSnapshot,
+    api_key: String,
+) -> Result<ModelRuntimeConfig, String> {
+    snapshot.validate()?;
+    Ok(ModelRuntimeConfig {
+        base_url: snapshot.base_url,
+        api_key,
+        model: snapshot.model,
+        provider: snapshot.provider,
+        supports_responses: snapshot.supports_responses,
+        supports_images: snapshot.supports_images,
+        instructions: snapshot.instructions,
+        temperature: snapshot.temperature,
+        max_output_tokens: snapshot.max_output_tokens,
+        thinking_level: snapshot.thinking_level,
+        prompt_cache_key: None,
+        previous_response_id: None,
+        request_cwd: None,
+        include_prompt_cache_retention: snapshot.include_prompt_cache_retention,
+        request_body_limit_bytes: snapshot
+            .request_body_limit_bytes
+            .map(usize::try_from)
+            .transpose()
+            .map_err(|_| "request_body_limit_bytes does not fit this platform".to_string())?,
+        max_transient_retries: snapshot.max_transient_retries.map(|value| value as usize),
+        output_format: snapshot.output_format.map(decode_output_format),
+    })
+}
+
+fn decode_output_format(format: LocalJsonSchemaOutputFormat) -> JsonSchemaOutputFormat {
+    JsonSchemaOutputFormat {
+        name: format.name,
+        description: format.description,
+        schema: format.schema,
+        strict: format.strict,
+    }
+}
+
 fn now_unix_ms() -> Result<i64, String> {
     let elapsed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -240,94 +340,4 @@ fn revision_key(
         }
     }
     Ok((first, second))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{MAIN_CHAT_PROFILE_KEY, TASK_RUNNER_PROFILE_KEY};
-
-    #[tokio::test]
-    async fn capabilities_are_resolved_by_exact_profile_and_revision() {
-        let snapshot = LocalControlPlaneSnapshot::new();
-        snapshot
-            .publish_capabilities(
-                MAIN_CHAT_PROFILE_KEY,
-                "policy-1",
-                ResolvedLocalCapabilities {
-                    instructions: Some("main chat".to_string()),
-                    ..ResolvedLocalCapabilities::default()
-                },
-            )
-            .await
-            .expect("publish");
-        let resolved = snapshot
-            .resolve_capabilities(MAIN_CHAT_PROFILE_KEY, "policy-1")
-            .await
-            .expect("resolve");
-        assert_eq!(resolved.instructions.as_deref(), Some("main chat"));
-        assert!(snapshot
-            .resolve_capabilities(TASK_RUNNER_PROFILE_KEY, "policy-1")
-            .await
-            .is_err());
-        assert!(snapshot
-            .resolve_capabilities(MAIN_CHAT_PROFILE_KEY, "policy-2")
-            .await
-            .is_err());
-        assert!(snapshot
-            .evict_capabilities(MAIN_CHAT_PROFILE_KEY, "policy-1")
-            .expect("remove"));
-    }
-
-    #[tokio::test]
-    async fn capabilities_reload_from_sqlite_after_process_cache_is_recreated() {
-        let storage = Arc::new(
-            chatos_client_storage::SqliteClientStorage::connect_memory()
-                .await
-                .expect("storage"),
-        );
-        let first = LocalControlPlaneSnapshot::with_capability_store(storage.clone());
-        first
-            .publish_capabilities(
-                MAIN_CHAT_PROFILE_KEY,
-                "policy-durable",
-                ResolvedLocalCapabilities {
-                    instructions: Some("durable policy".to_string()),
-                    tools: vec![serde_json::json!({"name": "read_file"})],
-                    ..ResolvedLocalCapabilities::default()
-                },
-            )
-            .await
-            .expect("publish");
-
-        let restarted = LocalControlPlaneSnapshot::with_capability_store(storage);
-        let resolved = restarted
-            .resolve_capabilities(MAIN_CHAT_PROFILE_KEY, "policy-durable")
-            .await
-            .expect("resolve persisted revision");
-        assert_eq!(resolved.instructions.as_deref(), Some("durable policy"));
-        assert_eq!(
-            resolved.tools,
-            vec![serde_json::json!({"name": "read_file"})]
-        );
-    }
-
-    #[tokio::test]
-    async fn oversized_capabilities_are_rejected_before_entering_memory() {
-        let snapshot = LocalControlPlaneSnapshot::new();
-        let error = snapshot
-            .publish_capabilities(
-                MAIN_CHAT_PROFILE_KEY,
-                "policy-too-large",
-                ResolvedLocalCapabilities {
-                    instructions: Some(
-                        "x".repeat(chatos_local_agent_ports::MAX_CAPABILITY_INSTRUCTIONS_BYTES + 1),
-                    ),
-                    ..ResolvedLocalCapabilities::default()
-                },
-            )
-            .await
-            .expect_err("oversized snapshot must fail");
-        assert!(error.contains("instructions"));
-    }
 }

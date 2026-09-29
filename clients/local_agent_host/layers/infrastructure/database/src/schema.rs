@@ -290,3 +290,25 @@ pub(super) const SCHEMA_V11: &[&str] = &["CREATE TABLE local_capability_policy_s
        created_at_unix_ms INTEGER NOT NULL,\
        PRIMARY KEY(profile_key, capability_policy_revision)\
      )"];
+
+pub(super) const SCHEMA_V12: &[&str] = &["CREATE TABLE local_model_config_snapshots (\
+       model_config_ref TEXT NOT NULL,\
+       model_config_revision TEXT NOT NULL,\
+       credential_ref TEXT NOT NULL,\
+       base_url TEXT NOT NULL,\
+       model TEXT NOT NULL,\
+       provider TEXT NOT NULL,\
+       supports_responses INTEGER NOT NULL CHECK(supports_responses IN (0, 1)),\
+       supports_images INTEGER CHECK(supports_images IN (0, 1)),\
+       instructions TEXT,\
+       temperature REAL,\
+       max_output_tokens INTEGER,\
+       thinking_level TEXT,\
+       include_prompt_cache_retention INTEGER NOT NULL \
+         CHECK(include_prompt_cache_retention IN (0, 1)),\
+       request_body_limit_bytes INTEGER,\
+       max_transient_retries INTEGER,\
+       output_format_json TEXT,\
+       created_at_unix_ms INTEGER NOT NULL,\
+       PRIMARY KEY(model_config_ref, model_config_revision)\
+     )"];

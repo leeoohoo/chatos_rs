@@ -19,6 +19,7 @@ The current milestone provides:
 - a local tool registry and one-invocation Tool Scheduler;
 - a client-owned MCP stdio process/session adapter with local tool discovery and execution;
 - durable installed-Plugin/MCP snapshots in the client-owned SQLite database;
+- durable non-secret model and capability control-plane revisions;
 - a client-owned Conversation/Turn/Message fact source with atomic Main Chat Run creation and control;
 - durable local Message attachment references without storing file bodies in SQLite;
 - idempotent Task Graph terminal summaries written back to their source Conversation;
@@ -39,7 +40,7 @@ The library-level schedulers execute one registered Profile step or one tool inv
 
 The in-process assembly reserves `create_task` and `create_tasks_with_prerequisites` and routes them directly into the local Task DAG repository. IDs are derived from the durable tool invocation, so replay returns the original graph. New Tasks inherit the parent Run's exact model and capability revisions; an unresolved model switch and dependencies on Tasks outside the submitted graph are rejected instead of storing an ambiguous execution snapshot.
 
-`LocalControlPlaneSnapshot` is the default Resolver backing for native integration. Authenticated configuration code publishes exact model and capability revisions into it. Non-secret capability revisions are immutable and may be retained through the `LocalCapabilitySnapshotStore` port in client SQLite, so a restarted Host can resolve the policy frozen by an existing Run. Model runners and credential-bearing `ModelRuntimeConfig` values remain non-serializable process memory and must be republished after native credential resolution; API keys never enter the Run or capability database.
+`LocalControlPlaneSnapshot` is the default Resolver backing for native integration. Authenticated configuration code publishes exact model and capability revisions into it. Non-secret revisions are immutable and retained through the `LocalModelConfigSnapshotStore` and `LocalCapabilitySnapshotStore` ports in client SQLite, so a restarted Host can resolve the configuration frozen by an existing Run. The model snapshot stores a native `credential_ref`, never the credential value. At execution time `LocalModelCredentialResolver` reads that reference from Keychain/Credential Manager and constructs a transient `ModelRuntimeConfig` around the process-local runner. API keys never enter the Run or control-plane database; request-specific cache keys, response IDs, and working directories are also excluded from the durable configuration DTO.
 
 Native clients may choose `LocalAgentHostAssembly::with_external_tool_worker`. In that mode Swift or C# claims and commits platform tools through IPC, while Rust still owns model scheduling plus the two Task creation tools and wakes immediately after each native tool receipt. This keeps platform permissions and UI-bound tools in the native process without duplicating the Agent loop.
 

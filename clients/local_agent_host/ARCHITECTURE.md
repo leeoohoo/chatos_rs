@@ -38,7 +38,9 @@ The local MCP adapter owns Plugin process startup, MCP session initialization, t
 
 Installed Plugin/MCP snapshots are application data behind a storage port and are implemented by the local SQLite adapter. Only credential-store references are durable; native Keychain/Credential Manager adapters resolve secret values into the child-process environment at launch time.
 
-Capability policy revisions follow the same dependency direction through `LocalCapabilitySnapshotStore`. SQLite v11 stores immutable, bounded instructions, prefixed input items and tool definitions keyed by Profile plus revision. The control-plane resolver repopulates its process cache from this table after restart. Credential-bearing model runtimes are a separate transient registry: native code resolves its Keychain/Credential Manager reference and reconstructs the runner in memory, while neither the API key nor a serialized `ModelRuntimeConfig` is written to SQLite.
+Control-plane revisions follow the same dependency direction through `LocalCapabilitySnapshotStore` and `LocalModelConfigSnapshotStore`. SQLite v11 stores immutable, bounded instructions, prefixed input items and tool definitions keyed by Profile plus revision. SQLite v12 stores the bounded model/provider request configuration and a native credential reference keyed by model config plus revision. The model DTO structurally has no API-key field and excludes request-specific cache keys, response IDs and working directories.
+
+After restart, the control-plane resolver loads both revision types from SQLite. `LocalModelCredentialResolver` resolves the persisted reference from Keychain/Credential Manager only when a model step is prepared, then combines the secret with a process-local `ContextualTurnRunner`. The credential value and runner are never serialized or written to SQLite.
 
 ## Server-removal boundary
 

@@ -8,6 +8,7 @@ edition = "2021"
 
 [dependencies]
 async-trait = "0.1"
+chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime" }
 chatos_client_storage = { path = "layers/infrastructure/database" }
 chatos_agent_profiles = { path = "layers/profiles" }
 chatos_local_agent_ports = { path = "layers/ports" }

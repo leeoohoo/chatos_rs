@@ -17,9 +17,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-pub const MAX_CAPABILITY_INSTRUCTIONS_BYTES: usize = 256 * 1024;
-pub const MAX_CAPABILITY_ITEMS: usize = 256;
-pub const MAX_CAPABILITY_SNAPSHOT_BYTES: usize = 1024 * 1024;
+mod control_plane_snapshots;
+
+pub use control_plane_snapshots::{
+    LocalCapabilityPolicySnapshot, LocalJsonSchemaOutputFormat, LocalModelConfigSnapshot,
+    MAX_CAPABILITY_INSTRUCTIONS_BYTES, MAX_CAPABILITY_ITEMS, MAX_CONTROL_PLANE_SNAPSHOT_BYTES,
+};
 
 #[derive(Debug, Error)]
 pub enum ClientStorageError {
@@ -63,61 +66,6 @@ impl ClientStorageError {
 pub struct IdempotentCommand {
     pub command_id: String,
     pub request_fingerprint: String,
-}
-
-/// Immutable, non-secret capability revision cached by the client. Model
-/// credentials and executable runtime objects deliberately do not belong in
-/// this record.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct LocalCapabilityPolicySnapshot {
-    pub profile_key: String,
-    pub capability_policy_revision: String,
-    pub instructions: Option<String>,
-    pub prefixed_input_items: Vec<Value>,
-    pub tools: Vec<Value>,
-}
-
-impl LocalCapabilityPolicySnapshot {
-    pub fn validate(&self) -> Result<(), String> {
-        validate_snapshot_identifier("profile_key", &self.profile_key)?;
-        validate_snapshot_identifier(
-            "capability_policy_revision",
-            &self.capability_policy_revision,
-        )?;
-        if self
-            .instructions
-            .as_ref()
-            .is_some_and(|value| value.len() > MAX_CAPABILITY_INSTRUCTIONS_BYTES)
-        {
-            return Err(format!(
-                "capability instructions must be at most {MAX_CAPABILITY_INSTRUCTIONS_BYTES} bytes"
-            ));
-        }
-        if self.prefixed_input_items.len() > MAX_CAPABILITY_ITEMS {
-            return Err(format!(
-                "prefixed_input_items must contain at most {MAX_CAPABILITY_ITEMS} entries"
-            ));
-        }
-        if self.tools.len() > MAX_CAPABILITY_ITEMS {
-            return Err(format!(
-                "tools must contain at most {MAX_CAPABILITY_ITEMS} entries"
-            ));
-        }
-        let encoded = serde_json::to_vec(self).map_err(|error| error.to_string())?;
-        if encoded.len() > MAX_CAPABILITY_SNAPSHOT_BYTES {
-            return Err(format!(
-                "capability snapshot must be at most {MAX_CAPABILITY_SNAPSHOT_BYTES} bytes"
-            ));
-        }
-        Ok(())
-    }
-}
-
-fn validate_snapshot_identifier(name: &str, value: &str) -> Result<(), String> {
-    if value.trim().is_empty() || value.len() > 256 {
-        return Err(format!("{name} must be 1..=256 characters"));
-    }
-    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -343,6 +291,23 @@ pub trait LocalCapabilitySnapshotStore: Send + Sync {
         profile_key: &str,
         capability_policy_revision: &str,
     ) -> Result<Option<LocalCapabilityPolicySnapshot>, ClientStorageError>;
+}
+
+#[async_trait]
+pub trait LocalModelConfigSnapshotStore: Send + Sync {
+    /// Stores a non-secret immutable model configuration revision. API keys
+    /// are represented only by native credential-store references.
+    async fn put_model_config_snapshot(
+        &self,
+        snapshot: &LocalModelConfigSnapshot,
+        now_unix_ms: i64,
+    ) -> Result<(), ClientStorageError>;
+
+    async fn get_model_config_snapshot(
+        &self,
+        model_config_ref: &str,
+        model_config_revision: &str,
+    ) -> Result<Option<LocalModelConfigSnapshot>, ClientStorageError>;
 }
 
 #[async_trait]
