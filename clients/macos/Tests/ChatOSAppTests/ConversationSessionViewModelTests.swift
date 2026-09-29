@@ -6,6 +6,34 @@ import XCTest
 
 @MainActor
 final class ConversationSessionViewModelTests: XCTestCase {
+    func testTimelineObservationIgnoresUnrelatedConversationUpdates() async throws {
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore()
+        )
+        try await Task.sleep(for: .milliseconds(50))
+        var timelineUpdateCount = 0
+        let timelineCancellable = viewModel.timelineObservationState.objectWillChange.sink {
+            timelineUpdateCount += 1
+        }
+        let initialRevision = viewModel.timelineObservationState.revision
+
+        viewModel.isSending = true
+        viewModel.sendError = "send failed"
+        viewModel.historyError = "history failed"
+        viewModel.runtimeSettingsError = "settings failed"
+
+        XCTAssertEqual(timelineUpdateCount, 0)
+        XCTAssertEqual(viewModel.timelineObservationState.revision, initialRevision)
+
+        viewModel.focus(turnID: "turn-1", promptID: nil, taskID: nil, runID: nil)
+
+        XCTAssertEqual(timelineUpdateCount, 1)
+        XCTAssertEqual(viewModel.timelineObservationState.revision, initialRevision + 1)
+        withExtendedLifetime(timelineCancellable) {}
+    }
+
     func testComposerDraftPublishesOnlyComposerStateUpdates() async throws {
         let viewModel = ConversationSessionViewModel(
             sessionID: "session-1",

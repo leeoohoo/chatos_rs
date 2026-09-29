@@ -59,6 +59,7 @@ extension ConversationSessionViewModel {
         let turn = makeOptimisticTurn(text, attachments: attachments)
         beginSending()
         selectedTurnID = turn.id
+        timelineObservationState.invalidate()
 
         Task {
             await historyStore.applyRealtime(
