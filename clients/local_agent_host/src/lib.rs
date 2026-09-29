@@ -9,9 +9,10 @@ pub mod interface;
 
 pub use application::{
     LocalAgentCoordinatorError, LocalAgentHostAssembly, LocalAgentHostCoordinator,
-    LocalAgentScheduler, LocalAgentSchedulerError, LocalTaskToolExecutor, LocalToolExecutor,
-    LocalToolRegistry, LocalToolScheduler, LocalToolSchedulerError, SchedulerTick,
-    ToolSchedulerTick, CREATE_TASKS_TOOL, CREATE_TASK_TOOL,
+    LocalAgentScheduler, LocalAgentSchedulerError, LocalMemoryContextCache,
+    LocalMemoryOutboxWriter, LocalMemorySyncError, LocalMemorySyncWorker, LocalTaskToolExecutor,
+    LocalToolExecutor, LocalToolRegistry, LocalToolScheduler, LocalToolSchedulerError,
+    MemorySyncTick, SchedulerTick, ToolSchedulerTick, CREATE_TASKS_TOOL, CREATE_TASK_TOOL,
 };
 pub use chatos_agent_profiles::{
     ChatosAiRuntimeStepExecutor, ConservativeToolSafetyPolicy, ControlPlaneLocalAiStepPlanner,
@@ -23,8 +24,8 @@ pub use infrastructure::{
     ChildEnvironmentModelCredentialResolver, LocalCapabilityPolicySnapshot,
     LocalCapabilitySnapshotStore, LocalControlPlaneSnapshot, LocalJsonSchemaOutputFormat,
     LocalMcpServerConfig, LocalMcpStdioSession, LocalMcpToolDefinition, LocalMcpToolSet,
-    LocalMemoryRuntimeConfig, LocalModelConfigSnapshot, LocalModelConfigSnapshotStore,
-    LocalModelCredentialResolver, LocalPluginSecretResolver,
+    LocalMemoryRuntimeConfig, LocalMemoryRuntimeServices, LocalModelConfigSnapshot,
+    LocalModelConfigSnapshotStore, LocalModelCredentialResolver, LocalPluginSecretResolver,
 };
 pub use interface::{
     decode_response, read_frame, serve_reader_writer, serve_stream, write_frame,

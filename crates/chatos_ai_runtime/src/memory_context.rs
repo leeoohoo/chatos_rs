@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use memory_engine_sdk::{
-    ComposeContextPolicy, ComposeContextResponse, MemoryEngineClient,
+    ComposeContextMeta, ComposeContextPolicy, ComposeContextResponse, MemoryEngineClient,
     RunThreadActiveSummaryResponse, SdkComposeContextRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::time::{sleep, Instant};
+use tracing::warn;
 
 use crate::tool_runtime::ToolResultModelBudgetLimits;
 
@@ -77,6 +80,18 @@ impl MemoryScope {
 pub struct MemoryContextComposer {
     client: MemoryEngineClient,
     source_id: Option<String>,
+    resilient_cache: Option<Arc<dyn MemoryContextCache>>,
+}
+
+#[async_trait]
+pub trait MemoryContextCache: Send + Sync {
+    async fn load(&self, scope: &MemoryScope) -> Result<Option<ComposeContextResponse>, String>;
+
+    async fn store(
+        &self,
+        scope: &MemoryScope,
+        response: &ComposeContextResponse,
+    ) -> Result<(), String>;
 }
 
 impl MemoryContextComposer {
@@ -89,6 +104,7 @@ impl MemoryContextComposer {
         Ok(Self {
             client: MemoryEngineClient::new_direct(base_url, timeout, source_id.clone())?,
             source_id: Some(source_id),
+            resilient_cache: None,
         })
     }
 
@@ -96,7 +112,16 @@ impl MemoryContextComposer {
         Self {
             client,
             source_id: None,
+            resilient_cache: None,
         }
+    }
+
+    pub fn with_resilient_cache<C>(mut self, cache: C) -> Self
+    where
+        C: MemoryContextCache + 'static,
+    {
+        self.resilient_cache = Some(Arc::new(cache));
+        self
     }
 
     pub fn source_id(&self) -> Option<&str> {
@@ -105,7 +130,8 @@ impl MemoryContextComposer {
 
     pub async fn compose(&self, scope: &MemoryScope) -> Result<ComposeContextResponse, String> {
         self.validate_scope_source(scope)?;
-        self.client
+        let remote = self
+            .client
             .compose_context(&SdkComposeContextRequest {
                 tenant_id: scope.tenant_id.clone(),
                 subject_id: scope.subject_id.clone(),
@@ -117,7 +143,45 @@ impl MemoryContextComposer {
                 thread_id: scope.thread_id.clone(),
                 policy: scope.policy.clone().or_else(standard_compose_policy),
             })
-            .await
+            .await;
+        let Some(cache) = self.resilient_cache.as_ref() else {
+            return remote;
+        };
+        match remote {
+            Ok(response) => {
+                if let Err(error) = cache.store(scope, &response).await {
+                    warn!(
+                        error = error.as_str(),
+                        "store local Memory context cache failed"
+                    );
+                }
+                Ok(response)
+            }
+            Err(remote_error) => match cache.load(scope).await {
+                Ok(Some(response)) => {
+                    warn!(
+                        error = remote_error.as_str(),
+                        "retained Memory unavailable; using local context cache"
+                    );
+                    Ok(response)
+                }
+                Ok(None) => {
+                    warn!(
+                        error = remote_error.as_str(),
+                        "retained Memory unavailable and no local cache exists; continuing without Memory context"
+                    );
+                    Ok(empty_context(scope))
+                }
+                Err(cache_error) => {
+                    warn!(
+                        error = remote_error.as_str(),
+                        cache_error = cache_error.as_str(),
+                        "retained Memory and local cache unavailable; continuing without Memory context"
+                    );
+                    Ok(empty_context(scope))
+                }
+            },
+        }
     }
 
     pub async fn compose_input_items(&self, scope: &MemoryScope) -> Result<Vec<Value>, String> {
@@ -235,6 +299,18 @@ impl MemoryContextComposer {
                 "memory scope source_id mismatch: composer={client_source_id}, scope={scope_source_id}"
             ))
         }
+    }
+}
+
+fn empty_context(scope: &MemoryScope) -> ComposeContextResponse {
+    ComposeContextResponse {
+        thread_id: scope.thread_id.clone(),
+        blocks: Vec::new(),
+        recent_records: Vec::new(),
+        meta: ComposeContextMeta {
+            summary_count: 0,
+            recent_record_count: 0,
+        },
     }
 }
 

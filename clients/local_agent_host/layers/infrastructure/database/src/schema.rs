@@ -312,3 +312,43 @@ pub(super) const SCHEMA_V12: &[&str] = &["CREATE TABLE local_model_config_snapsh
        created_at_unix_ms INTEGER NOT NULL,\
        PRIMARY KEY(model_config_ref, model_config_revision)\
      )"];
+
+pub(super) const SCHEMA_V13: &[&str] = &[
+    "CREATE TABLE local_memory_outbox (\
+       record_id TEXT NOT NULL,\
+       tenant_id TEXT NOT NULL,\
+       source_id TEXT NOT NULL,\
+       thread_id TEXT NOT NULL,\
+       payload_json TEXT NOT NULL,\
+       status TEXT NOT NULL CHECK(status IN ('pending','syncing','retry_scheduled','synced')),\
+       attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),\
+       version INTEGER NOT NULL DEFAULT 1 CHECK(version > 0),\
+       claim_token TEXT,\
+       claim_until_unix_ms INTEGER,\
+       next_attempt_at_unix_ms INTEGER,\
+       last_error TEXT,\
+       created_at_unix_ms INTEGER NOT NULL,\
+       updated_at_unix_ms INTEGER NOT NULL,\
+       PRIMARY KEY(source_id, record_id)\
+     )",
+    "CREATE INDEX local_memory_outbox_runnable ON local_memory_outbox(\
+       status, next_attempt_at_unix_ms, created_at_unix_ms, source_id, record_id\
+     )",
+    "CREATE INDEX local_memory_outbox_thread ON local_memory_outbox(\
+       tenant_id, source_id, thread_id, created_at_unix_ms, record_id\
+     )",
+];
+
+pub(super) const SCHEMA_V14: &[&str] = &[
+    "CREATE TABLE local_memory_context_cache (\
+       cache_key TEXT PRIMARY KEY NOT NULL,\
+       tenant_id TEXT NOT NULL,\
+       source_id TEXT NOT NULL,\
+       thread_id TEXT NOT NULL,\
+       response_json TEXT NOT NULL,\
+       refreshed_at_unix_ms INTEGER NOT NULL\
+     )",
+    "CREATE INDEX local_memory_context_cache_thread ON local_memory_context_cache(\
+       tenant_id, source_id, thread_id, refreshed_at_unix_ms DESC\
+     )",
+];

@@ -17,6 +17,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
+mod memory_cache;
+mod memory_outbox;
+
+pub use memory_cache::LocalMemoryContextCacheStore;
+pub use memory_outbox::{LocalMemoryOutboxRecord, LocalMemoryOutboxStatus, LocalMemoryOutboxStore};
+
 pub use chatos_local_agent_protocol::{
     LocalCapabilityPolicySnapshot, LocalJsonSchemaOutputFormat, LocalModelConfigSnapshot,
     MAX_CAPABILITY_INSTRUCTIONS_BYTES, MAX_CAPABILITY_ITEMS, MAX_CONTROL_PLANE_SNAPSHOT_BYTES,
@@ -381,6 +387,8 @@ pub trait LocalAgentStore:
     + LocalConversationStore
     + LocalCapabilitySnapshotStore
     + LocalModelConfigSnapshotStore
+    + LocalMemoryOutboxStore
+    + LocalMemoryContextCacheStore
 {
 }
 
@@ -392,5 +400,7 @@ impl<T> LocalAgentStore for T where
         + LocalConversationStore
         + LocalCapabilitySnapshotStore
         + LocalModelConfigSnapshotStore
+        + LocalMemoryOutboxStore
+        + LocalMemoryContextCacheStore
 {
 }

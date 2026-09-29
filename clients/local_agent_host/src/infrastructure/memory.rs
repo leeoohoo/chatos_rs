@@ -3,10 +3,19 @@
 
 use chatos_ai_runtime::{
     AiRuntime, ContextualTurnRunner, MemoryContextComposer, MemoryEngineRecordWriter,
-    MemoryRecordScope,
+    MemoryRecordScope, MemoryRecordWriter,
 };
+use chatos_local_agent_ports::{LocalMemoryContextCacheStore, LocalMemoryOutboxStore};
 use memory_engine_sdk::MemoryEngineClient;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
+
+use crate::{LocalMemoryContextCache, LocalMemoryOutboxWriter, LocalMemorySyncWorker};
+
+pub struct LocalMemoryRuntimeServices {
+    pub runner: ContextualTurnRunner,
+    pub sync_worker: LocalMemorySyncWorker,
+    pub source_id: String,
+}
 
 /// Process-local retained Memory adapter. Authentication values are accepted
 /// only as transient strings and this type deliberately implements neither
@@ -55,7 +64,34 @@ impl LocalMemoryRuntimeConfig {
         self.source_id.trim()
     }
 
-    pub fn build_runner(&self) -> Result<ContextualTurnRunner, String> {
+    pub fn build_services<S>(&self, store: Arc<S>) -> Result<LocalMemoryRuntimeServices, String>
+    where
+        S: LocalMemoryOutboxStore + LocalMemoryContextCacheStore + 'static,
+    {
+        let source_id = required("Memory source_id", &self.source_id)?;
+        let client = self.build_client()?;
+        let cache_store: Arc<dyn LocalMemoryContextCacheStore> = store.clone();
+        let composer = MemoryContextComposer::from_client(client.clone())
+            .with_resilient_cache(LocalMemoryContextCache::new(cache_store));
+        let remote_writer: Arc<dyn MemoryRecordWriter> =
+            Arc::new(MemoryEngineRecordWriter::from_client(
+                client,
+                MemoryRecordScope::per_record_tenant("tenant_id"),
+            ));
+        let outbox_store: Arc<dyn LocalMemoryOutboxStore> = store;
+        let outbox_writer =
+            LocalMemoryOutboxWriter::new(Arc::clone(&outbox_store), source_id.clone())?;
+        Ok(LocalMemoryRuntimeServices {
+            runner: AiRuntime::builder()
+                .with_memory_composer(composer)
+                .with_record_writer(outbox_writer)
+                .build_contextual_turn_runner(),
+            sync_worker: LocalMemorySyncWorker::new(outbox_store, remote_writer),
+            source_id,
+        })
+    }
+
+    fn build_client(&self) -> Result<MemoryEngineClient, String> {
         let base_url = required("Memory base_url", &self.base_url)?;
         let source_id = required("Memory source_id", &self.source_id)?;
         if self.timeout.is_zero() {
@@ -75,15 +111,7 @@ impl LocalMemoryRuntimeConfig {
             })?;
             client = client.with_internal_service_auth(caller, internal_secret);
         }
-        let composer = MemoryContextComposer::from_client(client.clone());
-        let writer = MemoryEngineRecordWriter::from_client(
-            client,
-            MemoryRecordScope::per_record_tenant("tenant_id"),
-        );
-        Ok(AiRuntime::builder()
-            .with_memory_composer(composer)
-            .with_record_writer(writer)
-            .build_contextual_turn_runner())
+        Ok(client)
     }
 }
 
@@ -115,10 +143,10 @@ mod tests {
             Duration::from_secs(1),
         );
         assert_eq!(config.source_id(), "local_agent");
-        config.build_runner().expect("runner");
+        config.build_client().expect("client");
 
         let invalid = LocalMemoryRuntimeConfig::new(" ", "local_agent", Duration::from_secs(1));
-        assert!(invalid.build_runner().is_err());
+        assert!(invalid.build_client().is_err());
     }
 
     #[test]
@@ -129,6 +157,6 @@ mod tests {
             Duration::from_secs(1),
         )
         .with_internal_service_auth(None, Some("secret".to_string()));
-        assert!(config.build_runner().is_err());
+        assert!(config.build_client().is_err());
     }
 }

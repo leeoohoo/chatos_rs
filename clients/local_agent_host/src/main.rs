@@ -51,7 +51,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if recovered > 0 {
         eprintln!("Local Agent Host moved {recovered} expired claim(s) to needs_review");
     }
-    let (runner, memory_source_id) = match options.memory.as_ref() {
+    let (runner, memory_services) = match options.memory.as_ref() {
         Some(memory) => {
             let config = LocalMemoryRuntimeConfig::new(
                 memory.base_url.clone(),
@@ -63,8 +63,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 non_empty_env("CHATOS_MEMORY_INTERNAL_CALLER"),
                 non_empty_env("CHATOS_MEMORY_INTERNAL_SECRET"),
             );
-            let source_id = config.source_id().to_string();
-            (Arc::new(config.build_runner()?), Some(source_id))
+            let services = config.build_services(storage.clone())?;
+            (
+                Arc::new(services.runner),
+                Some((services.source_id, services.sync_worker)),
+            )
         }
         None => (
             Arc::new(AiRuntime::builder().build_contextual_turn_runner()),
@@ -80,14 +83,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 Arc::new(ChildEnvironmentModelCredentialResolver),
             ),
     );
-    let assembly = match memory_source_id {
-        Some(source_id) => LocalAgentHostAssembly::with_external_tool_worker_and_memory(
-            runtime,
-            control_plane.clone(),
-            control_plane,
-            options.read_only_tools,
-            source_id,
-        ),
+    let assembly = match memory_services {
+        Some((source_id, sync_worker)) => {
+            LocalAgentHostAssembly::with_external_tool_worker_and_memory(
+                runtime,
+                control_plane.clone(),
+                control_plane,
+                options.read_only_tools,
+                source_id,
+                sync_worker,
+            )
+        }
         None => LocalAgentHostAssembly::with_external_tool_worker(
             runtime,
             control_plane.clone(),

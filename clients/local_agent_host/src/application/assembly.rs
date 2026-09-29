@@ -3,7 +3,7 @@
 
 use crate::{
     ChatosAiRuntimeStepExecutor, ControlPlaneLocalAiStepPlanner, DurableAiProfile,
-    LocalAgentHostCoordinator, LocalAgentScheduler, LocalCapabilityResolver,
+    LocalAgentHostCoordinator, LocalAgentScheduler, LocalCapabilityResolver, LocalMemorySyncWorker,
     LocalModelRuntimeResolver, LocalTaskToolExecutor, LocalToolExecutor, LocalToolRegistry,
     LocalToolScheduler, NamedReadOnlyTools, CREATE_TASKS_TOOL, CREATE_TASK_TOOL,
     MAIN_CHAT_PROFILE_KEY, TASK_RUNNER_PROFILE_KEY,
@@ -40,6 +40,7 @@ impl LocalAgentHostAssembly {
             Some(tools),
             read_only_tools,
             None,
+            None,
         )
     }
 
@@ -64,6 +65,7 @@ impl LocalAgentHostAssembly {
             None,
             read_only_tools,
             None,
+            None,
         )
     }
 
@@ -75,6 +77,7 @@ impl LocalAgentHostAssembly {
         capability_resolver: C,
         read_only_tools: I,
         memory_source_id: impl Into<String>,
+        memory_sync_worker: LocalMemorySyncWorker,
     ) -> Result<Self, String>
     where
         M: LocalModelRuntimeResolver + 'static,
@@ -89,6 +92,7 @@ impl LocalAgentHostAssembly {
             None,
             read_only_tools,
             Some(memory_source_id.into()),
+            Some(memory_sync_worker),
         )
     }
 
@@ -99,6 +103,7 @@ impl LocalAgentHostAssembly {
         tools: Option<LocalToolRegistry>,
         read_only_tools: I,
         memory_source_id: Option<String>,
+        memory_sync_worker: Option<LocalMemorySyncWorker>,
     ) -> Result<Self, String>
     where
         M: LocalModelRuntimeResolver + 'static,
@@ -155,14 +160,16 @@ impl LocalAgentHostAssembly {
                 Vec::new(),
             )?;
         }
-        let coordinator = Arc::new(
-            LocalAgentHostCoordinator::new(
-                Arc::clone(&runtime),
-                Some(model_scheduler),
-                Some(tool_scheduler),
-            )?
-            .with_reserved_ipc_tools([CREATE_TASK_TOOL, CREATE_TASKS_TOOL])?,
-        );
+        let mut coordinator = LocalAgentHostCoordinator::new(
+            Arc::clone(&runtime),
+            Some(model_scheduler),
+            Some(tool_scheduler),
+        )?
+        .with_reserved_ipc_tools([CREATE_TASK_TOOL, CREATE_TASKS_TOOL])?;
+        if let Some(worker) = memory_sync_worker {
+            coordinator = coordinator.with_memory_sync_worker(worker);
+        }
+        let coordinator = Arc::new(coordinator);
         Ok(Self {
             runtime,
             coordinator,

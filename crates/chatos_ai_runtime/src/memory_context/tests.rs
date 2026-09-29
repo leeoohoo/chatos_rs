@@ -11,7 +11,7 @@ use serde_json::json;
 
 use super::{
     compose_response_to_input_items, compose_response_to_input_items_with_budget,
-    MemoryContextComposer, MemoryRecordScope, MemoryScope,
+    MemoryContextCache, MemoryContextComposer, MemoryRecordScope, MemoryScope,
 };
 use crate::tool_runtime::ToolResultModelBudgetLimits;
 use crate::SaveRecordInput;
@@ -111,6 +111,85 @@ fn direct_composer_rejects_mismatched_scope_source_key() {
         .validate_scope_source(&mismatched)
         .expect_err("mismatched scope source");
     assert!(err.contains("source_id mismatch"));
+}
+
+struct TestContextCache {
+    response: Option<ComposeContextResponse>,
+}
+
+#[async_trait::async_trait]
+impl MemoryContextCache for TestContextCache {
+    async fn load(&self, _scope: &MemoryScope) -> Result<Option<ComposeContextResponse>, String> {
+        Ok(self.response.clone())
+    }
+
+    async fn store(
+        &self,
+        _scope: &MemoryScope,
+        _response: &ComposeContextResponse,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn resilient_composer_uses_cache_or_empty_context_when_remote_is_offline() {
+    use axum::{http::StatusCode, Router};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let address = listener.local_addr().expect("address");
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().fallback(|| async {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Memory temporarily offline",
+                )
+            }),
+        )
+        .await
+        .expect("server");
+    });
+    let scope = MemoryScope::thread("user-1", "local_agent", "conversation-1");
+    let cached = ComposeContextResponse {
+        thread_id: "conversation-1".to_string(),
+        blocks: vec![ComposeContextBlock {
+            block_type: "summary".to_string(),
+            text: "cached summary".to_string(),
+        }],
+        recent_records: Vec::new(),
+        meta: ComposeContextMeta {
+            summary_count: 1,
+            recent_record_count: 0,
+        },
+    };
+    let composer = MemoryContextComposer::new_direct(
+        format!("http://{address}"),
+        Duration::from_secs(1),
+        "local_agent",
+    )
+    .expect("composer")
+    .with_resilient_cache(TestContextCache {
+        response: Some(cached),
+    });
+    let response = composer.compose(&scope).await.expect("cached fallback");
+    assert_eq!(response.blocks[0].text, "cached summary");
+
+    let composer = MemoryContextComposer::new_direct(
+        format!("http://{address}"),
+        Duration::from_secs(1),
+        "local_agent",
+    )
+    .expect("composer")
+    .with_resilient_cache(TestContextCache { response: None });
+    let response = composer.compose(&scope).await.expect("empty fallback");
+    assert_eq!(response.thread_id, "conversation-1");
+    assert!(response.blocks.is_empty());
+    assert!(response.recent_records.is_empty());
+    server.abort();
 }
 
 #[test]

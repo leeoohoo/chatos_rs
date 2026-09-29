@@ -2,8 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use crate::{
-    HostRequestHandler, LocalAgentScheduler, LocalAgentSchedulerError, LocalToolScheduler,
-    LocalToolSchedulerError, SchedulerTick, ToolSchedulerTick,
+    HostRequestHandler, LocalAgentScheduler, LocalAgentSchedulerError, LocalMemorySyncError,
+    LocalMemorySyncWorker, LocalToolScheduler, LocalToolSchedulerError, MemorySyncTick,
+    SchedulerTick, ToolSchedulerTick,
 };
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
@@ -22,6 +23,8 @@ pub enum LocalAgentCoordinatorError {
     ToolScheduler(#[from] LocalToolSchedulerError),
     #[error(transparent)]
     Runtime(#[from] LocalAgentRuntimeError),
+    #[error(transparent)]
+    MemorySync(#[from] LocalMemorySyncError),
     #[error("system clock is before the Unix epoch")]
     Clock,
 }
@@ -30,6 +33,7 @@ pub struct LocalAgentHostCoordinator {
     runtime: Arc<LocalAgentRuntime>,
     model_scheduler: Option<LocalAgentScheduler>,
     tool_scheduler: Option<LocalToolScheduler>,
+    memory_sync_worker: Option<LocalMemorySyncWorker>,
     wakeup: Arc<Notify>,
     activity: watch::Sender<u64>,
     reserved_ipc_tools: Vec<String>,
@@ -49,10 +53,16 @@ impl LocalAgentHostCoordinator {
             runtime,
             model_scheduler,
             tool_scheduler,
+            memory_sync_worker: None,
             wakeup: Arc::new(Notify::new()),
             activity,
             reserved_ipc_tools: Vec::new(),
         })
+    }
+
+    pub fn with_memory_sync_worker(mut self, worker: LocalMemorySyncWorker) -> Self {
+        self.memory_sync_worker = Some(worker);
+        self
     }
 
     pub fn with_reserved_ipc_tools<I, S>(mut self, tool_names: I) -> Result<Self, String>
@@ -111,6 +121,7 @@ impl LocalAgentHostCoordinator {
         &self,
         shutdown: &watch::Receiver<bool>,
     ) -> Result<(), LocalAgentCoordinatorError> {
+        let mut sync_memory = true;
         loop {
             if *shutdown.borrow() {
                 return Ok(());
@@ -134,6 +145,21 @@ impl LocalAgentHostCoordinator {
                 }
                 progressed |= committed;
             }
+            if sync_memory {
+                if let Some(worker) = self.memory_sync_worker.as_ref() {
+                    match worker.run_once().await? {
+                        MemorySyncTick::Idle => {}
+                        MemorySyncTick::Synced { .. } => {
+                            self.signal_activity();
+                            progressed = true;
+                        }
+                        MemorySyncTick::RetryScheduled { .. } => {
+                            self.signal_activity();
+                            sync_memory = false;
+                        }
+                    }
+                }
+            }
             if !progressed {
                 return Ok(());
             }
@@ -141,7 +167,17 @@ impl LocalAgentHostCoordinator {
     }
 
     async fn next_retry_delay(&self) -> Result<Duration, LocalAgentCoordinatorError> {
-        let Some(next_retry_at) = self.runtime.next_retry_at().await? else {
+        let run_retry_at = self.runtime.next_retry_at().await?;
+        let memory_retry_at = match self.memory_sync_worker.as_ref() {
+            Some(worker) => worker.next_retry_at().await?,
+            None => None,
+        };
+        let next_retry_at = match (run_retry_at, memory_retry_at) {
+            (Some(run), Some(memory)) => Some(run.min(memory)),
+            (Some(value), None) | (None, Some(value)) => Some(value),
+            (None, None) => None,
+        };
+        let Some(next_retry_at) = next_retry_at else {
             return Ok(Duration::from_secs(24 * 60 * 60));
         };
         let now = system_now_unix_ms()?;

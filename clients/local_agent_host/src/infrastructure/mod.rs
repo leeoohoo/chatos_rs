@@ -21,5 +21,5 @@ pub use mcp::{
     LocalMcpServerConfig, LocalMcpStdioSession, LocalMcpToolDefinition, LocalMcpToolSet,
     LocalPluginSecretResolver,
 };
-pub use memory::LocalMemoryRuntimeConfig;
+pub use memory::{LocalMemoryRuntimeConfig, LocalMemoryRuntimeServices};
 pub use model_credentials::ChildEnvironmentModelCredentialResolver;

@@ -54,7 +54,8 @@ pub use lifecycle::{
 pub use mcp_executor::McpRuntimeToolExecutor;
 pub use memory_context::{
     compose_response_to_input_items, compose_response_to_input_items_with_budget,
-    MemoryContextComposer, MemoryEngineRecordWriter, MemoryRecordScope, MemoryScope,
+    MemoryContextCache, MemoryContextComposer, MemoryEngineRecordWriter, MemoryRecordScope,
+    MemoryScope,
 };
 pub use request::{AiRequestHandler, AiRequestOptions, AiResponse, AiTransport, StreamCallbacks};
 pub use runtime::{
