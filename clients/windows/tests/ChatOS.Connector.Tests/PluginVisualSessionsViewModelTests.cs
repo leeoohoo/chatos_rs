@@ -80,6 +80,19 @@ public sealed class PluginVisualSessionsViewModelTests
         Assert.Single(viewModel.Sessions);
     }
 
+    [Fact]
+    public async Task RelaysVisualChangeSignalWithoutReadingSessionFiles()
+    {
+        var service = new FakeVisualService();
+        var viewModel = new PluginVisualSessionsViewModel(service, new ImmediateUiDispatcher());
+        var wait = viewModel.WaitForVisualChangeAsync(viewModel.VisualRevision);
+
+        service.SignalVisualChange();
+
+        Assert.Equal(1, await wait);
+        Assert.Empty(service.Requests);
+    }
+
     private static PluginVisualSession Session(string adapter, ulong sequence, byte[]? frame) => new(
         $"session-{sequence}",
         adapter,
@@ -98,9 +111,28 @@ public sealed class PluginVisualSessionsViewModelTests
 
     private sealed class FakeVisualService(params PluginVisualSession[] sessions) : IPluginVisualSessionService
     {
+        private TaskCompletionSource<long> _visualChanged = ChangeSource();
+        private long _visualRevision;
+
         public IReadOnlyList<PluginVisualSession> Sessions { get; set; } = sessions;
         public Exception? Error { get; set; }
         public List<string[]> Requests { get; } = [];
+        public long VisualRevision => Interlocked.Read(ref _visualRevision);
+
+        public Task<long> WaitForVisualChangeAsync(
+            long afterRevision,
+            CancellationToken cancellationToken = default)
+        {
+            if (VisualRevision > afterRevision) return Task.FromResult(VisualRevision);
+            return _visualChanged.Task.WaitAsync(cancellationToken);
+        }
+
+        public void SignalVisualChange()
+        {
+            var revision = Interlocked.Increment(ref _visualRevision);
+            var previous = Interlocked.Exchange(ref _visualChanged, ChangeSource());
+            previous.TrySetResult(revision);
+        }
 
         public Task<IReadOnlyList<PluginVisualSession>> ReadAsync(
             IReadOnlySet<string>? loadFrameDataForAdapterSessionIds = null,
@@ -115,6 +147,9 @@ public sealed class PluginVisualSessionsViewModelTests
             }).ToArray();
             return Task.FromResult(values);
         }
+
+        private static TaskCompletionSource<long> ChangeSource() =>
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private sealed class RacingVisualService : IPluginVisualSessionService
@@ -122,6 +157,16 @@ public sealed class PluginVisualSessionsViewModelTests
         private int _calls;
         public TaskCompletionSource FirstReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ReleaseFirstRead { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public long VisualRevision => 0;
+
+        public Task<long> WaitForVisualChangeAsync(
+            long afterRevision,
+            CancellationToken cancellationToken = default) =>
+            Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ContinueWith(
+                _ => 0L,
+                cancellationToken,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
 
         public async Task<IReadOnlyList<PluginVisualSession>> ReadAsync(
             IReadOnlySet<string>? loadFrameDataForAdapterSessionIds = null,

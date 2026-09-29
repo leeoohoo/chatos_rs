@@ -2,7 +2,9 @@ namespace ChatOS.Desktop.Features.Plugins;
 
 public sealed class PluginVisualSessionController : IDisposable
 {
-    private static readonly TimeSpan RefreshInterval = TimeSpan.FromMilliseconds(650);
+    private const int DiscoveryRefreshAttempts = 8;
+    private static readonly TimeSpan ActiveRefreshInterval = TimeSpan.FromMilliseconds(650);
+    private static readonly TimeSpan IdleRefreshInterval = TimeSpan.FromSeconds(5);
     private readonly PluginVisualSessionsViewModel _viewModel;
     private readonly PluginVisualSessionWindow _window;
     private readonly object _lifetimeSync = new();
@@ -33,12 +35,13 @@ public sealed class PluginVisualSessionController : IDisposable
             _lifetimeCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         }
 
+        var observedRevision = _viewModel.VisualRevision;
         await _viewModel.RefreshAsync(cancellationToken).ConfigureAwait(false);
         lock (_lifetimeSync)
         {
             if (_lifetimeCancellation is { } lifetime)
             {
-                _monitorTask = MonitorAsync(lifetime.Token);
+                _monitorTask = MonitorAsync(observedRevision, lifetime.Token);
             }
         }
     }
@@ -61,18 +64,54 @@ public sealed class PluginVisualSessionController : IDisposable
 
     public void Dispose() => Stop();
 
-    private async Task MonitorAsync(CancellationToken cancellationToken)
+    private async Task MonitorAsync(
+        long observedRevision,
+        CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(RefreshInterval);
+        var discoveryRefreshesRemaining = 0;
         try
         {
-            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+            while (true)
             {
+                if (_viewModel.HasSessions || discoveryRefreshesRemaining > 0)
+                {
+                    if (!_viewModel.HasSessions) discoveryRefreshesRemaining--;
+                    await Task.Delay(ActiveRefreshInterval, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    var changed = await WaitForChangeOrIdleRefreshAsync(
+                        observedRevision,
+                        cancellationToken).ConfigureAwait(false);
+                    if (changed) discoveryRefreshesRemaining = DiscoveryRefreshAttempts;
+                }
+
+                var refreshRevision = _viewModel.VisualRevision;
                 await _viewModel.RefreshAsync(cancellationToken).ConfigureAwait(false);
+                observedRevision = refreshRevision;
+                if (_viewModel.HasSessions) discoveryRefreshesRemaining = 0;
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+        }
+    }
+
+    private async Task<bool> WaitForChangeOrIdleRefreshAsync(
+        long observedRevision,
+        CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(IdleRefreshInterval);
+        try
+        {
+            await _viewModel.WaitForVisualChangeAsync(observedRevision, timeout.Token)
+                .ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
         }
     }
 }

@@ -58,6 +58,26 @@ public sealed class PluginVisualSessionReaderTests : IDisposable
         Assert.Empty(await reader.ReadAsync());
     }
 
+    [Fact]
+    public async Task SignalsWhenVisualOwnershipAppearsAndDisappears()
+    {
+        var store = new PluginRuntimeSessionStore();
+        await AddSessionAsync(store, "adapter-signal", "browser", [1, 2, 3], "2020-01-01T00:00:00Z");
+        var reader = new PluginVisualSessionReader(store);
+        var ownershipChanged = reader.WaitForVisualChangeAsync(reader.VisualRevision);
+
+        store.BindVisualOwner("adapter-signal", new PluginVisualSessionOwner("conversation-1"));
+
+        var boundRevision = await ownershipChanged;
+        Assert.True(boundRevision > 0);
+        var removalChanged = reader.WaitForVisualChangeAsync(boundRevision);
+
+        Assert.Equal(
+            "cancelled",
+            await store.CancelAsync("adapter-signal", null, "workspace-1"));
+        Assert.True(await removalChanged > boundRevision);
+    }
+
     public void Dispose()
     {
         try
