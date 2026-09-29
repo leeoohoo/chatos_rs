@@ -2,7 +2,7 @@
 
 macOS 后续 Bug 修复、功能更新和协议变化先进入 `10-macos-change-sync-register.md`，完成 Windows 自动化与真机验收后再回写本矩阵。
 
-本地代码完成审计：2026-09-23。当前登记范围内未发现仍可由本地代码关闭的 Windows/macOS 差距；剩余项均为 Windows 真机、工具链、签名、硬件、外部凭据或尚未提交登记的上游变化。
+本地代码完成审计：2026-09-29。已发现并补齐 macOS 近期增加的邀请码邮箱注册；其余登记范围内未发现仍可由本地代码关闭的 Windows/macOS 差距。
 
 状态定义：
 
@@ -18,7 +18,7 @@ macOS 后续 Bug 修复、功能更新和协议变化先进入 `10-macos-change-
 | 工程 | 依赖注入、配置、日志 | Windows 验收 | DI、环境配置和统一敏感日志审计已完成；异常日志只记录失败类型，不记录 URL、Token、Secret、API Key 或供应商错误正文 |
 | 设计 | 全局颜色、字号、圆角、间距 token | Windows 验收 | 基础 token 已统一接入，等待 Windows 多 DPI 与 macOS 视觉对照验收 |
 | 设计 | 中英文切换 | Windows 验收 | 全部 Desktop XAML 已移除中文硬编码；页面、DataTemplate、资源标题、状态和操作反馈均绑定统一运行时本地化源 |
-| 认证 | 登录、恢复、退出、401 失效 | Windows 验收 | API 和 Credential Manager 已实现并测试，等待 Windows UI 验收 |
+| 认证 | 登录、邀请码邮箱注册、恢复、退出、401 失效 | 实现中 | 注册 API、邮箱验证码、服务端重发倒计时、两次密码校验、自动登录和 Credential Manager 已接入，等待 Windows CI 后进行真实邮箱与高 DPI UI 验收 |
 | Shell | 联系人、项目、终端、远端侧栏 | Windows 验收 | 联系人、项目、本机 Connector、独立多工作区本机终端和远端连接均已真实加载并进入对应页面 |
 | Shell | 全局记事本和设置 Toolbar | Windows 验收 | 两个 Toolbar 均已接真实页面，记事本支持原地关闭返回工作区 |
 | 聊天 | 历史分页与缓存 | Windows 验收 | 状态机、SQLite cache-first 和服务端校正已实现并测试 |

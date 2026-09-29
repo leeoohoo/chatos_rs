@@ -192,11 +192,61 @@ public sealed class ClientOwnedShellTests : IAsyncLifetime
         Assert.Equal(0, _conversations.Calls);
     }
 
+    [Fact]
+    public async Task RegistrationRejectsMismatchedPasswordsBeforeCallingService()
+    {
+        await _shell.LogoutCommand.ExecuteAsync(null);
+        _shell.ShowRegistrationCommand.Execute(null);
+        _shell.Username = "person@example.com";
+        _shell.InviteCode = "invite-123";
+        _shell.VerificationCode = "123456";
+        _shell.Password = "secret-value";
+        _shell.ConfirmPassword = "different-value";
+
+        await _shell.RegisterCommand.ExecuteAsync(null);
+
+        Assert.Equal("两次输入的密码不一致。", _shell.ErrorMessage);
+        Assert.Equal(0, _auth.RegisterCalls);
+    }
+
+    [Fact]
+    public async Task RegistrationAuthenticatesNewAccountAndPersistsWorkspaceIdentity()
+    {
+        await _shell.LogoutCommand.ExecuteAsync(null);
+        _shell.ShowRegistrationCommand.Execute(null);
+        _shell.Username = "person@example.com";
+        _shell.InviteCode = "invite-123";
+        _shell.VerificationCode = "123456";
+        _shell.Password = _shell.ConfirmPassword = "secret-value";
+        _auth.Owner = "alice";
+
+        await _shell.RegisterCommand.ExecuteAsync(null);
+
+        Assert.True(_shell.IsAuthenticated);
+        Assert.Equal(1, _auth.RegisterCalls);
+        Assert.Equal("alice", _shell.CurrentOwnerUserId);
+        Assert.Empty(_shell.Password);
+        Assert.Empty(_shell.ConfirmPassword);
+        Assert.Single(_shell.Projects);
+    }
+
     private sealed class Auth : IAuthenticationService
     {
         public string Owner = "alice";
+        public int CodeCalls;
+        public int RegisterCalls;
         public Task<AuthSession?> RestoreSessionAsync(CancellationToken cancellationToken = default) => Task.FromResult<AuthSession?>(new(new(Owner, Owner, null, "user")));
         public Task<AuthSession> LoginAsync(string username, string password, CancellationToken cancellationToken = default) => Task.FromResult(new AuthSession(new(Owner, Owner, null, "user")));
+        public Task<RegistrationCodeDelivery> SendRegistrationCodeAsync(string email, string inviteCode, CancellationToken cancellationToken = default)
+        {
+            CodeCalls++;
+            return Task.FromResult(new RegistrationCodeDelivery(600, 60));
+        }
+        public Task<AuthSession> RegisterAsync(string email, string password, string inviteCode, string verificationCode, CancellationToken cancellationToken = default)
+        {
+            RegisterCalls++;
+            return Task.FromResult(new AuthSession(new(Owner, Owner, null, "user")));
+        }
         public ValueTask LogoutAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
     }
 

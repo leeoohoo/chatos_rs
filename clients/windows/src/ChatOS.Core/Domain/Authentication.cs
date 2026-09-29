@@ -11,3 +11,7 @@ public sealed record AuthUser(
 }
 
 public sealed record AuthSession(AuthUser User);
+
+public sealed record RegistrationCodeDelivery(
+    int ExpiresInSeconds,
+    int ResendAfterSeconds);

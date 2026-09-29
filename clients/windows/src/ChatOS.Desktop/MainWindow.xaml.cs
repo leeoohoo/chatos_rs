@@ -168,6 +168,11 @@ public sealed partial class MainWindow : Window
         ViewModel.Password = ((PasswordBox)sender).Password;
     }
 
+    private void OnConfirmPasswordChanged(object sender, RoutedEventArgs e)
+    {
+        ViewModel.ConfirmPassword = ((PasswordBox)sender).Password;
+    }
+
     private void OnSidebarSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (e.AddedItems.FirstOrDefault() is not ShellResourceViewModel selected) return;
@@ -184,6 +189,9 @@ public sealed partial class MainWindow : Window
             nameof(MainWindowViewModel.IsBusy) or
             nameof(MainWindowViewModel.ErrorMessage) or
             nameof(MainWindowViewModel.Password) or
+            nameof(MainWindowViewModel.ConfirmPassword) or
+            nameof(MainWindowViewModel.IsRegistrationMode) or
+            nameof(MainWindowViewModel.RegistrationMessage) or
             nameof(MainWindowViewModel.SelectedResource))
         {
             if (e.PropertyName == nameof(MainWindowViewModel.SelectedResource))
@@ -561,8 +569,14 @@ public sealed partial class MainWindow : Window
         LoginRoot.Visibility = ViewModel.IsAuthenticated ? Visibility.Collapsed : Visibility.Visible;
         ShellRoot.Visibility = ViewModel.IsAuthenticated ? Visibility.Visible : Visibility.Collapsed;
         SetTitleBar(ViewModel.IsAuthenticated ? AppTitleBar : LoginTitleBar);
+        LoginForm.Visibility = ViewModel.IsRegistrationMode ? Visibility.Collapsed : Visibility.Visible;
+        RegistrationForm.Visibility = ViewModel.IsRegistrationMode ? Visibility.Visible : Visibility.Collapsed;
         LoginButton.IsEnabled = !ViewModel.IsBusy;
         LoginErrorText.Visibility = string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        RegistrationErrorText.Visibility = LoginErrorText.Visibility;
+        RegistrationStatusText.Visibility = string.IsNullOrWhiteSpace(ViewModel.RegistrationMessage)
             ? Visibility.Collapsed
             : Visibility.Visible;
         SidebarErrorCard.Visibility = string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)
@@ -571,6 +585,14 @@ public sealed partial class MainWindow : Window
         if (ViewModel.Password.Length == 0 && LoginPasswordBox.Password.Length != 0)
         {
             LoginPasswordBox.Password = string.Empty;
+        }
+        if (ViewModel.Password.Length == 0 && RegistrationPasswordBox.Password.Length != 0)
+        {
+            RegistrationPasswordBox.Password = string.Empty;
+        }
+        if (ViewModel.ConfirmPassword.Length == 0 && RegistrationConfirmPasswordBox.Password.Length != 0)
+        {
+            RegistrationConfirmPasswordBox.Password = string.Empty;
         }
 
         WorkspaceHost.Configure(ViewModel.SelectedResource);

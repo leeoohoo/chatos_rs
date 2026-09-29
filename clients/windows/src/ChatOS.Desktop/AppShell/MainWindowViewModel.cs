@@ -369,6 +369,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _ownerUserId = null;
         _workspaceSnapshot = WorkspaceSnapshot.Empty;
         LocalConnectorStatus = null;
+        IsRegistrationMode = false;
+        ClearRegistrationFeedback(clearIdentity: true);
         IsAuthenticated = false;
         Contacts.Clear();
         Projects.Clear();
