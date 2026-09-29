@@ -34,5 +34,7 @@ public sealed class AgentTeamDisplayTextTests
         Assert.Equal("进行中", todoItem.StatusLabel);
         Assert.Equal("Windows 专家", runItem.AgentLabel);
         Assert.Equal("模型调用 3 次", runItem.ModelCallsLabel);
+        Assert.Equal("0 秒", runItem.DurationLabel);
+        Assert.Contains(":", runItem.UpdatedAtLabel);
     }
 }

@@ -315,6 +315,67 @@ public sealed partial class AgentTeamPage : UserControl
             await IgnoreFailureAsync(() => ViewModel.ResolveStaffingProposalAsync(proposal, false));
     }
 
+    private async void OnInspectRunClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: AgentRunItemViewModel item }) return;
+        var details = new StackPanel { Spacing = 9, MinWidth = 560 };
+        details.Children.Add(RunDetailRow("Agent", item.AgentLabel));
+        details.Children.Add(RunDetailRow("状态", item.StatusLabel));
+        details.Children.Add(RunDetailRow("模型调用", item.Run.ModelCalls.ToString()));
+        details.Children.Add(RunDetailRow("开始时间", item.StartedAtLabel));
+        details.Children.Add(RunDetailRow("更新时间", item.UpdatedAtLabel));
+        details.Children.Add(RunDetailRow("耗时", item.DurationLabel));
+        details.Children.Add(RunDetailRow("Run ID", item.Run.Id));
+        details.Children.Add(RunDetailRow("Delivery ID", item.Run.DeliveryId));
+        if (!string.IsNullOrWhiteSpace(item.LastError))
+        {
+            details.Children.Add(new TextBlock
+            {
+                Text = "错误详情",
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Margin = new Thickness(0, 8, 0, 0),
+            });
+            details.Children.Add(new TextBox
+            {
+                Text = item.LastError,
+                IsReadOnly = true,
+                AcceptsReturn = true,
+                TextWrapping = TextWrapping.Wrap,
+                MaxHeight = 260,
+            });
+        }
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = $"运行详情 · {item.AgentLabel}",
+            Content = new ScrollViewer
+            {
+                Content = details,
+                MaxHeight = 650,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            },
+            CloseButtonText = "完成",
+        };
+        await dialog.ShowAsync();
+    }
+
+    private static Grid RunDetailRow(string label, string value)
+    {
+        var row = new Grid { ColumnSpacing = 12 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.Children.Add(new TextBlock { Text = label, Opacity = 0.65 });
+        var valueText = new TextBlock
+        {
+            Text = value,
+            IsTextSelectionEnabled = true,
+            TextWrapping = TextWrapping.Wrap,
+        };
+        Grid.SetColumn(valueText, 1);
+        row.Children.Add(valueText);
+        return row;
+    }
+
     private async Task ShowAgentDialogAsync(AgentProfile? profile)
     {
         var name = new TextBox { Header = "名称", Text = profile?.Draft.Name ?? string.Empty };

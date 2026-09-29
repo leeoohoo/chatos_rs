@@ -361,21 +361,44 @@
                 </PivotItem>
 
                 <PivotItem Header="运行">
-                    <ListView Margin="0,10,0,0" Background="Transparent" BorderThickness="0" ItemsSource="{x:Bind ViewModel.RunItems}" SelectionMode="None">
-                        <ListView.ItemTemplate>
-                            <DataTemplate x:DataType="presentation:AgentRunItemViewModel">
-                                <Border Margin="0,0,0,9" Style="{StaticResource ChatOSSectionCardStyle}">
-                                    <Grid ColumnSpacing="12">
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="130" /><ColumnDefinition Width="110" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                        <TextBlock Text="{x:Bind AgentLabel}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                                        <TextBlock Grid.Column="1" Text="{x:Bind StatusLabel}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
-                                        <TextBlock Grid.Column="2" Text="{x:Bind ModelCallsLabel}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
-                                        <TextBlock Grid.Column="3" Foreground="{StaticResource ChatOSFailureBrush}" Text="{x:Bind LastError}" TextWrapping="Wrap" />
-                                    </Grid>
-                                </Border>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                    </ListView>
+                    <Grid Margin="0,10,0,0" RowSpacing="12">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="220" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="Agent 运行" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                <TextBlock Text="查看运行状态、耗时、模型调用和错误详情。" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" DisplayMemberPath="Label" ItemsSource="{x:Bind ViewModel.RunAgentFilters}" SelectedItem="{x:Bind ViewModel.SelectedRunAgentFilter, Mode=TwoWay}" />
+                        </Grid>
+                        <Grid Grid.Row="1">
+                            <ListView Background="Transparent" BorderThickness="0" ItemsSource="{x:Bind ViewModel.VisibleRunItems}" SelectionMode="None">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="presentation:AgentRunItemViewModel">
+                                        <Border Margin="0,0,0,9" Style="{StaticResource ChatOSSectionCardStyle}">
+                                            <Grid ColumnSpacing="14">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                <StackPanel Spacing="5">
+                                                    <StackPanel Orientation="Horizontal" Spacing="9">
+                                                        <TextBlock Text="{x:Bind AgentLabel}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                        <Border Padding="8,3" Background="{StaticResource ChatOSAccentSoftBrush}" CornerRadius="8"><TextBlock Text="{x:Bind StatusLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" /></Border>
+                                                    </StackPanel>
+                                                    <TextBlock Style="{StaticResource ChatOSCaptionTextStyle}"><Run Text="{x:Bind ModelCallsLabel}" /><Run Text=" · 耗时 " /><Run Text="{x:Bind DurationLabel}" /><Run Text=" · 更新于 " /><Run Text="{x:Bind UpdatedAtLabel}" /></TextBlock>
+                                                    <TextBlock Foreground="{StaticResource ChatOSFailureBrush}" Text="{x:Bind LastError}" TextWrapping="Wrap" />
+                                                </StackPanel>
+                                                <Button Grid.Column="1" VerticalAlignment="Center" Click="OnInspectRunClick" Content="查看详情" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Visibility="{x:Bind ViewModel.HasVisibleRuns, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+                                <FontIcon Glyph="&#xE9D9;" FontSize="24" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                                <TextBlock HorizontalAlignment="Center" Text="暂无运行记录" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                <TextBlock Text="Agent 被消息、心跳或团队任务唤醒后会显示在这里。" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
                 </PivotItem>
             </Pivot>
         </Grid>

@@ -45,6 +45,8 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
     public ObservableCollection<AgentStaffingProposal> StaffingProposals { get; } = [];
     public ObservableCollection<AgentRunSummary> Runs { get; } = [];
     public ObservableCollection<AgentRunItemViewModel> RunItems { get; } = [];
+    public ObservableCollection<AgentRunItemViewModel> VisibleRunItems { get; } = [];
+    public ObservableCollection<AgentRunFilterOption> RunAgentFilters { get; } = [];
     public ObservableCollection<AgentMessageAttachment> PendingAttachments { get; } = [];
 
     public bool IsOpen => _ownerUserId is not null && ProjectId is not null;
@@ -53,6 +55,7 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
     public bool HasAgents => Agents.Count > 0;
     public bool CanConfigureTeam => SelectedRoom is { Kind: AgentConversationKind.ProjectTeam };
     public bool HasPendingAttachments => PendingAttachments.Count > 0;
+    public bool HasVisibleRuns => VisibleRunItems.Count > 0;
 
     [ObservableProperty]
     private string? _projectId;
@@ -91,6 +94,9 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
 
     [ObservableProperty]
     private bool _isLoadingEarlierMessages;
+
+    [ObservableProperty]
+    private AgentRunFilterOption? _selectedRunAgentFilter;
 
     public async Task OpenAsync(
         string ownerUserId,
@@ -334,9 +340,11 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
             Replace(RequirementSurveys, snapshot.RequirementSurveys);
             Replace(StaffingProposals, snapshot.StaffingProposals);
             Replace(Runs, snapshot.Runs);
-            Replace(RunItems, snapshot.Runs.Select(run =>
+            var runItems = snapshot.Runs.Select(run =>
                 new AgentRunItemViewModel(run,
-                    agentNames.TryGetValue(run.AgentId, out var name) ? name : null)));
+                    agentNames.TryGetValue(run.AgentId, out var name) ? name : null)).ToArray();
+            Replace(RunItems, runItems);
+            RefreshRunFilters(runItems);
             _loadedRoomId = snapshot.Room.Id;
             SelectedTodo = Todos.FirstOrDefault(value => value.Id == SelectedTodo?.Id);
             SelectedAsset = Assets.FirstOrDefault(value => value.Id == SelectedAsset?.Id);
@@ -360,6 +368,9 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
         StaffingProposals.Clear();
         Runs.Clear();
         RunItems.Clear();
+        VisibleRunItems.Clear();
+        RunAgentFilters.Clear();
+        SelectedRunAgentFilter = null;
         PendingAttachments.Clear();
         OnPropertyChanged(nameof(HasPendingAttachments));
         _loadedRoomId = null;
@@ -383,6 +394,32 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
             .GroupBy(agent => agent.Id, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Last().Draft.Name,
                 StringComparer.Ordinal);
+
+    partial void OnSelectedRunAgentFilterChanged(AgentRunFilterOption? value) =>
+        RefreshVisibleRuns();
+
+    private void RefreshRunFilters(IReadOnlyList<AgentRunItemViewModel> items)
+    {
+        var selectedAgentId = SelectedRunAgentFilter?.AgentId;
+        var filters = new List<AgentRunFilterOption> { new(null, "全部 Agent") };
+        filters.AddRange(items
+            .GroupBy(item => item.Run.AgentId, StringComparer.Ordinal)
+            .Select(group => new AgentRunFilterOption(group.Key, group.First().AgentLabel))
+            .OrderBy(option => option.Label, StringComparer.CurrentCulture));
+        Replace(RunAgentFilters, filters);
+        SelectedRunAgentFilter = filters.FirstOrDefault(option =>
+            option.AgentId == selectedAgentId) ?? filters[0];
+        RefreshVisibleRuns();
+    }
+
+    private void RefreshVisibleRuns()
+    {
+        var agentId = SelectedRunAgentFilter?.AgentId;
+        Replace(VisibleRunItems, agentId is null
+            ? RunItems
+            : RunItems.Where(item => item.Run.AgentId == agentId));
+        OnPropertyChanged(nameof(HasVisibleRuns));
+    }
 
     private async void OnServiceChanged(object? sender, AgentTeamChangedEventArgs args)
     {
