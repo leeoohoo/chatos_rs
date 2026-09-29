@@ -97,11 +97,8 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published var recentRuns: [LocalAgentGroupChatRun] = []
     @Published var recentRunDeliveries: [UUID: ProjectAgentDelivery] = [:]
     @Published var todoRunPresentationsByTodoID: [String: TeamTodoRunPresentation] = [:]
-    @Published var draftMessage = ""
-    @Published var attachments: [ConversationAttachmentDraft] = []
-    @Published var attachmentError: String?
+    let composerState = AgentChatComposerState()
     @Published var attachmentDataByID: [String: Data] = [:]
-    @Published var selectedMentionAgentIDs: Set<String> = []
     @Published var isLoading = false
     @Published var isLoadingModels = false
     @Published var isLoadingOlderMessages = false
@@ -134,6 +131,26 @@ final class AgentGroupChatViewModel: ObservableObject {
     var modelLoadTask: Task<LocalAgentBuilderResources, Error>?
     var hasLoadedModels = false
     let messagePageSize = 50
+
+    var draftMessage: String {
+        get { composerState.draftMessage }
+        set { composerState.draftMessage = newValue }
+    }
+
+    var attachments: [ConversationAttachmentDraft] {
+        get { composerState.attachments }
+        set { composerState.attachments = newValue }
+    }
+
+    var attachmentError: String? {
+        get { composerState.attachmentError }
+        set { composerState.attachmentError = newValue }
+    }
+
+    var selectedMentionAgentIDs: Set<String> {
+        get { composerState.selectedMentionAgentIDs }
+        set { composerState.selectedMentionAgentIDs = newValue }
+    }
 
     init(
         projectID: String,

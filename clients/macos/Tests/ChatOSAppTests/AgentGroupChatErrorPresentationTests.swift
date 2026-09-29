@@ -2,11 +2,72 @@ import ChatOSAgentRuntime
 @testable import ChatOSApp
 @testable import ChatOSConnector
 import ChatOSCore
+import Combine
 import Foundation
 import XCTest
 
 @MainActor
 final class AgentGroupChatErrorPresentationTests: XCTestCase {
+    func testComposerDraftDoesNotPublishTeamWorkspaceUpdates() {
+        let fixture = makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let viewModel = AgentGroupChatViewModel(
+            projectID: "project-1",
+            ownerUserID: "alice",
+            service: fixture.groupChatService,
+            scheduler: fixture.scheduler,
+            builderService: fixture.builderService,
+            projectsService: fixture.projectsService
+        )
+        var workspaceUpdateCount = 0
+        var composerUpdateCount = 0
+        let workspaceCancellable = viewModel.objectWillChange.sink {
+            workspaceUpdateCount += 1
+        }
+        let composerCancellable = viewModel.composerState.objectWillChange.sink {
+            composerUpdateCount += 1
+        }
+
+        for length in 1 ... 200 {
+            viewModel.draftMessage = String(repeating: "x", count: length)
+        }
+
+        XCTAssertEqual(viewModel.composerState.draftMessage.count, 200)
+        XCTAssertEqual(workspaceUpdateCount, 0)
+        XCTAssertEqual(composerUpdateCount, 200)
+        withExtendedLifetime((workspaceCancellable, composerCancellable)) {}
+    }
+
+    func testComposerDraftDoesNotPublishDirectTimelineUpdates() {
+        let fixture = makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        let viewModel = AgentDirectChatViewModel(
+            ownerUserID: "alice",
+            conversationID: "conversation-1",
+            service: fixture.groupChatService,
+            scheduler: fixture.scheduler,
+            builderService: fixture.builderService,
+            projectsService: fixture.projectsService
+        )
+        var timelineUpdateCount = 0
+        var composerUpdateCount = 0
+        let timelineCancellable = viewModel.objectWillChange.sink {
+            timelineUpdateCount += 1
+        }
+        let composerCancellable = viewModel.composerState.objectWillChange.sink {
+            composerUpdateCount += 1
+        }
+
+        for length in 1 ... 200 {
+            viewModel.draftMessage = String(repeating: "x", count: length)
+        }
+
+        XCTAssertEqual(viewModel.composerState.draftMessage.count, 200)
+        XCTAssertEqual(timelineUpdateCount, 0)
+        XCTAssertEqual(composerUpdateCount, 200)
+        withExtendedLifetime((timelineCancellable, composerCancellable)) {}
+    }
+
     func testSchedulerIssueIgnoresAnotherConversation() {
         let result = LocalAgentGroupChatScheduler.DeliveryAttemptReceipt(
             deliveryID: "delivery-1",

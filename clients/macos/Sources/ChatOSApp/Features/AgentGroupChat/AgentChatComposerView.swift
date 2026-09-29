@@ -3,10 +3,16 @@ import ChatOSCore
 import SwiftUI
 import UniformTypeIdentifiers
 
+@MainActor
+final class AgentChatComposerState: ObservableObject {
+    @Published var draftMessage = ""
+    @Published var attachments: [ConversationAttachmentDraft] = []
+    @Published var attachmentError: String?
+    @Published var selectedMentionAgentIDs: Set<String> = []
+}
+
 struct AgentChatComposerView<LeadingControl: View>: View {
-    @Binding var text: String
-    @Binding var attachments: [ConversationAttachmentDraft]
-    @Binding var attachmentError: String?
+    @ObservedObject var state: AgentChatComposerState
     let isSending: Bool
     let placeholder: String
     let mentionCandidates: [AgentChatMentionCandidate]
@@ -57,13 +63,13 @@ struct AgentChatComposerView<LeadingControl: View>: View {
         ) { result in
             switch result {
             case let .success(urls): addFiles(urls)
-            case let .failure(error): attachmentError = error.localizedDescription
+            case let .failure(error): state.attachmentError = error.localizedDescription
             }
         }
         .sheet(item: $previewedAttachment) { attachment in
             ComposerAttachmentPreview(attachment: attachment)
         }
-        .onChange(of: text) { _, _ in
+        .onChange(of: state.draftMessage) { _, _ in
             suppressesMentionSuggestions = false
             selectFirstMentionSuggestion()
         }
@@ -87,16 +93,16 @@ struct AgentChatComposerView<LeadingControl: View>: View {
 
     @ViewBuilder
     private var attachmentStrip: some View {
-        if !attachments.isEmpty {
+        if !state.attachments.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(attachments) { attachment in
+                    ForEach(state.attachments) { attachment in
                         ComposerAttachmentChip(
                             attachment: attachment,
                             onPreview: { previewedAttachment = attachment },
                             onRemove: {
-                                attachments.removeAll { $0.id == attachment.id }
-                                if attachments.isEmpty { attachmentError = nil }
+                                state.attachments.removeAll { $0.id == attachment.id }
+                                if state.attachments.isEmpty { state.attachmentError = nil }
                             }
                         )
                     }
@@ -108,7 +114,7 @@ struct AgentChatComposerView<LeadingControl: View>: View {
 
     @ViewBuilder
     private var errorView: some View {
-        if let attachmentError {
+        if let attachmentError = state.attachmentError {
             HStack(alignment: .top, spacing: 7) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
@@ -117,7 +123,7 @@ struct AgentChatComposerView<LeadingControl: View>: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("关闭", systemImage: "xmark") {
-                    self.attachmentError = nil
+                    state.attachmentError = nil
                 }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.plain)
@@ -128,7 +134,7 @@ struct AgentChatComposerView<LeadingControl: View>: View {
     private var input: some View {
         HStack(alignment: .bottom, spacing: 10) {
             ComposerPasteTextEditor(
-                text: $text,
+                text: $state.draftMessage,
                 placeholder: placeholder,
                 onSubmit: onSend,
                 onPasteContent: handlePasteContent,
@@ -211,7 +217,7 @@ struct AgentChatComposerView<LeadingControl: View>: View {
 
     private var activeMentionQuery: AgentChatMentionQuery? {
         guard !suppressesMentionSuggestions else { return nil }
-        return AgentChatMentionSyntax.trailingQuery(in: text)
+        return AgentChatMentionSyntax.trailingQuery(in: state.draftMessage)
     }
 
     private var visibleMentionCandidates: [AgentChatMentionCandidate] {
@@ -240,8 +246,11 @@ struct AgentChatComposerView<LeadingControl: View>: View {
     }
 
     private func selectMention(_ candidate: AgentChatMentionCandidate) {
-        guard let query = AgentChatMentionSyntax.trailingQuery(in: text) else { return }
-        text = AgentChatMentionSyntax.removingTrailingQuery(query, from: text)
+        guard let query = AgentChatMentionSyntax.trailingQuery(in: state.draftMessage) else { return }
+        state.draftMessage = AgentChatMentionSyntax.removingTrailingQuery(
+            query,
+            from: state.draftMessage
+        )
         onMentionSelected(candidate.id)
         highlightedMentionID = nil
         suppressesMentionSuggestions = false
@@ -267,8 +276,8 @@ struct AgentChatComposerView<LeadingControl: View>: View {
 
     private var canSend: Bool {
         !isSending && (
-            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || !attachments.isEmpty
+            !state.draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !state.attachments.isEmpty
         )
     }
 
@@ -312,7 +321,7 @@ struct AgentChatComposerView<LeadingControl: View>: View {
 
     private func addFiles(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
-        attachmentError = nil
+        state.attachmentError = nil
         Task {
             let result = await Task.detached(priority: .userInitiated) {
                 loadAgentChatAttachmentFiles(urls)
@@ -329,9 +338,9 @@ struct AgentChatComposerView<LeadingControl: View>: View {
         let maximumBytes = 20 * 1_024 * 1_024
         var accepted: [ConversationAttachmentDraft] = []
         var messages = errors
-        var totalBytes = attachments.reduce(0) { $0 + $1.size }
+        var totalBytes = state.attachments.reduce(0) { $0 + $1.size }
         for attachment in incoming {
-            if attachments.count + accepted.count >= maximumCount {
+            if state.attachments.count + accepted.count >= maximumCount {
                 messages.append("单次最多添加 \(maximumCount) 个附件")
                 break
             }
@@ -346,8 +355,8 @@ struct AgentChatComposerView<LeadingControl: View>: View {
             accepted.append(attachment)
             totalBytes += attachment.size
         }
-        attachments.append(contentsOf: accepted)
-        attachmentError = messages.isEmpty ? nil : messages.joined(separator: "；")
+        state.attachments.append(contentsOf: accepted)
+        state.attachmentError = messages.isEmpty ? nil : messages.joined(separator: "；")
     }
 
     private func attachmentKind(_ mimeType: String) -> ConversationAttachmentKind {
