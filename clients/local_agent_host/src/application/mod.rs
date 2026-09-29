@@ -6,6 +6,8 @@
 mod assembly;
 mod coordinator;
 mod memory_sync;
+#[cfg(test)]
+mod memory_sync_tests;
 mod scheduler;
 mod task_tools;
 mod tool_scheduler;

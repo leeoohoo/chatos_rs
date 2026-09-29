@@ -86,7 +86,12 @@ impl LocalMemoryRuntimeConfig {
                 .with_memory_composer(composer)
                 .with_record_writer(outbox_writer)
                 .build_contextual_turn_runner(),
-            sync_worker: LocalMemorySyncWorker::new(outbox_store, remote_writer),
+            sync_worker: LocalMemorySyncWorker::new(outbox_store, remote_writer)
+                .with_lease_duration(
+                    self.timeout
+                        .saturating_add(Duration::from_secs(5))
+                        .max(Duration::from_secs(30)),
+                )?,
             source_id,
         })
     }
