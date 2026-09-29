@@ -18,6 +18,7 @@
             <converters:RemoteFileGlyphConverter x:Key="RemoteFileGlyphConverter" />
             <converters:AgentMessageAlignmentConverter x:Key="AgentMessageAlignmentConverter" />
             <converters:AgentMessageBubbleBrushConverter x:Key="AgentMessageBubbleBrushConverter" />
+            <converters:AgentTeamDisplayTextConverter x:Key="AgentTeamDisplayTextConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

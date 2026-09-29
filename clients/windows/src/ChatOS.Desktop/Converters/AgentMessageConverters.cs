@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Data;
+using ChatOS.Presentation.AgentTeams;
 
 namespace ChatOS.Desktop.Converters;
 
@@ -19,6 +20,15 @@ public sealed class AgentMessageBubbleBrushConverter : IValueConverter
         var resourceKey = value is true ? "ChatOSUserBubbleBrush" : "ChatOSSurfaceSubtleBrush";
         return Application.Current.Resources[resourceKey];
     }
+
+    public object ConvertBack(object value, Type targetType, object parameter, string language) =>
+        throw new NotSupportedException();
+}
+
+public sealed class AgentTeamDisplayTextConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, string language) =>
+        AgentTeamDisplayText.For(value);
 
     public object ConvertBack(object value, Type targetType, object parameter, string language) =>
         throw new NotSupportedException();

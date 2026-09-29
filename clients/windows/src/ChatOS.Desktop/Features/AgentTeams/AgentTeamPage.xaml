@@ -98,7 +98,7 @@
                                                 </Border>
                                                 <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
                                                     <TextBlock FontWeight="SemiBold" Text="{x:Bind Draft.Name}" TextTrimming="CharacterEllipsis" />
-                                                    <TextBlock Text="{x:Bind Kind}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                    <TextBlock Text="{x:Bind Kind, Converter={StaticResource AgentTeamDisplayTextConverter}}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                 </StackPanel>
                                             </Grid>
                                         </DataTemplate>
@@ -269,7 +269,7 @@
                                                 <TextBlock Text="{x:Bind Draft.Title}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
                                                 <TextBlock Text="{x:Bind Draft.Detail}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
                                                 <Border HorizontalAlignment="Left" Padding="9,4" Background="{StaticResource ChatOSAccentSoftBrush}" CornerRadius="9">
-                                                    <TextBlock Text="{x:Bind Status}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                    <TextBlock Text="{x:Bind Status, Converter={StaticResource AgentTeamDisplayTextConverter}}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                 </Border>
                                             </StackPanel>
                                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="6">
@@ -305,7 +305,7 @@
                                                 <Expander.Header>
                                                     <StackPanel Spacing="3">
                                                         <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                                        <TextBlock Text="{x:Bind Category}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        <TextBlock Text="{x:Bind Category, Converter={StaticResource AgentTeamDisplayTextConverter}}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                     </StackPanel>
                                                 </Expander.Header>
                                                 <TextBlock Margin="0,10,0,4" IsTextSelectionEnabled="True" Text="{x:Bind Markdown}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
@@ -332,11 +332,11 @@
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                         <StackPanel Spacing="4">
                                             <TextBlock Text="{x:Bind Draft.Name}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                            <TextBlock Text="{x:Bind Draft.Kind}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            <TextBlock Text="{x:Bind Draft.Kind, Converter={StaticResource AgentTeamDisplayTextConverter}}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                             <TextBlock Text="{x:Bind Draft.Role}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
                                             <TextBlock Text="{x:Bind Draft.Rationale}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
                                             <TextBlock Text="{x:Bind Draft.Reason}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
-                                            <TextBlock Text="{x:Bind Status}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            <TextBlock Text="{x:Bind Status, Converter={StaticResource AgentTeamDisplayTextConverter}}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                         </StackPanel>
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="7">
                                             <Button Click="OnApproveStaffingProposalClick" Content="批准" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
@@ -357,7 +357,7 @@
                                     <Grid ColumnSpacing="12">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="130" /><ColumnDefinition Width="110" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                         <TextBlock Text="{x:Bind AgentId}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                                        <TextBlock Grid.Column="1" Text="{x:Bind Status}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                        <TextBlock Grid.Column="1" Text="{x:Bind Status, Converter={StaticResource AgentTeamDisplayTextConverter}}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
                                         <TextBlock Grid.Column="2" Text="{x:Bind ModelCalls}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
                                         <TextBlock Grid.Column="3" Foreground="{StaticResource ChatOSFailureBrush}" Text="{x:Bind LastError}" TextWrapping="Wrap" />
                                     </Grid>

@@ -382,7 +382,7 @@ public sealed partial class AgentTeamPage : UserControl
             if (await ShowDialogAsync("新建 Todo", Form(assignee, title, detail, priority), "创建") != ContentDialogResult.Primary ||
                 assignee.SelectedItem is not AgentProfile profile) return;
             await IgnoreFailureAsync(() => ViewModel.CreateTodoAsync(profile.Id, title.Text, detail.Text,
-                (AgentTodoPriority)priority.SelectedItem));
+                SelectedEnum<AgentTodoPriority>(priority)));
             return;
         }
         var status = EnumPicker("状态", todo.Status);
@@ -400,7 +400,7 @@ public sealed partial class AgentTeamPage : UserControl
             MaxHeight = 180,
         };
         if (await ShowDialogAsync("更新 Todo", Form(assignee, title, detail, priority, status, result, progress), "更新") != ContentDialogResult.Primary) return;
-        await IgnoreFailureAsync(() => ViewModel.UpdateTodoAsync(todo, (AgentTodoStatus)status.SelectedItem,
+        await IgnoreFailureAsync(() => ViewModel.UpdateTodoAsync(todo, SelectedEnum<AgentTodoStatus>(status),
             result.Text, (assignee.SelectedItem as AgentProfile)?.Id));
     }
 
@@ -412,7 +412,7 @@ public sealed partial class AgentTeamPage : UserControl
         if (await ShowDialogAsync(asset is null ? "新建团队资产" : $"编辑资产 · revision {asset.Revision}",
             Form(category, title, markdown), "保存") != ContentDialogResult.Primary) return;
         await IgnoreFailureAsync(() => ViewModel.SaveAssetAsync(asset,
-            (AgentTeamAssetCategory)category.SelectedItem, title.Text, markdown.Text));
+            SelectedEnum<AgentTeamAssetCategory>(category), title.Text, markdown.Text));
     }
 
     private ComboBox AgentPicker(string header, AgentProfile? selected, IEnumerable<AgentProfile>? source = null) =>
@@ -434,13 +434,23 @@ public sealed partial class AgentTeamPage : UserControl
         HorizontalAlignment = HorizontalAlignment.Stretch,
     };
 
-    private static ComboBox EnumPicker<T>(string header, T selected) where T : struct, Enum => new()
+    private static ComboBox EnumPicker<T>(string header, T selected) where T : struct, Enum
     {
-        Header = header,
-        ItemsSource = Enum.GetValues<T>(),
-        SelectedItem = selected,
-        HorizontalAlignment = HorizontalAlignment.Stretch,
-    };
+        var options = Enum.GetValues<T>()
+            .Select(value => new AgentEnumOption<T>(value, AgentTeamDisplayText.For(value)))
+            .ToArray();
+        return new ComboBox
+        {
+            Header = header,
+            ItemsSource = options,
+            DisplayMemberPath = nameof(AgentEnumOption<T>.Label),
+            SelectedItem = options.First(option => EqualityComparer<T>.Default.Equals(option.Value, selected)),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+    }
+
+    private static T SelectedEnum<T>(ComboBox picker) where T : struct, Enum =>
+        ((AgentEnumOption<T>)picker.SelectedItem).Value;
 
     private static IReadOnlyList<string> SplitIdentifiers(string value) => value
         .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
