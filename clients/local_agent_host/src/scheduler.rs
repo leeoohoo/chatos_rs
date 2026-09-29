@@ -1,0 +1,193 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
+//! One-step scheduler for registered Local Agent business profiles.
+
+use chatos_local_agent_protocol::{
+    ClaimNextRunCommand, CommitStepCommand, HostCommand, HostRequestEnvelope, HostResult,
+    LocalAgentRunRecord, LocalAgentStepOutcome, LOCAL_AGENT_PROTOCOL_VERSION,
+};
+use chatos_local_agent_runtime::{
+    LocalAgentProfileRegistry, LocalAgentRuntime, LocalAgentRuntimeError,
+};
+use std::sync::Arc;
+use thiserror::Error;
+use uuid::Uuid;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SchedulerTick {
+    Idle,
+    Committed(Box<LocalAgentRunRecord>),
+}
+
+#[derive(Debug, Error)]
+pub enum LocalAgentSchedulerError {
+    #[error(transparent)]
+    Runtime(#[from] LocalAgentRuntimeError),
+    #[error("Local Agent runtime returned an unexpected result: {0}")]
+    UnexpectedResult(&'static str),
+}
+
+#[derive(Clone)]
+pub struct LocalAgentScheduler {
+    runtime: Arc<LocalAgentRuntime>,
+    profiles: LocalAgentProfileRegistry,
+    worker_id: String,
+    lease_duration_ms: u64,
+}
+
+impl LocalAgentScheduler {
+    pub fn new(
+        runtime: Arc<LocalAgentRuntime>,
+        profiles: LocalAgentProfileRegistry,
+        worker_id: impl Into<String>,
+    ) -> Result<Self, String> {
+        let worker_id = worker_id.into();
+        let worker_id = worker_id.trim();
+        if worker_id.is_empty() || worker_id.len() > 256 {
+            return Err("Local Agent worker id must be 1..=256 characters".to_string());
+        }
+        if profiles.is_empty() {
+            return Err("Local Agent scheduler requires at least one profile".to_string());
+        }
+        Ok(Self {
+            runtime,
+            profiles,
+            worker_id: worker_id.to_string(),
+            lease_duration_ms: 300_000,
+        })
+    }
+
+    pub fn with_lease_duration_ms(mut self, lease_duration_ms: u64) -> Result<Self, String> {
+        if !(1_000..=300_000).contains(&lease_duration_ms) {
+            return Err("claim lease must be between 1000 and 300000 milliseconds".to_string());
+        }
+        self.lease_duration_ms = lease_duration_ms;
+        Ok(self)
+    }
+
+    /// Claims and executes at most one durable step. The caller owns wakeups
+    /// and retry timers, so an idle Host does not create polling receipts.
+    pub async fn run_once(&self) -> Result<SchedulerTick, LocalAgentSchedulerError> {
+        let claim_result = self
+            .runtime
+            .try_handle(envelope(
+                HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                    worker_id: self.worker_id.clone(),
+                    lease_duration_ms: self.lease_duration_ms,
+                }),
+                "scheduler-claim",
+            ))
+            .await?;
+        let claim = match claim_result {
+            HostResult::Claim { claim: Some(claim) } => claim,
+            HostResult::Claim { claim: None } => return Ok(SchedulerTick::Idle),
+            _ => return Err(LocalAgentSchedulerError::UnexpectedResult("claim")),
+        };
+        let outcome = match self.profiles.profile_for(&claim.run.profile_key) {
+            Some(profile) => match profile.execute_step(&claim).await {
+                Ok(outcome) => outcome,
+                Err(error) => LocalAgentStepOutcome::NeedsReview {
+                    reason: "Local Agent profile step failed".to_string(),
+                    detail: serde_json::json!({"error": error}),
+                },
+            },
+            None => LocalAgentStepOutcome::NeedsReview {
+                reason: "Local Agent profile is not registered".to_string(),
+                detail: serde_json::json!({"profile_key": claim.run.profile_key}),
+            },
+        };
+        let committed = self
+            .runtime
+            .try_handle(envelope(
+                HostCommand::CommitStep(CommitStepCommand {
+                    run_id: claim.run.run_id,
+                    claim_token: claim.claim_token,
+                    expected_version: claim.run.version,
+                    outcome,
+                }),
+                "scheduler-commit",
+            ))
+            .await?;
+        match committed {
+            HostResult::Run { run } => Ok(SchedulerTick::Committed(Box::new(run))),
+            _ => Err(LocalAgentSchedulerError::UnexpectedResult("commit")),
+        }
+    }
+}
+
+fn envelope(command: HostCommand, prefix: &str) -> HostRequestEnvelope {
+    HostRequestEnvelope {
+        protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+        command_id: format!("{prefix}-{}", Uuid::new_v4()),
+        command,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use chatos_client_storage::SqliteClientStorage;
+    use chatos_local_agent_protocol::{CreateRunCommand, LocalAgentRunClaim, LocalAgentRunStatus};
+    use chatos_local_agent_runtime::LocalAgentProfile;
+
+    struct SuccessProfile;
+
+    #[async_trait]
+    impl LocalAgentProfile for SuccessProfile {
+        async fn execute_step(
+            &self,
+            claim: &LocalAgentRunClaim,
+        ) -> Result<LocalAgentStepOutcome, String> {
+            Ok(LocalAgentStepOutcome::Succeed {
+                output: serde_json::json!({"run_id": claim.run.run_id}),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn scheduler_executes_one_registered_profile_step() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = Arc::new(LocalAgentRuntime::new(storage));
+        runtime.initialize().await.expect("initialize");
+        runtime
+            .try_handle(envelope(
+                HostCommand::CreateRun(CreateRunCommand {
+                    run_id: "run-scheduler".to_string(),
+                    owner_user_id: "user-1".to_string(),
+                    owner_entity_type: "conversation".to_string(),
+                    owner_entity_id: "conversation-1".to_string(),
+                    profile_key: "test_success".to_string(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: serde_json::json!({"message": "hello"}),
+                    max_iterations: 4,
+                }),
+                "create",
+            ))
+            .await
+            .expect("create run");
+        let mut profiles = LocalAgentProfileRegistry::new();
+        profiles
+            .register("test_success", SuccessProfile)
+            .expect("profile");
+        let scheduler = LocalAgentScheduler::new(runtime, profiles, "worker-1").expect("scheduler");
+
+        let tick = scheduler.run_once().await.expect("run once");
+        let SchedulerTick::Committed(run) = tick else {
+            panic!("expected committed run")
+        };
+        assert_eq!(run.status, LocalAgentRunStatus::Succeeded);
+        assert_eq!(run.version, 3);
+        assert_eq!(
+            scheduler.run_once().await.expect("idle"),
+            SchedulerTick::Idle
+        );
+    }
+}

@@ -104,7 +104,7 @@ Config Center 只服务于服务端运行配置和受管 Agent 绑定，不保�
 ```text
 crates/chatos_local_agent_protocol
 crates/chatos_local_agent_runtime
-local_agent_host
+clients/local_agent_host
 ```
 
 最终代码中删除 Cloud 专用命名和行为。`chatos_cloud_agent_protocol`、`chatos_cloud_agent_runtime` 中与状态归约、claim、幂等和单步执行有关的通用代码进入本地 Runtime；RabbitMQ、MongoDB、Cloud Outbox Driver 和 owner service 路由不得进入最终本地内核。
@@ -720,7 +720,7 @@ crates/
    ├─ approval.rs
    └─ story.rs
 
-local_agent_host/
+clients/local_agent_host/
 ├─ main.rs
 ├─ ipc_server.rs
 ├─ profile_registry.rs
