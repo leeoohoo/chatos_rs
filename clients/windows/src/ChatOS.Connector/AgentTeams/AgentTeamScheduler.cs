@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
+using ChatOS.Connector.Gateway;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
 
@@ -10,10 +11,13 @@ internal sealed partial class AgentTeamScheduler(
     IAgentTeamStore store,
     AgentTeamModelGateway models,
     AgentTeamToolExecutor tools,
-    AgentPluginToolRuntime? pluginTools = null)
+    AgentPluginToolRuntime? pluginTools = null,
+    AgentTeamRuntimeSettingsProvider? runtimeSettings = null)
 {
     private readonly ConcurrentDictionary<(string OwnerUserId, AgentDeliveryLane Lane), SemaphoreSlim>
         _laneGates = new();
+    private readonly AgentTeamRuntimeSettingsProvider _runtimeSettings =
+        runtimeSettings ?? new AgentTeamRuntimeSettingsProvider();
 
     public event EventHandler<AgentTeamChangedEventArgs>? Changed;
 
@@ -96,7 +100,20 @@ internal sealed partial class AgentTeamScheduler(
         RaiseChanged(delivery, "run_started");
         try
         {
-            await RunDeliveryAsync(delivery, run, cancellationToken).ConfigureAwait(false);
+            var settings = _runtimeSettings.Current;
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(settings.RunTimeoutSeconds));
+            try
+            {
+                await RunDeliveryAsync(delivery, run, settings, timeout.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException exception) when (
+                !cancellationToken.IsCancellationRequested && timeout.IsCancellationRequested)
+            {
+                throw new AgentTeamException(AgentTeamError.ModelUnavailable,
+                    "Agent run exceeded its managed time limit.", exception);
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -150,6 +167,7 @@ internal sealed partial class AgentTeamScheduler(
     private async Task RunDeliveryAsync(
         AgentDelivery delivery,
         AgentRunSummary initialRun,
+        NativeAgentRuntimeSettings settings,
         CancellationToken cancellationToken)
     {
         var room = await store.GetRoomAsync(delivery.OwnerUserId, delivery.RoomId, cancellationToken)
@@ -231,7 +249,9 @@ internal sealed partial class AgentTeamScheduler(
         string? responseMessageId = null;
         var ended = false;
         var transientRetries = 0;
-        for (var modelCall = run.ModelCalls + 1; modelCall <= 16 && !ended; modelCall++)
+        for (var modelCall = run.ModelCalls + 1;
+             modelCall <= settings.MaximumModelCalls && !ended;
+             modelCall++)
         {
             run = run with
             {
@@ -242,11 +262,14 @@ internal sealed partial class AgentTeamScheduler(
             AgentModelTurn turn;
             try
             {
-                turn = await models.CompleteAsync(profile, input, definitions, cancellationToken)
+                turn = await models.CompleteAsync(profile, input, definitions, cancellationToken,
+                        settings.RequestTimeoutSeconds)
                     .ConfigureAwait(false);
             }
             catch (AgentTeamException exception) when (
-                exception.IsTransient && transientRetries < 5 && modelCall < 16)
+                exception.IsTransient &&
+                transientRetries < settings.MaximumRequestRetries &&
+                modelCall < settings.MaximumModelCalls)
             {
                 transientRetries++;
                 await Task.Delay(TimeSpan.FromSeconds(1 << (transientRetries - 1)),

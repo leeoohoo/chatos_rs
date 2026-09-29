@@ -32,6 +32,35 @@ public sealed record ConnectorControlledNetworkReadiness(
     string? PermissionProfile,
     int AllowedHostCount);
 
+public sealed record NativeAgentRuntimeSettings(
+    int MaximumModelCalls,
+    int MaximumRequestRetries,
+    int RequestTimeoutSeconds,
+    int RunTimeoutSeconds,
+    int MaximumNoProgressRounds,
+    int ContextWindowTokens,
+    int OutputReserveTokens)
+{
+    public static NativeAgentRuntimeSettings Default { get; } = new(
+        600, 2, 180, 7_200, 8, 2_000_000, 30_000);
+
+    public void Validate()
+    {
+        if (MaximumModelCalls is < 1 or > 10_000 ||
+            MaximumRequestRetries is < 0 or > 10 ||
+            RequestTimeoutSeconds is < 5 or > 1_800 ||
+            RunTimeoutSeconds is < 10 or > 86_400 ||
+            MaximumNoProgressRounds is < 1 or > 100 ||
+            ContextWindowTokens is < 2_048 or > 2_000_000 ||
+            OutputReserveTokens < 256 || OutputReserveTokens >= ContextWindowTokens)
+            throw new InvalidDataException("Managed Agent runtime settings are invalid.");
+    }
+}
+
+public sealed record ConnectorManagedRuntimeConfig(
+    NativeAgentRuntimeSettings NativeAgentRuntimeSettings,
+    RemoteControlTrust RemoteControlTrust);
+
 public sealed record ConnectorPluginSource(
     ConnectorPluginCatalog Catalog,
     ConnectorPluginRelease Release,
@@ -152,6 +181,14 @@ public interface IConnectorGatewayClient
         Uri gatewayBaseUri,
         string token,
         CancellationToken cancellationToken = default);
+
+    async Task<ConnectorManagedRuntimeConfig> GetManagedRuntimeConfigAsync(
+        Uri gatewayBaseUri,
+        string token,
+        CancellationToken cancellationToken = default) => new(
+            NativeAgentRuntimeSettings.Default,
+            await GetRemoteControlTrustAsync(
+                gatewayBaseUri, token, cancellationToken).ConfigureAwait(false));
 
     Task<IReadOnlyList<ConnectorPluginSource>> ListPluginSourcesAsync(
         Uri gatewayBaseUri,

@@ -7,7 +7,7 @@ using ChatOS.Connector.Relay;
 
 namespace ChatOS.Connector.Gateway;
 
-public sealed class ConnectorGatewayHttpClient : IConnectorGatewayClient
+public sealed partial class ConnectorGatewayHttpClient : IConnectorGatewayClient
 {
     internal const string HttpClientName = "ChatOS.LocalConnectorGateway";
     internal const string ClientVersion = "1.0.0-windows";
@@ -192,6 +192,13 @@ public sealed class ConnectorGatewayHttpClient : IConnectorGatewayClient
     public async Task<RemoteControlTrust> GetRemoteControlTrustAsync(
         Uri gatewayBaseUri,
         string token,
+        CancellationToken cancellationToken = default) =>
+        (await GetManagedRuntimeConfigAsync(
+            gatewayBaseUri, token, cancellationToken).ConfigureAwait(false)).RemoteControlTrust;
+
+    public async Task<ConnectorManagedRuntimeConfig> GetManagedRuntimeConfigAsync(
+        Uri gatewayBaseUri,
+        string token,
         CancellationToken cancellationToken = default)
     {
         var response = await SendAsync<GatewayManagedRuntimeDto>(
@@ -201,10 +208,13 @@ public sealed class ConnectorGatewayHttpClient : IConnectorGatewayClient
             token,
             null,
             cancellationToken).ConfigureAwait(false);
-        return new RemoteControlTrust(
+        var settings = response.NativeAgentRuntimeSettings?.ToDomain()
+            ?? NativeAgentRuntimeSettings.Default;
+        settings.Validate();
+        return new ConnectorManagedRuntimeConfig(settings, new RemoteControlTrust(
             response.RemoteControlTrust.RequireSignedMessages,
             response.RemoteControlTrust.SignatureMaxSkewSeconds,
-            response.RemoteControlTrust.TrustedRelayPublicKeys);
+            response.RemoteControlTrust.TrustedRelayPublicKeys));
     }
 
     public async Task<IReadOnlyList<ConnectorPluginSource>> ListPluginSourcesAsync(
@@ -572,24 +582,6 @@ public sealed class ConnectorGatewayHttpClient : IConnectorGatewayClient
 
         [JsonPropertyName("local_path_fingerprint")]
         public required string LocalPathFingerprint { get; init; }
-    }
-
-    private sealed record GatewayManagedRuntimeDto
-    {
-        [JsonPropertyName("remote_control_trust")]
-        public required GatewayTrustDto RemoteControlTrust { get; init; }
-    }
-
-    private sealed record GatewayTrustDto
-    {
-        [JsonPropertyName("require_signed_messages")]
-        public required bool RequireSignedMessages { get; init; }
-
-        [JsonPropertyName("signature_max_skew_seconds")]
-        public required int SignatureMaxSkewSeconds { get; init; }
-
-        [JsonPropertyName("trusted_relay_public_keys")]
-        public required IReadOnlyDictionary<string, string> TrustedRelayPublicKeys { get; init; }
     }
 
     private sealed record GatewayPluginSourceListDto

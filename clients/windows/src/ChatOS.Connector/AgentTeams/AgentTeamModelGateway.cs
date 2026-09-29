@@ -30,7 +30,8 @@ internal sealed class AgentTeamModelGateway(
         AgentProfile profile,
         IReadOnlyList<object> input,
         IReadOnlyList<AgentToolDefinition> tools,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int requestTimeoutSeconds = 180)
     {
         var config = await apiClient.GetAsync<AgentModelConfigurationDto>(
             $"ai-model-configs/{Uri.EscapeDataString(profile.Draft.ModelConfigId)}?include_secret=true",
@@ -73,7 +74,7 @@ internal sealed class AgentTeamModelGateway(
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.ApiKey);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromMinutes(3));
+        timeout.CancelAfter(TimeSpan.FromSeconds(requestTimeoutSeconds));
         try
         {
             using var response = await httpClientFactory.CreateClient(HttpClientName)

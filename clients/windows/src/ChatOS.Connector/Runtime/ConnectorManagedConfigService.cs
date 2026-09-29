@@ -1,4 +1,5 @@
 using ChatOS.Connector.Gateway;
+using ChatOS.Connector.AgentTeams;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -8,13 +9,16 @@ public sealed class ConnectorManagedConfigSynchronizer
 {
     private readonly ConnectorRuntimeContext _runtime;
     private readonly IConnectorGatewayClient _gateway;
+    private readonly AgentTeamRuntimeSettingsProvider _agentRuntimeSettings;
 
     public ConnectorManagedConfigSynchronizer(
         ConnectorRuntimeContext runtime,
-        IConnectorGatewayClient gateway)
+        IConnectorGatewayClient gateway,
+        AgentTeamRuntimeSettingsProvider agentRuntimeSettings)
     {
         _runtime = runtime;
         _gateway = gateway;
+        _agentRuntimeSettings = agentRuntimeSettings;
     }
 
     public async Task<bool> SyncAsync(CancellationToken cancellationToken = default)
@@ -26,15 +30,17 @@ public sealed class ConnectorManagedConfigSynchronizer
             return false;
         }
 
-        var trust = await _gateway.GetRemoteControlTrustAsync(
+        var managed = await _gateway.GetManagedRuntimeConfigAsync(
             session.GatewayBaseUri,
             session.AccessToken,
             cancellationToken).ConfigureAwait(false);
-        return await _runtime.UpdateRemoteControlTrustAsync(
+        var trustChanged = await _runtime.UpdateRemoteControlTrustAsync(
             state.GatewayBaseUri,
             state.DeviceId,
-            trust,
+            managed.RemoteControlTrust,
             cancellationToken).ConfigureAwait(false);
+        var runtimeChanged = _agentRuntimeSettings.Update(managed.NativeAgentRuntimeSettings);
+        return trustChanged || runtimeChanged;
     }
 }
 

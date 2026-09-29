@@ -24,6 +24,7 @@
 | CP-20260831-004 | 原生屏幕录制 | Windows 原生 Snipping Tool、WinUI | 待真机验收 | 已接入显示器/窗口选择、系统音频与原生停止条，并自动归档 MP4；验证系统版本兼容性与媒体参数 |
 | CP-20260922-001 | Agent 团队与需求调研 | Core、SQLite、Connector、Presentation、WinUI | 待真机验收 | 项目级调研中心、统一渐进调研、多模态输入、跨会话 Inbox、run-scoped opaque refs、成员提案、Todo 隔离调度和失败 delivery/run 恢复均已补；验证 Windows 真机模型、Plugin、崩溃恢复和长对话内存占用 |
 | CP-20260928-001 | 邀请码邮箱注册 | Core、API、Credential Manager、WinUI | 待自动化验证 | 注册协议、校验、重发倒计时、自动登录与双语界面已补；等待 Windows CI 后进行真机邮箱注册和高 DPI 视觉验收 |
+| CP-20260928-002 | Agent 运行参数由配置中心统一管理 | Connector、Agent Scheduler、managed config | 待自动化验证 | managed runtime 解码、验证和 Run 级冻结已补；等待 Windows CI 后验证配置刷新与长 Run 超时 |
 
 ## 未编号工作区观察
 
@@ -108,6 +109,16 @@
 - Windows 真机要求：使用真实邀请码完成收码、重发限制、错误验证码、成功注册和重启会话恢复；在 100%/150%/200% DPI 与中英文下检查滚动、焦点、密码清理和两栏布局。
 - 当前状态：`待自动化验证`；代码和回归测试已加入，等待 Windows CI。
 - 关闭条件：Windows 原生测试和自包含安装包通过后进入 `待真机验收`；真实邮箱注册与高 DPI 视觉证据完成后标记 `已同步`。
+
+### CP-20260928-002：Agent 运行参数由配置中心统一管理
+
+- macOS 状态：Local Connector 从统一 runtime config 读取原生 Agent 默认值，验证后写入平台托管快照；用户侧旧运行时设置不再控制生产行为。
+- Windows 风险：固定 16 次调用和 5 次重试会与 macOS/服务端策略分叉，长任务过早失败，同时无法通过配置中心统一调整请求和整轮超时。
+- Windows 代码修改：Gateway 解码 `native_agent_runtime_settings` 并执行与共享 Rust 配置相同的范围校验；managed config 同轮刷新远控 trust 与 Agent 运行快照；每个 delivery 启动时冻结快照，应用模型调用上限、瞬时重试次数、单请求超时和整轮超时，刷新不会改变正在运行的 Run；缺少新字段时使用共享默认值 600/2/180s/7200s。
+- Windows 自动化要求：覆盖完整 DTO、默认值、非法范围拒绝、快照原子替换、模型调用/重试预算和超时接线。
+- Windows 真机要求：调整测试环境配置后确认新 Run 采用新预算、已有 Run 不漂移；验证超时失败保留 durable run/delivery 诊断并可安全重试。
+- 当前状态：`待自动化验证`；代码和回归测试已加入，等待 Windows CI。
+- 关闭条件：Windows 原生测试通过后进入 `待真机验收`；配置刷新和长 Run 证据完成后标记 `已同步`。
 
 ## 新记录模板
 

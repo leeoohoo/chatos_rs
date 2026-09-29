@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using ChatOS.Api.Http;
 using ChatOS.Connector.AgentTeams;
+using ChatOS.Connector.Gateway;
 using ChatOS.Connector.Persistence;
 using ChatOS.Core.Domain;
 using Microsoft.Data.Sqlite;
@@ -14,6 +15,21 @@ public sealed class AgentTeamSchedulerTests : IAsyncLifetime
     private readonly string _directory = Path.Combine(
         Path.GetTempPath(), "chatos-agent-scheduler-tests", Guid.NewGuid().ToString("N"));
     private SqliteAgentTeamStore _store = null!;
+
+    [Fact]
+    public void ManagedRuntimeSettingsReplaceDefaultsAndRejectInvalidValues()
+    {
+        var provider = new AgentTeamRuntimeSettingsProvider();
+        Assert.Equal(600, provider.Current.MaximumModelCalls);
+        var managed = new NativeAgentRuntimeSettings(
+            240, 3, 90, 3_600, 6, 200_000, 12_000);
+
+        Assert.True(provider.Update(managed));
+        Assert.False(provider.Update(managed));
+        Assert.Equal(240, provider.Current.MaximumModelCalls);
+        Assert.Throws<InvalidDataException>(() => provider.Update(
+            managed with { OutputReserveTokens = 200_000 }));
+    }
 
     public async Task InitializeAsync()
     {
