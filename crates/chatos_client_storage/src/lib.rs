@@ -7,131 +7,24 @@
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunRecord, LocalAgentRunStatus,
-    LocalAgentToolBatch,
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow},
     Row, SqliteConnection, SqlitePool,
 };
 use std::{path::Path, str::FromStr, time::Duration};
-use thiserror::Error;
 
+mod contracts;
 mod schema;
 mod tool_store;
 
-use schema::{RUN_SELECT, SCHEMA_V1, SCHEMA_V2};
+pub use contracts::{ClientStorageError, IdempotentCommand, LocalAgentRunStore, RunTransition};
+use schema::{RUN_SELECT, SCHEMA_V1, SCHEMA_V2, SCHEMA_V3};
 pub use tool_store::LocalAgentToolStore;
 
-const SCHEMA_VERSION: i64 = 2;
-
-#[derive(Debug, Error)]
-pub enum ClientStorageError {
-    #[error("client storage database error: {0}")]
-    Database(#[from] sqlx::Error),
-    #[error("client storage serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
-    #[error("record not found: {0}")]
-    NotFound(String),
-    #[error("storage conflict: {0}")]
-    Conflict(String),
-    #[error("invalid stored state: {0}")]
-    InvalidState(String),
-    #[error("command id was reused with different input: {0}")]
-    CommandMismatch(String),
-}
-
-impl ClientStorageError {
-    pub fn code(&self) -> &'static str {
-        match self {
-            Self::Database(_) => "storage_unavailable",
-            Self::Serialization(_) | Self::InvalidState(_) => "storage_corrupt",
-            Self::NotFound(_) => "not_found",
-            Self::Conflict(_) => "conflict",
-            Self::CommandMismatch(_) => "command_mismatch",
-        }
-    }
-
-    pub fn retryable(&self) -> bool {
-        matches!(self, Self::Database(_))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct IdempotentCommand {
-    pub command_id: String,
-    pub request_fingerprint: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RunTransition {
-    pub run_id: String,
-    pub claim_token: String,
-    pub expected_version: u64,
-    pub expected_status: LocalAgentRunStatus,
-    pub next_status: LocalAgentRunStatus,
-    pub next_attempt_at_unix_ms: Option<i64>,
-    pub pending_tool_batch: Option<Value>,
-    pub tool_batch: Option<LocalAgentToolBatch>,
-    pub terminal_outcome: Option<Value>,
-    pub event_id: String,
-    pub event_type: String,
-    pub event_payload: Value,
-    pub occurred_at_unix_ms: i64,
-}
-
-#[async_trait]
-pub trait LocalAgentRunStore: Send + Sync {
-    async fn create_run(
-        &self,
-        command: &IdempotentCommand,
-        run: &LocalAgentRunRecord,
-        event_id: &str,
-    ) -> Result<LocalAgentRunRecord, ClientStorageError>;
-
-    async fn get_run(
-        &self,
-        run_id: &str,
-    ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError>;
-
-    async fn recover_expired_claims(&self, now_unix_ms: i64) -> Result<u64, ClientStorageError>;
-
-    async fn claim_next_run(
-        &self,
-        command: &IdempotentCommand,
-        worker_id: &str,
-        claim_token: &str,
-        now_unix_ms: i64,
-        claim_until_unix_ms: i64,
-        event_id: &str,
-    ) -> Result<Option<LocalAgentRunClaim>, ClientStorageError>;
-
-    async fn apply_transition(
-        &self,
-        command: &IdempotentCommand,
-        transition: &RunTransition,
-    ) -> Result<LocalAgentRunRecord, ClientStorageError>;
-
-    async fn cancel_run(
-        &self,
-        command: &IdempotentCommand,
-        run_id: &str,
-        expected_version: Option<u64>,
-        reason: &str,
-        event_id: &str,
-        now_unix_ms: i64,
-    ) -> Result<LocalAgentRunRecord, ClientStorageError>;
-
-    async fn list_events(
-        &self,
-        after_cursor: i64,
-        limit: u32,
-        run_id: Option<&str>,
-    ) -> Result<Vec<LocalAgentEventRecord>, ClientStorageError>;
-
-    async fn health_check(&self) -> Result<(), ClientStorageError>;
-}
+const SCHEMA_VERSION: i64 = 3;
 
 pub trait LocalAgentStore: LocalAgentRunStore + LocalAgentToolStore {}
 
@@ -211,6 +104,11 @@ impl SqliteClientStorage {
             let result = Self::apply_schema_v2(&mut connection).await;
             Self::finish_write(&mut connection, result).await?;
         }
+        if version < 3 {
+            Self::begin_immediate(&mut connection).await?;
+            let result = Self::apply_schema_v3(&mut connection).await;
+            Self::finish_write(&mut connection, result).await?;
+        }
         Ok(())
     }
 
@@ -234,6 +132,19 @@ impl SqliteClientStorage {
         sqlx::query(
             "INSERT INTO client_schema_migrations(version, applied_at_unix_ms) \
              VALUES(2, CAST(strftime('%s','now') AS INTEGER) * 1000)",
+        )
+        .execute(&mut *connection)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_schema_v3(connection: &mut SqliteConnection) -> Result<(), ClientStorageError> {
+        for statement in SCHEMA_V3 {
+            sqlx::query(statement).execute(&mut *connection).await?;
+        }
+        sqlx::query(
+            "INSERT INTO client_schema_migrations(version, applied_at_unix_ms) \
+             VALUES(3, CAST(strftime('%s','now') AS INTEGER) * 1000)",
         )
         .execute(&mut *connection)
         .await?;
@@ -404,8 +315,9 @@ impl LocalAgentRunStore for SqliteClientStorage {
                  model_config_ref, model_config_revision, capability_policy_revision, input_json, \
                  status, iteration, max_iterations, version, claim_token, claim_until_unix_ms, \
                  next_attempt_at_unix_ms, pending_tool_batch_json, terminal_outcome_json, \
-                 created_at_unix_ms, updated_at_unix_ms) \
-                 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?)",
+                 checkpoint_json, continuation_input_json, created_at_unix_ms, updated_at_unix_ms) \
+                 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, \
+                 ?, NULL, ?, ?)",
             )
             .bind(&run.run_id)
             .bind(&run.owner_user_id)
@@ -420,6 +332,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
             .bind(i64::from(run.iteration))
             .bind(i64::from(run.max_iterations))
             .bind(run.version as i64)
+            .bind(serde_json::to_string(&run.checkpoint)?)
             .bind(run.created_at_unix_ms)
             .bind(run.updated_at_unix_ms)
             .execute(&mut *connection)
@@ -551,7 +464,9 @@ impl LocalAgentRunStore for SqliteClientStorage {
             let updated = sqlx::query(
                 "UPDATE local_agent_runs SET status = ?, version = version + 1, \
                  claim_token = NULL, claim_until_unix_ms = NULL, next_attempt_at_unix_ms = ?, \
-                 pending_tool_batch_json = ?, terminal_outcome_json = ?, updated_at_unix_ms = ? \
+                 pending_tool_batch_json = ?, terminal_outcome_json = ?, \
+                 checkpoint_json = COALESCE(?, checkpoint_json), continuation_input_json = NULL, \
+                 updated_at_unix_ms = ? \
                  WHERE run_id = ? AND status = ? AND version = ? AND claim_token = ? \
                  AND claim_until_unix_ms > ?",
             )
@@ -559,6 +474,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
             .bind(transition.next_attempt_at_unix_ms)
             .bind(json_option(&transition.pending_tool_batch)?)
             .bind(json_option(&transition.terminal_outcome)?)
+            .bind(json_option(&transition.checkpoint)?)
             .bind(transition.occurred_at_unix_ms)
             .bind(&transition.run_id)
             .bind(transition.expected_status.as_str())
@@ -607,6 +523,58 @@ impl LocalAgentRunStore for SqliteClientStorage {
         Self::finish_write(&mut connection, result).await
     }
 
+    async fn resume_run(
+        &self,
+        command: &IdempotentCommand,
+        run_id: &str,
+        expected_version: u64,
+        expected_status: LocalAgentRunStatus,
+        continuation_input: &Value,
+        event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<LocalAgentRunRecord, ClientStorageError> {
+        let mut connection = self.pool.acquire().await?;
+        Self::begin_immediate(&mut connection).await?;
+        let result = async {
+            if let Some(replay) = Self::replay(&mut connection, command).await? {
+                return Ok(replay);
+            }
+            let updated = sqlx::query(
+                "UPDATE local_agent_runs SET status = 'continuation_ready', \
+                 version = version + 1, continuation_input_json = ?, updated_at_unix_ms = ? \
+                 WHERE run_id = ? AND status = ? AND version = ?",
+            )
+            .bind(serde_json::to_string(continuation_input)?)
+            .bind(now_unix_ms)
+            .bind(run_id)
+            .bind(expected_status.as_str())
+            .bind(expected_version as i64)
+            .execute(&mut *connection)
+            .await?;
+            if updated.rows_affected() != 1 {
+                return Err(ClientStorageError::Conflict(format!(
+                    "run status or version changed while resuming: {run_id}"
+                )));
+            }
+            Self::insert_event(
+                &mut connection,
+                event_id,
+                run_id,
+                "run_resumed",
+                continuation_input,
+                now_unix_ms,
+            )
+            .await?;
+            let run = Self::fetch_run_on(&mut connection, run_id)
+                .await?
+                .ok_or_else(|| ClientStorageError::NotFound(run_id.to_string()))?;
+            Self::record_receipt(&mut connection, command, &run, now_unix_ms).await?;
+            Ok(run)
+        }
+        .await;
+        Self::finish_write(&mut connection, result).await
+    }
+
     async fn cancel_run(
         &self,
         command: &IdempotentCommand,
@@ -638,7 +606,8 @@ impl LocalAgentRunStore for SqliteClientStorage {
             let updated = sqlx::query(
                 "UPDATE local_agent_runs SET status = 'cancelled', version = version + 1, \
                  claim_token = NULL, claim_until_unix_ms = NULL, next_attempt_at_unix_ms = NULL, \
-                 pending_tool_batch_json = NULL, terminal_outcome_json = ?, updated_at_unix_ms = ? \
+                 pending_tool_batch_json = NULL, continuation_input_json = NULL, \
+                 terminal_outcome_json = ?, updated_at_unix_ms = ? \
                  WHERE run_id = ? AND version = ?",
             )
             .bind(serde_json::to_string(
@@ -723,6 +692,8 @@ fn decode_run(row: SqliteRow) -> Result<LocalAgentRunRecord, ClientStorageError>
     let input: String = row.try_get("input_json")?;
     let pending_tool_batch: Option<String> = row.try_get("pending_tool_batch_json")?;
     let terminal_outcome: Option<String> = row.try_get("terminal_outcome_json")?;
+    let checkpoint: String = row.try_get("checkpoint_json")?;
+    let continuation_input: Option<String> = row.try_get("continuation_input_json")?;
     Ok(LocalAgentRunRecord {
         run_id: row.try_get("run_id")?,
         owner_user_id: row.try_get("owner_user_id")?,
@@ -741,6 +712,10 @@ fn decode_run(row: SqliteRow) -> Result<LocalAgentRunRecord, ClientStorageError>
         claim_until_unix_ms: row.try_get("claim_until_unix_ms")?,
         next_attempt_at_unix_ms: row.try_get("next_attempt_at_unix_ms")?,
         pending_tool_batch: pending_tool_batch
+            .map(|value| serde_json::from_str(&value))
+            .transpose()?,
+        checkpoint: serde_json::from_str(&checkpoint)?,
+        continuation_input: continuation_input
             .map(|value| serde_json::from_str(&value))
             .transpose()?,
         terminal_outcome: terminal_outcome

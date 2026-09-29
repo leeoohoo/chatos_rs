@@ -356,11 +356,17 @@ async fn advance_run_after_tool(
         .into_iter()
         .map(decode_invocation)
         .collect::<Result<Vec<_>, _>>()?;
+    let continuation = json!({
+        "type": "tool_results",
+        "batch_id": batch_id,
+        "invocations": invocations
+    });
     let updated = sqlx::query(
         "UPDATE local_agent_runs SET status = 'continuation_ready', version = version + 1, \
-         pending_tool_batch_json = NULL, updated_at_unix_ms = ? \
+         pending_tool_batch_json = NULL, continuation_input_json = ?, updated_at_unix_ms = ? \
          WHERE run_id = ? AND status = 'waiting_tool_result'",
     )
+    .bind(serde_json::to_string(&continuation)?)
     .bind(now_unix_ms)
     .bind(run_id)
     .execute(&mut *connection)
@@ -371,7 +377,7 @@ async fn advance_run_after_tool(
             event_id,
             run_id,
             "tool_batch_completed",
-            &json!({"batch_id": batch_id, "invocations": invocations}),
+            &continuation,
             now_unix_ms,
         )
         .await?;

@@ -80,12 +80,15 @@ Mutating commands use `command_id` as an idempotency key. Reusing a key with dif
 - `commit_step`
 - `claim_next_tool`
 - `commit_tool`
+- `resume_run`
 - `cancel_run`
 - `list_events`
 
 A successful claim moves one runnable Run to `model_running`, increments its iteration and version, and returns a random claim token. `commit_step` requires the exact token and version. If the Host stops before commit, an expired `model_running` claim is moved to `needs_review`; it is never silently replayed.
 
 `wait_for_tool` persists every call before execution. Read-only calls whose lease expires return to `pending`; side-effecting calls with an unknown result move both the invocation and Run to `needs_review`. A completed batch moves the Run to `continuation_ready` only after every call has a durable result.
+
+Each Run also stores an opaque Profile checkpoint plus a one-shot continuation payload. Tool results and explicit `resume_run` input survive Host restarts and are cleared only after the next claimed model step commits.
 
 ## Verification
 

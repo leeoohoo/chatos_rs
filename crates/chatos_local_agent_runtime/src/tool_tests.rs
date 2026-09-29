@@ -6,7 +6,7 @@ use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
     ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand, CreateRunCommand, HostCommand,
     HostRequestEnvelope, HostResult, LocalAgentRunClaim, LocalAgentToolCall, LocalAgentToolClaim,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    ResumeRunCommand, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde_json::json;
 use std::sync::atomic::AtomicI64;
@@ -83,6 +83,7 @@ async fn prepare_claimed_tool(
                         arguments: json!({"path": "README.md"}),
                         side_effecting,
                     }],
+                    checkpoint: json!({"response_id": "response-1"}),
                 },
             }),
         ))
@@ -146,4 +147,93 @@ async fn expired_read_only_tool_is_requeued() {
         first_claim.invocation.invocation_id
     );
     assert!(second_claim.invocation.version > first_claim.invocation.version);
+}
+
+#[tokio::test]
+async fn waiting_user_resume_preserves_checkpoint_and_supplies_input() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(20_000)));
+    runtime.initialize().await.expect("initialize");
+    runtime
+        .handle(envelope(
+            "create-user-wait",
+            HostCommand::CreateRun(CreateRunCommand {
+                run_id: "run-user-wait".to_string(),
+                owner_user_id: "user-1".to_string(),
+                owner_entity_type: "conversation".to_string(),
+                owner_entity_id: "conversation-1".to_string(),
+                profile_key: "main_chat".to_string(),
+                model_config_ref: "model-1".to_string(),
+                model_config_revision: "revision-1".to_string(),
+                capability_policy_revision: "policy-1".to_string(),
+                input: json!({"message": "hello"}),
+                max_iterations: 4,
+            }),
+        ))
+        .await;
+    let claimed = runtime
+        .handle(envelope(
+            "claim-user-wait",
+            HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                worker_id: "model-worker".to_string(),
+                lease_duration_ms: 10_000,
+            }),
+        ))
+        .await;
+    let claim = match claimed.result.expect("claim") {
+        HostResult::Claim { claim: Some(claim) } => claim,
+        result => panic!("unexpected result: {result:?}"),
+    };
+    let waiting = runtime
+        .handle(envelope(
+            "wait-user",
+            HostCommand::CommitStep(CommitStepCommand {
+                run_id: claim.run.run_id,
+                claim_token: claim.claim_token,
+                expected_version: claim.run.version,
+                outcome: LocalAgentStepOutcome::WaitForUser {
+                    prompt: json!({"question": "Continue?"}),
+                    checkpoint: json!({"response_id": "response-user-wait"}),
+                },
+            }),
+        ))
+        .await;
+    let waiting = match waiting.result.expect("waiting") {
+        HostResult::Run { run } => run,
+        result => panic!("unexpected result: {result:?}"),
+    };
+    assert_eq!(waiting.status, LocalAgentRunStatus::WaitingUser);
+
+    let resumed = runtime
+        .handle(envelope(
+            "resume-user",
+            HostCommand::ResumeRun(ResumeRunCommand {
+                run_id: waiting.run_id,
+                expected_version: waiting.version,
+                expected_status: LocalAgentRunStatus::WaitingUser,
+                reason: "user replied".to_string(),
+                input: json!({"answer": "yes"}),
+            }),
+        ))
+        .await;
+    let resumed = match resumed.result.expect("resumed") {
+        HostResult::Run { run } => run,
+        result => panic!("unexpected result: {result:?}"),
+    };
+    assert_eq!(resumed.status, LocalAgentRunStatus::ContinuationReady);
+    assert_eq!(
+        resumed.checkpoint,
+        json!({"response_id": "response-user-wait"})
+    );
+    assert_eq!(
+        resumed
+            .continuation_input
+            .as_ref()
+            .and_then(|value| value.get("input")),
+        Some(&json!({"answer": "yes"}))
+    );
 }

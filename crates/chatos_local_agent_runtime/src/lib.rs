@@ -222,6 +222,26 @@ impl LocalAgentRuntime {
                     result: Box::new(result),
                 })
             }
+            HostCommand::ResumeRun(command) => {
+                let continuation_input = json!({
+                    "type": "resume",
+                    "reason": command.reason,
+                    "input": command.input
+                });
+                let run = self
+                    .store
+                    .resume_run(
+                        &idempotency,
+                        &command.run_id,
+                        command.expected_version,
+                        command.expected_status,
+                        &continuation_input,
+                        &new_event_id(),
+                        self.now()?,
+                    )
+                    .await?;
+                Ok(HostResult::Run { run })
+            }
             HostCommand::CancelRun(command) => {
                 let run = self
                     .store
@@ -281,6 +301,8 @@ fn create_run_record(command: CreateRunCommand, now: i64) -> LocalAgentRunRecord
         claim_until_unix_ms: None,
         next_attempt_at_unix_ms: None,
         pending_tool_batch: None,
+        checkpoint: serde_json::Value::Null,
+        continuation_input: None,
         terminal_outcome: None,
         created_at_unix_ms: now,
         updated_at_unix_ms: now,
@@ -298,10 +320,17 @@ fn transition_for_outcome(
         LocalAgentStepOutcome::WaitForTool {
             batch_id,
             tool_calls,
+            ..
         } => Some(LocalAgentToolBatch {
             batch_id: batch_id.clone(),
             calls: tool_calls.clone(),
         }),
+        _ => None,
+    };
+    let checkpoint = match &outcome {
+        LocalAgentStepOutcome::Continue { checkpoint }
+        | LocalAgentStepOutcome::WaitForTool { checkpoint, .. }
+        | LocalAgentStepOutcome::WaitForUser { checkpoint, .. } => Some(checkpoint.clone()),
         _ => None,
     };
     let (next_status, next_attempt, pending_tool_batch, terminal_outcome, event_type, payload) =
@@ -332,6 +361,7 @@ fn transition_for_outcome(
             LocalAgentStepOutcome::WaitForTool {
                 batch_id,
                 tool_calls,
+                ..
             } => {
                 let batch = json!({"batch_id": batch_id, "tool_calls": tool_calls});
                 (
@@ -343,7 +373,7 @@ fn transition_for_outcome(
                     batch,
                 )
             }
-            LocalAgentStepOutcome::WaitForUser { prompt } => (
+            LocalAgentStepOutcome::WaitForUser { prompt, .. } => (
                 LocalAgentRunStatus::WaitingUser,
                 None,
                 None,
@@ -407,6 +437,7 @@ fn transition_for_outcome(
         next_attempt_at_unix_ms: next_attempt,
         pending_tool_batch,
         tool_batch,
+        checkpoint,
         terminal_outcome,
         event_id: new_event_id(),
         event_type: event_type.to_string(),
@@ -620,6 +651,7 @@ mod tests {
                                 side_effecting: true,
                             },
                         ],
+                        checkpoint: json!({"response_id": "response-1"}),
                     },
                 }),
             ))
@@ -674,6 +706,16 @@ mod tests {
             } else {
                 assert_eq!(result.run.status, LocalAgentRunStatus::ContinuationReady);
                 assert!(result.run.pending_tool_batch.is_none());
+                assert_eq!(result.run.checkpoint, json!({"response_id": "response-1"}));
+                assert_eq!(
+                    result
+                        .run
+                        .continuation_input
+                        .as_ref()
+                        .and_then(|value| value.get("type"))
+                        .and_then(serde_json::Value::as_str),
+                    Some("tool_results")
+                );
             }
         }
 

@@ -6,7 +6,8 @@ pub(super) const RUN_SELECT: &str =
      model_config_ref, model_config_revision, capability_policy_revision, input_json, status, \
      iteration, max_iterations, version, claim_token, claim_until_unix_ms, \
      next_attempt_at_unix_ms, pending_tool_batch_json, terminal_outcome_json, \
-     created_at_unix_ms, updated_at_unix_ms FROM local_agent_runs WHERE run_id = ?";
+     checkpoint_json, continuation_input_json, created_at_unix_ms, updated_at_unix_ms \
+     FROM local_agent_runs WHERE run_id = ?";
 
 pub(super) const SCHEMA_V1: &[&str] = &[
     "CREATE TABLE local_agent_runs (\
@@ -87,4 +88,9 @@ pub(super) const SCHEMA_V2: &[&str] = &[
     "CREATE INDEX local_agent_tool_invocations_batch ON local_agent_tool_invocations(\
        run_id, batch_id, status, invocation_id\
      )",
+];
+
+pub(super) const SCHEMA_V3: &[&str] = &[
+    "ALTER TABLE local_agent_runs ADD COLUMN checkpoint_json TEXT NOT NULL DEFAULT 'null'",
+    "ALTER TABLE local_agent_runs ADD COLUMN continuation_input_json TEXT",
 ];

@@ -53,6 +53,7 @@ pub enum HostCommand {
     CommitStep(CommitStepCommand),
     ClaimNextTool(ClaimNextToolCommand),
     CommitTool(CommitToolCommand),
+    ResumeRun(ResumeRunCommand),
     CancelRun(CancelRunCommand),
     ListEvents(ListEventsCommand),
 }
@@ -67,6 +68,7 @@ impl HostCommand {
             Self::CommitStep(command) => command.validate(),
             Self::ClaimNextTool(command) => command.validate(),
             Self::CommitTool(command) => command.validate(),
+            Self::ResumeRun(command) => command.validate(),
             Self::CancelRun(command) => command.validate(),
             Self::ListEvents(command) => command.validate(),
         }
@@ -159,6 +161,45 @@ pub struct CancelRunCommand {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ResumeRunCommand {
+    pub run_id: String,
+    pub expected_version: u64,
+    pub expected_status: LocalAgentRunStatus,
+    pub reason: String,
+    #[serde(default)]
+    pub input: Value,
+}
+
+impl ResumeRunCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("run_id", &self.run_id)?;
+        if self.expected_version == 0 {
+            return Err("expected_version must be greater than zero".to_string());
+        }
+        if !matches!(
+            self.expected_status,
+            LocalAgentRunStatus::WaitingUser
+                | LocalAgentRunStatus::Paused
+                | LocalAgentRunStatus::NeedsReview
+        ) {
+            return Err(
+                "only waiting_user, paused, or needs_review runs can be resumed".to_string(),
+            );
+        }
+        validate_text("reason", &self.reason, 4_000)?;
+        let input_size = serde_json::to_vec(&self.input)
+            .map_err(|error| format!("resume input is not serializable: {error}"))?
+            .len();
+        if input_size > LOCAL_AGENT_MAX_INPUT_BYTES {
+            return Err(format!(
+                "resume input exceeds the {LOCAL_AGENT_MAX_INPUT_BYTES} byte limit"
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl CancelRunCommand {
     pub fn validate(&self) -> Result<(), String> {
         validate_identifier("run_id", &self.run_id)?;
@@ -204,10 +245,14 @@ pub enum LocalAgentStepOutcome {
         batch_id: String,
         #[serde(default)]
         tool_calls: Vec<LocalAgentToolCall>,
+        #[serde(default)]
+        checkpoint: Value,
     },
     WaitForUser {
         #[serde(default)]
         prompt: Value,
+        #[serde(default)]
+        checkpoint: Value,
     },
     Retry {
         resume_at_unix_ms: i64,
@@ -239,6 +284,7 @@ impl LocalAgentStepOutcome {
             Self::WaitForTool {
                 batch_id,
                 tool_calls,
+                ..
             } => {
                 validate_identifier("batch_id", batch_id)?;
                 if tool_calls.is_empty() {
@@ -355,6 +401,8 @@ pub struct LocalAgentRunRecord {
     pub claim_until_unix_ms: Option<i64>,
     pub next_attempt_at_unix_ms: Option<i64>,
     pub pending_tool_batch: Option<Value>,
+    pub checkpoint: Value,
+    pub continuation_input: Option<Value>,
     pub terminal_outcome: Option<Value>,
     pub created_at_unix_ms: i64,
     pub updated_at_unix_ms: i64,

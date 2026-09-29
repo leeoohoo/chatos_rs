@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use sqlx::Connection;
 use uuid::Uuid;
 
 fn run(now: i64) -> LocalAgentRunRecord {
@@ -23,6 +24,8 @@ fn run(now: i64) -> LocalAgentRunRecord {
         claim_until_unix_ms: None,
         next_attempt_at_unix_ms: None,
         pending_tool_batch: None,
+        checkpoint: serde_json::Value::Null,
+        continuation_input: None,
         terminal_outcome: None,
         created_at_unix_ms: now,
         updated_at_unix_ms: now,
@@ -166,6 +169,7 @@ async fn expired_claim_cannot_commit_a_late_step() {
                 next_attempt_at_unix_ms: None,
                 pending_tool_batch: None,
                 tool_batch: None,
+                checkpoint: None,
                 terminal_outcome: Some(serde_json::json!({"answer": 42})),
                 event_id: "event-completed".to_string(),
                 event_type: "run_succeeded".to_string(),
@@ -176,4 +180,72 @@ async fn expired_claim_cannot_commit_a_late_step() {
         .await
         .expect_err("expired claim must fail");
     assert!(matches!(error, ClientStorageError::Conflict(_)));
+}
+
+#[tokio::test]
+async fn version_two_database_migrates_checkpoint_columns() {
+    let database_path = std::env::temp_dir().join(format!(
+        "chatos-local-agent-migration-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let options = SqliteConnectOptions::new()
+        .filename(&database_path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let mut connection = SqliteConnection::connect_with(&options)
+        .await
+        .expect("legacy connection");
+    sqlx::query(
+        "CREATE TABLE client_schema_migrations (\
+         version INTEGER PRIMARY KEY NOT NULL, applied_at_unix_ms INTEGER NOT NULL)",
+    )
+    .execute(&mut connection)
+    .await
+    .expect("migration table");
+    for statement in crate::schema::SCHEMA_V1 {
+        sqlx::query(statement)
+            .execute(&mut connection)
+            .await
+            .expect("schema v1");
+    }
+    for statement in crate::schema::SCHEMA_V2 {
+        sqlx::query(statement)
+            .execute(&mut connection)
+            .await
+            .expect("schema v2");
+    }
+    sqlx::query(
+        "INSERT INTO client_schema_migrations(version, applied_at_unix_ms) \
+         VALUES(1, 1000), (2, 2000)",
+    )
+    .execute(&mut connection)
+    .await
+    .expect("legacy versions");
+    connection.close().await.expect("close legacy database");
+
+    let storage = SqliteClientStorage::connect_file(&database_path)
+        .await
+        .expect("migrate storage");
+    let expected = run(3_000);
+    let created = storage
+        .create_run(
+            &command("create-migrated", "create-migrated"),
+            &expected,
+            "event-created-migrated",
+        )
+        .await
+        .expect("create after migration");
+    assert_eq!(created.checkpoint, serde_json::Value::Null);
+    assert!(created.continuation_input.is_none());
+    storage.pool.close().await;
+    drop(storage);
+    for path in [
+        database_path.clone(),
+        database_path.with_extension("sqlite-wal"),
+        database_path.with_extension("sqlite-shm"),
+    ] {
+        if let Err(error) = std::fs::remove_file(&path) {
+            assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        }
+    }
 }
