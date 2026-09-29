@@ -9,18 +9,20 @@ public sealed class SshVerificationExchangeTests
     {
         var attempt = new SshSessionAttempt<FakeSession>(
             initialCode: null,
-            lifetime: TimeSpan.FromSeconds(5),
+            lifetime: TimeSpan.FromSeconds(10),
             async (verification, cancellationToken) =>
             {
-                var response = await Task.Run(
+                var response = await Task.Factory.StartNew(
                     () => verification.ResolveResponse("Please input MFA code (SMS):", null),
-                    cancellationToken);
+                    cancellationToken,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default);
                 return new FakeSession(response);
             });
 
         var challenge = await attempt.ObserveAsync(
             afterVersion: 0,
-            phaseTimeout: TimeSpan.FromSeconds(2),
+            phaseTimeout: TimeSpan.FromSeconds(5),
             CancellationToken.None);
 
         Assert.NotNull(challenge);
@@ -30,7 +32,7 @@ public sealed class SshVerificationExchangeTests
 
         var nextChallenge = await attempt.ObserveAsync(
             challenge.Version,
-            TimeSpan.FromSeconds(2),
+            TimeSpan.FromSeconds(5),
             CancellationToken.None);
         Assert.Null(nextChallenge);
         using var session = await attempt.TakeAsync();

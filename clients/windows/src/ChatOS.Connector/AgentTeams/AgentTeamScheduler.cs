@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using ChatOS.Connector.Gateway;
@@ -249,10 +250,18 @@ internal sealed partial class AgentTeamScheduler(
         string? responseMessageId = null;
         var ended = false;
         var transientRetries = 0;
+        var noProgressRounds = 0;
+        var observations = new Dictionary<string, string>(StringComparer.Ordinal);
         for (var modelCall = run.ModelCalls + 1;
              modelCall <= settings.MaximumModelCalls && !ended;
              modelCall++)
         {
+            if (noProgressRounds >= settings.MaximumNoProgressRounds)
+            {
+                throw new AgentTeamException(AgentTeamError.ModelUnavailable,
+                    "Agent paused after repeated tool rounds without progress.");
+            }
+            AgentTeamContextBudget.EnsureWithinLimit(input, definitions, settings);
             run = run with
             {
                 ModelCalls = modelCall,
@@ -263,7 +272,8 @@ internal sealed partial class AgentTeamScheduler(
             try
             {
                 turn = await models.CompleteAsync(profile, input, definitions, cancellationToken,
-                        settings.RequestTimeoutSeconds)
+                        settings.RequestTimeoutSeconds,
+                        Math.Min(16_384, settings.OutputReserveTokens))
                     .ConfigureAwait(false);
             }
             catch (AgentTeamException exception) when (
@@ -296,6 +306,7 @@ internal sealed partial class AgentTeamScheduler(
                 continue;
             }
 
+            noProgressRounds++;
             foreach (var call in turn.ToolCalls)
             {
                 AgentToolExecutionResult result;
@@ -313,7 +324,7 @@ internal sealed partial class AgentTeamScheduler(
                     {
                         success = false,
                         error = SafeError(exception),
-                    }));
+                    }), IsError: true);
                 }
 
                 input.Add(new Dictionary<string, object>
@@ -322,6 +333,11 @@ internal sealed partial class AgentTeamScheduler(
                     ["call_id"] = call.Id,
                     ["output"] = result.Content,
                 });
+                var signature = ToolFingerprint(call);
+                var madeProgress = !observations.TryGetValue(signature, out var previous) ||
+                    !string.Equals(previous, result.Content, StringComparison.Ordinal);
+                observations[signature] = result.Content;
+                if (madeProgress && !result.IsError) noProgressRounds = 0;
                 responseMessageId ??= result.ResponseMessageId;
                 if (result.EndsCycle)
                 {
@@ -588,5 +604,22 @@ internal sealed partial class AgentTeamScheduler(
             _ => "The local Agent run failed before completion.",
         };
         return message.Length <= 2_000 ? message : message[..2_000];
+    }
+
+    private static string ToolFingerprint(AgentToolCall call)
+    {
+        string arguments;
+        try
+        {
+            using var document = JsonDocument.Parse(call.Arguments);
+            arguments = JsonSerializer.Serialize(document.RootElement);
+        }
+        catch (JsonException)
+        {
+            arguments = call.Arguments;
+        }
+
+        return Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes($"{call.Name}\n{arguments}")));
     }
 }

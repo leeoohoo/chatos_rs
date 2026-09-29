@@ -65,12 +65,14 @@ public sealed class AgentTeamSchedulerTests : IAsyncLifetime
         });
         var turn = await gateway.CompleteAsync(Profile(),
             [new Dictionary<string, object> { ["role"] = "user", ["content"] = "hello" }],
-            AgentTeamToolExecutor.Definitions, CancellationToken.None);
+            AgentTeamToolExecutor.Definitions, CancellationToken.None,
+            maximumOutputTokens: 512);
 
         Assert.Equal("https://provider.example/v1/responses", captured!.RequestUri!.AbsoluteUri);
         Assert.Equal("Bearer", captured.Headers.Authorization!.Scheme);
         Assert.Equal("provider-secret", captured.Headers.Authorization.Parameter);
         Assert.Contains("\"store\":false", requestBody, StringComparison.Ordinal);
+        Assert.Contains("\"max_output_tokens\":512", requestBody, StringComparison.Ordinal);
         Assert.DoesNotContain("provider-secret", requestBody, StringComparison.Ordinal);
         Assert.Equal("先检查", turn.Content);
         var call = Assert.Single(turn.ToolCalls);
@@ -107,6 +109,79 @@ public sealed class AgentTeamSchedulerTests : IAsyncLifetime
         Assert.Equal(delivery.Id, run.DeliveryId);
         Assert.Equal(AgentRunStatus.Completed, run.Status);
         Assert.Equal(1, run.ModelCalls);
+    }
+
+    [Fact]
+    public async Task ManagedNoProgressLimitStopsRepeatedToolRounds()
+    {
+        var profile = await _store.CreateAgentAsync("alice", Profile().Draft);
+        var room = await _store.CreateRoomAsync("alice", "project-1",
+            new("团队", "停止无进展循环"), profile.Id);
+        await CompleteInitialMaintenanceAsync();
+        _ = await _store.PostMessageAsync("alice", room.Id,
+            new(AgentMessageSenderKind.Human, null, "检查成员"));
+        var providerCalls = 0;
+        var gateway = CreateGateway(_ =>
+        {
+            providerCalls++;
+            return Task.FromResult(Json($$"""
+                {"status":"completed","output":[
+                  {"type":"function_call","call_id":"call-{{providerCalls}}","name":"team_members","arguments":"{}"}
+                ]}
+                """));
+        });
+        var runtime = new AgentTeamRuntimeSettingsProvider();
+        runtime.Update(runtime.Current with
+        {
+            MaximumModelCalls = 10,
+            MaximumNoProgressRounds = 2,
+        });
+        var scheduler = new AgentTeamScheduler(_store, gateway,
+            new AgentTeamToolExecutor(_store, null!), runtimeSettings: runtime);
+
+        await scheduler.DrainAsync("alice");
+
+        var run = Assert.Single(await _store.ListRunsAsync("alice", room.Id));
+        Assert.Equal(AgentRunStatus.Failed, run.Status);
+        Assert.Equal(3, providerCalls);
+        Assert.Contains("without progress", run.LastError, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ManagedContextBudgetStopsOversizedRequestBeforeProviderCall()
+    {
+        var profile = await _store.CreateAgentAsync("alice", Profile().Draft);
+        var room = await _store.CreateRoomAsync("alice", "project-1",
+            new("团队", "限制上下文"), profile.Id);
+        await CompleteInitialMaintenanceAsync();
+        _ = await _store.PostMessageAsync("alice", room.Id,
+            new(AgentMessageSenderKind.Human, null, new string('x', 20_000)));
+        var providerCalls = 0;
+        var gateway = CreateGateway(_ =>
+        {
+            providerCalls++;
+            return Task.FromResult(Json("""
+                {"status":"completed","output":[
+                  {"type":"message","content":[{"type":"output_text","text":"done"}]}
+                ]}
+                """));
+        });
+        var runtime = new AgentTeamRuntimeSettingsProvider();
+        runtime.Update(runtime.Current with
+        {
+            ContextWindowTokens = 2_048,
+            OutputReserveTokens = 512,
+        });
+        var scheduler = new AgentTeamScheduler(_store, gateway,
+            new AgentTeamToolExecutor(_store, null!), runtimeSettings: runtime);
+
+        await scheduler.DrainAsync("alice");
+
+        var run = Assert.Single(await _store.ListRunsAsync("alice", room.Id));
+        Assert.Equal(AgentRunStatus.Failed, run.Status);
+        Assert.Equal(0, run.ModelCalls);
+        Assert.Equal(0, providerCalls);
+        Assert.Contains("context budget", run.LastError, StringComparison.Ordinal);
     }
 
     [Fact]

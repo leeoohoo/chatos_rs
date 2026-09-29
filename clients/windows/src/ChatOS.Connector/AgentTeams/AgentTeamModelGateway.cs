@@ -31,7 +31,8 @@ internal sealed class AgentTeamModelGateway(
         IReadOnlyList<object> input,
         IReadOnlyList<AgentToolDefinition> tools,
         CancellationToken cancellationToken,
-        int requestTimeoutSeconds = 180)
+        int requestTimeoutSeconds = 180,
+        int maximumOutputTokens = 16_384)
     {
         var config = await apiClient.GetAsync<AgentModelConfigurationDto>(
             $"ai-model-configs/{Uri.EscapeDataString(profile.Draft.ModelConfigId)}?include_secret=true",
@@ -57,7 +58,7 @@ internal sealed class AgentTeamModelGateway(
             }).ToArray(),
             ["tool_choice"] = "auto",
             ["store"] = false,
-            ["max_output_tokens"] = 16_384,
+            ["max_output_tokens"] = maximumOutputTokens,
             ["prompt_cache_key"] = "windows-agent-team",
         };
         var thinking = profile.Draft.ThinkingLevel?.Trim().ToLowerInvariant();
