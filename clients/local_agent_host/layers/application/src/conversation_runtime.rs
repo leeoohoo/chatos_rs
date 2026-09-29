@@ -27,6 +27,17 @@ impl LocalAgentRuntime {
                     .await?
                     .ok_or(ClientStorageError::NotFound(command.conversation_id))?,
             }),
+            HostCommand::GetConversationHistory(command) => Ok(HostResult::ConversationHistory {
+                page: Box::new(
+                    self.store
+                        .get_conversation_history(
+                            &command.conversation_id,
+                            command.before_ordinal,
+                            command.limit,
+                        )
+                        .await?,
+                ),
+            }),
             HostCommand::ListConversations(command) => Ok(HostResult::Conversations {
                 conversations: self
                     .store
@@ -158,9 +169,10 @@ mod tests {
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
         CancelConversationTurnCommand, ClaimNextRunCommand, CommitStepCommand,
-        GetConversationCommand, HostRequestEnvelope, ListConversationsCommand,
-        LocalAgentStepOutcome, LocalConversationAttachmentSpec, LocalConversationMessageRole,
-        LocalConversationTurnStatus, ResumeConversationTurnCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+        GetConversationCommand, GetConversationHistoryCommand, HostRequestEnvelope,
+        ListConversationsCommand, LocalAgentStepOutcome, LocalConversationAttachmentSpec,
+        LocalConversationMessageRole, LocalConversationTurnStatus, ResumeConversationTurnCommand,
+        LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use std::sync::Arc;
 
@@ -280,6 +292,23 @@ mod tests {
         assert!(matches!(
             listed,
             HostResult::Conversations { conversations } if conversations.len() == 1
+        ));
+
+        let history = runtime
+            .try_handle(request(
+                "get-conversation-history-1",
+                HostCommand::GetConversationHistory(GetConversationHistoryCommand {
+                    conversation_id: "conversation-1".to_string(),
+                    before_ordinal: None,
+                    limit: 10,
+                }),
+            ))
+            .await
+            .expect("get conversation history");
+        assert!(matches!(
+            history,
+            HostResult::ConversationHistory { page }
+                if page.messages.len() == 1 && page.attachments.len() == 1
         ));
     }
 

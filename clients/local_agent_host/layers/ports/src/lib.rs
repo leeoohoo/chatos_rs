@@ -8,9 +8,10 @@ use chatos_local_agent_protocol::{
     CancelConversationTurnCommand, CreateConversationCommand, CreateTaskGraphCommand,
     LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunRecord, LocalAgentRunStatus,
     LocalAgentToolBatch, LocalAgentToolClaim, LocalAgentToolCommitResult, LocalAgentToolOutcome,
-    LocalConversationDetail, LocalConversationRecord, LocalConversationTurnStart,
-    LocalConversationTurnUpdate, LocalPluginInstallationRecord, LocalPluginInstallationSpec,
-    LocalTaskGraph, ResumeConversationTurnCommand, StartConversationTurnCommand,
+    LocalConversationDetail, LocalConversationHistoryPage, LocalConversationRecord,
+    LocalConversationTurnStart, LocalConversationTurnUpdate, LocalPluginInstallationRecord,
+    LocalPluginInstallationSpec, LocalTaskGraph, ResumeConversationTurnCommand,
+    StartConversationTurnCommand,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -281,6 +282,13 @@ pub trait LocalConversationStore: Send + Sync {
         &self,
         conversation_id: &str,
     ) -> Result<Option<LocalConversationDetail>, ClientStorageError>;
+
+    async fn get_conversation_history(
+        &self,
+        conversation_id: &str,
+        before_ordinal: Option<u64>,
+        limit: u32,
+    ) -> Result<LocalConversationHistoryPage, ClientStorageError>;
 
     async fn list_conversations(
         &self,

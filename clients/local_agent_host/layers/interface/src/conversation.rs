@@ -7,6 +7,7 @@ use serde_json::Value;
 use std::{collections::HashSet, fmt, str::FromStr};
 
 pub const LOCAL_CONVERSATION_MAX_ATTACHMENTS: usize = 32;
+pub const LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE: u32 = 100;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateConversationCommand {
@@ -253,6 +254,28 @@ impl GetConversationCommand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetConversationHistoryCommand {
+    pub conversation_id: String,
+    pub before_ordinal: Option<u64>,
+    pub limit: u32,
+}
+
+impl GetConversationHistoryCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("conversation_id", &self.conversation_id)?;
+        if self.before_ordinal == Some(0) {
+            return Err("before_ordinal must be greater than zero".to_string());
+        }
+        if self.limit == 0 || self.limit > LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE {
+            return Err(format!(
+                "limit must be between 1 and {LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE}"
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ListConversationsCommand {
     pub owner_user_id: String,
     pub limit: u32,
@@ -394,6 +417,15 @@ pub struct LocalConversationDetail {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LocalConversationHistoryPage {
+    pub conversation: LocalConversationRecord,
+    pub turns: Vec<LocalConversationTurnRecord>,
+    pub messages: Vec<LocalConversationMessageRecord>,
+    pub attachments: Vec<LocalConversationAttachmentRecord>,
+    pub next_before_ordinal: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LocalConversationTurnStart {
     pub conversation: LocalConversationRecord,
     pub turn: LocalConversationTurnRecord,
@@ -492,5 +524,23 @@ mod tests {
         }
         .validate()
         .is_ok());
+    }
+
+    #[test]
+    fn history_page_requires_a_bounded_positive_cursor() {
+        assert!(GetConversationHistoryCommand {
+            conversation_id: "conversation-1".to_string(),
+            before_ordinal: None,
+            limit: LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE,
+        }
+        .validate()
+        .is_ok());
+        assert!(GetConversationHistoryCommand {
+            conversation_id: "conversation-1".to_string(),
+            before_ordinal: Some(0),
+            limit: 10,
+        }
+        .validate()
+        .is_err());
     }
 }

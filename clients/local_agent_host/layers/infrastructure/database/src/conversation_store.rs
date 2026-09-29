@@ -75,6 +75,21 @@ impl LocalConversationStore for SqliteClientStorage {
         fetch_conversation(&mut connection, conversation_id).await
     }
 
+    async fn get_conversation_history(
+        &self,
+        conversation_id: &str,
+        before_ordinal: Option<u64>,
+        limit: u32,
+    ) -> Result<chatos_local_agent_protocol::LocalConversationHistoryPage, ClientStorageError> {
+        super::conversation_history::get_conversation_history(
+            self,
+            conversation_id,
+            before_ordinal,
+            limit,
+        )
+        .await
+    }
+
     async fn list_conversations(
         &self,
         owner_user_id: &str,
@@ -441,7 +456,9 @@ fn decode_conversation(row: SqliteRow) -> Result<LocalConversationRecord, Client
     })
 }
 
-fn decode_turn(row: SqliteRow) -> Result<LocalConversationTurnRecord, ClientStorageError> {
+pub(super) fn decode_turn(
+    row: SqliteRow,
+) -> Result<LocalConversationTurnRecord, ClientStorageError> {
     let status: String = row.try_get("status").db()?;
     Ok(LocalConversationTurnRecord {
         turn_id: row.try_get("turn_id").db()?,
@@ -455,7 +472,9 @@ fn decode_turn(row: SqliteRow) -> Result<LocalConversationTurnRecord, ClientStor
     })
 }
 
-fn decode_message(row: SqliteRow) -> Result<LocalConversationMessageRecord, ClientStorageError> {
+pub(super) fn decode_message(
+    row: SqliteRow,
+) -> Result<LocalConversationMessageRecord, ClientStorageError> {
     let role: String = row.try_get("role").db()?;
     let content: String = row.try_get("content_json").db()?;
     let metadata: String = row.try_get("metadata_json").db()?;
@@ -472,7 +491,7 @@ fn decode_message(row: SqliteRow) -> Result<LocalConversationMessageRecord, Clie
     })
 }
 
-fn decode_attachment(
+pub(super) fn decode_attachment(
     row: SqliteRow,
 ) -> Result<LocalConversationAttachmentRecord, ClientStorageError> {
     let metadata: String = row.try_get("metadata_json").db()?;

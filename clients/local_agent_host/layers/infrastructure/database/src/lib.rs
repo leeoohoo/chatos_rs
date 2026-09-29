@@ -16,6 +16,7 @@ use sqlx::{
 use std::{path::Path, str::FromStr, time::Duration};
 
 mod conversation_commands;
+mod conversation_history;
 mod conversation_lifecycle;
 mod conversation_store;
 mod migration;

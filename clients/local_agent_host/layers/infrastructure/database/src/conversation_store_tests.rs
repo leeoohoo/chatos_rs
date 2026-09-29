@@ -482,3 +482,68 @@ async fn cancel_turn_reconciles_the_owned_run_without_assistant_message() {
         .expect("conversation");
     assert_eq!(detail.messages.len(), 1);
 }
+
+#[tokio::test]
+async fn history_pages_are_bounded_chronological_and_cursor_stable() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    create(&storage, "conversation-history").await;
+    let mut expected_version = 1;
+    for (index, suffix) in ["one", "two", "three"].into_iter().enumerate() {
+        let mut next = turn("conversation-history", expected_version, suffix);
+        if suffix == "two" {
+            next.attachments.push(LocalConversationAttachmentSpec {
+                attachment_id: "attachment-history-two".to_string(),
+                display_name: "two.txt".to_string(),
+                media_type: "text/plain".to_string(),
+                byte_size: 3,
+                sha256: "c".repeat(64),
+                authorized_local_ref: "local-attachment:history-two".to_string(),
+                metadata: json!({}),
+            });
+        }
+        let started = start(&storage, &next, 10_000 + index as i64)
+            .await
+            .expect("start history Turn");
+        expected_version += 1;
+        storage
+            .cancel_run(
+                &idempotency(&format!("cancel-history-{suffix}")),
+                &started.run.run_id,
+                Some(started.run.version),
+                "finish fixture",
+                &format!("event-cancel-history-{suffix}"),
+                20_000 + index as i64,
+            )
+            .await
+            .expect("cancel history Run");
+        expected_version += 1;
+    }
+
+    let latest = storage
+        .get_conversation_history("conversation-history", None, 2)
+        .await
+        .expect("latest history page");
+    assert_eq!(
+        latest
+            .messages
+            .iter()
+            .map(|message| message.ordinal)
+            .collect::<Vec<_>>(),
+        vec![2, 3]
+    );
+    assert_eq!(latest.next_before_ordinal, Some(2));
+    assert_eq!(latest.turns.len(), 2);
+    assert_eq!(latest.attachments.len(), 1);
+    assert_eq!(latest.attachments[0].message_id, "message-two");
+
+    let older = storage
+        .get_conversation_history("conversation-history", latest.next_before_ordinal, 2)
+        .await
+        .expect("older history page");
+    assert_eq!(older.messages.len(), 1);
+    assert_eq!(older.messages[0].ordinal, 1);
+    assert_eq!(older.next_before_ordinal, None);
+    assert!(older.attachments.is_empty());
+}
