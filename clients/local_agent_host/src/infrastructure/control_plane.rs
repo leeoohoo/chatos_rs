@@ -8,8 +8,8 @@ use crate::{
 use async_trait::async_trait;
 use chatos_ai_runtime::{ContextualTurnRunner, JsonSchemaOutputFormat, ModelRuntimeConfig};
 use chatos_local_agent_ports::{
-    LocalCapabilityPolicySnapshot, LocalCapabilitySnapshotStore, LocalJsonSchemaOutputFormat,
-    LocalModelConfigSnapshot, LocalModelConfigSnapshotStore,
+    IdempotentCommand, LocalCapabilityPolicySnapshot, LocalCapabilitySnapshotStore,
+    LocalJsonSchemaOutputFormat, LocalModelConfigSnapshot, LocalModelConfigSnapshotStore,
 };
 use std::{
     collections::HashMap,
@@ -70,9 +70,16 @@ impl LocalControlPlaneSnapshot {
         let store = self.model_store.as_ref().ok_or_else(|| {
             "model config storage is not configured for this control-plane resolver".to_string()
         })?;
+        let command = snapshot_command(
+            "model",
+            &snapshot.model_config_ref,
+            &snapshot.model_config_revision,
+            snapshot,
+        )?;
         store
-            .put_model_config_snapshot(snapshot, now_unix_ms()?)
+            .put_model_config_snapshot(&command, snapshot, now_unix_ms()?)
             .await
+            .map(|_| ())
             .map_err(|error| error.to_string())
     }
 
@@ -110,8 +117,14 @@ impl LocalControlPlaneSnapshot {
         let snapshot = encode_capabilities(&key, &capabilities);
         snapshot.validate()?;
         if let Some(store) = &self.capability_store {
+            let command = snapshot_command(
+                "capability",
+                &snapshot.profile_key,
+                &snapshot.capability_policy_revision,
+                &snapshot,
+            )?;
             store
-                .put_capability_snapshot(&snapshot, now_unix_ms()?)
+                .put_capability_snapshot(&command, &snapshot, now_unix_ms()?)
                 .await
                 .map_err(|error| error.to_string())?;
         }
@@ -326,6 +339,18 @@ fn now_unix_ms() -> Result<i64, String> {
         .map_err(|error| format!("system clock is before Unix epoch: {error}"))?;
     i64::try_from(elapsed.as_millis())
         .map_err(|_| "system time does not fit in an i64 millisecond timestamp".to_string())
+}
+
+fn snapshot_command<T: serde::Serialize>(
+    kind: &str,
+    reference: &str,
+    revision: &str,
+    snapshot: &T,
+) -> Result<IdempotentCommand, String> {
+    Ok(IdempotentCommand {
+        command_id: format!("internal-control-plane-{kind}:{reference}:{revision}"),
+        request_fingerprint: serde_json::to_string(snapshot).map_err(|error| error.to_string())?,
+    })
 }
 
 fn revision_key(

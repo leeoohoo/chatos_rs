@@ -50,7 +50,7 @@ pub struct LocalJsonSchemaOutputFormat {
     pub strict: bool,
 }
 
-/// Durable model configuration metadata. This type structurally cannot carry
+/// Durable model configuration metadata. This protocol type structurally cannot carry
 /// an API key: only a reference resolvable by Keychain/Credential Manager is
 /// persisted.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -110,6 +110,57 @@ impl LocalModelConfigSnapshot {
             }
         }
         validate_encoded_size("model config snapshot", self)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PutModelConfigSnapshotCommand {
+    pub snapshot: LocalModelConfigSnapshot,
+}
+
+impl PutModelConfigSnapshotCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        self.snapshot.validate()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetModelConfigSnapshotCommand {
+    pub model_config_ref: String,
+    pub model_config_revision: String,
+}
+
+impl GetModelConfigSnapshotCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("model_config_ref", &self.model_config_ref)?;
+        validate_identifier("model_config_revision", &self.model_config_revision)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PutCapabilityPolicySnapshotCommand {
+    pub snapshot: LocalCapabilityPolicySnapshot,
+}
+
+impl PutCapabilityPolicySnapshotCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        self.snapshot.validate()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetCapabilityPolicySnapshotCommand {
+    pub profile_key: String,
+    pub capability_policy_revision: String,
+}
+
+impl GetCapabilityPolicySnapshotCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("profile_key", &self.profile_key)?;
+        validate_identifier(
+            "capability_policy_revision",
+            &self.capability_policy_revision,
+        )
     }
 }
 

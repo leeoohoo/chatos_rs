@@ -17,9 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-mod control_plane_snapshots;
-
-pub use control_plane_snapshots::{
+pub use chatos_local_agent_protocol::{
     LocalCapabilityPolicySnapshot, LocalJsonSchemaOutputFormat, LocalModelConfigSnapshot,
     MAX_CAPABILITY_INSTRUCTIONS_BYTES, MAX_CAPABILITY_ITEMS, MAX_CONTROL_PLANE_SNAPSHOT_BYTES,
 };
@@ -282,9 +280,10 @@ pub trait LocalCapabilitySnapshotStore: Send + Sync {
     /// its key for different content must be rejected as a conflict.
     async fn put_capability_snapshot(
         &self,
+        command: &IdempotentCommand,
         snapshot: &LocalCapabilityPolicySnapshot,
         now_unix_ms: i64,
-    ) -> Result<(), ClientStorageError>;
+    ) -> Result<LocalCapabilityPolicySnapshot, ClientStorageError>;
 
     async fn get_capability_snapshot(
         &self,
@@ -299,9 +298,10 @@ pub trait LocalModelConfigSnapshotStore: Send + Sync {
     /// are represented only by native credential-store references.
     async fn put_model_config_snapshot(
         &self,
+        command: &IdempotentCommand,
         snapshot: &LocalModelConfigSnapshot,
         now_unix_ms: i64,
-    ) -> Result<(), ClientStorageError>;
+    ) -> Result<LocalModelConfigSnapshot, ClientStorageError>;
 
     async fn get_model_config_snapshot(
         &self,
@@ -379,6 +379,8 @@ pub trait LocalAgentStore:
     + LocalAgentTaskStore
     + LocalPluginInstallationStore
     + LocalConversationStore
+    + LocalCapabilitySnapshotStore
+    + LocalModelConfigSnapshotStore
 {
 }
 
@@ -388,5 +390,7 @@ impl<T> LocalAgentStore for T where
         + LocalAgentTaskStore
         + LocalPluginInstallationStore
         + LocalConversationStore
+        + LocalCapabilitySnapshotStore
+        + LocalModelConfigSnapshotStore
 {
 }

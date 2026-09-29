@@ -44,7 +44,9 @@ The in-process assembly reserves `create_task` and `create_tasks_with_prerequisi
 
 Native clients may choose `LocalAgentHostAssembly::with_external_tool_worker`. In that mode Swift or C# claims and commits platform tools through IPC, while Rust still owns model scheduling plus the two Task creation tools and wakes immediately after each native tool receipt. This keeps platform permissions and UI-bound tools in the native process without duplicating the Agent loop.
 
-Protocol v14 retains the optional `include_tool_names` and `exclude_tool_names` Tool claim filters. The Assembly's Rust worker includes only the two reserved Task tools, and Coordinator IPC automatically excludes them from native claims. Explicit overlapping filters are rejected.
+Protocol v15 retains the optional `include_tool_names` and `exclude_tool_names` Tool claim filters. The Assembly's Rust worker includes only the two reserved Task tools, and Coordinator IPC automatically excludes them from native claims. Explicit overlapping filters are rejected.
+
+Protocol v15 also lets authenticated native-client configuration code publish and read immutable model and capability revisions through the same protected Host IPC connection. These commands contain only the non-secret DTOs defined by the interface layer; storage ports and SQLite remain below the application boundary. Command receipts make publication replay-safe and reject reuse of one command ID with different content.
 
 Main Chat conversations are now written to the local SQLite fact source rather than a server Task Runner or `chatos` conversation runtime. Starting a Turn atomically creates the Turn, its user Message, and one queued `main_chat` Run owned by that Turn. A conversation version compare-and-swap rejects stale composers, while a partial unique index permits only one active Turn per conversation. Successful Runs append a deterministic assistant Message and close the Turn in the same transaction; failed or cancelled Runs close the Turn without inventing an assistant response. Historical server conversations are intentionally not migrated.
 
@@ -107,7 +109,7 @@ Example health request:
 
 ```json
 {
-  "protocol_version": 14,
+  "protocol_version": 15,
   "command_id": "health-019",
   "command": {
     "type": "health"
@@ -120,6 +122,10 @@ Mutating commands use `command_id` as an idempotency key. Reusing a key with dif
 ## Supported commands
 
 - `health`
+- `put_model_config_snapshot`
+- `get_model_config_snapshot`
+- `put_capability_policy_snapshot`
+- `get_capability_policy_snapshot`
 - `create_run`
 - `get_run`
 - `claim_next_run`

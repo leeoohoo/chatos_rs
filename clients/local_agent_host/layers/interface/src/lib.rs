@@ -10,11 +10,18 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{fmt, str::FromStr};
 
+mod control_plane;
 mod conversation;
 mod plugin;
 mod task;
 mod tool;
 
+pub use control_plane::{
+    GetCapabilityPolicySnapshotCommand, GetModelConfigSnapshotCommand,
+    LocalCapabilityPolicySnapshot, LocalJsonSchemaOutputFormat, LocalModelConfigSnapshot,
+    PutCapabilityPolicySnapshotCommand, PutModelConfigSnapshotCommand,
+    MAX_CAPABILITY_INSTRUCTIONS_BYTES, MAX_CAPABILITY_ITEMS, MAX_CONTROL_PLANE_SNAPSHOT_BYTES,
+};
 pub use conversation::{
     CancelConversationTurnCommand, CreateConversationCommand, GetConversationCommand,
     GetConversationHistoryCommand, GuideConversationTurnCommand, ListConversationsCommand,
@@ -41,7 +48,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 14;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 15;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -70,6 +77,10 @@ impl HostRequestEnvelope {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HostCommand {
     Health,
+    PutModelConfigSnapshot(PutModelConfigSnapshotCommand),
+    GetModelConfigSnapshot(GetModelConfigSnapshotCommand),
+    PutCapabilityPolicySnapshot(PutCapabilityPolicySnapshotCommand),
+    GetCapabilityPolicySnapshot(GetCapabilityPolicySnapshotCommand),
     CreateRun(CreateRunCommand),
     GetRun { run_id: String },
     ClaimNextRun(ClaimNextRunCommand),
@@ -104,6 +115,10 @@ impl HostCommand {
     pub fn validate(&self) -> Result<(), String> {
         match self {
             Self::Health => Ok(()),
+            Self::PutModelConfigSnapshot(command) => command.validate(),
+            Self::GetModelConfigSnapshot(command) => command.validate(),
+            Self::PutCapabilityPolicySnapshot(command) => command.validate(),
+            Self::GetCapabilityPolicySnapshot(command) => command.validate(),
             Self::CreateRun(command) => command.validate(),
             Self::GetRun { run_id } => validate_identifier("run_id", run_id),
             Self::ClaimNextRun(command) => command.validate(),
@@ -555,6 +570,12 @@ pub enum HostResult {
         service: String,
         storage_ready: bool,
         recovered_claims: u64,
+    },
+    ModelConfigSnapshot {
+        snapshot: LocalModelConfigSnapshot,
+    },
+    CapabilityPolicySnapshot {
+        snapshot: LocalCapabilityPolicySnapshot,
     },
     Run {
         run: LocalAgentRunRecord,

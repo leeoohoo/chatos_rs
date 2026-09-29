@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    ClientStorageError, LocalModelConfigSnapshot, LocalModelConfigSnapshotStore,
+    ClientStorageError, IdempotentCommand, LocalModelConfigSnapshot, LocalModelConfigSnapshotStore,
     SqliteClientStorage, SqliteResultExt,
 };
 use async_trait::async_trait;
@@ -19,9 +19,10 @@ const SNAPSHOT_SELECT: &str =
 impl LocalModelConfigSnapshotStore for SqliteClientStorage {
     async fn put_model_config_snapshot(
         &self,
+        command: &IdempotentCommand,
         snapshot: &LocalModelConfigSnapshot,
         now_unix_ms: i64,
-    ) -> Result<(), ClientStorageError> {
+    ) -> Result<LocalModelConfigSnapshot, ClientStorageError> {
         snapshot
             .validate()
             .map_err(ClientStorageError::InvalidState)?;
@@ -33,6 +34,9 @@ impl LocalModelConfigSnapshotStore for SqliteClientStorage {
         let mut connection = self.pool.acquire().await.db()?;
         Self::begin_immediate(&mut connection).await?;
         let result = async {
+            if let Some(replay) = Self::replay(&mut connection, command).await? {
+                return Ok(replay);
+            }
             if let Some(current) = fetch_snapshot(
                 &mut connection,
                 &snapshot.model_config_ref,
@@ -41,14 +45,17 @@ impl LocalModelConfigSnapshotStore for SqliteClientStorage {
             .await?
             {
                 if current == *snapshot {
-                    return Ok(());
+                    Self::record_receipt(&mut connection, command, &current, now_unix_ms).await?;
+                    return Ok(current);
                 }
                 return Err(ClientStorageError::Conflict(format!(
                     "model config revision already contains different content: {}@{}",
                     snapshot.model_config_ref, snapshot.model_config_revision
                 )));
             }
-            insert_snapshot(&mut connection, snapshot, now_unix_ms).await
+            insert_snapshot(&mut connection, snapshot, now_unix_ms).await?;
+            Self::record_receipt(&mut connection, command, snapshot, now_unix_ms).await?;
+            Ok(snapshot.clone())
         }
         .await;
         Self::finish_write(&mut connection, result).await
@@ -188,6 +195,13 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
+    fn command(id: &str, fingerprint: &str) -> IdempotentCommand {
+        IdempotentCommand {
+            command_id: id.to_string(),
+            request_fingerprint: fingerprint.to_string(),
+        }
+    }
+
     fn snapshot(model: &str) -> LocalModelConfigSnapshot {
         LocalModelConfigSnapshot {
             model_config_ref: "default".to_string(),
@@ -219,11 +233,11 @@ mod tests {
             .await
             .expect("storage");
         storage
-            .put_model_config_snapshot(&snapshot("model-a"), 1_000)
+            .put_model_config_snapshot(&command("put-1", "model-a"), &snapshot("model-a"), 1_000)
             .await
             .expect("put snapshot");
         storage
-            .put_model_config_snapshot(&snapshot("model-a"), 2_000)
+            .put_model_config_snapshot(&command("put-2", "model-a"), &snapshot("model-a"), 2_000)
             .await
             .expect("idempotent put");
         let columns: Vec<String> = sqlx::query("PRAGMA table_info(local_model_config_snapshots)")
@@ -248,7 +262,7 @@ mod tests {
             Some(snapshot("model-a"))
         );
         let error = reopened
-            .put_model_config_snapshot(&snapshot("model-b"), 3_000)
+            .put_model_config_snapshot(&command("put-3", "model-b"), &snapshot("model-b"), 3_000)
             .await
             .expect_err("revision reuse must fail");
         assert!(matches!(error, ClientStorageError::Conflict(_)));

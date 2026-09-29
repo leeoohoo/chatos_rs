@@ -42,6 +42,8 @@ Control-plane revisions follow the same dependency direction through `LocalCapab
 
 After restart, the control-plane resolver loads both revision types from SQLite. `LocalModelCredentialResolver` resolves the persisted reference from Keychain/Credential Manager only when a model step is prepared, then combines the secret with a process-local `ContextualTurnRunner`. The credential value and runner are never serialized or written to SQLite.
 
+IPC v15 exposes idempotent publication and exact-revision reads for both snapshot types. Their wire DTOs live in the interface layer, the application runtime routes validated commands into storage ports, and SQLite implements those ports with the common command-receipt transaction. The IPC DTOs contain credential references only; credential values are not accepted by these commands.
+
 ## Server-removal boundary
 
 The completed client localization must allow these directories to be physically deleted:

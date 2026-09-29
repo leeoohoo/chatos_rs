@@ -24,6 +24,7 @@ use std::{
 use thiserror::Error;
 use uuid::Uuid;
 
+mod control_plane_runtime;
 mod conversation_runtime;
 mod plugin_runtime;
 mod profile;
@@ -126,6 +127,13 @@ impl LocalAgentRuntime {
                     storage_ready: true,
                     recovered_claims: self.recovered_claims.load(Ordering::Acquire),
                 })
+            }
+            command @ (HostCommand::PutModelConfigSnapshot(_)
+            | HostCommand::GetModelConfigSnapshot(_)
+            | HostCommand::PutCapabilityPolicySnapshot(_)
+            | HostCommand::GetCapabilityPolicySnapshot(_)) => {
+                self.handle_control_plane_command(&idempotency, command)
+                    .await
             }
             HostCommand::CreateRun(command) => {
                 let now = self.now()?;

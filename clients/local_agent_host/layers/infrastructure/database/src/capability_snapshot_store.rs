@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    ClientStorageError, LocalCapabilityPolicySnapshot, LocalCapabilitySnapshotStore,
-    SqliteClientStorage, SqliteResultExt,
+    ClientStorageError, IdempotentCommand, LocalCapabilityPolicySnapshot,
+    LocalCapabilitySnapshotStore, SqliteClientStorage, SqliteResultExt,
 };
 use async_trait::async_trait;
 use sqlx::Row;
@@ -16,9 +16,10 @@ const SNAPSHOT_SELECT: &str = "SELECT profile_key, capability_policy_revision, i
 impl LocalCapabilitySnapshotStore for SqliteClientStorage {
     async fn put_capability_snapshot(
         &self,
+        command: &IdempotentCommand,
         snapshot: &LocalCapabilityPolicySnapshot,
         now_unix_ms: i64,
-    ) -> Result<(), ClientStorageError> {
+    ) -> Result<LocalCapabilityPolicySnapshot, ClientStorageError> {
         snapshot
             .validate()
             .map_err(ClientStorageError::InvalidState)?;
@@ -30,6 +31,9 @@ impl LocalCapabilitySnapshotStore for SqliteClientStorage {
         let mut connection = self.pool.acquire().await.db()?;
         Self::begin_immediate(&mut connection).await?;
         let result = async {
+            if let Some(replay) = Self::replay(&mut connection, command).await? {
+                return Ok(replay);
+            }
             if let Some(current) = fetch_snapshot(
                 &mut connection,
                 &snapshot.profile_key,
@@ -38,7 +42,8 @@ impl LocalCapabilitySnapshotStore for SqliteClientStorage {
             .await?
             {
                 if current == *snapshot {
-                    return Ok(());
+                    Self::record_receipt(&mut connection, command, &current, now_unix_ms).await?;
+                    return Ok(current);
                 }
                 return Err(ClientStorageError::Conflict(format!(
                     "capability revision already contains different content: {}@{}",
@@ -60,7 +65,8 @@ impl LocalCapabilitySnapshotStore for SqliteClientStorage {
             .execute(&mut *connection)
             .await
             .db()?;
-            Ok(())
+            Self::record_receipt(&mut connection, command, snapshot, now_unix_ms).await?;
+            Ok(snapshot.clone())
         }
         .await;
         Self::finish_write(&mut connection, result).await
@@ -110,6 +116,13 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
+    fn command(id: &str, fingerprint: &str) -> IdempotentCommand {
+        IdempotentCommand {
+            command_id: id.to_string(),
+            request_fingerprint: fingerprint.to_string(),
+        }
+    }
+
     fn snapshot(instructions: &str) -> LocalCapabilityPolicySnapshot {
         LocalCapabilityPolicySnapshot {
             profile_key: "main_chat".to_string(),
@@ -126,11 +139,11 @@ mod tests {
             .await
             .expect("storage");
         storage
-            .put_capability_snapshot(&snapshot("local policy"), 1_000)
+            .put_capability_snapshot(&command("put-1", "local"), &snapshot("local policy"), 1_000)
             .await
             .expect("put snapshot");
         storage
-            .put_capability_snapshot(&snapshot("local policy"), 2_000)
+            .put_capability_snapshot(&command("put-2", "local"), &snapshot("local policy"), 2_000)
             .await
             .expect("idempotent put");
         assert_eq!(
@@ -141,7 +154,11 @@ mod tests {
             Some(snapshot("local policy"))
         );
         let error = storage
-            .put_capability_snapshot(&snapshot("different policy"), 3_000)
+            .put_capability_snapshot(
+                &command("put-3", "different"),
+                &snapshot("different policy"),
+                3_000,
+            )
             .await
             .expect_err("revision reuse must fail");
         assert!(matches!(error, ClientStorageError::Conflict(_)));
@@ -157,7 +174,11 @@ mod tests {
             .await
             .expect("storage");
         storage
-            .put_capability_snapshot(&snapshot("restart policy"), 1_000)
+            .put_capability_snapshot(
+                &command("put-restart", "restart"),
+                &snapshot("restart policy"),
+                1_000,
+            )
             .await
             .expect("put snapshot");
         storage.pool.close().await;
