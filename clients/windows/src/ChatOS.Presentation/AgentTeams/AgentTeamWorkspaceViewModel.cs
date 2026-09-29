@@ -36,6 +36,7 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
     public ObservableCollection<AgentRoomMember> Members { get; } = [];
     public ObservableCollection<AgentProfile> MemberProfiles { get; } = [];
     public ObservableCollection<AgentMessage> Messages { get; } = [];
+    public ObservableCollection<AgentMessageItemViewModel> MessageItems { get; } = [];
     public ObservableCollection<AgentTodo> Todos { get; } = [];
     public ObservableCollection<AgentTodoProgress> SelectedTodoProgress { get; } = [];
     public ObservableCollection<AgentTeamAsset> Assets { get; } = [];
@@ -268,6 +269,14 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
             Replace(Members, snapshot.Members);
             Replace(MemberProfiles, snapshot.Profiles);
             Replace(Messages, snapshot.Messages);
+            var agentNames = Agents.Concat(snapshot.Profiles)
+                .GroupBy(agent => agent.Id, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Last().Draft.Name,
+                    StringComparer.Ordinal);
+            Replace(MessageItems, snapshot.Messages.Select(message =>
+                new AgentMessageItemViewModel(message,
+                    message.SenderAgentId is not null &&
+                    agentNames.TryGetValue(message.SenderAgentId, out var name) ? name : null)));
             Replace(Todos, snapshot.Todos);
             Replace(Assets, snapshot.Assets);
             Replace(RequirementSurveys, snapshot.RequirementSurveys);
@@ -285,6 +294,7 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
         Members.Clear();
         MemberProfiles.Clear();
         Messages.Clear();
+        MessageItems.Clear();
         Todos.Clear();
         SelectedTodoProgress.Clear();
         Assets.Clear();

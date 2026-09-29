@@ -16,6 +16,8 @@
             <converters:StringToVisibilityConverter x:Key="StringToVisibilityConverter" />
             <converters:StringToVisibilityConverter x:Key="InverseStringToVisibilityConverter" Invert="True" />
             <converters:RemoteFileGlyphConverter x:Key="RemoteFileGlyphConverter" />
+            <converters:AgentMessageAlignmentConverter x:Key="AgentMessageAlignmentConverter" />
+            <converters:AgentMessageBubbleBrushConverter x:Key="AgentMessageBubbleBrushConverter" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>
