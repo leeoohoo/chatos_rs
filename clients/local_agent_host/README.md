@@ -11,6 +11,7 @@ The current milestone provides:
 - a shared `LocalAgentProfile` registry and one-step Host scheduler;
 - a durable Tool Invocation Ledger with per-call claims and results;
 - a `chatos_ai_runtime` single-step Profile adapter and conservative tool-safety policy;
+- a local tool registry and one-invocation Tool Scheduler;
 - monotonic, replayable event cursors;
 - conservative crash recovery to `needs_review`;
 - length-prefixed JSON over Unix sockets, Windows named pipes, or stdio.
@@ -20,6 +21,8 @@ The standalone binary does not yet ship a control-plane model planner or platfor
 The library-level scheduler executes one registered Profile step at a time and commits its outcome through the same durable protocol. Wakeups and retry timers remain lifecycle concerns for the native client integration; the standalone binary does not poll an empty Profile registry.
 
 `ChatosAiRuntimeStepExecutor` executes a prepared `chatos_ai_runtime` request exactly once. `DurableAiProfile` converts final responses, continuations, retries and tool calls into durable Host outcomes. Tools are considered side-effecting unless an explicit `ToolSafetyPolicy` classifies them as read-only.
+
+`LocalToolScheduler` claims one persisted invocation, routes it through `LocalToolRegistry`, and commits the result. Executor infrastructure errors on side-effecting calls become `needs_review`; read-only executor errors become ordinary failed tool results that the next model step can inspect.
 
 ## Run locally
 

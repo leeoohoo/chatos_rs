@@ -4,6 +4,7 @@
 //! IPC transport for the client-owned Local Agent Host.
 
 mod scheduler;
+mod tool_scheduler;
 
 pub use chatos_agent_profiles::{
     ChatosAiRuntimeStepExecutor, ConservativeToolSafetyPolicy, DurableAiProfile,
@@ -11,6 +12,10 @@ pub use chatos_agent_profiles::{
     ToolSafetyPolicy,
 };
 pub use scheduler::{LocalAgentScheduler, LocalAgentSchedulerError, SchedulerTick};
+pub use tool_scheduler::{
+    LocalToolExecutor, LocalToolRegistry, LocalToolScheduler, LocalToolSchedulerError,
+    ToolSchedulerTick,
+};
 
 use chatos_local_agent_protocol::{
     HostRequestEnvelope, HostResponseEnvelope, LOCAL_AGENT_MAX_FRAME_BYTES,
