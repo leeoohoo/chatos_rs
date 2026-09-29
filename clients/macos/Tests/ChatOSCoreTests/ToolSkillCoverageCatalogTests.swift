@@ -96,11 +96,11 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             $0.providerID == ProductToolProviderID.localAgentChat
         }.flatMap(\.toolNames)
 
-        XCTAssertEqual(providerTools.count, 95)
-        XCTAssertEqual(Set(providerTools).count, 95)
+        XCTAssertEqual(providerTools.count, 85)
+        XCTAssertEqual(Set(providerTools).count, 85)
         XCTAssertEqual(nativeBuiltinTools.count, 34)
-        XCTAssertEqual(localAgentChatTools.count, 43)
-        XCTAssertEqual(Set(localAgentChatTools).count, 43)
+        XCTAssertEqual(localAgentChatTools.count, 33)
+        XCTAssertEqual(Set(localAgentChatTools).count, 33)
         XCTAssertEqual(
             bindings.filter {
                 $0.providerID == ProductToolProviderID.capabilityBroker
@@ -172,7 +172,7 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         )
 
         let router = await session.routerMarkdown()
-        XCTAssertTrue(router.contains("# Relay context"))
+        XCTAssertTrue(router.contains("# Agent communication context"))
         XCTAssertTrue(router.contains("# Remote connection"))
         XCTAssertTrue(router.contains("product-skill:chatos-agent-staffing"))
         XCTAssertTrue(router.contains("Propose creating, inviting, or removing"))

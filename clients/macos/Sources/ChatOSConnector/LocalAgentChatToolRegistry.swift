@@ -5,47 +5,14 @@ import Foundation
 extension LocalAgentChatToolProvider {
     static let toolDefinitions: [AgentToolDefinition] = [
         .init(
-            name: bootstrapToolName,
-            description: "连接本地 Relay MCP 后读取当前 Agent 身份、绑定项目、团队、成员和本次唤醒消息。身份与范围由客户端固定，不能由参数切换。",
-            schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8)
-        ),
-        .init(
             name: workspaceSnapshotToolName,
-            description: "读取当前账户在本机已有的全部活跃 Agent、项目团队、项目临时引用、成员关系和显式项目经理。私聊中的 relay_bootstrap 只描述当前会话。需求调研在私聊中使用这里返回的 project_ref 绑定项目；项目真实 ID 不暴露给模型。非项目经理收到需要任务化或分配成员的请求时，先用本工具判断自己是否属于目标团队并取得显式项目经理的 agent_ref：团队成员走 chat_team_send，非团队成员走 chat_direct_open → chat_direct_send。所有引用仅在同一 Run 内有效。",
+            description: "读取当前账户在本机已有的全部活跃 Agent、项目团队、项目临时引用、成员关系和显式项目经理。需求调研可使用这里返回的 project_ref 绑定项目；主动联系另一个 Agent 时，把其 agent_ref 直接传给 chat_send_message，通讯层会自动创建或复用私聊并唤醒对方。项目真实 ID 不暴露给模型，所有引用仅在同一 Run 内有效。",
             schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8)
-        ),
-        .init(
-            name: getTriggerToolName,
-            description: "读取唤醒当前 Agent 的群聊消息。项目、房间和消息身份由运行上下文固定。",
-            schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8)
-        ),
-        .init(
-            name: listMembersToolName,
-            description: "列出当前项目群聊中的 Agent 成员及职责。",
-            schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8)
-        ),
-        .init(
-            name: readUnreadToolName,
-            description: "读取当前 Agent 在这个群聊中的未读消息。已读位置按 Agent 独立持久化；读取不会自动确认，处理后调用 chat_mark_read。",
-            schema: Data(#"{"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false}"#.utf8)
         ),
         .init(
             name: readAllUnreadToolName,
-            description: "读取当前 Agent 在全部群聊和私聊中的未读消息。返回内容即视为已读并自动推进各会话游标；只返回同一 Run 内有效的临时引用，不暴露真实会话、消息或项目 ID，暂停、重启并恢复该 Run 后引用仍可使用。消息不一定需要行动，请自行判断是否回复、忽略或加入 TodoList。",
+            description: "读取当前 Agent 账户在全部群聊和私聊中的未读消息。Agent 每次启动和重试都先调用本工具，不把触发群聊当作运行范围。返回内容即视为已读并自动推进各会话游标；回复时只把 message_ref 传给 chat_send_message，通讯层自行定位原会话。消息不一定需要行动，请自行判断是否回复、忽略或加入 TodoList。",
             schema: Data(#"{"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":false}"#.utf8)
-        ),
-        .init(
-            name: inboxSendToolName,
-            description: "使用 chat_read_all_unread 或 todo_list 返回的临时引用回复原会话。notify_project_manager=true 仅适用于当前 Agent 可访问、且已绑定显式项目经理的项目团队会话；Human-Agent 私聊或 Agent 私聊不能用它通知项目经理。非项目经理在私聊收到任务化请求时，应先调用 agent_workspace_snapshot，再按成员关系使用 chat_team_send 或 chat_direct_open → chat_direct_send。Todo 私聊来源不可访问时也不要重试本工具。",
-            schema: Data("""
-            {"type":"object","properties":{"conversation_ref":{"type":"string","minLength":1,"maxLength":600},"reply_to_message_ref":{"type":"string","minLength":1,"maxLength":600},"content":{"type":"string","minLength":1,"maxLength":\(AgentCommunicationPolicy.standard.maximumMessageCharacters)},"document_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":\(AgentCommunicationPolicy.standard.maximumDocumentsPerMessage),"uniqueItems":true},"notify_project_manager":{"type":"boolean","default":false}},"required":["conversation_ref","reply_to_message_ref","content"],"additionalProperties":false}
-            """.utf8),
-            effect: .write
-        ),
-        .init(
-            name: readMessagesToolName,
-            description: "从最近一页开始，向更早方向分页读取当前会话记录。需要更早消息时，把响应中的 next_before_message_ref 作为 before_message_ref 继续读取。所有引用在同一 Run 内有效，客户端暂停、重启并恢复该 Run 后仍可继续使用。",
-            schema: Data(#"{"type":"object","properties":{"before_message_ref":{"type":"string","minLength":1,"maxLength":600},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false}"#.utf8)
         ),
         .init(
             name: readAttachmentToolName,
@@ -57,34 +24,6 @@ extension LocalAgentChatToolProvider {
             description: "创建当前 Run 内的 UTF-8 Markdown 文档草稿。客户端清洗文件名、计算大小和 SHA-256，只返回临时 document_ref；创建后必须在同一 Run 的下一条发送消息中通过 document_refs 附加。",
             schema: Data("""
             {"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":512},"title":{"type":"string","minLength":1,"maxLength":512},"markdown":{"type":"string","minLength":1,"maxLength":\(AgentCommunicationPolicy.standard.maximumDocumentBytes)}},"required":["name","title","markdown"],"additionalProperties":false}
-            """.utf8),
-            effect: .write
-        ),
-        .init(
-            name: markReadToolName,
-            description: "把当前 Agent 的独立已读游标推进到指定本轮消息引用。游标单调前进，旧调用或重试不会把已读位置回退。",
-            schema: Data(#"{"type":"object","properties":{"through_message_ref":{"type":"string","minLength":1,"maxLength":600}},"required":["through_message_ref"],"additionalProperties":false}"#.utf8),
-            effect: .write
-        ),
-        .init(
-            name: openDirectToolName,
-            description: "使用 agent_workspace_snapshot 或成员列表返回的临时 Agent 引用打开或复用私聊。非项目经理不属于目标团队、无法 chat_team_send 时，用本工具打开与该团队显式项目经理的私聊，再用 chat_direct_send 转交完整任务简报。不能与自己私聊；同一团队成员之间的项目协作仍优先使用 chat_team_send。",
-            schema: Data(#"{"type":"object","properties":{"target_agent_ref":{"type":"string","minLength":1,"maxLength":600}},"required":["target_agent_ref"],"additionalProperties":false}"#.utf8),
-            effect: .write
-        ),
-        .init(
-            name: sendDirectToolName,
-            description: "向 chat_direct_open 返回的 Agent 私聊发送消息，成功后通过本地 delivery 唤醒对方。非项目经理向目标团队项目经理转交任务时，消息必须包含 Human 原始目标与来源、目标团队、范围、交付物、验收建议和关键 URL；不得声称 Todo 已创建。当前 Agent 必须是该私聊参与者。",
-            schema: Data("""
-            {"type":"object","properties":{"conversation_ref":{"type":"string","minLength":1,"maxLength":600},"content":{"type":"string","minLength":1,"maxLength":\(AgentCommunicationPolicy.standard.maximumMessageCharacters)},"document_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":\(AgentCommunicationPolicy.standard.maximumDocumentsPerMessage),"uniqueItems":true}},"required":["conversation_ref","content"],"additionalProperties":false}
-            """.utf8),
-            effect: .write
-        ),
-        .init(
-            name: sendTeamToolName,
-            description: "向 agent_workspace_snapshot 返回的项目团队主动发送群消息并精确 @ 成员。当前 Agent 必须是该团队活跃成员。非项目经理属于目标团队且需要项目经理任务化新增工作时，用本工具发送完整任务简报，并在 mention_agent_refs 中传该团队显式项目经理的 agent_ref；若当前 Agent 不属于该团队，改用 chat_direct_open → chat_direct_send。",
-            schema: Data("""
-            {"type":"object","properties":{"team_ref":{"type":"string","minLength":1,"maxLength":600},"content":{"type":"string","minLength":1,"maxLength":\(AgentCommunicationPolicy.standard.maximumMessageCharacters)},"document_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":\(AgentCommunicationPolicy.standard.maximumDocumentsPerMessage),"uniqueItems":true},"mention_agent_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":64,"uniqueItems":true}},"required":["team_ref","content"],"additionalProperties":false}
             """.utf8),
             effect: .write
         ),
@@ -108,15 +47,15 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: sendMessageToolName,
-            description: "以当前 Agent 身份回复当前会话。需要 @ 成员或回复指定消息时，只能使用同一 Run 内的成员和消息临时引用；暂停、重启并恢复该 Run 后旧引用仍可使用。发送不会结束通讯周期，仍需检查未读和任务调度并调用 agent_cycle_complete。",
+            description: "统一发送消息，不让模型管理会话 ID。回复未读时只传 reply_to_message_ref，通讯层自动定位原会话；主动联系另一个 Agent 时只传 target_agent_ref，通讯层自动创建或复用私聊并唤醒目标 Agent；主动发团队消息时传 team_ref。三种目标最多选择一个；均不提供 conversation_ref。省略目标时回复本轮触发消息。发送不会结束通讯周期，仍需检查全局未读和任务调度并调用 agent_cycle_complete。",
             schema: Data("""
-            {"type":"object","properties":{"content":{"type":"string","minLength":1,"maxLength":\(AgentCommunicationPolicy.standard.maximumMessageCharacters)},"document_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":\(AgentCommunicationPolicy.standard.maximumDocumentsPerMessage),"uniqueItems":true},"mention_agent_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":32,"uniqueItems":true},"reply_to_message_ref":{"type":"string","minLength":1,"maxLength":600}},"required":["content"],"additionalProperties":false}
+            {"type":"object","properties":{"content":{"type":"string","minLength":1,"maxLength":\(AgentCommunicationPolicy.standard.maximumMessageCharacters)},"reply_to_message_ref":{"type":"string","minLength":1,"maxLength":600},"target_agent_ref":{"type":"string","minLength":1,"maxLength":600},"team_ref":{"type":"string","minLength":1,"maxLength":600},"document_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":\(AgentCommunicationPolicy.standard.maximumDocumentsPerMessage),"uniqueItems":true},"mention_agent_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":64,"uniqueItems":true}},"required":["content"],"additionalProperties":false}
             """.utf8),
             effect: .write
         ),
         .init(
             name: completeHeartbeatToolName,
-            description: "仅用于主动巡检：当前会话没有需要汇报或执行的事项时，安静完成本次巡检，不向聊天记录发送消息。",
+            description: "仅用于主动巡检：检查全部会话未读和任务后没有需要汇报或执行的事项时，安静完成本次巡检，不向聊天记录发送消息。",
             schema: Data(#"{"type":"object","properties":{},"additionalProperties":false}"#.utf8),
             effect: .write
         ),
@@ -128,7 +67,7 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: todoListToolName,
-            description: "读取当前 Agent 所属项目团队的共享任务板，并标明团队、负责人、来源、依赖和是否分配给自己。来源只表示项目经理创建任务时引用的会话，并不保证当前负责人是该来源私聊的参与者；chat_inbox_send 若返回 source_conversation_not_accessible，应改用 agent_workspace_snapshot 与 chat_team_send 向所属团队公开汇报。普通成员只能查看；只有团队明确指定的项目经理可以修改。默认不返回已完成或已取消任务。",
+            description: "读取当前 Agent 所属项目团队的共享任务板，并标明团队、负责人、来源、依赖和是否分配给自己。回复可访问的来源消息时，把 source 的 message_ref 直接传给 chat_send_message；需要联系项目经理时，把其 agent_ref 直接传给 chat_send_message。普通成员只能查看；只有团队明确指定的项目经理可以修改。默认不返回已完成或已取消任务。",
             schema: Data(#"{"type":"object","properties":{"include_terminal":{"type":"boolean","default":false}},"additionalProperties":false}"#.utf8)
         ),
         .init(
@@ -154,7 +93,7 @@ extension LocalAgentChatToolProvider {
         ),
         .init(
             name: todoAddToolName,
-            description: "仅供项目经理在共享团队任务板创建 Todo。适用于 Human 要求建立任务、找成员执行，以及下载/克隆/查看/运行/分析远程 Git 仓库；仓库 URL 应原样写入 objective、scope 或 detail，需要 git clone 或命令行时在 builtin_capabilities 选择 terminal。此工具不创建 ChatOS 项目或团队，不得因正文出现‘项目’或 Git URL 而改用 team_propose_*。必须明确目标、范围、交付物、验收条件和约束，并选择负责人、前置任务及可信执行能力。每个 Todo 只能包含该负责人凭所选能力可以独立完成的职责；不同责任人的技术验证、项目协调、真人测试、调研、审批或部署必须拆成有依赖关系的任务，不能制造可预见的成员阻塞。team_ref/assignee_ref/plugin_ref 必须来自 todo_execution_options，source_message_refs 必须来自 chat_get_trigger、relay_bootstrap、chat_read_unread、chat_read_all_unread 或 chat_read_messages；真实 ID 由客户端解析和校验。",
+            description: "仅供项目经理在共享团队任务板创建 Todo。适用于 Human 要求建立任务、找成员执行，以及下载/克隆/查看/运行/分析远程 Git 仓库；仓库 URL 应原样写入 objective、scope 或 detail，需要 git clone 或命令行时在 builtin_capabilities 选择 terminal。此工具不创建 ChatOS 项目或团队，不得因正文出现‘项目’或 Git URL 而改用 team_propose_*。必须明确目标、范围、交付物、验收条件和约束，并选择负责人、前置任务及可信执行能力。每个 Todo 只能包含该负责人凭所选能力可以独立完成的职责；不同责任人的技术验证、项目协调、真人测试、调研、审批或部署必须拆成有依赖关系的任务，不能制造可预见的成员阻塞。team_ref/assignee_ref/plugin_ref 必须来自 todo_execution_options，source_message_refs 必须来自 chat_read_all_unread；真实 ID 由客户端解析和校验。",
             schema: Data(#"{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":500},"detail":{"type":"string","maxLength":16000},"objective":{"type":"string","minLength":1,"maxLength":8000},"scope":{"type":"string","minLength":1,"maxLength":16000},"expected_outputs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":4000},"minItems":1,"maxItems":64},"acceptance_criteria":{"type":"array","items":{"type":"string","minLength":1,"maxLength":4000},"minItems":1,"maxItems":64},"constraints":{"type":"array","items":{"type":"string","minLength":1,"maxLength":4000},"maxItems":64},"priority":{"type":"integer","minimum":0,"maximum":100,"default":50},"team_ref":{"type":"string","minLength":1,"maxLength":600},"assignee_ref":{"type":"string","minLength":1,"maxLength":600},"depends_on_todo_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"maxItems":64,"uniqueItems":true},"source_message_refs":{"type":"array","items":{"type":"string","minLength":1,"maxLength":600},"minItems":1,"maxItems":64,"uniqueItems":true},"requires_execution":{"type":"boolean","default":true},"builtin_capabilities":{"type":"array","description":"任务级基础工具。选择 requirement_survey_write 时客户端会强制同时加入 requirement_survey_read。","items":{"type":"string","enum":["project_read","project_write","terminal","requirement_survey_read","requirement_survey_write"]},"maxItems":5,"uniqueItems":true},"plugin_hints":{"type":"array","items":{"type":"object","properties":{"plugin_ref":{"type":"string","minLength":1,"maxLength":600},"reason":{"type":"string","maxLength":1000}},"required":["plugin_ref"],"additionalProperties":false},"maxItems":32}},"required":["title","objective","scope","expected_outputs","acceptance_criteria","team_ref","assignee_ref","source_message_refs","requires_execution","builtin_capabilities"],"additionalProperties":false}"#.utf8),
             effect: .write
         ),

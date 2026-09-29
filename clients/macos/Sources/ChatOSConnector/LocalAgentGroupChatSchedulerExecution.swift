@@ -70,7 +70,7 @@ extension LocalAgentGroupChatScheduler {
                 key: LocalAgentSkillCatalog.legacyProfessionKey
             )!
             let projectType: LocalProjectTypeDefinition?
-            if room.conversationKind == .projectTeam {
+            if delivery.lane == .executor, room.conversationKind == .projectTeam {
                 let projectTypeKey = try await projectTypeKeyProvider(ownerUserID, projectID)
                     ?? LocalAgentSkillCatalog.legacyProjectTypeKey
                 projectType = try await projectTypeProvider(ownerUserID, projectTypeKey)
@@ -87,21 +87,6 @@ extension LocalAgentGroupChatScheduler {
                 language: contextLanguage,
                 audience: delivery.lane == .manager ? .manager : .executor
             )
-            guard let triggerMessage = try await store.message(
-                ownerUserID: ownerUserID,
-                roomID: room.id,
-                messageID: delivery.messageID
-            ) else { throw AgentGroupChatError.notFound }
-            var triggerAttachments: [ProjectAgentMessageAttachmentPayload] = []
-            for attachment in triggerMessage.attachmentItems {
-                guard let payload = try await store.messageAttachment(
-                    ownerUserID: ownerUserID,
-                    roomID: room.id,
-                    messageID: triggerMessage.id,
-                    attachmentID: attachment.id
-                ) else { throw AgentGroupChatError.storage("message attachment is missing") }
-                triggerAttachments.append(payload)
-            }
             let builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>
             if delivery.lane == .executor,
                let todo = try await store.todoForDelivery(
@@ -116,15 +101,11 @@ extension LocalAgentGroupChatScheduler {
                 scope: scope,
                 messages: try Self.initialMessages(
                     profile: profile,
-                    member: member,
-                    room: room,
                     delivery: delivery,
                     profession: profession,
                     progressiveSkillSnapshot: progressiveSkillSnapshot,
                     communicationSkill: communicationSkill,
-                    builtinCapabilities: builtinCapabilities,
-                    triggerMessage: triggerMessage,
-                    triggerAttachments: triggerAttachments
+                    builtinCapabilities: builtinCapabilities
                 )
             )
             initial.id = runID

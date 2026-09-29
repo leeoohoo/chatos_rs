@@ -376,9 +376,6 @@ extension LocalAgentChatToolProvider {
             todoID: todo.id
         ) {
             sourceReferences.append(.init(
-                conversationReference: await references.conversationReference(
-                    roomID: source.conversationID
-                ),
                 messageReference: await references.messageReference(
                     roomID: source.conversationID,
                     messageID: source.messageID

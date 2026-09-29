@@ -102,9 +102,8 @@ public extension ToolSkillCoverageCatalog {
                     id: ProductToolSkillBindingID.relayContext,
                     providerID: ProductToolProviderID.localAgentChat,
                     toolNames: [
-                        "relay_bootstrap", "agent_workspace_snapshot", "chat_get_trigger",
-                        "chat_list_members", "chat_read_unread", "chat_read_all_unread",
-                        "chat_read_messages", "chat_read_attachment",
+                        "agent_workspace_snapshot", "chat_read_all_unread",
+                        "chat_read_attachment",
                     ],
                     routerSkillName: "chatos-relay-context",
                     specialistSkillName: "chatos-relay-context",
@@ -114,9 +113,8 @@ public extension ToolSkillCoverageCatalog {
                     id: ProductToolSkillBindingID.collaborationMessaging,
                     providerID: ProductToolProviderID.localAgentChat,
                     toolNames: [
-                        "chat_inbox_send", "chat_document_create", "chat_mark_read",
-                        "chat_direct_open", "chat_direct_send", "chat_team_send",
-                        "chat_send_message", "chat_heartbeat_complete", "agent_cycle_complete",
+                        "chat_document_create", "chat_send_message",
+                        "chat_heartbeat_complete", "agent_cycle_complete",
                     ],
                     routerSkillName: "chatos-collaboration-messaging",
                     specialistSkillName: "chatos-collaboration-messaging",

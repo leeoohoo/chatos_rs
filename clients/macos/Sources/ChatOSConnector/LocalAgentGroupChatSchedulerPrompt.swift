@@ -5,36 +5,12 @@ import Foundation
 extension LocalAgentGroupChatScheduler {
     static func initialMessages(
         profile: LocalAgentProfile,
-        member: ProjectAgentRoomMember,
-        room: ProjectAgentRoom,
         delivery: ProjectAgentDelivery,
         profession: LocalAgentProfessionDefinition,
         progressiveSkillSnapshot: LocalAgentProgressiveSkillSnapshot,
         communicationSkill: LocalAgentCommunicationSkillSnapshot,
-        builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>,
-        triggerMessage: ProjectAgentMessage,
-        triggerAttachments: [ProjectAgentMessageAttachmentPayload]
+        builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>
     ) throws -> [AgentMessage] {
-        let conversationRole: String
-        let conversationContext: String
-        switch room.conversationKind {
-        case .projectTeam:
-            conversationRole = LocalAgentPromptCatalog.render(.conversationRoleProjectTeam)
-            conversationContext = LocalAgentPromptCatalog.render(
-                .conversationProjectTeam,
-                values: [
-                    "room_goal": room.draft.goal.isEmpty
-                        ? LocalAgentPromptCatalog.render(.roomGoalUnset)
-                        : room.draft.goal,
-                ]
-            )
-        case .humanAgentDirect:
-            conversationRole = LocalAgentPromptCatalog.render(.conversationRoleHumanAgentDirect)
-            conversationContext = LocalAgentPromptCatalog.render(.conversationHumanAgentDirect)
-        case .agentAgentDirect:
-            conversationRole = LocalAgentPromptCatalog.render(.conversationRoleAgentAgentDirect)
-            conversationContext = LocalAgentPromptCatalog.render(.conversationAgentAgentDirect)
-        }
         let staffingInstructions = LocalAgentPermission.canManageStaff(
             profile.draft.defaultSkillIDs
         ) ? LocalAgentPromptCatalog.render(.permissionStaffManagement) : ""
@@ -89,70 +65,49 @@ extension LocalAgentGroupChatScheduler {
                 "skill_markdown": progressiveSkillSnapshot.routerMarkdown,
             ]
         )
-        // The project-type entry lives in the same bound Router catalog. Keeping one catalog
-        // avoids injecting either complete leaf twice and makes activation order explicit.
-        let projectSkill = ""
+        if delivery.lane == .manager {
+            let system = LocalAgentPromptCatalog.render(
+                .managerSystem,
+                values: [
+                    "agent_name": profile.draft.name,
+                    "responsibility": profile.draft.description.isEmpty
+                        ? profile.draft.rolePrompt
+                        : profile.draft.description,
+                    "role_prompt": profile.draft.rolePrompt,
+                    "capability_discovery_skill": try BundledAgentSkillLoader.load(
+                        named: "chatos-capability-discovery"
+                    ).instructions,
+                    "staffing_instructions": staffingInstructions,
+                    "project_instructions": projectInstructions,
+                    "requirement_survey_skill": requirementSurveySkill,
+                    "manager_instructions": heartbeatInstructions,
+                    "todo_status_instructions": todoStatusInstructions,
+                    "compact_communication_skill": communicationSkill.promptBlock,
+                    "profession_skill": professionSkill,
+                ]
+            )
+            return [
+                .init(role: .system, content: system),
+                .init(role: .user, content: LocalAgentPromptCatalog.render(.managerWakeUser)),
+            ]
+        }
         let system = LocalAgentPromptCatalog.render(
-            .groupChatSystem,
+            .executorSystem,
             values: [
-                "conversation_role": conversationRole,
                 "agent_name": profile.draft.name,
-                "member_role": member.draft.role,
-                "responsibility": member.draft.responsibility.isEmpty
-                    ? profile.draft.description
-                    : member.draft.responsibility,
                 "role_prompt": profile.draft.rolePrompt,
-                "conversation_context": conversationContext,
                 "capability_discovery_skill": try BundledAgentSkillLoader.load(
                     named: "chatos-capability-discovery"
                 ).instructions,
-                "staffing_instructions": staffingInstructions,
-                "project_instructions": projectInstructions,
                 "requirement_survey_skill": requirementSurveySkill,
-                "manager_instructions": heartbeatInstructions,
                 "executor_instructions": todoInstructions,
-                "todo_status_instructions": todoStatusInstructions,
                 "compact_communication_skill": communicationSkill.promptBlock,
                 "profession_skill": professionSkill,
-                "project_skill": projectSkill,
-            ]
-        )
-        let requestedAction = switch delivery.triggerKind {
-        case .heartbeat: LocalAgentPromptCatalog.render(.actionHeartbeat)
-        case .todo: LocalAgentPromptCatalog.render(.actionTodo)
-        case .todoStatus: LocalAgentPromptCatalog.render(.actionTodoStatus)
-        default: LocalAgentPromptCatalog.render(.actionDefault)
-        }
-        let triggerPayload = (try? JSONEncoder().encode([
-            "content": triggerMessage.content,
-            "sender_kind": triggerMessage.senderKind.rawValue,
-        ])).map { String(decoding: $0, as: UTF8.self) }
-            ?? #"{"content":"","sender_kind":"system"}"#
-        let envelope = LocalAgentPromptCatalog.render(
-            .deliveryUser,
-            values: [
-                "trigger_kind": delivery.triggerKind.rawValue,
-                "attachment_count": String(triggerAttachments.count),
-                "trigger_payload": triggerPayload,
-                "requested_action": requestedAction,
             ]
         )
         return [
             .init(role: .system, content: system),
-            .init(
-                role: .user,
-                content: envelope,
-                attachments: triggerAttachments.map { payload in
-                    AgentMessageAttachment(
-                        name: payload.attachment.name,
-                        mimeType: payload.attachment.mimeType,
-                        kind: AgentMessageAttachment.Kind(
-                            rawValue: payload.attachment.kind.rawValue
-                        ) ?? .file,
-                        localFileURL: payload.localFileURL
-                    )
-                }
-            ),
+            .init(role: .user, content: LocalAgentPromptCatalog.render(.executorWakeUser)),
         ]
     }
 

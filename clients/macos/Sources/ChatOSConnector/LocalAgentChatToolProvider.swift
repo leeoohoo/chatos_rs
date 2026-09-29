@@ -11,14 +11,10 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     public static let listMembersToolName = "chat_list_members"
     public static let readUnreadToolName = "chat_read_unread"
     public static let readAllUnreadToolName = "chat_read_all_unread"
-    public static let inboxSendToolName = "chat_inbox_send"
     public static let readMessagesToolName = "chat_read_messages"
     public static let readAttachmentToolName = "chat_read_attachment"
     public static let createDocumentToolName = "chat_document_create"
     public static let markReadToolName = "chat_mark_read"
-    public static let openDirectToolName = "chat_direct_open"
-    public static let sendDirectToolName = "chat_direct_send"
-    public static let sendTeamToolName = "chat_team_send"
     public static let proposeMemberToolName = "agent_propose_member"
     public static let proposeExistingMemberToolName = "agent_propose_existing_member"
     public static let proposeMemberRemovalToolName = "agent_propose_member_removal"
@@ -177,8 +173,6 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             return try await readUnread(call)
         case Self.readAllUnreadToolName:
             return try await readAllUnread(call)
-        case Self.inboxSendToolName:
-            return try await sendInboxMessage(call)
         case Self.readMessagesToolName:
             return try await readMessages(call)
         case Self.readAttachmentToolName:
@@ -187,12 +181,6 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             return try await createDocument(call)
         case Self.markReadToolName:
             return try await markRead(call)
-        case Self.openDirectToolName:
-            return try await openDirect(call)
-        case Self.sendDirectToolName:
-            return try await sendDirect(call)
-        case Self.sendTeamToolName:
-            return try await sendTeam(call)
         case Self.proposeMemberToolName:
             return try await proposeMember(call)
         case Self.proposeExistingMemberToolName:
@@ -344,9 +332,8 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
              listMembersToolName, readUnreadToolName, readAllUnreadToolName,
              readMessagesToolName, readAttachmentToolName:
             ProductToolSkillBindingID.relayContext
-        case inboxSendToolName, createDocumentToolName, markReadToolName,
-             openDirectToolName, sendDirectToolName, sendTeamToolName,
-             sendMessageToolName, completeHeartbeatToolName, completeManagerCycleToolName:
+        case createDocumentToolName, markReadToolName, sendMessageToolName,
+             completeHeartbeatToolName, completeManagerCycleToolName:
             ProductToolSkillBindingID.collaborationMessaging
         case proposeMemberToolName, proposeExistingMemberToolName,
              proposeMemberRemovalToolName:

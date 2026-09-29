@@ -1,20 +1,16 @@
 # Relay references and unread state
 
-## Trigger versus unread
+## Wake-up versus unread
 
-Good: read the trigger first, then check unread only when the cycle may depend on additional messages.
+The wake-up only starts the Agent. It does not select a current conversation and does not inject a trigger message as the Agent's working context.
 
-Bad: assume the newest message is the trigger or repeatedly scan all history.
+Good: call `chat_read_all_unread` once at the start or retry, then decide independently whether each message needs a reply, a Todo, or no action.
+
+Bad: assume the newest message defines this Run, or limit work to the room that caused the wake-up.
 
 ## Global unread
 
-`chat_read_all_unread` advances the returned conversations' cursors automatically. Decide whether each item needs a reply, a Todo, or no action before sending anything.
-
-`chat_read_unread` does not confirm the current-room cursor. After processing, use `chat_mark_read` with the exact returned message reference.
-
-## Older history
-
-Start from the recent page. Continue with `next_before_message_ref` only when older context is necessary. Do not infer that omitted history does not exist.
+`chat_read_all_unread` advances the returned conversations' cursors automatically. Its message references retain the authority needed by `chat_send_message`; the model does not need a conversation reference.
 
 ## Attachments
 

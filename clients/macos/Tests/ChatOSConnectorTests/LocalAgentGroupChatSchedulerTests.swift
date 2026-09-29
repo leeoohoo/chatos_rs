@@ -231,21 +231,23 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         XCTAssertFalse(savedRun?.events.contains(where: { $0.kind == "memory_unavailable" }) == true)
         let system = savedRun?.checkpoint.messages.first?.content ?? ""
         XCTAssertTrue(system.contains(#"name="chatos-profession-desktop-engineer""#))
-        XCTAssertTrue(system.contains("AS-project_type-desktop_application"))
+        XCTAssertFalse(system.contains("AS-project_type-desktop_application"))
         XCTAssertEqual(
             savedRun?.progressiveSkillSnapshot?.skills.map(\.name),
-            [
-                "chatos-profession-desktop-engineer",
-                "chatos-project-type-desktop-application",
-            ]
+            ["chatos-profession-desktop-engineer"]
         )
-        XCTAssertTrue(system.contains("Desktop Application Playbook") || system.contains("桌面"))
+        XCTAssertFalse(system.contains("Desktop Application Playbook"))
         XCTAssertTrue(system.contains(#"name="chatos-compact-communication""#))
         XCTAssertEqual(
             savedRun?.checkpoint.instructionBundleItems.first?.audience,
             "manager"
         )
-        XCTAssertTrue(savedRun?.checkpoint.messages.dropFirst().first?.content.contains("开始实现") == true)
+        XCTAssertTrue(
+            savedRun?.checkpoint.messages.dropFirst().first?.content.contains("读取全部未读") == true
+        )
+        XCTAssertFalse(
+            savedRun?.checkpoint.messages.dropFirst().first?.content.contains("开始实现") == true
+        )
     }
 
     func testFailedTodoRetryResumesItsDurableRunAndCompletes() async throws {
@@ -1836,6 +1838,9 @@ private actor SchedulerTestModel: AgentModelClient {
             $0.role == .system && $0.content.contains("chatos-capability-discovery")
         })
         XCTAssertTrue(messages.contains {
+            $0.role == .user && $0.content.contains("读取全部未读")
+        })
+        XCTAssertFalse(messages.contains {
             $0.role == .user && $0.content.contains("current_trigger_json")
         })
         requestCount += 1
@@ -2224,7 +2229,7 @@ private actor ActiveCancellationSchedulerTestModel: AgentModelClient {
         timeout: TimeInterval
     ) async throws -> AgentMessage {
         let isExecutorLane = messages.contains {
-            $0.role == .user && $0.content.contains("- trigger_kind: todo\n")
+            $0.role == .user && $0.content.contains("执行当前绑定的 Todo")
         }
         if isExecutorLane {
             try await Task.sleep(for: .seconds(30))

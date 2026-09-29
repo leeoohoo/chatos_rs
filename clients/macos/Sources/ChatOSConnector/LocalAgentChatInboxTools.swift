@@ -286,9 +286,6 @@ extension LocalAgentChatToolProvider {
         let names = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0.draft.name) })
         var response: [InboxConversationResponse] = []
         for conversation in conversations {
-            let conversationReference = await references.conversationReference(
-                roomID: conversation.room.id
-            )
             var messages: [InboxMessageResponse] = []
             for message in conversation.messages {
                 let messageReference = await references.messageReference(
@@ -323,7 +320,6 @@ extension LocalAgentChatToolProvider {
                 ))
             }
             response.append(.init(
-                conversationReference: conversationReference,
                 name: conversation.room.draft.name,
                 kind: conversation.room.conversationKind.rawValue,
                 messages: messages
@@ -336,113 +332,4 @@ extension LocalAgentChatToolProvider {
         ))
     }
 
-    func sendInboxMessage(_ call: AgentToolCall) async throws -> AgentToolOutcome {
-        if let replayed = await replayedSendOutcome(call) { return replayed }
-        let arguments = try Self.arguments(call)
-        let content = try Self.requiredString(arguments, key: "content")
-        let lengthFailure = Self.messageLengthFailure(content)
-        await recordMessageAttempt(content, rejected: lengthFailure != nil)
-        if let lengthFailure { return lengthFailure }
-        let conversationReference = try Self.requiredString(
-            arguments,
-            key: "conversation_ref"
-        )
-        let replyReference = try Self.requiredString(arguments, key: "reply_to_message_ref")
-        guard let roomID = await references.roomID(
-            conversationReference: conversationReference
-        ), let source = await references.messageAuthority(reference: replyReference),
-           source.roomID == roomID,
-           let replyMessage = try await store.message(
-               ownerUserID: context.ownerUserID,
-               roomID: roomID,
-               messageID: source.messageID
-           ) else {
-            // Reference validation is a recoverable model-input error, including when a Run
-            // created by the pre-sealed-reference client resumes after an application update.
-            // Never turn it into an interrupted write that requires Human review: no side effect
-            // has started yet, and the model can refresh durable Todo sources and retry safely.
-            return Self.structuredFailure(
-                code: "invalid_inbox_reference",
-                field: "inbox_reference",
-                message: "会话或回复消息引用不是当前 Run 的有效工具签发值。若引用来自 Todo 来源，请重新调用 todo_list 并使用其 sources 中的新 conversation_ref 与 message_ref；若回复当前触发消息，请调用 relay_bootstrap；不要重复提交旧引用。",
-                retryable: true,
-                nextTool: Self.todoListToolName
-            )
-        }
-        let notifyProjectManager = try Self.optionalBoolean(
-            arguments,
-            key: "notify_project_manager"
-        ) ?? false
-        var mentionedAgentIDs: [String] = []
-        if notifyProjectManager {
-            guard let room = try await store.room(
-                ownerUserID: context.ownerUserID,
-                roomID: roomID
-            ), room.conversationKind == .projectTeam,
-            let projectManagerAgentID = room.projectManagerAgentID else {
-                return Self.structuredFailure(
-                    code: "project_manager_unavailable",
-                    field: "notify_project_manager",
-                    message: "该会话不是项目团队，或团队尚未明确指定项目经理。",
-                    retryable: false
-                )
-            }
-            mentionedAgentIDs = [projectManagerAgentID]
-        }
-        let resolution = try await resolveDocumentDrafts(arguments: arguments, callID: call.id)
-        guard case let .ready(documentReferences, attachmentDrafts) = resolution else {
-            if case let .failure(failure) = resolution { return failure }
-            fatalError("unreachable document resolution")
-        }
-        let post: AgentGroupChatPostResult
-        do {
-            post = try await store.postMessage(
-                ownerUserID: context.ownerUserID,
-                roomID: roomID,
-                draft: .init(
-                    senderKind: .agent,
-                    senderID: context.agentID,
-                    content: content,
-                    mentionedAgentIDs: mentionedAgentIDs,
-                    replyToMessageID: replyMessage.id,
-                    sourceRunID: context.runID,
-                    causationID: context.deliveryID,
-                    rootMessageID: replyMessage.rootMessageID,
-                    hopCount: min(64, replyMessage.hopCount + 1),
-                    attachments: attachmentDrafts
-                ),
-                limits: limits
-            )
-        } catch AgentGroupChatError.notMember {
-            await references.releaseDocuments(references: documentReferences, callID: call.id)
-            // A Todo source records where its manager originally captured the work. The
-            // assignee is intentionally allowed to read that source reference from the shared
-            // board even when it was captured from a private conversation the assignee cannot
-            // join. Treat that topology as a recoverable routing choice, not an interrupted
-            // write requiring Human review.
-            return Self.structuredFailure(
-                code: "source_conversation_not_accessible",
-                field: "conversation_ref",
-                message: "当前 Agent 不是该 Todo 来源会话的参与者，不能向该私聊回报。请调用 agent_workspace_snapshot 获取 Todo 所属团队和项目经理的临时引用，再使用 chat_team_send 在团队群公开汇报；不要重复调用 chat_inbox_send。",
-                retryable: true,
-                nextTool: Self.workspaceSnapshotToolName
-            )
-        } catch {
-            await references.releaseDocuments(references: documentReferences, callID: call.id)
-            throw error
-        }
-        await references.consumeDocuments(references: documentReferences, callID: call.id)
-        await recordSuccessfulMessage(content, documentCount: attachmentDrafts.count)
-        await roomChangeHandler(roomID)
-        let outcome = try Self.outcome(InboxSendResponse(
-            sent: true,
-            notifiedProjectManager: notifyProjectManager,
-            conversationReference: conversationReference,
-            replyToMessageReference: replyReference,
-            spawnedDeliveryCount: post.deliveries.count,
-            routingStopReason: post.routingStopReason
-        ))
-        await recordSendOutcome(outcome, call: call)
-        return outcome
-    }
 }

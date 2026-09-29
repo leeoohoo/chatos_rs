@@ -24,6 +24,10 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
     case professionSkill = "AgentPrompt.Skill.Profession"
     case projectSkill = "AgentPrompt.Skill.Project"
     case groupChatSystem = "AgentPrompt.GroupChat.System"
+    case managerSystem = "AgentPrompt.Manager.System"
+    case managerWakeUser = "AgentPrompt.Manager.WakeUser"
+    case executorSystem = "AgentPrompt.Executor.System"
+    case executorWakeUser = "AgentPrompt.Executor.WakeUser"
     case actionHeartbeat = "AgentPrompt.Action.Heartbeat"
     case actionTodo = "AgentPrompt.Action.Todo"
     case actionTodoStatus = "AgentPrompt.Action.TodoStatus"
@@ -57,6 +61,20 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
                 "executor_instructions", "todo_status_instructions", "profession_skill",
                 "project_skill", "compact_communication_skill", "requirement_survey_skill",
             ]
+        case .managerSystem:
+            [
+                "agent_name", "responsibility", "role_prompt",
+                "capability_discovery_skill", "staffing_instructions",
+                "project_instructions", "requirement_survey_skill",
+                "manager_instructions", "compact_communication_skill",
+                "profession_skill", "todo_status_instructions",
+            ]
+        case .executorSystem:
+            [
+                "agent_name", "role_prompt", "capability_discovery_skill",
+                "requirement_survey_skill", "executor_instructions",
+                "compact_communication_skill", "profession_skill",
+            ]
         case .deliveryUser:
             ["trigger_kind", "attachment_count", "trigger_payload", "requested_action"]
         case .builderUser:
@@ -74,7 +92,7 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
              .executorCycle, .todoStatusCycle,
              .actionHeartbeat, .actionTodo,
              .actionTodoStatus, .actionDefault, .builderSystem, .agentDefaultRole,
-             .approvalSystem:
+             .approvalSystem, .managerWakeUser, .executorWakeUser:
             []
         }
     }

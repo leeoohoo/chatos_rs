@@ -126,13 +126,11 @@ extension LocalAgentChatToolProvider {
     }
 
     struct InboxConversationResponse: Encodable {
-        let conversationReference: String
         let name: String
         let kind: String
         let messages: [InboxMessageResponse]
 
         enum CodingKeys: String, CodingKey {
-            case conversationReference = "conversation_ref"
             case name, kind, messages
         }
     }
@@ -148,24 +146,6 @@ extension LocalAgentChatToolProvider {
             case messageReference = "message_ref"
             case sender, content, attachments
             case createdAtUnixMs = "created_at_unix_ms"
-        }
-    }
-
-    struct InboxSendResponse: Encodable {
-        let sent: Bool
-        let notifiedProjectManager: Bool
-        let conversationReference: String
-        let replyToMessageReference: String
-        let spawnedDeliveryCount: Int
-        let routingStopReason: String?
-
-        enum CodingKeys: String, CodingKey {
-            case sent
-            case notifiedProjectManager = "notified_project_manager"
-            case conversationReference = "conversation_ref"
-            case replyToMessageReference = "reply_to_message_ref"
-            case spawnedDeliveryCount = "spawned_delivery_count"
-            case routingStopReason = "routing_stop_reason"
         }
     }
 
@@ -411,12 +391,10 @@ extension LocalAgentChatToolProvider {
     }
 
     struct TodoSourceReferenceResponse: Encodable {
-        let conversationReference: String
         let messageReference: String
         let relation: String
 
         enum CodingKeys: String, CodingKey {
-            case conversationReference = "conversation_ref"
             case messageReference = "message_ref"
             case relation
         }
@@ -574,30 +552,6 @@ extension LocalAgentChatToolProvider {
         let type: String
         let status: String
         let subject: String
-    }
-
-    struct DirectOpenResponse: Encodable {
-        let conversationReference: String
-        let targetAgentReference: String
-
-        enum CodingKeys: String, CodingKey {
-            case conversationReference = "conversation_ref"
-            case targetAgentReference = "target_agent_ref"
-        }
-    }
-
-    struct DirectSendResponse: Encodable {
-        let conversationReference: String
-        let messageReference: String
-        let spawnedDeliveryCount: Int
-        let routingStopReason: String?
-
-        enum CodingKeys: String, CodingKey {
-            case conversationReference = "conversation_ref"
-            case messageReference = "message_ref"
-            case spawnedDeliveryCount = "spawned_delivery_count"
-            case routingStopReason = "routing_stop_reason"
-        }
     }
 
     struct SendResponse: Encodable {

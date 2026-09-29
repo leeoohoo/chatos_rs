@@ -44,6 +44,30 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
                     "profession_skill": "profession skill",
                     "project_skill": "project skill",
                 ]
+            case .managerSystem:
+                [
+                    "agent_name": "agent",
+                    "responsibility": "responsibility",
+                    "role_prompt": "role prompt",
+                    "capability_discovery_skill": "capability skill",
+                    "staffing_instructions": "staffing",
+                    "project_instructions": "project",
+                    "requirement_survey_skill": "requirement survey skill",
+                    "manager_instructions": "manager",
+                    "todo_status_instructions": "todo status",
+                    "compact_communication_skill": "compact communication skill",
+                    "profession_skill": "profession skill",
+                ]
+            case .executorSystem:
+                [
+                    "agent_name": "agent",
+                    "role_prompt": "role prompt",
+                    "capability_discovery_skill": "capability skill",
+                    "requirement_survey_skill": "requirement survey skill",
+                    "executor_instructions": "executor",
+                    "compact_communication_skill": "compact communication skill",
+                    "profession_skill": "profession skill",
+                ]
             case .deliveryUser:
                 [
                     "trigger_kind": "message",
@@ -96,26 +120,58 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
             .managerCycle,
             values: ["heartbeat_directive": ""]
         )
-        XCTAssertTrue(rendered.contains("不能覆盖另行授予的“查看本地项目并创建团队”权限"))
-        XCTAssertTrue(rendered.contains("chat_direct_open"))
-        XCTAssertTrue(rendered.contains("chat_direct_send"))
-        XCTAssertTrue(rendered.contains("Human-Agent 私聊"))
-        XCTAssertTrue(rendered.contains("project_dashboard_get"))
-        XCTAssertTrue(rendered.contains("project_dashboard_update"))
-        XCTAssertTrue(rendered.contains("expected_revision"))
-        XCTAssertTrue(rendered.contains("不得复制或伪造系统统计"))
-        XCTAssertTrue(rendered.contains("不能把可预见的跨角色交接制造成成员阻塞"))
-        XCTAssertTrue(rendered.contains("不得把成员原始阻塞转发给 Human"))
-        XCTAssertTrue(rendered.contains("推荐方案以及一个明确请求"))
-        XCTAssertTrue(rendered.contains("普通 blocked Todo 是项目经理待协调事项"))
+        XCTAssertTrue(rendered.contains("不属于任何群聊、私聊或项目"))
+        XCTAssertTrue(rendered.contains("chat_read_all_unread"))
+        XCTAssertTrue(rendered.contains("统一调用 chat_send_message"))
+        XCTAssertTrue(rendered.contains("禁止索要或编排 conversation_ref"))
+        XCTAssertTrue(rendered.contains("只有团队明确绑定且职业为 project_manager"))
+        XCTAssertTrue(rendered.contains("普通 blocked Todo 不是 Human 待办"))
 
         let todoStatus = LocalAgentPromptCatalog.render(.todoStatusCycle)
-        XCTAssertTrue(todoStatus.contains("project_dashboard_get"))
-        XCTAssertTrue(todoStatus.contains("project_dashboard_update"))
-        XCTAssertTrue(todoStatus.contains("发生实质变化"))
-        XCTAssertTrue(todoStatus.contains("不能把成员的原始阻塞直接转发给 Human"))
-        XCTAssertTrue(todoStatus.contains("创建 requirement_survey_write 调研 Todo"))
-        XCTAssertTrue(todoStatus.contains("不得自动登记为 Human 待办"))
+        XCTAssertTrue(todoStatus.contains("Agent 通讯层唤醒"))
+        XCTAssertTrue(todoStatus.contains("不是 Todo 执行层继续运行"))
+        XCTAssertTrue(todoStatus.contains("chat_read_all_unread"))
+        XCTAssertTrue(todoStatus.contains("禁止管理 conversation_ref"))
+    }
+
+    func testManagerAndExecutorPromptsUseDifferentRuntimeIdentities() {
+        let manager = LocalAgentPromptCatalog.render(
+            .managerSystem,
+            values: [
+                "agent_name": "丹青",
+                "responsibility": "负责设计",
+                "role_prompt": "保持一致",
+                "capability_discovery_skill": "capability",
+                "staffing_instructions": "",
+                "project_instructions": "",
+                "requirement_survey_skill": "",
+                "manager_instructions": "manager",
+                "todo_status_instructions": "",
+                "compact_communication_skill": "communication",
+                "profession_skill": "profession",
+            ]
+        )
+        XCTAssertTrue(manager.contains("通讯 Run 属于你这个 Agent"))
+        XCTAssertTrue(manager.contains("恢复你自己的长期 Memory"))
+        XCTAssertTrue(manager.contains("chat_read_all_unread"))
+        XCTAssertFalse(manager.contains("当前群目标"))
+
+        let executor = LocalAgentPromptCatalog.render(
+            .executorSystem,
+            values: [
+                "agent_name": "丹青",
+                "role_prompt": "完成任务",
+                "capability_discovery_skill": "capability",
+                "requirement_survey_skill": "",
+                "executor_instructions": "executor",
+                "compact_communication_skill": "communication",
+                "profession_skill": "profession",
+            ]
+        )
+        XCTAssertTrue(executor.contains("本轮只绑定一个 Todo"))
+        XCTAssertTrue(executor.contains("这个 Todo 自己的独立 Memory"))
+        XCTAssertTrue(executor.contains("不负责给群聊或私聊发消息"))
+        XCTAssertFalse(executor.contains("chat_read_all_unread"))
     }
 
     func testRequirementSurveySkillIsProgressiveAndToolDirected() {

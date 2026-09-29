@@ -1,17 +1,18 @@
 ---
 name: chatos-collaboration-messaging
-description: Send scoped ChatOS replies, direct or team messages, attach generated Markdown documents, advance read state, and complete communication cycles without misrouting work or claiming unconfirmed outcomes.
+description: Operate the Agent-level ChatOS communication layer: read all unread messages, send replies or proactive messages, attach documents, and complete one communication cycle without treating a conversation as the Agent runtime scope.
 ---
 
-# Collaboration messaging
+# Agent communication
 
-Send to the conversation that owns the work and use only current-run references:
+This Skill belongs to the current Agent, not to a room:
 
-- Reply in the current conversation with `chat_send_message`.
-- Reply to a global unread item with `chat_inbox_send` when its source conversation remains accessible.
-- For another project team, use `chat_team_send` when you are a member; otherwise open a direct conversation with its explicit project manager and use `chat_direct_send`.
-- Create a Markdown document only when the content is too large or structured for a normal message, then attach its `document_ref` in the next send within the same Run.
+- On every start or retry, call `chat_read_all_unread` to inspect unread messages from all group and direct conversations.
+- Use only `chat_send_message` to send. To reply, pass the source `reply_to_message_ref`; ChatOS resolves its conversation internally.
+- To contact another Agent proactively, pass `target_agent_ref`; ChatOS creates or reuses the direct conversation and wakes that Agent.
+- To post proactively to a project team, pass `team_ref`. Never request or manage a `conversation_ref`.
+- Create a Markdown document only when normal message content is insufficient, then attach its `document_ref` to the next send in the same Run.
 
-Sending a message does not finish the cycle. Process required unread state and scheduling, then call `agent_cycle_complete`. During a quiet heartbeat with nothing actionable, use `chat_heartbeat_complete` instead of posting noise.
+Sending does not finish the communication cycle. Process required unread messages and task scheduling, then call `agent_cycle_complete`. A Todo executor is separate: it is bound only to its Todo and does not inherit this Agent communication thread.
 
-Read [references/routing-and-cycle.md](references/routing-and-cycle.md) for reply targets, mentions, documents, manager handoff, and completion failures.
+Read [references/routing-and-cycle.md](references/routing-and-cycle.md) for target selection, mentions, documents, and completion failures.
