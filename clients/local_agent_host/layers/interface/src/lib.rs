@@ -10,10 +10,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{fmt, str::FromStr};
 
+mod conversation;
 mod plugin;
 mod task;
 mod tool;
 
+pub use conversation::{
+    CreateConversationCommand, GetConversationCommand, ListConversationsCommand,
+    LocalConversationDetail, LocalConversationMessageRecord, LocalConversationMessageRole,
+    LocalConversationRecord, LocalConversationTurnRecord, LocalConversationTurnStart,
+    LocalConversationTurnStatus, StartConversationTurnCommand,
+};
 pub use plugin::{
     GetPluginInstallationCommand, ListPluginInstallationsCommand, LocalPluginInstallationRecord,
     LocalPluginInstallationSpec, PutPluginInstallationCommand, RemovePluginInstallationCommand,
@@ -30,7 +37,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 9;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 10;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -79,6 +86,10 @@ pub enum HostCommand {
     GetPluginInstallation(GetPluginInstallationCommand),
     ListPluginInstallations(ListPluginInstallationsCommand),
     RemovePluginInstallation(RemovePluginInstallationCommand),
+    CreateConversation(CreateConversationCommand),
+    GetConversation(GetConversationCommand),
+    ListConversations(ListConversationsCommand),
+    StartConversationTurn(StartConversationTurnCommand),
 }
 
 impl HostCommand {
@@ -105,6 +116,10 @@ impl HostCommand {
             Self::GetPluginInstallation(command) => command.validate(),
             Self::ListPluginInstallations(command) => command.validate(),
             Self::RemovePluginInstallation(command) => command.validate(),
+            Self::CreateConversation(command) => command.validate(),
+            Self::GetConversation(command) => command.validate(),
+            Self::ListConversations(command) => command.validate(),
+            Self::StartConversationTurn(command) => command.validate(),
         }
     }
 }
@@ -557,6 +572,15 @@ pub enum HostResult {
     },
     PluginInstallations {
         installations: Vec<LocalPluginInstallationRecord>,
+    },
+    Conversation {
+        conversation: LocalConversationDetail,
+    },
+    Conversations {
+        conversations: Vec<LocalConversationRecord>,
+    },
+    ConversationTurnStarted {
+        result: Box<LocalConversationTurnStart>,
     },
 }
 

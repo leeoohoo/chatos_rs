@@ -216,7 +216,7 @@ async fn expired_claim_cannot_commit_a_late_step() {
 }
 
 #[tokio::test]
-async fn version_two_database_migrates_through_plugin_installation_schema() {
+async fn version_two_database_migrates_through_conversation_schema() {
     let database_path = std::env::temp_dir().join(format!(
         "chatos-local-agent-migration-{}.sqlite",
         Uuid::new_v4()
@@ -276,7 +276,7 @@ async fn version_two_database_migrates_through_plugin_installation_schema() {
             .fetch_one(&storage.pool)
             .await
             .expect("schema version");
-    assert_eq!(schema_version, 6);
+    assert_eq!(schema_version, 7);
     let task_tables: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (\
          'local_task_graphs', 'local_tasks', 'local_task_dependencies')",
@@ -293,6 +293,14 @@ async fn version_two_database_migrates_through_plugin_installation_schema() {
     .await
     .expect("plugin table");
     assert_eq!(plugin_tables, 1);
+    let conversation_tables: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (\
+         'local_conversations', 'local_conversation_turns', 'local_conversation_messages')",
+    )
+    .fetch_one(&storage.pool)
+    .await
+    .expect("conversation tables");
+    assert_eq!(conversation_tables, 3);
     storage.pool.close().await;
     drop(storage);
     for path in [

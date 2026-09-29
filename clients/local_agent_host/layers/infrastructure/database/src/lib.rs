@@ -10,13 +10,16 @@ use chatos_local_agent_protocol::{
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use sqlx::{
-    sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow},
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
     Row, SqliteConnection, SqlitePool,
 };
 use std::{path::Path, str::FromStr, time::Duration};
 
+mod conversation_lifecycle;
+mod conversation_store;
 mod migration;
 mod plugin_store;
+mod run_record;
 mod schema;
 mod task_commands;
 mod task_lifecycle;
@@ -25,8 +28,10 @@ mod tool_store;
 
 pub use chatos_local_agent_ports::{
     ClientStorageError, IdempotentCommand, LocalAgentRunStore, LocalAgentStore,
-    LocalAgentTaskStore, LocalAgentToolStore, LocalPluginInstallationStore, RunTransition,
+    LocalAgentTaskStore, LocalAgentToolStore, LocalConversationStore, LocalPluginInstallationStore,
+    RunTransition,
 };
+use run_record::{decode_event, decode_run};
 use schema::RUN_SELECT;
 
 /// Converts SQLx failures inside the SQLite adapter without leaking SQLx into
@@ -202,6 +207,50 @@ impl SqliteClientStorage {
             .transpose()
     }
 
+    pub(crate) async fn insert_run_on(
+        connection: &mut SqliteConnection,
+        run: &LocalAgentRunRecord,
+    ) -> Result<(), ClientStorageError> {
+        sqlx::query(
+            "INSERT INTO local_agent_runs(\
+             run_id, owner_user_id, owner_entity_type, owner_entity_id, profile_key, \
+             model_config_ref, model_config_revision, capability_policy_revision, input_json, \
+             status, iteration, model_attempt, max_iterations, version, claim_token, \
+             claim_until_unix_ms, next_attempt_at_unix_ms, pending_tool_batch_json, \
+             terminal_outcome_json, checkpoint_json, continuation_input_json, \
+             created_at_unix_ms, updated_at_unix_ms) \
+             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, \
+             ?, NULL, ?, ?)",
+        )
+        .bind(&run.run_id)
+        .bind(&run.owner_user_id)
+        .bind(&run.owner_entity_type)
+        .bind(&run.owner_entity_id)
+        .bind(&run.profile_key)
+        .bind(&run.model_config_ref)
+        .bind(&run.model_config_revision)
+        .bind(&run.capability_policy_revision)
+        .bind(serde_json::to_string(&run.input)?)
+        .bind(run.status.as_str())
+        .bind(i64::from(run.iteration))
+        .bind(i64::from(run.model_attempt))
+        .bind(i64::from(run.max_iterations))
+        .bind(run.version as i64)
+        .bind(serde_json::to_string(&run.checkpoint)?)
+        .bind(run.created_at_unix_ms)
+        .bind(run.updated_at_unix_ms)
+        .execute(&mut *connection)
+        .await
+        .map_err(|error| {
+            if is_unique_violation(&error) {
+                ClientStorageError::Conflict(format!("run id already exists: {}", run.run_id))
+            } else {
+                ClientStorageError::database(error)
+            }
+        })?;
+        Ok(())
+    }
+
     async fn recover_expired_claims_on(
         connection: &mut SqliteConnection,
         now_unix_ms: i64,
@@ -261,42 +310,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
             if let Some(replay) = Self::replay(&mut connection, command).await.db()? {
                 return Ok(replay);
             }
-            sqlx::query(
-                "INSERT INTO local_agent_runs(\
-                 run_id, owner_user_id, owner_entity_type, owner_entity_id, profile_key, \
-                 model_config_ref, model_config_revision, capability_policy_revision, input_json, \
-                 status, iteration, model_attempt, max_iterations, version, claim_token, claim_until_unix_ms, \
-                 next_attempt_at_unix_ms, pending_tool_batch_json, terminal_outcome_json, \
-                 checkpoint_json, continuation_input_json, created_at_unix_ms, updated_at_unix_ms) \
-                 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, \
-                 ?, NULL, ?, ?)",
-            )
-            .bind(&run.run_id)
-            .bind(&run.owner_user_id)
-            .bind(&run.owner_entity_type)
-            .bind(&run.owner_entity_id)
-            .bind(&run.profile_key)
-            .bind(&run.model_config_ref)
-            .bind(&run.model_config_revision)
-            .bind(&run.capability_policy_revision)
-            .bind(serde_json::to_string(&run.input)?)
-            .bind(run.status.as_str())
-            .bind(i64::from(run.iteration))
-            .bind(i64::from(run.model_attempt))
-            .bind(i64::from(run.max_iterations))
-            .bind(run.version as i64)
-            .bind(serde_json::to_string(&run.checkpoint)?)
-            .bind(run.created_at_unix_ms)
-            .bind(run.updated_at_unix_ms)
-            .execute(&mut *connection)
-            .await
-            .map_err(|error| {
-                if is_unique_violation(&error) {
-                    ClientStorageError::Conflict(format!("run id already exists: {}", run.run_id))
-                } else {
-                    ClientStorageError::database(error)
-                }
-            })?;
+            Self::insert_run_on(&mut connection, run).await?;
             Self::insert_event(
                 &mut connection,
                 event_id,
@@ -305,8 +319,11 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 &serde_json::json!({"profile_key": run.profile_key}),
                 run.created_at_unix_ms,
             )
-            .await.db()?;
-            Self::record_receipt(&mut connection, command, run, run.created_at_unix_ms).await.db()?;
+            .await
+            .db()?;
+            Self::record_receipt(&mut connection, command, run, run.created_at_unix_ms)
+                .await
+                .db()?;
             Ok(run.clone())
         }
         .await;
@@ -497,6 +514,12 @@ impl LocalAgentRunStore for SqliteClientStorage {
             )
             .await
             .db()?;
+            conversation_lifecycle::reconcile_conversation_after_run(
+                &mut connection,
+                &run,
+                transition.occurred_at_unix_ms,
+            )
+            .await?;
             Self::record_receipt(
                 &mut connection,
                 command,
@@ -643,6 +666,12 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 .await
                 .db()?
                 .ok_or_else(|| ClientStorageError::NotFound(run_id.to_string()))?;
+            conversation_lifecycle::reconcile_conversation_after_run(
+                &mut connection,
+                &run,
+                now_unix_ms,
+            )
+            .await?;
             Self::record_receipt(&mut connection, command, &run, now_unix_ms)
                 .await
                 .db()?;
@@ -697,68 +726,6 @@ impl LocalAgentRunStore for SqliteClientStorage {
         }
         Ok(())
     }
-}
-
-fn decode_run(row: SqliteRow) -> Result<LocalAgentRunRecord, ClientStorageError> {
-    let status: String = row.try_get("status").db()?;
-    let input: String = row.try_get("input_json").db()?;
-    let pending_tool_batch: Option<String> = row.try_get("pending_tool_batch_json").db()?;
-    let terminal_outcome: Option<String> = row.try_get("terminal_outcome_json").db()?;
-    let checkpoint: String = row.try_get("checkpoint_json").db()?;
-    let continuation_input: Option<String> = row.try_get("continuation_input_json").db()?;
-    Ok(LocalAgentRunRecord {
-        run_id: row.try_get("run_id").db()?,
-        owner_user_id: row.try_get("owner_user_id").db()?,
-        owner_entity_type: row.try_get("owner_entity_type").db()?,
-        owner_entity_id: row.try_get("owner_entity_id").db()?,
-        profile_key: row.try_get("profile_key").db()?,
-        model_config_ref: row.try_get("model_config_ref").db()?,
-        model_config_revision: row.try_get("model_config_revision").db()?,
-        capability_policy_revision: row.try_get("capability_policy_revision").db()?,
-        input: serde_json::from_str(&input)?,
-        status: LocalAgentRunStatus::from_str(&status).map_err(ClientStorageError::InvalidState)?,
-        iteration: integer_to_u32(row.try_get("iteration").db()?, "iteration")?,
-        model_attempt: integer_to_u32(row.try_get("model_attempt").db()?, "model_attempt")?,
-        max_iterations: integer_to_u32(row.try_get("max_iterations").db()?, "max_iterations")?,
-        version: integer_to_u64(row.try_get("version").db()?, "version")?,
-        claim_token: row.try_get("claim_token").db()?,
-        claim_until_unix_ms: row.try_get("claim_until_unix_ms").db()?,
-        next_attempt_at_unix_ms: row.try_get("next_attempt_at_unix_ms").db()?,
-        pending_tool_batch: pending_tool_batch
-            .map(|value| serde_json::from_str(&value))
-            .transpose()?,
-        checkpoint: serde_json::from_str(&checkpoint)?,
-        continuation_input: continuation_input
-            .map(|value| serde_json::from_str(&value))
-            .transpose()?,
-        terminal_outcome: terminal_outcome
-            .map(|value| serde_json::from_str(&value))
-            .transpose()?,
-        created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
-        updated_at_unix_ms: row.try_get("updated_at_unix_ms").db()?,
-    })
-}
-
-fn decode_event(row: SqliteRow) -> Result<LocalAgentEventRecord, ClientStorageError> {
-    let payload: String = row.try_get("payload_json").db()?;
-    Ok(LocalAgentEventRecord {
-        cursor: row.try_get("cursor").db()?,
-        event_id: row.try_get("event_id").db()?,
-        run_id: row.try_get("run_id").db()?,
-        event_type: row.try_get("event_type").db()?,
-        payload: serde_json::from_str(&payload)?,
-        created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
-    })
-}
-
-fn integer_to_u32(value: i64, field: &str) -> Result<u32, ClientStorageError> {
-    u32::try_from(value)
-        .map_err(|_| ClientStorageError::InvalidState(format!("invalid {field}: {value}")))
-}
-
-fn integer_to_u64(value: i64, field: &str) -> Result<u64, ClientStorageError> {
-    u64::try_from(value)
-        .map_err(|_| ClientStorageError::InvalidState(format!("invalid {field}: {value}")))
 }
 
 fn json_option(value: &Option<Value>) -> Result<Option<String>, ClientStorageError> {

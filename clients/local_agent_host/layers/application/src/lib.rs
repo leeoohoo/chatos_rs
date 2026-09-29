@@ -10,9 +10,8 @@ use chatos_local_agent_ports::{
     ClientStorageError, IdempotentCommand, LocalAgentStore, RunTransition,
 };
 use chatos_local_agent_protocol::{
-    CreateRunCommand, HostCommand, HostError, HostRequestEnvelope, HostResponseEnvelope,
-    HostResult, LocalAgentRunRecord, LocalAgentRunStatus, LocalAgentStepOutcome,
-    LocalAgentToolBatch,
+    HostCommand, HostError, HostRequestEnvelope, HostResponseEnvelope, HostResult,
+    LocalAgentRunRecord, LocalAgentRunStatus, LocalAgentStepOutcome, LocalAgentToolBatch,
 };
 use serde_json::json;
 use std::{
@@ -25,11 +24,14 @@ use std::{
 use thiserror::Error;
 use uuid::Uuid;
 
+mod conversation_runtime;
 mod plugin_runtime;
 mod profile;
+mod run_factory;
 mod task_runtime;
 
 pub use profile::{LocalAgentProfile, LocalAgentProfileRegistry};
+use run_factory::create_run_record;
 
 #[derive(Debug, Error)]
 pub enum LocalAgentRuntimeError {
@@ -310,39 +312,18 @@ impl LocalAgentRuntime {
             | HostCommand::RemovePluginInstallation(_)) => {
                 self.handle_plugin_command(&idempotency, command).await
             }
+            command @ (HostCommand::CreateConversation(_)
+            | HostCommand::GetConversation(_)
+            | HostCommand::ListConversations(_)
+            | HostCommand::StartConversationTurn(_)) => {
+                self.handle_conversation_command(&idempotency, command)
+                    .await
+            }
         }
     }
 
     fn now(&self) -> Result<i64, LocalAgentRuntimeError> {
         (self.clock)()
-    }
-}
-
-fn create_run_record(command: CreateRunCommand, now: i64) -> LocalAgentRunRecord {
-    LocalAgentRunRecord {
-        run_id: command.run_id,
-        owner_user_id: command.owner_user_id,
-        owner_entity_type: command.owner_entity_type,
-        owner_entity_id: command.owner_entity_id,
-        profile_key: command.profile_key,
-        model_config_ref: command.model_config_ref,
-        model_config_revision: command.model_config_revision,
-        capability_policy_revision: command.capability_policy_revision,
-        input: command.input,
-        status: LocalAgentRunStatus::Queued,
-        iteration: 0,
-        model_attempt: 1,
-        max_iterations: command.max_iterations,
-        version: 1,
-        claim_token: None,
-        claim_until_unix_ms: None,
-        next_attempt_at_unix_ms: None,
-        pending_tool_batch: None,
-        checkpoint: serde_json::Value::Null,
-        continuation_input: None,
-        terminal_outcome: None,
-        created_at_unix_ms: now,
-        updated_at_unix_ms: now,
     }
 }
 
@@ -515,7 +496,7 @@ mod tests {
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
         ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand, CommitToolCommand,
-        LocalAgentToolCall, LocalAgentToolOutcome, LOCAL_AGENT_PROTOCOL_VERSION,
+        CreateRunCommand, LocalAgentToolCall, LocalAgentToolOutcome, LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use serde_json::Value;
 

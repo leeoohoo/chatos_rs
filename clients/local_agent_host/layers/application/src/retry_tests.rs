@@ -4,7 +4,8 @@
 use super::*;
 use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
-    ClaimNextRunCommand, CommitStepCommand, ResumeRunCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+    ClaimNextRunCommand, CommitStepCommand, CreateRunCommand, ResumeRunCommand,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde_json::json;
 use std::sync::atomic::{AtomicI64, Ordering};

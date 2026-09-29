@@ -174,3 +174,50 @@ pub(super) const SCHEMA_V6: &[&str] = &[
        owner_user_id, plugin_id, component_id\
      )",
 ];
+
+pub(super) const SCHEMA_V7: &[&str] = &[
+    "CREATE TABLE local_conversations (\
+       conversation_id TEXT PRIMARY KEY NOT NULL,\
+       owner_user_id TEXT NOT NULL,\
+       title TEXT NOT NULL,\
+       version INTEGER NOT NULL CHECK(version > 0),\
+       created_at_unix_ms INTEGER NOT NULL,\
+       updated_at_unix_ms INTEGER NOT NULL\
+     )",
+    "CREATE INDEX local_conversations_owner ON local_conversations(\
+       owner_user_id, updated_at_unix_ms DESC, conversation_id\
+     )",
+    "CREATE TABLE local_conversation_turns (\
+       turn_id TEXT PRIMARY KEY NOT NULL,\
+       conversation_id TEXT NOT NULL,\
+       user_message_id TEXT NOT NULL UNIQUE,\
+       run_id TEXT NOT NULL UNIQUE,\
+       status TEXT NOT NULL CHECK(status IN ('running','succeeded','failed','cancelled')),\
+       created_at_unix_ms INTEGER NOT NULL,\
+       updated_at_unix_ms INTEGER NOT NULL,\
+       FOREIGN KEY(conversation_id) REFERENCES local_conversations(conversation_id) ON DELETE CASCADE,\
+       FOREIGN KEY(run_id) REFERENCES local_agent_runs(run_id)\
+     )",
+    "CREATE UNIQUE INDEX local_conversation_turns_active ON local_conversation_turns(\
+       conversation_id\
+     ) WHERE status = 'running'",
+    "CREATE INDEX local_conversation_turns_conversation ON local_conversation_turns(\
+       conversation_id, created_at_unix_ms, turn_id\
+     )",
+    "CREATE TABLE local_conversation_messages (\
+       message_id TEXT PRIMARY KEY NOT NULL,\
+       conversation_id TEXT NOT NULL,\
+       turn_id TEXT NOT NULL,\
+       ordinal INTEGER NOT NULL CHECK(ordinal > 0),\
+       role TEXT NOT NULL CHECK(role IN ('user','assistant')),\
+       content_json TEXT NOT NULL,\
+       metadata_json TEXT NOT NULL,\
+       created_at_unix_ms INTEGER NOT NULL,\
+       FOREIGN KEY(conversation_id) REFERENCES local_conversations(conversation_id) ON DELETE CASCADE,\
+       FOREIGN KEY(turn_id) REFERENCES local_conversation_turns(turn_id) ON DELETE CASCADE,\
+       UNIQUE(conversation_id, ordinal)\
+     )",
+    "CREATE INDEX local_conversation_messages_turn ON local_conversation_messages(\
+       turn_id, ordinal\
+     )",
+];

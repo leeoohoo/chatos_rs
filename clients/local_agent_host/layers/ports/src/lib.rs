@@ -5,10 +5,11 @@
 
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
-    CreateTaskGraphCommand, LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunRecord,
-    LocalAgentRunStatus, LocalAgentToolBatch, LocalAgentToolClaim, LocalAgentToolCommitResult,
-    LocalAgentToolOutcome, LocalPluginInstallationRecord, LocalPluginInstallationSpec,
-    LocalTaskGraph,
+    CreateConversationCommand, CreateTaskGraphCommand, LocalAgentEventRecord, LocalAgentRunClaim,
+    LocalAgentRunRecord, LocalAgentRunStatus, LocalAgentToolBatch, LocalAgentToolClaim,
+    LocalAgentToolCommitResult, LocalAgentToolOutcome, LocalConversationDetail,
+    LocalConversationRecord, LocalConversationTurnStart, LocalPluginInstallationRecord,
+    LocalPluginInstallationSpec, LocalTaskGraph, StartConversationTurnCommand,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -266,8 +267,42 @@ pub trait LocalPluginInstallationStore: Send + Sync {
     ) -> Result<LocalPluginInstallationRecord, ClientStorageError>;
 }
 
+#[async_trait]
+pub trait LocalConversationStore: Send + Sync {
+    async fn create_conversation(
+        &self,
+        command: &IdempotentCommand,
+        conversation: &CreateConversationCommand,
+        now_unix_ms: i64,
+    ) -> Result<LocalConversationDetail, ClientStorageError>;
+
+    async fn get_conversation(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<LocalConversationDetail>, ClientStorageError>;
+
+    async fn list_conversations(
+        &self,
+        owner_user_id: &str,
+        limit: u32,
+    ) -> Result<Vec<LocalConversationRecord>, ClientStorageError>;
+
+    async fn start_conversation_turn(
+        &self,
+        command: &IdempotentCommand,
+        turn: &StartConversationTurnCommand,
+        run: &LocalAgentRunRecord,
+        event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<LocalConversationTurnStart, ClientStorageError>;
+}
+
 pub trait LocalAgentStore:
-    LocalAgentRunStore + LocalAgentToolStore + LocalAgentTaskStore + LocalPluginInstallationStore
+    LocalAgentRunStore
+    + LocalAgentToolStore
+    + LocalAgentTaskStore
+    + LocalPluginInstallationStore
+    + LocalConversationStore
 {
 }
 
@@ -276,5 +311,6 @@ impl<T> LocalAgentStore for T where
         + LocalAgentToolStore
         + LocalAgentTaskStore
         + LocalPluginInstallationStore
+        + LocalConversationStore
 {
 }
