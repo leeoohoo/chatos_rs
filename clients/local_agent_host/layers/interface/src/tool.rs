@@ -14,6 +14,87 @@ pub struct LocalAgentToolCall {
     pub arguments: Value,
     #[serde(default)]
     pub side_effecting: bool,
+    #[serde(default)]
+    pub requires_approval: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalAgentToolApprovalDecision {
+    Approve,
+    Reject,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalAgentToolApprovalStatus {
+    NotRequired,
+    Pending,
+    Approved,
+    Rejected,
+}
+
+impl LocalAgentToolApprovalStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotRequired => "not_required",
+            Self::Pending => "pending",
+            Self::Approved => "approved",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+impl std::str::FromStr for LocalAgentToolApprovalStatus {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "not_required" => Ok(Self::NotRequired),
+            "pending" => Ok(Self::Pending),
+            "approved" => Ok(Self::Approved),
+            "rejected" => Ok(Self::Rejected),
+            _ => Err(format!("unknown Local Agent tool approval status: {value}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListPendingToolApprovalsCommand {
+    pub owner_user_id: String,
+    pub limit: u32,
+}
+
+impl ListPendingToolApprovalsCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
+        if !(1..=100).contains(&self.limit) {
+            return Err("limit must be between 1 and 100".to_string());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DecideToolApprovalCommand {
+    pub owner_user_id: String,
+    pub invocation_id: String,
+    pub expected_version: u64,
+    pub decision: LocalAgentToolApprovalDecision,
+    pub decided_by: String,
+    pub reason: String,
+}
+
+impl DecideToolApprovalCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
+        validate_identifier("invocation_id", &self.invocation_id)?;
+        if self.expected_version == 0 {
+            return Err("expected_version must be greater than zero".to_string());
+        }
+        validate_identifier("decided_by", &self.decided_by)?;
+        validate_text("reason", &self.reason, 4_000)
+    }
 }
 
 impl LocalAgentToolCall {
@@ -203,6 +284,11 @@ pub struct LocalAgentToolInvocationRecord {
     pub tool_name: String,
     pub arguments: Value,
     pub side_effecting: bool,
+    pub requires_approval: bool,
+    pub approval_status: LocalAgentToolApprovalStatus,
+    pub approval_decided_by: Option<String>,
+    pub approval_reason: Option<String>,
+    pub approval_decided_at_unix_ms: Option<i64>,
     pub status: LocalAgentToolStatus,
     pub result: Option<Value>,
     pub error: Option<String>,
@@ -222,6 +308,12 @@ pub struct LocalAgentToolClaim {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LocalAgentToolCommitResult {
+    pub invocation: LocalAgentToolInvocationRecord,
+    pub run: LocalAgentRunRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LocalAgentToolApprovalResult {
     pub invocation: LocalAgentToolInvocationRecord,
     pub run: LocalAgentRunRecord,
 }

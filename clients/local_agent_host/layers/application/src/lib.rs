@@ -258,6 +258,33 @@ impl LocalAgentRuntime {
                     result: Box::new(result),
                 })
             }
+            HostCommand::ListPendingToolApprovals(command) => {
+                let invocations = self
+                    .store
+                    .list_pending_tool_approvals(&command.owner_user_id, command.limit)
+                    .await?;
+                Ok(HostResult::PendingToolApprovals { invocations })
+            }
+            HostCommand::DecideToolApproval(command) => {
+                let result = self
+                    .store
+                    .decide_tool_approval(
+                        &idempotency,
+                        &command.owner_user_id,
+                        &command.invocation_id,
+                        command.expected_version,
+                        command.decision,
+                        &command.decided_by,
+                        &command.reason,
+                        &new_event_id(),
+                        &new_event_id(),
+                        self.now()?,
+                    )
+                    .await?;
+                Ok(HostResult::ToolApproval {
+                    result: Box::new(result),
+                })
+            }
             HostCommand::ResumeRun(command) => {
                 let continuation_input = json!({
                     "type": "resume",
@@ -677,5 +704,7 @@ mod retry_tests;
 mod run_query_tests;
 #[cfg(test)]
 mod runtime_tool_batch_tests;
+#[cfg(test)]
+mod tool_approval_tests;
 #[cfg(test)]
 mod tool_tests;

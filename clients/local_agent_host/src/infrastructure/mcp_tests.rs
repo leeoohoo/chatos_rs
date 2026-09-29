@@ -5,8 +5,8 @@ use super::*;
 use crate::{LocalToolExecutor, LocalToolRegistry};
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
-    LocalAgentToolInvocationRecord, LocalAgentToolOutcome, LocalAgentToolStatus,
-    LocalPluginInstallationRecord, LocalPluginInstallationSpec,
+    LocalAgentToolApprovalStatus, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
+    LocalAgentToolStatus, LocalPluginInstallationRecord, LocalPluginInstallationSpec,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -20,6 +20,11 @@ fn invocation(tool_name: &str) -> LocalAgentToolInvocationRecord {
         tool_name: tool_name.to_string(),
         arguments: json!({"path": "README.md"}),
         side_effecting: false,
+        requires_approval: false,
+        approval_status: LocalAgentToolApprovalStatus::NotRequired,
+        approval_decided_by: None,
+        approval_reason: None,
+        approval_decided_at_unix_ms: None,
         status: LocalAgentToolStatus::Running,
         result: None,
         error: None,

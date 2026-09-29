@@ -88,6 +88,10 @@ impl LocalAiStepExecutor for ChatosAiRuntimeStepExecutor {
 
 pub trait ToolSafetyPolicy: Send + Sync {
     fn is_side_effecting(&self, tool_name: &str) -> bool;
+
+    fn requires_approval(&self, tool_name: &str) -> bool {
+        self.is_side_effecting(tool_name)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -102,6 +106,7 @@ impl ToolSafetyPolicy for ConservativeToolSafetyPolicy {
 #[derive(Debug, Clone, Default)]
 pub struct NamedReadOnlyTools {
     read_only: HashSet<String>,
+    approval_exempt: HashSet<String>,
 }
 
 impl NamedReadOnlyTools {
@@ -117,13 +122,33 @@ impl NamedReadOnlyTools {
                 .map(|value: String| value.trim().to_string())
                 .filter(|value| !value.is_empty())
                 .collect(),
+            approval_exempt: HashSet::new(),
         }
+    }
+
+    pub fn with_approval_exempt<I, S>(mut self, tool_names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.approval_exempt.extend(
+            tool_names
+                .into_iter()
+                .map(Into::into)
+                .map(|value: String| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+        );
+        self
     }
 }
 
 impl ToolSafetyPolicy for NamedReadOnlyTools {
     fn is_side_effecting(&self, tool_name: &str) -> bool {
         !self.read_only.contains(tool_name)
+    }
+
+    fn requires_approval(&self, tool_name: &str) -> bool {
+        self.is_side_effecting(tool_name) && !self.approval_exempt.contains(tool_name)
     }
 }
 
@@ -254,6 +279,7 @@ fn decode_tool_calls(
                 tool_name: tool_name.to_string(),
                 arguments,
                 side_effecting: tool_safety.is_side_effecting(tool_name),
+                requires_approval: tool_safety.requires_approval(tool_name),
             })
         })
         .collect()
@@ -345,8 +371,14 @@ mod tests {
         };
         assert_eq!(tool_calls.len(), 2);
         assert!(!tool_calls[0].side_effecting);
+        assert!(!tool_calls[0].requires_approval);
         assert!(tool_calls[1].side_effecting);
+        assert!(tool_calls[1].requires_approval);
         assert_eq!(tool_calls[0].arguments["path"], "README.md");
+
+        let exempt = NamedReadOnlyTools::new(["read_file"]).with_approval_exempt(["create_task"]);
+        assert!(exempt.is_side_effecting("create_task"));
+        assert!(!exempt.requires_approval("create_task"));
     }
 
     #[test]

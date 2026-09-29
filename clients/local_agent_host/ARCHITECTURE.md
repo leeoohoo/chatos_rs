@@ -54,6 +54,8 @@ IPC v16 exposes tenant/source-scoped aggregate Memory sync status through the ap
 
 IPC v17 exposes owner-scoped Run discovery for native recovery and inspector views. Active, terminal, and complete history filters share a stable descending `(updated_at_unix_ms, run_id)` cursor backed by the SQLite v15 owner/update index. The UI can therefore reconstruct its Run list after reconnecting without retaining scheduler state or querying the old service backend.
 
+Tool authorization is a Host-owned durable state machine in IPC v18 and SQLite v16. A model call records `requires_approval` independently from `side_effecting`: the former gates first execution, while the latter controls unknown-result crash recovery. Approval-pending rows cannot be claimed. Pending approval discovery and decisions are account-scoped, decisions use version/CAS plus command receipts, and rejection becomes a durable failed tool result rather than executing the tool. Built-in Task creation is explicitly exempt from first-execution approval but remains locally idempotent and crash-safe.
+
 ## Server-removal boundary
 
 The completed client localization must allow these directories to be physically deleted:

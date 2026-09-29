@@ -7,6 +7,7 @@ use super::{
 };
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
+    LocalAgentToolApprovalDecision, LocalAgentToolApprovalResult, LocalAgentToolApprovalStatus,
     LocalAgentToolBatch, LocalAgentToolClaim, LocalAgentToolCommitResult,
     LocalAgentToolInvocationRecord, LocalAgentToolOutcome, LocalAgentToolStatus,
 };
@@ -26,9 +27,9 @@ pub(crate) async fn insert_tool_batch(
         sqlx::query(
             "INSERT INTO local_agent_tool_invocations(\
              invocation_id, run_id, batch_id, call_id, tool_name, arguments_json, \
-             side_effecting, status, result_json, error_text, version, claim_token, \
-             claim_until_unix_ms, created_at_unix_ms, updated_at_unix_ms) \
-             VALUES(?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, 1, NULL, NULL, ?, ?)",
+             side_effecting, requires_approval, approval_status, status, result_json, error_text, \
+             version, claim_token, claim_until_unix_ms, created_at_unix_ms, updated_at_unix_ms) \
+             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, 1, NULL, NULL, ?, ?)",
         )
         .bind(Uuid::new_v4().to_string())
         .bind(run_id)
@@ -37,6 +38,12 @@ pub(crate) async fn insert_tool_batch(
         .bind(&call.tool_name)
         .bind(serde_json::to_string(&call.arguments)?)
         .bind(call.side_effecting)
+        .bind(call.requires_approval)
+        .bind(if call.requires_approval {
+            LocalAgentToolApprovalStatus::Pending.as_str()
+        } else {
+            LocalAgentToolApprovalStatus::NotRequired.as_str()
+        })
         .bind(now_unix_ms)
         .bind(now_unix_ms)
         .execute(&mut *connection)
@@ -100,7 +107,8 @@ impl LocalAgentToolStore for SqliteClientStorage {
                 .db()?;
             let candidates = sqlx::query(
                 "SELECT invocation_id, tool_name FROM local_agent_tool_invocations \
-                 WHERE status = 'pending' AND run_id IN (\
+                 WHERE status = 'pending' \
+                 AND approval_status IN ('not_required','approved') AND run_id IN (\
                    SELECT run_id FROM local_agent_runs WHERE status = 'waiting_tool_result'\
                  ) ORDER BY created_at_unix_ms, invocation_id",
             )
@@ -264,6 +272,43 @@ impl LocalAgentToolStore for SqliteClientStorage {
         .await;
         Self::finish_write(&mut connection, result).await
     }
+
+    async fn list_pending_tool_approvals(
+        &self,
+        owner_user_id: &str,
+        limit: u32,
+    ) -> Result<Vec<LocalAgentToolInvocationRecord>, ClientStorageError> {
+        super::tool_approval_store::list_pending(self, owner_user_id, limit).await
+    }
+
+    async fn decide_tool_approval(
+        &self,
+        command: &IdempotentCommand,
+        owner_user_id: &str,
+        invocation_id: &str,
+        expected_version: u64,
+        decision: LocalAgentToolApprovalDecision,
+        decided_by: &str,
+        reason: &str,
+        event_id: &str,
+        batch_event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<LocalAgentToolApprovalResult, ClientStorageError> {
+        super::tool_approval_store::decide(
+            self,
+            command,
+            owner_user_id,
+            invocation_id,
+            expected_version,
+            decision,
+            decided_by,
+            reason,
+            event_id,
+            batch_event_id,
+            now_unix_ms,
+        )
+        .await
+    }
 }
 
 async fn recover_expired_on(
@@ -338,7 +383,7 @@ async fn recover_expired_on(
     Ok(rows.len() as u64)
 }
 
-async fn advance_run_after_tool(
+pub(super) async fn advance_run_after_tool(
     connection: &mut SqliteConnection,
     run_id: &str,
     batch_id: &str,
@@ -372,7 +417,8 @@ async fn advance_run_after_tool(
     }
     let rows = sqlx::query(
         "SELECT invocation_id, run_id, batch_id, call_id, tool_name, arguments_json, \
-         side_effecting, status, result_json, error_text, version, claim_token, \
+         side_effecting, requires_approval, approval_status, approval_decided_by, \
+         approval_reason, approval_decided_at_unix_ms, status, result_json, error_text, version, claim_token, \
          claim_until_unix_ms, created_at_unix_ms, updated_at_unix_ms \
          FROM local_agent_tool_invocations WHERE run_id = ? AND batch_id = ? \
          ORDER BY invocation_id",
@@ -417,13 +463,14 @@ async fn advance_run_after_tool(
     Ok(())
 }
 
-async fn fetch_invocation(
+pub(super) async fn fetch_invocation(
     connection: &mut SqliteConnection,
     invocation_id: &str,
 ) -> Result<Option<LocalAgentToolInvocationRecord>, ClientStorageError> {
     sqlx::query(
         "SELECT invocation_id, run_id, batch_id, call_id, tool_name, arguments_json, \
-         side_effecting, status, result_json, error_text, version, claim_token, \
+         side_effecting, requires_approval, approval_status, approval_decided_by, \
+         approval_reason, approval_decided_at_unix_ms, status, result_json, error_text, version, claim_token, \
          claim_until_unix_ms, created_at_unix_ms, updated_at_unix_ms \
          FROM local_agent_tool_invocations WHERE invocation_id = ?",
     )
@@ -435,8 +482,11 @@ async fn fetch_invocation(
     .transpose()
 }
 
-fn decode_invocation(row: SqliteRow) -> Result<LocalAgentToolInvocationRecord, ClientStorageError> {
+pub(super) fn decode_invocation(
+    row: SqliteRow,
+) -> Result<LocalAgentToolInvocationRecord, ClientStorageError> {
     let status: String = row.try_get("status").db()?;
+    let approval_status: String = row.try_get("approval_status").db()?;
     let arguments: String = row.try_get("arguments_json").db()?;
     let result: Option<String> = row.try_get("result_json").db()?;
     Ok(LocalAgentToolInvocationRecord {
@@ -447,6 +497,12 @@ fn decode_invocation(row: SqliteRow) -> Result<LocalAgentToolInvocationRecord, C
         tool_name: row.try_get("tool_name").db()?,
         arguments: serde_json::from_str(&arguments)?,
         side_effecting: row.try_get("side_effecting").db()?,
+        requires_approval: row.try_get("requires_approval").db()?,
+        approval_status: LocalAgentToolApprovalStatus::from_str(&approval_status)
+            .map_err(ClientStorageError::InvalidState)?,
+        approval_decided_by: row.try_get("approval_decided_by").db()?,
+        approval_reason: row.try_get("approval_reason").db()?,
+        approval_decided_at_unix_ms: row.try_get("approval_decided_at_unix_ms").db()?,
         status: LocalAgentToolStatus::from_str(&status)
             .map_err(ClientStorageError::InvalidState)?,
         result: result

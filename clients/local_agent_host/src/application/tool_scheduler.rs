@@ -283,6 +283,7 @@ mod tests {
                             tool_name: "read_file".to_string(),
                             arguments: json!({"path": "README.md"}),
                             side_effecting: false,
+                            requires_approval: false,
                         }],
                         checkpoint: json!({"response_id": "response-1"}),
                     },

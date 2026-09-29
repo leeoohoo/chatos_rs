@@ -35,6 +35,7 @@ mod task_commands;
 mod task_conversation_writeback;
 mod task_lifecycle;
 mod task_store;
+mod tool_approval_store;
 mod tool_store;
 
 pub use chatos_local_agent_ports::{

@@ -8,11 +8,12 @@ use chatos_local_agent_protocol::{
     CancelConversationTurnCommand, CreateConversationCommand, CreateTaskGraphCommand,
     GuideConversationTurnCommand, LocalAgentEventRecord, LocalAgentRunClaim,
     LocalAgentRunListScope, LocalAgentRunPage, LocalAgentRunRecord, LocalAgentRunStatus,
-    LocalAgentToolBatch, LocalAgentToolClaim, LocalAgentToolCommitResult, LocalAgentToolOutcome,
-    LocalConversationDetail, LocalConversationHistoryPage, LocalConversationRecord,
-    LocalConversationTurnStart, LocalConversationTurnUpdate, LocalPluginInstallationRecord,
-    LocalPluginInstallationSpec, LocalTaskGraph, ResumeConversationTurnCommand,
-    StartConversationTurnCommand,
+    LocalAgentToolApprovalDecision, LocalAgentToolApprovalResult, LocalAgentToolBatch,
+    LocalAgentToolClaim, LocalAgentToolCommitResult, LocalAgentToolInvocationRecord,
+    LocalAgentToolOutcome, LocalConversationDetail, LocalConversationHistoryPage,
+    LocalConversationRecord, LocalConversationTurnStart, LocalConversationTurnUpdate,
+    LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalTaskGraph,
+    ResumeConversationTurnCommand, StartConversationTurnCommand,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -259,6 +260,27 @@ pub trait LocalAgentToolStore: Send + Sync {
         batch_event_id: &str,
         now_unix_ms: i64,
     ) -> Result<LocalAgentToolCommitResult, ClientStorageError>;
+
+    async fn list_pending_tool_approvals(
+        &self,
+        owner_user_id: &str,
+        limit: u32,
+    ) -> Result<Vec<LocalAgentToolInvocationRecord>, ClientStorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    async fn decide_tool_approval(
+        &self,
+        command: &IdempotentCommand,
+        owner_user_id: &str,
+        invocation_id: &str,
+        expected_version: u64,
+        decision: LocalAgentToolApprovalDecision,
+        decided_by: &str,
+        reason: &str,
+        event_id: &str,
+        batch_event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<LocalAgentToolApprovalResult, ClientStorageError>;
 }
 
 #[async_trait]

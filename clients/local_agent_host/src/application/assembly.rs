@@ -113,7 +113,8 @@ impl LocalAgentHostAssembly {
     {
         let model_resolver: Arc<dyn LocalModelRuntimeResolver> = Arc::new(model_resolver);
         let capability_resolver: Arc<dyn LocalCapabilityResolver> = Arc::new(capability_resolver);
-        let safety = NamedReadOnlyTools::new(read_only_tools);
+        let safety = NamedReadOnlyTools::new(read_only_tools)
+            .with_approval_exempt([CREATE_TASK_TOOL, CREATE_TASKS_TOOL]);
         let mut main_chat_planner = ControlPlaneLocalAiStepPlanner::main_chat(
             Arc::clone(&model_resolver),
             Arc::clone(&capability_resolver),

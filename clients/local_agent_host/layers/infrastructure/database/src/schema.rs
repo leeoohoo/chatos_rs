@@ -355,3 +355,18 @@ pub(super) const SCHEMA_V14: &[&str] = &[
 
 pub(super) const SCHEMA_V15: &[&str] = &["CREATE INDEX local_agent_runs_owner_updated ON \
      local_agent_runs(owner_user_id, updated_at_unix_ms DESC, run_id DESC)"];
+
+pub(super) const SCHEMA_V16: &[&str] = &[
+    "ALTER TABLE local_agent_tool_invocations ADD COLUMN \
+     requires_approval INTEGER NOT NULL DEFAULT 0 CHECK(requires_approval IN (0, 1))",
+    "ALTER TABLE local_agent_tool_invocations ADD COLUMN \
+     approval_status TEXT NOT NULL DEFAULT 'not_required' CHECK(approval_status IN (\
+       'not_required','pending','approved','rejected'\
+     ))",
+    "ALTER TABLE local_agent_tool_invocations ADD COLUMN approval_decided_by TEXT",
+    "ALTER TABLE local_agent_tool_invocations ADD COLUMN approval_reason TEXT",
+    "ALTER TABLE local_agent_tool_invocations ADD COLUMN approval_decided_at_unix_ms INTEGER",
+    "CREATE INDEX local_agent_tool_invocations_approval ON local_agent_tool_invocations(\
+       approval_status, status, created_at_unix_ms, invocation_id\
+     )",
+];

@@ -47,12 +47,14 @@ pub use task::{
     LocalTaskStatus, RestartTaskCommand, RetryTaskCommand,
 };
 pub use tool::{
-    ClaimNextToolCommand, CommitToolCommand, LocalAgentToolBatch, LocalAgentToolCall,
-    LocalAgentToolClaim, LocalAgentToolCommitResult, LocalAgentToolInvocationRecord,
-    LocalAgentToolOutcome, LocalAgentToolStatus,
+    ClaimNextToolCommand, CommitToolCommand, DecideToolApprovalCommand,
+    ListPendingToolApprovalsCommand, LocalAgentToolApprovalDecision, LocalAgentToolApprovalResult,
+    LocalAgentToolApprovalStatus, LocalAgentToolBatch, LocalAgentToolCall, LocalAgentToolClaim,
+    LocalAgentToolCommitResult, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
+    LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 17;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 18;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -93,6 +95,8 @@ pub enum HostCommand {
     CommitStep(CommitStepCommand),
     ClaimNextTool(ClaimNextToolCommand),
     CommitTool(CommitToolCommand),
+    ListPendingToolApprovals(ListPendingToolApprovalsCommand),
+    DecideToolApproval(DecideToolApprovalCommand),
     ResumeRun(ResumeRunCommand),
     CancelRun(CancelRunCommand),
     ListEvents(ListEventsCommand),
@@ -133,6 +137,8 @@ impl HostCommand {
             Self::CommitStep(command) => command.validate(),
             Self::ClaimNextTool(command) => command.validate(),
             Self::CommitTool(command) => command.validate(),
+            Self::ListPendingToolApprovals(command) => command.validate(),
+            Self::DecideToolApproval(command) => command.validate(),
             Self::ResumeRun(command) => command.validate(),
             Self::CancelRun(command) => command.validate(),
             Self::ListEvents(command) => command.validate(),
@@ -602,6 +608,12 @@ pub enum HostResult {
     },
     ToolCommit {
         result: Box<LocalAgentToolCommitResult>,
+    },
+    PendingToolApprovals {
+        invocations: Vec<LocalAgentToolInvocationRecord>,
+    },
+    ToolApproval {
+        result: Box<LocalAgentToolApprovalResult>,
     },
     Events {
         events: Vec<LocalAgentEventRecord>,
