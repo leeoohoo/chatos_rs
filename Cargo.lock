@@ -881,6 +881,7 @@ dependencies = [
  "chatos_client_storage",
  "chatos_local_agent_protocol",
  "chatos_local_agent_runtime",
+ "serde",
  "serde_json",
  "thiserror",
  "tokio",

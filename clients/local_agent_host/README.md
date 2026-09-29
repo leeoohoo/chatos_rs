@@ -11,6 +11,7 @@ The current milestone provides:
 - a shared `LocalAgentProfile` registry and one-step Host scheduler;
 - a durable Tool Invocation Ledger with per-call claims and results;
 - a durable Task DAG repository with atomic, idempotent graph creation;
+- local `create_task` and `create_tasks_with_prerequisites` tool executors;
 - a `chatos_ai_runtime` single-step Profile adapter and conservative tool-safety policy;
 - a local tool registry and one-invocation Tool Scheduler;
 - an event-driven Host Coordinator that drains model and tool work to quiescence;
@@ -28,9 +29,13 @@ The library-level schedulers execute one registered Profile step or one tool inv
 
 `LocalAgentHostAssembly` is the native-client composition root. Given one initialized Runtime plus concrete model, capability and platform-tool adapters, it registers both production Profile keys and constructs the model Scheduler, tool Scheduler and Coordinator with one shared safety policy.
 
+The in-process assembly reserves `create_task` and `create_tasks_with_prerequisites` and routes them directly into the local Task DAG repository. IDs are derived from the durable tool invocation, so replay returns the original graph. New Tasks inherit the parent Run's exact model and capability revisions; an unresolved model switch and dependencies on Tasks outside the submitted graph are rejected instead of storing an ambiguous execution snapshot.
+
 `LocalControlPlaneSnapshot` is the default in-process Resolver backing for native integration. Authenticated configuration code publishes exact model and capability revisions into it; model credentials remain in non-serializable process memory and can be removed or atomically replaced without altering durable Runs.
 
 Native clients may choose `LocalAgentHostAssembly::with_external_tool_worker`. In that mode Swift or C# claims and commits the durable Tool Invocation Ledger through IPC, while Rust still owns model scheduling and wakes immediately after each native tool receipt. This keeps platform permissions and UI-bound tools in the native process without duplicating the Agent loop.
+
+The external-tool-worker mode does not yet reserve Rust-only tool claims, so native integration must handle the two Task creation tools itself for now. Filtered tool claims will let Rust own those tools while Swift/C# continues to own platform tools in a later slice.
 
 `LocalToolScheduler` claims one persisted invocation, routes it through `LocalToolRegistry`, and commits the result. Executor infrastructure errors on side-effecting calls become `needs_review`; read-only executor errors become ordinary failed tool results that the next model step can inspect.
 

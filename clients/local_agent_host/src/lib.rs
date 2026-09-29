@@ -7,6 +7,7 @@ mod assembly;
 mod control_plane;
 mod coordinator;
 mod scheduler;
+mod task_tools;
 mod tool_scheduler;
 
 pub use assembly::LocalAgentHostAssembly;
@@ -19,6 +20,7 @@ pub use chatos_agent_profiles::{
 pub use control_plane::LocalControlPlaneSnapshot;
 pub use coordinator::{LocalAgentCoordinatorError, LocalAgentHostCoordinator};
 pub use scheduler::{LocalAgentScheduler, LocalAgentSchedulerError, SchedulerTick};
+pub use task_tools::LocalTaskToolExecutor;
 pub use tool_scheduler::{
     LocalToolExecutor, LocalToolRegistry, LocalToolScheduler, LocalToolSchedulerError,
     ToolSchedulerTick,

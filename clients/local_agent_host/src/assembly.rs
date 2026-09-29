@@ -4,8 +4,8 @@
 use crate::{
     ChatosAiRuntimeStepExecutor, ControlPlaneLocalAiStepPlanner, DurableAiProfile,
     LocalAgentHostCoordinator, LocalAgentScheduler, LocalCapabilityResolver,
-    LocalModelRuntimeResolver, LocalToolRegistry, LocalToolScheduler, NamedReadOnlyTools,
-    MAIN_CHAT_PROFILE_KEY, TASK_RUNNER_PROFILE_KEY,
+    LocalModelRuntimeResolver, LocalTaskToolExecutor, LocalToolExecutor, LocalToolRegistry,
+    LocalToolScheduler, NamedReadOnlyTools, MAIN_CHAT_PROFILE_KEY, TASK_RUNNER_PROFILE_KEY,
 };
 use chatos_local_agent_runtime::{LocalAgentProfileRegistry, LocalAgentRuntime};
 use std::sync::Arc;
@@ -104,7 +104,13 @@ impl LocalAgentHostAssembly {
         let model_scheduler =
             LocalAgentScheduler::new(Arc::clone(&runtime), profiles, "local-model-worker")?;
         let tool_scheduler = tools
-            .map(|tools| LocalToolScheduler::new(Arc::clone(&runtime), tools, "local-tool-worker"))
+            .map(|mut tools| {
+                let task_tools: Arc<dyn LocalToolExecutor> =
+                    Arc::new(LocalTaskToolExecutor::new(Arc::clone(&runtime)));
+                tools.register_shared("create_task", Arc::clone(&task_tools))?;
+                tools.register_shared("create_tasks_with_prerequisites", task_tools)?;
+                LocalToolScheduler::new(Arc::clone(&runtime), tools, "local-tool-worker")
+            })
             .transpose()?;
         let coordinator = Arc::new(LocalAgentHostCoordinator::new(
             Arc::clone(&runtime),
