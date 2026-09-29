@@ -4,7 +4,6 @@ using ChatOS.Presentation.AgentTeams;
 using ChatOS.Presentation.Settings;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.Storage.Streams;
 
@@ -140,22 +139,24 @@ public sealed partial class AgentWorkspacePage : Page
         if (sender is not Button { DataContext: AgentMessageAttachment metadata }) return;
         try
         {
-            var attachment = await ViewModel.LoadAttachmentAsync(metadata.Id)
-                ?? throw new InvalidOperationException("附件已经不存在。");
-            var window = (Application.Current as App)?.MainWindow
-                ?? throw new InvalidOperationException("无法找到当前窗口。");
-            var extension = Path.GetExtension(attachment.Name);
-            if (string.IsNullOrWhiteSpace(extension)) extension = ".bin";
-            var picker = new FileSavePicker { SuggestedFileName = attachment.Name };
-            picker.FileTypeChoices.Add("附件", [extension]);
-            WinRT.Interop.InitializeWithWindow.Initialize(
-                picker, WinRT.Interop.WindowNative.GetWindowHandle(window));
-            var file = await picker.PickSaveFileAsync();
-            if (file is not null) await FileIO.WriteBytesAsync(file, attachment.Data);
+            await AgentMessageAttachmentPresenter.SaveAsync(ViewModel, metadata);
         }
         catch (Exception exception)
         {
             await ShowAlertAsync("无法保存附件", exception.Message);
+        }
+    }
+
+    private async void OnPreviewAttachmentClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: AgentMessageAttachment metadata }) return;
+        try
+        {
+            await AgentMessageAttachmentPresenter.PreviewAsync(XamlRoot, ViewModel, metadata);
+        }
+        catch (Exception exception)
+        {
+            await ShowAlertAsync("无法预览附件", exception.Message);
         }
     }
 

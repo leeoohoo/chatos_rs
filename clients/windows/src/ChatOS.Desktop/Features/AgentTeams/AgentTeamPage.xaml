@@ -175,7 +175,10 @@
                                                     <ItemsControl ItemsSource="{x:Bind Attachments}">
                                                         <ItemsControl.ItemTemplate>
                                                             <DataTemplate x:DataType="domain:AgentMessageAttachment">
-                                                                <Button Click="OnDownloadAttachmentClick" Content="{x:Bind Name}" Style="{StaticResource ChatOSSecondaryButtonStyle}" FontSize="11" />
+                                                                <StackPanel Margin="0,2,0,0" Orientation="Horizontal" Spacing="4">
+                                                                    <Button Click="OnPreviewAttachmentClick" Content="{x:Bind Name}" Style="{StaticResource ChatOSSecondaryButtonStyle}" FontSize="11" />
+                                                                    <Button Click="OnDownloadAttachmentClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="另存为"><FontIcon Glyph="&#xE896;" FontSize="12" /></Button>
+                                                                </StackPanel>
                                                             </DataTemplate>
                                                         </ItemsControl.ItemTemplate>
                                                     </ItemsControl>
