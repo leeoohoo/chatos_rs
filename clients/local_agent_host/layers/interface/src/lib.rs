@@ -17,12 +17,13 @@ mod tool;
 
 pub use conversation::{
     CancelConversationTurnCommand, CreateConversationCommand, GetConversationCommand,
-    GetConversationHistoryCommand, ListConversationsCommand, LocalConversationAttachmentRecord,
-    LocalConversationAttachmentSpec, LocalConversationDetail, LocalConversationHistoryPage,
-    LocalConversationMessageRecord, LocalConversationMessageRole, LocalConversationRecord,
-    LocalConversationTurnRecord, LocalConversationTurnStart, LocalConversationTurnStatus,
-    LocalConversationTurnUpdate, ResumeConversationTurnCommand, StartConversationTurnCommand,
-    LOCAL_CONVERSATION_MAX_ATTACHMENTS, LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE,
+    GetConversationHistoryCommand, GuideConversationTurnCommand, ListConversationsCommand,
+    LocalConversationAttachmentRecord, LocalConversationAttachmentSpec, LocalConversationDetail,
+    LocalConversationHistoryPage, LocalConversationMessageRecord, LocalConversationMessageRole,
+    LocalConversationRecord, LocalConversationTurnRecord, LocalConversationTurnStart,
+    LocalConversationTurnStatus, LocalConversationTurnUpdate, ResumeConversationTurnCommand,
+    StartConversationTurnCommand, LOCAL_CONVERSATION_MAX_ATTACHMENTS,
+    LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE,
 };
 pub use plugin::{
     GetPluginInstallationCommand, ListPluginInstallationsCommand, LocalPluginInstallationRecord,
@@ -40,7 +41,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 13;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 14;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -94,6 +95,7 @@ pub enum HostCommand {
     GetConversationHistory(GetConversationHistoryCommand),
     ListConversations(ListConversationsCommand),
     StartConversationTurn(StartConversationTurnCommand),
+    GuideConversationTurn(GuideConversationTurnCommand),
     ResumeConversationTurn(ResumeConversationTurnCommand),
     CancelConversationTurn(CancelConversationTurnCommand),
 }
@@ -127,6 +129,7 @@ impl HostCommand {
             Self::GetConversationHistory(command) => command.validate(),
             Self::ListConversations(command) => command.validate(),
             Self::StartConversationTurn(command) => command.validate(),
+            Self::GuideConversationTurn(command) => command.validate(),
             Self::ResumeConversationTurn(command) => command.validate(),
             Self::CancelConversationTurn(command) => command.validate(),
         }

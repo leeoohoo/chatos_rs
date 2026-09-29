@@ -317,6 +317,7 @@ impl LocalAgentRuntime {
             | HostCommand::GetConversationHistory(_)
             | HostCommand::ListConversations(_)
             | HostCommand::StartConversationTurn(_)
+            | HostCommand::GuideConversationTurn(_)
             | HostCommand::ResumeConversationTurn(_)
             | HostCommand::CancelConversationTurn(_)) => {
                 self.handle_conversation_command(&idempotency, command)

@@ -260,3 +260,23 @@ pub(super) const SCHEMA_V9: &[&str] = &[
        UNIQUE(graph_id, terminal_signature)\
      )",
 ];
+
+pub(super) const SCHEMA_V10: &[&str] = &[
+    "CREATE TABLE local_conversation_guidance (\
+       message_id TEXT PRIMARY KEY NOT NULL,\
+       conversation_id TEXT NOT NULL,\
+       turn_id TEXT NOT NULL,\
+       run_id TEXT NOT NULL,\
+       payload_json TEXT NOT NULL,\
+       delivered_run_version INTEGER,\
+       created_at_unix_ms INTEGER NOT NULL,\
+       delivered_at_unix_ms INTEGER,\
+       FOREIGN KEY(message_id) REFERENCES local_conversation_messages(message_id) ON DELETE CASCADE,\
+       FOREIGN KEY(conversation_id) REFERENCES local_conversations(conversation_id) ON DELETE CASCADE,\
+       FOREIGN KEY(turn_id) REFERENCES local_conversation_turns(turn_id) ON DELETE CASCADE,\
+       FOREIGN KEY(run_id) REFERENCES local_agent_runs(run_id) ON DELETE CASCADE\
+     )",
+    "CREATE INDEX local_conversation_guidance_pending ON local_conversation_guidance(\
+       run_id, delivered_run_version, created_at_unix_ms, message_id\
+     )",
+];

@@ -50,6 +50,15 @@ impl LocalAgentRuntime {
                     result: Box::new(result),
                 })
             }
+            HostCommand::GuideConversationTurn(command) => {
+                let result = self
+                    .store
+                    .guide_conversation_turn(idempotency, &command, &new_event_id(), self.now()?)
+                    .await?;
+                Ok(HostResult::ConversationTurnUpdated {
+                    result: Box::new(result),
+                })
+            }
             HostCommand::ResumeConversationTurn(command) => {
                 let result = self.resume_conversation_turn(idempotency, command).await?;
                 Ok(HostResult::ConversationTurnUpdated {
@@ -169,10 +178,10 @@ mod tests {
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
         CancelConversationTurnCommand, ClaimNextRunCommand, CommitStepCommand,
-        GetConversationCommand, GetConversationHistoryCommand, HostRequestEnvelope,
-        ListConversationsCommand, LocalAgentStepOutcome, LocalConversationAttachmentSpec,
-        LocalConversationMessageRole, LocalConversationTurnStatus, ResumeConversationTurnCommand,
-        LOCAL_AGENT_PROTOCOL_VERSION,
+        GetConversationCommand, GetConversationHistoryCommand, GuideConversationTurnCommand,
+        HostRequestEnvelope, ListConversationsCommand, LocalAgentStepOutcome,
+        LocalConversationAttachmentSpec, LocalConversationMessageRole, LocalConversationTurnStatus,
+        ResumeConversationTurnCommand, LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use std::sync::Arc;
 
@@ -422,5 +431,69 @@ mod tests {
             LocalConversationTurnStatus::Cancelled
         );
         assert!(cancelled.message.is_none());
+    }
+
+    #[tokio::test]
+    async fn host_routes_guidance_into_the_next_local_model_claim() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
+        runtime.initialize().await.expect("initialize");
+        runtime
+            .try_handle(request(
+                "create-conversation-guidance",
+                HostCommand::CreateConversation(create_conversation()),
+            ))
+            .await
+            .expect("create conversation");
+        runtime
+            .try_handle(request(
+                "start-turn-guidance",
+                HostCommand::StartConversationTurn(start_turn(1)),
+            ))
+            .await
+            .expect("start Turn");
+        let guided = runtime
+            .try_handle(request(
+                "guide-turn",
+                HostCommand::GuideConversationTurn(GuideConversationTurnCommand {
+                    conversation_id: "conversation-1".to_string(),
+                    expected_conversation_version: 2,
+                    turn_id: "turn-1".to_string(),
+                    expected_run_version: Some(1),
+                    message_id: "message-guidance".to_string(),
+                    message: "include tests".to_string(),
+                    message_metadata: json!({}),
+                    attachments: Vec::new(),
+                }),
+            ))
+            .await
+            .expect("guide Turn");
+        assert!(matches!(
+            guided,
+            HostResult::ConversationTurnUpdated { result }
+                if result.conversation.version == 3 && result.message.is_some()
+        ));
+        let claim = runtime
+            .try_handle(request(
+                "claim-guided-turn",
+                HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                    worker_id: "model-worker".to_string(),
+                    lease_duration_ms: 10_000,
+                }),
+            ))
+            .await
+            .expect("claim guided Run");
+        assert!(matches!(
+            claim,
+            HostResult::Claim { claim: Some(claim) }
+                if claim.run.continuation_input.as_ref()
+                    .and_then(|input| input.get("guidance"))
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|guidance| guidance.len() == 1)
+        ));
     }
 }

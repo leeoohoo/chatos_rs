@@ -98,18 +98,44 @@ impl LocalAgentScheduler {
                 detail: serde_json::json!({"profile_key": claim.run.profile_key}),
             },
         };
+        let run_id = claim.run.run_id.clone();
+        let claim_token = claim.claim_token.clone();
+        let expected_version = claim.run.version;
         let committed = self
             .runtime
             .try_handle(envelope(
                 HostCommand::CommitStep(CommitStepCommand {
-                    run_id: claim.run.run_id,
-                    claim_token: claim.claim_token,
-                    expected_version: claim.run.version,
+                    run_id: run_id.clone(),
+                    claim_token: claim_token.clone(),
+                    expected_version,
                     outcome,
                 }),
                 "scheduler-commit",
             ))
-            .await?;
+            .await;
+        let committed = match committed {
+            Ok(result) => result,
+            Err(error) => {
+                let current = self
+                    .runtime
+                    .try_handle(envelope(
+                        HostCommand::GetRun {
+                            run_id: run_id.clone(),
+                        },
+                        "scheduler-reconcile",
+                    ))
+                    .await;
+                match current {
+                    Ok(HostResult::Run { run })
+                        if run.version > expected_version
+                            && run.claim_token.as_deref() != Some(claim_token.as_str()) =>
+                    {
+                        HostResult::Run { run }
+                    }
+                    _ => return Err(error.into()),
+                }
+            }
+        };
         match committed {
             HostResult::Run { run } => Ok(SchedulerTick::Committed(Box::new(run))),
             _ => Err(LocalAgentSchedulerError::UnexpectedResult("commit")),
@@ -131,8 +157,9 @@ mod tests {
     use async_trait::async_trait;
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
-        CreateRunCommand, CreateTaskGraphCommand, GetTaskGraphCommand, LocalAgentRunClaim,
-        LocalAgentRunStatus, LocalTaskSpec, LocalTaskStatus,
+        CreateConversationCommand, CreateRunCommand, CreateTaskGraphCommand, GetTaskGraphCommand,
+        GuideConversationTurnCommand, LocalAgentRunClaim, LocalAgentRunStatus, LocalTaskSpec,
+        LocalTaskStatus, StartConversationTurnCommand,
     };
     use chatos_local_agent_runtime::LocalAgentProfile;
 
@@ -146,6 +173,43 @@ mod tests {
         ) -> Result<LocalAgentStepOutcome, String> {
             Ok(LocalAgentStepOutcome::Succeed {
                 output: serde_json::json!({"run_id": claim.run.run_id}),
+            })
+        }
+    }
+
+    struct GuidanceProfile {
+        runtime: Arc<LocalAgentRuntime>,
+    }
+
+    #[async_trait]
+    impl LocalAgentProfile for GuidanceProfile {
+        async fn execute_step(
+            &self,
+            claim: &LocalAgentRunClaim,
+        ) -> Result<LocalAgentStepOutcome, String> {
+            if claim.run.continuation_input.is_some() {
+                return Ok(LocalAgentStepOutcome::Succeed {
+                    output: serde_json::json!({"answer": "guided"}),
+                });
+            }
+            self.runtime
+                .try_handle(envelope(
+                    HostCommand::GuideConversationTurn(GuideConversationTurnCommand {
+                        conversation_id: "conversation-guided-scheduler".to_string(),
+                        expected_conversation_version: 2,
+                        turn_id: "turn-guided-scheduler".to_string(),
+                        expected_run_version: Some(claim.run.version),
+                        message_id: "message-guided-scheduler-2".to_string(),
+                        message: "change direction".to_string(),
+                        message_metadata: serde_json::json!({}),
+                        attachments: Vec::new(),
+                    }),
+                    "guide-active-step",
+                ))
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok(LocalAgentStepOutcome::Succeed {
+                output: serde_json::json!({"answer": "stale"}),
             })
         }
     }
@@ -192,6 +256,73 @@ mod tests {
         assert_eq!(
             scheduler.run_once().await.expect("idle"),
             SchedulerTick::Idle
+        );
+    }
+
+    #[tokio::test]
+    async fn scheduler_reconciles_a_model_claim_superseded_by_guidance() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = Arc::new(LocalAgentRuntime::new(storage));
+        runtime.initialize().await.expect("initialize");
+        runtime
+            .try_handle(envelope(
+                HostCommand::CreateConversation(CreateConversationCommand {
+                    conversation_id: "conversation-guided-scheduler".to_string(),
+                    owner_user_id: "user-1".to_string(),
+                    title: "Guided scheduler".to_string(),
+                }),
+                "create-guided-conversation",
+            ))
+            .await
+            .expect("create conversation");
+        runtime
+            .try_handle(envelope(
+                HostCommand::StartConversationTurn(StartConversationTurnCommand {
+                    conversation_id: "conversation-guided-scheduler".to_string(),
+                    expected_conversation_version: 1,
+                    turn_id: "turn-guided-scheduler".to_string(),
+                    message_id: "message-guided-scheduler-1".to_string(),
+                    run_id: "run-guided-scheduler".to_string(),
+                    message: "start".to_string(),
+                    message_metadata: serde_json::json!({}),
+                    attachments: Vec::new(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    max_iterations: 4,
+                }),
+                "start-guided-turn",
+            ))
+            .await
+            .expect("start Turn");
+        let mut profiles = LocalAgentProfileRegistry::new();
+        profiles
+            .register(
+                "main_chat",
+                GuidanceProfile {
+                    runtime: Arc::clone(&runtime),
+                },
+            )
+            .expect("profile");
+        let scheduler = LocalAgentScheduler::new(runtime, profiles, "worker-1").expect("scheduler");
+
+        let SchedulerTick::Committed(interrupted) = scheduler.run_once().await.expect("interrupt")
+        else {
+            panic!("expected interrupted claim reconciliation")
+        };
+        assert_eq!(interrupted.status, LocalAgentRunStatus::ContinuationReady);
+        let SchedulerTick::Committed(completed) = scheduler.run_once().await.expect("complete")
+        else {
+            panic!("expected guided completion")
+        };
+        assert_eq!(completed.status, LocalAgentRunStatus::Succeeded);
+        assert_eq!(
+            completed.terminal_outcome,
+            Some(serde_json::json!({"answer": "guided"}))
         );
     }
 

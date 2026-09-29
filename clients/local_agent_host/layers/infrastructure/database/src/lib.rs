@@ -16,6 +16,7 @@ use sqlx::{
 use std::{path::Path, str::FromStr, time::Duration};
 
 mod conversation_commands;
+mod conversation_guidance;
 mod conversation_history;
 mod conversation_lifecycle;
 mod conversation_store;
@@ -403,6 +404,17 @@ impl LocalAgentRunStore for SqliteClientStorage {
                     "run changed while claiming: {run_id}"
                 )));
             }
+            let claimed_version = Self::fetch_run_on(&mut connection, &run_id)
+                .await?
+                .ok_or_else(|| ClientStorageError::NotFound(run_id.clone()))?
+                .version;
+            conversation_guidance::attach_pending_guidance_to_claim(
+                &mut connection,
+                &run_id,
+                claimed_version,
+                now_unix_ms,
+            )
+            .await?;
             Self::insert_event(
                 &mut connection,
                 event_id,

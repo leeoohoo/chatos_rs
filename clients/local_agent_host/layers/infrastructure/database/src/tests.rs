@@ -276,7 +276,7 @@ async fn version_two_database_migrates_through_conversation_schema() {
             .fetch_one(&storage.pool)
             .await
             .expect("schema version");
-    assert_eq!(schema_version, 9);
+    assert_eq!(schema_version, 10);
     let task_tables: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (\
          'local_task_graphs', 'local_tasks', 'local_task_dependencies')",
@@ -317,6 +317,14 @@ async fn version_two_database_migrates_through_conversation_schema() {
     .await
     .expect("Task Graph writeback table");
     assert_eq!(writeback_tables, 1);
+    let guidance_tables: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' \
+         AND name = 'local_conversation_guidance'",
+    )
+    .fetch_one(&storage.pool)
+    .await
+    .expect("Conversation guidance table");
+    assert_eq!(guidance_tables, 1);
     storage.pool.close().await;
     drop(storage);
     for path in [

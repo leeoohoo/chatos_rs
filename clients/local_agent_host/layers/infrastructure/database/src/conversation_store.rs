@@ -256,6 +256,23 @@ impl LocalConversationStore for SqliteClientStorage {
         .await
     }
 
+    async fn guide_conversation_turn(
+        &self,
+        command: &IdempotentCommand,
+        turn: &chatos_local_agent_protocol::GuideConversationTurnCommand,
+        event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<chatos_local_agent_protocol::LocalConversationTurnUpdate, ClientStorageError> {
+        super::conversation_commands::guide_conversation_turn(
+            self,
+            command,
+            turn,
+            event_id,
+            now_unix_ms,
+        )
+        .await
+    }
+
     async fn cancel_conversation_turn(
         &self,
         command: &IdempotentCommand,

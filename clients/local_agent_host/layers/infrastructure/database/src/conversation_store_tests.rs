@@ -4,8 +4,8 @@
 use super::*;
 use chatos_local_agent_ports::{LocalAgentRunStore, RunTransition};
 use chatos_local_agent_protocol::{
-    CancelConversationTurnCommand, LocalAgentRunStatus, LocalConversationAttachmentSpec,
-    ResumeConversationTurnCommand,
+    CancelConversationTurnCommand, GuideConversationTurnCommand, LocalAgentRunStatus,
+    LocalConversationAttachmentSpec, ResumeConversationTurnCommand,
 };
 use serde_json::{json, Value};
 
@@ -546,4 +546,96 @@ async fn history_pages_are_bounded_chronological_and_cursor_stable() {
     assert_eq!(older.messages[0].ordinal, 1);
     assert_eq!(older.next_before_ordinal, None);
     assert!(older.attachments.is_empty());
+}
+
+#[tokio::test]
+async fn guidance_interrupts_an_active_claim_and_is_delivered_once() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    create(&storage, "conversation-guidance").await;
+    let initial = turn("conversation-guidance", 1, "guidance");
+    start(&storage, &initial, 2_000).await.expect("start Turn");
+    let claim = storage
+        .claim_next_run(
+            &idempotency("claim-before-guidance"),
+            "worker-1",
+            "token-before-guidance",
+            3_000,
+            13_000,
+            "event-claim-before-guidance",
+        )
+        .await
+        .expect("claim")
+        .expect("claimed Run");
+    let command = GuideConversationTurnCommand {
+        conversation_id: "conversation-guidance".to_string(),
+        expected_conversation_version: 2,
+        turn_id: initial.turn_id.clone(),
+        expected_run_version: Some(claim.run.version),
+        message_id: "message-guidance-follow-up".to_string(),
+        message: "also inspect the tests".to_string(),
+        message_metadata: json!({"source": "guidance"}),
+        attachments: Vec::new(),
+    };
+    let receipt = idempotency("guide-conversation-turn");
+    let guided = storage
+        .guide_conversation_turn(&receipt, &command, "event-guidance", 4_000)
+        .await
+        .expect("queue guidance");
+    assert_eq!(guided.conversation.version, 3);
+    assert_eq!(guided.run.status, LocalAgentRunStatus::ContinuationReady);
+    assert!(guided.run.claim_token.is_none());
+    assert_eq!(guided.message.as_ref().expect("message").ordinal, 2);
+
+    let replay = storage
+        .guide_conversation_turn(&receipt, &command, "ignored-event", 5_000)
+        .await
+        .expect("replay guidance");
+    assert_eq!(replay, guided);
+    let late = storage
+        .apply_transition(
+            &idempotency("late-guidance-commit"),
+            &RunTransition {
+                run_id: claim.run.run_id.clone(),
+                claim_token: claim.claim_token,
+                expected_version: claim.run.version,
+                expected_status: LocalAgentRunStatus::ModelRunning,
+                next_status: LocalAgentRunStatus::Succeeded,
+                next_model_attempt: 1,
+                next_attempt_at_unix_ms: None,
+                pending_tool_batch: None,
+                tool_batch: None,
+                checkpoint: None,
+                clear_continuation_input: true,
+                terminal_outcome: Some(json!({"answer": "stale"})),
+                event_id: "event-late-guidance".to_string(),
+                event_type: "run_succeeded".to_string(),
+                event_payload: json!({"answer": "stale"}),
+                occurred_at_unix_ms: 5_000,
+            },
+        )
+        .await;
+    assert!(matches!(late, Err(ClientStorageError::Conflict(_))));
+
+    let guided_claim = storage
+        .claim_next_run(
+            &idempotency("claim-after-guidance"),
+            "worker-1",
+            "token-after-guidance",
+            6_000,
+            16_000,
+            "event-claim-after-guidance",
+        )
+        .await
+        .expect("claim guidance")
+        .expect("guidance Run");
+    assert_eq!(
+        guided_claim.run.continuation_input.as_ref().expect("input")["type"],
+        "guidance"
+    );
+    assert_eq!(
+        guided_claim.run.continuation_input.as_ref().expect("input")["guidance"][0]["message"],
+        "also inspect the tests"
+    );
 }

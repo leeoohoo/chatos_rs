@@ -85,6 +85,36 @@ pub struct ResumeConversationTurnCommand {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GuideConversationTurnCommand {
+    pub conversation_id: String,
+    pub expected_conversation_version: u64,
+    pub turn_id: String,
+    pub expected_run_version: Option<u64>,
+    pub message_id: String,
+    pub message: String,
+    #[serde(default)]
+    pub message_metadata: Value,
+    #[serde(default)]
+    pub attachments: Vec<LocalConversationAttachmentSpec>,
+}
+
+impl GuideConversationTurnCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        for (field, value) in [
+            ("conversation_id", self.conversation_id.as_str()),
+            ("turn_id", self.turn_id.as_str()),
+            ("message_id", self.message_id.as_str()),
+        ] {
+            validate_identifier(field, value)?;
+        }
+        if self.expected_conversation_version == 0 || self.expected_run_version == Some(0) {
+            return Err("expected versions must be greater than zero".to_string());
+        }
+        validate_message_payload(&self.message, &self.message_metadata, &self.attachments)
+    }
+}
+
 impl ResumeConversationTurnCommand {
     pub fn validate(&self) -> Result<(), String> {
         for (field, value) in [
@@ -521,6 +551,19 @@ mod tests {
             turn_id: "turn-1".to_string(),
             expected_run_version: Some(3),
             reason: "user stopped".to_string(),
+        }
+        .validate()
+        .is_ok());
+
+        assert!(GuideConversationTurnCommand {
+            conversation_id: "conversation-1".to_string(),
+            expected_conversation_version: 2,
+            turn_id: "turn-1".to_string(),
+            expected_run_version: None,
+            message_id: "message-guidance".to_string(),
+            message: "also inspect the tests".to_string(),
+            message_metadata: json!({}),
+            attachments: Vec::new(),
         }
         .validate()
         .is_ok());

@@ -196,11 +196,15 @@ fn durable_step_input(
 ) -> Result<(Vec<Value>, String), String> {
     let checkpoint = claim.run.checkpoint.as_object();
     let Some(response) = checkpoint.and_then(|value| value.get("response")) else {
-        return initial_step_input(
+        let (mut items, mut reason) = initial_step_input(
             &claim.run.input,
             initial_text_field,
             claim.run.model_attempt,
-        );
+        )?;
+        if append_guidance_items(&mut items, claim.run.continuation_input.as_ref())? {
+            reason = format!("{reason}_with_guidance");
+        }
+        return Ok((items, reason));
     };
     let request_items = value_array(response, "request_input_items")?;
     let response_items = value_array(response, "response_output_items")?;
@@ -218,7 +222,7 @@ fn durable_step_input(
     .as_array()
     .cloned()
     .unwrap_or_default();
-    let reason = match claim.run.continuation_input.as_ref() {
+    let mut reason = match claim.run.continuation_input.as_ref() {
         Some(value) if value.get("type").and_then(Value::as_str) == Some("tool_results") => {
             history.extend(tool_output_items(value)?);
             "tool_results".to_string()
@@ -235,6 +239,9 @@ fn durable_step_input(
             )));
             "user_resume".to_string()
         }
+        Some(value) if value.get("type").and_then(Value::as_str) == Some("guidance") => {
+            "user_guidance".to_string()
+        }
         Some(_) => return Err("unsupported durable continuation payload".to_string()),
         None if claim.run.model_attempt > 1 => "model_retry".to_string(),
         None => checkpoint
@@ -244,6 +251,11 @@ fn durable_step_input(
             .unwrap_or("durable_continuation")
             .to_string(),
     };
+    if append_guidance_items(&mut history, claim.run.continuation_input.as_ref())?
+        && reason != "user_guidance"
+    {
+        reason = format!("{reason}_with_guidance");
+    }
     Ok((history, reason))
 }
 
@@ -265,11 +277,20 @@ fn initial_step_input(
         .map(array_value)
         .transpose()?
         .unwrap_or_default();
-    if attachments.is_empty() {
-        let text = text.ok_or_else(|| format!("run input requires {text_field} or input_items"))?;
-        return Ok((vec![user_text_item(text)], initial_reason(model_attempt)));
+    if text.is_none() && attachments.is_empty() {
+        return Err(format!("run input requires {text_field} or input_items"));
     }
-    let manifest = local_attachment_manifest(&attachments)?;
+    Ok((
+        vec![local_user_item(text, &attachments)?],
+        initial_reason(model_attempt),
+    ))
+}
+
+fn local_user_item(text: Option<&str>, attachments: &[Value]) -> Result<Value, String> {
+    if attachments.is_empty() {
+        return Ok(user_text_item(text.unwrap_or_default()));
+    }
+    let manifest = local_attachment_manifest(attachments)?;
     let mut content = Vec::with_capacity(2);
     if let Some(text) = text {
         content.push(json!({"type": "input_text", "text": text}));
@@ -282,10 +303,36 @@ fn initial_step_input(
              before using content. Attachment manifest: {manifest}"
         )
     }));
-    Ok((
-        vec![message_item("user", Value::Array(content))],
-        initial_reason(model_attempt),
-    ))
+    Ok(message_item("user", Value::Array(content)))
+}
+
+fn append_guidance_items(
+    history: &mut Vec<Value>,
+    continuation: Option<&Value>,
+) -> Result<bool, String> {
+    let Some(guidance) = continuation
+        .and_then(|value| value.get("guidance"))
+        .and_then(Value::as_array)
+    else {
+        return Ok(false);
+    };
+    for item in guidance {
+        let text = item
+            .get("message")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let attachments = item
+            .get("attachments")
+            .map(array_value)
+            .transpose()?
+            .unwrap_or_default();
+        if text.is_none() && attachments.is_empty() {
+            return Err("guidance requires a message or attachments".to_string());
+        }
+        history.push(local_user_item(text, &attachments)?);
+    }
+    Ok(!guidance.is_empty())
 }
 
 fn local_attachment_manifest(attachments: &[Value]) -> Result<String, String> {
@@ -431,6 +478,30 @@ mod tests {
         let (items, reason) = durable_step_input(&claim, "message").expect("input");
         assert_eq!(reason, "model_retry");
         assert_eq!(items[0]["role"], "user");
+    }
+
+    #[test]
+    fn guidance_is_appended_to_initial_or_existing_history() {
+        let guidance = Some(json!({
+            "type": "guidance",
+            "guidance": [{"message_id": "message-2", "message": "inspect tests", "attachments": []}]
+        }));
+        let initial = claim(Value::Null, guidance.clone());
+        let (items, reason) = durable_step_input(&initial, "message").expect("initial guidance");
+        assert_eq!(reason, "initial_request_with_guidance");
+        assert_eq!(items.len(), 2);
+
+        let continued = claim(
+            json!({"response": {
+                "request_input_items": [{"role": "user", "content": "hello"}],
+                "response_output_items": [{"type": "message", "content": "working"}]
+            }}),
+            guidance,
+        );
+        let (items, reason) =
+            durable_step_input(&continued, "message").expect("continued guidance");
+        assert_eq!(reason, "user_guidance");
+        assert!(items.len() >= 3);
     }
 
     #[test]

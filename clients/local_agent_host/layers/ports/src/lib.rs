@@ -6,12 +6,12 @@
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     CancelConversationTurnCommand, CreateConversationCommand, CreateTaskGraphCommand,
-    LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunRecord, LocalAgentRunStatus,
-    LocalAgentToolBatch, LocalAgentToolClaim, LocalAgentToolCommitResult, LocalAgentToolOutcome,
-    LocalConversationDetail, LocalConversationHistoryPage, LocalConversationRecord,
-    LocalConversationTurnStart, LocalConversationTurnUpdate, LocalPluginInstallationRecord,
-    LocalPluginInstallationSpec, LocalTaskGraph, ResumeConversationTurnCommand,
-    StartConversationTurnCommand,
+    GuideConversationTurnCommand, LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunRecord,
+    LocalAgentRunStatus, LocalAgentToolBatch, LocalAgentToolClaim, LocalAgentToolCommitResult,
+    LocalAgentToolOutcome, LocalConversationDetail, LocalConversationHistoryPage,
+    LocalConversationRecord, LocalConversationTurnStart, LocalConversationTurnUpdate,
+    LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalTaskGraph,
+    ResumeConversationTurnCommand, StartConversationTurnCommand,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -304,6 +304,14 @@ pub trait LocalConversationStore: Send + Sync {
         event_id: &str,
         now_unix_ms: i64,
     ) -> Result<LocalConversationTurnStart, ClientStorageError>;
+
+    async fn guide_conversation_turn(
+        &self,
+        command: &IdempotentCommand,
+        turn: &GuideConversationTurnCommand,
+        event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<LocalConversationTurnUpdate, ClientStorageError>;
 
     #[allow(clippy::too_many_arguments)]
     async fn resume_conversation_turn(
