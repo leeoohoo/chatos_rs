@@ -11,6 +11,7 @@ The current milestone provides:
 - a shared `LocalAgentProfile` registry and one-step Host scheduler;
 - a durable Tool Invocation Ledger with per-call claims and results;
 - a durable Task DAG repository with atomic, idempotent graph creation;
+- query-derived Task Graph lifecycle status and per-Task Run history;
 - local `create_task` and `create_tasks_with_prerequisites` tool executors;
 - a `chatos_ai_runtime` single-step Profile adapter and conservative tool-safety policy;
 - a local tool registry and one-invocation Tool Scheduler;
@@ -35,7 +36,7 @@ The in-process assembly reserves `create_task` and `create_tasks_with_prerequisi
 
 Native clients may choose `LocalAgentHostAssembly::with_external_tool_worker`. In that mode Swift or C# claims and commits platform tools through IPC, while Rust still owns model scheduling plus the two Task creation tools and wakes immediately after each native tool receipt. This keeps platform permissions and UI-bound tools in the native process without duplicating the Agent loop.
 
-Protocol v6 tool claims support optional `include_tool_names` and `exclude_tool_names`. The Assembly's Rust worker includes only the two reserved Task tools, and Coordinator IPC automatically excludes them from native claims. Explicit overlapping filters are rejected.
+Protocol v7 retains the optional `include_tool_names` and `exclude_tool_names` Tool claim filters. The Assembly's Rust worker includes only the two reserved Task tools, and Coordinator IPC automatically excludes them from native claims. Explicit overlapping filters are rejected.
 
 `LocalToolScheduler` claims one persisted invocation, routes it through `LocalToolRegistry`, and commits the result. Executor infrastructure errors on side-effecting calls become `needs_review`; read-only executor errors become ordinary failed tool results that the next model step can inspect.
 
@@ -82,7 +83,7 @@ Example health request:
 
 ```json
 {
-  "protocol_version": 6,
+  "protocol_version": 7,
   "command_id": "health-019",
   "command": {
     "type": "health"
@@ -107,12 +108,17 @@ Mutating commands use `command_id` as an idempotency key. Reusing a key with dif
 - `wait_events`
 - `create_task_graph`
 - `get_task_graph`
+- `get_task_runs`
 - `cancel_task`
 - `retry_task`
 
 `create_task_graph` validates the complete acyclic graph and writes it in one SQLite transaction. Tasks without prerequisites start as `ready`; dependent tasks start as `pending`. Graph creation uses the same command receipt mechanism as Run mutations, so an identical `command_id` replay returns the original graph and a mismatched replay is rejected.
 
-The model scheduler atomically materializes each `ready` Task as one Run. A terminal Run updates its owning Task in the same transaction: success unlocks newly satisfied dependents, while failure or cancellation transitively marks downstream Tasks `blocked`. `cancel_task` also terminates an active Run atomically. `retry_task` requires the exact failed/cancelled Task version and satisfied prerequisites, then resets derived downstream blocks before scheduling a fresh Run. An explicit aggregate Graph status and a separate force-restart operation are not implemented yet.
+The model scheduler atomically materializes each `ready` Task as one Run. A terminal Run updates its owning Task in the same transaction: success unlocks newly satisfied dependents, while failure or cancellation transitively marks downstream Tasks `blocked`. `cancel_task` also terminates an active Run atomically. `retry_task` requires the exact failed/cancelled Task version and satisfied prerequisites, then resets derived downstream blocks before scheduling a fresh Run.
+
+`get_task_graph` derives its aggregate status from the authoritative Task rows instead of maintaining a second mutable status column. A graph is `pending` before work starts, `running` once any Task has started while runnable work remains, `succeeded` when every Task succeeds, `failed` when terminal execution contains a failure, and `cancelled` when cancellation ends the graph without a failure. Retrying a Task immediately re-derives the graph status from the reset DAG.
+
+`get_task_runs` returns up to 100 Runs owned by one Task, newest first. This includes superseded failed or cancelled Runs after retry, allowing Task Inspector to show the complete local execution history. Unknown Task IDs return `not_found`.
 
 A successful claim moves one runnable Run to `model_running`, increments its iteration and version, and returns a random claim token. `commit_step` requires the exact token and version. If the Host stops before commit, an expired `model_running` claim is moved to `needs_review`; it is never silently replayed.
 

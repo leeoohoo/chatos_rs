@@ -5,7 +5,7 @@ use super::{ClientStorageError, IdempotentCommand, SqliteClientStorage};
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     CreateTaskGraphCommand, LocalAgentRunRecord, LocalTaskDependency, LocalTaskGraph,
-    LocalTaskRecord, LocalTaskStatus,
+    LocalTaskGraphStatus, LocalTaskRecord, LocalTaskStatus,
 };
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 use std::{collections::HashSet, str::FromStr};
@@ -23,6 +23,12 @@ pub trait LocalAgentTaskStore: Send + Sync {
         &self,
         graph_id: &str,
     ) -> Result<Option<LocalTaskGraph>, ClientStorageError>;
+
+    async fn list_task_runs(
+        &self,
+        task_id: &str,
+        limit: u32,
+    ) -> Result<Vec<LocalAgentRunRecord>, ClientStorageError>;
 
     async fn start_next_task_run(
         &self,
@@ -83,6 +89,44 @@ impl LocalAgentTaskStore for SqliteClientStorage {
     ) -> Result<Option<LocalTaskGraph>, ClientStorageError> {
         let mut connection = self.pool.acquire().await?;
         fetch_graph(&mut connection, graph_id).await
+    }
+
+    async fn list_task_runs(
+        &self,
+        task_id: &str,
+        limit: u32,
+    ) -> Result<Vec<LocalAgentRunRecord>, ClientStorageError> {
+        if !(1..=100).contains(&limit) {
+            return Err(ClientStorageError::InvalidState(
+                "task Run limit must be between 1 and 100".to_string(),
+            ));
+        }
+        let mut connection = self.pool.acquire().await?;
+        let exists =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM local_tasks WHERE task_id = ?")
+                .bind(task_id)
+                .fetch_one(&mut *connection)
+                .await?;
+        if exists == 0 {
+            return Err(ClientStorageError::NotFound(task_id.to_string()));
+        }
+        sqlx::query(
+            "SELECT run_id, owner_user_id, owner_entity_type, owner_entity_id, profile_key, \
+             model_config_ref, model_config_revision, capability_policy_revision, input_json, \
+             status, iteration, model_attempt, max_iterations, version, claim_token, \
+             claim_until_unix_ms, next_attempt_at_unix_ms, pending_tool_batch_json, \
+             terminal_outcome_json, checkpoint_json, continuation_input_json, \
+             created_at_unix_ms, updated_at_unix_ms FROM local_agent_runs \
+             WHERE owner_entity_type = 'task' AND owner_entity_id = ? \
+             ORDER BY created_at_unix_ms DESC, run_id DESC LIMIT ?",
+        )
+        .bind(task_id)
+        .bind(i64::from(limit))
+        .fetch_all(&mut *connection)
+        .await?
+        .into_iter()
+        .map(super::decode_run)
+        .collect()
     }
 
     async fn start_next_task_run(
@@ -274,11 +318,13 @@ pub(super) async fn fetch_graph(
         })
     })
     .collect::<Result<Vec<_>, ClientStorageError>>()?;
+    let status = LocalTaskGraphStatus::derive(&tasks);
     Ok(Some(LocalTaskGraph {
         graph_id: graph.try_get("graph_id")?,
         owner_user_id: graph.try_get("owner_user_id")?,
         source_entity_type: graph.try_get("source_entity_type")?,
         source_entity_id: graph.try_get("source_entity_id")?,
+        status,
         tasks,
         dependencies,
         created_at_unix_ms: graph.try_get("created_at_unix_ms")?,
@@ -370,6 +416,7 @@ mod tests {
         assert_eq!(created.tasks[0].status, LocalTaskStatus::Pending);
         assert_eq!(created.tasks[1].task_id, "task-root");
         assert_eq!(created.tasks[1].status, LocalTaskStatus::Ready);
+        assert_eq!(created.status, LocalTaskGraphStatus::Pending);
         assert_eq!(created.dependencies, spec.dependencies);
         assert_eq!(created.created_at_unix_ms, 10_000);
 
@@ -379,6 +426,18 @@ mod tests {
             .expect("get graph")
             .expect("stored graph");
         assert_eq!(loaded, created);
+
+        storage
+            .start_next_task_run("run-root", "event-run-root", 30_000)
+            .await
+            .expect("start task")
+            .expect("ready task");
+        let running = storage
+            .get_task_graph("graph-1")
+            .await
+            .expect("get graph")
+            .expect("stored graph");
+        assert_eq!(running.status, LocalTaskGraphStatus::Running);
     }
 
     #[tokio::test]
@@ -408,5 +467,20 @@ mod tests {
             .await
             .expect("get graph")
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn task_run_query_rejects_invalid_input() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        assert!(matches!(
+            storage.list_task_runs("missing-task", 10).await,
+            Err(ClientStorageError::NotFound(_))
+        ));
+        assert!(matches!(
+            storage.list_task_runs("missing-task", 0).await,
+            Err(ClientStorageError::InvalidState(_))
+        ));
     }
 }

@@ -280,8 +280,6 @@ impl LocalAgentRuntime {
                 })
             }
             HostCommand::WaitEvents(command) => {
-                // The bare Runtime provides the same immediate snapshot as
-                // list_events. LocalAgentHostCoordinator adds the bounded wait.
                 let events = self
                     .store
                     .list_events(
@@ -299,22 +297,23 @@ impl LocalAgentRuntime {
                     next_cursor,
                 })
             }
-            HostCommand::CreateTaskGraph(command) => {
-                let graph = self.create_task_graph(&idempotency, command).await?;
-                Ok(HostResult::TaskGraph { graph })
+            HostCommand::CreateTaskGraph(command) => Ok(HostResult::TaskGraph {
+                graph: self.create_task_graph(&idempotency, command).await?,
+            }),
+            HostCommand::GetTaskGraph(command) => Ok(HostResult::TaskGraph {
+                graph: self.get_task_graph(&command.graph_id).await?,
+            }),
+            HostCommand::GetTaskRuns(command) => {
+                let task_id = command.task_id.clone();
+                let runs = self.get_task_runs(command).await?;
+                Ok(HostResult::TaskRuns { task_id, runs })
             }
-            HostCommand::GetTaskGraph(command) => {
-                let graph = self.get_task_graph(&command.graph_id).await?;
-                Ok(HostResult::TaskGraph { graph })
-            }
-            HostCommand::CancelTask(command) => {
-                let graph = self.cancel_task(&idempotency, command).await?;
-                Ok(HostResult::TaskGraph { graph })
-            }
-            HostCommand::RetryTask(command) => {
-                let graph = self.retry_task(&idempotency, command).await?;
-                Ok(HostResult::TaskGraph { graph })
-            }
+            HostCommand::CancelTask(command) => Ok(HostResult::TaskGraph {
+                graph: self.cancel_task(&idempotency, command).await?,
+            }),
+            HostCommand::RetryTask(command) => Ok(HostResult::TaskGraph {
+                graph: self.retry_task(&idempotency, command).await?,
+            }),
         }
     }
 

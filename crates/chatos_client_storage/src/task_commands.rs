@@ -247,7 +247,8 @@ mod tests {
     use super::*;
     use crate::{LocalAgentRunStore, LocalAgentTaskStore};
     use chatos_local_agent_protocol::{
-        CreateTaskGraphCommand, LocalAgentRunStatus, LocalTaskDependency, LocalTaskSpec,
+        CreateTaskGraphCommand, LocalAgentRunStatus, LocalTaskDependency, LocalTaskGraphStatus,
+        LocalTaskSpec,
     };
     use serde_json::json;
 
@@ -312,6 +313,7 @@ mod tests {
             .expect("cancel task");
         assert_eq!(cancelled.tasks[0].status, LocalTaskStatus::Blocked);
         assert_eq!(cancelled.tasks[1].status, LocalTaskStatus::Cancelled);
+        assert_eq!(cancelled.status, LocalTaskGraphStatus::Cancelled);
         let replay = storage
             .cancel_task(
                 &command("cancel"),
@@ -331,6 +333,7 @@ mod tests {
             .expect("retry task");
         assert_eq!(retried.tasks[0].status, LocalTaskStatus::Pending);
         assert_eq!(retried.tasks[1].status, LocalTaskStatus::Ready);
+        assert_eq!(retried.status, LocalTaskGraphStatus::Pending);
     }
 
     #[tokio::test]
@@ -373,5 +376,38 @@ mod tests {
         assert!(events
             .iter()
             .any(|event| event.event_type == "task_state_reconciled"));
+
+        let retried = storage
+            .retry_task(
+                &command("retry"),
+                "task-root",
+                cancelled.tasks[0].version,
+                4_000,
+            )
+            .await
+            .expect("retry task");
+        assert_eq!(retried.status, LocalTaskGraphStatus::Pending);
+        storage
+            .start_next_task_run("run-root-retry", "event-run-retry", 5_000)
+            .await
+            .expect("start retry")
+            .expect("retry run");
+        let latest = storage
+            .list_task_runs("task-root", 1)
+            .await
+            .expect("latest run");
+        assert_eq!(latest.len(), 1);
+        assert_eq!(latest[0].run_id, "run-root-retry");
+        let history = storage
+            .list_task_runs("task-root", 10)
+            .await
+            .expect("run history");
+        assert_eq!(
+            history
+                .iter()
+                .map(|run| run.run_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["run-root-retry", "run-root"]
+        );
     }
 }

@@ -4,8 +4,8 @@
 use super::{LocalAgentRuntime, LocalAgentRuntimeError};
 use chatos_client_storage::{ClientStorageError, IdempotentCommand};
 use chatos_local_agent_protocol::{
-    CancelTaskCommand, CreateTaskGraphCommand, LocalAgentRunRecord, LocalTaskGraph,
-    RetryTaskCommand,
+    CancelTaskCommand, CreateTaskGraphCommand, GetTaskRunsCommand, LocalAgentRunRecord,
+    LocalTaskGraph, RetryTaskCommand,
 };
 use uuid::Uuid;
 
@@ -44,6 +44,16 @@ impl LocalAgentRuntime {
             .get_task_graph(graph_id)
             .await?
             .ok_or_else(|| ClientStorageError::NotFound(graph_id.to_string()))?)
+    }
+
+    pub(super) async fn get_task_runs(
+        &self,
+        command: GetTaskRunsCommand,
+    ) -> Result<Vec<LocalAgentRunRecord>, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .list_task_runs(&command.task_id, command.limit)
+            .await?)
     }
 
     pub(super) async fn cancel_task(
@@ -86,9 +96,9 @@ mod tests {
     use super::*;
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
-        CancelTaskCommand, GetTaskGraphCommand, HostCommand, HostRequestEnvelope, HostResult,
-        LocalTaskDependency, LocalTaskSpec, LocalTaskStatus, RetryTaskCommand,
-        LOCAL_AGENT_PROTOCOL_VERSION,
+        CancelTaskCommand, GetTaskGraphCommand, GetTaskRunsCommand, HostCommand,
+        HostRequestEnvelope, HostResult, LocalTaskDependency, LocalTaskGraphStatus, LocalTaskSpec,
+        LocalTaskStatus, RetryTaskCommand, LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use serde_json::json;
     use std::sync::Arc;
@@ -156,6 +166,24 @@ mod tests {
         };
         assert_eq!(graph.tasks[0].status, LocalTaskStatus::Ready);
         assert_eq!(graph.tasks[1].status, LocalTaskStatus::Pending);
+        assert_eq!(graph.status, LocalTaskGraphStatus::Pending);
+
+        let runs = runtime
+            .handle(request(
+                "get-task-runs-1",
+                HostCommand::GetTaskRuns(GetTaskRunsCommand {
+                    task_id: "task-1".to_string(),
+                    limit: 10,
+                }),
+            ))
+            .await;
+        assert_eq!(
+            runs.result,
+            Some(HostResult::TaskRuns {
+                task_id: "task-1".to_string(),
+                runs: Vec::new(),
+            })
+        );
     }
 
     #[tokio::test]

@@ -14,8 +14,9 @@ mod task;
 mod tool;
 
 pub use task::{
-    CancelTaskCommand, CreateTaskGraphCommand, GetTaskGraphCommand, LocalTaskDependency,
-    LocalTaskGraph, LocalTaskRecord, LocalTaskSpec, LocalTaskStatus, RetryTaskCommand,
+    CancelTaskCommand, CreateTaskGraphCommand, GetTaskGraphCommand, GetTaskRunsCommand,
+    LocalTaskDependency, LocalTaskGraph, LocalTaskGraphStatus, LocalTaskRecord, LocalTaskSpec,
+    LocalTaskStatus, RetryTaskCommand,
 };
 pub use tool::{
     ClaimNextToolCommand, CommitToolCommand, LocalAgentToolBatch, LocalAgentToolCall,
@@ -23,7 +24,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 6;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 7;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -64,6 +65,7 @@ pub enum HostCommand {
     WaitEvents(WaitEventsCommand),
     CreateTaskGraph(CreateTaskGraphCommand),
     GetTaskGraph(GetTaskGraphCommand),
+    GetTaskRuns(GetTaskRunsCommand),
     CancelTask(CancelTaskCommand),
     RetryTask(RetryTaskCommand),
 }
@@ -84,6 +86,7 @@ impl HostCommand {
             Self::WaitEvents(command) => command.validate(),
             Self::CreateTaskGraph(command) => command.validate(),
             Self::GetTaskGraph(command) => command.validate(),
+            Self::GetTaskRuns(command) => command.validate(),
             Self::CancelTask(command) => command.validate(),
             Self::RetryTask(command) => command.validate(),
         }
@@ -528,6 +531,10 @@ pub enum HostResult {
     },
     TaskGraph {
         graph: LocalTaskGraph,
+    },
+    TaskRuns {
+        task_id: String,
+        runs: Vec<LocalAgentRunRecord>,
     },
 }
 

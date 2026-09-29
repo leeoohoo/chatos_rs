@@ -188,7 +188,8 @@ mod tests {
         SqliteClientStorage,
     };
     use chatos_local_agent_protocol::{
-        CreateTaskGraphCommand, LocalTaskDependency, LocalTaskSpec, LocalTaskStatus,
+        CreateTaskGraphCommand, LocalTaskDependency, LocalTaskGraphStatus, LocalTaskSpec,
+        LocalTaskStatus,
     };
     use serde_json::json;
 
@@ -303,6 +304,7 @@ mod tests {
             .await
             .expect("get graph")
             .expect("graph");
+        assert_eq!(after_success.status, LocalTaskGraphStatus::Running);
         assert_eq!(after_success.tasks[0].status, LocalTaskStatus::Succeeded);
         assert_eq!(after_success.tasks[1].status, LocalTaskStatus::Ready);
         assert_eq!(after_success.tasks[2].status, LocalTaskStatus::Pending);
@@ -313,6 +315,7 @@ mod tests {
             .await
             .expect("get graph")
             .expect("graph");
+        assert_eq!(after_failure.status, LocalTaskGraphStatus::Failed);
         assert_eq!(after_failure.tasks[1].status, LocalTaskStatus::Failed);
         assert_eq!(after_failure.tasks[2].status, LocalTaskStatus::Blocked);
         assert_eq!(after_failure.tasks[3].status, LocalTaskStatus::Blocked);

@@ -161,6 +161,12 @@ pub struct GetTaskGraphCommand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetTaskRunsCommand {
+    pub task_id: String,
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CancelTaskCommand {
     pub task_id: String,
     pub expected_version: Option<u64>,
@@ -199,6 +205,16 @@ impl GetTaskGraphCommand {
     }
 }
 
+impl GetTaskRunsCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("task_id", &self.task_id)?;
+        if !(1..=100).contains(&self.limit) {
+            return Err("limit must be between 1 and 100".to_string());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LocalTaskStatus {
@@ -209,6 +225,59 @@ pub enum LocalTaskStatus {
     Failed,
     Cancelled,
     Blocked,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalTaskGraphStatus {
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
+impl LocalTaskGraphStatus {
+    pub fn derive(tasks: &[LocalTaskRecord]) -> Self {
+        if tasks
+            .iter()
+            .all(|task| task.status == LocalTaskStatus::Succeeded)
+        {
+            return Self::Succeeded;
+        }
+        let has_active = tasks.iter().any(|task| {
+            matches!(
+                task.status,
+                LocalTaskStatus::Pending | LocalTaskStatus::Ready | LocalTaskStatus::Running
+            )
+        });
+        if has_active {
+            let has_progress = tasks.iter().any(|task| {
+                !matches!(
+                    task.status,
+                    LocalTaskStatus::Pending | LocalTaskStatus::Ready
+                )
+            });
+            return if has_progress {
+                Self::Running
+            } else {
+                Self::Pending
+            };
+        }
+        if tasks
+            .iter()
+            .any(|task| task.status == LocalTaskStatus::Failed)
+        {
+            Self::Failed
+        } else if tasks
+            .iter()
+            .any(|task| task.status == LocalTaskStatus::Cancelled)
+        {
+            Self::Cancelled
+        } else {
+            Self::Failed
+        }
+    }
 }
 
 impl LocalTaskStatus {
@@ -269,6 +338,7 @@ pub struct LocalTaskGraph {
     pub owner_user_id: String,
     pub source_entity_type: String,
     pub source_entity_id: String,
+    pub status: LocalTaskGraphStatus,
     pub tasks: Vec<LocalTaskRecord>,
     pub dependencies: Vec<LocalTaskDependency>,
     pub created_at_unix_ms: i64,
@@ -278,6 +348,28 @@ pub struct LocalTaskGraph {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn record(status: LocalTaskStatus) -> LocalTaskRecord {
+        LocalTaskRecord {
+            graph_id: "graph-1".to_string(),
+            owner_user_id: "user-1".to_string(),
+            source_entity_type: "conversation".to_string(),
+            source_entity_id: "conversation-1".to_string(),
+            task_id: format!("task-{}", status.as_str()),
+            title: "Task".to_string(),
+            profile_key: "task_runner".to_string(),
+            model_config_ref: "model-1".to_string(),
+            model_config_revision: "revision-1".to_string(),
+            capability_policy_revision: "policy-1".to_string(),
+            input: Value::Null,
+            max_iterations: 4,
+            status,
+            active_run_id: None,
+            version: 1,
+            created_at_unix_ms: 1,
+            updated_at_unix_ms: 1,
+        }
+    }
 
     fn task(task_id: &str) -> LocalTaskSpec {
         LocalTaskSpec {
@@ -321,6 +413,53 @@ mod tests {
                 prerequisite_task_id: "task-2".to_string(),
             },
         ])
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn derives_task_graph_lifecycle_status() {
+        let derive = |statuses: &[LocalTaskStatus]| {
+            LocalTaskGraphStatus::derive(&statuses.iter().copied().map(record).collect::<Vec<_>>())
+        };
+        assert_eq!(
+            derive(&[LocalTaskStatus::Ready, LocalTaskStatus::Pending]),
+            LocalTaskGraphStatus::Pending
+        );
+        assert_eq!(
+            derive(&[LocalTaskStatus::Running, LocalTaskStatus::Pending]),
+            LocalTaskGraphStatus::Running
+        );
+        assert_eq!(
+            derive(&[LocalTaskStatus::Succeeded, LocalTaskStatus::Ready]),
+            LocalTaskGraphStatus::Running
+        );
+        assert_eq!(
+            derive(&[LocalTaskStatus::Succeeded, LocalTaskStatus::Succeeded]),
+            LocalTaskGraphStatus::Succeeded
+        );
+        assert_eq!(
+            derive(&[LocalTaskStatus::Failed, LocalTaskStatus::Blocked]),
+            LocalTaskGraphStatus::Failed
+        );
+        assert_eq!(
+            derive(&[LocalTaskStatus::Cancelled, LocalTaskStatus::Blocked]),
+            LocalTaskGraphStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn validates_task_run_page_limit() {
+        assert!(GetTaskRunsCommand {
+            task_id: "task-1".to_string(),
+            limit: 100,
+        }
+        .validate()
+        .is_ok());
+        assert!(GetTaskRunsCommand {
+            task_id: "task-1".to_string(),
+            limit: 0,
+        }
         .validate()
         .is_err());
     }
