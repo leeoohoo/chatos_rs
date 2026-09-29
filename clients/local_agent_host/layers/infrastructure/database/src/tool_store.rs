@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::{ClientStorageError, IdempotentCommand, SqliteClientStorage};
+use super::{ClientStorageError, IdempotentCommand, LocalAgentToolStore, SqliteClientStorage};
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     LocalAgentToolBatch, LocalAgentToolClaim, LocalAgentToolCommitResult,
@@ -11,40 +11,6 @@ use serde_json::{json, Value};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 use std::str::FromStr;
 use uuid::Uuid;
-
-#[async_trait]
-pub trait LocalAgentToolStore: Send + Sync {
-    async fn recover_expired_tool_claims(
-        &self,
-        now_unix_ms: i64,
-    ) -> Result<u64, ClientStorageError>;
-
-    #[allow(clippy::too_many_arguments)]
-    async fn claim_next_tool(
-        &self,
-        command: &IdempotentCommand,
-        worker_id: &str,
-        claim_token: &str,
-        now_unix_ms: i64,
-        claim_until_unix_ms: i64,
-        event_id: &str,
-        include_tool_names: Option<&[String]>,
-        exclude_tool_names: &[String],
-    ) -> Result<Option<LocalAgentToolClaim>, ClientStorageError>;
-
-    #[allow(clippy::too_many_arguments)]
-    async fn commit_tool(
-        &self,
-        command: &IdempotentCommand,
-        invocation_id: &str,
-        claim_token: &str,
-        expected_version: u64,
-        outcome: &LocalAgentToolOutcome,
-        event_id: &str,
-        batch_event_id: &str,
-        now_unix_ms: i64,
-    ) -> Result<LocalAgentToolCommitResult, ClientStorageError>;
-}
 
 pub(crate) async fn insert_tool_batch(
     connection: &mut SqliteConnection,

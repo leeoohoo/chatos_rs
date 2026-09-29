@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{LocalAgentRuntime, LocalAgentRuntimeError};
-use chatos_client_storage::{ClientStorageError, IdempotentCommand};
+use chatos_local_agent_ports::{ClientStorageError, IdempotentCommand};
 use chatos_local_agent_protocol::{
     CancelTaskCommand, CreateTaskGraphCommand, GetTaskRunsCommand, LocalAgentRunRecord,
     LocalTaskGraph, RetryTaskCommand,

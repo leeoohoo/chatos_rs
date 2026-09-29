@@ -2,17 +2,18 @@
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
 [package]
-name = "chatos_agent_profiles"
+name = "chatos_local_agent_runtime"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 async-trait = "0.1"
-chatos_ai_runtime = { path = "../chatos_ai_runtime" }
-chatos_local_agent_protocol = { path = "../chatos_local_agent_protocol" }
-chatos_local_agent_runtime = { path = "../chatos_local_agent_runtime" }
+chatos_local_agent_ports = { path = "../ports" }
+chatos_local_agent_protocol = { path = "../interface" }
 serde_json = "1"
+thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+chatos_client_storage = { path = "../infrastructure/database" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

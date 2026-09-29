@@ -74,6 +74,7 @@ run_quality() {
 
 run_rust_build() {
   cd "$ROOT_DIR"
+  python3 scripts/check_local_agent_host_dependency_boundary.py
   "${CARGO[@]}" check \
     -p config_center_service_backend \
     -p plugin_management_service_backend \

@@ -6,7 +6,7 @@
 //! Owns run creation, claim leases, one-step transitions, cancellation, event
 //! replay, and conservative recovery behind durable state contracts.
 
-use chatos_client_storage::{
+use chatos_local_agent_ports::{
     ClientStorageError, IdempotentCommand, LocalAgentStore, RunTransition,
 };
 use chatos_local_agent_protocol::{

@@ -2,6 +2,8 @@
 
 `chatos_local_agent_host` is the client-owned durable execution host introduced for the 3.0.8 local-runtime migration.
 
+The source, protocol, application state machine, storage ports, SQLite adapter, Profiles, and native IPC adapters are owned under this directory. See [ARCHITECTURE.md](./ARCHITECTURE.md) for the layer boundaries and the enforced requirement that `chatos/`, `mcp_management_service/`, and `task_runner_service/` can ultimately be removed.
+
 The current milestone provides:
 
 - a versioned cross-platform protocol;

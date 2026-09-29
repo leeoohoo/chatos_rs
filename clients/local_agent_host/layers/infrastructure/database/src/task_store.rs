@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::{ClientStorageError, IdempotentCommand, SqliteClientStorage};
+use super::{ClientStorageError, IdempotentCommand, LocalAgentTaskStore, SqliteClientStorage};
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     CreateTaskGraphCommand, LocalAgentRunRecord, LocalTaskDependency, LocalTaskGraph,
@@ -9,53 +9,6 @@ use chatos_local_agent_protocol::{
 };
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 use std::{collections::HashSet, str::FromStr};
-
-#[async_trait]
-pub trait LocalAgentTaskStore: Send + Sync {
-    async fn create_task_graph(
-        &self,
-        command: &IdempotentCommand,
-        graph: &CreateTaskGraphCommand,
-        now_unix_ms: i64,
-    ) -> Result<LocalTaskGraph, ClientStorageError>;
-
-    async fn get_task_graph(
-        &self,
-        graph_id: &str,
-    ) -> Result<Option<LocalTaskGraph>, ClientStorageError>;
-
-    async fn list_task_runs(
-        &self,
-        task_id: &str,
-        limit: u32,
-    ) -> Result<Vec<LocalAgentRunRecord>, ClientStorageError>;
-
-    async fn start_next_task_run(
-        &self,
-        run_id: &str,
-        event_id: &str,
-        now_unix_ms: i64,
-    ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError>;
-
-    #[allow(clippy::too_many_arguments)]
-    async fn cancel_task(
-        &self,
-        command: &IdempotentCommand,
-        task_id: &str,
-        expected_version: Option<u64>,
-        reason: &str,
-        run_event_id: &str,
-        now_unix_ms: i64,
-    ) -> Result<LocalTaskGraph, ClientStorageError>;
-
-    async fn retry_task(
-        &self,
-        command: &IdempotentCommand,
-        task_id: &str,
-        expected_version: u64,
-        now_unix_ms: i64,
-    ) -> Result<LocalTaskGraph, ClientStorageError>;
-}
 
 #[async_trait]
 impl LocalAgentTaskStore for SqliteClientStorage {

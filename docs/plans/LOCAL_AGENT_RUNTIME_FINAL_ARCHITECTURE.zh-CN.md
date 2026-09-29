@@ -102,12 +102,17 @@ Config Center 只服务于服务端运行配置和受管 Agent 绑定，不保�
 建立跨平台 Rust 内核：
 
 ```text
-crates/chatos_local_agent_protocol
-crates/chatos_local_agent_runtime
-clients/local_agent_host
+clients/local_agent_host/layers/interface
+clients/local_agent_host/layers/ports
+clients/local_agent_host/layers/application
+clients/local_agent_host/layers/profiles
+clients/local_agent_host/layers/infrastructure/database
+clients/local_agent_host/src/{application,infrastructure,interface}
 ```
 
 最终代码中删除 Cloud 专用命名和行为。`chatos_cloud_agent_protocol`、`chatos_cloud_agent_runtime` 中与状态归约、claim、幂等和单步执行有关的通用代码进入本地 Runtime；RabbitMQ、MongoDB、Cloud Outbox Driver 和 owner service 路由不得进入最终本地内核。
+
+所有 Local Agent 专用 package 归属 `clients/local_agent_host`。应用运行时只依赖 interface DTO 和 ports，不依赖 SQLite 实现；Host 装配根负责选择 infrastructure adapter。Host 的传递依赖禁止进入 `chatos/`、`mcp_management_service/` 或 `task_runner_service/`，这三个目录是完成本地化后的物理删除目标。
 
 macOS Swift 与 Windows C# 只通过本地 IPC 使用该内核。现有 Swift `ChatOSAgentRuntime` 不继续作为第二套 Loop；审批、剧情、主聊天和 Task Runner 都应注册为公共 Runtime 的 Profile 或通过类型化工具回调接入。
 
@@ -193,16 +198,17 @@ Cancelled
 
 ### 7.1 Storage Provider
 
-建立跨平台公共存储模块：
+建立 Host 自有的跨平台存储端口与实现：
 
 ```text
-crates/chatos_client_storage
-├─ contracts
+clients/local_agent_host/layers/ports
+└─ LocalAgent{Run,Task,Tool}Store
+
+clients/local_agent_host/layers/infrastructure/database
 ├─ repositories
 ├─ transaction
 ├─ migrations
-├─ sqlite
-└─ postgres
+└─ sqlite
 ```
 
 所有客户端结构化业务数据只能通过该模块访问。业务层只能看到领域 Repository，不能接收数据库连接、拼接 SQL 或判断当前后端。

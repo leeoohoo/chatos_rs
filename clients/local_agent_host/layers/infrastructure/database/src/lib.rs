@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-//! Client-owned structured storage contracts and the SQLite implementation used
-//! by the Local Agent Host.
+//! SQLite implementation of the Local Agent Host storage ports.
 
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
@@ -16,7 +15,6 @@ use sqlx::{
 };
 use std::{path::Path, str::FromStr, time::Duration};
 
-mod contracts;
 mod migration;
 mod schema;
 mod task_commands;
@@ -24,15 +22,11 @@ mod task_lifecycle;
 mod task_store;
 mod tool_store;
 
-pub use contracts::{ClientStorageError, IdempotentCommand, LocalAgentRunStore, RunTransition};
+pub use chatos_local_agent_ports::{
+    ClientStorageError, IdempotentCommand, LocalAgentRunStore, LocalAgentStore,
+    LocalAgentTaskStore, LocalAgentToolStore, RunTransition,
+};
 use schema::RUN_SELECT;
-pub use task_store::LocalAgentTaskStore;
-pub use tool_store::LocalAgentToolStore;
-
-pub trait LocalAgentStore: LocalAgentRunStore + LocalAgentToolStore + LocalAgentTaskStore {}
-
-impl<T> LocalAgentStore for T where T: LocalAgentRunStore + LocalAgentToolStore + LocalAgentTaskStore
-{}
 
 #[derive(Debug, Clone)]
 pub struct SqliteClientStorage {

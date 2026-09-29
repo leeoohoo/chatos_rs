@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+//! Persistence interfaces owned by the Local Agent application layer.
+
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
-    LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunRecord, LocalAgentRunStatus,
-    LocalAgentToolBatch,
+    CreateTaskGraphCommand, LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunRecord,
+    LocalAgentRunStatus, LocalAgentToolBatch, LocalAgentToolClaim, LocalAgentToolCommitResult,
+    LocalAgentToolOutcome, LocalTaskGraph,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -133,3 +136,89 @@ pub trait LocalAgentRunStore: Send + Sync {
 
     async fn health_check(&self) -> Result<(), ClientStorageError>;
 }
+
+#[async_trait]
+pub trait LocalAgentTaskStore: Send + Sync {
+    async fn create_task_graph(
+        &self,
+        command: &IdempotentCommand,
+        graph: &CreateTaskGraphCommand,
+        now_unix_ms: i64,
+    ) -> Result<LocalTaskGraph, ClientStorageError>;
+
+    async fn get_task_graph(
+        &self,
+        graph_id: &str,
+    ) -> Result<Option<LocalTaskGraph>, ClientStorageError>;
+
+    async fn list_task_runs(
+        &self,
+        task_id: &str,
+        limit: u32,
+    ) -> Result<Vec<LocalAgentRunRecord>, ClientStorageError>;
+
+    async fn start_next_task_run(
+        &self,
+        run_id: &str,
+        event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    async fn cancel_task(
+        &self,
+        command: &IdempotentCommand,
+        task_id: &str,
+        expected_version: Option<u64>,
+        reason: &str,
+        run_event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<LocalTaskGraph, ClientStorageError>;
+
+    async fn retry_task(
+        &self,
+        command: &IdempotentCommand,
+        task_id: &str,
+        expected_version: u64,
+        now_unix_ms: i64,
+    ) -> Result<LocalTaskGraph, ClientStorageError>;
+}
+
+#[async_trait]
+pub trait LocalAgentToolStore: Send + Sync {
+    async fn recover_expired_tool_claims(
+        &self,
+        now_unix_ms: i64,
+    ) -> Result<u64, ClientStorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    async fn claim_next_tool(
+        &self,
+        command: &IdempotentCommand,
+        worker_id: &str,
+        claim_token: &str,
+        now_unix_ms: i64,
+        claim_until_unix_ms: i64,
+        event_id: &str,
+        include_tool_names: Option<&[String]>,
+        exclude_tool_names: &[String],
+    ) -> Result<Option<LocalAgentToolClaim>, ClientStorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    async fn commit_tool(
+        &self,
+        command: &IdempotentCommand,
+        invocation_id: &str,
+        claim_token: &str,
+        expected_version: u64,
+        outcome: &LocalAgentToolOutcome,
+        event_id: &str,
+        batch_event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<LocalAgentToolCommitResult, ClientStorageError>;
+}
+
+pub trait LocalAgentStore: LocalAgentRunStore + LocalAgentToolStore + LocalAgentTaskStore {}
+
+impl<T> LocalAgentStore for T where T: LocalAgentRunStore + LocalAgentToolStore + LocalAgentTaskStore
+{}

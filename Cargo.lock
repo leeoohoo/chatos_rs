@@ -813,6 +813,7 @@ name = "chatos_client_storage"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chatos_local_agent_ports",
  "chatos_local_agent_protocol",
  "serde",
  "serde_json",
@@ -879,6 +880,7 @@ dependencies = [
  "async-trait",
  "chatos_agent_profiles",
  "chatos_client_storage",
+ "chatos_local_agent_ports",
  "chatos_local_agent_protocol",
  "chatos_local_agent_runtime",
  "serde",
@@ -887,6 +889,18 @@ dependencies = [
  "tokio",
  "uuid",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "chatos_local_agent_ports"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chatos_local_agent_protocol",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
 ]
 
 [[package]]
@@ -903,6 +917,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chatos_client_storage",
+ "chatos_local_agent_ports",
  "chatos_local_agent_protocol",
  "serde_json",
  "thiserror",

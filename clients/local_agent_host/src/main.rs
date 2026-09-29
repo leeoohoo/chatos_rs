@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use chatos_client_storage::SqliteClientStorage;
-use chatos_local_agent_host::serve_reader_writer;
-use chatos_local_agent_runtime::LocalAgentRuntime;
+use chatos_local_agent_host::{
+    application::LocalAgentRuntime, infrastructure::SqliteClientStorage, serve_reader_writer,
+};
 use std::{env, error::Error, path::PathBuf, sync::Arc};
 
 enum IpcMode {
