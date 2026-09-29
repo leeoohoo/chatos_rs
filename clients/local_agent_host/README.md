@@ -105,7 +105,7 @@ Mutating commands use `command_id` as an idempotency key. Reusing a key with dif
 
 `create_task_graph` validates the complete acyclic graph and writes it in one SQLite transaction. Tasks without prerequisites start as `ready`; dependent tasks start as `pending`. Graph creation uses the same command receipt mechanism as Run mutations, so an identical `command_id` replay returns the original graph and a mismatched replay is rejected.
 
-Task-to-Run scheduling, dependency completion/unlock, and graph terminal-state reduction are not implemented yet. The Task DAG is durable authority in this milestone, but does not start work by itself.
+The model scheduler atomically materializes each `ready` Task as one Run. A terminal Run updates its owning Task in the same transaction: success unlocks newly satisfied dependents, while failure or cancellation transitively marks downstream Tasks `blocked`. Task retry/restart commands and an explicit aggregate Graph status are not implemented yet.
 
 A successful claim moves one runnable Run to `model_running`, increments its iteration and version, and returns a random claim token. `commit_step` requires the exact token and version. If the Host stops before commit, an expired `model_running` claim is moved to `needs_review`; it is never silently replayed.
 

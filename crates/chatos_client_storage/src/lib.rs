@@ -19,6 +19,7 @@ use std::{path::Path, str::FromStr, time::Duration};
 mod contracts;
 mod migration;
 mod schema;
+mod task_lifecycle;
 mod task_store;
 mod tool_store;
 
@@ -450,6 +451,12 @@ impl LocalAgentRunStore for SqliteClientStorage {
             let run = Self::fetch_run_on(&mut connection, &transition.run_id)
                 .await?
                 .ok_or_else(|| ClientStorageError::NotFound(transition.run_id.clone()))?;
+            task_lifecycle::reconcile_task_after_run(
+                &mut connection,
+                &run,
+                transition.occurred_at_unix_ms,
+            )
+            .await?;
             Self::record_receipt(
                 &mut connection,
                 command,
@@ -508,6 +515,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
             let run = Self::fetch_run_on(&mut connection, run_id)
                 .await?
                 .ok_or_else(|| ClientStorageError::NotFound(run_id.to_string()))?;
+            task_lifecycle::reconcile_task_after_run(&mut connection, &run, now_unix_ms).await?;
             Self::record_receipt(&mut connection, command, &run, now_unix_ms).await?;
             Ok(run)
         }

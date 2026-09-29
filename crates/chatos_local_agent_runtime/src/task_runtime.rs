@@ -3,9 +3,24 @@
 
 use super::{LocalAgentRuntime, LocalAgentRuntimeError};
 use chatos_client_storage::{ClientStorageError, IdempotentCommand};
-use chatos_local_agent_protocol::{CreateTaskGraphCommand, LocalTaskGraph};
+use chatos_local_agent_protocol::{CreateTaskGraphCommand, LocalAgentRunRecord, LocalTaskGraph};
+use uuid::Uuid;
 
 impl LocalAgentRuntime {
+    pub async fn start_next_task_run(
+        &self,
+    ) -> Result<Option<LocalAgentRunRecord>, LocalAgentRuntimeError> {
+        let now = self.now()?;
+        Ok(self
+            .store
+            .start_next_task_run(
+                &format!("task-run-{}", Uuid::new_v4()),
+                &format!("task-run-event-{}", Uuid::new_v4()),
+                now,
+            )
+            .await?)
+    }
+
     pub(super) async fn create_task_graph(
         &self,
         idempotency: &IdempotentCommand,

@@ -4,7 +4,8 @@
 use super::{ClientStorageError, IdempotentCommand, SqliteClientStorage};
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
-    CreateTaskGraphCommand, LocalTaskDependency, LocalTaskGraph, LocalTaskRecord, LocalTaskStatus,
+    CreateTaskGraphCommand, LocalAgentRunRecord, LocalTaskDependency, LocalTaskGraph,
+    LocalTaskRecord, LocalTaskStatus,
 };
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 use std::{collections::HashSet, str::FromStr};
@@ -22,6 +23,13 @@ pub trait LocalAgentTaskStore: Send + Sync {
         &self,
         graph_id: &str,
     ) -> Result<Option<LocalTaskGraph>, ClientStorageError>;
+
+    async fn start_next_task_run(
+        &self,
+        run_id: &str,
+        event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError>;
 }
 
 #[async_trait]
@@ -56,6 +64,24 @@ impl LocalAgentTaskStore for SqliteClientStorage {
     ) -> Result<Option<LocalTaskGraph>, ClientStorageError> {
         let mut connection = self.pool.acquire().await?;
         fetch_graph(&mut connection, graph_id).await
+    }
+
+    async fn start_next_task_run(
+        &self,
+        run_id: &str,
+        event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError> {
+        let mut connection = self.pool.acquire().await?;
+        Self::begin_immediate(&mut connection).await?;
+        let result = super::task_lifecycle::start_next_task_run(
+            &mut connection,
+            run_id,
+            event_id,
+            now_unix_ms,
+        )
+        .await;
+        Self::finish_write(&mut connection, result).await
     }
 }
 

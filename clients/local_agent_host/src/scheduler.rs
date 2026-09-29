@@ -69,6 +69,7 @@ impl LocalAgentScheduler {
     /// Claims and executes at most one durable step. The caller owns wakeups
     /// and retry timers, so an idle Host does not create polling receipts.
     pub async fn run_once(&self) -> Result<SchedulerTick, LocalAgentSchedulerError> {
+        self.runtime.start_next_task_run().await?;
         let claim_result = self
             .runtime
             .try_handle(envelope(
@@ -129,7 +130,10 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use chatos_client_storage::SqliteClientStorage;
-    use chatos_local_agent_protocol::{CreateRunCommand, LocalAgentRunClaim, LocalAgentRunStatus};
+    use chatos_local_agent_protocol::{
+        CreateRunCommand, CreateTaskGraphCommand, GetTaskGraphCommand, LocalAgentRunClaim,
+        LocalAgentRunStatus, LocalTaskSpec, LocalTaskStatus,
+    };
     use chatos_local_agent_runtime::LocalAgentProfile;
 
     struct SuccessProfile;
@@ -189,5 +193,64 @@ mod tests {
             scheduler.run_once().await.expect("idle"),
             SchedulerTick::Idle
         );
+    }
+
+    #[tokio::test]
+    async fn scheduler_materializes_and_completes_a_ready_task() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = Arc::new(LocalAgentRuntime::new(storage));
+        runtime.initialize().await.expect("initialize");
+        runtime
+            .try_handle(envelope(
+                HostCommand::CreateTaskGraph(CreateTaskGraphCommand {
+                    graph_id: "graph-scheduler".to_string(),
+                    owner_user_id: "user-1".to_string(),
+                    source_entity_type: "conversation".to_string(),
+                    source_entity_id: "conversation-1".to_string(),
+                    tasks: vec![LocalTaskSpec {
+                        task_id: "task-scheduler".to_string(),
+                        title: "Scheduled task".to_string(),
+                        profile_key: "test_success".to_string(),
+                        model_config_ref: "model-1".to_string(),
+                        model_config_revision: "revision-1".to_string(),
+                        capability_policy_revision: "policy-1".to_string(),
+                        input: serde_json::json!({"message": "hello"}),
+                        max_iterations: 4,
+                    }],
+                    dependencies: Vec::new(),
+                }),
+                "create-task-graph",
+            ))
+            .await
+            .expect("create graph");
+        let mut profiles = LocalAgentProfileRegistry::new();
+        profiles
+            .register("test_success", SuccessProfile)
+            .expect("profile");
+        let scheduler = LocalAgentScheduler::new(Arc::clone(&runtime), profiles, "worker-1")
+            .expect("scheduler");
+
+        assert!(matches!(
+            scheduler.run_once().await.expect("run task"),
+            SchedulerTick::Committed(_)
+        ));
+        let graph = runtime
+            .try_handle(envelope(
+                HostCommand::GetTaskGraph(GetTaskGraphCommand {
+                    graph_id: "graph-scheduler".to_string(),
+                }),
+                "get-task-graph",
+            ))
+            .await
+            .expect("get graph");
+        let HostResult::TaskGraph { graph } = graph else {
+            panic!("expected task graph")
+        };
+        assert_eq!(graph.tasks[0].status, LocalTaskStatus::Succeeded);
+        assert!(graph.tasks[0].active_run_id.is_none());
     }
 }
