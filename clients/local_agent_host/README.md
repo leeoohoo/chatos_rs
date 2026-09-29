@@ -18,6 +18,7 @@ The current milestone provides:
 - a `chatos_ai_runtime` single-step Profile adapter and conservative tool-safety policy;
 - a local tool registry and one-invocation Tool Scheduler;
 - a client-owned MCP stdio process/session adapter with local tool discovery and execution;
+- durable installed-Plugin/MCP snapshots in the client-owned SQLite database;
 - an event-driven Host Coordinator that drains model and tool work to quiescence;
 - monotonic, replayable event cursors;
 - conservative crash recovery to `needs_review`;
@@ -39,7 +40,9 @@ The in-process assembly reserves `create_task` and `create_tasks_with_prerequisi
 
 Native clients may choose `LocalAgentHostAssembly::with_external_tool_worker`. In that mode Swift or C# claims and commits platform tools through IPC, while Rust still owns model scheduling plus the two Task creation tools and wakes immediately after each native tool receipt. This keeps platform permissions and UI-bound tools in the native process without duplicating the Agent loop.
 
-Protocol v8 retains the optional `include_tool_names` and `exclude_tool_names` Tool claim filters. The Assembly's Rust worker includes only the two reserved Task tools, and Coordinator IPC automatically excludes them from native claims. Explicit overlapping filters are rejected.
+Protocol v9 retains the optional `include_tool_names` and `exclude_tool_names` Tool claim filters. The Assembly's Rust worker includes only the two reserved Task tools, and Coordinator IPC automatically excludes them from native claims. Explicit overlapping filters are rejected.
+
+Installed Plugin MCP configurations are created, queried, updated and removed through version-protected Host commands and stored by the Local Agent SQLite repository. Records freeze Plugin release/component revisions, executable location and the allowed tool set. Environment entries store native credential references only; `LocalPluginSecretResolver` resolves their values transiently from Keychain or Credential Manager immediately before local process launch.
 
 `LocalToolScheduler` claims one persisted invocation, routes it through `LocalToolRegistry`, and commits the result. Executor infrastructure errors on side-effecting calls become `needs_review`; read-only executor errors become ordinary failed tool results that the next model step can inspect.
 
@@ -88,7 +91,7 @@ Example health request:
 
 ```json
 {
-  "protocol_version": 8,
+  "protocol_version": 9,
   "command_id": "health-019",
   "command": {
     "type": "health"
@@ -117,6 +120,10 @@ Mutating commands use `command_id` as an idempotency key. Reusing a key with dif
 - `cancel_task`
 - `retry_task`
 - `restart_task`
+- `put_plugin_installation`
+- `get_plugin_installation`
+- `list_plugin_installations`
+- `remove_plugin_installation`
 
 `create_task_graph` validates the complete acyclic graph and writes it in one SQLite transaction. Tasks without prerequisites start as `ready`; dependent tasks start as `pending`. Graph creation uses the same command receipt mechanism as Run mutations, so an identical `command_id` replay returns the original graph and a mismatched replay is rejected.
 

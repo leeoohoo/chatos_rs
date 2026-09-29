@@ -145,3 +145,32 @@ pub(super) const SCHEMA_V5: &[&str] = &[
        graph_id, prerequisite_task_id, task_id\
      )",
 ];
+
+pub(super) const SCHEMA_V6: &[&str] = &[
+    "CREATE TABLE local_plugin_installations (\
+       installation_id TEXT PRIMARY KEY NOT NULL,\
+       owner_user_id TEXT NOT NULL,\
+       plugin_id TEXT NOT NULL,\
+       release_id TEXT NOT NULL,\
+       release_digest TEXT NOT NULL,\
+       component_id TEXT NOT NULL,\
+       component_revision TEXT NOT NULL,\
+       server_id TEXT NOT NULL,\
+       executable_path TEXT NOT NULL,\
+       args_json TEXT NOT NULL,\
+       working_directory TEXT,\
+       environment_secret_refs_json TEXT NOT NULL,\
+       tool_prefix TEXT,\
+       allowed_tools_json TEXT,\
+       enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),\
+       version INTEGER NOT NULL CHECK(version > 0),\
+       created_at_unix_ms INTEGER NOT NULL,\
+       updated_at_unix_ms INTEGER NOT NULL\
+     )",
+    "CREATE INDEX local_plugin_installations_owner ON local_plugin_installations(\
+       owner_user_id, enabled, updated_at_unix_ms DESC, installation_id\
+     )",
+    "CREATE UNIQUE INDEX local_plugin_installations_component ON local_plugin_installations(\
+       owner_user_id, plugin_id, component_id\
+     )",
+];

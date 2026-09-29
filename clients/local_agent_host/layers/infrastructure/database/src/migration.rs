@@ -2,12 +2,12 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    schema::{SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5},
+    schema::{SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6},
     ClientStorageError, SqliteClientStorage, SqliteResultExt,
 };
 use sqlx::SqliteConnection;
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 impl SqliteClientStorage {
     pub(super) async fn migrate(&self) -> Result<(), ClientStorageError> {
@@ -37,6 +37,7 @@ impl SqliteClientStorage {
             (3, SCHEMA_V3),
             (4, SCHEMA_V4),
             (5, SCHEMA_V5),
+            (6, SCHEMA_V6),
         ] {
             if version < next_version {
                 Self::begin_immediate(&mut connection).await.db()?;

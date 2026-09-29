@@ -216,7 +216,7 @@ async fn expired_claim_cannot_commit_a_late_step() {
 }
 
 #[tokio::test]
-async fn version_two_database_migrates_through_task_graph_schema() {
+async fn version_two_database_migrates_through_plugin_installation_schema() {
     let database_path = std::env::temp_dir().join(format!(
         "chatos-local-agent-migration-{}.sqlite",
         Uuid::new_v4()
@@ -276,7 +276,7 @@ async fn version_two_database_migrates_through_task_graph_schema() {
             .fetch_one(&storage.pool)
             .await
             .expect("schema version");
-    assert_eq!(schema_version, 5);
+    assert_eq!(schema_version, 6);
     let task_tables: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (\
          'local_task_graphs', 'local_tasks', 'local_task_dependencies')",
@@ -285,6 +285,14 @@ async fn version_two_database_migrates_through_task_graph_schema() {
     .await
     .expect("task tables");
     assert_eq!(task_tables, 3);
+    let plugin_tables: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' \
+         AND name = 'local_plugin_installations'",
+    )
+    .fetch_one(&storage.pool)
+    .await
+    .expect("plugin table");
+    assert_eq!(plugin_tables, 1);
     storage.pool.close().await;
     drop(storage);
     for path in [

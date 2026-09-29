@@ -7,7 +7,8 @@ use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     CreateTaskGraphCommand, LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunRecord,
     LocalAgentRunStatus, LocalAgentToolBatch, LocalAgentToolClaim, LocalAgentToolCommitResult,
-    LocalAgentToolOutcome, LocalTaskGraph,
+    LocalAgentToolOutcome, LocalPluginInstallationRecord, LocalPluginInstallationSpec,
+    LocalTaskGraph,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -235,7 +236,45 @@ pub trait LocalAgentToolStore: Send + Sync {
     ) -> Result<LocalAgentToolCommitResult, ClientStorageError>;
 }
 
-pub trait LocalAgentStore: LocalAgentRunStore + LocalAgentToolStore + LocalAgentTaskStore {}
+#[async_trait]
+pub trait LocalPluginInstallationStore: Send + Sync {
+    async fn put_plugin_installation(
+        &self,
+        command: &IdempotentCommand,
+        installation: &LocalPluginInstallationSpec,
+        expected_version: Option<u64>,
+        now_unix_ms: i64,
+    ) -> Result<LocalPluginInstallationRecord, ClientStorageError>;
 
-impl<T> LocalAgentStore for T where T: LocalAgentRunStore + LocalAgentToolStore + LocalAgentTaskStore
-{}
+    async fn get_plugin_installation(
+        &self,
+        installation_id: &str,
+    ) -> Result<Option<LocalPluginInstallationRecord>, ClientStorageError>;
+
+    async fn list_plugin_installations(
+        &self,
+        owner_user_id: &str,
+        limit: u32,
+    ) -> Result<Vec<LocalPluginInstallationRecord>, ClientStorageError>;
+
+    async fn remove_plugin_installation(
+        &self,
+        command: &IdempotentCommand,
+        installation_id: &str,
+        expected_version: u64,
+        now_unix_ms: i64,
+    ) -> Result<LocalPluginInstallationRecord, ClientStorageError>;
+}
+
+pub trait LocalAgentStore:
+    LocalAgentRunStore + LocalAgentToolStore + LocalAgentTaskStore + LocalPluginInstallationStore
+{
+}
+
+impl<T> LocalAgentStore for T where
+    T: LocalAgentRunStore
+        + LocalAgentToolStore
+        + LocalAgentTaskStore
+        + LocalPluginInstallationStore
+{
+}

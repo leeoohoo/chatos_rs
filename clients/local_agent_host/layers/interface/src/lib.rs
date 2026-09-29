@@ -10,8 +10,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{fmt, str::FromStr};
 
+mod plugin;
 mod task;
 mod tool;
+
+pub use plugin::{
+    GetPluginInstallationCommand, ListPluginInstallationsCommand, LocalPluginInstallationRecord,
+    LocalPluginInstallationSpec, PutPluginInstallationCommand, RemovePluginInstallationCommand,
+};
 
 pub use task::{
     CancelTaskCommand, CreateTaskGraphCommand, GetTaskGraphCommand, GetTaskRunsCommand,
@@ -24,7 +30,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 8;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 9;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -69,6 +75,10 @@ pub enum HostCommand {
     CancelTask(CancelTaskCommand),
     RetryTask(RetryTaskCommand),
     RestartTask(RestartTaskCommand),
+    PutPluginInstallation(PutPluginInstallationCommand),
+    GetPluginInstallation(GetPluginInstallationCommand),
+    ListPluginInstallations(ListPluginInstallationsCommand),
+    RemovePluginInstallation(RemovePluginInstallationCommand),
 }
 
 impl HostCommand {
@@ -91,6 +101,10 @@ impl HostCommand {
             Self::CancelTask(command) => command.validate(),
             Self::RetryTask(command) => command.validate(),
             Self::RestartTask(command) => command.validate(),
+            Self::PutPluginInstallation(command) => command.validate(),
+            Self::GetPluginInstallation(command) => command.validate(),
+            Self::ListPluginInstallations(command) => command.validate(),
+            Self::RemovePluginInstallation(command) => command.validate(),
         }
     }
 }
@@ -537,6 +551,12 @@ pub enum HostResult {
     TaskRuns {
         task_id: String,
         runs: Vec<LocalAgentRunRecord>,
+    },
+    PluginInstallation {
+        installation: LocalPluginInstallationRecord,
+    },
+    PluginInstallations {
+        installations: Vec<LocalPluginInstallationRecord>,
     },
 }
 

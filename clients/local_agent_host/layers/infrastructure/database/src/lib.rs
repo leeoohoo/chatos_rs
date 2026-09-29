@@ -16,6 +16,7 @@ use sqlx::{
 use std::{path::Path, str::FromStr, time::Duration};
 
 mod migration;
+mod plugin_store;
 mod schema;
 mod task_commands;
 mod task_lifecycle;
@@ -24,7 +25,7 @@ mod tool_store;
 
 pub use chatos_local_agent_ports::{
     ClientStorageError, IdempotentCommand, LocalAgentRunStore, LocalAgentStore,
-    LocalAgentTaskStore, LocalAgentToolStore, RunTransition,
+    LocalAgentTaskStore, LocalAgentToolStore, LocalPluginInstallationStore, RunTransition,
 };
 use schema::RUN_SELECT;
 

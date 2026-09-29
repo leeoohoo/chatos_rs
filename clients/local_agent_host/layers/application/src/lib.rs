@@ -25,6 +25,7 @@ use std::{
 use thiserror::Error;
 use uuid::Uuid;
 
+mod plugin_runtime;
 mod profile;
 mod task_runtime;
 
@@ -303,6 +304,12 @@ impl LocalAgentRuntime {
             | HostCommand::CancelTask(_)
             | HostCommand::RetryTask(_)
             | HostCommand::RestartTask(_)) => self.handle_task_command(&idempotency, command).await,
+            command @ (HostCommand::PutPluginInstallation(_)
+            | HostCommand::GetPluginInstallation(_)
+            | HostCommand::ListPluginInstallations(_)
+            | HostCommand::RemovePluginInstallation(_)) => {
+                self.handle_plugin_command(&idempotency, command).await
+            }
         }
     }
 

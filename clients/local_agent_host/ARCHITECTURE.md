@@ -24,6 +24,8 @@ The application runtime depends on `ports` and `interface`; it does not depend o
 
 The local MCP adapter owns Plugin process startup, MCP session initialization, tool discovery and invocation. Marketplace metadata and signed artifacts may still come from the retained Plugin control plane, but no tool execution request is routed through `mcp_management_service`.
 
+Installed Plugin/MCP snapshots are application data behind a storage port and are implemented by the local SQLite adapter. Only credential-store references are durable; native Keychain/Credential Manager adapters resolve secret values into the child-process environment at launch time.
+
 ## Server-removal boundary
 
 The completed client localization must allow these directories to be physically deleted:

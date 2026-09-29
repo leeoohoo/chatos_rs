@@ -21,7 +21,7 @@ pub use chatos_agent_profiles::{
 };
 pub use infrastructure::{
     LocalControlPlaneSnapshot, LocalMcpServerConfig, LocalMcpStdioSession, LocalMcpToolDefinition,
-    LocalMcpToolSet,
+    LocalMcpToolSet, LocalPluginSecretResolver,
 };
 pub use interface::{
     decode_response, read_frame, serve_reader_writer, serve_stream, write_frame,
