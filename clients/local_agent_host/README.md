@@ -29,6 +29,8 @@ The library-level schedulers execute one registered Profile step or one tool inv
 
 `LocalControlPlaneSnapshot` is the default in-process Resolver backing for native integration. Authenticated configuration code publishes exact model and capability revisions into it; model credentials remain in non-serializable process memory and can be removed or atomically replaced without altering durable Runs.
 
+Native clients may choose `LocalAgentHostAssembly::with_external_tool_worker`. In that mode Swift or C# claims and commits the durable Tool Invocation Ledger through IPC, while Rust still owns model scheduling and wakes immediately after each native tool receipt. This keeps platform permissions and UI-bound tools in the native process without duplicating the Agent loop.
+
 `LocalToolScheduler` claims one persisted invocation, routes it through `LocalToolRegistry`, and commits the result. Executor infrastructure errors on side-effecting calls become `needs_review`; read-only executor errors become ordinary failed tool results that the next model step can inspect.
 
 ## Run locally

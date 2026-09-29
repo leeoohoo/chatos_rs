@@ -32,6 +32,51 @@ impl LocalAgentHostAssembly {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
+        Self::build(
+            runtime,
+            model_resolver,
+            capability_resolver,
+            Some(tools),
+            read_only_tools,
+        )
+    }
+
+    /// Builds a Host whose platform tools are claimed and committed by the
+    /// native client through IPC instead of executed by an in-process worker.
+    pub fn with_external_tool_worker<M, C, I, S>(
+        runtime: Arc<LocalAgentRuntime>,
+        model_resolver: M,
+        capability_resolver: C,
+        read_only_tools: I,
+    ) -> Result<Self, String>
+    where
+        M: LocalModelRuntimeResolver + 'static,
+        C: LocalCapabilityResolver + 'static,
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self::build(
+            runtime,
+            model_resolver,
+            capability_resolver,
+            None,
+            read_only_tools,
+        )
+    }
+
+    fn build<M, C, I, S>(
+        runtime: Arc<LocalAgentRuntime>,
+        model_resolver: M,
+        capability_resolver: C,
+        tools: Option<LocalToolRegistry>,
+        read_only_tools: I,
+    ) -> Result<Self, String>
+    where
+        M: LocalModelRuntimeResolver + 'static,
+        C: LocalCapabilityResolver + 'static,
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
         let model_resolver: Arc<dyn LocalModelRuntimeResolver> = Arc::new(model_resolver);
         let capability_resolver: Arc<dyn LocalCapabilityResolver> = Arc::new(capability_resolver);
         let safety = NamedReadOnlyTools::new(read_only_tools);
@@ -58,12 +103,13 @@ impl LocalAgentHostAssembly {
         )?;
         let model_scheduler =
             LocalAgentScheduler::new(Arc::clone(&runtime), profiles, "local-model-worker")?;
-        let tool_scheduler =
-            LocalToolScheduler::new(Arc::clone(&runtime), tools, "local-tool-worker")?;
+        let tool_scheduler = tools
+            .map(|tools| LocalToolScheduler::new(Arc::clone(&runtime), tools, "local-tool-worker"))
+            .transpose()?;
         let coordinator = Arc::new(LocalAgentHostCoordinator::new(
             Arc::clone(&runtime),
             Some(model_scheduler),
-            Some(tool_scheduler),
+            tool_scheduler,
         )?);
         Ok(Self {
             runtime,
@@ -144,6 +190,27 @@ mod tests {
             ModelResolver,
             Capabilities,
             tools,
+            ["read_file"],
+        )
+        .expect("assembly");
+
+        assert!(Arc::ptr_eq(&assembly.runtime(), &runtime));
+        assembly.coordinator().wake();
+    }
+
+    #[tokio::test]
+    async fn external_tool_worker_does_not_require_a_rust_tool_registry() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = Arc::new(LocalAgentRuntime::new(storage));
+        runtime.initialize().await.expect("initialize");
+        let assembly = LocalAgentHostAssembly::with_external_tool_worker(
+            Arc::clone(&runtime),
+            ModelResolver,
+            Capabilities,
             ["read_file"],
         )
         .expect("assembly");
