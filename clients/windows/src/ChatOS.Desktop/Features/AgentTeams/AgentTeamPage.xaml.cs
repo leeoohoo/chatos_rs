@@ -213,18 +213,18 @@ public sealed partial class AgentTeamPage : UserControl
 
     private async void OnEditTodoClick(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { DataContext: AgentTodo todo }) await ShowTodoDialogAsync(todo);
+        if (sender is Button { Tag: AgentTodo todo }) await ShowTodoDialogAsync(todo);
     }
 
     private async void OnTodoUpClick(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { DataContext: AgentTodo todo })
+        if (sender is Button { Tag: AgentTodo todo })
             await IgnoreFailureAsync(() => ViewModel.MoveTodoAsync(todo, -1));
     }
 
     private async void OnTodoDownClick(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { DataContext: AgentTodo todo })
+        if (sender is Button { Tag: AgentTodo todo })
             await IgnoreFailureAsync(() => ViewModel.MoveTodoAsync(todo, 1));
     }
 
@@ -251,7 +251,7 @@ public sealed partial class AgentTeamPage : UserControl
                 var details = new StackPanel { Spacing = 6 };
                 details.Children.Add(new TextBlock
                 {
-                    Text = $"{revision.Title}\n{revision.Status} · {editor} · {timestamp}",
+                    Text = $"{revision.Title}\n{AgentTeamDisplayText.For(revision.Status)} · {editor} · {timestamp}",
                     TextWrapping = TextWrapping.Wrap,
                 });
                 details.Children.Add(new TextBlock
@@ -297,7 +297,8 @@ public sealed partial class AgentTeamPage : UserControl
     {
         if (sender is Button { DataContext: AgentStaffingProposal proposal } &&
             proposal.Status == AgentStaffingProposalStatus.Pending &&
-            await ConfirmAsync("批准成员提案", $"批准 {proposal.Draft.Kind} 提案？"))
+            await ConfirmAsync("批准成员提案",
+                $"批准“{AgentTeamDisplayText.For(proposal.Draft.Kind)}”提案？"))
             await IgnoreFailureAsync(() => ViewModel.ResolveStaffingProposalAsync(proposal, true));
     }
 
@@ -305,7 +306,8 @@ public sealed partial class AgentTeamPage : UserControl
     {
         if (sender is Button { DataContext: AgentStaffingProposal proposal } &&
             proposal.Status == AgentStaffingProposalStatus.Pending &&
-            await ConfirmAsync("拒绝成员提案", $"拒绝 {proposal.Draft.Kind} 提案？"))
+            await ConfirmAsync("拒绝成员提案",
+                $"拒绝“{AgentTeamDisplayText.For(proposal.Draft.Kind)}”提案？"))
             await IgnoreFailureAsync(() => ViewModel.ResolveStaffingProposalAsync(proposal, false));
     }
 

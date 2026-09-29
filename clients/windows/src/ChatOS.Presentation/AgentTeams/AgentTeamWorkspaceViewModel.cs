@@ -38,11 +38,13 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
     public ObservableCollection<AgentMessage> Messages { get; } = [];
     public ObservableCollection<AgentMessageItemViewModel> MessageItems { get; } = [];
     public ObservableCollection<AgentTodo> Todos { get; } = [];
+    public ObservableCollection<AgentTodoItemViewModel> TodoItems { get; } = [];
     public ObservableCollection<AgentTodoProgress> SelectedTodoProgress { get; } = [];
     public ObservableCollection<AgentTeamAsset> Assets { get; } = [];
     public ObservableCollection<AgentRequirementSurvey> RequirementSurveys { get; } = [];
     public ObservableCollection<AgentStaffingProposal> StaffingProposals { get; } = [];
     public ObservableCollection<AgentRunSummary> Runs { get; } = [];
+    public ObservableCollection<AgentRunItemViewModel> RunItems { get; } = [];
     public ObservableCollection<AgentMessageAttachment> PendingAttachments { get; } = [];
 
     public bool IsOpen => _ownerUserId is not null && ProjectId is not null;
@@ -278,10 +280,16 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
                     message.SenderAgentId is not null &&
                     agentNames.TryGetValue(message.SenderAgentId, out var name) ? name : null)));
             Replace(Todos, snapshot.Todos);
+            Replace(TodoItems, snapshot.Todos.Select(todo =>
+                new AgentTodoItemViewModel(todo,
+                    agentNames.TryGetValue(todo.Draft.AgentId, out var name) ? name : null)));
             Replace(Assets, snapshot.Assets);
             Replace(RequirementSurveys, snapshot.RequirementSurveys);
             Replace(StaffingProposals, snapshot.StaffingProposals);
             Replace(Runs, snapshot.Runs);
+            Replace(RunItems, snapshot.Runs.Select(run =>
+                new AgentRunItemViewModel(run,
+                    agentNames.TryGetValue(run.AgentId, out var name) ? name : null)));
             _loadedRoomId = snapshot.Room.Id;
             SelectedTodo = Todos.FirstOrDefault(value => value.Id == SelectedTodo?.Id);
             SelectedAsset = Assets.FirstOrDefault(value => value.Id == SelectedAsset?.Id);
@@ -296,11 +304,13 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
         Messages.Clear();
         MessageItems.Clear();
         Todos.Clear();
+        TodoItems.Clear();
         SelectedTodoProgress.Clear();
         Assets.Clear();
         RequirementSurveys.Clear();
         StaffingProposals.Clear();
         Runs.Clear();
+        RunItems.Clear();
         PendingAttachments.Clear();
         OnPropertyChanged(nameof(HasPendingAttachments));
         _loadedRoomId = null;
