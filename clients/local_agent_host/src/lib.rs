@@ -4,6 +4,7 @@
 //! IPC transport for the client-owned Local Agent Host.
 
 mod assembly;
+mod control_plane;
 mod coordinator;
 mod scheduler;
 mod tool_scheduler;
@@ -15,6 +16,7 @@ pub use chatos_agent_profiles::{
     LocalModelRuntimeResolver, NamedReadOnlyTools, PreparedLocalAiStep, ResolvedLocalCapabilities,
     ToolSafetyPolicy, TransientLocalModelRuntime, MAIN_CHAT_PROFILE_KEY, TASK_RUNNER_PROFILE_KEY,
 };
+pub use control_plane::LocalControlPlaneSnapshot;
 pub use coordinator::{LocalAgentCoordinatorError, LocalAgentHostCoordinator};
 pub use scheduler::{LocalAgentScheduler, LocalAgentSchedulerError, SchedulerTick};
 pub use tool_scheduler::{

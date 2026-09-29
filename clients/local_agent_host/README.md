@@ -27,6 +27,8 @@ The library-level schedulers execute one registered Profile step or one tool inv
 
 `LocalAgentHostAssembly` is the native-client composition root. Given one initialized Runtime plus concrete model, capability and platform-tool adapters, it registers both production Profile keys and constructs the model Scheduler, tool Scheduler and Coordinator with one shared safety policy.
 
+`LocalControlPlaneSnapshot` is the default in-process Resolver backing for native integration. Authenticated configuration code publishes exact model and capability revisions into it; model credentials remain in non-serializable process memory and can be removed or atomically replaced without altering durable Runs.
+
 `LocalToolScheduler` claims one persisted invocation, routes it through `LocalToolRegistry`, and commits the result. Executor infrastructure errors on side-effecting calls become `needs_review`; read-only executor errors become ordinary failed tool results that the next model step can inspect.
 
 ## Run locally
