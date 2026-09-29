@@ -30,6 +30,25 @@ pub trait LocalAgentTaskStore: Send + Sync {
         event_id: &str,
         now_unix_ms: i64,
     ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    async fn cancel_task(
+        &self,
+        command: &IdempotentCommand,
+        task_id: &str,
+        expected_version: Option<u64>,
+        reason: &str,
+        run_event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<LocalTaskGraph, ClientStorageError>;
+
+    async fn retry_task(
+        &self,
+        command: &IdempotentCommand,
+        task_id: &str,
+        expected_version: u64,
+        now_unix_ms: i64,
+    ) -> Result<LocalTaskGraph, ClientStorageError>;
 }
 
 #[async_trait]
@@ -78,6 +97,50 @@ impl LocalAgentTaskStore for SqliteClientStorage {
             &mut connection,
             run_id,
             event_id,
+            now_unix_ms,
+        )
+        .await;
+        Self::finish_write(&mut connection, result).await
+    }
+
+    async fn cancel_task(
+        &self,
+        command: &IdempotentCommand,
+        task_id: &str,
+        expected_version: Option<u64>,
+        reason: &str,
+        run_event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<LocalTaskGraph, ClientStorageError> {
+        let mut connection = self.pool.acquire().await?;
+        Self::begin_immediate(&mut connection).await?;
+        let result = super::task_commands::cancel_task(
+            &mut connection,
+            command,
+            task_id,
+            expected_version,
+            reason,
+            run_event_id,
+            now_unix_ms,
+        )
+        .await;
+        Self::finish_write(&mut connection, result).await
+    }
+
+    async fn retry_task(
+        &self,
+        command: &IdempotentCommand,
+        task_id: &str,
+        expected_version: u64,
+        now_unix_ms: i64,
+    ) -> Result<LocalTaskGraph, ClientStorageError> {
+        let mut connection = self.pool.acquire().await?;
+        Self::begin_immediate(&mut connection).await?;
+        let result = super::task_commands::retry_task(
+            &mut connection,
+            command,
+            task_id,
+            expected_version,
             now_unix_ms,
         )
         .await;
@@ -172,7 +235,7 @@ fn map_insert(
     }
 }
 
-async fn fetch_graph(
+pub(super) async fn fetch_graph(
     connection: &mut SqliteConnection,
     graph_id: &str,
 ) -> Result<Option<LocalTaskGraph>, ClientStorageError> {

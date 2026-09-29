@@ -134,7 +134,7 @@ pub(super) async fn reconcile_task_after_run(
     Ok(())
 }
 
-async fn propagate_blocked(
+pub(super) async fn propagate_blocked(
     connection: &mut SqliteConnection,
     graph_id: &str,
     now_unix_ms: i64,
@@ -159,7 +159,7 @@ async fn propagate_blocked(
     }
 }
 
-async fn unlock_satisfied(
+pub(super) async fn unlock_satisfied(
     connection: &mut SqliteConnection,
     graph_id: &str,
     now_unix_ms: i64,

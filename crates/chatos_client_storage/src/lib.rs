@@ -19,6 +19,7 @@ use std::{path::Path, str::FromStr, time::Duration};
 mod contracts;
 mod migration;
 mod schema;
+mod task_commands;
 mod task_lifecycle;
 mod task_store;
 mod tool_store;

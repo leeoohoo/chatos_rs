@@ -3,7 +3,10 @@
 
 use super::{LocalAgentRuntime, LocalAgentRuntimeError};
 use chatos_client_storage::{ClientStorageError, IdempotentCommand};
-use chatos_local_agent_protocol::{CreateTaskGraphCommand, LocalAgentRunRecord, LocalTaskGraph};
+use chatos_local_agent_protocol::{
+    CancelTaskCommand, CreateTaskGraphCommand, LocalAgentRunRecord, LocalTaskGraph,
+    RetryTaskCommand,
+};
 use uuid::Uuid;
 
 impl LocalAgentRuntime {
@@ -42,6 +45,40 @@ impl LocalAgentRuntime {
             .await?
             .ok_or_else(|| ClientStorageError::NotFound(graph_id.to_string()))?)
     }
+
+    pub(super) async fn cancel_task(
+        &self,
+        idempotency: &IdempotentCommand,
+        command: CancelTaskCommand,
+    ) -> Result<LocalTaskGraph, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .cancel_task(
+                idempotency,
+                &command.task_id,
+                command.expected_version,
+                &command.reason,
+                &format!("task-cancel-event-{}", Uuid::new_v4()),
+                self.now()?,
+            )
+            .await?)
+    }
+
+    pub(super) async fn retry_task(
+        &self,
+        idempotency: &IdempotentCommand,
+        command: RetryTaskCommand,
+    ) -> Result<LocalTaskGraph, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .retry_task(
+                idempotency,
+                &command.task_id,
+                command.expected_version,
+                self.now()?,
+            )
+            .await?)
+    }
 }
 
 #[cfg(test)]
@@ -49,8 +86,9 @@ mod tests {
     use super::*;
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
-        GetTaskGraphCommand, HostCommand, HostRequestEnvelope, HostResult, LocalTaskDependency,
-        LocalTaskSpec, LocalTaskStatus, LOCAL_AGENT_PROTOCOL_VERSION,
+        CancelTaskCommand, GetTaskGraphCommand, HostCommand, HostRequestEnvelope, HostResult,
+        LocalTaskDependency, LocalTaskSpec, LocalTaskStatus, RetryTaskCommand,
+        LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use serde_json::json;
     use std::sync::Arc;
@@ -113,6 +151,55 @@ mod tests {
             .await;
         assert_eq!(created.result, loaded.result);
         let graph = match loaded.result.expect("task graph result") {
+            HostResult::TaskGraph { graph } => graph,
+            result => panic!("unexpected result: {result:?}"),
+        };
+        assert_eq!(graph.tasks[0].status, LocalTaskStatus::Ready);
+        assert_eq!(graph.tasks[1].status, LocalTaskStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn host_routes_idempotent_task_cancel_and_retry() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
+        runtime.initialize().await.expect("initialize");
+        runtime
+            .handle(request(
+                "create-graph-1",
+                HostCommand::CreateTaskGraph(graph_command()),
+            ))
+            .await;
+        let cancel = request(
+            "cancel-task-1",
+            HostCommand::CancelTask(CancelTaskCommand {
+                task_id: "task-1".to_string(),
+                expected_version: Some(1),
+                reason: "stop".to_string(),
+            }),
+        );
+        let cancelled = runtime.handle(cancel.clone()).await;
+        assert_eq!(runtime.handle(cancel).await, cancelled);
+        let graph = match cancelled.result.expect("cancel result") {
+            HostResult::TaskGraph { graph } => graph,
+            result => panic!("unexpected result: {result:?}"),
+        };
+        assert_eq!(graph.tasks[0].status, LocalTaskStatus::Cancelled);
+        assert_eq!(graph.tasks[1].status, LocalTaskStatus::Blocked);
+
+        let retried = runtime
+            .handle(request(
+                "retry-task-1",
+                HostCommand::RetryTask(RetryTaskCommand {
+                    task_id: "task-1".to_string(),
+                    expected_version: 2,
+                }),
+            ))
+            .await;
+        let graph = match retried.result.expect("retry result") {
             HostResult::TaskGraph { graph } => graph,
             result => panic!("unexpected result: {result:?}"),
         };

@@ -307,6 +307,14 @@ impl LocalAgentRuntime {
                 let graph = self.get_task_graph(&command.graph_id).await?;
                 Ok(HostResult::TaskGraph { graph })
             }
+            HostCommand::CancelTask(command) => {
+                let graph = self.cancel_task(&idempotency, command).await?;
+                Ok(HostResult::TaskGraph { graph })
+            }
+            HostCommand::RetryTask(command) => {
+                let graph = self.retry_task(&idempotency, command).await?;
+                Ok(HostResult::TaskGraph { graph })
+            }
         }
     }
 

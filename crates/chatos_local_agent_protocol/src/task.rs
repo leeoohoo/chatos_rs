@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use crate::{validate_identifier, LOCAL_AGENT_MAX_INPUT_BYTES};
+use crate::{validate_identifier, validate_text, LOCAL_AGENT_MAX_INPUT_BYTES};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -158,6 +158,39 @@ fn validate_dependencies(
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetTaskGraphCommand {
     pub graph_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CancelTaskCommand {
+    pub task_id: String,
+    pub expected_version: Option<u64>,
+    pub reason: String,
+}
+
+impl CancelTaskCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("task_id", &self.task_id)?;
+        if self.expected_version == Some(0) {
+            return Err("expected_version must be greater than zero".to_string());
+        }
+        validate_text("reason", &self.reason, 4_000)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RetryTaskCommand {
+    pub task_id: String,
+    pub expected_version: u64,
+}
+
+impl RetryTaskCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("task_id", &self.task_id)?;
+        if self.expected_version == 0 {
+            return Err("expected_version must be greater than zero".to_string());
+        }
+        Ok(())
+    }
 }
 
 impl GetTaskGraphCommand {
