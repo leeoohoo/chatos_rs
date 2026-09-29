@@ -10,13 +10,16 @@ The current milestone provides:
 - Run claim leases and compare-and-swap transitions;
 - a shared `LocalAgentProfile` registry and one-step Host scheduler;
 - a durable Tool Invocation Ledger with per-call claims and results;
+- a `chatos_ai_runtime` single-step Profile adapter and conservative tool-safety policy;
 - monotonic, replayable event cursors;
 - conservative crash recovery to `needs_review`;
 - length-prefixed JSON over Unix sockets, Windows named pipes, or stdio.
 
-It does not yet call a model, execute tools, or replace the production conversation path. Main Chat and Task Runner profiles will attach to the durable runtime in later milestones.
+The standalone binary does not yet ship a control-plane model planner or platform tool adapters, so it does not replace the production conversation path by itself. Main Chat and Task Runner planners resolve each model request without persisting credentials, while native tool workers consume the durable Tool Invocation Ledger.
 
 The library-level scheduler executes one registered Profile step at a time and commits its outcome through the same durable protocol. Wakeups and retry timers remain lifecycle concerns for the native client integration; the standalone binary does not poll an empty Profile registry.
+
+`ChatosAiRuntimeStepExecutor` executes a prepared `chatos_ai_runtime` request exactly once. `DurableAiProfile` converts final responses, continuations, retries and tool calls into durable Host outcomes. Tools are considered side-effecting unless an explicit `ToolSafetyPolicy` classifies them as read-only.
 
 ## Run locally
 

@@ -5,6 +5,11 @@
 
 mod scheduler;
 
+pub use chatos_agent_profiles::{
+    ChatosAiRuntimeStepExecutor, ConservativeToolSafetyPolicy, DurableAiProfile,
+    LocalAiStepExecutor, LocalAiStepPlanner, NamedReadOnlyTools, PreparedLocalAiStep,
+    ToolSafetyPolicy,
+};
 pub use scheduler::{LocalAgentScheduler, LocalAgentSchedulerError, SchedulerTick};
 
 use chatos_local_agent_protocol::{

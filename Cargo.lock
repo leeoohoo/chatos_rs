@@ -775,6 +775,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_agent_profiles"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chatos_ai_runtime",
+ "chatos_local_agent_protocol",
+ "chatos_local_agent_runtime",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "chatos_ai_runtime"
 version = "0.1.0"
 dependencies = [
@@ -864,6 +877,7 @@ name = "chatos_local_agent_host"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chatos_agent_profiles",
  "chatos_client_storage",
  "chatos_local_agent_protocol",
  "chatos_local_agent_runtime",
