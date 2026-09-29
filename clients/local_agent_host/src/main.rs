@@ -5,9 +5,9 @@ use chatos_ai_runtime::AiRuntime;
 use chatos_local_agent_host::{
     application::LocalAgentRuntime, infrastructure::SqliteClientStorage, serve_reader_writer,
     ChildEnvironmentModelCredentialResolver, LocalAgentHostAssembly, LocalAgentHostCoordinator,
-    LocalControlPlaneSnapshot,
+    LocalControlPlaneSnapshot, LocalMemoryRuntimeConfig,
 };
-use std::{env, error::Error, future::Future, io, path::PathBuf, sync::Arc};
+use std::{env, error::Error, future::Future, io, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::watch;
 
 enum IpcMode {
@@ -22,6 +22,13 @@ struct Options {
     database: PathBuf,
     mode: IpcMode,
     read_only_tools: Vec<String>,
+    memory: Option<MemoryOptions>,
+}
+
+struct MemoryOptions {
+    base_url: String,
+    source_id: String,
+    timeout_ms: u64,
 }
 
 #[tokio::main]
@@ -44,7 +51,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if recovered > 0 {
         eprintln!("Local Agent Host moved {recovered} expired claim(s) to needs_review");
     }
-    let runner = Arc::new(AiRuntime::builder().build_contextual_turn_runner());
+    let (runner, memory_source_id) = match options.memory.as_ref() {
+        Some(memory) => {
+            let config = LocalMemoryRuntimeConfig::new(
+                memory.base_url.clone(),
+                memory.source_id.clone(),
+                Duration::from_millis(memory.timeout_ms),
+            )
+            .with_access_token(non_empty_env("CHATOS_MEMORY_ACCESS_TOKEN"))
+            .with_internal_service_auth(
+                non_empty_env("CHATOS_MEMORY_INTERNAL_CALLER"),
+                non_empty_env("CHATOS_MEMORY_INTERNAL_SECRET"),
+            );
+            let source_id = config.source_id().to_string();
+            (Arc::new(config.build_runner()?), Some(source_id))
+        }
+        None => (
+            Arc::new(AiRuntime::builder().build_contextual_turn_runner()),
+            None,
+        ),
+    };
     let control_plane = Arc::new(
         LocalControlPlaneSnapshot::new()
             .with_capability_store(storage.clone())
@@ -54,12 +80,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 Arc::new(ChildEnvironmentModelCredentialResolver),
             ),
     );
-    let assembly = LocalAgentHostAssembly::with_external_tool_worker(
-        runtime,
-        control_plane.clone(),
-        control_plane,
-        options.read_only_tools,
-    )
+    let assembly = match memory_source_id {
+        Some(source_id) => LocalAgentHostAssembly::with_external_tool_worker_and_memory(
+            runtime,
+            control_plane.clone(),
+            control_plane,
+            options.read_only_tools,
+            source_id,
+        ),
+        None => LocalAgentHostAssembly::with_external_tool_worker(
+            runtime,
+            control_plane.clone(),
+            control_plane,
+            options.read_only_tools,
+        ),
+    }
     .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
     let coordinator = assembly.coordinator();
     match options.mode {
@@ -96,6 +131,9 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
     let mut database = None;
     let mut mode = None;
     let mut read_only_tools = Vec::new();
+    let mut memory_base_url = None;
+    let mut memory_source_id = None;
+    let mut memory_timeout_ms = 30_000;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -107,6 +145,26 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
             "--read-only-tool" => {
                 index += 1;
                 read_only_tools.push(required_value(&arguments, index, "--read-only-tool")?.into());
+            }
+            "--memory-base-url" => {
+                index += 1;
+                memory_base_url =
+                    Some(required_value(&arguments, index, "--memory-base-url")?.to_string());
+            }
+            "--memory-source-id" => {
+                index += 1;
+                memory_source_id =
+                    Some(required_value(&arguments, index, "--memory-source-id")?.to_string());
+            }
+            "--memory-timeout-ms" => {
+                index += 1;
+                let value = required_value(&arguments, index, "--memory-timeout-ms")?;
+                memory_timeout_ms = value
+                    .parse::<u64>()
+                    .map_err(|_| "--memory-timeout-ms must be an integer".to_string())?;
+                if !(1..=300_000).contains(&memory_timeout_ms) {
+                    return Err("--memory-timeout-ms must be between 1 and 300000".to_string());
+                }
             }
             "--stdio" => set_mode(&mut mode, IpcMode::Stdio)?,
             #[cfg(unix)]
@@ -125,10 +183,31 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
         }
         index += 1;
     }
+    let memory = match (memory_base_url, memory_source_id) {
+        (Some(base_url), Some(source_id)) => Some(MemoryOptions {
+            base_url,
+            source_id,
+            timeout_ms: memory_timeout_ms,
+        }),
+        (None, None) => None,
+        _ => {
+            return Err(
+                "--memory-base-url and --memory-source-id must be provided together".to_string(),
+            )
+        }
+    };
     Ok(Options {
         database: database.ok_or_else(|| "--database is required".to_string())?,
         mode: mode.ok_or_else(|| "one IPC mode is required".to_string())?,
         read_only_tools,
+        memory,
+    })
+}
+
+fn non_empty_env(name: &str) -> Option<String> {
+    env::var(name).ok().and_then(|value| {
+        let value = value.trim().to_string();
+        (!value.is_empty()).then_some(value)
     })
 }
 
@@ -156,6 +235,9 @@ fn print_help() {
     eprintln!("ChatOS Local Agent Host");
     eprintln!("  --database <path>   Client-owned SQLite database");
     eprintln!("  --read-only-tool <name>  Mark a native tool as replay-safe; repeat as needed");
+    eprintln!("  --memory-base-url <url>  Enable retained Memory compose and record sync");
+    eprintln!("  --memory-source-id <id>  Memory source paired with --memory-base-url");
+    eprintln!("  --memory-timeout-ms <ms>  Memory request timeout (default: 30000)");
     eprintln!("  --stdio             Serve framed JSON on stdin/stdout");
     #[cfg(unix)]
     eprintln!("  --socket <path>     Serve a permission-restricted Unix socket");
@@ -216,6 +298,50 @@ mod tests {
             vec!["read_file".to_string(), "list_files".to_string()]
         );
         assert!(matches!(options.mode, IpcMode::Stdio));
+        assert!(options.memory.is_none());
         assert!(parse_options(vec!["--api-key".to_string(), "secret".to_string()]).is_err());
+        assert!(parse_options(vec![
+            "--memory-access-token".to_string(),
+            "secret".to_string()
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn parses_complete_optional_memory_configuration() {
+        let options = parse_options(
+            [
+                "--database",
+                "/tmp/local-agent.sqlite",
+                "--memory-base-url",
+                "https://memory.example.test",
+                "--memory-source-id",
+                "local_agent",
+                "--memory-timeout-ms",
+                "12000",
+                "--stdio",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        )
+        .expect("options");
+        let memory = options.memory.expect("memory");
+        assert_eq!(memory.source_id, "local_agent");
+        assert_eq!(memory.timeout_ms, 12_000);
+
+        let incomplete = parse_options(
+            [
+                "--database",
+                "/tmp/local-agent.sqlite",
+                "--memory-base-url",
+                "https://memory.example.test",
+                "--stdio",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        );
+        assert!(incomplete.is_err());
     }
 }

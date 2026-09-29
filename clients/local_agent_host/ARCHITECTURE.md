@@ -46,6 +46,10 @@ IPC v15 exposes idempotent publication and exact-revision reads for both snapsho
 
 The standalone composition root now wires SQLite, both control-plane stores, a process-local AI runner, both Profiles, the reserved Rust Task tools, model/tool Schedulers and the Coordinator. Platform tools stay in the native process and use the external Tool Worker IPC path. For child-process deployments, the native launcher resolves a model secret from Keychain/Credential Manager and injects it into a dedicated environment variable referenced as `env:NAME`; the standalone Host never accepts a secret CLI argument. Embedded clients may provide a native credential resolver instead.
 
+Retained Memory is isolated in an infrastructure adapter and is enabled only by an explicit base URL plus source ID. Profiles own the business mapping from a Run to tenant/thread/turn and stable record IDs; the infrastructure adapter owns HTTP authentication and the concrete Memory SDK client. This keeps the direction `Profile policy → AI runtime Memory port → retained Memory adapter`. Main Chat scopes a Memory thread to the local Conversation, Task Runner scopes it to the local Task, and record routing derives the tenant from bounded Profile metadata so one Host can serve multiple users without a fixed-tenant writer. Access tokens and internal signing secrets are child-process environment inputs only and never cross IPC or SQLite.
+
+The current adapter composes and writes synchronously when enabled. It is the online integration boundary, not the final offline policy: the local immutable record/outbox and compose-cache adapters described in the migration plan must sit in front of it before production cutover so retained Memory availability never owns local Run progress.
+
 ## Server-removal boundary
 
 The completed client localization must allow these directories to be physically deleted:

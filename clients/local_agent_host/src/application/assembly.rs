@@ -39,6 +39,7 @@ impl LocalAgentHostAssembly {
             capability_resolver,
             Some(tools),
             read_only_tools,
+            None,
         )
     }
 
@@ -62,6 +63,32 @@ impl LocalAgentHostAssembly {
             capability_resolver,
             None,
             read_only_tools,
+            None,
+        )
+    }
+
+    /// Builds the external-tool Host with retained Memory context and record
+    /// persistence enabled for both production Profiles.
+    pub fn with_external_tool_worker_and_memory<M, C, I, S>(
+        runtime: Arc<LocalAgentRuntime>,
+        model_resolver: M,
+        capability_resolver: C,
+        read_only_tools: I,
+        memory_source_id: impl Into<String>,
+    ) -> Result<Self, String>
+    where
+        M: LocalModelRuntimeResolver + 'static,
+        C: LocalCapabilityResolver + 'static,
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self::build(
+            runtime,
+            model_resolver,
+            capability_resolver,
+            None,
+            read_only_tools,
+            Some(memory_source_id.into()),
         )
     }
 
@@ -71,6 +98,7 @@ impl LocalAgentHostAssembly {
         capability_resolver: C,
         tools: Option<LocalToolRegistry>,
         read_only_tools: I,
+        memory_source_id: Option<String>,
     ) -> Result<Self, String>
     where
         M: LocalModelRuntimeResolver + 'static,
@@ -81,24 +109,30 @@ impl LocalAgentHostAssembly {
         let model_resolver: Arc<dyn LocalModelRuntimeResolver> = Arc::new(model_resolver);
         let capability_resolver: Arc<dyn LocalCapabilityResolver> = Arc::new(capability_resolver);
         let safety = NamedReadOnlyTools::new(read_only_tools);
+        let mut main_chat_planner = ControlPlaneLocalAiStepPlanner::main_chat(
+            Arc::clone(&model_resolver),
+            Arc::clone(&capability_resolver),
+        );
+        let mut task_runner_planner = ControlPlaneLocalAiStepPlanner::task_runner(
+            Arc::clone(&model_resolver),
+            Arc::clone(&capability_resolver),
+        );
+        if let Some(source_id) = memory_source_id {
+            main_chat_planner = main_chat_planner.with_memory_source_id(source_id.clone())?;
+            task_runner_planner = task_runner_planner.with_memory_source_id(source_id)?;
+        }
         let mut profiles = LocalAgentProfileRegistry::new();
         profiles.register(
             MAIN_CHAT_PROFILE_KEY,
             DurableAiProfile::new(
-                ChatosAiRuntimeStepExecutor::new(ControlPlaneLocalAiStepPlanner::main_chat(
-                    Arc::clone(&model_resolver),
-                    Arc::clone(&capability_resolver),
-                )),
+                ChatosAiRuntimeStepExecutor::new(main_chat_planner),
                 safety.clone(),
             ),
         )?;
         profiles.register(
             TASK_RUNNER_PROFILE_KEY,
             DurableAiProfile::new(
-                ChatosAiRuntimeStepExecutor::new(ControlPlaneLocalAiStepPlanner::task_runner(
-                    model_resolver,
-                    capability_resolver,
-                )),
+                ChatosAiRuntimeStepExecutor::new(task_runner_planner),
                 safety,
             ),
         )?;

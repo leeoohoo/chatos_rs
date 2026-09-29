@@ -99,6 +99,9 @@ impl LocalAgentRuntime {
             .ok_or_else(|| ClientStorageError::NotFound(command.conversation_id.clone()))?;
         let now = self.now()?;
         let input = json!({
+            "conversation_id": &command.conversation_id,
+            "turn_id": &command.turn_id,
+            "message_id": &command.message_id,
             "message": &command.message,
             "attachments": &command.attachments,
         });
@@ -266,6 +269,9 @@ mod tests {
         assert_eq!(result.run.owner_entity_type, "conversation_turn");
         assert_eq!(result.run.owner_entity_id, "turn-1");
         assert_eq!(result.run.profile_key, "main_chat");
+        assert_eq!(result.run.input["conversation_id"], "conversation-1");
+        assert_eq!(result.run.input["turn_id"], "turn-1");
+        assert_eq!(result.run.input["message_id"], "message-1");
         assert_eq!(
             result.run.input["attachments"][0]["attachment_id"],
             "attachment-1"

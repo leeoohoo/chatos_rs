@@ -8,6 +8,7 @@ use chatos_ai_runtime::{
 };
 use chatos_local_agent_protocol::{LocalAgentRunClaim, LocalAgentStepOutcome, LocalAgentToolCall};
 use chatos_local_agent_runtime::LocalAgentProfile;
+use chatos_mcp_runtime::ToolResult;
 use serde_json::{json, Value};
 use std::{
     collections::HashSet,
@@ -28,6 +29,7 @@ pub struct PreparedLocalAiStep {
     pub runner: Arc<ContextualTurnRunner>,
     pub request: ContextualTurnRequest,
     pub reason: String,
+    pub external_tool_results: Vec<ToolResult>,
 }
 
 #[async_trait]
@@ -66,6 +68,13 @@ impl LocalAiStepExecutor for ChatosAiRuntimeStepExecutor {
         if prepared.reason.trim().is_empty() {
             return Err("Local AI step reason must not be empty".to_string());
         }
+        prepared
+            .runner
+            .persist_external_tool_results(
+                &prepared.request.runtime_options,
+                prepared.external_tool_results.as_slice(),
+            )
+            .await?;
         let iteration = usize::try_from(claim.run.iteration)
             .map_err(|_| "Local Agent iteration exceeds usize".to_string())?;
         let model_attempt = usize::try_from(claim.run.model_attempt)

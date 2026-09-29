@@ -14,6 +14,7 @@ use super::{
     MemoryContextComposer, MemoryRecordScope, MemoryScope,
 };
 use crate::tool_runtime::ToolResultModelBudgetLimits;
+use crate::SaveRecordInput;
 
 #[test]
 fn memory_scope_builder_keeps_runtime_source_key() {
@@ -61,6 +62,36 @@ fn memory_record_scope_builder_defaults_to_pending_message_records() {
         message_scope.default_summary_status.as_deref(),
         Some("pending")
     );
+
+    let routed_scope = MemoryRecordScope::per_record_tenant("tenant_id");
+    assert!(routed_scope.tenant_id.is_empty());
+    assert_eq!(
+        routed_scope.tenant_metadata_key.as_deref(),
+        Some("tenant_id")
+    );
+}
+
+#[test]
+fn memory_record_writer_resolves_multi_user_tenant_from_record_metadata() {
+    let client = memory_engine_sdk::MemoryEngineClient::new_direct(
+        "http://127.0.0.1:1",
+        Duration::from_secs(1),
+        "local_agent",
+    )
+    .expect("client");
+    let writer = super::MemoryEngineRecordWriter::from_client(
+        client,
+        MemoryRecordScope::per_record_tenant("tenant_id"),
+    );
+    let record = SaveRecordInput::user_message("conversation-1", "hello")
+        .with_metadata(json!({"tenant_id": "user-1"}));
+
+    assert_eq!(
+        writer.tenant_id_for_record(&record).expect("tenant"),
+        "user-1"
+    );
+    let missing = SaveRecordInput::user_message("conversation-2", "hello");
+    assert!(writer.tenant_id_for_record(&missing).is_err());
 }
 
 #[test]

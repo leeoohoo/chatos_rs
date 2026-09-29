@@ -23,8 +23,8 @@ pub use infrastructure::{
     ChildEnvironmentModelCredentialResolver, LocalCapabilityPolicySnapshot,
     LocalCapabilitySnapshotStore, LocalControlPlaneSnapshot, LocalJsonSchemaOutputFormat,
     LocalMcpServerConfig, LocalMcpStdioSession, LocalMcpToolDefinition, LocalMcpToolSet,
-    LocalModelConfigSnapshot, LocalModelConfigSnapshotStore, LocalModelCredentialResolver,
-    LocalPluginSecretResolver,
+    LocalMemoryRuntimeConfig, LocalModelConfigSnapshot, LocalModelConfigSnapshotStore,
+    LocalModelCredentialResolver, LocalPluginSecretResolver,
 };
 pub use interface::{
     decode_response, read_frame, serve_reader_writer, serve_stream, write_frame,

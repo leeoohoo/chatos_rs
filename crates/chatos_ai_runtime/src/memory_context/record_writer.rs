@@ -18,6 +18,8 @@ use super::normalized;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryRecordScope {
     pub tenant_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_metadata_key: Option<String>,
     pub thread_id: Option<String>,
     pub record_type: String,
     pub default_summary_status: Option<String>,
@@ -27,6 +29,7 @@ impl MemoryRecordScope {
     pub fn new(tenant_id: impl Into<String>) -> Self {
         Self {
             tenant_id: tenant_id.into(),
+            tenant_metadata_key: None,
             thread_id: None,
             record_type: "message".to_string(),
             default_summary_status: Some("pending".to_string()),
@@ -36,7 +39,20 @@ impl MemoryRecordScope {
     pub fn message_thread(tenant_id: impl Into<String>, thread_id: impl Into<String>) -> Self {
         Self {
             tenant_id: tenant_id.into(),
+            tenant_metadata_key: None,
             thread_id: Some(thread_id.into()),
+            record_type: "message".to_string(),
+            default_summary_status: Some("pending".to_string()),
+        }
+    }
+
+    /// Routes each record to the tenant carried in its metadata. This is used
+    /// by multi-user runtimes that share one process-local Memory client.
+    pub fn per_record_tenant(metadata_key: impl Into<String>) -> Self {
+        Self {
+            tenant_id: String::new(),
+            tenant_metadata_key: Some(metadata_key.into()),
+            thread_id: None,
             record_type: "message".to_string(),
             default_summary_status: Some("pending".to_string()),
         }
@@ -96,7 +112,7 @@ impl MemoryEngineRecordWriter {
 #[async_trait]
 impl MemoryRecordWriter for MemoryEngineRecordWriter {
     async fn save_record(&self, input: SaveRecordInput) -> Result<(), String> {
-        let tenant_id = self.tenant_id()?;
+        let tenant_id = self.tenant_id_for_record(&input)?;
         let thread_id = self.thread_id_for_record(&input)?;
         let record = self.upsert_record_input(input)?;
         let records = vec![record];
@@ -159,16 +175,19 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
             return Ok(());
         }
 
-        let tenant_id = self.tenant_id()?;
-        let mut batches: BTreeMap<String, Vec<UpsertRecordInput>> = BTreeMap::new();
+        let mut batches: BTreeMap<(String, String), Vec<UpsertRecordInput>> = BTreeMap::new();
         for input in inputs {
             let input: SaveRecordInput = input.into();
+            let tenant_id = self.tenant_id_for_record(&input)?;
             let thread_id = self.thread_id_for_record(&input)?;
             let record = self.upsert_record_input(input)?;
-            batches.entry(thread_id).or_default().push(record);
+            batches
+                .entry((tenant_id, thread_id))
+                .or_default()
+                .push(record);
         }
 
-        for (thread_id, records) in batches {
+        for ((tenant_id, thread_id), records) in batches {
             let summary = summarize_record_batch(records.as_slice());
             let source_id = self.source_id.as_deref().unwrap_or("");
             info!(
@@ -230,9 +249,25 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
 }
 
 impl MemoryEngineRecordWriter {
-    fn tenant_id(&self) -> Result<String, String> {
-        normalized(self.scope.tenant_id.as_str())
-            .ok_or_else(|| "memory record tenant_id is required".to_string())
+    pub(crate) fn tenant_id_for_record(&self, input: &SaveRecordInput) -> Result<String, String> {
+        if let Some(tenant_id) = normalized(self.scope.tenant_id.as_str()) {
+            return Ok(tenant_id);
+        }
+        let metadata_key = self
+            .scope
+            .tenant_metadata_key
+            .as_deref()
+            .and_then(normalized)
+            .ok_or_else(|| "memory record tenant_id is required".to_string())?;
+        input
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get(metadata_key.as_str()))
+            .and_then(serde_json::Value::as_str)
+            .and_then(normalized)
+            .ok_or_else(|| {
+                format!("memory record metadata.{metadata_key} must contain a tenant_id")
+            })
     }
 
     fn thread_id_for_record(&self, input: &SaveRecordInput) -> Result<String, String> {

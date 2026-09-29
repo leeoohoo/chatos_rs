@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use crate::{LocalAiStepPlanner, PreparedLocalAiStep};
+use crate::{memory::memory_plan, LocalAiStepPlanner, PreparedLocalAiStep};
 use async_trait::async_trait;
 use chatos_ai_runtime::{
     append_responses_history_items, message_item, user_text_item, ContextualTurnRunner,
@@ -83,6 +83,7 @@ pub struct ControlPlaneLocalAiStepPlanner {
     initial_text_field: &'static str,
     model_resolver: Arc<dyn LocalModelRuntimeResolver>,
     capability_resolver: Arc<dyn LocalCapabilityResolver>,
+    memory_source_id: Option<String>,
 }
 
 impl ControlPlaneLocalAiStepPlanner {
@@ -127,7 +128,17 @@ impl ControlPlaneLocalAiStepPlanner {
             initial_text_field,
             model_resolver: Arc::new(model_resolver),
             capability_resolver: Arc::new(capability_resolver),
+            memory_source_id: None,
         }
+    }
+
+    pub fn with_memory_source_id(mut self, source_id: impl Into<String>) -> Result<Self, String> {
+        let source_id = source_id.into().trim().to_string();
+        if source_id.is_empty() {
+            return Err("Memory source_id must not be empty".to_string());
+        }
+        self.memory_source_id = Some(source_id);
+        Ok(self)
     }
 }
 
@@ -159,19 +170,40 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
             transient.model_config.instructions,
         );
         let (current_input_items, reason) = durable_step_input(claim, self.initial_text_field)?;
+        let memory = self
+            .memory_source_id
+            .as_deref()
+            .map(|source_id| memory_plan(claim, source_id, self.initial_text_field))
+            .transpose()?;
         let caller_model = transient.model_config.model.clone();
-        let request =
-            RuntimeTurnSpec::new(transient.model_config, claim.run.owner_entity_id.clone())
-                .with_conversation_turn_id(claim.run.run_id.clone())
-                .with_caller_model(caller_model)
-                .with_prefixed_input_items(capabilities.prefixed_input_items)
-                .with_current_input_items(current_input_items)
-                .with_tools(capabilities.tools)
-                .into_contextual_turn_request();
+        let conversation_id = memory
+            .as_ref()
+            .map(|memory| memory.thread_id.clone())
+            .unwrap_or_else(|| claim.run.owner_entity_id.clone());
+        let conversation_turn_id = memory
+            .as_ref()
+            .map(|memory| memory.turn_id.clone())
+            .unwrap_or_else(|| claim.run.run_id.clone());
+        let mut spec = RuntimeTurnSpec::new(transient.model_config, conversation_id)
+            .with_conversation_turn_id(conversation_turn_id)
+            .with_caller_model(caller_model)
+            .with_prefixed_input_items(capabilities.prefixed_input_items)
+            .with_current_input_items(current_input_items)
+            .with_tools(capabilities.tools);
+        if let Some(memory) = &memory {
+            spec = spec
+                .with_memory_scope(Some(memory.scope.clone()))
+                .with_record_options(memory.record_options.clone())
+                .with_user_record(memory.user_record.clone());
+        }
+        let request = spec.into_contextual_turn_request();
         Ok(PreparedLocalAiStep {
             runner: transient.runner,
             request,
             reason,
+            external_tool_results: memory
+                .map(|memory| memory.external_tool_results)
+                .unwrap_or_default(),
         })
     }
 }

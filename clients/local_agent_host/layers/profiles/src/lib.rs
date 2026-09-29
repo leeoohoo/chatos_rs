@@ -4,6 +4,7 @@
 //! Shared business-profile adapters for the durable Local Agent runtime.
 
 mod ai_step;
+mod memory;
 mod planner;
 
 pub use ai_step::{
