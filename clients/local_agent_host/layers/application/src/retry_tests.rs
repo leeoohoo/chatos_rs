@@ -84,6 +84,7 @@ async fn retry_preserves_the_next_model_attempt_across_claims() {
         .try_handle(envelope(
             "resume",
             HostCommand::ResumeRun(ResumeRunCommand {
+                owner_user_id: "user-1".to_string(),
                 run_id: waiting.run_id,
                 expected_version: waiting.version,
                 expected_status: LocalAgentRunStatus::WaitingUser,

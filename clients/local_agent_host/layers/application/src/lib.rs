@@ -113,6 +113,16 @@ impl LocalAgentRuntime {
         Ok(self.store.next_retry_at().await?)
     }
 
+    /// Trusted in-process worker lookup. Native callers must use the
+    /// owner-scoped `get_run` IPC command instead.
+    #[doc(hidden)]
+    pub async fn get_run_for_host_worker(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<LocalAgentRunRecord>, LocalAgentRuntimeError> {
+        Ok(self.store.get_run(run_id).await?)
+    }
+
     pub async fn try_handle(
         &self,
         request: HostRequestEnvelope,
@@ -157,12 +167,12 @@ impl LocalAgentRuntime {
                     .await?;
                 Ok(HostResult::Run { run: created })
             }
-            HostCommand::GetRun { run_id } => {
+            HostCommand::GetRun(command) => {
                 let run = self
                     .store
-                    .get_run(&run_id)
+                    .get_run_for_owner(&command.owner_user_id, &command.run_id)
                     .await?
-                    .ok_or(ClientStorageError::NotFound(run_id))?;
+                    .ok_or(ClientStorageError::NotFound(command.run_id))?;
                 Ok(HostResult::Run { run })
             }
             HostCommand::ListRuns(command) => {
@@ -299,8 +309,9 @@ impl LocalAgentRuntime {
                 });
                 let run = self
                     .store
-                    .resume_run(
+                    .resume_run_for_owner(
                         &idempotency,
+                        &command.owner_user_id,
                         &command.run_id,
                         command.expected_version,
                         command.expected_status,
@@ -314,8 +325,9 @@ impl LocalAgentRuntime {
             HostCommand::CancelRun(command) => {
                 let run = self
                     .store
-                    .cancel_run(
+                    .cancel_run_for_owner(
                         &idempotency,
+                        &command.owner_user_id,
                         &command.run_id,
                         command.expected_version,
                         &command.reason,
@@ -328,7 +340,8 @@ impl LocalAgentRuntime {
             HostCommand::ListEvents(command) => {
                 let events = self
                     .store
-                    .list_events(
+                    .list_events_for_owner(
+                        &command.owner_user_id,
                         command.after_cursor,
                         command.limit,
                         command.run_id.as_deref(),
@@ -346,7 +359,8 @@ impl LocalAgentRuntime {
             HostCommand::WaitEvents(command) => {
                 let events = self
                     .store
-                    .list_events(
+                    .list_events_for_owner(
+                        &command.owner_user_id,
                         command.after_cursor,
                         command.limit,
                         command.run_id.as_deref(),
@@ -707,6 +721,8 @@ mod tests {
 mod memory_status_tests;
 #[cfg(test)]
 mod retry_tests;
+#[cfg(test)]
+mod run_account_tests;
 #[cfg(test)]
 mod run_query_tests;
 #[cfg(test)]

@@ -5,8 +5,8 @@ use super::*;
 use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
     CancelRunCommand, ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand,
-    CommitToolCommand, CreateRunCommand, HostCommand, HostRequestEnvelope, HostResult,
-    LocalAgentRunClaim, LocalAgentToolCall, LocalAgentToolClaim, LocalAgentToolOutcome,
+    CommitToolCommand, CreateRunCommand, GetRunCommand, HostCommand, HostRequestEnvelope,
+    HostResult, LocalAgentRunClaim, LocalAgentToolCall, LocalAgentToolClaim, LocalAgentToolOutcome,
     ResumeRunCommand, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde_json::json;
@@ -116,9 +116,10 @@ async fn expired_side_effecting_tool_requires_review() {
     let response = runtime
         .handle(envelope(
             "get-run",
-            HostCommand::GetRun {
+            HostCommand::GetRun(GetRunCommand {
+                owner_user_id: "user-1".to_string(),
                 run_id: "run-tool-recovery".to_string(),
-            },
+            }),
         ))
         .await;
     let run = match response.result.expect("run") {
@@ -162,6 +163,7 @@ async fn cancelling_run_invalidates_outstanding_tool_claim() {
         .handle(envelope(
             "cancel-run-with-tool",
             HostCommand::CancelRun(CancelRunCommand {
+                owner_user_id: "user-1".to_string(),
                 run_id: "run-tool-recovery".to_string(),
                 expected_version: None,
                 reason: "task was restarted".to_string(),
@@ -359,6 +361,7 @@ async fn waiting_user_resume_preserves_checkpoint_and_supplies_input() {
         .handle(envelope(
             "resume-user",
             HostCommand::ResumeRun(ResumeRunCommand {
+                owner_user_id: "user-1".to_string(),
                 run_id: waiting.run_id,
                 expected_version: waiting.version,
                 expected_status: LocalAgentRunStatus::WaitingUser,

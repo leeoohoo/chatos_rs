@@ -272,9 +272,9 @@ mod tests {
     use async_trait::async_trait;
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
-        ClaimNextToolCommand, CreateRunCommand, HostCommand, HostResult, LocalAgentRunClaim,
-        LocalAgentToolInvocationRecord, LocalAgentToolOutcome, WaitEventsCommand,
-        LOCAL_AGENT_PROTOCOL_VERSION,
+        ClaimNextToolCommand, CreateRunCommand, GetRunCommand, HostCommand, HostResult,
+        LocalAgentRunClaim, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
+        WaitEventsCommand, LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileRegistry};
     use serde_json::json;
@@ -384,6 +384,7 @@ mod tests {
                         protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
                         command_id: "wait-coordinator-events".to_string(),
                         command: HostCommand::WaitEvents(WaitEventsCommand {
+                            owner_user_id: "user-1".to_string(),
                             after_cursor: 0,
                             limit: 50,
                             run_id: Some("run-coordinator".to_string()),
@@ -428,9 +429,10 @@ mod tests {
                 .handle(HostRequestEnvelope {
                     protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
                     command_id: format!("get-{}", Uuid::new_v4()),
-                    command: HostCommand::GetRun {
+                    command: HostCommand::GetRun(GetRunCommand {
+                        owner_user_id: "user-1".to_string(),
                         run_id: "run-coordinator".to_string(),
-                    },
+                    }),
                 })
                 .await;
             let status = match response.result.expect("run") {

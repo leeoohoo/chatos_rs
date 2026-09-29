@@ -4,8 +4,8 @@
 //! One-step scheduler for registered Local Agent business profiles.
 
 use chatos_local_agent_protocol::{
-    ClaimNextRunCommand, CommitStepCommand, HostCommand, HostRequestEnvelope, HostResult,
-    LocalAgentRunRecord, LocalAgentStepOutcome, LOCAL_AGENT_PROTOCOL_VERSION,
+    ClaimNextRunCommand, CommitStepCommand, GetRunCommand, HostCommand, HostRequestEnvelope,
+    HostResult, LocalAgentRunRecord, LocalAgentStepOutcome, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::{
     LocalAgentProfileRegistry, LocalAgentRuntime, LocalAgentRuntimeError,
@@ -99,6 +99,7 @@ impl LocalAgentScheduler {
             },
         };
         let run_id = claim.run.run_id.clone();
+        let owner_user_id = claim.run.owner_user_id.clone();
         let claim_token = claim.claim_token.clone();
         let expected_version = claim.run.version;
         let committed = self
@@ -119,9 +120,10 @@ impl LocalAgentScheduler {
                 let current = self
                     .runtime
                     .try_handle(envelope(
-                        HostCommand::GetRun {
+                        HostCommand::GetRun(GetRunCommand {
+                            owner_user_id,
                             run_id: run_id.clone(),
-                        },
+                        }),
                         "scheduler-reconcile",
                     ))
                     .await;

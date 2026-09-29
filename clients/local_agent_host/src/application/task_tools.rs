@@ -12,7 +12,6 @@ use chatos_local_agent_runtime::LocalAgentRuntime;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::{collections::HashMap, sync::Arc};
-use uuid::Uuid;
 
 pub const CREATE_TASK_TOOL: &str = "create_task";
 pub const CREATE_TASKS_TOOL: &str = "create_tasks_with_prerequisites";
@@ -28,20 +27,11 @@ impl LocalTaskToolExecutor {
     }
 
     async fn parent_run(&self, run_id: &str) -> Result<LocalAgentRunRecord, String> {
-        match self
-            .runtime
-            .try_handle(envelope(
-                format!("task-tool-parent-{}", Uuid::new_v4()),
-                HostCommand::GetRun {
-                    run_id: run_id.to_string(),
-                },
-            ))
+        self.runtime
+            .get_run_for_host_worker(run_id)
             .await
             .map_err(|error| error.to_string())?
-        {
-            HostResult::Run { run } => Ok(run),
-            result => Err(format!("unexpected parent Run response: {result:?}")),
-        }
+            .ok_or_else(|| format!("parent Run not found: {run_id}"))
     }
 
     async fn create_graph(

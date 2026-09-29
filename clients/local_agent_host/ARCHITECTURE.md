@@ -62,6 +62,8 @@ IPC v20 applies the same account boundary to the local Conversation fact store. 
 
 IPC v21 and SQLite v17 apply account isolation to the local Plugin installation registry. The paged index returns only identity, revision, enabled state and timestamps; launch configuration and credential references remain in owner-scoped detail responses. An installation's owner is immutable, and CAS update/removal SQL includes that owner so an identifier and version from another account cannot transfer or delete the local installation.
 
+IPC v22 extends that boundary from the Run index to direct Run operations and the event stream. Native detail, resume, cancel, list and wait requests carry an owner account, and SQLite checks it inside the relevant query or write transaction. Only trusted in-process workers may use the unscoped lookup required to reconcile a claim whose owner came from the claimed Run itself.
+
 ## Server-removal boundary
 
 The completed client localization must allow these directories to be physically deleted:

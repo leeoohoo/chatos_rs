@@ -30,6 +30,7 @@ mod model_snapshot_store;
 mod plugin_query_store;
 mod plugin_store;
 mod run_commands;
+mod run_owner_store;
 mod run_query_store;
 mod run_record;
 mod schema;
@@ -51,7 +52,7 @@ pub use chatos_local_agent_ports::{
     LocalMemorySyncStatus, LocalModelConfigSnapshot, LocalModelConfigSnapshotStore,
     LocalPluginInstallationStore, RunTransition,
 };
-use run_record::{decode_event, decode_run};
+use run_record::decode_run;
 use schema::RUN_SELECT;
 
 /// Converts SQLx failures inside the SQLite adapter without leaking SQLx into
@@ -358,6 +359,14 @@ impl LocalAgentRunStore for SqliteClientStorage {
         Self::fetch_run_on(&mut connection, run_id).await
     }
 
+    async fn get_run_for_owner(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+    ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError> {
+        run_owner_store::get_run(self, owner_user_id, run_id).await
+    }
+
     async fn list_runs(
         &self,
         owner_user_id: &str,
@@ -647,6 +656,31 @@ impl LocalAgentRunStore for SqliteClientStorage {
         Self::finish_write(&mut connection, result).await
     }
 
+    async fn resume_run_for_owner(
+        &self,
+        command: &IdempotentCommand,
+        owner_user_id: &str,
+        run_id: &str,
+        expected_version: u64,
+        expected_status: LocalAgentRunStatus,
+        continuation_input: &Value,
+        event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<LocalAgentRunRecord, ClientStorageError> {
+        run_owner_store::resume_run(
+            self,
+            command,
+            owner_user_id,
+            run_id,
+            expected_version,
+            expected_status,
+            continuation_input,
+            event_id,
+            now_unix_ms,
+        )
+        .await
+    }
+
     async fn cancel_run(
         &self,
         command: &IdempotentCommand,
@@ -680,36 +714,46 @@ impl LocalAgentRunStore for SqliteClientStorage {
         Self::finish_write(&mut connection, result).await
     }
 
+    async fn cancel_run_for_owner(
+        &self,
+        command: &IdempotentCommand,
+        owner_user_id: &str,
+        run_id: &str,
+        expected_version: Option<u64>,
+        reason: &str,
+        event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<LocalAgentRunRecord, ClientStorageError> {
+        run_owner_store::cancel_run(
+            self,
+            command,
+            owner_user_id,
+            run_id,
+            expected_version,
+            reason,
+            event_id,
+            now_unix_ms,
+        )
+        .await
+    }
+
     async fn list_events(
         &self,
         after_cursor: i64,
         limit: u32,
         run_id: Option<&str>,
     ) -> Result<Vec<LocalAgentEventRecord>, ClientStorageError> {
-        let mut connection = self.pool.acquire().await.db()?;
-        let rows =
-            if let Some(run_id) = run_id {
-                sqlx::query(
-                "SELECT cursor, event_id, run_id, event_type, payload_json, created_at_unix_ms \
-                 FROM local_agent_events WHERE cursor > ? AND run_id = ? \
-                 ORDER BY cursor LIMIT ?",
-            )
-            .bind(after_cursor)
-            .bind(run_id)
-            .bind(i64::from(limit))
-            .fetch_all(&mut *connection)
-            .await.db()?
-            } else {
-                sqlx::query(
-                "SELECT cursor, event_id, run_id, event_type, payload_json, created_at_unix_ms \
-                 FROM local_agent_events WHERE cursor > ? ORDER BY cursor LIMIT ?",
-            )
-            .bind(after_cursor)
-            .bind(i64::from(limit))
-            .fetch_all(&mut *connection)
-            .await.db()?
-            };
-        rows.into_iter().map(decode_event).collect()
+        run_owner_store::list_events_unscoped(self, after_cursor, limit, run_id).await
+    }
+
+    async fn list_events_for_owner(
+        &self,
+        owner_user_id: &str,
+        after_cursor: i64,
+        limit: u32,
+        run_id: Option<&str>,
+    ) -> Result<Vec<LocalAgentEventRecord>, ClientStorageError> {
+        run_owner_store::list_events(self, owner_user_id, after_cursor, limit, run_id).await
     }
 
     async fn health_check(&self) -> Result<(), ClientStorageError> {

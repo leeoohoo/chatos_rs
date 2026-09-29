@@ -56,7 +56,7 @@ pub use tool::{
     LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 21;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 22;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -91,7 +91,7 @@ pub enum HostCommand {
     PutCapabilityPolicySnapshot(PutCapabilityPolicySnapshotCommand),
     GetCapabilityPolicySnapshot(GetCapabilityPolicySnapshotCommand),
     CreateRun(CreateRunCommand),
-    GetRun { run_id: String },
+    GetRun(GetRunCommand),
     ListRuns(ListRunsCommand),
     ClaimNextRun(ClaimNextRunCommand),
     CommitStep(CommitStepCommand),
@@ -134,7 +134,7 @@ impl HostCommand {
             Self::PutCapabilityPolicySnapshot(command) => command.validate(),
             Self::GetCapabilityPolicySnapshot(command) => command.validate(),
             Self::CreateRun(command) => command.validate(),
-            Self::GetRun { run_id } => validate_identifier("run_id", run_id),
+            Self::GetRun(command) => command.validate(),
             Self::ListRuns(command) => command.validate(),
             Self::ClaimNextRun(command) => command.validate(),
             Self::CommitStep(command) => command.validate(),
@@ -182,6 +182,19 @@ pub struct CreateRunCommand {
     #[serde(default)]
     pub input: Value,
     pub max_iterations: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetRunCommand {
+    pub owner_user_id: String,
+    pub run_id: String,
+}
+
+impl GetRunCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
+        validate_identifier("run_id", &self.run_id)
+    }
 }
 
 impl CreateRunCommand {
@@ -250,6 +263,7 @@ impl CommitStepCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CancelRunCommand {
+    pub owner_user_id: String,
     pub run_id: String,
     pub expected_version: Option<u64>,
     pub reason: String,
@@ -257,6 +271,7 @@ pub struct CancelRunCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ResumeRunCommand {
+    pub owner_user_id: String,
     pub run_id: String,
     pub expected_version: u64,
     pub expected_status: LocalAgentRunStatus,
@@ -267,6 +282,7 @@ pub struct ResumeRunCommand {
 
 impl ResumeRunCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("run_id", &self.run_id)?;
         if self.expected_version == 0 {
             return Err("expected_version must be greater than zero".to_string());
@@ -296,6 +312,7 @@ impl ResumeRunCommand {
 
 impl CancelRunCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("run_id", &self.run_id)?;
         if self.expected_version == Some(0) {
             return Err("expected_version must be greater than zero".to_string());
@@ -306,6 +323,7 @@ impl CancelRunCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ListEventsCommand {
+    pub owner_user_id: String,
     pub after_cursor: i64,
     pub limit: u32,
     pub run_id: Option<String>,
@@ -313,6 +331,7 @@ pub struct ListEventsCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WaitEventsCommand {
+    pub owner_user_id: String,
     pub after_cursor: i64,
     pub limit: u32,
     pub run_id: Option<String>,
@@ -322,6 +341,7 @@ pub struct WaitEventsCommand {
 impl WaitEventsCommand {
     pub fn validate(&self) -> Result<(), String> {
         ListEventsCommand {
+            owner_user_id: self.owner_user_id.clone(),
             after_cursor: self.after_cursor,
             limit: self.limit,
             run_id: self.run_id.clone(),
@@ -336,6 +356,7 @@ impl WaitEventsCommand {
 
 impl ListEventsCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         if self.after_cursor < 0 {
             return Err("after_cursor must not be negative".to_string());
         }
@@ -728,6 +749,7 @@ mod tests {
         };
         assert!(commit.validate().is_err());
         assert!(ListEventsCommand {
+            owner_user_id: "user-1".to_string(),
             after_cursor: 0,
             limit: LOCAL_AGENT_MAX_EVENT_PAGE_SIZE + 1,
             run_id: None,
@@ -735,6 +757,7 @@ mod tests {
         .validate()
         .is_err());
         assert!(WaitEventsCommand {
+            owner_user_id: "user-1".to_string(),
             after_cursor: 0,
             limit: 10,
             run_id: None,

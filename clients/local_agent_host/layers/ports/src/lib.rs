@@ -110,6 +110,12 @@ pub trait LocalAgentRunStore: Send + Sync {
         run_id: &str,
     ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError>;
 
+    async fn get_run_for_owner(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+    ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError>;
+
     async fn list_runs(
         &self,
         owner_user_id: &str,
@@ -151,6 +157,19 @@ pub trait LocalAgentRunStore: Send + Sync {
         now_unix_ms: i64,
     ) -> Result<LocalAgentRunRecord, ClientStorageError>;
 
+    #[allow(clippy::too_many_arguments)]
+    async fn resume_run_for_owner(
+        &self,
+        command: &IdempotentCommand,
+        owner_user_id: &str,
+        run_id: &str,
+        expected_version: u64,
+        expected_status: LocalAgentRunStatus,
+        continuation_input: &Value,
+        event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<LocalAgentRunRecord, ClientStorageError>;
+
     async fn cancel_run(
         &self,
         command: &IdempotentCommand,
@@ -161,8 +180,28 @@ pub trait LocalAgentRunStore: Send + Sync {
         now_unix_ms: i64,
     ) -> Result<LocalAgentRunRecord, ClientStorageError>;
 
+    #[allow(clippy::too_many_arguments)]
+    async fn cancel_run_for_owner(
+        &self,
+        command: &IdempotentCommand,
+        owner_user_id: &str,
+        run_id: &str,
+        expected_version: Option<u64>,
+        reason: &str,
+        event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<LocalAgentRunRecord, ClientStorageError>;
+
     async fn list_events(
         &self,
+        after_cursor: i64,
+        limit: u32,
+        run_id: Option<&str>,
+    ) -> Result<Vec<LocalAgentEventRecord>, ClientStorageError>;
+
+    async fn list_events_for_owner(
+        &self,
+        owner_user_id: &str,
         after_cursor: i64,
         limit: u32,
         run_id: Option<&str>,
