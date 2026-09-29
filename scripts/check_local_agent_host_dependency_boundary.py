@@ -88,16 +88,30 @@ def main() -> int:
     if len(runtime_ids) != 1:
         violations.append("expected exactly one chatos_local_agent_runtime package")
     else:
-        runtime_dependencies = {
-            packages[dependency["pkg"]]["name"]
-            for dependency in nodes[runtime_ids[0]]["deps"]
-            if any(
-                dependency_kind["kind"] in (None, "normal")
-                for dependency_kind in dependency["dep_kinds"]
+        runtime_dependencies: set[str] = set()
+        runtime_pending = runtime_ids[:]
+        runtime_seen: set[str] = set()
+        while runtime_pending:
+            package_id = runtime_pending.pop()
+            if package_id in runtime_seen:
+                continue
+            runtime_seen.add(package_id)
+            for dependency in nodes[package_id]["deps"]:
+                if not any(
+                    dependency_kind["kind"] in (None, "normal")
+                    for dependency_kind in dependency["dep_kinds"]
+                ):
+                    continue
+                runtime_pending.append(dependency["pkg"])
+                runtime_dependencies.add(packages[dependency["pkg"]]["name"])
+        forbidden_runtime_dependencies = runtime_dependencies.intersection(
+            {"chatos_client_storage", "sqlx", "sqlx-core", "sqlx-sqlite"}
+        )
+        if forbidden_runtime_dependencies:
+            violations.append(
+                "application runtime transitively depends on SQLite infrastructure: "
+                + ", ".join(sorted(forbidden_runtime_dependencies))
             )
-        }
-        if "chatos_client_storage" in runtime_dependencies:
-            violations.append("application runtime directly depends on SQLite infrastructure")
 
     if violations:
         print("Local Agent Host dependency boundary violations:", file=sys.stderr)

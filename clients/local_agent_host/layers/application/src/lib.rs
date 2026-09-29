@@ -138,7 +138,7 @@ impl LocalAgentRuntime {
                     .store
                     .get_run(&run_id)
                     .await?
-                    .ok_or_else(|| ClientStorageError::NotFound(run_id))?;
+                    .ok_or(ClientStorageError::NotFound(run_id))?;
                 Ok(HostResult::Run { run })
             }
             HostCommand::ClaimNextRun(command) => {

@@ -3,7 +3,7 @@
 
 use super::{
     schema::{SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5},
-    ClientStorageError, SqliteClientStorage,
+    ClientStorageError, IntoClientStorageResult, SqliteClientStorage,
 };
 use sqlx::SqliteConnection;
 
@@ -11,18 +11,20 @@ const SCHEMA_VERSION: i64 = 5;
 
 impl SqliteClientStorage {
     pub(super) async fn migrate(&self) -> Result<(), ClientStorageError> {
-        let mut connection = self.pool.acquire().await?;
+        let mut connection = self.pool.acquire().await.into_storage()?;
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS client_schema_migrations (\
              version INTEGER PRIMARY KEY NOT NULL, applied_at_unix_ms INTEGER NOT NULL)",
         )
         .execute(&mut *connection)
-        .await?;
+        .await
+        .into_storage()?;
         let version = sqlx::query_scalar::<_, Option<i64>>(
             "SELECT MAX(version) FROM client_schema_migrations",
         )
         .fetch_one(&mut *connection)
-        .await?
+        .await
+        .into_storage()?
         .unwrap_or(0);
         if version > SCHEMA_VERSION {
             return Err(ClientStorageError::InvalidState(format!(
@@ -37,9 +39,13 @@ impl SqliteClientStorage {
             (5, SCHEMA_V5),
         ] {
             if version < next_version {
-                Self::begin_immediate(&mut connection).await?;
+                Self::begin_immediate(&mut connection)
+                    .await
+                    .into_storage()?;
                 let result = apply_schema(&mut connection, next_version, statements).await;
-                Self::finish_write(&mut connection, result).await?;
+                Self::finish_write(&mut connection, result)
+                    .await
+                    .into_storage()?;
             }
         }
         Ok(())
@@ -52,7 +58,10 @@ async fn apply_schema(
     statements: &[&str],
 ) -> Result<(), ClientStorageError> {
     for statement in statements {
-        sqlx::query(statement).execute(&mut *connection).await?;
+        sqlx::query(statement)
+            .execute(&mut *connection)
+            .await
+            .into_storage()?;
     }
     sqlx::query(
         "INSERT INTO client_schema_migrations(version, applied_at_unix_ms) \
@@ -60,6 +69,7 @@ async fn apply_schema(
     )
     .bind(version)
     .execute(&mut *connection)
-    .await?;
+    .await
+    .into_storage()?;
     Ok(())
 }

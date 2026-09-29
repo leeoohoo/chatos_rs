@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::{ClientStorageError, IdempotentCommand, LocalAgentToolStore, SqliteClientStorage};
+use super::{
+    ClientStorageError, IdempotentCommand, IntoClientStorageResult, LocalAgentToolStore,
+    SqliteClientStorage,
+};
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     LocalAgentToolBatch, LocalAgentToolClaim, LocalAgentToolCommitResult,
@@ -37,7 +40,8 @@ pub(crate) async fn insert_tool_batch(
         .bind(now_unix_ms)
         .bind(now_unix_ms)
         .execute(&mut *connection)
-        .await?;
+        .await
+        .into_storage()?;
     }
     Ok(())
 }
@@ -57,7 +61,8 @@ pub(crate) async fn fail_open_invocations_for_cancelled_run(
     .bind(now_unix_ms)
     .bind(run_id)
     .execute(&mut *connection)
-    .await?;
+    .await
+    .into_storage()?;
     Ok(updated.rows_affected())
 }
 
@@ -67,8 +72,10 @@ impl LocalAgentToolStore for SqliteClientStorage {
         &self,
         now_unix_ms: i64,
     ) -> Result<u64, ClientStorageError> {
-        let mut connection = self.pool.acquire().await?;
-        Self::begin_immediate(&mut connection).await?;
+        let mut connection = self.pool.acquire().await.into_storage()?;
+        Self::begin_immediate(&mut connection)
+            .await
+            .into_storage()?;
         let result = recover_expired_on(&mut connection, now_unix_ms).await;
         Self::finish_write(&mut connection, result).await
     }
@@ -84,13 +91,20 @@ impl LocalAgentToolStore for SqliteClientStorage {
         include_tool_names: Option<&[String]>,
         exclude_tool_names: &[String],
     ) -> Result<Option<LocalAgentToolClaim>, ClientStorageError> {
-        let mut connection = self.pool.acquire().await?;
-        Self::begin_immediate(&mut connection).await?;
+        let mut connection = self.pool.acquire().await.into_storage()?;
+        Self::begin_immediate(&mut connection)
+            .await
+            .into_storage()?;
         let result = async {
-            if let Some(replay) = Self::replay(&mut connection, command).await? {
+            if let Some(replay) = Self::replay(&mut connection, command)
+                .await
+                .into_storage()?
+            {
                 return Ok(replay);
             }
-            recover_expired_on(&mut connection, now_unix_ms).await?;
+            recover_expired_on(&mut connection, now_unix_ms)
+                .await
+                .into_storage()?;
             let candidates = sqlx::query(
                 "SELECT invocation_id, tool_name FROM local_agent_tool_invocations \
                  WHERE status = 'pending' AND run_id IN (\
@@ -98,10 +112,11 @@ impl LocalAgentToolStore for SqliteClientStorage {
                  ) ORDER BY created_at_unix_ms, invocation_id",
             )
             .fetch_all(&mut *connection)
-            .await?;
+            .await
+            .into_storage()?;
             let mut candidate = None;
             for row in candidates {
-                let tool_name: String = row.try_get("tool_name")?;
+                let tool_name: String = row.try_get("tool_name").into_storage()?;
                 let included = include_tool_names
                     .is_none_or(|names| names.iter().any(|name| name == &tool_name));
                 let excluded = exclude_tool_names.iter().any(|name| name == &tool_name);
@@ -112,10 +127,12 @@ impl LocalAgentToolStore for SqliteClientStorage {
             }
             let Some(candidate) = candidate else {
                 let response: Option<LocalAgentToolClaim> = None;
-                Self::record_receipt(&mut connection, command, &response, now_unix_ms).await?;
+                Self::record_receipt(&mut connection, command, &response, now_unix_ms)
+                    .await
+                    .into_storage()?;
                 return Ok(response);
             };
-            let invocation_id: String = candidate.try_get("invocation_id")?;
+            let invocation_id: String = candidate.try_get("invocation_id").into_storage()?;
             let updated = sqlx::query(
                 "UPDATE local_agent_tool_invocations SET status = 'running', \
                  version = version + 1, claim_token = ?, claim_until_unix_ms = ?, \
@@ -126,14 +143,16 @@ impl LocalAgentToolStore for SqliteClientStorage {
             .bind(now_unix_ms)
             .bind(&invocation_id)
             .execute(&mut *connection)
-            .await?;
+            .await
+            .into_storage()?;
             if updated.rows_affected() != 1 {
                 return Err(ClientStorageError::Conflict(format!(
                     "tool invocation changed while claiming: {invocation_id}"
                 )));
             }
             let invocation = fetch_invocation(&mut connection, &invocation_id)
-                .await?
+                .await
+                .into_storage()?
                 .ok_or_else(|| ClientStorageError::NotFound(invocation_id.clone()))?;
             Self::insert_event(
                 &mut connection,
@@ -148,13 +167,16 @@ impl LocalAgentToolStore for SqliteClientStorage {
                 }),
                 now_unix_ms,
             )
-            .await?;
+            .await
+            .into_storage()?;
             let response = Some(LocalAgentToolClaim {
                 worker_id: worker_id.to_string(),
                 claim_token: claim_token.to_string(),
                 invocation,
             });
-            Self::record_receipt(&mut connection, command, &response, now_unix_ms).await?;
+            Self::record_receipt(&mut connection, command, &response, now_unix_ms)
+                .await
+                .into_storage()?;
             Ok(response)
         }
         .await;
@@ -172,14 +194,20 @@ impl LocalAgentToolStore for SqliteClientStorage {
         batch_event_id: &str,
         now_unix_ms: i64,
     ) -> Result<LocalAgentToolCommitResult, ClientStorageError> {
-        let mut connection = self.pool.acquire().await?;
-        Self::begin_immediate(&mut connection).await?;
+        let mut connection = self.pool.acquire().await.into_storage()?;
+        Self::begin_immediate(&mut connection)
+            .await
+            .into_storage()?;
         let result = async {
-            if let Some(replay) = Self::replay(&mut connection, command).await? {
+            if let Some(replay) = Self::replay(&mut connection, command)
+                .await
+                .into_storage()?
+            {
                 return Ok(replay);
             }
             let current = fetch_invocation(&mut connection, invocation_id)
-                .await?
+                .await
+                .into_storage()?
                 .ok_or_else(|| ClientStorageError::NotFound(invocation_id.to_string()))?;
             let (status, result, error) = outcome_fields(outcome);
             let updated = sqlx::query(
@@ -198,14 +226,16 @@ impl LocalAgentToolStore for SqliteClientStorage {
             .bind(claim_token)
             .bind(now_unix_ms)
             .execute(&mut *connection)
-            .await?;
+            .await
+            .into_storage()?;
             if updated.rows_affected() != 1 {
                 return Err(ClientStorageError::Conflict(format!(
                     "tool claim or version changed: {invocation_id}"
                 )));
             }
             let invocation = fetch_invocation(&mut connection, invocation_id)
-                .await?
+                .await
+                .into_storage()?
                 .ok_or_else(|| ClientStorageError::NotFound(invocation_id.to_string()))?;
             Self::insert_event(
                 &mut connection,
@@ -221,7 +251,8 @@ impl LocalAgentToolStore for SqliteClientStorage {
                 }),
                 now_unix_ms,
             )
-            .await?;
+            .await
+            .into_storage()?;
             advance_run_after_tool(
                 &mut connection,
                 &current.run_id,
@@ -230,12 +261,16 @@ impl LocalAgentToolStore for SqliteClientStorage {
                 batch_event_id,
                 now_unix_ms,
             )
-            .await?;
+            .await
+            .into_storage()?;
             let run = Self::fetch_run_on(&mut connection, &current.run_id)
-                .await?
+                .await
+                .into_storage()?
                 .ok_or_else(|| ClientStorageError::NotFound(current.run_id.clone()))?;
             let response = LocalAgentToolCommitResult { invocation, run };
-            Self::record_receipt(&mut connection, command, &response, now_unix_ms).await?;
+            Self::record_receipt(&mut connection, command, &response, now_unix_ms)
+                .await
+                .into_storage()?;
             Ok(response)
         }
         .await;
@@ -255,13 +290,14 @@ async fn recover_expired_on(
     )
     .bind(now_unix_ms)
     .fetch_all(&mut *connection)
-    .await?;
+    .await
+    .into_storage()?;
     for row in &rows {
-        let invocation_id: String = row.try_get("invocation_id")?;
-        let run_id: String = row.try_get("run_id")?;
-        let call_id: String = row.try_get("call_id")?;
-        let side_effecting: bool = row.try_get("side_effecting")?;
-        let version: i64 = row.try_get("version")?;
+        let invocation_id: String = row.try_get("invocation_id").into_storage()?;
+        let run_id: String = row.try_get("run_id").into_storage()?;
+        let call_id: String = row.try_get("call_id").into_storage()?;
+        let side_effecting: bool = row.try_get("side_effecting").into_storage()?;
+        let version: i64 = row.try_get("version").into_storage()?;
         let next_status = if side_effecting {
             LocalAgentToolStatus::NeedsReview
         } else {
@@ -279,7 +315,8 @@ async fn recover_expired_on(
         .bind(&invocation_id)
         .bind(version)
         .execute(&mut *connection)
-        .await?;
+        .await
+        .into_storage()?;
         let event_type = if side_effecting {
             sqlx::query(
                 "UPDATE local_agent_runs SET status = 'needs_review', version = version + 1, \
@@ -288,7 +325,8 @@ async fn recover_expired_on(
             .bind(now_unix_ms)
             .bind(&run_id)
             .execute(&mut *connection)
-            .await?;
+            .await
+            .into_storage()?;
             "tool_claim_expired_needs_review"
         } else {
             "tool_claim_expired_requeued"
@@ -306,7 +344,8 @@ async fn recover_expired_on(
             }),
             now_unix_ms,
         )
-        .await?;
+        .await
+        .into_storage()?;
     }
     Ok(rows.len() as u64)
 }
@@ -327,7 +366,8 @@ async fn advance_run_after_tool(
         .bind(now_unix_ms)
         .bind(run_id)
         .execute(&mut *connection)
-        .await?;
+        .await
+        .into_storage()?;
         return Ok(());
     }
     let remaining: i64 = sqlx::query_scalar(
@@ -337,7 +377,8 @@ async fn advance_run_after_tool(
     .bind(run_id)
     .bind(batch_id)
     .fetch_one(&mut *connection)
-    .await?;
+    .await
+    .into_storage()?;
     if remaining > 0 {
         return Ok(());
     }
@@ -351,7 +392,8 @@ async fn advance_run_after_tool(
     .bind(run_id)
     .bind(batch_id)
     .fetch_all(&mut *connection)
-    .await?;
+    .await
+    .into_storage()?;
     let invocations = rows
         .into_iter()
         .map(decode_invocation)
@@ -370,7 +412,8 @@ async fn advance_run_after_tool(
     .bind(now_unix_ms)
     .bind(run_id)
     .execute(&mut *connection)
-    .await?;
+    .await
+    .into_storage()?;
     if updated.rows_affected() == 1 {
         SqliteClientStorage::insert_event(
             connection,
@@ -380,7 +423,8 @@ async fn advance_run_after_tool(
             &continuation,
             now_unix_ms,
         )
-        .await?;
+        .await
+        .into_storage()?;
     }
     Ok(())
 }
@@ -397,36 +441,37 @@ async fn fetch_invocation(
     )
     .bind(invocation_id)
     .fetch_optional(&mut *connection)
-    .await?
+    .await
+    .into_storage()?
     .map(decode_invocation)
     .transpose()
 }
 
 fn decode_invocation(row: SqliteRow) -> Result<LocalAgentToolInvocationRecord, ClientStorageError> {
-    let status: String = row.try_get("status")?;
-    let arguments: String = row.try_get("arguments_json")?;
-    let result: Option<String> = row.try_get("result_json")?;
+    let status: String = row.try_get("status").into_storage()?;
+    let arguments: String = row.try_get("arguments_json").into_storage()?;
+    let result: Option<String> = row.try_get("result_json").into_storage()?;
     Ok(LocalAgentToolInvocationRecord {
-        invocation_id: row.try_get("invocation_id")?,
-        run_id: row.try_get("run_id")?,
-        batch_id: row.try_get("batch_id")?,
-        call_id: row.try_get("call_id")?,
-        tool_name: row.try_get("tool_name")?,
+        invocation_id: row.try_get("invocation_id").into_storage()?,
+        run_id: row.try_get("run_id").into_storage()?,
+        batch_id: row.try_get("batch_id").into_storage()?,
+        call_id: row.try_get("call_id").into_storage()?,
+        tool_name: row.try_get("tool_name").into_storage()?,
         arguments: serde_json::from_str(&arguments)?,
-        side_effecting: row.try_get("side_effecting")?,
+        side_effecting: row.try_get("side_effecting").into_storage()?,
         status: LocalAgentToolStatus::from_str(&status)
             .map_err(ClientStorageError::InvalidState)?,
         result: result
             .map(|value| serde_json::from_str(&value))
             .transpose()?,
-        error: row.try_get("error_text")?,
-        version: u64::try_from(row.try_get::<i64, _>("version")?).map_err(|_| {
+        error: row.try_get("error_text").into_storage()?,
+        version: u64::try_from(row.try_get::<i64, _>("version").into_storage()?).map_err(|_| {
             ClientStorageError::InvalidState("invalid tool invocation version".to_string())
         })?,
-        claim_token: row.try_get("claim_token")?,
-        claim_until_unix_ms: row.try_get("claim_until_unix_ms")?,
-        created_at_unix_ms: row.try_get("created_at_unix_ms")?,
-        updated_at_unix_ms: row.try_get("updated_at_unix_ms")?,
+        claim_token: row.try_get("claim_token").into_storage()?,
+        claim_until_unix_ms: row.try_get("claim_until_unix_ms").into_storage()?,
+        created_at_unix_ms: row.try_get("created_at_unix_ms").into_storage()?,
+        updated_at_unix_ms: row.try_get("updated_at_unix_ms").into_storage()?,
     })
 }
 

@@ -899,7 +899,6 @@ dependencies = [
  "chatos_local_agent_protocol",
  "serde",
  "serde_json",
- "sqlx",
  "thiserror",
 ]
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::{ClientStorageError, SqliteClientStorage};
+use super::{ClientStorageError, IntoClientStorageResult, SqliteClientStorage};
 use chatos_local_agent_protocol::{LocalAgentRunRecord, LocalAgentRunStatus};
 use sqlx::{Row, SqliteConnection};
 
@@ -20,13 +20,14 @@ pub(super) async fn start_next_task_run(
          ORDER BY t.created_at_unix_ms, t.task_id LIMIT 1",
     )
     .fetch_optional(&mut *connection)
-    .await?;
+    .await
+    .into_storage()?;
     let Some(candidate) = candidate else {
         return Ok(None);
     };
-    let task_id: String = candidate.try_get("task_id")?;
-    let graph_id: String = candidate.try_get("graph_id")?;
-    let task_version: i64 = candidate.try_get("version")?;
+    let task_id: String = candidate.try_get("task_id").into_storage()?;
+    let graph_id: String = candidate.try_get("graph_id").into_storage()?;
+    let task_version: i64 = candidate.try_get("version").into_storage()?;
     sqlx::query(
         "INSERT INTO local_agent_runs(\
          run_id, owner_user_id, owner_entity_type, owner_entity_id, profile_key, \
@@ -39,18 +40,47 @@ pub(super) async fn start_next_task_run(
          NULL, NULL, 'null', NULL, ?, ?)",
     )
     .bind(run_id)
-    .bind(candidate.try_get::<String, _>("owner_user_id")?)
+    .bind(
+        candidate
+            .try_get::<String, _>("owner_user_id")
+            .into_storage()?,
+    )
     .bind(&task_id)
-    .bind(candidate.try_get::<String, _>("profile_key")?)
-    .bind(candidate.try_get::<String, _>("model_config_ref")?)
-    .bind(candidate.try_get::<String, _>("model_config_revision")?)
-    .bind(candidate.try_get::<String, _>("capability_policy_revision")?)
-    .bind(candidate.try_get::<String, _>("input_json")?)
-    .bind(candidate.try_get::<i64, _>("max_iterations")?)
+    .bind(
+        candidate
+            .try_get::<String, _>("profile_key")
+            .into_storage()?,
+    )
+    .bind(
+        candidate
+            .try_get::<String, _>("model_config_ref")
+            .into_storage()?,
+    )
+    .bind(
+        candidate
+            .try_get::<String, _>("model_config_revision")
+            .into_storage()?,
+    )
+    .bind(
+        candidate
+            .try_get::<String, _>("capability_policy_revision")
+            .into_storage()?,
+    )
+    .bind(
+        candidate
+            .try_get::<String, _>("input_json")
+            .into_storage()?,
+    )
+    .bind(
+        candidate
+            .try_get::<i64, _>("max_iterations")
+            .into_storage()?,
+    )
     .bind(now_unix_ms)
     .bind(now_unix_ms)
     .execute(&mut *connection)
-    .await?;
+    .await
+    .into_storage()?;
     let updated = sqlx::query(
         "UPDATE local_tasks SET status = 'running', active_run_id = ?, \
          version = version + 1, updated_at_unix_ms = ? \
@@ -63,7 +93,8 @@ pub(super) async fn start_next_task_run(
     .bind(&graph_id)
     .bind(task_version)
     .execute(&mut *connection)
-    .await?;
+    .await
+    .into_storage()?;
     if updated.rows_affected() != 1 {
         return Err(ClientStorageError::Conflict(format!(
             "task changed while starting: {task_id}"
@@ -77,7 +108,8 @@ pub(super) async fn start_next_task_run(
         &serde_json::json!({"graph_id": graph_id, "task_id": task_id}),
         now_unix_ms,
     )
-    .await?;
+    .await
+    .into_storage()?;
     SqliteClientStorage::fetch_run_on(connection, run_id).await
 }
 
@@ -105,7 +137,8 @@ pub(super) async fn reconcile_task_after_run(
     .bind(&run.owner_entity_id)
     .bind(&run.run_id)
     .execute(&mut *connection)
-    .await?;
+    .await
+    .into_storage()?;
     if updated.rows_affected() != 1 {
         return Err(ClientStorageError::Conflict(format!(
             "task run ownership changed: {}",
@@ -115,9 +148,14 @@ pub(super) async fn reconcile_task_after_run(
     let graph_id: String = sqlx::query_scalar("SELECT graph_id FROM local_tasks WHERE task_id = ?")
         .bind(&run.owner_entity_id)
         .fetch_one(&mut *connection)
-        .await?;
-    propagate_blocked(connection, &graph_id, now_unix_ms).await?;
-    unlock_satisfied(connection, &graph_id, now_unix_ms).await?;
+        .await
+        .into_storage()?;
+    propagate_blocked(connection, &graph_id, now_unix_ms)
+        .await
+        .into_storage()?;
+    unlock_satisfied(connection, &graph_id, now_unix_ms)
+        .await
+        .into_storage()?;
     SqliteClientStorage::insert_event(
         connection,
         &format!("task-reconciled:{}:{}", run.run_id, run.version),
@@ -130,7 +168,8 @@ pub(super) async fn reconcile_task_after_run(
         }),
         now_unix_ms,
     )
-    .await?;
+    .await
+    .into_storage()?;
     Ok(())
 }
 
@@ -152,7 +191,8 @@ pub(super) async fn propagate_blocked(
         .bind(now_unix_ms)
         .bind(graph_id)
         .execute(&mut *connection)
-        .await?;
+        .await
+        .into_storage()?;
         if updated.rows_affected() == 0 {
             return Ok(());
         }
@@ -176,7 +216,8 @@ pub(super) async fn unlock_satisfied(
     .bind(now_unix_ms)
     .bind(graph_id)
     .execute(&mut *connection)
-    .await?;
+    .await
+    .into_storage()?;
     Ok(())
 }
 

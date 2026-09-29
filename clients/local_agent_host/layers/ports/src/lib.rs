@@ -16,7 +16,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum ClientStorageError {
     #[error("client storage database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(String),
     #[error("client storage serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
     #[error("record not found: {0}")]
@@ -30,6 +30,12 @@ pub enum ClientStorageError {
 }
 
 impl ClientStorageError {
+    /// Erases an infrastructure-specific database error at the storage port
+    /// boundary. Application packages must not depend on SQLx or SQLite types.
+    pub fn database(error: impl std::fmt::Display) -> Self {
+        Self::Database(error.to_string())
+    }
+
     pub fn code(&self) -> &'static str {
         match self {
             Self::Database(_) => "storage_unavailable",

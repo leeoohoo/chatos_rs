@@ -28,6 +28,25 @@ pub use chatos_local_agent_ports::{
 };
 use schema::RUN_SELECT;
 
+/// Converts SQLx failures inside the SQLite adapter without leaking SQLx into
+/// the application-facing storage ports. The identity implementation keeps
+/// transaction helpers readable when they already return the port error.
+pub(crate) trait IntoClientStorageResult<T> {
+    fn into_storage(self) -> Result<T, ClientStorageError>;
+}
+
+impl<T> IntoClientStorageResult<T> for Result<T, sqlx::Error> {
+    fn into_storage(self) -> Result<T, ClientStorageError> {
+        self.map_err(ClientStorageError::database)
+    }
+}
+
+impl<T> IntoClientStorageResult<T> for Result<T, ClientStorageError> {
+    fn into_storage(self) -> Result<T, ClientStorageError> {
+        self
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SqliteClientStorage {
     pub(crate) pool: SqlitePool,
@@ -52,7 +71,8 @@ impl SqliteClientStorage {
     }
 
     pub async fn connect_memory() -> Result<Self, ClientStorageError> {
-        let options = SqliteConnectOptions::from_str("sqlite::memory:")?
+        let options = SqliteConnectOptions::from_str("sqlite::memory:")
+            .into_storage()?
             .foreign_keys(true)
             .busy_timeout(Duration::from_secs(5));
         Self::connect_with_options(options).await
@@ -67,9 +87,10 @@ impl SqliteClientStorage {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(options)
-            .await?;
+            .await
+            .into_storage()?;
         let storage = Self { pool };
-        storage.migrate().await?;
+        storage.migrate().await.into_storage()?;
         Ok(storage)
     }
 
@@ -78,7 +99,8 @@ impl SqliteClientStorage {
     ) -> Result<(), ClientStorageError> {
         sqlx::query("BEGIN IMMEDIATE")
             .execute(&mut *connection)
-            .await?;
+            .await
+            .into_storage()?;
         Ok(())
     }
 
@@ -88,7 +110,10 @@ impl SqliteClientStorage {
     ) -> Result<T, ClientStorageError> {
         match result {
             Ok(value) => {
-                sqlx::query("COMMIT").execute(&mut *connection).await?;
+                sqlx::query("COMMIT")
+                    .execute(&mut *connection)
+                    .await
+                    .into_storage()?;
                 Ok(value)
             }
             Err(error) => {
@@ -108,15 +133,16 @@ impl SqliteClientStorage {
         )
         .bind(&command.command_id)
         .fetch_optional(&mut *connection)
-        .await?;
+        .await
+        .into_storage()?;
         let Some(row) = row else { return Ok(None) };
-        let fingerprint: String = row.try_get("request_fingerprint")?;
+        let fingerprint: String = row.try_get("request_fingerprint").into_storage()?;
         if fingerprint != command.request_fingerprint {
             return Err(ClientStorageError::CommandMismatch(
                 command.command_id.clone(),
             ));
         }
-        let response: String = row.try_get("response_json")?;
+        let response: String = row.try_get("response_json").into_storage()?;
         Ok(Some(serde_json::from_str(&response)?))
     }
 
@@ -136,7 +162,8 @@ impl SqliteClientStorage {
         .bind(serde_json::to_string(response)?)
         .bind(now_unix_ms)
         .execute(&mut *connection)
-        .await?;
+        .await
+        .into_storage()?;
         Ok(())
     }
 
@@ -159,7 +186,8 @@ impl SqliteClientStorage {
         .bind(serde_json::to_string(payload)?)
         .bind(now_unix_ms)
         .execute(&mut *connection)
-        .await?;
+        .await
+        .into_storage()?;
         Ok(())
     }
 
@@ -170,7 +198,8 @@ impl SqliteClientStorage {
         sqlx::query(RUN_SELECT)
             .bind(run_id)
             .fetch_optional(&mut *connection)
-            .await?
+            .await
+            .into_storage()?
             .map(decode_run)
             .transpose()
     }
@@ -186,10 +215,11 @@ impl SqliteClientStorage {
         )
         .bind(now_unix_ms)
         .fetch_all(&mut *connection)
-        .await?;
+        .await
+        .into_storage()?;
         for row in &rows {
-            let run_id: String = row.try_get("run_id")?;
-            let version: i64 = row.try_get("version")?;
+            let run_id: String = row.try_get("run_id").into_storage()?;
+            let version: i64 = row.try_get("version").into_storage()?;
             sqlx::query(
                 "UPDATE local_agent_runs SET status = 'needs_review', version = version + 1, \
                  claim_token = NULL, claim_until_unix_ms = NULL, updated_at_unix_ms = ? \
@@ -199,7 +229,8 @@ impl SqliteClientStorage {
             .bind(&run_id)
             .bind(version)
             .execute(&mut *connection)
-            .await?;
+            .await
+            .into_storage()?;
             let event_id = format!("recovery:{run_id}:{}", version + 1);
             Self::insert_event(
                 connection,
@@ -211,7 +242,8 @@ impl SqliteClientStorage {
                 }),
                 now_unix_ms,
             )
-            .await?;
+            .await
+            .into_storage()?;
         }
         Ok(rows.len() as u64)
     }
@@ -225,10 +257,12 @@ impl LocalAgentRunStore for SqliteClientStorage {
         run: &LocalAgentRunRecord,
         event_id: &str,
     ) -> Result<LocalAgentRunRecord, ClientStorageError> {
-        let mut connection = self.pool.acquire().await?;
-        Self::begin_immediate(&mut connection).await?;
+        let mut connection = self.pool.acquire().await.into_storage()?;
+        Self::begin_immediate(&mut connection)
+            .await
+            .into_storage()?;
         let result = async {
-            if let Some(replay) = Self::replay(&mut connection, command).await? {
+            if let Some(replay) = Self::replay(&mut connection, command).await.into_storage()? {
                 return Ok(replay);
             }
             sqlx::query(
@@ -264,7 +298,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 if is_unique_violation(&error) {
                     ClientStorageError::Conflict(format!("run id already exists: {}", run.run_id))
                 } else {
-                    error.into()
+                    ClientStorageError::database(error)
                 }
             })?;
             Self::insert_event(
@@ -275,8 +309,8 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 &serde_json::json!({"profile_key": run.profile_key}),
                 run.created_at_unix_ms,
             )
-            .await?;
-            Self::record_receipt(&mut connection, command, run, run.created_at_unix_ms).await?;
+            .await.into_storage()?;
+            Self::record_receipt(&mut connection, command, run, run.created_at_unix_ms).await.into_storage()?;
             Ok(run.clone())
         }
         .await;
@@ -287,13 +321,15 @@ impl LocalAgentRunStore for SqliteClientStorage {
         &self,
         run_id: &str,
     ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError> {
-        let mut connection = self.pool.acquire().await?;
+        let mut connection = self.pool.acquire().await.into_storage()?;
         Self::fetch_run_on(&mut connection, run_id).await
     }
 
     async fn recover_expired_claims(&self, now_unix_ms: i64) -> Result<u64, ClientStorageError> {
-        let mut connection = self.pool.acquire().await?;
-        Self::begin_immediate(&mut connection).await?;
+        let mut connection = self.pool.acquire().await.into_storage()?;
+        Self::begin_immediate(&mut connection)
+            .await
+            .into_storage()?;
         let result = Self::recover_expired_claims_on(&mut connection, now_unix_ms).await;
         Self::finish_write(&mut connection, result).await
     }
@@ -307,13 +343,20 @@ impl LocalAgentRunStore for SqliteClientStorage {
         claim_until_unix_ms: i64,
         event_id: &str,
     ) -> Result<Option<LocalAgentRunClaim>, ClientStorageError> {
-        let mut connection = self.pool.acquire().await?;
-        Self::begin_immediate(&mut connection).await?;
+        let mut connection = self.pool.acquire().await.into_storage()?;
+        Self::begin_immediate(&mut connection)
+            .await
+            .into_storage()?;
         let result = async {
-            if let Some(replay) = Self::replay(&mut connection, command).await? {
+            if let Some(replay) = Self::replay(&mut connection, command)
+                .await
+                .into_storage()?
+            {
                 return Ok(replay);
             }
-            Self::recover_expired_claims_on(&mut connection, now_unix_ms).await?;
+            Self::recover_expired_claims_on(&mut connection, now_unix_ms)
+                .await
+                .into_storage()?;
             let candidate = sqlx::query(
                 "SELECT run_id FROM local_agent_runs \
                  WHERE iteration < max_iterations AND (\
@@ -323,13 +366,16 @@ impl LocalAgentRunStore for SqliteClientStorage {
             )
             .bind(now_unix_ms)
             .fetch_optional(&mut *connection)
-            .await?;
+            .await
+            .into_storage()?;
             let Some(candidate) = candidate else {
                 let response: Option<LocalAgentRunClaim> = None;
-                Self::record_receipt(&mut connection, command, &response, now_unix_ms).await?;
+                Self::record_receipt(&mut connection, command, &response, now_unix_ms)
+                    .await
+                    .into_storage()?;
                 return Ok(response);
             };
-            let run_id: String = candidate.try_get("run_id")?;
+            let run_id: String = candidate.try_get("run_id").into_storage()?;
             let updated = sqlx::query(
                 "UPDATE local_agent_runs SET status = 'model_running', iteration = iteration + 1, \
                  version = version + 1, claim_token = ?, claim_until_unix_ms = ?, \
@@ -340,7 +386,8 @@ impl LocalAgentRunStore for SqliteClientStorage {
             .bind(now_unix_ms)
             .bind(&run_id)
             .execute(&mut *connection)
-            .await?;
+            .await
+            .into_storage()?;
             if updated.rows_affected() != 1 {
                 return Err(ClientStorageError::Conflict(format!(
                     "run changed while claiming: {run_id}"
@@ -357,16 +404,20 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 }),
                 now_unix_ms,
             )
-            .await?;
+            .await
+            .into_storage()?;
             let run = Self::fetch_run_on(&mut connection, &run_id)
-                .await?
+                .await
+                .into_storage()?
                 .ok_or_else(|| ClientStorageError::NotFound(run_id.clone()))?;
             let response = Some(LocalAgentRunClaim {
                 worker_id: worker_id.to_string(),
                 claim_token: claim_token.to_string(),
                 run,
             });
-            Self::record_receipt(&mut connection, command, &response, now_unix_ms).await?;
+            Self::record_receipt(&mut connection, command, &response, now_unix_ms)
+                .await
+                .into_storage()?;
             Ok(response)
         }
         .await;
@@ -374,13 +425,14 @@ impl LocalAgentRunStore for SqliteClientStorage {
     }
 
     async fn next_retry_at(&self) -> Result<Option<i64>, ClientStorageError> {
-        let mut connection = self.pool.acquire().await?;
+        let mut connection = self.pool.acquire().await.into_storage()?;
         Ok(sqlx::query_scalar::<_, Option<i64>>(
             "SELECT MIN(next_attempt_at_unix_ms) FROM local_agent_runs \
              WHERE status = 'retry_scheduled'",
         )
         .fetch_one(&mut *connection)
-        .await?)
+        .await
+        .into_storage()?)
     }
 
     async fn apply_transition(
@@ -388,10 +440,15 @@ impl LocalAgentRunStore for SqliteClientStorage {
         command: &IdempotentCommand,
         transition: &RunTransition,
     ) -> Result<LocalAgentRunRecord, ClientStorageError> {
-        let mut connection = self.pool.acquire().await?;
-        Self::begin_immediate(&mut connection).await?;
+        let mut connection = self.pool.acquire().await.into_storage()?;
+        Self::begin_immediate(&mut connection)
+            .await
+            .into_storage()?;
         let result = async {
-            if let Some(replay) = Self::replay(&mut connection, command).await? {
+            if let Some(replay) = Self::replay(&mut connection, command)
+                .await
+                .into_storage()?
+            {
                 return Ok(replay);
             }
             let updated = sqlx::query(
@@ -418,7 +475,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
             .bind(&transition.claim_token)
             .bind(transition.occurred_at_unix_ms)
             .execute(&mut *connection)
-            .await?;
+            .await.into_storage()?;
             if updated.rows_affected() != 1 {
                 return Err(ClientStorageError::Conflict(format!(
                     "run claim or version changed: {}",
@@ -433,7 +490,8 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 &transition.event_payload,
                 transition.occurred_at_unix_ms,
             )
-            .await?;
+            .await
+            .into_storage()?;
             if let Some(batch) = transition.tool_batch.as_ref() {
                 tool_store::insert_tool_batch(
                     &mut connection,
@@ -441,24 +499,28 @@ impl LocalAgentRunStore for SqliteClientStorage {
                     batch,
                     transition.occurred_at_unix_ms,
                 )
-                .await?;
+                .await
+                .into_storage()?;
             }
             let run = Self::fetch_run_on(&mut connection, &transition.run_id)
-                .await?
+                .await
+                .into_storage()?
                 .ok_or_else(|| ClientStorageError::NotFound(transition.run_id.clone()))?;
             task_lifecycle::reconcile_task_after_run(
                 &mut connection,
                 &run,
                 transition.occurred_at_unix_ms,
             )
-            .await?;
+            .await
+            .into_storage()?;
             Self::record_receipt(
                 &mut connection,
                 command,
                 &run,
                 transition.occurred_at_unix_ms,
             )
-            .await?;
+            .await
+            .into_storage()?;
             Ok(run)
         }
         .await;
@@ -475,10 +537,15 @@ impl LocalAgentRunStore for SqliteClientStorage {
         event_id: &str,
         now_unix_ms: i64,
     ) -> Result<LocalAgentRunRecord, ClientStorageError> {
-        let mut connection = self.pool.acquire().await?;
-        Self::begin_immediate(&mut connection).await?;
+        let mut connection = self.pool.acquire().await.into_storage()?;
+        Self::begin_immediate(&mut connection)
+            .await
+            .into_storage()?;
         let result = async {
-            if let Some(replay) = Self::replay(&mut connection, command).await? {
+            if let Some(replay) = Self::replay(&mut connection, command)
+                .await
+                .into_storage()?
+            {
                 return Ok(replay);
             }
             let updated = sqlx::query(
@@ -492,7 +559,8 @@ impl LocalAgentRunStore for SqliteClientStorage {
             .bind(expected_status.as_str())
             .bind(expected_version as i64)
             .execute(&mut *connection)
-            .await?;
+            .await
+            .into_storage()?;
             if updated.rows_affected() != 1 {
                 return Err(ClientStorageError::Conflict(format!(
                     "run status or version changed while resuming: {run_id}"
@@ -506,12 +574,18 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 continuation_input,
                 now_unix_ms,
             )
-            .await?;
+            .await
+            .into_storage()?;
             let run = Self::fetch_run_on(&mut connection, run_id)
-                .await?
+                .await
+                .into_storage()?
                 .ok_or_else(|| ClientStorageError::NotFound(run_id.to_string()))?;
-            task_lifecycle::reconcile_task_after_run(&mut connection, &run, now_unix_ms).await?;
-            Self::record_receipt(&mut connection, command, &run, now_unix_ms).await?;
+            task_lifecycle::reconcile_task_after_run(&mut connection, &run, now_unix_ms)
+                .await
+                .into_storage()?;
+            Self::record_receipt(&mut connection, command, &run, now_unix_ms)
+                .await
+                .into_storage()?;
             Ok(run)
         }
         .await;
@@ -527,14 +601,20 @@ impl LocalAgentRunStore for SqliteClientStorage {
         event_id: &str,
         now_unix_ms: i64,
     ) -> Result<LocalAgentRunRecord, ClientStorageError> {
-        let mut connection = self.pool.acquire().await?;
-        Self::begin_immediate(&mut connection).await?;
+        let mut connection = self.pool.acquire().await.into_storage()?;
+        Self::begin_immediate(&mut connection)
+            .await
+            .into_storage()?;
         let result = async {
-            if let Some(replay) = Self::replay(&mut connection, command).await? {
+            if let Some(replay) = Self::replay(&mut connection, command)
+                .await
+                .into_storage()?
+            {
                 return Ok(replay);
             }
             let current = Self::fetch_run_on(&mut connection, run_id)
-                .await?
+                .await
+                .into_storage()?
                 .ok_or_else(|| ClientStorageError::NotFound(run_id.to_string()))?;
             if current.status.is_terminal() {
                 return Err(ClientStorageError::Conflict(format!(
@@ -560,7 +640,8 @@ impl LocalAgentRunStore for SqliteClientStorage {
             .bind(run_id)
             .bind(current.version as i64)
             .execute(&mut *connection)
-            .await?;
+            .await
+            .into_storage()?;
             if updated.rows_affected() != 1 {
                 return Err(ClientStorageError::Conflict(format!(
                     "run changed while cancelling: {run_id}"
@@ -572,7 +653,8 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 reason,
                 now_unix_ms,
             )
-            .await?;
+            .await
+            .into_storage()?;
             Self::insert_event(
                 &mut connection,
                 event_id,
@@ -581,11 +663,15 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 &serde_json::json!({"reason": reason}),
                 now_unix_ms,
             )
-            .await?;
+            .await
+            .into_storage()?;
             let run = Self::fetch_run_on(&mut connection, run_id)
-                .await?
+                .await
+                .into_storage()?
                 .ok_or_else(|| ClientStorageError::NotFound(run_id.to_string()))?;
-            Self::record_receipt(&mut connection, command, &run, now_unix_ms).await?;
+            Self::record_receipt(&mut connection, command, &run, now_unix_ms)
+                .await
+                .into_storage()?;
             Ok(run)
         }
         .await;
@@ -598,9 +684,10 @@ impl LocalAgentRunStore for SqliteClientStorage {
         limit: u32,
         run_id: Option<&str>,
     ) -> Result<Vec<LocalAgentEventRecord>, ClientStorageError> {
-        let mut connection = self.pool.acquire().await?;
-        let rows = if let Some(run_id) = run_id {
-            sqlx::query(
+        let mut connection = self.pool.acquire().await.into_storage()?;
+        let rows =
+            if let Some(run_id) = run_id {
+                sqlx::query(
                 "SELECT cursor, event_id, run_id, event_type, payload_json, created_at_unix_ms \
                  FROM local_agent_events WHERE cursor > ? AND run_id = ? \
                  ORDER BY cursor LIMIT ?",
@@ -609,25 +696,26 @@ impl LocalAgentRunStore for SqliteClientStorage {
             .bind(run_id)
             .bind(i64::from(limit))
             .fetch_all(&mut *connection)
-            .await?
-        } else {
-            sqlx::query(
+            .await.into_storage()?
+            } else {
+                sqlx::query(
                 "SELECT cursor, event_id, run_id, event_type, payload_json, created_at_unix_ms \
                  FROM local_agent_events WHERE cursor > ? ORDER BY cursor LIMIT ?",
             )
             .bind(after_cursor)
             .bind(i64::from(limit))
             .fetch_all(&mut *connection)
-            .await?
-        };
+            .await.into_storage()?
+            };
         rows.into_iter().map(decode_event).collect()
     }
 
     async fn health_check(&self) -> Result<(), ClientStorageError> {
-        let mut connection = self.pool.acquire().await?;
+        let mut connection = self.pool.acquire().await.into_storage()?;
         let result: String = sqlx::query_scalar("PRAGMA quick_check(1)")
             .fetch_one(&mut *connection)
-            .await?;
+            .await
+            .into_storage()?;
         if result != "ok" {
             return Err(ClientStorageError::InvalidState(format!(
                 "SQLite quick_check failed: {result}"
@@ -638,30 +726,38 @@ impl LocalAgentRunStore for SqliteClientStorage {
 }
 
 fn decode_run(row: SqliteRow) -> Result<LocalAgentRunRecord, ClientStorageError> {
-    let status: String = row.try_get("status")?;
-    let input: String = row.try_get("input_json")?;
-    let pending_tool_batch: Option<String> = row.try_get("pending_tool_batch_json")?;
-    let terminal_outcome: Option<String> = row.try_get("terminal_outcome_json")?;
-    let checkpoint: String = row.try_get("checkpoint_json")?;
-    let continuation_input: Option<String> = row.try_get("continuation_input_json")?;
+    let status: String = row.try_get("status").into_storage()?;
+    let input: String = row.try_get("input_json").into_storage()?;
+    let pending_tool_batch: Option<String> =
+        row.try_get("pending_tool_batch_json").into_storage()?;
+    let terminal_outcome: Option<String> = row.try_get("terminal_outcome_json").into_storage()?;
+    let checkpoint: String = row.try_get("checkpoint_json").into_storage()?;
+    let continuation_input: Option<String> =
+        row.try_get("continuation_input_json").into_storage()?;
     Ok(LocalAgentRunRecord {
-        run_id: row.try_get("run_id")?,
-        owner_user_id: row.try_get("owner_user_id")?,
-        owner_entity_type: row.try_get("owner_entity_type")?,
-        owner_entity_id: row.try_get("owner_entity_id")?,
-        profile_key: row.try_get("profile_key")?,
-        model_config_ref: row.try_get("model_config_ref")?,
-        model_config_revision: row.try_get("model_config_revision")?,
-        capability_policy_revision: row.try_get("capability_policy_revision")?,
+        run_id: row.try_get("run_id").into_storage()?,
+        owner_user_id: row.try_get("owner_user_id").into_storage()?,
+        owner_entity_type: row.try_get("owner_entity_type").into_storage()?,
+        owner_entity_id: row.try_get("owner_entity_id").into_storage()?,
+        profile_key: row.try_get("profile_key").into_storage()?,
+        model_config_ref: row.try_get("model_config_ref").into_storage()?,
+        model_config_revision: row.try_get("model_config_revision").into_storage()?,
+        capability_policy_revision: row.try_get("capability_policy_revision").into_storage()?,
         input: serde_json::from_str(&input)?,
         status: LocalAgentRunStatus::from_str(&status).map_err(ClientStorageError::InvalidState)?,
-        iteration: integer_to_u32(row.try_get("iteration")?, "iteration")?,
-        model_attempt: integer_to_u32(row.try_get("model_attempt")?, "model_attempt")?,
-        max_iterations: integer_to_u32(row.try_get("max_iterations")?, "max_iterations")?,
-        version: integer_to_u64(row.try_get("version")?, "version")?,
-        claim_token: row.try_get("claim_token")?,
-        claim_until_unix_ms: row.try_get("claim_until_unix_ms")?,
-        next_attempt_at_unix_ms: row.try_get("next_attempt_at_unix_ms")?,
+        iteration: integer_to_u32(row.try_get("iteration").into_storage()?, "iteration")?,
+        model_attempt: integer_to_u32(
+            row.try_get("model_attempt").into_storage()?,
+            "model_attempt",
+        )?,
+        max_iterations: integer_to_u32(
+            row.try_get("max_iterations").into_storage()?,
+            "max_iterations",
+        )?,
+        version: integer_to_u64(row.try_get("version").into_storage()?, "version")?,
+        claim_token: row.try_get("claim_token").into_storage()?,
+        claim_until_unix_ms: row.try_get("claim_until_unix_ms").into_storage()?,
+        next_attempt_at_unix_ms: row.try_get("next_attempt_at_unix_ms").into_storage()?,
         pending_tool_batch: pending_tool_batch
             .map(|value| serde_json::from_str(&value))
             .transpose()?,
@@ -672,20 +768,20 @@ fn decode_run(row: SqliteRow) -> Result<LocalAgentRunRecord, ClientStorageError>
         terminal_outcome: terminal_outcome
             .map(|value| serde_json::from_str(&value))
             .transpose()?,
-        created_at_unix_ms: row.try_get("created_at_unix_ms")?,
-        updated_at_unix_ms: row.try_get("updated_at_unix_ms")?,
+        created_at_unix_ms: row.try_get("created_at_unix_ms").into_storage()?,
+        updated_at_unix_ms: row.try_get("updated_at_unix_ms").into_storage()?,
     })
 }
 
 fn decode_event(row: SqliteRow) -> Result<LocalAgentEventRecord, ClientStorageError> {
-    let payload: String = row.try_get("payload_json")?;
+    let payload: String = row.try_get("payload_json").into_storage()?;
     Ok(LocalAgentEventRecord {
-        cursor: row.try_get("cursor")?,
-        event_id: row.try_get("event_id")?,
-        run_id: row.try_get("run_id")?,
-        event_type: row.try_get("event_type")?,
+        cursor: row.try_get("cursor").into_storage()?,
+        event_id: row.try_get("event_id").into_storage()?,
+        run_id: row.try_get("run_id").into_storage()?,
+        event_type: row.try_get("event_type").into_storage()?,
         payload: serde_json::from_str(&payload)?,
-        created_at_unix_ms: row.try_get("created_at_unix_ms")?,
+        created_at_unix_ms: row.try_get("created_at_unix_ms").into_storage()?,
     })
 }
 
