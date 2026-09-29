@@ -5,9 +5,13 @@ namespace ChatOS.Connector.AgentTeams;
 
 internal sealed class AgentTeamCoordinator : IAgentTeamService
 {
+    private const int MessagePageSize = 60;
     private readonly IAgentTeamStore _store;
     private readonly IProjectRegistry _projects;
     private readonly AgentTeamScheduler _scheduler;
+    private readonly object _drainSync = new();
+    private readonly HashSet<string> _activeDrains = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _requestedDrains = new(StringComparer.Ordinal);
 
     public AgentTeamCoordinator(
         IAgentTeamStore store,
@@ -163,7 +167,7 @@ internal sealed class AgentTeamCoordinator : IAgentTeamService
             includeRemoved: false, cancellationToken);
         var profilesTask = _store.ListAgentsAsync(ownerUserId,
             includeArchived: false, cancellationToken);
-        var messagesTask = _store.ListMessagesAsync(ownerUserId, roomId, 250,
+        var messagesTask = _store.ListMessagesAsync(ownerUserId, roomId, MessagePageSize + 1,
             includeAttachmentPayloads: false, cancellationToken);
         var todosTask = _store.ListTodosAsync(ownerUserId, roomId,
             includeTerminal: true, limit: 200, cancellationToken);
@@ -180,10 +184,36 @@ internal sealed class AgentTeamCoordinator : IAgentTeamService
                 surveysTask, staffingTask, runsTask)
             .ConfigureAwait(false);
         var memberIds = membersTask.Result.Select(value => value.AgentId).ToHashSet(StringComparer.Ordinal);
+        var hasEarlierMessages = messagesTask.Result.Count > MessagePageSize;
+        var messages = hasEarlierMessages
+            ? messagesTask.Result.Skip(messagesTask.Result.Count - MessagePageSize).ToArray()
+            : messagesTask.Result;
         return new AgentTeamSnapshot(room, membersTask.Result,
             profilesTask.Result.Where(value => memberIds.Contains(value.Id)).ToArray(),
-            messagesTask.Result, todosTask.Result, assetsTask.Result, surveysTask.Result,
-            staffingTask.Result, runsTask.Result);
+            messages, todosTask.Result, assetsTask.Result, surveysTask.Result,
+            staffingTask.Result, runsTask.Result, hasEarlierMessages);
+    }
+
+    public async Task<AgentMessagePage> ListEarlierMessagesAsync(
+        string ownerUserId,
+        string roomId,
+        long beforeCreatedAtUnixMs,
+        string beforeMessageId,
+        int limit = MessagePageSize,
+        CancellationToken cancellationToken = default)
+    {
+        _ = await RequireRoomAsync(ownerUserId, roomId, cancellationToken).ConfigureAwait(false);
+        if (limit is < 1 or > 250)
+        {
+            throw AgentTeamValidation.Invalid(nameof(limit));
+        }
+        var messages = await _store.ListMessagesAsync(ownerUserId, roomId, limit + 1,
+            includeAttachmentPayloads: false, cancellationToken,
+            beforeCreatedAtUnixMs, beforeMessageId).ConfigureAwait(false);
+        var hasMore = messages.Count > limit;
+        return new AgentMessagePage(
+            hasMore ? messages.Skip(messages.Count - limit).ToArray() : messages,
+            hasMore);
     }
 
     public async Task<AgentPostResult> PostHumanMessageAsync(
@@ -316,6 +346,24 @@ internal sealed class AgentTeamCoordinator : IAgentTeamService
         Raise(ownerUserId, room.ProjectId, roomId, "asset_archived");
     }
 
+    public async Task<IReadOnlyList<AgentTeamAssetRevision>> ListAssetRevisionsAsync(
+        string ownerUserId,
+        string roomId,
+        string assetId,
+        CancellationToken cancellationToken = default)
+    {
+        var assets = await _store.ListAssetsAsync(ownerUserId, roomId,
+            includeArchived: true, cancellationToken).ConfigureAwait(false);
+        if (assets.All(value => !string.Equals(value.Id, assetId, StringComparison.Ordinal)))
+        {
+            throw new AgentTeamException(AgentTeamError.NotFound,
+                "Team asset was not found in this room.");
+        }
+
+        return await _store.ListAssetRevisionsAsync(ownerUserId, assetId,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
     public Task<IReadOnlyList<AgentRequirementSurvey>> ListProjectRequirementSurveysAsync(
         string ownerUserId,
         string projectId,
@@ -388,17 +436,40 @@ internal sealed class AgentTeamCoordinator : IAgentTeamService
         }
     }
 
-    private void QueueDrain(string ownerUserId) => _ = Task.Run(async () =>
+    private void QueueDrain(string ownerUserId)
     {
-        try
+        lock (_drainSync)
         {
-            await _scheduler.DrainAsync(ownerUserId, CancellationToken.None).ConfigureAwait(false);
+            _requestedDrains.Add(ownerUserId);
+            if (!_activeDrains.Add(ownerUserId)) return;
         }
-        catch
+
+        _ = Task.Run(() => DrainQueuedAsync(ownerUserId));
+    }
+
+    private async Task DrainQueuedAsync(string ownerUserId)
+    {
+        while (true)
         {
-            // Individual delivery failures are durable and visible through Agent runs.
+            lock (_drainSync) _requestedDrains.Remove(ownerUserId);
+            try
+            {
+                await _scheduler.DrainAsync(ownerUserId, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Individual delivery failures are durable and visible through Agent runs.
+            }
+
+            lock (_drainSync)
+            {
+                if (_requestedDrains.Remove(ownerUserId)) continue;
+                _activeDrains.Remove(ownerUserId);
+                return;
+            }
         }
-    });
+    }
 
     private void Raise(string ownerUserId, string? projectId, string? roomId, string kind) =>
         Changed?.Invoke(this, new AgentTeamChangedEventArgs(ownerUserId, projectId, roomId, kind));

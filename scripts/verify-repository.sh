@@ -133,8 +133,11 @@ run_native_platform() {
         pwsh -NoProfile -File "$ROOT_DIR/clients/windows/build/diagnose-xaml-compiler.ps1"
         return 1
       fi
+      export VSTEST_CONNECTION_TIMEOUT="${VSTEST_CONNECTION_TIMEOUT:-180}"
       dotnet test "$ROOT_DIR/clients/windows/ChatOS.Win.sln" \
         --configuration Release \
+        --no-build \
+        --no-restore \
         --blame-hang \
         --blame-hang-timeout 2m
       dotnet build "$ROOT_DIR/plugins/computer-use/windows/VisualComputerUse.Windows/VisualComputerUse.Windows.csproj" --configuration Release

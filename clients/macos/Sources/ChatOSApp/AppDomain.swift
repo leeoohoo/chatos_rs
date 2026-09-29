@@ -1,4 +1,5 @@
 import ChatOSCore
+import CoreGraphics
 
 enum SidebarSelection: Hashable {
     case contact(String)
@@ -52,9 +53,22 @@ struct PetQuickChatResource: Identifiable, Hashable {
     let conversationID: String?
 }
 
-struct VisualSessionPresentation: Equatable {
+final class VisualSessionFrameImage: @unchecked Sendable, Equatable {
+    let image: CGImage
+
+    init(image: CGImage) {
+        self.image = image
+    }
+
+    static func == (lhs: VisualSessionFrameImage, rhs: VisualSessionFrameImage) -> Bool {
+        lhs === rhs
+    }
+}
+
+struct VisualSessionPresentation: Equatable, Sendable {
     var session: PluginVisualSession
     var isExpanded: Bool
+    var frameImage: VisualSessionFrameImage?
 
     var ownerSessionID: String { session.owner.conversationID }
 }

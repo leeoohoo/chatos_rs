@@ -1533,6 +1533,8 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         let reopened = try SQLiteAgentGroupChatStore(databaseURL: url)
         let loaded = try await reopened.run(ownerUserID: "alice", deliveryID: claimed.id)
         XCTAssertEqual(loaded, run)
+        let loadedByID = try await reopened.run(ownerUserID: "alice", runID: run.id)
+        XCTAssertEqual(loadedByID, run)
         let listedForAgent = try await reopened.listAgentRuns(
             ownerUserID: "alice",
             agentID: agent.id,
@@ -2241,6 +2243,18 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         )
         XCTAssertEqual(Set(firstStatus.map(\.id)), Set(repeatedStatus.map(\.id)))
         XCTAssertEqual(firstStatus.count, 2)
+        let managerStatus = try XCTUnwrap(
+            firstStatus.first(where: { $0.targetAgentID == manager.id })
+        )
+        let loadedManagerMessage = try await store.message(
+            ownerUserID: "alice",
+            roomID: managerStatus.roomID,
+            messageID: managerStatus.messageID
+        )
+        let managerMessage = try XCTUnwrap(loadedManagerMessage)
+        XCTAssertTrue(managerMessage.content.contains("不得转给 Human"))
+        XCTAssertTrue(managerMessage.content.contains("项目经理待协调事项"))
+        XCTAssertTrue(managerMessage.content.contains("2—3 个方案"))
 
         _ = try await store.updateAgentTodo(
             ownerUserID: "alice",

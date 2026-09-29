@@ -1,6 +1,6 @@
 # macOS / Windows 跨平台变更登记
 
-更新时间：2026-09-23
+更新时间：2026-09-29
 
 本文是 macOS 端发现或实现的产品行为变更的权威登记。目标是避免 macOS 修复、功能更新或协议调整只停留在 Swift 客户端，导致 Windows 客户端随后出现行为分叉。
 
@@ -130,6 +130,27 @@ Windows 状态只允许使用：
 - Windows 是否需要代码修改：需要，且本地代码差距已关闭。账号级 Inbox/已读、run-scoped opaque reference、文档草稿/发送 receipt、成员变更提案审批、Todo 执行合同/来源/任务级能力与完整调度、独立 communication/executor lane、图片/PDF 多模态和项目级调研中心均已实现；executor 以有界批量查询加载跨会话来源消息、提及和附件元数据，不再逐来源查询或预载 payload；Todo 完成后的依赖释放以单条集合 SQL 原子推进受影响记录，不再无界加载全账号 Pending Todo 或逐项查询依赖。
 - Windows 必做项：在 Windows x64/ARM64 完成编译，并在 x64 真机验证 Agent/团队编辑与成员提案、团队切换、附件/多模态、项目调研中心、真实模型与插件进程、Artifact、命令审批、崩溃恢复和长对话内存占用。未提交、未编号的 macOS session-bound SSH MFA 工作区变化不并入本条；Windows 已独立预同步 SSH.NET 同会话验证码 continuation，待来源提交后另行分配编号，并在 Windows 真机验证跳板机与目标机连续挑战。
 - Windows 状态：`待真机验收`；Windows solution 502 项测试通过，本地可实现差距已关闭。
+
+### CP-20260928-001：邀请码邮箱注册
+
+- 来源：macOS 邀请测试注册体验。
+- 类型：功能更新、认证协议与客户端交互。
+- 预期行为：登录页可切换到注册页，使用邮箱、邀请码和 6 位邮箱验证码创建账号；验证码发送遵守服务端重发倒计时，注册成功后安全保存访问令牌并直接进入工作区。
+- 修复范围：macOS 已接入 `/auth/register/send-code` 和 `/auth/register`，包含邮箱/密码校验、服务端错误友好提示与双栏登录视觉。
+- macOS 状态：代码与自动化已验证。
+- Windows 是否需要代码修改：需要。Windows 原先只有登录、会话恢复和退出能力。
+- Windows 必做项：接入相同注册协议；实现邀请码、验证码、密码确认、重发倒计时和注册后自动登录；访问令牌继续只写入 Windows Credential Manager；覆盖 API payload、校验和工作区切换测试；完成 Windows 真机邮箱注册与高 DPI 视觉验收。
+- Windows 状态：`待真机验收`；注册协议、WinUI 流程、双语界面、Windows 原生测试和自包含安装包均已验证。
+
+### CP-20260928-002：Agent 运行参数由配置中心统一管理
+
+- 来源：macOS Agent Runtime 默认值收口。
+- 类型：协议变化、运行时一致性。
+- 预期行为：原生 Agent 的模型调用上限、瞬时重试、请求/整轮超时、无进展阈值和上下文预算由 `/api/local-connectors/config/runtime` 下发；客户端不再允许用户编辑或长期使用分叉的硬编码值。
+- macOS 状态：代码与自动化已验证。
+- Windows 是否需要代码修改：需要。Windows Agent 团队原先固定使用 16 次模型调用、5 次瞬时重试和 3 分钟请求超时。
+- Windows 必做项：解码并验证 `native_agent_runtime_settings`；与 managed trust 同轮刷新；调度器在每个 Run 开始时冻结当前配置并应用模型调用、重试、请求和整轮超时；无配置时使用共享产品默认值；完成 Windows CI 与长 Run 真机验收。
+- Windows 状态：`待真机验收`；managed config 映射、原子内存快照、调度器接线、Windows 原生测试和自包含安装包均已验证。
 
 ## 新记录模板
 

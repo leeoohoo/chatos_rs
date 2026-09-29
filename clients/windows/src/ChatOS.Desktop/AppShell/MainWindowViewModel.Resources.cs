@@ -52,7 +52,7 @@ public sealed partial class MainWindowViewModel
     private void RelocalizeResources()
     {
         ApplicationResources.Clear();
-        ApplicationResources.Add(CreateApplicationsResource());
+        AddWorkspaceTools();
         for (var index = 0; index < Contacts.Count; index++)
         {
             var current = Contacts[index];
@@ -103,4 +103,27 @@ public sealed partial class MainWindowViewModel
         Localization.Applications,
         Localization.InstalledPluginApplications,
         "\uE71D");
+
+    private void AddWorkspaceTools()
+    {
+        ApplicationResources.Add(CreateApplicationsResource());
+        ApplicationResources.Add(new ShellResourceViewModel(
+            "media-studio",
+            WorkspaceResourceKind.MediaStudio,
+            Localization.Text("AI 创作", "AI Creation"),
+            Localization.Text("生成图片与视频", "Generate images and video"),
+            "\uE735"));
+        ApplicationResources.Add(new ShellResourceViewModel(
+            "agent-teams",
+            WorkspaceResourceKind.AgentTeams,
+            "Agent",
+            Localization.Text("私聊与项目团队", "Direct messages and project teams"),
+            "\uE716"));
+        ApplicationResources.Add(new ShellResourceViewModel(
+            "requirement-surveys",
+            WorkspaceResourceKind.RequirementSurveys,
+            Localization.Text("需求调研", "Requirement Surveys"),
+            Localization.Text("需求确认、方案与执行计划", "Requirements, solutions, and execution plans"),
+            "\uE9D5"));
+    }
 }

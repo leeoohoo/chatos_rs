@@ -1,4 +1,4 @@
-import AppKit
+@preconcurrency import AppKit
 import ChatOSCore
 import ImageIO
 import SwiftUI
@@ -15,97 +15,23 @@ struct PetSpriteAnimationView: View {
     let isAnimationActive: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var animationEpoch = Date()
 
     var body: some View {
         Group {
-            if PetSpriteResource.isAvailable, isAnimationActive, !reduceMotion {
-                TimelineView(.periodic(
-                    from: animationEpoch,
-                    by: frameDuration
-                )) { context in
-                    let frameIndex = currentFrameIndex(at: context.date)
-                    if let frame = PetSpriteResource.frame(row: row, column: frameIndex) {
-                        spriteFrame(frame)
-                    } else {
-                        fallbackCharacter
-                    }
-                }
-            } else if let frame = PetSpriteResource.frame(row: row, column: 0) {
-                spriteFrame(frame)
+            if PetSpriteResource.isAvailable {
+                NativePetSpriteView(configuration: PetSpriteAnimationPolicy.configuration(
+                    animationState: animationState,
+                    isDragging: isDragging,
+                    dragDirection: dragDirection,
+                    isAnimationActive: isAnimationActive,
+                    reduceMotion: reduceMotion
+                ))
             } else {
                 fallbackCharacter
             }
         }
-        .onChange(of: animationState) { _, _ in
-            animationEpoch = Date()
-        }
-        .onChange(of: isDragging) { _, _ in
-            animationEpoch = Date()
-        }
-        .onChange(of: dragDirection) { _, _ in
-            animationEpoch = Date()
-        }
-    }
-
-    private func spriteFrame(_ frame: CGImage) -> some View {
-        Image(decorative: frame, scale: 1)
-            .resizable()
-            .interpolation(.high)
-            .antialiased(true)
-            .aspectRatio(Atlas.cellWidth / Atlas.cellHeight, contentMode: .fit)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .shadow(color: .white.opacity(0.18), radius: 1)
-            .shadow(
-                color: .black.opacity(isDragging ? 0.12 : 0.28),
-                radius: isDragging ? 2 : 5,
-                y: isDragging ? 1 : 3
-            )
-    }
-
-    private var row: Int {
-        if isDragging {
-            return dragDirection == .right ? 1 : 2
-        }
-        return switch animationState {
-        case .idle: 0
-        case .succeeded: 4
-        case .failed: 5
-        case .waiting: 6
-        case .running: 7
-        case .review: 8
-        }
-    }
-
-    private var frameCount: Int {
-        if isDragging {
-            return 8
-        }
-        return switch animationState {
-        case .idle: 7
-        case .succeeded: 5
-        case .failed: 8
-        case .waiting, .running, .review: 6
-        }
-    }
-
-    private var frameDuration: TimeInterval {
-        if isDragging {
-            return 0.10
-        }
-        return switch animationState {
-        case .idle: 0.60
-        case .succeeded: 0.13
-        case .failed: 0.18
-        case .waiting: 0.20
-        case .running: 0.15
-        case .review: 0.19
-        }
-    }
-
-    private func currentFrameIndex(at date: Date) -> Int {
-        let elapsed = max(0, date.timeIntervalSince(animationEpoch))
-        return Int(elapsed / frameDuration) % frameCount
+        .aspectRatio(Atlas.cellWidth / Atlas.cellHeight, contentMode: .fit)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var fallbackCharacter: some View {
@@ -118,6 +44,166 @@ struct PetSpriteAnimationView: View {
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.blue)
         }
+    }
+}
+
+struct PetSpriteAnimationConfiguration: Equatable, Sendable {
+    let row: Int
+    let frameCount: Int
+    let frameDuration: TimeInterval
+    let shouldAnimate: Bool
+}
+
+enum PetSpriteAnimationPolicy {
+    static func configuration(
+        animationState: PetAnimationState,
+        isDragging: Bool,
+        dragDirection: PetDragDirection,
+        isAnimationActive: Bool,
+        reduceMotion: Bool
+    ) -> PetSpriteAnimationConfiguration {
+        let row: Int
+        let frameCount: Int
+        let frameDuration: TimeInterval
+
+        if isDragging {
+            row = dragDirection == .right ? 1 : 2
+            frameCount = 8
+            frameDuration = 0.10
+        } else {
+            switch animationState {
+            case .idle:
+                row = 0
+                frameCount = 7
+                frameDuration = 1.0
+            case .succeeded:
+                row = 4
+                frameCount = 5
+                frameDuration = 0.50
+            case .failed:
+                row = 5
+                frameCount = 8
+                frameDuration = 0.50
+            case .waiting:
+                row = 6
+                frameCount = 6
+                frameDuration = 0.50
+            case .running:
+                row = 7
+                frameCount = 6
+                frameDuration = 0.20
+            case .review:
+                row = 8
+                frameCount = 6
+                frameDuration = 0.25
+            }
+        }
+
+        return PetSpriteAnimationConfiguration(
+            row: row,
+            frameCount: frameCount,
+            frameDuration: frameDuration,
+            shouldAnimate: isAnimationActive && !reduceMotion
+        )
+    }
+}
+
+/// Updates one layer's contents instead of invalidating a SwiftUI `TimelineView`
+/// and its surrounding AttributeGraph on every sprite frame.
+private struct NativePetSpriteView: NSViewRepresentable {
+    let configuration: PetSpriteAnimationConfiguration
+
+    func makeNSView(context: Context) -> PetSpriteLayerView {
+        let view = PetSpriteLayerView()
+        view.configure(configuration)
+        return view
+    }
+
+    func updateNSView(_ nsView: PetSpriteLayerView, context: Context) {
+        nsView.configure(configuration)
+    }
+
+    static func dismantleNSView(_ nsView: PetSpriteLayerView, coordinator: Void) {
+        nsView.stopAnimating()
+    }
+}
+
+@MainActor
+private final class PetSpriteLayerView: NSView {
+    private var configuration: PetSpriteAnimationConfiguration?
+    private var animationTimer: Timer?
+    private var frameIndex = 0
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.isOpaque = false
+        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.contentsGravity = .resizeAspect
+        layer?.minificationFilter = .trilinear
+        layer?.magnificationFilter = .linear
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override var isOpaque: Bool { false }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else {
+            stopAnimating()
+            return
+        }
+        restartTimerIfNeeded()
+    }
+
+    func configure(_ newConfiguration: PetSpriteAnimationConfiguration) {
+        guard configuration != newConfiguration else { return }
+        configuration = newConfiguration
+        frameIndex = 0
+        displayCurrentFrame()
+        restartTimerIfNeeded()
+    }
+
+    func stopAnimating() {
+        animationTimer?.invalidate()
+        animationTimer = nil
+    }
+
+    private func restartTimerIfNeeded() {
+        stopAnimating()
+        guard window != nil,
+              let configuration,
+              configuration.shouldAnimate,
+              configuration.frameCount > 1 else {
+            return
+        }
+
+        let timer = Timer(timeInterval: configuration.frameDuration, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.advanceFrame()
+            }
+        }
+        timer.tolerance = min(0.10, configuration.frameDuration * 0.20)
+        RunLoop.main.add(timer, forMode: .default)
+        animationTimer = timer
+    }
+
+    private func advanceFrame() {
+        guard let configuration else { return }
+        frameIndex = (frameIndex + 1) % configuration.frameCount
+        displayCurrentFrame()
+    }
+
+    private func displayCurrentFrame() {
+        guard let configuration else { return }
+        layer?.contents = PetSpriteResource.frame(
+            row: configuration.row,
+            column: frameIndex
+        )
     }
 }
 

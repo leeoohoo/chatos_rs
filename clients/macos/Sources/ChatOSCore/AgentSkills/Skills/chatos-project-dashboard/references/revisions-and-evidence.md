@@ -22,3 +22,5 @@ Tie milestone progress to real Todo references and acceptance evidence. Percenta
 ## Human issues
 
 Record the requested action and severity precisely. Remove or resolve an issue only after the underlying condition changes.
+
+Do not create a Human issue merely because a Todo is blocked. First classify it as manager-resolvable, team-resolvable, external, or Human-only. For Human-only items, the detail must summarize attempted resolution, impact, deadline, options, and recommendation; `requested_action` must be a single decision or input, not “please handle this blocker.” Use a requirement survey when the Human must answer multiple related questions.

@@ -337,9 +337,7 @@ struct AgentDirectChatView: View {
 
     private var composer: some View {
         AgentChatComposerView(
-            text: $viewModel.draftMessage,
-            attachments: $viewModel.attachments,
-            attachmentError: $viewModel.attachmentError,
+            state: viewModel.composerState,
             isSending: viewModel.isSending,
             placeholder: "输入消息，或粘贴图片、文档和长文本…",
             mentionCandidates: [],

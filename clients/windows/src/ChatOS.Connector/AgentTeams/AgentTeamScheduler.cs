@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using ChatOS.Connector.Gateway;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
 
@@ -10,10 +12,13 @@ internal sealed partial class AgentTeamScheduler(
     IAgentTeamStore store,
     AgentTeamModelGateway models,
     AgentTeamToolExecutor tools,
-    AgentPluginToolRuntime? pluginTools = null)
+    AgentPluginToolRuntime? pluginTools = null,
+    AgentTeamRuntimeSettingsProvider? runtimeSettings = null)
 {
     private readonly ConcurrentDictionary<(string OwnerUserId, AgentDeliveryLane Lane), SemaphoreSlim>
         _laneGates = new();
+    private readonly AgentTeamRuntimeSettingsProvider _runtimeSettings =
+        runtimeSettings ?? new AgentTeamRuntimeSettingsProvider();
 
     public event EventHandler<AgentTeamChangedEventArgs>? Changed;
 
@@ -96,7 +101,20 @@ internal sealed partial class AgentTeamScheduler(
         RaiseChanged(delivery, "run_started");
         try
         {
-            await RunDeliveryAsync(delivery, run, cancellationToken).ConfigureAwait(false);
+            var settings = _runtimeSettings.Current;
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(settings.RunTimeoutSeconds));
+            try
+            {
+                await RunDeliveryAsync(delivery, run, settings, timeout.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException exception) when (
+                !cancellationToken.IsCancellationRequested && timeout.IsCancellationRequested)
+            {
+                throw new AgentTeamException(AgentTeamError.ModelUnavailable,
+                    "Agent run exceeded its managed time limit.", exception);
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -150,6 +168,7 @@ internal sealed partial class AgentTeamScheduler(
     private async Task RunDeliveryAsync(
         AgentDelivery delivery,
         AgentRunSummary initialRun,
+        NativeAgentRuntimeSettings settings,
         CancellationToken cancellationToken)
     {
         var room = await store.GetRoomAsync(delivery.OwnerUserId, delivery.RoomId, cancellationToken)
@@ -231,8 +250,18 @@ internal sealed partial class AgentTeamScheduler(
         string? responseMessageId = null;
         var ended = false;
         var transientRetries = 0;
-        for (var modelCall = run.ModelCalls + 1; modelCall <= 16 && !ended; modelCall++)
+        var noProgressRounds = 0;
+        var observations = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (var modelCall = run.ModelCalls + 1;
+             modelCall <= settings.MaximumModelCalls && !ended;
+             modelCall++)
         {
+            if (noProgressRounds >= settings.MaximumNoProgressRounds)
+            {
+                throw new AgentTeamException(AgentTeamError.ModelUnavailable,
+                    "Agent paused after repeated tool rounds without progress.");
+            }
+            AgentTeamContextBudget.EnsureWithinLimit(input, definitions, settings);
             run = run with
             {
                 ModelCalls = modelCall,
@@ -242,11 +271,15 @@ internal sealed partial class AgentTeamScheduler(
             AgentModelTurn turn;
             try
             {
-                turn = await models.CompleteAsync(profile, input, definitions, cancellationToken)
+                turn = await models.CompleteAsync(profile, input, definitions, cancellationToken,
+                        settings.RequestTimeoutSeconds,
+                        Math.Min(16_384, settings.OutputReserveTokens))
                     .ConfigureAwait(false);
             }
             catch (AgentTeamException exception) when (
-                exception.IsTransient && transientRetries < 5 && modelCall < 16)
+                exception.IsTransient &&
+                transientRetries < settings.MaximumRequestRetries &&
+                modelCall < settings.MaximumModelCalls)
             {
                 transientRetries++;
                 await Task.Delay(TimeSpan.FromSeconds(1 << (transientRetries - 1)),
@@ -273,6 +306,7 @@ internal sealed partial class AgentTeamScheduler(
                 continue;
             }
 
+            noProgressRounds++;
             foreach (var call in turn.ToolCalls)
             {
                 AgentToolExecutionResult result;
@@ -290,7 +324,7 @@ internal sealed partial class AgentTeamScheduler(
                     {
                         success = false,
                         error = SafeError(exception),
-                    }));
+                    }), IsError: true);
                 }
 
                 input.Add(new Dictionary<string, object>
@@ -299,6 +333,11 @@ internal sealed partial class AgentTeamScheduler(
                     ["call_id"] = call.Id,
                     ["output"] = result.Content,
                 });
+                var signature = ToolFingerprint(call);
+                var madeProgress = !observations.TryGetValue(signature, out var previous) ||
+                    !string.Equals(previous, result.Content, StringComparison.Ordinal);
+                observations[signature] = result.Content;
+                if (madeProgress && !result.IsError) noProgressRounds = 0;
                 responseMessageId ??= result.ResponseMessageId;
                 if (result.EndsCycle)
                 {
@@ -565,5 +604,22 @@ internal sealed partial class AgentTeamScheduler(
             _ => "The local Agent run failed before completion.",
         };
         return message.Length <= 2_000 ? message : message[..2_000];
+    }
+
+    private static string ToolFingerprint(AgentToolCall call)
+    {
+        string arguments;
+        try
+        {
+            using var document = JsonDocument.Parse(call.Arguments);
+            arguments = JsonSerializer.Serialize(document.RootElement);
+        }
+        catch (JsonException)
+        {
+            arguments = call.Arguments;
+        }
+
+        return Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes($"{call.Name}\n{arguments}")));
     }
 }

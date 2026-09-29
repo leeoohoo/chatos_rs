@@ -7,7 +7,8 @@ namespace ChatOS.Connector.AgentTeams;
 internal sealed record AgentToolExecutionResult(
     string Content,
     bool EndsCycle = false,
-    string? ResponseMessageId = null);
+    string? ResponseMessageId = null,
+    bool IsError = false);
 
 internal sealed partial class AgentTeamToolExecutor(
     IAgentTeamStore store,

@@ -165,12 +165,13 @@ public actor NativeAgentGroupChatService {
 
     /// Emits process-local invalidations after the durable SQLite write has completed. Consumers
     /// always re-read SQLite, so this stream is only a wake-up signal and never a second source of
-    /// truth. `bufferingNewest` coalesces rapid model/tool checkpoint updates for slow UI readers.
+    /// truth. A small bounded buffer preserves a lower-frequency `roomUpdated` invalidation among
+    /// rapid model/tool checkpoints while still applying backpressure to slow UI readers.
     public func changes(
         ownerUserID: String,
         roomID: String? = nil
     ) -> AsyncStream<NativeAgentGroupChatChange> {
-        AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+        AsyncStream(bufferingPolicy: .bufferingNewest(64)) { continuation in
             let id = UUID()
             changeObservers[id] = .init(
                 ownerUserID: ownerUserID,

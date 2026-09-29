@@ -10,7 +10,7 @@ param(
     [string]$LocalConnectorCloudBaseUrl = "https://local-connector.jgoool.com",
 
     [ValidatePattern("^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$")]
-    [string]$Version = "3.0.5",
+    [string]$Version = "3.0.7",
 
     [switch]$SkipTests,
 
@@ -295,6 +295,7 @@ try {
     }
     $metadata = [ordered]@{
         schema_version = 1
+        app_version = $Version
         packaged_at = [DateTimeOffset]::UtcNow.ToString("O")
         platform = $Platform
         runtime_identifier = $runtimeIdentifier

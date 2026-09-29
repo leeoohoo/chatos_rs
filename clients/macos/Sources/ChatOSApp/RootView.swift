@@ -25,7 +25,10 @@ struct RootView: View {
                     : .bottomTrailing) {
                     VisualSessionOverlayHost(
                         store: model.visualSessionStore,
-                        currentConversationID: model.currentConversationID
+                        currentConversationID: model.currentConversationID,
+                        onSelectPrevious: model.selectPreviousVisualSession,
+                        onSelectNext: model.selectNextVisualSession,
+                        onToggle: model.toggleVisualSession
                     )
                     .padding(18)
                     .zIndex(20)

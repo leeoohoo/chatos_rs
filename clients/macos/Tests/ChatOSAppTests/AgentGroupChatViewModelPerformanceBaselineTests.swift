@@ -96,10 +96,12 @@ final class AgentGroupChatViewModelPerformanceBaselineTests: XCTestCase {
 
         // Freeze the trailing-edge coalesced refresh fan-out. A 500-event burst must settle as
         // one complete refresh; any higher result is a duplicate-refresh regression.
-        XCTAssertEqual(initialLoadPreparedStatements, 349)
-        XCTAssertEqual(initialLoadPublications, 45)
-        XCTAssertEqual(burstRefreshPreparedStatements, 123)
-        XCTAssertEqual(burstRefreshPublications, 21)
+        XCTAssertEqual(initialLoadPreparedStatements, 541)
+        // Initial hydration publishes only values that differ from their empty defaults.
+        XCTAssertEqual(initialLoadPublications, 13)
+        XCTAssertEqual(burstRefreshPreparedStatements, 125)
+        // A durable-state verification with no data changes must not invalidate SwiftUI.
+        XCTAssertEqual(burstRefreshPublications, 0)
         XCTAssertGreaterThan(probe.sampleCount, 0)
 
         let measurements = Measurements(

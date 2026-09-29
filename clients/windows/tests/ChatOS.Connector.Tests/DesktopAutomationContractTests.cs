@@ -184,6 +184,26 @@ public sealed class DesktopAutomationContractTests
         Assert.True(missingNames.Length == 0, $"Automation elements missing explicit accessible names: {string.Join(", ", missingNames)}");
     }
 
+    [Fact]
+    public void SidebarListsDoNotWriteNullSelectionsBackToTheSharedViewModel()
+    {
+        var mainWindow = XDocument.Load(Path.Combine(
+            FindRepositoryRoot(), "src", "ChatOS.Desktop", "MainWindow.xaml"));
+        var sidebarLists = mainWindow.Descendants()
+            .Where(element => element.Name.LocalName == "ListView")
+            .Where(element => element.Attributes().Any(attribute =>
+                attribute.Name.LocalName == "AutomationProperties.AutomationId" &&
+                attribute.Value.StartsWith("ChatOS.Shell.", StringComparison.Ordinal)))
+            .ToArray();
+
+        Assert.Equal(5, sidebarLists.Length);
+        Assert.All(sidebarLists, list =>
+        {
+            Assert.Contains("Mode=OneWay", list.Attribute("SelectedItem")?.Value);
+            Assert.Equal("OnSidebarSelectionChanged", list.Attribute("SelectionChanged")?.Value);
+        });
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

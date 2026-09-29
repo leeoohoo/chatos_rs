@@ -8,6 +8,8 @@ final class PetOverlayStore: ObservableObject {
 
     private var reducer = PetStateReducer()
     private var expirationTask: Task<Void, Never>?
+    private var scheduledExpiration: Date?
+    private var expirationMonitoringEnabled = false
     private var sourceVersions: [PetActivitySource: Int64] = [:]
     private var dismissedActivityIdentities: [String: Date] = [:]
     var onDisposition: ((PetActivity, PetActivityDisposition) -> Void)?
@@ -21,16 +23,9 @@ final class PetOverlayStore: ObservableObject {
     }
 
     func startExpirationMonitoring() {
-        guard expirationTask == nil else { return }
-        expirationTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-                guard let self, !Task.isCancelled else { return }
-                if self.reducer.removeExpired() {
-                    self.publishPresentation()
-                }
-            }
-        }
+        guard !expirationMonitoringEnabled else { return }
+        expirationMonitoringEnabled = true
+        publishPresentation()
     }
 
     func apply(_ event: PetActivityEvent) {
@@ -166,14 +161,53 @@ final class PetOverlayStore: ObservableObject {
         dismissedActivityIdentities.removeValue(forKey: activityIdentity(activity))
     }
 
-    private func publishPresentation() {
-        let nextActivities = reducer.visibleActivities()
-        let nextPresentation = reducer.presentation()
+    private func publishPresentation(at date: Date = Date()) {
+        reducer.removeExpired(at: date)
+        let nextActivities = reducer.visibleActivities(at: date)
+        let nextPresentation = reducer.presentation(at: date)
         if activities != nextActivities {
             activities = nextActivities
         }
         if presentation != nextPresentation {
             presentation = nextPresentation
+        }
+        scheduleNextExpiration(in: nextActivities, after: date)
+    }
+
+    private func scheduleNextExpiration(
+        in activities: [PetActivity],
+        after date: Date
+    ) {
+        guard expirationMonitoringEnabled else { return }
+        let nextExpiration = PetExpirationSchedulingPolicy.nextExpiration(
+            in: activities,
+            after: date
+        )
+        if scheduledExpiration == nextExpiration,
+           nextExpiration == nil || expirationTask != nil {
+            return
+        }
+
+        expirationTask?.cancel()
+        expirationTask = nil
+        scheduledExpiration = nextExpiration
+        guard let nextExpiration else { return }
+
+        let delay = max(0, nextExpiration.timeIntervalSince(date))
+        expirationTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(delay))
+            } catch {
+                return
+            }
+            guard let self,
+                  !Task.isCancelled,
+                  self.scheduledExpiration == nextExpiration else {
+                return
+            }
+            self.expirationTask = nil
+            self.scheduledExpiration = nil
+            self.publishPresentation()
         }
     }
 
@@ -243,5 +277,14 @@ final class PetOverlayStore: ObservableObject {
 
     private static func parseDate(_ value: String) -> Date? {
         ISO8601DateFormatter().date(from: value)
+    }
+}
+
+enum PetExpirationSchedulingPolicy {
+    static func nextExpiration(
+        in activities: [PetActivity],
+        after date: Date
+    ) -> Date? {
+        activities.compactMap(\.expiresAt).filter { $0 > date }.min()
     }
 }

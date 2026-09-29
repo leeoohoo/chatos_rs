@@ -184,6 +184,10 @@ public sealed class ProjectRequirementSurveysViewModelTests
         public Task ArchiveAssetAsync(string ownerUserId, string roomId, string assetId,
             string? editorAgentId, int expectedRevision,
             CancellationToken cancellationToken = default) => Unsupported();
+        public Task<IReadOnlyList<AgentTeamAssetRevision>> ListAssetRevisionsAsync(
+            string ownerUserId, string roomId, string assetId,
+            CancellationToken cancellationToken = default) =>
+            Unsupported<IReadOnlyList<AgentTeamAssetRevision>>();
         public Task<AgentRequirementSurvey> SubmitRequirementSurveyAsync(string ownerUserId,
             string roomId, string surveyId, AgentRequirementSubmission submission,
             CancellationToken cancellationToken = default) => Unsupported<AgentRequirementSurvey>();

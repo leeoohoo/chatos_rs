@@ -474,7 +474,13 @@ extension SQLiteAgentGroupChatStore {
             let suggestionNotice = suggestionCount > 0
                 ? "\n共享资产更新建议：\(suggestionCount) 条，请用 todo_read_progress 审核后决定是否落库。"
                 : ""
-            let content = "Todo 状态已更新：\(todo.title)\n状态：\(todo.status.rawValue)\n\(summary)\(suggestionNotice)\n如果你是该团队项目经理，请调用 project_dashboard_get 核对实时事实，并在阶段、里程碑、风险或 Human 待办发生变化时使用 project_dashboard_update 更新总览。"
+            let managerInstruction: String
+            if todo.status == .blocked {
+                managerInstruction = "如果你是该团队项目经理，请先读取完整进度并自行分流：可通过补充信息、拆单、重派、重试或团队协调解决的，不得转给 Human；负责人工作已完成而后续属于另一角色时，创建后续 Todo。只有权限、预算、凭据、产品方向决策或外部动作确实只能由 Human 完成时，才整理包含已尝试动作、影响与期限、2—3 个方案、推荐方案和明确请求的升级事项，问题较多时创建调研 Todo。"
+            } else {
+                managerInstruction = "如果你是该团队项目经理，请识别完成结果中的跨角色后续并创建独立 Todo，不要把已完成交付重新解释为阻塞。"
+            }
+            let content = "Todo 状态已更新：\(todo.title)\n状态：\(todo.status.rawValue)\n\(summary)\(suggestionNotice)\n\(managerInstruction)\n请调用 project_dashboard_get 核对实时事实；普通阻塞属于项目经理待协调事项，只有真正的 Human-only 决策或输入才能写入 Human 待办。"
             let eventKey = "status:\(todo.id):\(todo.status.rawValue):\(todo.updatedAtUnixMs)"
             var deliveries: [ProjectAgentDelivery] = []
             for recipientID in recipientIDs {

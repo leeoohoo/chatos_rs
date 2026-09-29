@@ -140,15 +140,51 @@ extension AppModel {
     }
 
     func recoverLocalConnector(forceReconnect: Bool) {
+        let now = Date()
+        let secondsSinceLastRecovery = lastLocalConnectorRecoveryDate.map {
+            now.timeIntervalSince($0)
+        }
+        let hasLiveTask = localConnectorRecoveryTask.map { !$0.isCancelled } ?? false
+        guard LocalConnectorRecoveryPolicy.shouldStart(
+            forceReconnect: forceReconnect,
+            hasLiveTask: hasLiveTask,
+            secondsSinceLastRecovery: secondsSinceLastRecovery
+        ) else { return }
+
+        localConnectorRecoveryTask?.cancel()
+        localConnectorRecoveryGeneration += 1
+        let generation = localConnectorRecoveryGeneration
+        lastLocalConnectorRecoveryDate = now
         let service = localConnectorService
-        Task { [weak self] in
+        localConnectorRecoveryTask = Task { [weak self] in
             await service.recoverGatewayConnection(forceReconnect: forceReconnect)
-            try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                self?.localConnectorControl.refreshStatus()
+            do {
+                try await Task.sleep(for: .milliseconds(500))
+            } catch {
+                guard self?.localConnectorRecoveryGeneration == generation else { return }
+                self?.localConnectorRecoveryTask = nil
+                return
             }
+            guard !Task.isCancelled,
+                  self?.localConnectorRecoveryGeneration == generation else { return }
+            self?.localConnectorControl.refreshStatus()
+            self?.localConnectorRecoveryTask = nil
         }
     }
 
+}
+
+enum LocalConnectorRecoveryPolicy {
+    static let minimumRecoveryInterval: TimeInterval = 60
+
+    static func shouldStart(
+        forceReconnect: Bool,
+        hasLiveTask: Bool,
+        secondsSinceLastRecovery: TimeInterval?
+    ) -> Bool {
+        if forceReconnect { return true }
+        if hasLiveTask { return false }
+        guard let secondsSinceLastRecovery else { return true }
+        return secondsSinceLastRecovery >= minimumRecoveryInterval
+    }
 }

@@ -19,7 +19,7 @@ struct AgentAvatarView: View {
 
     var body: some View {
         Group {
-            if let data, let image = NSImage(data: data) {
+            if let data, let image = AgentAvatarImageCache.image(for: data) {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFill()
@@ -34,6 +34,24 @@ struct AgentAvatarView: View {
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .accessibilityLabel("\(name)的头像")
+    }
+}
+
+@MainActor
+private enum AgentAvatarImageCache {
+    private static let cache: NSCache<NSData, NSImage> = {
+        let cache = NSCache<NSData, NSImage>()
+        cache.countLimit = 128
+        cache.totalCostLimit = 64 * 1_024 * 1_024
+        return cache
+    }()
+
+    static func image(for data: Data) -> NSImage? {
+        let key = data as NSData
+        if let cached = cache.object(forKey: key) { return cached }
+        guard let image = NSImage(data: data) else { return nil }
+        cache.setObject(image, forKey: key, cost: data.count)
+        return image
     }
 }
 

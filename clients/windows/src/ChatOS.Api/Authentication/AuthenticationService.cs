@@ -65,6 +65,51 @@ public sealed class AuthenticationService : IAuthenticationService
         return new AuthSession(response.User.ToDomain());
     }
 
+    public async Task<RegistrationCodeDelivery> SendRegistrationCodeAsync(
+        string email,
+        string inviteCode,
+        CancellationToken cancellationToken = default)
+    {
+        email = email.Trim();
+        inviteCode = inviteCode.Trim();
+        if (email.Length == 0 || inviteCode.Length == 0)
+            throw new ArgumentException("Email and invitation code are required.");
+
+        var response = await _client.PostAsync<SendRegistrationCodeResponseDto>(
+            "auth/register/send-code",
+            new SendRegistrationCodeRequestDto(email, inviteCode),
+            cancellationToken).ConfigureAwait(false);
+        return new RegistrationCodeDelivery(
+            Math.Max(0, response.ExpiresInSeconds),
+            Math.Max(0, response.ResendAfterSeconds));
+    }
+
+    public async Task<AuthSession> RegisterAsync(
+        string email,
+        string password,
+        string inviteCode,
+        string verificationCode,
+        CancellationToken cancellationToken = default)
+    {
+        email = email.Trim();
+        inviteCode = inviteCode.Trim();
+        verificationCode = verificationCode.Trim();
+        if (email.Length == 0 || password.Length == 0 ||
+            inviteCode.Length == 0 || verificationCode.Length == 0)
+            throw new ArgumentException("Complete registration information is required.");
+
+        var response = await _client.PostAsync<LoginResponseDto>(
+            "auth/register",
+            new RegisterRequestDto(email, password, inviteCode, verificationCode),
+            cancellationToken).ConfigureAwait(false);
+        var token = response.AccessToken.Trim();
+        if (token.Length == 0)
+            throw new ChatOSApiException("The registration response did not include an access token.");
+
+        await _tokenStore.SetAccessTokenAsync(token, cancellationToken).ConfigureAwait(false);
+        return new AuthSession(response.User.ToDomain());
+    }
+
     public ValueTask LogoutAsync(CancellationToken cancellationToken = default) =>
         _tokenStore.ClearAsync(cancellationToken);
 }
@@ -76,6 +121,20 @@ internal sealed record LoginRequestDto(
 internal sealed record LoginResponseDto(
     [property: JsonPropertyName("access_token")] string AccessToken,
     [property: JsonPropertyName("user")] AuthUserDto User);
+
+internal sealed record SendRegistrationCodeRequestDto(
+    [property: JsonPropertyName("email")] string Email,
+    [property: JsonPropertyName("invite_code")] string InviteCode);
+
+internal sealed record SendRegistrationCodeResponseDto(
+    [property: JsonPropertyName("expires_in_seconds")] int ExpiresInSeconds,
+    [property: JsonPropertyName("resend_after_seconds")] int ResendAfterSeconds);
+
+internal sealed record RegisterRequestDto(
+    [property: JsonPropertyName("email")] string Email,
+    [property: JsonPropertyName("password")] string Password,
+    [property: JsonPropertyName("invite_code")] string InviteCode,
+    [property: JsonPropertyName("verification_code")] string VerificationCode);
 
 internal sealed record MeResponseDto(
     [property: JsonPropertyName("user")] AuthUserDto User);

@@ -42,6 +42,16 @@ public sealed partial class WorkspaceHostPage : UserControl
 
     public LocalizationViewModel Localization { get; }
 
+    public void OpenProjectFeature(string tab)
+    {
+        WorkspaceNavigation.SelectedItem = tab switch
+        {
+            "agent-team" => AgentTeamItem,
+            "requirement-surveys" => RequirementSurveysItem,
+            _ => ChatItem,
+        };
+    }
+
     public void Configure(ShellResourceViewModel? resource)
     {
         var isProject = resource?.Kind == WorkspaceResourceKind.Project;

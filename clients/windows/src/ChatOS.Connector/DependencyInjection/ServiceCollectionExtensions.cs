@@ -46,6 +46,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAgentTeamStore>(provider =>
             provider.GetRequiredService<SqliteAgentTeamStore>());
         services.AddSingleton<AgentTeamModelGateway>();
+        services.AddSingleton<AgentTeamRuntimeSettingsProvider>();
         services.AddSingleton<AgentProjectToolExecutor>();
         services.AddSingleton<AgentTeamToolExecutor>();
         services.AddSingleton<AgentPluginToolRuntime>();

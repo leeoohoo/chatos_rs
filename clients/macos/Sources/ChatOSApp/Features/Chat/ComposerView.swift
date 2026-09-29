@@ -5,9 +5,15 @@ import UniformTypeIdentifiers
 struct ComposerView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var conversation: ConversationSessionViewModel
+    @ObservedObject private var composerState: ConversationComposerState
     @State private var showsFileImporter = false
     @State private var previewedAttachment: ConversationAttachmentDraft?
     @State private var isDropTargeted = false
+
+    init(conversation: ConversationSessionViewModel) {
+        self.conversation = conversation
+        _composerState = ObservedObject(wrappedValue: conversation.composerState)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -45,7 +51,7 @@ struct ComposerView: View {
             case let .success(urls):
                 conversation.addAttachmentFiles(urls)
             case let .failure(error):
-                conversation.attachmentError = error.localizedDescription
+                composerState.attachmentError = error.localizedDescription
             }
         }
         .sheet(item: $previewedAttachment) { attachment in
@@ -150,10 +156,10 @@ struct ComposerView: View {
 
     @ViewBuilder
     private var attachmentStrip: some View {
-        if !conversation.attachments.isEmpty {
+        if !composerState.attachments.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(conversation.attachments) { attachment in
+                    ForEach(composerState.attachments) { attachment in
                         ComposerAttachmentChip(
                             attachment: attachment,
                             onPreview: { previewedAttachment = attachment },
@@ -168,7 +174,7 @@ struct ComposerView: View {
 
     @ViewBuilder
     private var attachmentError: some View {
-        if let error = conversation.attachmentError {
+        if let error = composerState.attachmentError {
             HStack(alignment: .top, spacing: 7) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
@@ -188,7 +194,7 @@ struct ComposerView: View {
     private var input: some View {
         HStack(alignment: .bottom, spacing: 10) {
             ComposerPasteTextEditor(
-                text: $conversation.draft,
+                text: $composerState.draft,
                 placeholder: model.localized(
                     "输入消息，或粘贴图片、文档和长文本…",
                     english: "Type a message, or paste images, documents, and long text…"

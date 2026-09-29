@@ -13,6 +13,27 @@ namespace ChatOS.Connector.Tests;
 public sealed class PetQuickChatViewModelTests
 {
     [Fact]
+    public void Windows_shell_exposes_applications_agents_and_surveys_as_first_class_tools()
+    {
+        var main = CreateMainWindow(new ImmediateUiDispatcher());
+
+        Assert.Equal(
+            [
+                WorkspaceResourceKind.Applications,
+                WorkspaceResourceKind.MediaStudio,
+                WorkspaceResourceKind.AgentTeams,
+                WorkspaceResourceKind.RequirementSurveys,
+            ],
+            main.ApplicationResources.Select(resource => resource.Kind));
+        Assert.All(main.ApplicationResources, resource =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(resource.Title));
+            Assert.False(string.IsNullOrWhiteSpace(resource.Subtitle));
+            Assert.False(string.IsNullOrWhiteSpace(resource.Glyph));
+        });
+    }
+
+    [Fact]
     public async Task Jiguli_is_always_first_and_only_existing_favorite_projects_are_appended()
     {
         var dispatcher = new ImmediateUiDispatcher();

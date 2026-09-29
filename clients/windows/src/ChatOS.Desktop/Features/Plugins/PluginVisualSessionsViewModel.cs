@@ -40,9 +40,16 @@ public sealed partial class PluginVisualSessionsViewModel : ObservableObject, ID
 
     public bool HasSessions => Sessions.Count != 0;
 
+    public long VisualRevision => _service.VisualRevision;
+
     public byte[]? FrameData => SelectedSession?.FrameData;
 
     public bool HasFrame => FrameData is { Length: > 0 };
+
+    public Task<long> WaitForVisualChangeAsync(
+        long afterRevision,
+        CancellationToken cancellationToken = default) =>
+        _service.WaitForVisualChangeAsync(afterRevision, cancellationToken);
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {

@@ -89,14 +89,64 @@ struct PetTaskInspectorPlacement {
 }
 
 final class PetMessagePanel: NSPanel {
+    var onTextInputFocusRequest: ((NSResponder) -> Void)?
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        let accepted = super.makeFirstResponder(responder)
+        guard accepted, let responder, responder is NSTextView else { return accepted }
+
+        // A non-activating pet panel can become key while another application
+        // remains active. That is enough for raw key events, but macOS input
+        // methods only present their candidate UI for the active application.
+        // Wait until AppKit has completed the responder change before asking
+        // the controller to activate ChatOS around this specific text input.
+        DispatchQueue.main.async { [weak self, weak responder] in
+            guard let self, let responder, self.firstResponder === responder else { return }
+            self.onTextInputFocusRequest?(responder)
+        }
+        return accepted
+    }
+
     override func sendEvent(_ event: NSEvent) {
+        let clickedTextInput: NSTextView? = if event.type == .leftMouseDown {
+            textInputResponder(at: event.locationInWindow)
+        } else {
+            nil
+        }
         if event.type == .leftMouseDown, !isKeyWindow {
             makeKey()
         }
         super.sendEvent(event)
+        guard let clickedTextInput else { return }
+
+        // The editor can remain first responder while another application is
+        // active. In that case AppKit does not call makeFirstResponder again,
+        // so focus-change observation alone cannot start the activating input
+        // window. Treat an actual click inside NSTextView as an explicit input
+        // request and defer the window handoff until this mouse event finishes.
+        DispatchQueue.main.async { [weak self, weak clickedTextInput] in
+            guard let self,
+                  let clickedTextInput,
+                  clickedTextInput.window === self,
+                  self.firstResponder === clickedTextInput else { return }
+            self.onTextInputFocusRequest?(clickedTextInput)
+        }
+    }
+
+    func textInputResponder(at windowPoint: NSPoint) -> NSTextView? {
+        guard let contentView else { return nil }
+        let point = contentView.convert(windowPoint, from: nil)
+        var candidate: NSView? = contentView.hitTest(point)
+        while let view = candidate {
+            if let textView = view as? NSTextView {
+                return textView
+            }
+            candidate = view.superview
+        }
+        return nil
     }
 }
 
@@ -281,6 +331,32 @@ enum PetOverlayPanelFactory {
         // non-activating panel needs key status. The interactive message panel
         // therefore takes key status on click while the pet panel stays passive.
         panel.becomesKeyOnlyIfNeeded = !acceptsKeyboardInput
+        return panel
+    }
+
+    static func makeActiveInputPanel(size: NSSize) -> PetMessagePanel {
+        let panel = PetMessagePanel(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.level = .popUpMenu
+        panel.animationBehavior = .utilityWindow
+        panel.collectionBehavior = [
+            .canJoinAllSpaces,
+            .fullScreenAuxiliary,
+            .transient,
+            .ignoresCycle,
+        ]
+        panel.isMovable = true
+        panel.isMovableByWindowBackground = false
+        panel.becomesKeyOnlyIfNeeded = false
         return panel
     }
 

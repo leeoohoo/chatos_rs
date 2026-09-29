@@ -1,0 +1,348 @@
+using System.Collections.ObjectModel;
+using CommunityToolkit.Mvvm.ComponentModel;
+
+namespace ChatOS.Desktop.Features.MediaStudio;
+
+public sealed partial class StorySegmentEditor : ObservableObject
+{
+    private readonly Func<string?, string?> _resolvePath;
+
+    public StorySegmentEditor(StorySegmentDocument document, Func<string?, string?> resolvePath)
+    {
+        _resolvePath = resolvePath;
+        Id = document.Id;
+        _title = document.Title;
+        _narrative = document.Narrative;
+        _imagePrompt = document.ImagePrompt;
+        _videoPrompt = document.VideoPrompt;
+        _seconds = document.Seconds;
+        _firstFrameAsset = document.FirstFrameAsset;
+        _lastFrameAsset = document.LastFrameAsset;
+        _videoAsset = document.VideoAsset;
+        _resourceIdsText = string.Join(", ", document.ResourceIds);
+        _kind = document.Kind;
+        _isRefined = document.IsRefined;
+        _pendingVideoJobId = document.PendingVideoJobId;
+        _pendingVideoJobStatus = document.PendingVideoJobStatus;
+        _pendingVideoRequestDigest = document.PendingVideoRequestDigest;
+        _pendingVideoGuidance = document.PendingVideoGuidance;
+        _actualVideoLastFrameAsset = document.ActualVideoLastFrameAsset;
+        _continuityIn = document.ContinuityIn ?? string.Empty;
+        _continuityOut = document.ContinuityOut ?? string.Empty;
+        _shotPlan = document.ShotPlan ?? string.Empty;
+        FirstFramePath = resolvePath(document.FirstFrameAsset);
+        LastFramePath = resolvePath(document.LastFrameAsset);
+        VideoPath = resolvePath(document.VideoAsset);
+        ActualVideoLastFramePath = resolvePath(document.ActualVideoLastFrameAsset);
+        foreach (var archived in document.ArchivedVideos)
+            ArchivedVideos.Add(new StoryArchivedVideoEditor(archived, resolvePath));
+        foreach (var archived in document.ArchivedFrames)
+            ArchivedFrames.Add(new StoryArchivedFrameEditor(archived, resolvePath));
+    }
+
+    public string Id { get; }
+    public string NumberLabel { get; internal set; } = string.Empty;
+    public string? FirstFramePath { get; private set; }
+    public string? LastFramePath { get; private set; }
+    public string? VideoPath { get; private set; }
+    public string? ActualVideoLastFramePath { get; private set; }
+    public string FrameStatus => (FirstFramePath, LastFramePath) switch
+    {
+        ({ Length: > 0 }, { Length: > 0 }) => "首尾帧已就绪",
+        ({ Length: > 0 }, _) => "首帧已就绪",
+        _ => "尚未生成画面",
+    };
+    public string VideoStatus => HasPendingVideoJob
+        ? $"已有视频任务 · {PendingVideoJobStatus ?? "等待查询"}"
+        : VideoPath is { Length: > 0 } ? "视频已完成" : "视频待生成";
+    public bool HasPendingVideoJob => !string.IsNullOrWhiteSpace(_pendingVideoJobId);
+    public string? PendingVideoJobId => _pendingVideoJobId;
+    public string? PendingVideoJobStatus => _pendingVideoJobStatus;
+    public string? PendingVideoRequestDigest => _pendingVideoRequestDigest;
+    public string PendingVideoGuidance => _pendingVideoGuidance;
+    public string KindLabel => Kind == StorySegmentKind.Transition ? "转场" : "剧情";
+    public ObservableCollection<StoryArchivedVideoEditor> ArchivedVideos { get; } = [];
+    public ObservableCollection<StoryArchivedFrameEditor> ArchivedFrames { get; } = [];
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(KindLabel))]
+    private StorySegmentKind _kind;
+    [ObservableProperty] private bool _isRefined;
+    [ObservableProperty] private string _title;
+    [ObservableProperty] private string _narrative;
+    [ObservableProperty] private string _imagePrompt;
+    [ObservableProperty] private string _videoPrompt;
+    [ObservableProperty] private int _seconds;
+    [ObservableProperty] private string _resourceIdsText;
+    [ObservableProperty] private string _continuityIn;
+    [ObservableProperty] private string _continuityOut;
+    [ObservableProperty] private string _shotPlan;
+    private string? _firstFrameAsset;
+    private string? _lastFrameAsset;
+    private string? _videoAsset;
+    private string? _pendingVideoJobId;
+    private string? _pendingVideoJobStatus;
+    private string? _pendingVideoRequestDigest;
+    private string _pendingVideoGuidance;
+    private string? _actualVideoLastFrameAsset;
+
+    public StorySegmentDocument ToDocument() => new(
+        Id,
+        Title.Trim(),
+        Narrative.Trim(),
+        ImagePrompt.Trim(),
+        VideoPrompt.Trim(),
+        Seconds,
+        _firstFrameAsset,
+        _lastFrameAsset,
+        _videoAsset)
+    {
+        Kind = this.Kind,
+        IsRefined = IsRefined,
+        PendingVideoJobId = _pendingVideoJobId,
+        PendingVideoJobStatus = _pendingVideoJobStatus,
+        PendingVideoRequestDigest = _pendingVideoRequestDigest,
+        PendingVideoGuidance = _pendingVideoGuidance,
+        ActualVideoLastFrameAsset = _actualVideoLastFrameAsset,
+        ArchivedVideos = ArchivedVideos.Select(item => item.Document).ToArray(),
+        ArchivedFrames = ArchivedFrames.Select(item => item.Document).ToArray(),
+        ResourceIds = ParseResourceIds(ResourceIdsText),
+        ContinuityIn = ContinuityIn.Trim(),
+        ContinuityOut = ContinuityOut.Trim(),
+        ShotPlan = ShotPlan.Trim(),
+    };
+
+    internal void RemoveResource(string resourceId)
+    {
+        ResourceIdsText = string.Join(", ", ParseResourceIds(ResourceIdsText)
+            .Where(id => !string.Equals(id, resourceId, StringComparison.Ordinal)));
+    }
+
+    private static IReadOnlyList<string> ParseResourceIds(string value) => value
+        .Split([',', '，', ';', '；'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+        .Distinct(StringComparer.Ordinal)
+        .ToArray();
+
+    public void SetFrame(bool lastFrame, string relativePath, string fullPath)
+    {
+        ArchiveCurrentFrame(lastFrame);
+        if (lastFrame)
+        {
+            _lastFrameAsset = relativePath;
+            LastFramePath = fullPath;
+            OnPropertyChanged(nameof(LastFramePath));
+        }
+        else
+        {
+            _firstFrameAsset = relativePath;
+            FirstFramePath = fullPath;
+            OnPropertyChanged(nameof(FirstFramePath));
+        }
+        OnPropertyChanged(nameof(FrameStatus));
+    }
+
+    public void RestoreArchivedFrame(StoryArchivedFrameEditor archived)
+    {
+        if (!ArchivedFrames.Contains(archived))
+            throw new InvalidOperationException("画面历史版本已失效。");
+        ArchiveCurrentFrame(archived.Document.IsLastFrame);
+        ArchivedFrames.Remove(archived);
+        ApplyFrameState(archived.Document.IsLastFrame, archived.Document.Asset);
+    }
+
+    public void RestoreFrameState(StorySegmentDocument document)
+    {
+        ArchivedFrames.Clear();
+        foreach (var archived in document.ArchivedFrames)
+            ArchivedFrames.Add(new StoryArchivedFrameEditor(archived, _resolvePath));
+        _firstFrameAsset = document.FirstFrameAsset;
+        _lastFrameAsset = document.LastFrameAsset;
+        FirstFramePath = _resolvePath(document.FirstFrameAsset);
+        LastFramePath = _resolvePath(document.LastFrameAsset);
+        OnPropertyChanged(nameof(FirstFramePath));
+        OnPropertyChanged(nameof(LastFramePath));
+        OnPropertyChanged(nameof(FrameStatus));
+    }
+
+    public void SetVideo(string relativePath, string fullPath)
+    {
+        ArchiveCurrentVideo();
+        _videoAsset = relativePath;
+        VideoPath = fullPath;
+        _actualVideoLastFrameAsset = null;
+        ActualVideoLastFramePath = null;
+        ClearPendingVideoJob();
+        OnPropertyChanged(nameof(VideoPath));
+        OnPropertyChanged(nameof(ActualVideoLastFramePath));
+        OnPropertyChanged(nameof(VideoStatus));
+    }
+
+    public void RestoreArchivedVideo(StoryArchivedVideoEditor archived)
+    {
+        if (!ArchivedVideos.Contains(archived))
+            throw new InvalidOperationException("视频历史版本已失效。");
+        ArchiveCurrentVideo();
+        ArchivedVideos.Remove(archived);
+        ApplyVideoState(archived.Document.Asset, archived.Document.ActualLastFrameAsset);
+    }
+
+    public void RestoreVideoState(StorySegmentDocument document)
+    {
+        ArchivedVideos.Clear();
+        foreach (var archived in document.ArchivedVideos)
+            ArchivedVideos.Add(new StoryArchivedVideoEditor(archived, _resolvePath));
+        ApplyVideoState(document.VideoAsset, document.ActualVideoLastFrameAsset);
+    }
+
+    public void SetActualVideoLastFrame(string relativePath, string fullPath)
+    {
+        _actualVideoLastFrameAsset = relativePath;
+        ActualVideoLastFramePath = fullPath;
+        OnPropertyChanged(nameof(ActualVideoLastFramePath));
+    }
+
+    private void ArchiveCurrentVideo()
+    {
+        if (string.IsNullOrWhiteSpace(_videoAsset)) return;
+        var existing = ArchivedVideos.FirstOrDefault(item => item.Document.Asset == _videoAsset);
+        if (existing is not null) ArchivedVideos.Remove(existing);
+        ArchivedVideos.Insert(0, new StoryArchivedVideoEditor(new StoryArchivedVideoDocument(
+            _videoAsset,
+            _actualVideoLastFrameAsset,
+            $"{Title} · {DateTimeOffset.Now:MM-dd HH:mm}",
+            DateTimeOffset.UtcNow), _resolvePath));
+        while (ArchivedVideos.Count > 20) ArchivedVideos.RemoveAt(ArchivedVideos.Count - 1);
+    }
+
+    private void ArchiveCurrentFrame(bool lastFrame)
+    {
+        var asset = lastFrame ? _lastFrameAsset : _firstFrameAsset;
+        if (string.IsNullOrWhiteSpace(asset)) return;
+        var existing = ArchivedFrames.FirstOrDefault(item =>
+            item.Document.Asset == asset && item.Document.IsLastFrame == lastFrame);
+        if (existing is not null) ArchivedFrames.Remove(existing);
+        var role = lastFrame ? "尾帧" : "首帧";
+        ArchivedFrames.Insert(0, new StoryArchivedFrameEditor(new StoryArchivedFrameDocument(
+            asset,
+            lastFrame,
+            $"{Title} · {role} · {DateTimeOffset.Now:MM-dd HH:mm}",
+            DateTimeOffset.UtcNow), _resolvePath));
+        while (ArchivedFrames.Count > 40) ArchivedFrames.RemoveAt(ArchivedFrames.Count - 1);
+    }
+
+    private void ApplyFrameState(bool lastFrame, string asset)
+    {
+        if (lastFrame)
+        {
+            _lastFrameAsset = asset;
+            LastFramePath = _resolvePath(asset);
+            OnPropertyChanged(nameof(LastFramePath));
+        }
+        else
+        {
+            _firstFrameAsset = asset;
+            FirstFramePath = _resolvePath(asset);
+            OnPropertyChanged(nameof(FirstFramePath));
+        }
+        OnPropertyChanged(nameof(FrameStatus));
+    }
+
+    private void ApplyVideoState(string? asset, string? actualLastFrameAsset)
+    {
+        _videoAsset = asset;
+        _actualVideoLastFrameAsset = actualLastFrameAsset;
+        VideoPath = _resolvePath(asset);
+        ActualVideoLastFramePath = _resolvePath(actualLastFrameAsset);
+        ClearPendingVideoJob();
+        OnPropertyChanged(nameof(VideoPath));
+        OnPropertyChanged(nameof(ActualVideoLastFramePath));
+        OnPropertyChanged(nameof(VideoStatus));
+    }
+
+    public bool SetPendingVideoJob(string jobId, string status, string digest, string guidance)
+    {
+        if (_pendingVideoJobId == jobId && _pendingVideoJobStatus == status &&
+            _pendingVideoRequestDigest == digest && _pendingVideoGuidance == guidance) return false;
+        _pendingVideoJobId = jobId;
+        _pendingVideoJobStatus = status;
+        _pendingVideoRequestDigest = digest;
+        _pendingVideoGuidance = guidance;
+        OnPropertyChanged(nameof(PendingVideoJobId));
+        OnPropertyChanged(nameof(PendingVideoJobStatus));
+        OnPropertyChanged(nameof(PendingVideoRequestDigest));
+        OnPropertyChanged(nameof(PendingVideoGuidance));
+        OnPropertyChanged(nameof(HasPendingVideoJob));
+        OnPropertyChanged(nameof(VideoStatus));
+        return true;
+    }
+
+    public void ClearPendingVideoJob()
+    {
+        if (!HasPendingVideoJob && _pendingVideoJobStatus is null && _pendingVideoRequestDigest is null) return;
+        _pendingVideoJobId = null;
+        _pendingVideoJobStatus = null;
+        _pendingVideoRequestDigest = null;
+        _pendingVideoGuidance = "frames";
+        OnPropertyChanged(nameof(PendingVideoJobId));
+        OnPropertyChanged(nameof(PendingVideoJobStatus));
+        OnPropertyChanged(nameof(PendingVideoRequestDigest));
+        OnPropertyChanged(nameof(PendingVideoGuidance));
+        OnPropertyChanged(nameof(HasPendingVideoJob));
+        OnPropertyChanged(nameof(VideoStatus));
+    }
+
+    internal void SetNumberLabel(string value)
+    {
+        NumberLabel = value;
+        OnPropertyChanged(nameof(NumberLabel));
+    }
+
+    private void MarkRefinementStale()
+    {
+        if (IsRefined) IsRefined = false;
+    }
+
+    partial void OnKindChanged(StorySegmentKind value) => MarkRefinementStale();
+    partial void OnTitleChanged(string value) => MarkRefinementStale();
+    partial void OnNarrativeChanged(string value) => MarkRefinementStale();
+    partial void OnImagePromptChanged(string value) => MarkRefinementStale();
+    partial void OnVideoPromptChanged(string value) => MarkRefinementStale();
+    partial void OnSecondsChanged(int value) => MarkRefinementStale();
+    partial void OnResourceIdsTextChanged(string value) => MarkRefinementStale();
+    partial void OnContinuityInChanged(string value) => MarkRefinementStale();
+    partial void OnContinuityOutChanged(string value) => MarkRefinementStale();
+    partial void OnShotPlanChanged(string value) => MarkRefinementStale();
+}
+
+public sealed class StoryArchivedVideoEditor
+{
+    public StoryArchivedVideoEditor(
+        StoryArchivedVideoDocument document,
+        Func<string?, string?> resolvePath)
+    {
+        Document = document;
+        FilePath = resolvePath(document.Asset);
+    }
+
+    public StoryArchivedVideoDocument Document { get; }
+    public string Label => Document.Label;
+    public string ArchivedAtLabel => Document.ArchivedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+    public string? FilePath { get; }
+}
+
+public sealed class StoryArchivedFrameEditor
+{
+    public StoryArchivedFrameEditor(
+        StoryArchivedFrameDocument document,
+        Func<string?, string?> resolvePath)
+    {
+        Document = document;
+        FilePath = resolvePath(document.Asset);
+    }
+
+    public StoryArchivedFrameDocument Document { get; }
+    public string Label => Document.Label;
+    public string RoleLabel => Document.IsLastFrame ? "尾帧" : "首帧";
+    public string ArchivedAtLabel => Document.ArchivedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+    public string? FilePath { get; }
+}

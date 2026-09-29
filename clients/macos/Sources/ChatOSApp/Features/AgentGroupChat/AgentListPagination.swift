@@ -26,7 +26,7 @@ struct AgentListPaginationBar: View {
 
             Spacer(minLength: 8)
 
-            if !compact {
+            if !compact, pageSizeOptions.count > 1 {
                 Picker("每页", selection: $pageSize) {
                     ForEach(pageSizeOptions, id: \.self) { size in
                         Text("\(size) / 页").tag(size)

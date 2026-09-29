@@ -1,6 +1,7 @@
 using ChatOS.Connector.AgentTeams;
 using ChatOS.Connector.Persistence;
 using ChatOS.Core.Domain;
+using Microsoft.Data.Sqlite;
 
 namespace ChatOS.Connector.Tests;
 
@@ -17,10 +18,20 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
         _store = new SqliteAgentTeamStore(database);
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
-        if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true);
-        return Task.CompletedTask;
+        SqliteConnection.ClearAllPools();
+        for (var attempt = 1; Directory.Exists(_directory); attempt++)
+        {
+            try
+            {
+                Directory.Delete(_directory, recursive: true);
+            }
+            catch (IOException) when (attempt < 6)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(50 * attempt));
+            }
+        }
     }
 
     [Fact]
@@ -138,6 +149,33 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
         Assert.Equal(1, claimed.Attempt);
         var completed = await _store.CompleteDeliveryAsync("alice", claimed.Id, null);
         Assert.Equal(AgentDeliveryStatus.Completed, completed.Status);
+    }
+
+    [Fact]
+    public async Task MessagesPageBackwardWithoutDuplicatesAtEqualTimestamps()
+    {
+        var agent = await CreateAgentAsync("alice", "分页 Agent");
+        var room = await _store.OpenHumanAgentDirectAsync("alice", agent.Id);
+        for (var index = 0; index < 5; index++)
+        {
+            await _store.PostMessageAsync("alice", room.Id,
+                new AgentMessageDraft(AgentMessageSenderKind.Human, null, $"message-{index}"));
+        }
+
+        var all = await _store.ListMessagesAsync("alice", room.Id, 20);
+        var latest = await _store.ListMessagesAsync("alice", room.Id, 2);
+        var middle = await _store.ListMessagesAsync("alice", room.Id, 2,
+            cancellationToken: default,
+            beforeCreatedAtUnixMs: latest[0].CreatedAtUnixMs,
+            beforeMessageId: latest[0].Id);
+        var oldest = await _store.ListMessagesAsync("alice", room.Id, 2,
+            cancellationToken: default,
+            beforeCreatedAtUnixMs: middle[0].CreatedAtUnixMs,
+            beforeMessageId: middle[0].Id);
+
+        var paged = oldest.Concat(middle).Concat(latest).ToArray();
+        Assert.Equal(all.Select(message => message.Id), paged.Select(message => message.Id));
+        Assert.Equal(paged.Length, paged.Select(message => message.Id).Distinct().Count());
     }
 
     [Fact]

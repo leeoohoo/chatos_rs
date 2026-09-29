@@ -2,13 +2,42 @@ import ChatOSCore
 import SwiftUI
 
 struct ConversationTimelineView: View {
+    let conversation: ConversationSessionViewModel
+    let title: String
+    var projectRootPath: String? = nil
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(title).appFont(.subheadline.weight(.semibold))
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+
+            Divider()
+            ConversationHistoryStatusView(conversation: conversation)
+            ConversationTimelineContentView(
+                conversation: conversation,
+                projectRootPath: projectRootPath
+            )
+            .workspaceFill()
+            ComposerView(conversation: conversation)
+                .padding(16)
+        }
+        .workspaceFill()
+        .background(Color(nsColor: .textBackgroundColor))
+    }
+}
+
+private struct ConversationTimelineContentView: View {
     private static let bottomAnchorID = "conversation-timeline-bottom"
     private static let scrollCoordinateSpace = "conversation-timeline-scroll"
 
-    @ObservedObject var conversation: ConversationSessionViewModel
-    @EnvironmentObject private var model: AppModel
-    let title: String
-    var projectRootPath: String? = nil
+    let conversation: ConversationSessionViewModel
+    let projectRootPath: String?
+    @ObservedObject private var timelineObservationState: ConversationTimelineObservationState
+    @Environment(\.locale) private var locale
     @State private var selectedProcessTurn: ConversationTurn?
     @State private var selectedTaskTurn: ConversationTurn?
     @State private var selectedTaskReply: TaskReplySelection?
@@ -18,18 +47,17 @@ struct ConversationTimelineView: View {
     @State private var initialPositionTask: Task<Void, Never>?
     @State private var isPinnedToBottom = true
 
+    init(conversation: ConversationSessionViewModel, projectRootPath: String?) {
+        self.conversation = conversation
+        self.projectRootPath = projectRootPath
+        _timelineObservationState = ObservedObject(
+            wrappedValue: conversation.timelineObservationState
+        )
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            ConversationHistoryStatusView(conversation: conversation)
-            timeline
-                .workspaceFill()
-            ComposerView(conversation: conversation)
-                .padding(16)
-        }
-        .workspaceFill()
-        .background(Color(nsColor: .textBackgroundColor))
+        let _ = timelineObservationState.revision
+        timeline
         .sheet(item: $selectedProcessTurn) { turn in
             if let service = conversation.turnProcessService {
                 TurnProcessSheet(turn: turn, service: service)
@@ -48,15 +76,6 @@ struct ConversationTimelineView: View {
         }
     }
 
-    private var header: some View {
-        HStack {
-            Text(title).appFont(.subheadline.weight(.semibold))
-            Spacer()
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-    }
-
     private var timeline: some View {
         GeometryReader { viewport in
             ScrollViewReader { proxy in
@@ -65,7 +84,7 @@ struct ConversationTimelineView: View {
                         VStack(alignment: .leading, spacing: 0) {
                             if conversation.hasOlder {
                                 if conversation.isLoadingOlder {
-                                    ProgressView(model.localized(
+                                    ProgressView(localized(
                                         "正在加载更早消息…",
                                         english: "Loading earlier messages…"
                                     ))
@@ -73,7 +92,7 @@ struct ConversationTimelineView: View {
                                         .frame(maxWidth: .infinity)
                                 } else {
                                     Button(
-                                        model.localized("加载更早消息", english: "Load Earlier Messages"),
+                                        localized("加载更早消息", english: "Load Earlier Messages"),
                                         systemImage: "arrow.up"
                                     ) {
                                         conversation.loadOlder()
@@ -85,12 +104,12 @@ struct ConversationTimelineView: View {
 
                             if conversation.turns.isEmpty {
                                 ContentUnavailableView(
-                                    model.localized(
+                                    localized(
                                         "开始一段新对话",
                                         english: "Start a new conversation"
                                     ),
                                     systemImage: "bubble.left.and.bubble.right",
-                                    description: Text(model.localized(
+                                    description: Text(localized(
                                         "这个会话还没有消息。",
                                         english: "This conversation has no messages yet."
                                     ))
@@ -98,7 +117,7 @@ struct ConversationTimelineView: View {
                                 .frame(maxWidth: .infinity, minHeight: 300)
                             }
 
-                            ForEach(timelineItems) { item in
+                            ForEach(conversation.timelineItems) { item in
                                 timelineRow(item)
                                     .padding(.top, item.spacingBefore)
                             }
@@ -128,7 +147,7 @@ struct ConversationTimelineView: View {
 
                     if conversation.unreadNewerCount > 0 {
                         Button(
-                            model.localized(
+                            localized(
                                 "\(conversation.unreadNewerCount) 条新任务动态",
                                 english: "\(conversation.unreadNewerCount) new task updates"
                             ),
@@ -145,7 +164,7 @@ struct ConversationTimelineView: View {
                         HStack {
                             Spacer()
                             Button(
-                                model.localized("收起详情", english: "Collapse Details"),
+                                localized("收起详情", english: "Collapse Details"),
                                 systemImage: "chevron.up"
                             ) {
                                 withAnimation(.easeInOut(duration: 0.18)) {
@@ -154,7 +173,7 @@ struct ConversationTimelineView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .tint(AppPalette.ai)
-                            .help(model.localized(
+                            .help(localized(
                                 "收起当前任务详情或执行过程",
                                 english: "Collapse the current task details or execution process"
                             ))
@@ -201,17 +220,6 @@ struct ConversationTimelineView: View {
             ?? turn.finalAssistantMessage?.id
             ?? "none"
         return "\(turn.id)|\(turn.revision)|\(turn.assistantReplies.count)|\(replyID)"
-    }
-
-    private var timelineItems: [ConversationTimelineItem] {
-        let promptsByTurnID = Dictionary(uniqueKeysWithValues: conversation.turns.map {
-            ($0.id, conversation.prompts(for: $0.id))
-        })
-        return ConversationTimelineItem.build(
-            turns: conversation.turns,
-            promptsByTurnID: promptsByTurnID,
-            unattachedPrompts: conversation.unattachedPendingPrompts
-        )
     }
 
     @ViewBuilder
@@ -328,9 +336,9 @@ struct ConversationTimelineView: View {
         guard let request = conversation.focusRequest else { return }
 
         if let promptID = request.promptID,
-           timelineItems.contains(where: { $0.id == promptID }) {
+           conversation.timelineItems.contains(where: { $0.id == "ask-user-\(promptID)" }) {
             withAnimation(.easeOut(duration: 0.18)) {
-                proxy.scrollTo(promptID, anchor: .center)
+                proxy.scrollTo("ask-user-\(promptID)", anchor: .center)
             }
             conversation.consumeFocusRequest(id: request.id)
             return
@@ -378,6 +386,10 @@ struct ConversationTimelineView: View {
             guard !Task.isCancelled else { return }
             proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
         }
+    }
+
+    private func localized(_ chinese: String, english: String) -> String {
+        locale.identifier.lowercased().hasPrefix("en") ? english : chinese
     }
 }
 

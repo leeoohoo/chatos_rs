@@ -1,4 +1,5 @@
 import ChatOSCore
+import Combine
 import Foundation
 import XCTest
 @testable import ChatOSApp
@@ -90,6 +91,29 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.task?.id, "task-1")
         XCTAssertNil(viewModel.errorMessage)
         XCTAssertNotNil(viewModel.modelOutputError)
+    }
+
+    func testIdenticalPollingResultDoesNotRepublishInspectorState() {
+        let viewModel = TaskReplyInspectorViewModel(
+            selection: makeSelection(section: .process),
+            service: TaskReplyInspectorServiceStub()
+        )
+        let task = MessageTask(
+            id: "task-1",
+            title: "任务一",
+            status: "running",
+            processLog: "正在执行"
+        )
+        viewModel.apply(task)
+
+        var publicationCount = 0
+        let cancellable = viewModel.objectWillChange.sink {
+            publicationCount += 1
+        }
+        viewModel.apply(task)
+
+        XCTAssertEqual(publicationCount, 0)
+        withExtendedLifetime(cancellable) {}
     }
 
     private func waitUntilLoaded(

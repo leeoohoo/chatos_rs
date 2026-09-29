@@ -2,6 +2,23 @@ import ChatOSCore
 import Foundation
 
 @MainActor
+final class ConversationComposerState: ObservableObject {
+    @Published var draft = ""
+    @Published var attachments: [ConversationAttachmentDraft] = []
+    @Published var attachmentError: String?
+}
+
+@MainActor
+final class ConversationTimelineObservationState: ObservableObject {
+    private(set) var revision = 0
+
+    func invalidate() {
+        objectWillChange.send()
+        revision &+= 1
+    }
+}
+
+@MainActor
 final class ConversationSessionViewModel: ObservableObject {
     private static let historyPageSize = 10
     private static let realtimeRefreshDebounce: Duration = .milliseconds(250)
@@ -34,13 +51,30 @@ final class ConversationSessionViewModel: ObservableObject {
     @Published var runtimeSettingsError: String?
     @Published var sendError: String?
     @Published var selectedTurnID: String?
-    @Published var draft = ""
-    @Published var attachments: [ConversationAttachmentDraft] = []
-    @Published var attachmentError: String?
     @Published var askUserPrompts: [AskUserPrompt] = []
     @Published var submittingAskUserPromptIDs: Set<String> = []
     @Published var askUserPromptErrors: [String: String] = [:]
     @Published private(set) var focusRequest: ConversationFocusRequest?
+
+    let composerState = ConversationComposerState()
+    let timelineObservationState = ConversationTimelineObservationState()
+    private(set) var timelineItems: [ConversationTimelineItem]
+    private(set) var timelineItemsBuildCount = 0
+
+    var draft: String {
+        get { composerState.draft }
+        set { composerState.draft = newValue }
+    }
+
+    var attachments: [ConversationAttachmentDraft] {
+        get { composerState.attachments }
+        set { composerState.attachments = newValue }
+    }
+
+    var attachmentError: String? {
+        get { composerState.attachmentError }
+        set { composerState.attachmentError = newValue }
+    }
 
     let historyStore: any ConversationHistoryStoring
     let commandService: (any ConversationCommandServicing)?
@@ -79,6 +113,12 @@ final class ConversationSessionViewModel: ObservableObject {
     ) {
         self.sessionID = sessionID
         self.turns = initialTurns
+        self.timelineItems = ConversationTimelineItem.build(
+            turns: initialTurns,
+            promptsByTurnID: [:],
+            unattachedPrompts: []
+        )
+        self.timelineItemsBuildCount = 1
         self.selectedTurnID = initialTurns.last?.id
         self.historyStore = historyStore
         self.remoteService = remoteService
@@ -251,6 +291,7 @@ final class ConversationSessionViewModel: ObservableObject {
         inFlightOlderCursor = cursor
         isLoadingOlder = true
         historyError = nil
+        timelineObservationState.invalidate()
 
         Task {
             do {
@@ -271,6 +312,7 @@ final class ConversationSessionViewModel: ObservableObject {
                 inFlightOlderCursor = nil
             }
             isLoadingOlder = false
+            timelineObservationState.invalidate()
         }
     }
 
@@ -294,11 +336,13 @@ final class ConversationSessionViewModel: ObservableObject {
             taskID: taskID,
             runID: runID
         )
+        timelineObservationState.invalidate()
     }
 
     func consumeFocusRequest(id: UUID) {
         guard focusRequest?.id == id else { return }
         focusRequest = nil
+        timelineObservationState.invalidate()
     }
 
     func setTimelinePinnedToBottom(_ isPinned: Bool) {
@@ -326,20 +370,27 @@ final class ConversationSessionViewModel: ObservableObject {
     func resolveTaskGraphAvailability(for turn: ConversationTurn) {
         let isCandidate = turn.isTaskGraphAvailable && turn.messageTaskLookup != nil
         guard isCandidate, let messageTaskGraphService else {
+            let hadVisibleGraph = taskGraphAvailability[turn.id] != nil
             guard taskGraphAvailabilityRevisions[turn.id] != turn.revision
-                    || taskGraphAvailability[turn.id] != nil
+                    || hadVisibleGraph
                     || taskGraphAvailabilityTasks[turn.id] != nil else { return }
             taskGraphAvailability.removeValue(forKey: turn.id)
             taskGraphAvailabilityRevisions[turn.id] = turn.revision
             taskGraphAvailabilityTasks[turn.id]?.cancel()
             taskGraphAvailabilityTasks[turn.id] = nil
+            if hadVisibleGraph {
+                timelineObservationState.invalidate()
+            }
             return
         }
         guard taskGraphAvailabilityRevisions[turn.id] != turn.revision else { return }
 
         taskGraphAvailabilityRevisions[turn.id] = turn.revision
-        taskGraphAvailability.removeValue(forKey: turn.id)
+        let hadVisibleGraph = taskGraphAvailability.removeValue(forKey: turn.id) != nil
         taskGraphAvailabilityTasks[turn.id]?.cancel()
+        if hadVisibleGraph {
+            timelineObservationState.invalidate()
+        }
         taskGraphAvailabilityTasks[turn.id] = Task { [weak self] in
             do {
                 let graph = try await messageTaskGraphService.fetchGraph(
@@ -351,16 +402,23 @@ final class ConversationSessionViewModel: ObservableObject {
                     return
                 }
                 if graph.nodes.isEmpty {
-                    self?.taskGraphAvailability.removeValue(forKey: turn.id)
+                    if self?.taskGraphAvailability.removeValue(forKey: turn.id) != nil {
+                        self?.timelineObservationState.invalidate()
+                    }
                 } else {
-                    self?.taskGraphAvailability[turn.id] = true
+                    if self?.taskGraphAvailability[turn.id] != true {
+                        self?.taskGraphAvailability[turn.id] = true
+                        self?.timelineObservationState.invalidate()
+                    }
                 }
             } catch {
                 guard !Task.isCancelled,
                       self?.taskGraphAvailabilityRevisions[turn.id] == turn.revision else {
                     return
                 }
-                self?.taskGraphAvailability.removeValue(forKey: turn.id)
+                if self?.taskGraphAvailability.removeValue(forKey: turn.id) != nil {
+                    self?.timelineObservationState.invalidate()
+                }
             }
             self?.taskGraphAvailabilityTasks[turn.id] = nil
         }
@@ -563,17 +621,44 @@ final class ConversationSessionViewModel: ObservableObject {
 
     func refreshSnapshot() async {
         let snapshot = await historyStore.snapshot(sessionID: sessionID)
+        var timelineChanged = false
         if turns != snapshot.turns {
             turns = snapshot.turns
+            rebuildTimelineItems()
+            timelineChanged = true
         }
         preloadTaskGraphAvailability(for: snapshot.turns)
         olderCursor = snapshot.olderCursor
         if hasOlder != snapshot.hasOlder {
             hasOlder = snapshot.hasOlder
+            timelineChanged = true
         }
         if unreadNewerCount != snapshot.unreadNewerCount {
             unreadNewerCount = snapshot.unreadNewerCount
+            timelineChanged = true
         }
+        if timelineChanged {
+            timelineObservationState.invalidate()
+        }
+    }
+
+    func replaceAskUserPrompts(_ prompts: [AskUserPrompt]) {
+        guard askUserPrompts != prompts else { return }
+        askUserPrompts = prompts
+        rebuildTimelineItems()
+        timelineObservationState.invalidate()
+    }
+
+    private func rebuildTimelineItems() {
+        let promptsByTurnID = Dictionary(uniqueKeysWithValues: turns.map {
+            ($0.id, prompts(for: $0.id))
+        })
+        timelineItems = ConversationTimelineItem.build(
+            turns: turns,
+            promptsByTurnID: promptsByTurnID,
+            unattachedPrompts: unattachedPendingPrompts
+        )
+        timelineItemsBuildCount += 1
     }
 
     private func preloadTaskGraphAvailability(for turns: [ConversationTurn]) {
@@ -582,10 +667,14 @@ final class ConversationSessionViewModel: ObservableObject {
             !currentTurnIDs.contains($0)
         }
         for turnID in staleTurnIDs {
+            let hadVisibleGraph = taskGraphAvailability[turnID] != nil
             taskGraphAvailabilityTasks[turnID]?.cancel()
             taskGraphAvailabilityTasks[turnID] = nil
             taskGraphAvailabilityRevisions[turnID] = nil
             taskGraphAvailability[turnID] = nil
+            if hadVisibleGraph {
+                timelineObservationState.invalidate()
+            }
         }
         for turn in turns {
             resolveTaskGraphAvailability(for: turn)

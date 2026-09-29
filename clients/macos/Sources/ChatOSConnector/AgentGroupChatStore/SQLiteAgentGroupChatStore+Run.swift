@@ -51,6 +51,19 @@ extension SQLiteAgentGroupChatStore {
 
     public func run(
         ownerUserID: String,
+        runID: UUID
+    ) throws -> LocalAgentGroupChatRun? {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        return try AgentRunRepository.run(
+            database,
+            ownerUserID: ownerUserID,
+            runID: runID,
+            preparedStatement: recordPreparedStatement
+        )
+    }
+
+    public func run(
+        ownerUserID: String,
         deliveryID: String
     ) throws -> LocalAgentGroupChatRun? {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")

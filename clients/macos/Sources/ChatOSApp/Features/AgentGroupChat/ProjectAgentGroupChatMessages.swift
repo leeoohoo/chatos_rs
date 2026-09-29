@@ -125,8 +125,41 @@ extension ProjectAgentGroupChatView {
     }
 
     var composer: some View {
+        AgentGroupChatComposerSection(
+            state: viewModel.composerState,
+            isRunningAgents: viewModel.isRunningAgents,
+            isSending: viewModel.isSending,
+            mentionCandidates: mentionCandidates,
+            onToggleMention: { viewModel.toggleMention(agentID: $0) },
+            onMentionSelected: { viewModel.selectMention(agentID: $0) },
+            onSend: { Task { await viewModel.sendMessage() } }
+        )
+    }
+
+    private var mentionCandidates: [AgentChatMentionCandidate] {
+        viewModel.activeMembers.compactMap { item in
+            guard let profile = item.profile else { return nil }
+            return AgentChatMentionCandidate(
+                id: item.member.agentID,
+                name: profile.draft.name,
+                subtitle: profession(profile.draft.professionKey)?.label
+            )
+        }
+    }
+}
+
+private struct AgentGroupChatComposerSection: View {
+    @ObservedObject var state: AgentChatComposerState
+    let isRunningAgents: Bool
+    let isSending: Bool
+    let mentionCandidates: [AgentChatMentionCandidate]
+    let onToggleMention: (String) -> Void
+    let onMentionSelected: (String) -> Void
+    let onSend: () -> Void
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if viewModel.isRunningAgents {
+            if isRunningAgents {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
                     Text("本地 Agent 正在处理群聊…")
@@ -134,14 +167,14 @@ extension ProjectAgentGroupChatView {
                         .foregroundStyle(.secondary)
                 }
             }
-            if !viewModel.selectedMentionAgentIDs.isEmpty {
+            if !state.selectedMentionAgentIDs.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
-                        ForEach(viewModel.selectedMentionAgentIDs.sorted(), id: \.self) { id in
+                        ForEach(state.selectedMentionAgentIDs.sorted(), id: \.self) { id in
                             Button {
-                                viewModel.toggleMention(agentID: id)
+                                onToggleMention(id)
                             } label: {
-                                Text("@\(viewModel.profilesByID[id]?.draft.name ?? id)  ×")
+                                Text("@\(name(for: id))  ×")
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
@@ -150,26 +183,24 @@ extension ProjectAgentGroupChatView {
                 }
             }
             AgentChatComposerView(
-                text: $viewModel.draftMessage,
-                attachments: $viewModel.attachments,
-                attachmentError: $viewModel.attachmentError,
-                isSending: viewModel.isSending,
+                state: state,
+                isSending: isSending,
                 placeholder: "输入消息；不选择 @ 时交给默认 Agent，也可粘贴图片、文档和长文本…",
-                mentionCandidates: mentionCandidates,
-                onMentionSelected: { viewModel.selectMention(agentID: $0) },
-                onSend: { Task { await viewModel.sendMessage() } }
+                mentionCandidates: availableMentionCandidates,
+                onMentionSelected: onMentionSelected,
+                onSend: onSend
             ) {
                 Menu {
-                    if viewModel.activeMembers.isEmpty {
+                    if mentionCandidates.isEmpty {
                         Text("先创建 Agent")
                     }
-                    ForEach(viewModel.activeMembers) { item in
+                    ForEach(mentionCandidates) { candidate in
                         Button {
-                            viewModel.toggleMention(agentID: item.member.agentID)
+                            onToggleMention(candidate.id)
                         } label: {
                             Label(
-                                item.profile?.draft.name ?? item.member.agentID,
-                                systemImage: viewModel.selectedMentionAgentIDs.contains(item.member.agentID)
+                                candidate.name,
+                                systemImage: state.selectedMentionAgentIDs.contains(candidate.id)
                                     ? "checkmark.circle.fill" : "circle"
                             )
                         }
@@ -178,7 +209,7 @@ extension ProjectAgentGroupChatView {
                     Image(systemName: "at")
                 }
                 .menuStyle(.borderlessButton)
-                .disabled(viewModel.activeMembers.isEmpty)
+                .disabled(mentionCandidates.isEmpty)
                 .help("选择要 @ 的 Agent；不选择时交给默认 Agent")
             }
         }
@@ -189,17 +220,11 @@ extension ProjectAgentGroupChatView {
         .background(.bar)
     }
 
-    private var mentionCandidates: [AgentChatMentionCandidate] {
-        viewModel.activeMembers.compactMap { item in
-            guard let profile = item.profile,
-                  !viewModel.selectedMentionAgentIDs.contains(item.member.agentID) else {
-                return nil
-            }
-            return AgentChatMentionCandidate(
-                id: item.member.agentID,
-                name: profile.draft.name,
-                subtitle: profession(profile.draft.professionKey)?.label
-            )
-        }
+    private var availableMentionCandidates: [AgentChatMentionCandidate] {
+        mentionCandidates.filter { !state.selectedMentionAgentIDs.contains($0.id) }
+    }
+
+    private func name(for id: String) -> String {
+        mentionCandidates.first { $0.id == id }?.name ?? id
     }
 }

@@ -1,7 +1,27 @@
 import ChatOSCore
+import Foundation
 import SQLite3
 
 enum AgentRunRepository {
+    static func run(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        runID: UUID,
+        preparedStatement: () -> Void
+    ) throws -> LocalAgentGroupChatRun? {
+        preparedStatement()
+        let values: [String] = try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT run_json FROM local_agent_group_chat_runs
+            WHERE owner_user_id = ? AND id = ? LIMIT 1
+            """,
+            [.text(ownerUserID), .text(runID.uuidString.lowercased())]
+        ) { string($0, 0) }
+        guard let json = values.first else { return nil }
+        return try AgentGroupChatRowMapper.run(json)
+    }
+
     static func run(
         _ handle: OpaquePointer?,
         ownerUserID: String,

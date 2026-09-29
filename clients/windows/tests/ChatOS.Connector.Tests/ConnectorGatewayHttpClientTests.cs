@@ -56,6 +56,15 @@ public sealed class ConnectorGatewayHttpClientTests
             return request.RequestUri.AbsolutePath.EndsWith("/config/runtime", StringComparison.Ordinal)
                 ? Json(HttpStatusCode.OK, """
                     {
+                      "native_agent_runtime_settings": {
+                        "maximum_model_calls": 240,
+                        "maximum_request_retries": 3,
+                        "request_timeout_seconds": 90,
+                        "run_timeout_seconds": 3600,
+                        "maximum_no_progress_rounds": 6,
+                        "context_window_tokens": 200000,
+                        "output_reserve_tokens": 12000
+                      },
                       "remote_control_trust": {
                         "require_signed_messages": true,
                         "signature_max_skew_seconds": 120,
@@ -79,13 +88,17 @@ public sealed class ConnectorGatewayHttpClientTests
             "token-1",
             "Windows PC",
             "ed25519:public");
-        var trust = await client.GetRemoteControlTrustAsync(
+        var managed = await client.GetManagedRuntimeConfigAsync(
             new Uri("https://gateway.example"),
             "token-1");
+        var trust = managed.RemoteControlTrust;
 
         Assert.Equal("device-1", device.Id);
         Assert.True(trust.RequireSignedMessages);
         Assert.Equal(120, trust.SignatureMaxSkewSeconds);
+        Assert.Equal(240, managed.NativeAgentRuntimeSettings.MaximumModelCalls);
+        Assert.Equal(90, managed.NativeAgentRuntimeSettings.RequestTimeoutSeconds);
+        Assert.Equal(12_000, managed.NativeAgentRuntimeSettings.OutputReserveTokens);
         Assert.All(requests, request => Assert.Equal("Bearer token-1", request.Authorization));
         using var body = JsonDocument.Parse(requests[0].Body!);
         Assert.Equal("Windows", body.RootElement.GetProperty("os").GetString());

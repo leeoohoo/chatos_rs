@@ -48,7 +48,8 @@ enum NativePluginVisualSessionReader {
     static func read(
         descriptors: [NativePluginRuntimeStore.VisualDescriptor],
         now: Date = Date(),
-        loadFrameDataForAdapterSessionIDs: Set<String>? = nil
+        loadFrameDataForAdapterSessionIDs: Set<String>? = nil,
+        knownFrameSequencesByAdapterSessionID: [String: UInt64] = [:]
     ) -> [PluginVisualSession] {
         descriptors.sorted { $0.ownerBoundAt > $1.ownerBoundAt }.compactMap { descriptor in
             read(
@@ -56,7 +57,10 @@ enum NativePluginVisualSessionReader {
                 now: now,
                 loadFrameData: loadFrameDataForAdapterSessionIDs?.contains(
                     descriptor.identity.adapterSessionID
-                ) ?? true
+                ) ?? true,
+                knownFrameSequence: knownFrameSequencesByAdapterSessionID[
+                    descriptor.identity.adapterSessionID
+                ]
             )
         }
     }
@@ -64,7 +68,8 @@ enum NativePluginVisualSessionReader {
     private static func read(
         descriptor: NativePluginRuntimeStore.VisualDescriptor,
         now: Date,
-        loadFrameData: Bool
+        loadFrameData: Bool,
+        knownFrameSequence: UInt64?
     ) -> PluginVisualSession? {
         guard let host: Host = boundedJSON(
             descriptor.visualSessionURL.appendingPathComponent("host.json")
@@ -91,10 +96,11 @@ enum NativePluginVisualSessionReader {
             metadata: metadata,
             directory: descriptor.visualSessionURL
         ) else { return nil }
-        let frame = loadFrameData
+        let shouldLoadFrameData = loadFrameData && knownFrameSequence != metadata.frameSequence
+        let frame = shouldLoadFrameData
             ? try? Data(contentsOf: frameURL, options: .mappedIfSafe)
             : nil
-        if loadFrameData, frame == nil { return nil }
+        if shouldLoadFrameData, frame == nil { return nil }
         return PluginVisualSession(
             id: metadata.sessionID,
             adapterSessionID: descriptor.identity.adapterSessionID,

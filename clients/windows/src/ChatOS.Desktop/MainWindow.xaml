@@ -10,19 +10,21 @@
 
     <Grid x:Name="RootGrid" Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
         <Grid.Resources>
-        <DataTemplate x:Key="ShellResourceTemplate" x:DataType="shell:ShellResourceViewModel">
-            <Grid Padding="4,6">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="28" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <FontIcon Glyph="{x:Bind Glyph}" FontSize="14" />
-                <StackPanel Grid.Column="1" Spacing="1">
-                    <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                    <TextBlock Text="{x:Bind Subtitle}" Style="{StaticResource ChatOSCaptionTextStyle}" TextTrimming="CharacterEllipsis" />
-                </StackPanel>
-            </Grid>
-        </DataTemplate>
+            <DataTemplate x:Key="ShellResourceTemplate" x:DataType="shell:ShellResourceViewModel">
+                <Grid Padding="4,5" ColumnSpacing="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="32" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Width="30" Height="30" Background="{StaticResource ChatOSAccentSoftBrush}" CornerRadius="9">
+                        <FontIcon Glyph="{x:Bind Glyph}" FontSize="14" Foreground="{StaticResource ChatOSAccentBrush}" />
+                    </Border>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+                        <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSBodyStrongTextStyle}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{x:Bind Subtitle}" Style="{StaticResource ChatOSCaptionTextStyle}" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Grid>
+            </DataTemplate>
         </Grid.Resources>
         <Grid x:Name="LoginRoot" AutomationProperties.AutomationId="ChatOS.Login.Root" AutomationProperties.Name="ChatOS sign in" Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
             <Grid.RowDefinitions>
@@ -35,51 +37,111 @@
                     <TextBlock Text="ChatOS" Style="{StaticResource ChatOSTitleTextStyle}" />
                 </StackPanel>
             </Grid>
-            <Border
-                Grid.Row="1"
-                Width="420"
-                Padding="32"
-                HorizontalAlignment="Center"
-                VerticalAlignment="Center"
-                Background="{StaticResource ChatOSContentBackgroundBrush}"
-                BorderBrush="{StaticResource ChatOSBorderBrush}"
-                BorderThickness="1"
-                CornerRadius="16">
-                <StackPanel Spacing="16">
-                    <StackPanel Spacing="6">
-                        <FontIcon HorizontalAlignment="Left" Glyph="&#xE8BD;" FontSize="34" Foreground="{StaticResource ChatOSAccentBrush}" />
-                        <TextBlock Text="{x:Bind ViewModel.Localization.SignInTitle, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" />
-                        <TextBlock Text="{x:Bind ViewModel.Localization.SignInDescription, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="5*" />
+                    <ColumnDefinition Width="6*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Margin="28" Padding="52" Background="{StaticResource ChatOSAccentSoftBrush}" CornerRadius="24">
+                    <StackPanel MaxWidth="510" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="22">
+                        <Border Width="112" Height="112" HorizontalAlignment="Left" Background="{StaticResource ChatOSContentBackgroundBrush}" CornerRadius="56">
+                            <FontIcon Glyph="&#xE8BD;" FontSize="48" Foreground="{StaticResource ChatOSAccentBrush}" />
+                        </Border>
+                        <StackPanel Spacing="4">
+                            <TextBlock FontFamily="{StaticResource ChatOSInterfaceFontFamily}" FontSize="38" FontWeight="Bold" Text="{x:Bind ViewModel.Localization.LoginBrandHeadline, Mode=OneWay}" TextWrapping="Wrap" />
+                            <TextBlock FontFamily="{StaticResource ChatOSInterfaceFontFamily}" FontSize="38" FontWeight="Bold" Foreground="{StaticResource ChatOSWarningBrush}" Text="{x:Bind ViewModel.Localization.LoginBrandMemory, Mode=OneWay}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <TextBlock FontSize="17" FontWeight="SemiBold" Foreground="{StaticResource ChatOSSecondaryTextBrush}" Text="{x:Bind ViewModel.Localization.LoginBrandTagline, Mode=OneWay}" TextWrapping="Wrap" />
                     </StackPanel>
+                </Border>
 
-                    <StackPanel Spacing="6">
-                        <TextBlock Text="{x:Bind ViewModel.Localization.Username, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                        <TextBox AutomationProperties.AutomationId="ChatOS.Login.Username" AutomationProperties.Name="Username" Text="{x:Bind ViewModel.Username, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="{x:Bind ViewModel.Localization.UsernamePlaceholder, Mode=OneWay}" />
-                    </StackPanel>
+                <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
+                    <Grid MinHeight="760" Padding="56,32">
+                        <Border
+                            Width="480"
+                            Padding="36"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Background="{StaticResource ChatOSContentBackgroundBrush}"
+                            BorderBrush="{StaticResource ChatOSBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="20">
+                            <Grid>
+                                <StackPanel x:Name="LoginForm" Spacing="18">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="{x:Bind ViewModel.Localization.SignInTitle, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" />
+                                        <TextBlock Text="{x:Bind ViewModel.Localization.SignInDescription, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="{x:Bind ViewModel.Localization.Account, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                        <TextBox AutomationProperties.AutomationId="ChatOS.Login.Username" AutomationProperties.Name="Account" Text="{x:Bind ViewModel.Username, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="{x:Bind ViewModel.Localization.AccountPlaceholder, Mode=OneWay}" />
+                                    </StackPanel>
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="{x:Bind ViewModel.Localization.Password, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                        <PasswordBox x:Name="LoginPasswordBox" AutomationProperties.AutomationId="ChatOS.Login.Password" AutomationProperties.Name="Password" PasswordChanged="OnPasswordChanged" PlaceholderText="{x:Bind ViewModel.Localization.PasswordPlaceholder, Mode=OneWay}" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="LoginErrorText" AutomationProperties.AutomationId="ChatOS.Login.Error" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" TextWrapping="Wrap" />
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <ProgressRing x:Name="LoginProgress" Width="22" Height="22" HorizontalAlignment="Left" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
+                                        <Button x:Name="LoginButton" AutomationProperties.AutomationId="ChatOS.Login.Submit" AutomationProperties.Name="Sign in" Grid.Column="1" MinWidth="112" Command="{x:Bind ViewModel.LoginCommand}" Content="{x:Bind ViewModel.Localization.SignIn, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                    </Grid>
+                                    <StackPanel HorizontalAlignment="Center" Orientation="Horizontal" Spacing="6">
+                                        <TextBlock VerticalAlignment="Center" Text="{x:Bind ViewModel.Localization.NoAccount, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                        <Button AutomationProperties.AutomationId="ChatOS.Login.ShowRegistration" Command="{x:Bind ViewModel.ShowRegistrationCommand}" Content="{x:Bind ViewModel.Localization.CreateAccount, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                    </StackPanel>
+                                </StackPanel>
 
-                    <StackPanel Spacing="6">
-                        <TextBlock Text="{x:Bind ViewModel.Localization.Password, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                        <PasswordBox x:Name="LoginPasswordBox" AutomationProperties.AutomationId="ChatOS.Login.Password" AutomationProperties.Name="Password" PasswordChanged="OnPasswordChanged" PlaceholderText="{x:Bind ViewModel.Localization.PasswordPlaceholder, Mode=OneWay}" />
-                    </StackPanel>
-
-                    <TextBlock
-                        x:Name="LoginErrorText"
-                        AutomationProperties.AutomationId="ChatOS.Login.Error"
-                        Foreground="{StaticResource ChatOSFailureBrush}"
-                        Style="{StaticResource ChatOSSecondaryBodyTextStyle}"
-                        Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                        TextWrapping="Wrap" />
-
-                    <Grid ColumnSpacing="10">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <ProgressRing x:Name="LoginProgress" Width="22" Height="22" HorizontalAlignment="Left" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
-                        <Button x:Name="LoginButton" AutomationProperties.AutomationId="ChatOS.Login.Submit" AutomationProperties.Name="Sign in" Grid.Column="1" MinWidth="96" Command="{x:Bind ViewModel.LoginCommand}" Content="{x:Bind ViewModel.Localization.SignIn, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                <StackPanel x:Name="RegistrationForm" Spacing="14" Visibility="Collapsed">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="{x:Bind ViewModel.Localization.CreateAccount, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" />
+                                        <TextBlock Text="{x:Bind ViewModel.Localization.RegisterDescription, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                    </StackPanel>
+                                    <StackPanel Spacing="5">
+                                        <TextBlock Text="{x:Bind ViewModel.Localization.Account, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                        <TextBox AutomationProperties.AutomationId="ChatOS.Register.Email" AutomationProperties.Name="Email" Text="{x:Bind ViewModel.Username, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="{x:Bind ViewModel.Localization.AccountPlaceholder, Mode=OneWay}" />
+                                    </StackPanel>
+                                    <StackPanel Spacing="5">
+                                        <TextBlock Text="{x:Bind ViewModel.Localization.InvitationCode, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                        <TextBox AutomationProperties.AutomationId="ChatOS.Register.InvitationCode" AutomationProperties.Name="Invitation code" Text="{x:Bind ViewModel.InviteCode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="{x:Bind ViewModel.Localization.InvitationCodePlaceholder, Mode=OneWay}" />
+                                    </StackPanel>
+                                    <StackPanel Spacing="5">
+                                        <TextBlock Text="{x:Bind ViewModel.Localization.EmailVerificationCode, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <TextBox AutomationProperties.AutomationId="ChatOS.Register.VerificationCode" AutomationProperties.Name="Email verification code" MaxLength="6" Text="{x:Bind ViewModel.VerificationCode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="{x:Bind ViewModel.Localization.RegistrationVerificationCodePlaceholder, Mode=OneWay}" />
+                                            <Button AutomationProperties.AutomationId="ChatOS.Register.SendCode" AutomationProperties.Name="Send verification code" Grid.Column="1" MinWidth="112" Command="{x:Bind ViewModel.SendRegistrationCodeCommand}" Content="{x:Bind ViewModel.RegistrationCodeActionTitle, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                        </Grid>
+                                    </StackPanel>
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="5">
+                                            <TextBlock Text="{x:Bind ViewModel.Localization.Password, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                            <PasswordBox x:Name="RegistrationPasswordBox" AutomationProperties.AutomationId="ChatOS.Register.Password" AutomationProperties.Name="Password" PasswordChanged="OnPasswordChanged" PlaceholderText="{x:Bind ViewModel.Localization.MinimumPasswordPlaceholder, Mode=OneWay}" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Spacing="5">
+                                            <TextBlock Text="{x:Bind ViewModel.Localization.ConfirmPassword, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                            <PasswordBox x:Name="RegistrationConfirmPasswordBox" AutomationProperties.AutomationId="ChatOS.Register.ConfirmPassword" AutomationProperties.Name="Confirm password" PasswordChanged="OnConfirmPasswordChanged" PlaceholderText="{x:Bind ViewModel.Localization.ConfirmPasswordPlaceholder, Mode=OneWay}" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <TextBlock x:Name="RegistrationErrorText" AutomationProperties.AutomationId="ChatOS.Register.Error" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" TextWrapping="Wrap" />
+                                    <TextBlock x:Name="RegistrationStatusText" AutomationProperties.AutomationId="ChatOS.Register.Status" Foreground="{StaticResource ChatOSSuccessBrush}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" Text="{x:Bind ViewModel.RegistrationMessage, Mode=OneWay}" TextWrapping="Wrap" />
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <ProgressRing Width="22" Height="22" HorizontalAlignment="Left" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
+                                        <Button x:Name="RegisterButton" AutomationProperties.AutomationId="ChatOS.Register.Submit" AutomationProperties.Name="Create account" Grid.Column="1" MinWidth="128" Command="{x:Bind ViewModel.RegisterCommand}" Content="{x:Bind ViewModel.Localization.CreateAccount, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                    </Grid>
+                                    <StackPanel HorizontalAlignment="Center" Orientation="Horizontal" Spacing="6">
+                                        <TextBlock VerticalAlignment="Center" Text="{x:Bind ViewModel.Localization.AlreadyHaveAccount, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                        <Button AutomationProperties.AutomationId="ChatOS.Register.ShowLogin" Command="{x:Bind ViewModel.ShowLoginCommand}" Content="{x:Bind ViewModel.Localization.BackToSignIn, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
                     </Grid>
-                </StackPanel>
-            </Border>
+                </ScrollViewer>
+            </Grid>
         </Grid>
 
         <Grid
@@ -88,20 +150,25 @@
             AutomationProperties.Name="ChatOS workspace"
             Visibility="Collapsed">
             <Grid.RowDefinitions>
-                <RowDefinition Height="48" />
+                <RowDefinition Height="54" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
             <Grid x:Name="AppTitleBar" Grid.Row="0" Background="{StaticResource ChatOSTitleBarBackgroundBrush}">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="252" />
+                    <ColumnDefinition Width="276" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Grid.Column="0" Margin="16,0,0,0" VerticalAlignment="Center" Orientation="Horizontal" Spacing="10">
-                    <FontIcon Glyph="&#xE8BD;" Foreground="{StaticResource ChatOSAccentBrush}" />
-                    <TextBlock Text="ChatOS" Style="{StaticResource ChatOSTitleTextStyle}" />
+                    <Border Width="30" Height="30" Background="{StaticResource ChatOSAccentBrush}" CornerRadius="9">
+                        <FontIcon Glyph="&#xE8BD;" FontSize="14" Foreground="White" />
+                    </Border>
+                    <StackPanel VerticalAlignment="Center" Spacing="0">
+                        <TextBlock Text="ChatOS" Style="{StaticResource ChatOSTitleTextStyle}" />
+                        <TextBlock Text="Workspace" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    </StackPanel>
                 </StackPanel>
 
                 <TextBlock Grid.Column="1" Margin="18,0,0,0" VerticalAlignment="Center" Text="{x:Bind ViewModel.WorkspaceTitle, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
@@ -136,22 +203,29 @@
 
             <Grid Grid.Row="1">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="252" />
+                    <ColumnDefinition Width="276" />
                     <ColumnDefinition Width="1" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
                 <Grid Grid.Column="0" Background="{StaticResource ChatOSSidebarBackgroundBrush}">
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="44" />
+                        <RowDefinition Height="52" />
                         <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <StackPanel Grid.Row="0" Margin="12,0" VerticalAlignment="Center" Orientation="Horizontal" Spacing="4">
+                    <Grid Grid.Row="0" Margin="12,0" ColumnSpacing="6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
                         <Button AutomationProperties.AutomationId="ChatOS.Shell.Refresh" AutomationProperties.Name="{x:Bind ViewModel.Localization.RefreshResources, Mode=OneWay}" Command="{x:Bind ViewModel.RefreshWorkspaceCommand}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind ViewModel.Localization.RefreshResources, Mode=OneWay}">
                             <FontIcon Glyph="&#xE72C;" />
                         </Button>
-                        <Button AutomationProperties.AutomationId="ChatOS.Shell.CreateResource" AutomationProperties.Name="{x:Bind ViewModel.Localization.CreateResource, Mode=OneWay}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind ViewModel.Localization.CreateResource, Mode=OneWay}">
+                        <Button Grid.Column="1" AutomationProperties.AutomationId="ChatOS.Shell.CreateResource" AutomationProperties.Name="{x:Bind ViewModel.Localization.CreateResource, Mode=OneWay}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind ViewModel.Localization.CreateResource, Mode=OneWay}">
                             <Button.Flyout>
                                 <MenuFlyout>
                                     <MenuFlyoutItem Text="{x:Bind ViewModel.Localization.CreateLocalProject, Mode=OneWay}" Click="OnCreateLocalProjectClicked" />
@@ -165,32 +239,72 @@
                             </Button.Flyout>
                             <FontIcon Glyph="&#xE710;" />
                         </Button>
-                        <ProgressRing Width="18" Height="18" Margin="6,0,0,0" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
-                    </StackPanel>
+                        <TextBlock Grid.Column="2" Margin="7,0,0,0" VerticalAlignment="Center" Text="资源" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <ProgressRing Grid.Column="3" Width="18" Height="18" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
+                    </Grid>
 
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                        <StackPanel Padding="10,4,10,20" Spacing="6">
+                        <StackPanel Padding="10,4,10,22" Spacing="6">
                             <TextBlock Text="{x:Bind ViewModel.Localization.Contacts, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
-                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.Contacts" AutomationProperties.Name="{x:Bind ViewModel.Localization.Contacts, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.Contacts}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=TwoWay}" SelectionMode="Single" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
+                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.Contacts" AutomationProperties.Name="{x:Bind ViewModel.Localization.Contacts, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.Contacts}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=OneWay}" SelectionChanged="OnSidebarSelectionChanged" SelectionMode="Single" Style="{StaticResource ChatOSSidebarListStyle}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
 
-                            <TextBlock Margin="0,8,0,0" Text="{x:Bind ViewModel.Localization.Projects, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
-                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.Projects" AutomationProperties.Name="{x:Bind ViewModel.Localization.Projects, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.Projects}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=TwoWay}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
+                            <TextBlock Margin="0,10,0,0" Text="{x:Bind ViewModel.Localization.Projects, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                            <TextBlock x:Name="ProjectsEmptyText" Margin="10,4,8,7" Text="项目保存在本机。点击上方 + 创建第一个项目。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="Collapsed" />
+                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.Projects" AutomationProperties.Name="{x:Bind ViewModel.Localization.Projects, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.Projects}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=OneWay}" SelectionChanged="OnSidebarSelectionChanged" Style="{StaticResource ChatOSSidebarListStyle}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
 
-                            <TextBlock Margin="0,8,0,0" Text="{x:Bind ViewModel.Localization.Applications, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
-                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.Applications" AutomationProperties.Name="{x:Bind ViewModel.Localization.Applications, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.ApplicationResources}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=TwoWay}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
+                            <TextBlock Margin="0,10,0,0" Text="工作台" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.Applications" AutomationProperties.Name="{x:Bind ViewModel.Localization.Applications, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.ApplicationResources}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=OneWay}" SelectionChanged="OnSidebarSelectionChanged" Style="{StaticResource ChatOSSidebarListStyle}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
 
-                            <TextBlock Margin="0,8,0,0" Text="{x:Bind ViewModel.Localization.Local, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
-                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.LocalResources" AutomationProperties.Name="{x:Bind ViewModel.Localization.Local, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.LocalResources}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=TwoWay}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
+                            <TextBlock Margin="0,10,0,0" Text="{x:Bind ViewModel.Localization.Local, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.LocalResources" AutomationProperties.Name="{x:Bind ViewModel.Localization.Local, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.LocalResources}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=OneWay}" SelectionChanged="OnSidebarSelectionChanged" Style="{StaticResource ChatOSSidebarListStyle}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
 
-                            <TextBlock Margin="0,8,0,0" Text="{x:Bind ViewModel.Localization.Remote, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
-                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.RemoteResources" AutomationProperties.Name="{x:Bind ViewModel.Localization.Remote, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.RemoteResources}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=TwoWay}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
+                            <TextBlock Margin="0,10,0,0" Text="{x:Bind ViewModel.Localization.Remote, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                            <TextBlock x:Name="RemoteEmptyText" Margin="10,4,8,7" Text="还没有远端连接" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="Collapsed" />
+                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.RemoteResources" AutomationProperties.Name="{x:Bind ViewModel.Localization.Remote, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.RemoteResources}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=OneWay}" SelectionChanged="OnSidebarSelectionChanged" Style="{StaticResource ChatOSSidebarListStyle}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
                         </StackPanel>
                     </ScrollViewer>
+
+                    <Border
+                        x:Name="SidebarErrorCard"
+                        Grid.Row="2"
+                        Margin="10,0,10,12"
+                        Padding="11"
+                        Background="{StaticResource ChatOSWarningSoftBrush}"
+                        CornerRadius="10"
+                        Visibility="Collapsed">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <FontIcon Glyph="&#xE783;" FontSize="14" Foreground="{StaticResource ChatOSWarningBrush}" />
+                            <TextBlock Grid.Column="1" MaxLines="3" Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            <Button Grid.Column="2" Click="OnSidebarRetryClicked" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="重试">
+                                <FontIcon Glyph="&#xE72C;" />
+                            </Button>
+                        </Grid>
+                    </Border>
                 </Grid>
 
                 <Border Grid.Column="1" Background="{StaticResource ChatOSBorderBrush}" />
 
-                <ContentControl x:Name="WorkspaceContent" AutomationProperties.AutomationId="ChatOS.Shell.Workspace" Grid.Column="2" />
+                <Grid Grid.Column="2" Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
+                    <ContentControl x:Name="WorkspaceContent" AutomationProperties.AutomationId="ChatOS.Shell.Workspace" />
+                    <Grid x:Name="EmptyWorkspaceState" Visibility="Collapsed">
+                        <StackPanel MaxWidth="520" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="14">
+                            <Border Style="{StaticResource ChatOSEmptyStateIconStyle}">
+                                <FontIcon Glyph="&#xE700;" FontSize="24" Foreground="{StaticResource ChatOSAccentBrush}" />
+                            </Border>
+                            <TextBlock HorizontalAlignment="Center" Text="选择一个资源开始" Style="{StaticResource ChatOSPageTitleTextStyle}" />
+                            <TextBlock Text="联系人用于持续对话；项目包含文件、聊天、Git、运行设置、Agent 团队与需求调研。" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                            <StackPanel HorizontalAlignment="Center" Orientation="Horizontal" Spacing="10">
+                                <Button Click="OnCreateLocalProjectClicked" Content="新建项目" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                <Button Click="OnSidebarRetryClicked" Content="刷新资源" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
             </Grid>
         </Grid>
 

@@ -256,28 +256,75 @@ extension LocalAgentGroupChatScheduler {
                         ownerUserID: ownerUserID,
                         deliveryID: run.context.deliveryID
                       ), delivery.status == .running else { continue }
-                if run.checkpoint.status == .needsReview {
-                    try await suspendTodoForReview(
-                        store: store,
+                guard await activeDeliveryRegistry.acquire(deliveryID: delivery.id) else { continue }
+                do {
+                    // Re-read after acquiring ownership. A Human retry may have changed both the
+                    // checkpoint and Todo between the list query above and this recovery attempt.
+                    guard let currentDelivery = try await store.delivery(
                         ownerUserID: ownerUserID,
-                        delivery: delivery,
-                        runID: run.context.runID,
-                        detail: run.checkpoint.stopReason
-                            ?? "执行中断，需要检查副作用后再决定是否重试。"
+                        deliveryID: delivery.id
+                    ), currentDelivery.status == .running,
+                       let currentRun = try await store.run(
+                        ownerUserID: ownerUserID,
+                        deliveryID: delivery.id
+                       ) else {
+                        await activeDeliveryRegistry.unregister(deliveryID: delivery.id)
+                        continue
+                    }
+                    if currentRun.checkpoint.status == .needsReview {
+                        try await suspendTodoForReview(
+                            store: store,
+                            ownerUserID: ownerUserID,
+                            delivery: currentDelivery,
+                            runID: currentRun.context.runID,
+                            detail: currentRun.checkpoint.stopReason
+                                ?? "执行中断，需要检查副作用后再决定是否重试。"
+                        )
+                        await activeDeliveryRegistry.unregister(deliveryID: delivery.id)
+                        continue
+                    }
+                    var isRecoveryEligible = Self.isAutomaticTriggerRecoveryEligible(
+                        currentRun.checkpoint
                     )
-                    continue
+                    // Older builds could leave a Todo blocked while its durable delivery stayed
+                    // running and its Run later paused on repeated identity rejections. Once the
+                    // Human explicitly resolves that blocker, the Todo becomes pending but cannot
+                    // be claimed again because the original delivery is still running. Repair that
+                    // split state in place and resume the same durable Run.
+                    if !isRecoveryEligible,
+                       currentDelivery.triggerKind == .todo,
+                       currentRun.checkpoint.status == .paused,
+                       currentRun.checkpoint.pendingCalls.isEmpty,
+                       currentRun.checkpoint.inFlightCallID == nil,
+                       let todo = try await store.todoForDelivery(
+                        ownerUserID: ownerUserID,
+                        deliveryID: currentDelivery.id
+                       ), todo.status == .pending {
+                        _ = try await store.updateAgentTodo(
+                            ownerUserID: ownerUserID,
+                            agentID: todo.agentID,
+                            todoID: todo.id,
+                            update: .init(status: .inProgress, blockedReason: ""),
+                            nowUnixMs: now()
+                        )
+                        isRecoveryEligible = true
+                    }
+                    guard isRecoveryEligible else {
+                        await activeDeliveryRegistry.unregister(deliveryID: delivery.id)
+                        continue
+                    }
+                    let result = try await resumeRegisteredDelivery(
+                        ownerUserID: ownerUserID,
+                        projectID: currentRun.context.projectID,
+                        deliveryID: delivery.id
+                    )
+                    await activeDeliveryRegistry.unregister(deliveryID: delivery.id)
+                    results.append(result)
+                    if result.outcome != .completed { break }
+                } catch {
+                    await activeDeliveryRegistry.unregister(deliveryID: delivery.id)
+                    throw error
                 }
-                guard Self.isAutomaticTriggerRecoveryEligible(run.checkpoint) else { continue }
-                guard !(await activeDeliveryRegistry.contains(deliveryID: delivery.id)) else {
-                    continue
-                }
-                let result = try await resumeDelivery(
-                    ownerUserID: ownerUserID,
-                    projectID: run.context.projectID,
-                    deliveryID: delivery.id
-                )
-                results.append(result)
-                if result.outcome != .completed { break }
             }
         }
         return results
@@ -372,7 +419,9 @@ extension LocalAgentGroupChatScheduler {
                 )?.id
                 : nil
             let handle = todoID == nil ? nil : LocalAgentExecutorCancellationHandle()
-            await activeDeliveryRegistry.register(deliveryID: work.delivery.id)
+            guard await activeDeliveryRegistry.acquire(deliveryID: work.delivery.id) else {
+                continue
+            }
             let task: Task<OrderedDeliveryAttemptReceipt, Never> = Task {
                 let receipt: DeliveryAttemptReceipt
                 do {

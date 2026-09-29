@@ -13,10 +13,15 @@ extension MessageTaskWorkspaceViewModel {
             )
             guard refreshGeneration == workspaceRefreshGeneration else { return }
             applyGraph(refreshedGraph)
-            errorMessage = nil
+            if errorMessage != nil {
+                errorMessage = nil
+            }
         } catch {
             guard refreshGeneration == workspaceRefreshGeneration else { return }
-            errorMessage = error.localizedDescription
+            let nextErrorMessage = error.localizedDescription
+            if errorMessage != nextErrorMessage {
+                errorMessage = nextErrorMessage
+            }
         }
 
         if refreshInspector {
@@ -229,6 +234,9 @@ extension MessageTaskWorkspaceViewModel {
         let sessionID = turn.sessionID
         realtimeTask = Task { [weak self] in
             let stream = await realtimeService.events(sessionID: sessionID)
+            guard !Task.isCancelled else { return }
+            self?.hasActiveRealtimeStream = true
+            self?.startPollingIfNeeded()
             do {
                 for try await signal in stream {
                     guard let self, !Task.isCancelled else { return }
@@ -250,6 +258,10 @@ extension MessageTaskWorkspaceViewModel {
                     self.errorMessage = "实时进度连接已中断：\(error.localizedDescription)"
                 }
             }
+            guard let self, !Task.isCancelled else { return }
+            self.hasActiveRealtimeStream = false
+            self.realtimeTask = nil
+            self.startPollingIfNeeded()
         }
     }
 
@@ -262,7 +274,11 @@ extension MessageTaskWorkspaceViewModel {
             while !Task.isCancelled {
                 guard let self, !Task.isCancelled else { return }
                 let isEmptyGraphRetry = self.shouldRetryEmptyGraph
-                try? await Task.sleep(for: isEmptyGraphRetry ? .milliseconds(600) : .seconds(2))
+                let interval = MessageTaskPollingPolicy.interval(
+                    isEmptyGraphRetry: isEmptyGraphRetry,
+                    hasActiveRealtimeStream: self.hasActiveRealtimeStream
+                )
+                try? await Task.sleep(for: interval)
                 guard !Task.isCancelled else { return }
                 await self.refreshWorkspaceState(refreshInspector: true)
                 if isEmptyGraphRetry {

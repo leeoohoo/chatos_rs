@@ -11,5 +11,17 @@ public interface IAuthenticationService
         string password,
         CancellationToken cancellationToken = default);
 
+    Task<RegistrationCodeDelivery> SendRegistrationCodeAsync(
+        string email,
+        string inviteCode,
+        CancellationToken cancellationToken = default);
+
+    Task<AuthSession> RegisterAsync(
+        string email,
+        string password,
+        string inviteCode,
+        string verificationCode,
+        CancellationToken cancellationToken = default);
+
     ValueTask LogoutAsync(CancellationToken cancellationToken = default);
 }

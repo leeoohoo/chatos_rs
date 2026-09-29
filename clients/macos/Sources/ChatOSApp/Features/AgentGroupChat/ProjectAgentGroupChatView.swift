@@ -172,10 +172,6 @@ struct ProjectAgentGroupChatView: View {
                     + viewModel.pendingTeamProposals.count
                     + viewModel.pendingMembershipProposals.count,
                 onOpen: { selectedSection = $0 },
-                onOpenTodo: { todo in
-                    focusedTodoID = todo.id
-                    selectedSection = .tasks
-                },
                 onInspectRun: { run in
                     inspectingRun = run
                 }
@@ -195,12 +191,11 @@ struct ProjectAgentGroupChatView: View {
             TeamTodoBoardView(
                 todos: viewModel.teamTodos,
                 profilesByID: viewModel.profilesByID,
-                runsByTodoID: todoRunsByTodoID,
+                runsByTodoID: viewModel.todoRunPresentationsByTodoID,
                 focusedTodoID: focusedTodoID,
-                onResolveBlocked: { todo, note in
-                    await viewModel.resolveBlockedTodo(todo, resolution: note)
-                },
-                onInspectRun: { run in inspectingRun = run }
+                onInspectRun: { runID in
+                    inspectingRun = viewModel.recentRuns.first { $0.id == runID }
+                }
             )
         case .research:
             ProjectRequirementSurveysView(
@@ -243,18 +238,6 @@ struct ProjectAgentGroupChatView: View {
                 onInspect: { inspectingRun = $0 }
             )
         }
-    }
-
-    private var todoRunsByTodoID: [String: LocalAgentGroupChatRun] {
-        var result: [String: LocalAgentGroupChatRun] = [:]
-        for run in viewModel.recentRuns {
-            guard let delivery = viewModel.recentRunDeliveries[run.id],
-                  delivery.triggerKind == .todo,
-                  delivery.deduplicationKey.hasPrefix("todo:") else { continue }
-            let todoID = String(delivery.deduplicationKey.dropFirst("todo:".count))
-            if result[todoID] == nil { result[todoID] = run }
-        }
-        return result
     }
 
     private var pendingProposals: some View {

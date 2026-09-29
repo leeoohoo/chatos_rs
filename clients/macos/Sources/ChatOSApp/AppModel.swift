@@ -141,6 +141,10 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var agentHeartbeatTask: Task<Void, Never>?
     var agentCommunicationTask: Task<Void, Never>?
     var agentArtifactSyncTask: Task<Void, Never>?
+    var agentArtifactSyncOwnerUserID: String?
+    var localConnectorRecoveryTask: Task<Void, Never>?
+    var localConnectorRecoveryGeneration: UInt64 = 0
+    var lastLocalConnectorRecoveryDate: Date?
     var mainWindowPresentationHandler: (() -> Void)?
     var settingsWindowPresentationHandler: (() -> Void)?
 
@@ -378,8 +382,13 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.recoverLocalConnector(forceReconnect: false)
-                self?.restartAgentArtifactSyncCoordinator()
+                self?.ensureAgentArtifactSyncCoordinator()
+                self?.startVisualSessionMonitoring()
             }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.stopVisualSessionMonitoring() }
             .store(in: &cancellables)
         NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)
             .receive(on: RunLoop.main)

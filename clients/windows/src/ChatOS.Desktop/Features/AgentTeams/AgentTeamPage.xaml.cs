@@ -2,7 +2,6 @@ using ChatOS.Core.Domain;
 using ChatOS.Presentation.AgentTeams;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.Storage.Streams;
 
@@ -28,6 +27,9 @@ public sealed partial class AgentTeamPage : UserControl
 
     private async void OnRefreshClick(object sender, RoutedEventArgs e) =>
         await IgnoreFailureAsync(() => ViewModel.RefreshAsync());
+
+    private async void OnLoadEarlierMessagesClick(object sender, RoutedEventArgs e) =>
+        await IgnoreFailureAsync(ViewModel.LoadEarlierMessagesAsync);
 
     private async void OnRunAgentsClick(object sender, RoutedEventArgs e) =>
         await IgnoreFailureAsync(ViewModel.DrainAsync);
@@ -189,22 +191,24 @@ public sealed partial class AgentTeamPage : UserControl
         if (sender is not Button { DataContext: AgentMessageAttachment metadata }) return;
         try
         {
-            var attachment = await ViewModel.LoadAttachmentAsync(metadata.Id)
-                ?? throw new InvalidOperationException("附件已经不存在。");
-            var window = (Application.Current as App)?.MainWindow
-                ?? throw new InvalidOperationException("无法找到当前窗口。");
-            var extension = Path.GetExtension(attachment.Name);
-            if (string.IsNullOrWhiteSpace(extension)) extension = ".bin";
-            var picker = new FileSavePicker { SuggestedFileName = attachment.Name };
-            picker.FileTypeChoices.Add("附件", [extension]);
-            WinRT.Interop.InitializeWithWindow.Initialize(
-                picker, WinRT.Interop.WindowNative.GetWindowHandle(window));
-            var file = await picker.PickSaveFileAsync();
-            if (file is not null) await FileIO.WriteBytesAsync(file, attachment.Data);
+            await AgentMessageAttachmentPresenter.SaveAsync(ViewModel, metadata);
         }
         catch (Exception exception)
         {
             await AlertAsync("无法保存附件", exception.Message);
+        }
+    }
+
+    private async void OnPreviewAttachmentClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: AgentMessageAttachment metadata }) return;
+        try
+        {
+            await AgentMessageAttachmentPresenter.PreviewAsync(XamlRoot, ViewModel, metadata);
+        }
+        catch (Exception exception)
+        {
+            await AlertAsync("无法预览附件", exception.Message);
         }
     }
 
@@ -213,18 +217,18 @@ public sealed partial class AgentTeamPage : UserControl
 
     private async void OnEditTodoClick(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { DataContext: AgentTodo todo }) await ShowTodoDialogAsync(todo);
+        if (sender is Button { Tag: AgentTodo todo }) await ShowTodoDialogAsync(todo);
     }
 
     private async void OnTodoUpClick(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { DataContext: AgentTodo todo })
+        if (sender is Button { Tag: AgentTodo todo })
             await IgnoreFailureAsync(() => ViewModel.MoveTodoAsync(todo, -1));
     }
 
     private async void OnTodoDownClick(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { DataContext: AgentTodo todo })
+        if (sender is Button { Tag: AgentTodo todo })
             await IgnoreFailureAsync(() => ViewModel.MoveTodoAsync(todo, 1));
     }
 
@@ -234,6 +238,56 @@ public sealed partial class AgentTeamPage : UserControl
     private async void OnEditAssetClick(object sender, RoutedEventArgs e)
     {
         if (sender is Button { DataContext: AgentTeamAsset asset }) await ShowAssetDialogAsync(asset);
+    }
+
+    private async void OnAssetHistoryClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: AgentTeamAsset asset }) return;
+        try
+        {
+            var revisions = await ViewModel.LoadAssetRevisionsAsync(asset);
+            var history = new StackPanel { Spacing = 10, MinWidth = 560 };
+            foreach (var revision in revisions)
+            {
+                var editor = ViewModel.AgentName(revision.EditorAgentId);
+                var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(
+                    revision.CreatedAtUnixMs).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+                var details = new StackPanel { Spacing = 6 };
+                details.Children.Add(new TextBlock
+                {
+                    Text = $"{revision.Title}\n{AgentTeamDisplayText.For(revision.Status)} · {editor} · {timestamp}",
+                    TextWrapping = TextWrapping.Wrap,
+                });
+                details.Children.Add(new TextBlock
+                {
+                    Text = revision.Markdown,
+                    IsTextSelectionEnabled = true,
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxWidth = 680,
+                });
+                history.Children.Add(new Expander
+                {
+                    Header = $"revision {revision.Revision}",
+                    Content = details,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                });
+            }
+
+            if (revisions.Count == 0)
+            {
+                history.Children.Add(new TextBlock { Text = "该资产还没有可显示的版本。" });
+            }
+            await ShowDialogAsync($"版本历史 · {asset.Title}", new ScrollViewer
+            {
+                Content = history,
+                MaxHeight = 650,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            }, null);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            await AlertAsync("无法加载版本历史", exception.Message);
+        }
     }
 
     private async void OnArchiveAssetClick(object sender, RoutedEventArgs e)
@@ -247,7 +301,8 @@ public sealed partial class AgentTeamPage : UserControl
     {
         if (sender is Button { DataContext: AgentStaffingProposal proposal } &&
             proposal.Status == AgentStaffingProposalStatus.Pending &&
-            await ConfirmAsync("批准成员提案", $"批准 {proposal.Draft.Kind} 提案？"))
+            await ConfirmAsync("批准成员提案",
+                $"批准“{AgentTeamDisplayText.For(proposal.Draft.Kind)}”提案？"))
             await IgnoreFailureAsync(() => ViewModel.ResolveStaffingProposalAsync(proposal, true));
     }
 
@@ -255,8 +310,70 @@ public sealed partial class AgentTeamPage : UserControl
     {
         if (sender is Button { DataContext: AgentStaffingProposal proposal } &&
             proposal.Status == AgentStaffingProposalStatus.Pending &&
-            await ConfirmAsync("拒绝成员提案", $"拒绝 {proposal.Draft.Kind} 提案？"))
+            await ConfirmAsync("拒绝成员提案",
+                $"拒绝“{AgentTeamDisplayText.For(proposal.Draft.Kind)}”提案？"))
             await IgnoreFailureAsync(() => ViewModel.ResolveStaffingProposalAsync(proposal, false));
+    }
+
+    private async void OnInspectRunClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: AgentRunItemViewModel item }) return;
+        var details = new StackPanel { Spacing = 9, MinWidth = 560 };
+        details.Children.Add(RunDetailRow("Agent", item.AgentLabel));
+        details.Children.Add(RunDetailRow("状态", item.StatusLabel));
+        details.Children.Add(RunDetailRow("模型调用", item.Run.ModelCalls.ToString()));
+        details.Children.Add(RunDetailRow("开始时间", item.StartedAtLabel));
+        details.Children.Add(RunDetailRow("更新时间", item.UpdatedAtLabel));
+        details.Children.Add(RunDetailRow("耗时", item.DurationLabel));
+        details.Children.Add(RunDetailRow("Run ID", item.Run.Id));
+        details.Children.Add(RunDetailRow("Delivery ID", item.Run.DeliveryId));
+        if (!string.IsNullOrWhiteSpace(item.LastError))
+        {
+            details.Children.Add(new TextBlock
+            {
+                Text = "错误详情",
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Margin = new Thickness(0, 8, 0, 0),
+            });
+            details.Children.Add(new TextBox
+            {
+                Text = item.LastError,
+                IsReadOnly = true,
+                AcceptsReturn = true,
+                TextWrapping = TextWrapping.Wrap,
+                MaxHeight = 260,
+            });
+        }
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = $"运行详情 · {item.AgentLabel}",
+            Content = new ScrollViewer
+            {
+                Content = details,
+                MaxHeight = 650,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            },
+            CloseButtonText = "完成",
+        };
+        await dialog.ShowAsync();
+    }
+
+    private static Grid RunDetailRow(string label, string value)
+    {
+        var row = new Grid { ColumnSpacing = 12 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.Children.Add(new TextBlock { Text = label, Opacity = 0.65 });
+        var valueText = new TextBlock
+        {
+            Text = value,
+            IsTextSelectionEnabled = true,
+            TextWrapping = TextWrapping.Wrap,
+        };
+        Grid.SetColumn(valueText, 1);
+        row.Children.Add(valueText);
+        return row;
     }
 
     private async Task ShowAgentDialogAsync(AgentProfile? profile)
@@ -332,7 +449,7 @@ public sealed partial class AgentTeamPage : UserControl
             if (await ShowDialogAsync("新建 Todo", Form(assignee, title, detail, priority), "创建") != ContentDialogResult.Primary ||
                 assignee.SelectedItem is not AgentProfile profile) return;
             await IgnoreFailureAsync(() => ViewModel.CreateTodoAsync(profile.Id, title.Text, detail.Text,
-                (AgentTodoPriority)priority.SelectedItem));
+                SelectedEnum<AgentTodoPriority>(priority)));
             return;
         }
         var status = EnumPicker("状态", todo.Status);
@@ -350,7 +467,7 @@ public sealed partial class AgentTeamPage : UserControl
             MaxHeight = 180,
         };
         if (await ShowDialogAsync("更新 Todo", Form(assignee, title, detail, priority, status, result, progress), "更新") != ContentDialogResult.Primary) return;
-        await IgnoreFailureAsync(() => ViewModel.UpdateTodoAsync(todo, (AgentTodoStatus)status.SelectedItem,
+        await IgnoreFailureAsync(() => ViewModel.UpdateTodoAsync(todo, SelectedEnum<AgentTodoStatus>(status),
             result.Text, (assignee.SelectedItem as AgentProfile)?.Id));
     }
 
@@ -362,7 +479,7 @@ public sealed partial class AgentTeamPage : UserControl
         if (await ShowDialogAsync(asset is null ? "新建团队资产" : $"编辑资产 · revision {asset.Revision}",
             Form(category, title, markdown), "保存") != ContentDialogResult.Primary) return;
         await IgnoreFailureAsync(() => ViewModel.SaveAssetAsync(asset,
-            (AgentTeamAssetCategory)category.SelectedItem, title.Text, markdown.Text));
+            SelectedEnum<AgentTeamAssetCategory>(category), title.Text, markdown.Text));
     }
 
     private ComboBox AgentPicker(string header, AgentProfile? selected, IEnumerable<AgentProfile>? source = null) =>
@@ -384,13 +501,23 @@ public sealed partial class AgentTeamPage : UserControl
         HorizontalAlignment = HorizontalAlignment.Stretch,
     };
 
-    private static ComboBox EnumPicker<T>(string header, T selected) where T : struct, Enum => new()
+    private static ComboBox EnumPicker<T>(string header, T selected) where T : struct, Enum
     {
-        Header = header,
-        ItemsSource = Enum.GetValues<T>(),
-        SelectedItem = selected,
-        HorizontalAlignment = HorizontalAlignment.Stretch,
-    };
+        var options = Enum.GetValues<T>()
+            .Select(value => new AgentEnumOption<T>(value, AgentTeamDisplayText.For(value)))
+            .ToArray();
+        return new ComboBox
+        {
+            Header = header,
+            ItemsSource = options,
+            DisplayMemberPath = nameof(AgentEnumOption<T>.Label),
+            SelectedItem = options.First(option => EqualityComparer<T>.Default.Equals(option.Value, selected)),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+    }
+
+    private static T SelectedEnum<T>(ComboBox picker) where T : struct, Enum =>
+        ((AgentEnumOption<T>)picker.SelectedItem).Value;
 
     private static IReadOnlyList<string> SplitIdentifiers(string value) => value
         .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

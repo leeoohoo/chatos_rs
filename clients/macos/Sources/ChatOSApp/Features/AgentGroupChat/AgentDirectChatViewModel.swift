@@ -36,9 +36,7 @@ final class AgentDirectChatViewModel: ObservableObject {
     @Published private(set) var pendingTeamProposals: [LocalAgentTeamCreationProposal] = []
     @Published private(set) var pendingMembershipProposals: [LocalAgentMembershipProposal] = []
     @Published private(set) var teams: [ProjectAgentRoom] = []
-    @Published var draftMessage = ""
-    @Published var attachments: [ConversationAttachmentDraft] = []
-    @Published var attachmentError: String?
+    let composerState = AgentChatComposerState()
     @Published private(set) var attachmentDataByID: [String: Data] = [:]
     @Published private(set) var isLoading = false
     @Published private(set) var hasCompletedInitialLoad = false
@@ -66,6 +64,21 @@ final class AgentDirectChatViewModel: ObservableObject {
     private var changeObservationTask: Task<Void, Never>?
     private var supplementaryLoadTask: Task<Void, Never>?
     private let messagePageSize = 20
+
+    var draftMessage: String {
+        get { composerState.draftMessage }
+        set { composerState.draftMessage = newValue }
+    }
+
+    var attachments: [ConversationAttachmentDraft] {
+        get { composerState.attachments }
+        set { composerState.attachments = newValue }
+    }
+
+    var attachmentError: String? {
+        get { composerState.attachmentError }
+        set { composerState.attachmentError = newValue }
+    }
 
     init(
         ownerUserID: String,

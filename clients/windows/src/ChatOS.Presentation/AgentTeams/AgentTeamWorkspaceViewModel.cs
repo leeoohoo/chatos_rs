@@ -36,19 +36,26 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
     public ObservableCollection<AgentRoomMember> Members { get; } = [];
     public ObservableCollection<AgentProfile> MemberProfiles { get; } = [];
     public ObservableCollection<AgentMessage> Messages { get; } = [];
+    public ObservableCollection<AgentMessageItemViewModel> MessageItems { get; } = [];
     public ObservableCollection<AgentTodo> Todos { get; } = [];
+    public ObservableCollection<AgentTodoItemViewModel> TodoItems { get; } = [];
     public ObservableCollection<AgentTodoProgress> SelectedTodoProgress { get; } = [];
     public ObservableCollection<AgentTeamAsset> Assets { get; } = [];
     public ObservableCollection<AgentRequirementSurvey> RequirementSurveys { get; } = [];
     public ObservableCollection<AgentStaffingProposal> StaffingProposals { get; } = [];
     public ObservableCollection<AgentRunSummary> Runs { get; } = [];
+    public ObservableCollection<AgentRunItemViewModel> RunItems { get; } = [];
+    public ObservableCollection<AgentRunItemViewModel> VisibleRunItems { get; } = [];
+    public ObservableCollection<AgentRunFilterOption> RunAgentFilters { get; } = [];
     public ObservableCollection<AgentMessageAttachment> PendingAttachments { get; } = [];
 
     public bool IsOpen => _ownerUserId is not null && ProjectId is not null;
+    public bool IsGlobalWorkspace { get; private set; }
     public bool HasRoom => SelectedRoom is not null;
     public bool HasAgents => Agents.Count > 0;
     public bool CanConfigureTeam => SelectedRoom is { Kind: AgentConversationKind.ProjectTeam };
     public bool HasPendingAttachments => PendingAttachments.Count > 0;
+    public bool HasVisibleRuns => VisibleRunItems.Count > 0;
 
     [ObservableProperty]
     private string? _projectId;
@@ -82,6 +89,15 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
     [ObservableProperty]
     private bool _isBusy;
 
+    [ObservableProperty]
+    private bool _hasEarlierMessages;
+
+    [ObservableProperty]
+    private bool _isLoadingEarlierMessages;
+
+    [ObservableProperty]
+    private AgentRunFilterOption? _selectedRunAgentFilter;
+
     public async Task OpenAsync(
         string ownerUserId,
         WorkspaceProject project,
@@ -89,8 +105,25 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
     {
         CancelSession();
         _ownerUserId = ownerUserId;
+        IsGlobalWorkspace = false;
         ProjectId = project.Id;
         ProjectName = project.Name;
+        _modelsLoaded = false;
+        await _dispatcher.InvokeAsync(() => Models.Clear(), cancellationToken).ConfigureAwait(false);
+        _sessionCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Interlocked.Increment(ref _generation);
+        await RefreshAsync(_sessionCancellation.Token).ConfigureAwait(false);
+    }
+
+    public async Task OpenGlobalAsync(
+        string ownerUserId,
+        CancellationToken cancellationToken = default)
+    {
+        CancelSession();
+        _ownerUserId = ownerUserId;
+        IsGlobalWorkspace = true;
+        ProjectId = "direct";
+        ProjectName = "Agent";
         _modelsLoaded = false;
         await _dispatcher.InvokeAsync(() => Models.Clear(), cancellationToken).ConfigureAwait(false);
         _sessionCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -106,7 +139,9 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
         {
             await SetBusyAsync(true, null, context.Token).ConfigureAwait(false);
             var agentsTask = _service.ListAgentsAsync(context.Owner, false, context.Token);
-            var roomsTask = _service.ListRoomsAsync(context.Owner, context.Project, context.Token);
+            var roomsTask = IsGlobalWorkspace
+                ? Task.FromResult<IReadOnlyList<AgentRoom>>([])
+                : _service.ListRoomsAsync(context.Owner, context.Project, context.Token);
             var directsTask = _service.ListRoomsAsync(context.Owner, "direct", context.Token);
             var shouldLoadModels = !_modelsLoaded;
             var modelsTask = shouldLoadModels
@@ -224,6 +259,54 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
             context.Token).ConfigureAwait(false);
     }
 
+    public async Task<IReadOnlyList<AgentTeamAssetRevision>> LoadAssetRevisionsAsync(
+        AgentTeamAsset asset)
+    {
+        using var context = RequireContext(CancellationToken.None);
+        var room = SelectedRoom ?? throw new InvalidOperationException("请先选择一个团队。");
+        var revisions = await _service.ListAssetRevisionsAsync(
+            context.Owner, room.Id, asset.Id, context.Token).ConfigureAwait(false);
+        EnsureCurrent(context.Generation, context.Token);
+        return revisions;
+    }
+
+    public async Task LoadEarlierMessagesAsync()
+    {
+        using var context = RequireContext(CancellationToken.None);
+        var room = SelectedRoom;
+        var cursor = Messages.FirstOrDefault();
+        if (room is null || cursor is null || !HasEarlierMessages || IsLoadingEarlierMessages)
+            return;
+
+        await _refreshGate.WaitAsync(context.Token).ConfigureAwait(false);
+        try
+        {
+            await _dispatcher.InvokeAsync(() => IsLoadingEarlierMessages = true, context.Token)
+                .ConfigureAwait(false);
+            var page = await _service.ListEarlierMessagesAsync(context.Owner, room.Id,
+                cursor.CreatedAtUnixMs, cursor.Id, cancellationToken: context.Token)
+                .ConfigureAwait(false);
+            EnsureCurrent(context.Generation, context.Token);
+            await _dispatcher.InvokeAsync(() =>
+            {
+                var messages = page.Messages.Concat(Messages)
+                    .DistinctBy(message => message.Id, StringComparer.Ordinal)
+                    .OrderBy(message => message.CreatedAtUnixMs)
+                    .ThenBy(message => message.Id, StringComparer.Ordinal)
+                    .ToArray();
+                Replace(Messages, messages);
+                ReplaceMessageItems(messages, MemberProfiles);
+                HasEarlierMessages = page.HasMore;
+            }, context.Token).ConfigureAwait(false);
+        }
+        finally
+        {
+            await _dispatcher.InvokeAsync(() => IsLoadingEarlierMessages = false,
+                CancellationToken.None).ConfigureAwait(false);
+            _refreshGate.Release();
+        }
+    }
+
     private async Task LoadSelectedRoomAsync(SessionContext context)
     {
         var room = SelectedRoom;
@@ -233,15 +316,35 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
         EnsureCurrent(context.Generation, context.Token);
         await _dispatcher.InvokeAsync(() =>
         {
+            var preserveEarlier = _loadedRoomId == snapshot.Room.Id;
+            var messages = snapshot.Messages
+                .Concat(preserveEarlier ? Messages : Enumerable.Empty<AgentMessage>())
+                .DistinctBy(message => message.Id, StringComparer.Ordinal)
+                .OrderBy(message => message.CreatedAtUnixMs)
+                .ThenBy(message => message.Id, StringComparer.Ordinal)
+                .ToArray();
             SelectedRoom = snapshot.Room;
             Replace(Members, snapshot.Members);
             Replace(MemberProfiles, snapshot.Profiles);
-            Replace(Messages, snapshot.Messages);
+            Replace(Messages, messages);
+            ReplaceMessageItems(messages, snapshot.Profiles);
+            HasEarlierMessages = preserveEarlier
+                ? HasEarlierMessages
+                : snapshot.HasEarlierMessages;
+            var agentNames = AgentNames(snapshot.Profiles);
             Replace(Todos, snapshot.Todos);
+            Replace(TodoItems, snapshot.Todos.Select(todo =>
+                new AgentTodoItemViewModel(todo,
+                    agentNames.TryGetValue(todo.Draft.AgentId, out var name) ? name : null)));
             Replace(Assets, snapshot.Assets);
             Replace(RequirementSurveys, snapshot.RequirementSurveys);
             Replace(StaffingProposals, snapshot.StaffingProposals);
             Replace(Runs, snapshot.Runs);
+            var runItems = snapshot.Runs.Select(run =>
+                new AgentRunItemViewModel(run,
+                    agentNames.TryGetValue(run.AgentId, out var name) ? name : null)).ToArray();
+            Replace(RunItems, runItems);
+            RefreshRunFilters(runItems);
             _loadedRoomId = snapshot.Room.Id;
             SelectedTodo = Todos.FirstOrDefault(value => value.Id == SelectedTodo?.Id);
             SelectedAsset = Assets.FirstOrDefault(value => value.Id == SelectedAsset?.Id);
@@ -254,17 +357,68 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
         Members.Clear();
         MemberProfiles.Clear();
         Messages.Clear();
+        MessageItems.Clear();
+        HasEarlierMessages = false;
+        IsLoadingEarlierMessages = false;
         Todos.Clear();
+        TodoItems.Clear();
         SelectedTodoProgress.Clear();
         Assets.Clear();
         RequirementSurveys.Clear();
         StaffingProposals.Clear();
         Runs.Clear();
+        RunItems.Clear();
+        VisibleRunItems.Clear();
+        RunAgentFilters.Clear();
+        SelectedRunAgentFilter = null;
         PendingAttachments.Clear();
         OnPropertyChanged(nameof(HasPendingAttachments));
         _loadedRoomId = null;
         SelectedTodo = null;
         SelectedAsset = null;
+    }
+
+    private void ReplaceMessageItems(
+        IEnumerable<AgentMessage> messages,
+        IEnumerable<AgentProfile> roomProfiles)
+    {
+        var agentNames = AgentNames(roomProfiles);
+        Replace(MessageItems, messages.Select(message =>
+            new AgentMessageItemViewModel(message,
+                message.SenderAgentId is not null &&
+                agentNames.TryGetValue(message.SenderAgentId, out var name) ? name : null)));
+    }
+
+    private Dictionary<string, string> AgentNames(IEnumerable<AgentProfile> roomProfiles) =>
+        Agents.Concat(roomProfiles)
+            .GroupBy(agent => agent.Id, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last().Draft.Name,
+                StringComparer.Ordinal);
+
+    partial void OnSelectedRunAgentFilterChanged(AgentRunFilterOption? value) =>
+        RefreshVisibleRuns();
+
+    private void RefreshRunFilters(IReadOnlyList<AgentRunItemViewModel> items)
+    {
+        var selectedAgentId = SelectedRunAgentFilter?.AgentId;
+        var filters = new List<AgentRunFilterOption> { new(null, "全部 Agent") };
+        filters.AddRange(items
+            .GroupBy(item => item.Run.AgentId, StringComparer.Ordinal)
+            .Select(group => new AgentRunFilterOption(group.Key, group.First().AgentLabel))
+            .OrderBy(option => option.Label, StringComparer.CurrentCulture));
+        Replace(RunAgentFilters, filters);
+        SelectedRunAgentFilter = filters.FirstOrDefault(option =>
+            option.AgentId == selectedAgentId) ?? filters[0];
+        RefreshVisibleRuns();
+    }
+
+    private void RefreshVisibleRuns()
+    {
+        var agentId = SelectedRunAgentFilter?.AgentId;
+        Replace(VisibleRunItems, agentId is null
+            ? RunItems
+            : RunItems.Where(item => item.Run.AgentId == agentId));
+        OnPropertyChanged(nameof(HasVisibleRuns));
     }
 
     private async void OnServiceChanged(object? sender, AgentTeamChangedEventArgs args)

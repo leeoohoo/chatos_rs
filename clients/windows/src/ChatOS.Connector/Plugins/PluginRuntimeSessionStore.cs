@@ -13,6 +13,28 @@ internal sealed class PluginRuntimeSessionStore : IPluginRuntimeLifetime
     private readonly ConcurrentDictionary<string, Session> _sessions = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, SkillSession> _skillSessions = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _exclusiveExecution = new(1, 1);
+    private readonly object _visualChangeGate = new();
+    private long _visualRevision;
+    private TaskCompletionSource<long> _visualChanged = VisualChangeSource();
+
+    internal long VisualRevision
+    {
+        get
+        {
+            lock (_visualChangeGate) return _visualRevision;
+        }
+    }
+
+    internal Task<long> WaitForVisualChangeAsync(
+        long afterRevision,
+        CancellationToken cancellationToken)
+    {
+        lock (_visualChangeGate)
+        {
+            if (_visualRevision > afterRevision) return Task.FromResult(_visualRevision);
+            return _visualChanged.Task.WaitAsync(cancellationToken);
+        }
+    }
 
     public async Task InsertAsync(
         PluginRuntimeIdentity identity,
@@ -40,6 +62,7 @@ internal sealed class PluginRuntimeSessionStore : IPluginRuntimeLifetime
         if (_sessions.TryGetValue(identity.AdapterSessionId, out var previous))
         {
             _sessions[identity.AdapterSessionId] = session;
+            if (previous.VisualOwner is not null) SignalVisualChanged();
             await previous.Client.TerminateAsync().ConfigureAwait(false);
             await previous.Client.DisposeAsync().ConfigureAwait(false);
         }
@@ -237,6 +260,7 @@ internal sealed class PluginRuntimeSessionStore : IPluginRuntimeLifetime
             };
             if (_sessions.TryUpdate(adapterSessionId, updated, session))
             {
+                SignalVisualChanged();
                 return;
             }
         }
@@ -341,6 +365,7 @@ internal sealed class PluginRuntimeSessionStore : IPluginRuntimeLifetime
 
         if (_sessions.TryRemove(adapterSessionId, out session))
         {
+            if (session.VisualOwner is not null) SignalVisualChanged();
             foreach (var invocation in session.ActiveInvocations.Values)
             {
                 invocation.Cancel();
@@ -359,6 +384,7 @@ internal sealed class PluginRuntimeSessionStore : IPluginRuntimeLifetime
         var sessions = _sessions.ToArray();
         _sessions.Clear();
         _skillSessions.Clear();
+        if (sessions.Any(value => value.Value.VisualOwner is not null)) SignalVisualChanged();
         foreach (var session in sessions)
         {
             foreach (var invocation in session.Value.ActiveInvocations.Values)
@@ -388,6 +414,7 @@ internal sealed class PluginRuntimeSessionStore : IPluginRuntimeLifetime
                 continue;
             }
 
+            if (session.VisualOwner is not null) SignalVisualChanged();
             foreach (var invocation in session.ActiveInvocations.Values)
             {
                 invocation.Cancel();
@@ -397,6 +424,23 @@ internal sealed class PluginRuntimeSessionStore : IPluginRuntimeLifetime
             await session.Client.DisposeAsync().ConfigureAwait(false);
         }
     }
+
+    private void SignalVisualChanged()
+    {
+        TaskCompletionSource<long> previous;
+        long revision;
+        lock (_visualChangeGate)
+        {
+            revision = ++_visualRevision;
+            previous = _visualChanged;
+            _visualChanged = VisualChangeSource();
+        }
+
+        previous.TrySetResult(revision);
+    }
+
+    private static TaskCompletionSource<long> VisualChangeSource() =>
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private sealed record Session(
         PluginRuntimeIdentity Identity,

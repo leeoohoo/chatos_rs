@@ -53,6 +53,7 @@ extension AppModel {
             agentCommunicationTask = nil
             agentArtifactSyncTask?.cancel()
             agentArtifactSyncTask = nil
+            agentArtifactSyncOwnerUserID = nil
             authenticatedUserID = nil
             languagePreferencesSaveTask?.cancel()
             isLanguagePreferencesLoading = false
@@ -85,6 +86,9 @@ extension AppModel {
 
     func prepareForApplicationTermination() {
         agentArtifactSyncTask?.cancel()
+        agentArtifactSyncOwnerUserID = nil
+        localConnectorRecoveryTask?.cancel()
+        localConnectorRecoveryTask = nil
         deactivateAllConversations()
         stopVisualSessionMonitoring()
         globalUtilityCoordinator.stop()

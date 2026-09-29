@@ -1,9 +1,11 @@
-import AppKit
 import SwiftUI
 
 struct VisualSessionOverlayHost: View {
     @ObservedObject var store: VisualSessionPresentationStore
     let currentConversationID: String?
+    let onSelectPrevious: () -> Void
+    let onSelectNext: () -> Void
+    let onToggle: () -> Void
 
     @ViewBuilder
     var body: some View {
@@ -12,17 +14,24 @@ struct VisualSessionOverlayHost: View {
             VisualSessionOverlay(
                 session: presentation,
                 position: (store.selectedIndex ?? 0) + 1,
-                sessionCount: store.presentations.count
+                sessionCount: store.presentations.count,
+                onSelectPrevious: onSelectPrevious,
+                onSelectNext: onSelectNext,
+                onToggle: onToggle
             )
+            .equatable()
         }
     }
 }
 
 struct VisualSessionOverlay: View {
-    @EnvironmentObject private var model: AppModel
     let session: VisualSessionPresentation
     let position: Int
     let sessionCount: Int
+    let onSelectPrevious: () -> Void
+    let onSelectNext: () -> Void
+    let onToggle: () -> Void
+    @Environment(\.locale) private var locale
 
     var body: some View {
         if session.isExpanded {
@@ -49,24 +58,24 @@ struct VisualSessionOverlay: View {
                     Spacer()
 
                     if sessionCount > 1 {
-                        Button(action: model.selectPreviousVisualSession) {
+                        Button(action: onSelectPrevious) {
                             Image(systemName: "chevron.left")
                         }
                         .buttonStyle(.plain)
-                        .help(model.localized("上一个实时画面", english: "Previous live view"))
+                        .help(localized("上一个实时画面", english: "Previous live view"))
 
                         Text("\(position)/\(sessionCount)")
                             .appFont(.caption2.monospacedDigit())
                             .foregroundStyle(.secondary)
 
-                        Button(action: model.selectNextVisualSession) {
+                        Button(action: onSelectNext) {
                             Image(systemName: "chevron.right")
                         }
                         .buttonStyle(.plain)
-                        .help(model.localized("下一个实时画面", english: "Next live view"))
+                        .help(localized("下一个实时画面", english: "Next live view"))
                     }
 
-                    Button(action: model.toggleVisualSession) {
+                    Button(action: onToggle) {
                         Image(systemName: "chevron.down")
                     }
                     .buttonStyle(.plain)
@@ -77,8 +86,8 @@ struct VisualSessionOverlay: View {
 
                 ZStack {
                     Color(nsColor: .windowBackgroundColor)
-                    if let frameImage {
-                        Image(nsImage: frameImage)
+                    if let frameImage = session.frameImage {
+                        Image(decorative: frameImage.image, scale: 1)
                             .resizable()
                             .interpolation(.high)
                             .antialiased(true)
@@ -88,7 +97,7 @@ struct VisualSessionOverlay: View {
                         VStack(spacing: 10) {
                             ProgressView()
                                 .controlSize(.small)
-                            Text(model.localized("正在建立实时画面…", english: "Establishing live view…"))
+                            Text(localized("正在建立实时画面…", english: "Establishing live view…"))
                                 .appFont(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -102,13 +111,13 @@ struct VisualSessionOverlay: View {
                     Text(session.session.pluginDisplayName)
                         .lineLimit(1)
                     if sessionCount > 1 {
-                        Text(model.localized(
+                        Text(localized(
                             "· \(sessionCount) 个活动画面",
                             english: "· \(sessionCount) active views"
                         ))
                     }
                     Spacer()
-                    Label(model.localized("仅在本机显示", english: "Visible only on this Mac"), systemImage: "lock.fill")
+                    Label(localized("仅在本机显示", english: "Visible only on this Mac"), systemImage: "lock.fill")
                 }
                 .appFont(.caption2)
                 .foregroundStyle(.secondary)
@@ -123,7 +132,7 @@ struct VisualSessionOverlay: View {
             }
             .shadow(radius: 18, y: 8)
         } else {
-            Button(action: model.toggleVisualSession) {
+            Button(action: onToggle) {
                 HStack(spacing: 8) {
                     Circle().fill(.green).frame(width: 7, height: 7)
                     Image(systemName: operationIcon)
@@ -148,20 +157,18 @@ struct VisualSessionOverlay: View {
         }
     }
 
-    private var frameImage: NSImage? {
-        session.session.frameData.flatMap(NSImage.init(data:))
-    }
-
     private let overlayWidth: CGFloat = 376
 
     private var imageAreaHeight: CGFloat {
-        guard let frameImage,
-              frameImage.size.width > 0,
-              frameImage.size.height > 0 else {
+        guard let frameImage = session.frameImage,
+              frameImage.image.width > 0,
+              frameImage.image.height > 0 else {
             return 178
         }
 
-        let fittedHeight = overlayWidth * frameImage.size.height / frameImage.size.width
+        let fittedHeight = overlayWidth
+            * CGFloat(frameImage.image.height)
+            / CGFloat(frameImage.image.width)
         return min(max(fittedHeight, 178), 260)
     }
 
@@ -179,8 +186,8 @@ struct VisualSessionOverlay: View {
 
     private var collapsedTitle: String {
         isBrowser
-            ? model.localized("浏览器操作", english: "Browser activity")
-            : model.localized("电脑操作", english: "Computer activity")
+            ? localized("浏览器操作", english: "Browser activity")
+            : localized("电脑操作", english: "Computer activity")
     }
 
     private var displayTitle: String {
@@ -192,10 +199,22 @@ struct VisualSessionOverlay: View {
         if let target = session.session.targetApplication,
            !target.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty {
             return isBrowser
-                ? model.localized("正在浏览 \(target)", english: "Browsing \(target)")
-                : model.localized("正在操作 \(target)", english: "Controlling \(target)")
+                ? localized("正在浏览 \(target)", english: "Browsing \(target)")
+                : localized("正在操作 \(target)", english: "Controlling \(target)")
         }
-        return model.localized("正在本机运行", english: "Running on this Mac")
+        return localized("正在本机运行", english: "Running on this Mac")
+    }
+
+    private func localized(_ chinese: String, english: String) -> String {
+        locale.identifier.lowercased().hasPrefix("en") ? english : chinese
+    }
+}
+
+extension VisualSessionOverlay: @MainActor Equatable {
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.session == rhs.session
+            && lhs.position == rhs.position
+            && lhs.sessionCount == rhs.sessionCount
     }
 }
 

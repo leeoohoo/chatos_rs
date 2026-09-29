@@ -55,7 +55,7 @@ final class AgentGroupChatViewModel: ObservableObject {
         let profile: LocalAgentProfile?
     }
 
-    struct InterruptedRunPresentation: Identifiable {
+    struct InterruptedRunPresentation: Identifiable, Equatable {
         var id: String { delivery.id }
         let run: LocalAgentGroupChatRun
         let delivery: ProjectAgentDelivery
@@ -96,11 +96,9 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published var loadingTeamAssetRevisionIDs: Set<String> = []
     @Published var recentRuns: [LocalAgentGroupChatRun] = []
     @Published var recentRunDeliveries: [UUID: ProjectAgentDelivery] = [:]
-    @Published var draftMessage = ""
-    @Published var attachments: [ConversationAttachmentDraft] = []
-    @Published var attachmentError: String?
+    @Published var todoRunPresentationsByTodoID: [String: TeamTodoRunPresentation] = [:]
+    let composerState = AgentChatComposerState()
     @Published var attachmentDataByID: [String: Data] = [:]
-    @Published var selectedMentionAgentIDs: Set<String> = []
     @Published var isLoading = false
     @Published var isLoadingModels = false
     @Published var isLoadingOlderMessages = false
@@ -110,7 +108,6 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published var isPausingAgents = false
     @Published var isStoppingAgents = false
     @Published var runActionDeliveryIDs: Set<String> = []
-    @Published var blockedTodoActionIDs: Set<String> = []
     @Published var proposalActionIDs: Set<String> = []
     @Published var removalProposalActionIDs: Set<String> = []
     @Published var teamProposalActionIDs: Set<String> = []
@@ -130,9 +127,31 @@ final class AgentGroupChatViewModel: ObservableObject {
     var communicationSchedulerNeedsAnotherPass = false
     var changeObservationTask: Task<Void, Never>?
     var supplementaryLoadTask: Task<Void, Never>?
+    var runRefreshTasks: [UUID: Task<Void, Never>] = [:]
     var modelLoadTask: Task<LocalAgentBuilderResources, Error>?
     var hasLoadedModels = false
+    private var isLoadInFlight = false
     let messagePageSize = 50
+
+    var draftMessage: String {
+        get { composerState.draftMessage }
+        set { composerState.draftMessage = newValue }
+    }
+
+    var attachments: [ConversationAttachmentDraft] {
+        get { composerState.attachments }
+        set { composerState.attachments = newValue }
+    }
+
+    var attachmentError: String? {
+        get { composerState.attachmentError }
+        set { composerState.attachmentError = newValue }
+    }
+
+    var selectedMentionAgentIDs: Set<String> {
+        get { composerState.selectedMentionAgentIDs }
+        set { composerState.selectedMentionAgentIDs = newValue }
+    }
 
     init(
         projectID: String,
@@ -155,6 +174,7 @@ final class AgentGroupChatViewModel: ObservableObject {
         communicationSchedulerTask?.cancel()
         changeObservationTask?.cancel()
         supplementaryLoadTask?.cancel()
+        for task in runRefreshTasks.values { task.cancel() }
     }
 
     var profilesByID: [String: LocalAgentProfile] {
@@ -208,9 +228,14 @@ final class AgentGroupChatViewModel: ObservableObject {
     }
 
     func load() async {
-        guard !isLoading else { return }
-        isLoading = true
-        defer { isLoading = false }
+        guard !isLoadInFlight else { return }
+        isLoadInFlight = true
+        let presentsLoading = room == nil
+        if presentsLoading { isLoading = true }
+        defer {
+            isLoadInFlight = false
+            if presentsLoading { isLoading = false }
+        }
         do {
             let store = try await resolveStore()
             let agents = try await store.listAgents(ownerUserID: ownerUserID, includeArchived: false)
@@ -230,24 +255,27 @@ final class AgentGroupChatViewModel: ObservableObject {
                 members = []
                 messagePage = nil
             }
-            self.agents = agents
+            publishIfChanged(agents, at: \.agents)
             let isSameRoom = self.room?.id == room?.id
-            self.room = room
-            self.members = members
+            publishIfChanged(room, at: \.room)
+            publishIfChanged(members, at: \.members)
             try await reconcilePersistedSchedulerIssue(store: store, roomID: room?.id)
             let messages = messagePage?.messages ?? []
             if isSameRoom, !self.messages.isEmpty {
-                self.messages = mergeMessages(self.messages, with: messages)
+                publishIfChanged(mergeMessages(self.messages, with: messages), at: \.messages)
             } else {
-                self.messages = messages
-                hasOlderMessages = messagePage?.hasMore ?? false
+                publishIfChanged(messages, at: \.messages)
+                publishIfChanged(messagePage?.hasMore ?? false, at: \.hasOlderMessages)
             }
             if room == nil {
-                attachmentDataByID = [:]
-                hasOlderMessages = false
+                publishIfChanged([:], at: \.attachmentDataByID)
+                publishIfChanged(false, at: \.hasOlderMessages)
             }
-            self.teams = teams
-            selectedMentionAgentIDs.formIntersection(Set(members.map(\.agentID)))
+            publishIfChanged(teams, at: \.teams)
+            let validMentionIDs = selectedMentionAgentIDs.intersection(members.map(\.agentID))
+            if validMentionIDs != selectedMentionAgentIDs {
+                selectedMentionAgentIDs = validMentionIDs
+            }
             // Background room updates must not dismiss an action error. The alert owner clears
             // it explicitly after the Human acknowledges it, while successful user actions can
             // still clear their own stale error state.
@@ -291,17 +319,18 @@ final class AgentGroupChatViewModel: ObservableObject {
     ) {
         supplementaryLoadTask?.cancel()
         guard let room else {
-            interruptedRuns = []
-            pendingProposals = []
-            pendingRemovalProposals = []
-            pendingTeamProposals = []
-            pendingMembershipProposals = []
-            teamTodos = []
-            teamAssets = []
-            projectDashboard = nil
-            requirementSurveys = []
-            recentRuns = []
-            recentRunDeliveries = [:]
+            publishIfChanged([], at: \.interruptedRuns)
+            publishIfChanged([], at: \.pendingProposals)
+            publishIfChanged([], at: \.pendingRemovalProposals)
+            publishIfChanged([], at: \.pendingTeamProposals)
+            publishIfChanged([], at: \.pendingMembershipProposals)
+            publishIfChanged([], at: \.teamTodos)
+            publishIfChanged([], at: \.teamAssets)
+            publishIfChanged(nil, at: \.projectDashboard)
+            publishIfChanged([], at: \.requirementSurveys)
+            publishIfChanged([], at: \.recentRuns)
+            publishIfChanged([:], at: \.recentRunDeliveries)
+            publishIfChanged([:], at: \.todoRunPresentationsByTodoID)
             return
         }
 
@@ -387,31 +416,52 @@ final class AgentGroupChatViewModel: ObservableObject {
                         return (run.id, delivery)
                     }
                 )
+                let todoRunPresentationsByTodoID = await Task.detached(priority: .utility) {
+                    TeamTodoRunPresentation.presentationsByTodoID(
+                        runs: recentRuns,
+                        deliveriesByRunID: recentRunDeliveries
+                    )
+                }.value
                 guard !Task.isCancelled, self.room?.id == room.id else { return }
+                var nextAttachmentData = mergeAttachments ? attachmentDataByID : [:]
                 if mergeAttachments {
-                    attachmentDataByID.merge(loadedAttachmentData) { _, new in new }
-                } else {
-                    attachmentDataByID = loadedAttachmentData
+                    nextAttachmentData.merge(loadedAttachmentData) { _, new in new }
                 }
-                self.interruptedRuns = interruptedRuns
-                self.pendingProposals = pendingProposals
-                self.pendingRemovalProposals = pendingRemovalProposals
-                self.pendingTeamProposals = pendingTeamProposals
-                self.pendingMembershipProposals = pendingMembershipProposals
-                self.teamTodos = teamTodos
-                self.teamAssets = teamAssets
-                self.projectDashboard = projectDashboard
-                self.requirementSurveys = requirementSurveys
+                publishIfChanged(nextAttachmentData, at: \.attachmentDataByID)
+                publishIfChanged(interruptedRuns, at: \.interruptedRuns)
+                publishIfChanged(pendingProposals, at: \.pendingProposals)
+                publishIfChanged(pendingRemovalProposals, at: \.pendingRemovalProposals)
+                publishIfChanged(pendingTeamProposals, at: \.pendingTeamProposals)
+                publishIfChanged(pendingMembershipProposals, at: \.pendingMembershipProposals)
+                publishIfChanged(teamTodos, at: \.teamTodos)
+                publishIfChanged(teamAssets, at: \.teamAssets)
+                publishIfChanged(projectDashboard, at: \.projectDashboard)
+                publishIfChanged(requirementSurveys, at: \.requirementSurveys)
                 let activeAssetIDs = Set(teamAssets.map(\.id))
-                teamAssetRevisions = teamAssetRevisions.filter { activeAssetIDs.contains($0.key) }
-                loadingTeamAssetRevisionIDs.formIntersection(activeAssetIDs)
-                self.recentRuns = recentRuns
-                self.recentRunDeliveries = recentRunDeliveries
+                publishIfChanged(
+                    teamAssetRevisions.filter { activeAssetIDs.contains($0.key) },
+                    at: \.teamAssetRevisions
+                )
+                publishIfChanged(
+                    loadingTeamAssetRevisionIDs.intersection(activeAssetIDs),
+                    at: \.loadingTeamAssetRevisionIDs
+                )
+                publishIfChanged(recentRuns, at: \.recentRuns)
+                publishIfChanged(recentRunDeliveries, at: \.recentRunDeliveries)
+                publishIfChanged(todoRunPresentationsByTodoID, at: \.todoRunPresentationsByTodoID)
             } catch {
                 guard !Task.isCancelled, self.room?.id == room.id else { return }
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    private func publishIfChanged<Value: Equatable>(
+        _ value: Value,
+        at keyPath: ReferenceWritableKeyPath<AgentGroupChatViewModel, Value>
+    ) {
+        guard self[keyPath: keyPath] != value else { return }
+        self[keyPath: keyPath] = value
     }
 
 }

@@ -29,6 +29,12 @@ public sealed record PluginVisualSession(
 
 public interface IPluginVisualSessionService
 {
+    long VisualRevision { get; }
+
+    Task<long> WaitForVisualChangeAsync(
+        long afterRevision,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<PluginVisualSession>> ReadAsync(
         IReadOnlySet<string>? loadFrameDataForAdapterSessionIds = null,
         CancellationToken cancellationToken = default);
@@ -45,6 +51,13 @@ internal sealed class PluginVisualSessionReader(
         PropertyNameCaseInsensitive = true,
     };
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
+    public long VisualRevision => sessions.VisualRevision;
+
+    public Task<long> WaitForVisualChangeAsync(
+        long afterRevision,
+        CancellationToken cancellationToken = default) =>
+        sessions.WaitForVisualChangeAsync(afterRevision, cancellationToken);
 
     public async Task<IReadOnlyList<PluginVisualSession>> ReadAsync(
         IReadOnlySet<string>? loadFrameDataForAdapterSessionIds = null,

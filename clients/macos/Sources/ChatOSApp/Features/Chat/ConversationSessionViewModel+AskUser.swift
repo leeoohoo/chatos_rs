@@ -22,10 +22,11 @@ extension ConversationSessionViewModel {
     func refreshAskUserPrompts() async {
         guard let askUserPromptService else { return }
         do {
-            askUserPrompts = try await askUserPromptService.fetchPrompts(
+            let prompts = try await askUserPromptService.fetchPrompts(
                 sessionID: sessionID,
                 limit: 100
             )
+            replaceAskUserPrompts(prompts)
         } catch {
             historyError = error.localizedDescription
         }
@@ -78,11 +79,13 @@ extension ConversationSessionViewModel {
     }
 
     private func upsertAskUserPrompt(_ prompt: AskUserPrompt) {
-        if let index = askUserPrompts.firstIndex(where: { $0.id == prompt.id }) {
-            askUserPrompts[index] = prompt
+        var prompts = askUserPrompts
+        if let index = prompts.firstIndex(where: { $0.id == prompt.id }) {
+            prompts[index] = prompt
         } else {
-            askUserPrompts.append(prompt)
+            prompts.append(prompt)
         }
+        replaceAskUserPrompts(prompts)
     }
 
     private static func askUserPromptOrder(_ lhs: AskUserPrompt, _ rhs: AskUserPrompt) -> Bool {

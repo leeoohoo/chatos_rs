@@ -69,7 +69,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _remoteTerminalSessions = remoteTerminalSessions;
         RemoteConnections.Connections.CollectionChanged += (_, _) => RebuildRemoteResources();
         Localization.PropertyChanged += (_, _) => RelocalizeResources();
-        ApplicationResources.Add(CreateApplicationsResource());
+        AddWorkspaceTools();
     }
 
     public ConversationSessionViewModel Conversation { get; }
@@ -369,6 +369,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _ownerUserId = null;
         _workspaceSnapshot = WorkspaceSnapshot.Empty;
         LocalConnectorStatus = null;
+        IsRegistrationMode = false;
+        ClearRegistrationFeedback(clearIdentity: true);
         IsAuthenticated = false;
         Contacts.Clear();
         Projects.Clear();
@@ -556,6 +558,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
         if (resource.Kind == WorkspaceResourceKind.Applications)
+        {
+            return;
+        }
+        if (resource.Kind == WorkspaceResourceKind.AgentTeams)
+        {
+            var owner = RequireAccount(AccountGeneration);
+            if (AgentTeam is not null)
+                await AgentTeam.OpenGlobalAsync(owner, cancellationToken);
+            return;
+        }
+        if (resource.Kind is WorkspaceResourceKind.RequirementSurveys or
+            WorkspaceResourceKind.MediaStudio)
         {
             return;
         }

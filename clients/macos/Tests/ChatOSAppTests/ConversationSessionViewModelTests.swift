@@ -6,6 +6,88 @@ import XCTest
 
 @MainActor
 final class ConversationSessionViewModelTests: XCTestCase {
+    func testTimelineObservationIgnoresUnrelatedConversationUpdates() async throws {
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore()
+        )
+        try await Task.sleep(for: .milliseconds(50))
+        var timelineUpdateCount = 0
+        let timelineCancellable = viewModel.timelineObservationState.objectWillChange.sink {
+            timelineUpdateCount += 1
+        }
+        let initialRevision = viewModel.timelineObservationState.revision
+
+        viewModel.isSending = true
+        viewModel.sendError = "send failed"
+        viewModel.historyError = "history failed"
+        viewModel.runtimeSettingsError = "settings failed"
+
+        XCTAssertEqual(timelineUpdateCount, 0)
+        XCTAssertEqual(viewModel.timelineObservationState.revision, initialRevision)
+
+        viewModel.focus(turnID: "turn-1", promptID: nil, taskID: nil, runID: nil)
+
+        XCTAssertEqual(timelineUpdateCount, 1)
+        XCTAssertEqual(viewModel.timelineObservationState.revision, initialRevision + 1)
+        withExtendedLifetime(timelineCancellable) {}
+    }
+
+    func testComposerDraftPublishesOnlyComposerStateUpdates() async throws {
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore()
+        )
+        try await Task.sleep(for: .milliseconds(50))
+        var conversationUpdateCount = 0
+        var composerUpdateCount = 0
+        let conversationCancellable = viewModel.objectWillChange.sink {
+            conversationUpdateCount += 1
+        }
+        let composerCancellable = viewModel.composerState.objectWillChange.sink {
+            composerUpdateCount += 1
+        }
+        let initialTimelineBuildCount = viewModel.timelineItemsBuildCount
+
+        for index in 1 ... 200 {
+            viewModel.draft = String(repeating: "x", count: index)
+        }
+
+        XCTAssertEqual(viewModel.composerState.draft.count, 200)
+        XCTAssertEqual(conversationUpdateCount, 0)
+        XCTAssertEqual(composerUpdateCount, 200)
+        XCTAssertEqual(viewModel.timelineItemsBuildCount, initialTimelineBuildCount)
+        withExtendedLifetime((conversationCancellable, composerCancellable)) {}
+    }
+
+    func testComposerAttachmentStateDoesNotPublishConversationUpdates() async throws {
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore()
+        )
+        try await Task.sleep(for: .milliseconds(50))
+        var conversationUpdateCount = 0
+        var composerUpdateCount = 0
+        let conversationCancellable = viewModel.objectWillChange.sink {
+            conversationUpdateCount += 1
+        }
+        let composerCancellable = viewModel.composerState.objectWillChange.sink {
+            composerUpdateCount += 1
+        }
+
+        viewModel.addLongPastedText("attachment content")
+        viewModel.attachmentError = "failed"
+
+        XCTAssertEqual(viewModel.composerState.attachments.count, 1)
+        XCTAssertEqual(viewModel.composerState.attachmentError, "failed")
+        XCTAssertEqual(conversationUpdateCount, 0)
+        XCTAssertEqual(composerUpdateCount, 3)
+        withExtendedLifetime((conversationCancellable, composerCancellable)) {}
+    }
+
     func testReconnectReconcileRefreshesConversationHistory() async throws {
         let remoteService = ConversationRemoteServiceStub()
         let realtimeService = ConversationRealtimeServiceStub()
