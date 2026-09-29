@@ -94,6 +94,8 @@ async fn prepare_claimed_tool(
             HostCommand::ClaimNextTool(ClaimNextToolCommand {
                 worker_id: "tool-worker".to_string(),
                 lease_duration_ms: 1_000,
+                include_tool_names: None,
+                exclude_tool_names: Vec::new(),
             }),
         ))
         .await;
@@ -135,6 +137,8 @@ async fn expired_read_only_tool_is_requeued() {
             HostCommand::ClaimNextTool(ClaimNextToolCommand {
                 worker_id: "tool-worker-2".to_string(),
                 lease_duration_ms: 1_000,
+                include_tool_names: None,
+                exclude_tool_names: Vec::new(),
             }),
         ))
         .await;
@@ -147,6 +151,109 @@ async fn expired_read_only_tool_is_requeued() {
         first_claim.invocation.invocation_id
     );
     assert!(second_claim.invocation.version > first_claim.invocation.version);
+}
+
+#[tokio::test]
+async fn tool_claim_filters_partition_reserved_and_platform_tools() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
+    runtime.initialize().await.expect("initialize");
+    runtime
+        .handle(envelope(
+            "create-filtered-run",
+            HostCommand::CreateRun(CreateRunCommand {
+                run_id: "run-filtered-tools".to_string(),
+                owner_user_id: "user-1".to_string(),
+                owner_entity_type: "conversation".to_string(),
+                owner_entity_id: "conversation-1".to_string(),
+                profile_key: "main_chat".to_string(),
+                model_config_ref: "model-1".to_string(),
+                model_config_revision: "revision-1".to_string(),
+                capability_policy_revision: "policy-1".to_string(),
+                input: json!({"message": "hello"}),
+                max_iterations: 4,
+            }),
+        ))
+        .await;
+    let claim = runtime
+        .handle(envelope(
+            "claim-filtered-run",
+            HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                worker_id: "model-worker".to_string(),
+                lease_duration_ms: 10_000,
+            }),
+        ))
+        .await;
+    let claim = match claim.result.expect("run claim") {
+        HostResult::Claim { claim: Some(claim) } => claim,
+        result => panic!("unexpected result: {result:?}"),
+    };
+    runtime
+        .handle(envelope(
+            "commit-filtered-run",
+            HostCommand::CommitStep(CommitStepCommand {
+                run_id: claim.run.run_id,
+                claim_token: claim.claim_token,
+                expected_version: claim.run.version,
+                outcome: LocalAgentStepOutcome::WaitForTool {
+                    batch_id: "batch-filtered".to_string(),
+                    tool_calls: vec![
+                        LocalAgentToolCall {
+                            call_id: "call-platform".to_string(),
+                            tool_name: "read_file".to_string(),
+                            arguments: json!({}),
+                            side_effecting: false,
+                        },
+                        LocalAgentToolCall {
+                            call_id: "call-reserved".to_string(),
+                            tool_name: "create_task".to_string(),
+                            arguments: json!({}),
+                            side_effecting: true,
+                        },
+                    ],
+                    checkpoint: json!({}),
+                },
+            }),
+        ))
+        .await;
+
+    let reserved = runtime
+        .handle(envelope(
+            "claim-reserved-tool",
+            HostCommand::ClaimNextTool(ClaimNextToolCommand {
+                worker_id: "rust-worker".to_string(),
+                lease_duration_ms: 10_000,
+                include_tool_names: Some(vec!["create_task".to_string()]),
+                exclude_tool_names: Vec::new(),
+            }),
+        ))
+        .await;
+    let reserved = match reserved.result.expect("reserved claim") {
+        HostResult::ToolClaim { claim: Some(claim) } => claim,
+        result => panic!("unexpected result: {result:?}"),
+    };
+    assert_eq!(reserved.invocation.tool_name, "create_task");
+
+    let platform = runtime
+        .handle(envelope(
+            "claim-platform-tool",
+            HostCommand::ClaimNextTool(ClaimNextToolCommand {
+                worker_id: "native-worker".to_string(),
+                lease_duration_ms: 10_000,
+                include_tool_names: None,
+                exclude_tool_names: vec!["create_task".to_string()],
+            }),
+        ))
+        .await;
+    let platform = match platform.result.expect("platform claim") {
+        HostResult::ToolClaim { claim: Some(claim) } => claim,
+        result => panic!("unexpected result: {result:?}"),
+    };
+    assert_eq!(platform.invocation.tool_name, "read_file");
 }
 
 #[tokio::test]

@@ -86,6 +86,8 @@ pub struct LocalToolScheduler {
     tools: LocalToolRegistry,
     worker_id: String,
     lease_duration_ms: u64,
+    include_tool_names: Option<Vec<String>>,
+    exclude_tool_names: Vec<String>,
 }
 
 impl LocalToolScheduler {
@@ -107,6 +109,8 @@ impl LocalToolScheduler {
             tools,
             worker_id: worker_id.to_string(),
             lease_duration_ms: 300_000,
+            include_tool_names: None,
+            exclude_tool_names: Vec::new(),
         })
     }
 
@@ -120,6 +124,23 @@ impl LocalToolScheduler {
         Ok(self)
     }
 
+    pub fn with_tool_filter(
+        mut self,
+        include_tool_names: Option<Vec<String>>,
+        exclude_tool_names: Vec<String>,
+    ) -> Result<Self, String> {
+        ClaimNextToolCommand {
+            worker_id: self.worker_id.clone(),
+            lease_duration_ms: self.lease_duration_ms,
+            include_tool_names: include_tool_names.clone(),
+            exclude_tool_names: exclude_tool_names.clone(),
+        }
+        .validate()?;
+        self.include_tool_names = include_tool_names;
+        self.exclude_tool_names = exclude_tool_names;
+        Ok(self)
+    }
+
     pub async fn run_once(&self) -> Result<ToolSchedulerTick, LocalToolSchedulerError> {
         let claimed = self
             .runtime
@@ -128,6 +149,8 @@ impl LocalToolScheduler {
                 HostCommand::ClaimNextTool(ClaimNextToolCommand {
                     worker_id: self.worker_id.clone(),
                     lease_duration_ms: self.lease_duration_ms,
+                    include_tool_names: self.include_tool_names.clone(),
+                    exclude_tool_names: self.exclude_tool_names.clone(),
                 }),
             ))
             .await?;

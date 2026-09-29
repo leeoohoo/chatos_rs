@@ -28,6 +28,8 @@ pub trait LocalAgentToolStore: Send + Sync {
         now_unix_ms: i64,
         claim_until_unix_ms: i64,
         event_id: &str,
+        include_tool_names: Option<&[String]>,
+        exclude_tool_names: &[String],
     ) -> Result<Option<LocalAgentToolClaim>, ClientStorageError>;
 
     #[allow(clippy::too_many_arguments)]
@@ -94,6 +96,8 @@ impl LocalAgentToolStore for SqliteClientStorage {
         now_unix_ms: i64,
         claim_until_unix_ms: i64,
         event_id: &str,
+        include_tool_names: Option<&[String]>,
+        exclude_tool_names: &[String],
     ) -> Result<Option<LocalAgentToolClaim>, ClientStorageError> {
         let mut connection = self.pool.acquire().await?;
         Self::begin_immediate(&mut connection).await?;
@@ -102,14 +106,25 @@ impl LocalAgentToolStore for SqliteClientStorage {
                 return Ok(replay);
             }
             recover_expired_on(&mut connection, now_unix_ms).await?;
-            let candidate = sqlx::query(
-                "SELECT invocation_id FROM local_agent_tool_invocations \
+            let candidates = sqlx::query(
+                "SELECT invocation_id, tool_name FROM local_agent_tool_invocations \
                  WHERE status = 'pending' AND run_id IN (\
                    SELECT run_id FROM local_agent_runs WHERE status = 'waiting_tool_result'\
-                 ) ORDER BY created_at_unix_ms, invocation_id LIMIT 1",
+                 ) ORDER BY created_at_unix_ms, invocation_id",
             )
-            .fetch_optional(&mut *connection)
+            .fetch_all(&mut *connection)
             .await?;
+            let mut candidate = None;
+            for row in candidates {
+                let tool_name: String = row.try_get("tool_name")?;
+                let included = include_tool_names
+                    .is_none_or(|names| names.iter().any(|name| name == &tool_name));
+                let excluded = exclude_tool_names.iter().any(|name| name == &tool_name);
+                if included && !excluded {
+                    candidate = Some(row);
+                    break;
+                }
+            }
             let Some(candidate) = candidate else {
                 let response: Option<LocalAgentToolClaim> = None;
                 Self::record_receipt(&mut connection, command, &response, now_unix_ms).await?;

@@ -5,7 +5,8 @@ use crate::{
     ChatosAiRuntimeStepExecutor, ControlPlaneLocalAiStepPlanner, DurableAiProfile,
     LocalAgentHostCoordinator, LocalAgentScheduler, LocalCapabilityResolver,
     LocalModelRuntimeResolver, LocalTaskToolExecutor, LocalToolExecutor, LocalToolRegistry,
-    LocalToolScheduler, NamedReadOnlyTools, MAIN_CHAT_PROFILE_KEY, TASK_RUNNER_PROFILE_KEY,
+    LocalToolScheduler, NamedReadOnlyTools, CREATE_TASKS_TOOL, CREATE_TASK_TOOL,
+    MAIN_CHAT_PROFILE_KEY, TASK_RUNNER_PROFILE_KEY,
 };
 use chatos_local_agent_runtime::{LocalAgentProfileRegistry, LocalAgentRuntime};
 use std::sync::Arc;
@@ -42,7 +43,7 @@ impl LocalAgentHostAssembly {
     }
 
     /// Builds a Host whose platform tools are claimed and committed by the
-    /// native client through IPC instead of executed by an in-process worker.
+    /// native client through IPC. Rust retains the reserved Task tools.
     pub fn with_external_tool_worker<M, C, I, S>(
         runtime: Arc<LocalAgentRuntime>,
         model_resolver: M,
@@ -103,20 +104,31 @@ impl LocalAgentHostAssembly {
         )?;
         let model_scheduler =
             LocalAgentScheduler::new(Arc::clone(&runtime), profiles, "local-model-worker")?;
-        let tool_scheduler = tools
-            .map(|mut tools| {
-                let task_tools: Arc<dyn LocalToolExecutor> =
-                    Arc::new(LocalTaskToolExecutor::new(Arc::clone(&runtime)));
-                tools.register_shared("create_task", Arc::clone(&task_tools))?;
-                tools.register_shared("create_tasks_with_prerequisites", task_tools)?;
-                LocalToolScheduler::new(Arc::clone(&runtime), tools, "local-tool-worker")
-            })
-            .transpose()?;
-        let coordinator = Arc::new(LocalAgentHostCoordinator::new(
-            Arc::clone(&runtime),
-            Some(model_scheduler),
-            tool_scheduler,
-        )?);
+        let external_tool_worker = tools.is_none();
+        let mut tools = tools.unwrap_or_default();
+        let task_tools: Arc<dyn LocalToolExecutor> =
+            Arc::new(LocalTaskToolExecutor::new(Arc::clone(&runtime)));
+        tools.register_shared(CREATE_TASK_TOOL, Arc::clone(&task_tools))?;
+        tools.register_shared(CREATE_TASKS_TOOL, task_tools)?;
+        let mut tool_scheduler =
+            LocalToolScheduler::new(Arc::clone(&runtime), tools, "local-tool-worker")?;
+        if external_tool_worker {
+            tool_scheduler = tool_scheduler.with_tool_filter(
+                Some(vec![
+                    CREATE_TASK_TOOL.to_string(),
+                    CREATE_TASKS_TOOL.to_string(),
+                ]),
+                Vec::new(),
+            )?;
+        }
+        let coordinator = Arc::new(
+            LocalAgentHostCoordinator::new(
+                Arc::clone(&runtime),
+                Some(model_scheduler),
+                Some(tool_scheduler),
+            )?
+            .with_reserved_ipc_tools([CREATE_TASK_TOOL, CREATE_TASKS_TOOL])?,
+        );
         Ok(Self {
             runtime,
             coordinator,

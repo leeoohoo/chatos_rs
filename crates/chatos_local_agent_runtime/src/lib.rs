@@ -3,10 +3,8 @@
 
 //! Durable, client-owned Local Agent state machine.
 //!
-//! This first implementation owns run creation, claim leases, one-step state
-//! transitions, cancellation, event replay, and conservative crash recovery.
-//! Model and tool executors attach to this runtime in later profiles; they do
-//! not get to bypass its durable claim and transition contracts.
+//! Owns run creation, claim leases, one-step transitions, cancellation, event
+//! replay, and conservative recovery behind durable state contracts.
 
 use chatos_client_storage::{
     ClientStorageError, IdempotentCommand, LocalAgentStore, RunTransition,
@@ -205,6 +203,8 @@ impl LocalAgentRuntime {
                         now,
                         claim_until,
                         &new_event_id(),
+                        command.include_tool_names.as_deref(),
+                        &command.exclude_tool_names,
                     )
                     .await?;
                 Ok(HostResult::ToolClaim { claim })
@@ -725,6 +725,8 @@ mod tests {
                     HostCommand::ClaimNextTool(ClaimNextToolCommand {
                         worker_id: "tool-worker".to_string(),
                         lease_duration_ms: 10_000,
+                        include_tool_names: None,
+                        exclude_tool_names: Vec::new(),
                     }),
                 ))
                 .await;

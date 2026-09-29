@@ -7,7 +7,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
-    HostCommand, HostRequestEnvelope, HostResponseEnvelope, HostResult,
+    validate_identifier, HostCommand, HostRequestEnvelope, HostResponseEnvelope, HostResult,
 };
 use chatos_local_agent_runtime::{LocalAgentRuntime, LocalAgentRuntimeError};
 use std::{sync::Arc, time::Duration};
@@ -32,6 +32,7 @@ pub struct LocalAgentHostCoordinator {
     tool_scheduler: Option<LocalToolScheduler>,
     wakeup: Arc<Notify>,
     activity: watch::Sender<u64>,
+    reserved_ipc_tools: Vec<String>,
 }
 
 impl LocalAgentHostCoordinator {
@@ -50,7 +51,29 @@ impl LocalAgentHostCoordinator {
             tool_scheduler,
             wakeup: Arc::new(Notify::new()),
             activity,
+            reserved_ipc_tools: Vec::new(),
         })
+    }
+
+    pub fn with_reserved_ipc_tools<I, S>(mut self, tool_names: I) -> Result<Self, String>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let mut names = Vec::new();
+        for tool_name in tool_names {
+            let tool_name = tool_name.into();
+            validate_identifier("reserved_ipc_tool", &tool_name)?;
+            if names.contains(&tool_name) {
+                return Err(format!("reserved IPC tool is duplicated: {tool_name}"));
+            }
+            names.push(tool_name);
+        }
+        if names.len() > 128 {
+            return Err("at most 128 IPC tools can be reserved".to_string());
+        }
+        self.reserved_ipc_tools = names;
+        Ok(self)
     }
 
     pub fn wake(&self) {
@@ -158,16 +181,28 @@ impl LocalAgentHostCoordinator {
             }
         }
     }
+
+    fn route_external_tool_claim(&self, request: &mut HostRequestEnvelope) {
+        let HostCommand::ClaimNextTool(command) = &mut request.command else {
+            return;
+        };
+        for tool_name in &self.reserved_ipc_tools {
+            if !command.exclude_tool_names.contains(tool_name) {
+                command.exclude_tool_names.push(tool_name.clone());
+            }
+        }
+    }
 }
 
 #[async_trait]
 impl HostRequestHandler for LocalAgentHostCoordinator {
-    async fn handle_request(&self, request: HostRequestEnvelope) -> HostResponseEnvelope {
+    async fn handle_request(&self, mut request: HostRequestEnvelope) -> HostResponseEnvelope {
         if let HostCommand::WaitEvents(command) = &request.command {
             return self
                 .wait_for_events(request.clone(), command.timeout_ms)
                 .await;
         }
+        self.route_external_tool_claim(&mut request);
         let response = self.runtime.handle(request).await;
         if response.ok {
             self.wake();
@@ -201,7 +236,7 @@ mod tests {
     use async_trait::async_trait;
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
-        CreateRunCommand, HostCommand, HostResult, LocalAgentRunClaim,
+        ClaimNextToolCommand, CreateRunCommand, HostCommand, HostResult, LocalAgentRunClaim,
         LocalAgentToolInvocationRecord, LocalAgentToolOutcome, WaitEventsCommand,
         LOCAL_AGENT_PROTOCOL_VERSION,
     };
@@ -280,8 +315,25 @@ mod tests {
                 Some(model_scheduler),
                 Some(tool_scheduler),
             )
-            .expect("coordinator"),
+            .expect("coordinator")
+            .with_reserved_ipc_tools(["create_task"])
+            .expect("reserved tools"),
         );
+        let mut external_claim = HostRequestEnvelope {
+            protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+            command_id: "claim-native-tool".to_string(),
+            command: HostCommand::ClaimNextTool(ClaimNextToolCommand {
+                worker_id: "native-worker".to_string(),
+                lease_duration_ms: 10_000,
+                include_tool_names: None,
+                exclude_tool_names: Vec::new(),
+            }),
+        };
+        coordinator.route_external_tool_claim(&mut external_claim);
+        let HostCommand::ClaimNextTool(routed) = external_claim.command else {
+            panic!("expected tool claim")
+        };
+        assert_eq!(routed.exclude_tool_names, vec!["create_task"]);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let task = {
             let coordinator = Arc::clone(&coordinator);

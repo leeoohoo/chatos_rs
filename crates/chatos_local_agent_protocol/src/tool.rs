@@ -62,6 +62,10 @@ impl LocalAgentToolBatch {
 pub struct ClaimNextToolCommand {
     pub worker_id: String,
     pub lease_duration_ms: u64,
+    #[serde(default)]
+    pub include_tool_names: Option<Vec<String>>,
+    #[serde(default)]
+    pub exclude_tool_names: Vec<String>,
 }
 
 impl ClaimNextToolCommand {
@@ -70,8 +74,39 @@ impl ClaimNextToolCommand {
         if !(1_000..=300_000).contains(&self.lease_duration_ms) {
             return Err("lease_duration_ms must be between 1000 and 300000".to_string());
         }
+        if self
+            .include_tool_names
+            .as_ref()
+            .is_some_and(|names| names.is_empty())
+        {
+            return Err("include_tool_names cannot be an empty list".to_string());
+        }
+        let included =
+            validate_tool_names("include_tool_names", self.include_tool_names.as_deref())?;
+        let excluded = validate_tool_names("exclude_tool_names", Some(&self.exclude_tool_names))?;
+        if included.iter().any(|name| excluded.contains(name)) {
+            return Err("a tool cannot be both included and excluded".to_string());
+        }
         Ok(())
     }
+}
+
+fn validate_tool_names<'a>(
+    field: &str,
+    names: Option<&'a [String]>,
+) -> Result<HashSet<&'a str>, String> {
+    let names = names.unwrap_or_default();
+    if names.len() > 128 {
+        return Err(format!("{field} must contain at most 128 items"));
+    }
+    let mut unique = HashSet::with_capacity(names.len());
+    for name in names {
+        validate_identifier(field, name)?;
+        if !unique.insert(name.as_str()) {
+            return Err(format!("{field} contains a duplicate tool name: {name}"));
+        }
+    }
+    Ok(unique)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -189,4 +224,28 @@ pub struct LocalAgentToolClaim {
 pub struct LocalAgentToolCommitResult {
     pub invocation: LocalAgentToolInvocationRecord,
     pub run: LocalAgentRunRecord,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn claim_filter_rejects_overlap_and_duplicates() {
+        let overlap = ClaimNextToolCommand {
+            worker_id: "worker-1".to_string(),
+            lease_duration_ms: 10_000,
+            include_tool_names: Some(vec!["create_task".to_string()]),
+            exclude_tool_names: vec!["create_task".to_string()],
+        };
+        assert!(overlap.validate().is_err());
+
+        let duplicates = ClaimNextToolCommand {
+            worker_id: "worker-1".to_string(),
+            lease_duration_ms: 10_000,
+            include_tool_names: None,
+            exclude_tool_names: vec!["read_file".to_string(), "read_file".to_string()],
+        };
+        assert!(duplicates.validate().is_err());
+    }
 }
