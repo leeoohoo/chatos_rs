@@ -138,6 +138,12 @@ public interface IAgentTeamService
         int expectedRevision,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<AgentTeamAssetRevision>> ListAssetRevisionsAsync(
+        string ownerUserId,
+        string roomId,
+        string assetId,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<AgentRequirementSurvey>> ListProjectRequirementSurveysAsync(
         string ownerUserId,
         string projectId,

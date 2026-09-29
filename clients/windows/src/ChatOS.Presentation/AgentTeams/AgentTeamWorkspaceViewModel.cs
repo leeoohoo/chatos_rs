@@ -244,6 +244,17 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
             context.Token).ConfigureAwait(false);
     }
 
+    public async Task<IReadOnlyList<AgentTeamAssetRevision>> LoadAssetRevisionsAsync(
+        AgentTeamAsset asset)
+    {
+        using var context = RequireContext(CancellationToken.None);
+        var room = SelectedRoom ?? throw new InvalidOperationException("请先选择一个团队。");
+        var revisions = await _service.ListAssetRevisionsAsync(
+            context.Owner, room.Id, asset.Id, context.Token).ConfigureAwait(false);
+        EnsureCurrent(context.Generation, context.Token);
+        return revisions;
+    }
+
     private async Task LoadSelectedRoomAsync(SessionContext context)
     {
         var room = SelectedRoom;

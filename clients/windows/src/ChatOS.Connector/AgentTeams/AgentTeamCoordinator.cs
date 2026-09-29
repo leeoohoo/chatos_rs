@@ -319,6 +319,24 @@ internal sealed class AgentTeamCoordinator : IAgentTeamService
         Raise(ownerUserId, room.ProjectId, roomId, "asset_archived");
     }
 
+    public async Task<IReadOnlyList<AgentTeamAssetRevision>> ListAssetRevisionsAsync(
+        string ownerUserId,
+        string roomId,
+        string assetId,
+        CancellationToken cancellationToken = default)
+    {
+        var assets = await _store.ListAssetsAsync(ownerUserId, roomId,
+            includeArchived: true, cancellationToken).ConfigureAwait(false);
+        if (assets.All(value => !string.Equals(value.Id, assetId, StringComparison.Ordinal)))
+        {
+            throw new AgentTeamException(AgentTeamError.NotFound,
+                "Team asset was not found in this room.");
+        }
+
+        return await _store.ListAssetRevisionsAsync(ownerUserId, assetId,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
     public Task<IReadOnlyList<AgentRequirementSurvey>> ListProjectRequirementSurveysAsync(
         string ownerUserId,
         string projectId,

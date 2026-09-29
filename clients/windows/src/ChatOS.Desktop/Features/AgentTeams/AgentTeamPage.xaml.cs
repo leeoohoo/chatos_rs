@@ -236,6 +236,56 @@ public sealed partial class AgentTeamPage : UserControl
         if (sender is Button { DataContext: AgentTeamAsset asset }) await ShowAssetDialogAsync(asset);
     }
 
+    private async void OnAssetHistoryClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: AgentTeamAsset asset }) return;
+        try
+        {
+            var revisions = await ViewModel.LoadAssetRevisionsAsync(asset);
+            var history = new StackPanel { Spacing = 10, MinWidth = 560 };
+            foreach (var revision in revisions)
+            {
+                var editor = ViewModel.AgentName(revision.EditorAgentId);
+                var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(
+                    revision.CreatedAtUnixMs).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+                var details = new StackPanel { Spacing = 6 };
+                details.Children.Add(new TextBlock
+                {
+                    Text = $"{revision.Title}\n{revision.Status} · {editor} · {timestamp}",
+                    TextWrapping = TextWrapping.Wrap,
+                });
+                details.Children.Add(new TextBlock
+                {
+                    Text = revision.Markdown,
+                    IsTextSelectionEnabled = true,
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxWidth = 680,
+                });
+                history.Children.Add(new Expander
+                {
+                    Header = $"revision {revision.Revision}",
+                    Content = details,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                });
+            }
+
+            if (revisions.Count == 0)
+            {
+                history.Children.Add(new TextBlock { Text = "该资产还没有可显示的版本。" });
+            }
+            await ShowDialogAsync($"版本历史 · {asset.Title}", new ScrollViewer
+            {
+                Content = history,
+                MaxHeight = 650,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            }, null);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            await AlertAsync("无法加载版本历史", exception.Message);
+        }
+    }
+
     private async void OnArchiveAssetClick(object sender, RoutedEventArgs e)
     {
         if (sender is Button { DataContext: AgentTeamAsset asset } &&

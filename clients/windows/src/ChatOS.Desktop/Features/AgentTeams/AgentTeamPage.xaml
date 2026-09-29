@@ -303,6 +303,7 @@
                                                 <TextBlock Margin="0,10,0,4" IsTextSelectionEnabled="True" Text="{x:Bind Markdown}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
                                             </Expander>
                                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="7">
+                                                <Button Click="OnAssetHistoryClick" Content="版本历史" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                 <Button Click="OnEditAssetClick" Content="编辑" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                 <Button Click="OnArchiveAssetClick" Content="归档" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                             </StackPanel>
