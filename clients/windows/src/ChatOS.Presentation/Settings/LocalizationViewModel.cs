@@ -35,7 +35,7 @@ public sealed class LocalizationViewModel : ObservableObject
     public string InvitationCode => Text("邀请码", "Invitation code");
     public string InvitationCodePlaceholder => Text("输入邀请测试码", "Enter invitation code");
     public string EmailVerificationCode => Text("邮箱验证码", "Email verification code");
-    public string VerificationCodePlaceholder => Text("6 位验证码", "6-digit code");
+    public string RegistrationVerificationCodePlaceholder => Text("6 位验证码", "6-digit code");
     public string ConfirmPassword => Text("确认密码", "Confirm password");
     public string ConfirmPasswordPlaceholder => Text("再次输入密码", "Enter password again");
     public string MinimumPasswordPlaceholder => Text("至少 6 个字符", "At least 6 characters");

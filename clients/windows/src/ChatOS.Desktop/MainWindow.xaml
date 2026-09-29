@@ -110,7 +110,7 @@
                                         <TextBlock Text="{x:Bind ViewModel.Localization.EmailVerificationCode, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
                                         <Grid ColumnSpacing="10">
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                            <TextBox AutomationProperties.AutomationId="ChatOS.Register.VerificationCode" AutomationProperties.Name="Email verification code" MaxLength="6" Text="{x:Bind ViewModel.VerificationCode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="{x:Bind ViewModel.Localization.VerificationCodePlaceholder, Mode=OneWay}" />
+                                            <TextBox AutomationProperties.AutomationId="ChatOS.Register.VerificationCode" AutomationProperties.Name="Email verification code" MaxLength="6" Text="{x:Bind ViewModel.VerificationCode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="{x:Bind ViewModel.Localization.RegistrationVerificationCodePlaceholder, Mode=OneWay}" />
                                             <Button AutomationProperties.AutomationId="ChatOS.Register.SendCode" AutomationProperties.Name="Send verification code" Grid.Column="1" MinWidth="112" Command="{x:Bind ViewModel.SendRegistrationCodeCommand}" Content="{x:Bind ViewModel.RegistrationCodeActionTitle, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                         </Grid>
                                     </StackPanel>
