@@ -352,3 +352,6 @@ pub(super) const SCHEMA_V14: &[&str] = &[
        tenant_id, source_id, thread_id, refreshed_at_unix_ms DESC\
      )",
 ];
+
+pub(super) const SCHEMA_V15: &[&str] = &["CREATE INDEX local_agent_runs_owner_updated ON \
+     local_agent_runs(owner_user_id, updated_at_unix_ms DESC, run_id DESC)"];

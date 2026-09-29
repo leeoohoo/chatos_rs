@@ -276,7 +276,7 @@ async fn version_two_database_migrates_through_conversation_schema() {
             .fetch_one(&storage.pool)
             .await
             .expect("schema version");
-    assert_eq!(schema_version, 14);
+    assert_eq!(schema_version, 15);
     let task_tables: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (\
          'local_task_graphs', 'local_tasks', 'local_task_dependencies')",

@@ -6,12 +6,13 @@
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     CancelConversationTurnCommand, CreateConversationCommand, CreateTaskGraphCommand,
-    GuideConversationTurnCommand, LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunRecord,
-    LocalAgentRunStatus, LocalAgentToolBatch, LocalAgentToolClaim, LocalAgentToolCommitResult,
-    LocalAgentToolOutcome, LocalConversationDetail, LocalConversationHistoryPage,
-    LocalConversationRecord, LocalConversationTurnStart, LocalConversationTurnUpdate,
-    LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalTaskGraph,
-    ResumeConversationTurnCommand, StartConversationTurnCommand,
+    GuideConversationTurnCommand, LocalAgentEventRecord, LocalAgentRunClaim,
+    LocalAgentRunListScope, LocalAgentRunPage, LocalAgentRunRecord, LocalAgentRunStatus,
+    LocalAgentToolBatch, LocalAgentToolClaim, LocalAgentToolCommitResult, LocalAgentToolOutcome,
+    LocalConversationDetail, LocalConversationHistoryPage, LocalConversationRecord,
+    LocalConversationTurnStart, LocalConversationTurnUpdate, LocalPluginInstallationRecord,
+    LocalPluginInstallationSpec, LocalTaskGraph, ResumeConversationTurnCommand,
+    StartConversationTurnCommand,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -106,6 +107,15 @@ pub trait LocalAgentRunStore: Send + Sync {
         &self,
         run_id: &str,
     ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError>;
+
+    async fn list_runs(
+        &self,
+        owner_user_id: &str,
+        scope: LocalAgentRunListScope,
+        before_updated_at_unix_ms: Option<i64>,
+        before_run_id: Option<&str>,
+        limit: u32,
+    ) -> Result<LocalAgentRunPage, ClientStorageError>;
 
     async fn recover_expired_claims(&self, now_unix_ms: i64) -> Result<u64, ClientStorageError>;
 

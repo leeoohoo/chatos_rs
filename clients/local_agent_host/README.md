@@ -48,6 +48,8 @@ Retained Memory is an explicit, optional standalone adapter. `--memory-base-url`
 
 IPC v16 adds `get_memory_sync_status`. Native UI supplies the signed-in tenant and configured source and receives only aggregate pending/syncing/retry/synced counts, retry and age timestamps, plus the most recent bounded error. Memory record payloads and credentials are never returned by this diagnostic command.
 
+IPC v17 adds `list_runs` for native recovery and inspector screens. Queries are always scoped to one owner account, may select active, terminal, or all Runs, and use the stable `(updated_at_unix_ms, run_id)` descending cursor. SQLite v15 adds the matching owner/update index; pages never depend on an in-memory scheduler view.
+
 Native clients may choose `LocalAgentHostAssembly::with_external_tool_worker`. In that mode Swift or C# claims and commits platform tools through IPC, while Rust still owns model scheduling plus the two Task creation tools and wakes immediately after each native tool receipt. This keeps platform permissions and UI-bound tools in the native process without duplicating the Agent loop.
 
 Protocol v15 retains the optional `include_tool_names` and `exclude_tool_names` Tool claim filters. The Assembly's Rust worker includes only the two reserved Task tools, and Coordinator IPC automatically excludes them from native claims. Explicit overlapping filters are rejected.
@@ -123,7 +125,7 @@ Example health request:
 
 ```json
 {
-  "protocol_version": 16,
+  "protocol_version": 17,
   "command_id": "health-019",
   "command": {
     "type": "health"

@@ -52,6 +52,8 @@ Memory writes follow `AI runtime record port → LocalMemoryOutboxStore → SQLi
 
 IPC v16 exposes tenant/source-scoped aggregate Memory sync status through the application storage port. The interface DTO contains counts and bounded diagnostics only; the SQLite adapter does not return record bodies, compose snapshots, or authentication values. This gives both native clients a stable offline/sync indicator without allowing UI code to query Host tables directly.
 
+IPC v17 exposes owner-scoped Run discovery for native recovery and inspector views. Active, terminal, and complete history filters share a stable descending `(updated_at_unix_ms, run_id)` cursor backed by the SQLite v15 owner/update index. The UI can therefore reconstruct its Run list after reconnecting without retaining scheduler state or querying the old service backend.
+
 ## Server-removal boundary
 
 The completed client localization must allow these directories to be physically deleted:

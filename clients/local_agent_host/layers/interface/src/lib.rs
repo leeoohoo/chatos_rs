@@ -14,6 +14,7 @@ mod control_plane;
 mod conversation;
 mod memory;
 mod plugin;
+mod run_query;
 mod task;
 mod tool;
 
@@ -38,6 +39,7 @@ pub use plugin::{
     GetPluginInstallationCommand, ListPluginInstallationsCommand, LocalPluginInstallationRecord,
     LocalPluginInstallationSpec, PutPluginInstallationCommand, RemovePluginInstallationCommand,
 };
+pub use run_query::{ListRunsCommand, LocalAgentRunListScope, LocalAgentRunPage};
 
 pub use task::{
     CancelTaskCommand, CreateTaskGraphCommand, GetTaskGraphCommand, GetTaskRunsCommand,
@@ -50,7 +52,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 16;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 17;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -86,6 +88,7 @@ pub enum HostCommand {
     GetCapabilityPolicySnapshot(GetCapabilityPolicySnapshotCommand),
     CreateRun(CreateRunCommand),
     GetRun { run_id: String },
+    ListRuns(ListRunsCommand),
     ClaimNextRun(ClaimNextRunCommand),
     CommitStep(CommitStepCommand),
     ClaimNextTool(ClaimNextToolCommand),
@@ -125,6 +128,7 @@ impl HostCommand {
             Self::GetCapabilityPolicySnapshot(command) => command.validate(),
             Self::CreateRun(command) => command.validate(),
             Self::GetRun { run_id } => validate_identifier("run_id", run_id),
+            Self::ListRuns(command) => command.validate(),
             Self::ClaimNextRun(command) => command.validate(),
             Self::CommitStep(command) => command.validate(),
             Self::ClaimNextTool(command) => command.validate(),
@@ -586,6 +590,9 @@ pub enum HostResult {
     },
     Run {
         run: LocalAgentRunRecord,
+    },
+    Runs {
+        page: LocalAgentRunPage,
     },
     Claim {
         claim: Option<LocalAgentRunClaim>,

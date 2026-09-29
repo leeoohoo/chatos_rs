@@ -159,6 +159,19 @@ impl LocalAgentRuntime {
                     .ok_or(ClientStorageError::NotFound(run_id))?;
                 Ok(HostResult::Run { run })
             }
+            HostCommand::ListRuns(command) => {
+                let page = self
+                    .store
+                    .list_runs(
+                        &command.owner_user_id,
+                        command.scope,
+                        command.before_updated_at_unix_ms,
+                        command.before_run_id.as_deref(),
+                        command.limit,
+                    )
+                    .await?;
+                Ok(HostResult::Runs { page })
+            }
             HostCommand::ClaimNextRun(command) => {
                 let now = self.now()?;
                 let lease_duration = i64::try_from(command.lease_duration_ms).map_err(|_| {
@@ -514,8 +527,7 @@ mod tests {
     use super::*;
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
-        ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand, CommitToolCommand,
-        CreateRunCommand, LocalAgentToolCall, LocalAgentToolOutcome, LOCAL_AGENT_PROTOCOL_VERSION,
+        ClaimNextRunCommand, CommitStepCommand, CreateRunCommand, LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use serde_json::Value;
 
@@ -655,142 +667,15 @@ mod tests {
         };
         assert_eq!(run.status, LocalAgentRunStatus::NeedsReview);
     }
-
-    #[tokio::test]
-    async fn tool_batch_is_durable_and_resumes_after_all_results() {
-        let storage = Arc::new(
-            SqliteClientStorage::connect_memory()
-                .await
-                .expect("storage"),
-        );
-        let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
-        runtime.initialize().await.expect("initialize");
-        runtime.handle(envelope("create-1", create_command())).await;
-        let claimed = runtime
-            .handle(envelope(
-                "claim-run-1",
-                HostCommand::ClaimNextRun(ClaimNextRunCommand {
-                    worker_id: "model-worker".to_string(),
-                    lease_duration_ms: 10_000,
-                }),
-            ))
-            .await;
-        let claim = match claimed.result.expect("claim result") {
-            HostResult::Claim { claim: Some(claim) } => claim,
-            result => panic!("unexpected result: {result:?}"),
-        };
-        let waiting = runtime
-            .handle(envelope(
-                "commit-model-1",
-                HostCommand::CommitStep(CommitStepCommand {
-                    run_id: claim.run.run_id,
-                    claim_token: claim.claim_token,
-                    expected_version: claim.run.version,
-                    outcome: LocalAgentStepOutcome::WaitForTool {
-                        batch_id: "batch-1".to_string(),
-                        tool_calls: vec![
-                            LocalAgentToolCall {
-                                call_id: "call-read".to_string(),
-                                tool_name: "read_file".to_string(),
-                                arguments: json!({"path": "README.md"}),
-                                side_effecting: false,
-                            },
-                            LocalAgentToolCall {
-                                call_id: "call-write".to_string(),
-                                tool_name: "write_file".to_string(),
-                                arguments: json!({"path": "result.txt"}),
-                                side_effecting: true,
-                            },
-                        ],
-                        checkpoint: json!({"response_id": "response-1"}),
-                    },
-                }),
-            ))
-            .await;
-        let waiting_run = match waiting.result.expect("waiting result") {
-            HostResult::Run { run } => run,
-            result => panic!("unexpected result: {result:?}"),
-        };
-        assert_eq!(waiting_run.status, LocalAgentRunStatus::WaitingToolResult);
-
-        for index in 0..2 {
-            let claimed = runtime
-                .handle(envelope(
-                    &format!("claim-tool-{index}"),
-                    HostCommand::ClaimNextTool(ClaimNextToolCommand {
-                        worker_id: "tool-worker".to_string(),
-                        lease_duration_ms: 10_000,
-                        include_tool_names: None,
-                        exclude_tool_names: Vec::new(),
-                    }),
-                ))
-                .await;
-            let claim = match claimed.result.expect("tool claim result") {
-                HostResult::ToolClaim { claim: Some(claim) } => claim,
-                result => panic!("unexpected result: {result:?}"),
-            };
-            let outcome = if claim.invocation.tool_name == "read_file" {
-                LocalAgentToolOutcome::Succeeded {
-                    output: json!({"content": "ok"}),
-                }
-            } else {
-                LocalAgentToolOutcome::Failed {
-                    error: "write rejected".to_string(),
-                    detail: json!({"code": "permission_denied"}),
-                }
-            };
-            let committed = runtime
-                .handle(envelope(
-                    &format!("commit-tool-{index}"),
-                    HostCommand::CommitTool(CommitToolCommand {
-                        invocation_id: claim.invocation.invocation_id,
-                        claim_token: claim.claim_token,
-                        expected_version: claim.invocation.version,
-                        outcome,
-                    }),
-                ))
-                .await;
-            let result = match committed.result.expect("tool commit result") {
-                HostResult::ToolCommit { result } => result,
-                result => panic!("unexpected result: {result:?}"),
-            };
-            if index == 0 {
-                assert_eq!(result.run.status, LocalAgentRunStatus::WaitingToolResult);
-            } else {
-                assert_eq!(result.run.status, LocalAgentRunStatus::ContinuationReady);
-                assert!(result.run.pending_tool_batch.is_none());
-                assert_eq!(result.run.checkpoint, json!({"response_id": "response-1"}));
-                assert_eq!(
-                    result
-                        .run
-                        .continuation_input
-                        .as_ref()
-                        .and_then(|value| value.get("type"))
-                        .and_then(serde_json::Value::as_str),
-                    Some("tool_results")
-                );
-            }
-        }
-
-        let next = runtime
-            .handle(envelope(
-                "claim-run-2",
-                HostCommand::ClaimNextRun(ClaimNextRunCommand {
-                    worker_id: "model-worker".to_string(),
-                    lease_duration_ms: 10_000,
-                }),
-            ))
-            .await;
-        assert!(matches!(
-            next.result,
-            Some(HostResult::Claim { claim: Some(_) })
-        ));
-    }
 }
 
 #[cfg(test)]
 mod memory_status_tests;
 #[cfg(test)]
 mod retry_tests;
+#[cfg(test)]
+mod run_query_tests;
+#[cfg(test)]
+mod runtime_tool_batch_tests;
 #[cfg(test)]
 mod tool_tests;

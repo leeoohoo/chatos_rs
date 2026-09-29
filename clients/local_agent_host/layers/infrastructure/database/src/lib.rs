@@ -5,7 +5,8 @@
 
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
-    LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunRecord, LocalAgentRunStatus,
+    LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunListScope, LocalAgentRunPage,
+    LocalAgentRunRecord, LocalAgentRunStatus,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
@@ -27,6 +28,7 @@ mod migration;
 mod model_snapshot_store;
 mod plugin_store;
 mod run_commands;
+mod run_query_store;
 mod run_record;
 mod schema;
 mod task_commands;
@@ -348,6 +350,25 @@ impl LocalAgentRunStore for SqliteClientStorage {
     ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError> {
         let mut connection = self.pool.acquire().await.db()?;
         Self::fetch_run_on(&mut connection, run_id).await
+    }
+
+    async fn list_runs(
+        &self,
+        owner_user_id: &str,
+        scope: LocalAgentRunListScope,
+        before_updated_at_unix_ms: Option<i64>,
+        before_run_id: Option<&str>,
+        limit: u32,
+    ) -> Result<LocalAgentRunPage, ClientStorageError> {
+        run_query_store::list_runs(
+            self,
+            owner_user_id,
+            scope,
+            before_updated_at_unix_ms,
+            before_run_id,
+            limit,
+        )
+        .await
     }
 
     async fn recover_expired_claims(&self, now_unix_ms: i64) -> Result<u64, ClientStorageError> {
