@@ -3,14 +3,14 @@
 
 use super::{
     schema::{
-        SCHEMA_V1, SCHEMA_V10, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7,
-        SCHEMA_V8, SCHEMA_V9,
+        SCHEMA_V1, SCHEMA_V10, SCHEMA_V11, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6,
+        SCHEMA_V7, SCHEMA_V8, SCHEMA_V9,
     },
     ClientStorageError, SqliteClientStorage, SqliteResultExt,
 };
 use sqlx::SqliteConnection;
 
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
 
 impl SqliteClientStorage {
     pub(super) async fn migrate(&self) -> Result<(), ClientStorageError> {
@@ -45,6 +45,7 @@ impl SqliteClientStorage {
             (8, SCHEMA_V8),
             (9, SCHEMA_V9),
             (10, SCHEMA_V10),
+            (11, SCHEMA_V11),
         ] {
             if version < next_version {
                 Self::begin_immediate(&mut connection).await.db()?;

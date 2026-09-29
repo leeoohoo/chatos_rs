@@ -280,3 +280,13 @@ pub(super) const SCHEMA_V10: &[&str] = &[
        run_id, delivered_run_version, created_at_unix_ms, message_id\
      )",
 ];
+
+pub(super) const SCHEMA_V11: &[&str] = &["CREATE TABLE local_capability_policy_snapshots (\
+       profile_key TEXT NOT NULL,\
+       capability_policy_revision TEXT NOT NULL,\
+       instructions TEXT,\
+       prefixed_input_items_json TEXT NOT NULL,\
+       tools_json TEXT NOT NULL,\
+       created_at_unix_ms INTEGER NOT NULL,\
+       PRIMARY KEY(profile_key, capability_policy_revision)\
+     )"];

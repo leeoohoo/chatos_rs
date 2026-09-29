@@ -15,6 +15,7 @@ use sqlx::{
 };
 use std::{path::Path, str::FromStr, time::Duration};
 
+mod capability_snapshot_store;
 mod conversation_commands;
 mod conversation_guidance;
 mod conversation_history;
@@ -33,7 +34,8 @@ mod tool_store;
 
 pub use chatos_local_agent_ports::{
     ClientStorageError, IdempotentCommand, LocalAgentRunStore, LocalAgentStore,
-    LocalAgentTaskStore, LocalAgentToolStore, LocalConversationStore, LocalPluginInstallationStore,
+    LocalAgentTaskStore, LocalAgentToolStore, LocalCapabilityPolicySnapshot,
+    LocalCapabilitySnapshotStore, LocalConversationStore, LocalPluginInstallationStore,
     RunTransition,
 };
 use run_record::{decode_event, decode_run};

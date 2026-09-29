@@ -6,25 +6,36 @@ use crate::{
     TransientLocalModelRuntime,
 };
 use async_trait::async_trait;
+use chatos_local_agent_ports::{LocalCapabilityPolicySnapshot, LocalCapabilitySnapshotStore};
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 type RevisionKey = (String, String);
 
-/// Process-memory control-plane snapshot populated by the native client's
-/// authenticated configuration service. It is intentionally not serializable:
-/// model credentials must never enter the durable Run database.
+/// Control-plane registry populated by the native client's authenticated
+/// configuration service. Credential-bearing model runtimes remain strictly
+/// process-local, while an optional storage port retains non-secret capability
+/// revisions across Host restarts.
 #[derive(Default)]
 pub struct LocalControlPlaneSnapshot {
     models: RwLock<HashMap<RevisionKey, TransientLocalModelRuntime>>,
     capabilities: RwLock<HashMap<RevisionKey, ResolvedLocalCapabilities>>,
+    capability_store: Option<Arc<dyn LocalCapabilitySnapshotStore>>,
 }
 
 impl LocalControlPlaneSnapshot {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_capability_store(store: Arc<dyn LocalCapabilitySnapshotStore>) -> Self {
+        Self {
+            capability_store: Some(store),
+            ..Self::default()
+        }
     }
 
     pub fn publish_model_runtime(
@@ -46,7 +57,7 @@ impl LocalControlPlaneSnapshot {
         Ok(())
     }
 
-    pub fn publish_capabilities(
+    pub async fn publish_capabilities(
         &self,
         profile_key: impl Into<String>,
         capability_policy_revision: impl Into<String>,
@@ -58,6 +69,14 @@ impl LocalControlPlaneSnapshot {
             "capability_policy_revision",
             capability_policy_revision.into(),
         )?;
+        let snapshot = encode_capabilities(&key, &capabilities);
+        snapshot.validate()?;
+        if let Some(store) = &self.capability_store {
+            store
+                .put_capability_snapshot(&snapshot, now_unix_ms()?)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
         self.capabilities
             .write()
             .map_err(|_| "capability snapshot lock is poisoned".to_string())?
@@ -84,7 +103,9 @@ impl LocalControlPlaneSnapshot {
             .is_some())
     }
 
-    pub fn remove_capabilities(
+    /// Removes only the process-local cache entry. A configured durable store
+    /// remains authoritative so active Runs can still resolve the revision.
+    pub fn evict_capabilities(
         &self,
         profile_key: &str,
         capability_policy_revision: &str,
@@ -146,17 +167,65 @@ impl LocalCapabilityResolver for LocalControlPlaneSnapshot {
             "capability_policy_revision",
             capability_policy_revision.to_string(),
         )?;
-        self.capabilities
+        if let Some(capabilities) = self
+            .capabilities
             .read()
             .map_err(|_| "capability snapshot lock is poisoned".to_string())?
             .get(&key)
             .cloned()
+        {
+            return Ok(capabilities);
+        }
+        let Some(store) = &self.capability_store else {
+            return Err(format!(
+                "capability revision is not loaded: {profile_key}@{capability_policy_revision}"
+            ));
+        };
+        let stored = store
+            .get_capability_snapshot(profile_key, capability_policy_revision)
+            .await
+            .map_err(|error| error.to_string())?
             .ok_or_else(|| {
                 format!(
                     "capability revision is not loaded: {profile_key}@{capability_policy_revision}"
                 )
-            })
+            })?;
+        let capabilities = decode_capabilities(stored);
+        self.capabilities
+            .write()
+            .map_err(|_| "capability snapshot lock is poisoned".to_string())?
+            .insert(key, capabilities.clone());
+        Ok(capabilities)
     }
+}
+
+fn encode_capabilities(
+    key: &RevisionKey,
+    capabilities: &ResolvedLocalCapabilities,
+) -> LocalCapabilityPolicySnapshot {
+    LocalCapabilityPolicySnapshot {
+        profile_key: key.0.clone(),
+        capability_policy_revision: key.1.clone(),
+        instructions: capabilities.instructions.clone(),
+        prefixed_input_items: capabilities.prefixed_input_items.clone(),
+        tools: capabilities.tools.clone(),
+    }
+}
+
+fn decode_capabilities(snapshot: LocalCapabilityPolicySnapshot) -> ResolvedLocalCapabilities {
+    ResolvedLocalCapabilities {
+        instructions: snapshot.instructions,
+        prefixed_input_items: snapshot.prefixed_input_items,
+        tools: snapshot.tools,
+    }
+}
+
+fn now_unix_ms() -> Result<i64, String> {
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock is before Unix epoch: {error}"))?;
+    i64::try_from(elapsed.as_millis())
+        .map_err(|_| "system time does not fit in an i64 millisecond timestamp".to_string())
 }
 
 fn revision_key(
@@ -190,6 +259,7 @@ mod tests {
                     ..ResolvedLocalCapabilities::default()
                 },
             )
+            .await
             .expect("publish");
         let resolved = snapshot
             .resolve_capabilities(MAIN_CHAT_PROFILE_KEY, "policy-1")
@@ -205,7 +275,59 @@ mod tests {
             .await
             .is_err());
         assert!(snapshot
-            .remove_capabilities(MAIN_CHAT_PROFILE_KEY, "policy-1")
+            .evict_capabilities(MAIN_CHAT_PROFILE_KEY, "policy-1")
             .expect("remove"));
+    }
+
+    #[tokio::test]
+    async fn capabilities_reload_from_sqlite_after_process_cache_is_recreated() {
+        let storage = Arc::new(
+            chatos_client_storage::SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let first = LocalControlPlaneSnapshot::with_capability_store(storage.clone());
+        first
+            .publish_capabilities(
+                MAIN_CHAT_PROFILE_KEY,
+                "policy-durable",
+                ResolvedLocalCapabilities {
+                    instructions: Some("durable policy".to_string()),
+                    tools: vec![serde_json::json!({"name": "read_file"})],
+                    ..ResolvedLocalCapabilities::default()
+                },
+            )
+            .await
+            .expect("publish");
+
+        let restarted = LocalControlPlaneSnapshot::with_capability_store(storage);
+        let resolved = restarted
+            .resolve_capabilities(MAIN_CHAT_PROFILE_KEY, "policy-durable")
+            .await
+            .expect("resolve persisted revision");
+        assert_eq!(resolved.instructions.as_deref(), Some("durable policy"));
+        assert_eq!(
+            resolved.tools,
+            vec![serde_json::json!({"name": "read_file"})]
+        );
+    }
+
+    #[tokio::test]
+    async fn oversized_capabilities_are_rejected_before_entering_memory() {
+        let snapshot = LocalControlPlaneSnapshot::new();
+        let error = snapshot
+            .publish_capabilities(
+                MAIN_CHAT_PROFILE_KEY,
+                "policy-too-large",
+                ResolvedLocalCapabilities {
+                    instructions: Some(
+                        "x".repeat(chatos_local_agent_ports::MAX_CAPABILITY_INSTRUCTIONS_BYTES + 1),
+                    ),
+                    ..ResolvedLocalCapabilities::default()
+                },
+            )
+            .await
+            .expect_err("oversized snapshot must fail");
+        assert!(error.contains("instructions"));
     }
 }
