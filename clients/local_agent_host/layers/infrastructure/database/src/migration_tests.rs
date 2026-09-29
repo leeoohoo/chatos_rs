@@ -94,6 +94,59 @@ async fn version_nineteen_discards_ownerless_control_plane_snapshots() {
     let storage = SqliteClientStorage::connect_file(&database_path)
         .await
         .expect("migrate storage");
+    let backup_paths = migration_backups(&database_path);
+    assert_eq!(backup_paths.len(), 1);
+    let backup_path = backup_paths.into_iter().next().expect("migration backup");
+    assert!(backup_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|name| name.contains(".pre-migration-v18-to-v20-")));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        assert_eq!(
+            std::fs::metadata(&database_path)
+                .expect("database metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert_eq!(
+            std::fs::metadata(&backup_path)
+                .expect("backup metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+    let backup_options = SqliteConnectOptions::new()
+        .filename(&backup_path)
+        .read_only(true)
+        .foreign_keys(true);
+    let mut backup = SqliteConnection::connect_with(&backup_options)
+        .await
+        .expect("open migration backup");
+    let backup_check: String = sqlx::query_scalar("PRAGMA quick_check(1)")
+        .fetch_one(&mut backup)
+        .await
+        .expect("check migration backup");
+    assert_eq!(backup_check, "ok");
+    let backup_version: i64 =
+        sqlx::query_scalar("SELECT MAX(version) FROM client_schema_migrations")
+            .fetch_one(&mut backup)
+            .await
+            .expect("backup schema version");
+    assert_eq!(backup_version, 18);
+    let legacy_snapshot_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM local_model_config_snapshots")
+            .fetch_one(&mut backup)
+            .await
+            .expect("backup legacy snapshots");
+    assert_eq!(legacy_snapshot_count, 1);
+    backup.close().await.expect("close migration backup");
     for table in [
         "local_capability_policy_snapshots",
         "local_model_config_snapshots",
@@ -135,6 +188,37 @@ async fn version_nineteen_discards_ownerless_control_plane_snapshots() {
         database_path.clone(),
         database_path.with_extension("sqlite-wal"),
         database_path.with_extension("sqlite-shm"),
+        backup_path,
+    ] {
+        if let Err(error) = std::fs::remove_file(path) {
+            assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        }
+    }
+}
+
+#[tokio::test]
+async fn current_database_reopen_does_not_create_redundant_backup() {
+    let database_path = std::env::temp_dir().join(format!(
+        "chatos-local-current-schema-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let storage = SqliteClientStorage::connect_file(&database_path)
+        .await
+        .expect("create current database");
+    storage.pool.close().await;
+    drop(storage);
+    assert!(migration_backups(&database_path).is_empty());
+
+    let reopened = SqliteClientStorage::connect_file(&database_path)
+        .await
+        .expect("reopen current database");
+    assert!(migration_backups(&database_path).is_empty());
+    reopened.pool.close().await;
+    drop(reopened);
+    for path in [
+        database_path.clone(),
+        database_path.with_extension("sqlite-wal"),
+        database_path.with_extension("sqlite-shm"),
     ] {
         if let Err(error) = std::fs::remove_file(path) {
             assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
@@ -155,4 +239,26 @@ async fn primary_key_columns(storage: &SqliteClientStorage, table: &str) -> Vec<
         .collect::<Vec<_>>();
     columns.sort_by_key(|(position, _)| *position);
     columns.into_iter().map(|(_, name)| name).collect()
+}
+
+fn migration_backups(database_path: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let backup_prefix = format!(
+        "{}.pre-migration-",
+        database_path
+            .file_name()
+            .expect("database file name")
+            .to_string_lossy()
+    );
+    std::fs::read_dir(database_path.parent().expect("database parent"))
+        .expect("list migration backups")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| {
+                    name.starts_with(&backup_prefix) && name.ends_with(".backup.sqlite")
+                })
+        })
+        .collect()
 }

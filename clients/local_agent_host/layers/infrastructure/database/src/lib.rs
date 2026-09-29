@@ -23,6 +23,7 @@ mod conversation_history;
 mod conversation_lifecycle;
 mod conversation_query_store;
 mod conversation_store;
+mod maintenance;
 mod memory_cache_store;
 mod memory_outbox_store;
 mod migration;
@@ -91,13 +92,17 @@ impl SqliteClientStorage {
                 ))
             })?;
         }
+        let requires_existing_database_backup = path
+            .metadata()
+            .map(|metadata| metadata.len() > 0)
+            .unwrap_or(false);
         let options = SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(true)
             .foreign_keys(true)
             .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
             .busy_timeout(Duration::from_secs(5));
-        Self::connect_with_options(options).await
+        Self::connect_with_options(options, Some((path, requires_existing_database_backup))).await
     }
 
     pub async fn connect_memory() -> Result<Self, ClientStorageError> {
@@ -105,11 +110,12 @@ impl SqliteClientStorage {
             .db()?
             .foreign_keys(true)
             .busy_timeout(Duration::from_secs(5));
-        Self::connect_with_options(options).await
+        Self::connect_with_options(options, None).await
     }
 
     async fn connect_with_options(
         options: SqliteConnectOptions,
+        file_context: Option<(&Path, bool)>,
     ) -> Result<Self, ClientStorageError> {
         // A single connection plus BEGIN IMMEDIATE gives SQLite and the runtime
         // one unambiguous local writer. IPC can remain concurrent without
@@ -120,7 +126,30 @@ impl SqliteClientStorage {
             .await
             .db()?;
         let storage = Self { pool };
+        if let Some((path, _)) = file_context {
+            maintenance::restrict_file_permissions(path)?;
+        }
+        maintenance::verify_integrity(&storage.pool).await?;
+        let version = storage.current_schema_version().await?;
+        if version > migration::SCHEMA_VERSION {
+            return Err(ClientStorageError::InvalidState(format!(
+                "database schema version {version} is newer than supported {}",
+                migration::SCHEMA_VERSION
+            )));
+        }
+        if version < migration::SCHEMA_VERSION {
+            if let Some((path, true)) = file_context {
+                maintenance::create_migration_backup(
+                    &storage.pool,
+                    path,
+                    version,
+                    migration::SCHEMA_VERSION,
+                )
+                .await?;
+            }
+        }
         storage.migrate().await.db()?;
+        maintenance::verify_integrity(&storage.pool).await?;
         Ok(storage)
     }
 
@@ -725,17 +754,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
     }
 
     async fn health_check(&self) -> Result<(), ClientStorageError> {
-        let mut connection = self.pool.acquire().await.db()?;
-        let result: String = sqlx::query_scalar("PRAGMA quick_check(1)")
-            .fetch_one(&mut *connection)
-            .await
-            .db()?;
-        if result != "ok" {
-            return Err(ClientStorageError::InvalidState(format!(
-                "SQLite quick_check failed: {result}"
-            )));
-        }
-        Ok(())
+        maintenance::verify_integrity(&self.pool).await
     }
 }
 

@@ -72,6 +72,8 @@ IPC v25 makes the standalone Coordinator an account-bound request gateway. Every
 
 SQLite v20 scopes maintenance work to that same active owner. Runtime initialization, model-claim recovery and Tool-claim recovery all pass the owner through the application ports into SQLite predicates; launching one account's Host never changes another account's expired lease. Durable Run retry discovery is owner-scoped as well, preventing a signed-out account's overdue retry from continuously waking the active Coordinator. The database adds owner-first Run runnable and expired-Tool indexes for these paths; no wire DTO or protocol version change is required.
 
+The file-backed SQLite adapter owns database safety below the application ports. It runs a quick integrity check before touching the schema and again after migration. Every upgrade of a non-empty database is preceded by a SQLite-native `VACUUM INTO` snapshot in the same directory; the adapter opens and checks that snapshot before proceeding, while migration versions remain individually transactional. Verified pre-migration snapshots survive migration failure for rollback and are not treated as application data or imported into the new schema. Unix database and backup files use mode `0600`; Windows protection remains the responsibility of the native per-user data-directory ACL.
+
 ## Server-removal boundary
 
 The completed client localization must allow these directories to be physically deleted:

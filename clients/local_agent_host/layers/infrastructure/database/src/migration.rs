@@ -11,9 +11,30 @@ use super::{
 };
 use sqlx::SqliteConnection;
 
-const SCHEMA_VERSION: i64 = 20;
+pub(super) const SCHEMA_VERSION: i64 = 20;
 
 impl SqliteClientStorage {
+    pub(super) async fn current_schema_version(&self) -> Result<i64, ClientStorageError> {
+        let mut connection = self.pool.acquire().await.db()?;
+        let has_migration_table: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master \
+             WHERE type = 'table' AND name = 'client_schema_migrations'",
+        )
+        .fetch_one(&mut *connection)
+        .await
+        .db()?;
+        if has_migration_table == 0 {
+            return Ok(0);
+        }
+        Ok(sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT MAX(version) FROM client_schema_migrations",
+        )
+        .fetch_one(&mut *connection)
+        .await
+        .db()?
+        .unwrap_or(0))
+    }
+
     pub(super) async fn migrate(&self) -> Result<(), ClientStorageError> {
         let mut connection = self.pool.acquire().await.db()?;
         sqlx::query(
