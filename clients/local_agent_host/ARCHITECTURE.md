@@ -50,6 +50,8 @@ Retained Memory is isolated in an infrastructure adapter and is enabled only by 
 
 Memory writes follow `AI runtime record port → LocalMemoryOutboxStore → SQLite v13`. Enqueue is immutable and idempotent by source plus stable record ID. The Coordinator owns a lease/CAS sync worker that sends one pending record at a time, marks success, and persists bounded failure diagnostics plus an exponential retry deadline; restarts reclaim expired leases. Network failure is therefore sync state, not Run failure. Compose follows `MemoryContextComposer → retained Memory → LocalMemoryContextCacheStore`: SQLite v14 stores a successful response under the exact serialized scope. A remote failure uses that snapshot, and a first-run miss produces an empty context instead of stopping local execution.
 
+IPC v16 exposes tenant/source-scoped aggregate Memory sync status through the application storage port. The interface DTO contains counts and bounded diagnostics only; the SQLite adapter does not return record bodies, compose snapshots, or authentication values. This gives both native clients a stable offline/sync indicator without allowing UI code to query Host tables directly.
+
 ## Server-removal boundary
 
 The completed client localization must allow these directories to be physically deleted:

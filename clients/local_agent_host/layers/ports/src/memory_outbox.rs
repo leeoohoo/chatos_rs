@@ -3,6 +3,7 @@
 
 use crate::ClientStorageError;
 use async_trait::async_trait;
+use chatos_local_agent_protocol::LocalMemorySyncStatus;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -101,4 +102,10 @@ pub trait LocalMemoryOutboxStore: Send + Sync {
     ) -> Result<LocalMemoryOutboxRecord, ClientStorageError>;
 
     async fn next_memory_retry_at(&self) -> Result<Option<i64>, ClientStorageError>;
+
+    async fn get_memory_sync_status(
+        &self,
+        tenant_id: &str,
+        source_id: &str,
+    ) -> Result<LocalMemorySyncStatus, ClientStorageError>;
 }

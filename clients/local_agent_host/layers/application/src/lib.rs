@@ -128,6 +128,13 @@ impl LocalAgentRuntime {
                     recovered_claims: self.recovered_claims.load(Ordering::Acquire),
                 })
             }
+            HostCommand::GetMemorySyncStatus(command) => {
+                let status = self
+                    .store
+                    .get_memory_sync_status(&command.tenant_id, &command.source_id)
+                    .await?;
+                Ok(HostResult::MemorySyncStatus { status })
+            }
             command @ (HostCommand::PutModelConfigSnapshot(_)
             | HostCommand::GetModelConfigSnapshot(_)
             | HostCommand::PutCapabilityPolicySnapshot(_)
@@ -781,6 +788,8 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod memory_status_tests;
 #[cfg(test)]
 mod retry_tests;
 #[cfg(test)]

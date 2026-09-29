@@ -3,7 +3,7 @@
 
 use super::{
     ClientStorageError, LocalMemoryOutboxRecord, LocalMemoryOutboxStatus, LocalMemoryOutboxStore,
-    SqliteClientStorage, SqliteResultExt,
+    LocalMemorySyncStatus, SqliteClientStorage, SqliteResultExt,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -186,6 +186,84 @@ impl LocalMemoryOutboxStore for SqliteClientStorage {
         .await
         .db()
     }
+
+    async fn get_memory_sync_status(
+        &self,
+        tenant_id: &str,
+        source_id: &str,
+    ) -> Result<LocalMemorySyncStatus, ClientStorageError> {
+        validate_scope(tenant_id, source_id)?;
+        let mut connection = self.pool.acquire().await.db()?;
+        let counts = sqlx::query(
+            "SELECT \
+             COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_count, \
+             COALESCE(SUM(CASE WHEN status = 'syncing' THEN 1 ELSE 0 END), 0) AS syncing_count, \
+             COALESCE(SUM(CASE WHEN status = 'retry_scheduled' THEN 1 ELSE 0 END), 0) \
+               AS retry_scheduled_count, \
+             COALESCE(SUM(CASE WHEN status = 'synced' THEN 1 ELSE 0 END), 0) AS synced_count, \
+             MIN(CASE WHEN status != 'synced' THEN created_at_unix_ms END) \
+               AS oldest_unsynced_at_unix_ms, \
+             MIN(CASE WHEN status = 'retry_scheduled' THEN next_attempt_at_unix_ms END) \
+               AS next_retry_at_unix_ms, \
+             MAX(CASE WHEN status = 'synced' THEN updated_at_unix_ms END) \
+               AS last_synced_at_unix_ms \
+             FROM local_memory_outbox WHERE tenant_id = ? AND source_id = ?",
+        )
+        .bind(tenant_id)
+        .bind(source_id)
+        .fetch_one(&mut *connection)
+        .await
+        .db()?;
+        let last_failure = sqlx::query(
+            "SELECT last_error, updated_at_unix_ms FROM local_memory_outbox \
+             WHERE tenant_id = ? AND source_id = ? AND last_error IS NOT NULL \
+             ORDER BY updated_at_unix_ms DESC, record_id DESC LIMIT 1",
+        )
+        .bind(tenant_id)
+        .bind(source_id)
+        .fetch_optional(&mut *connection)
+        .await
+        .db()?;
+        let (last_error, last_error_at_unix_ms) = match last_failure {
+            Some(row) => (
+                Some(row.try_get("last_error").db()?),
+                Some(row.try_get("updated_at_unix_ms").db()?),
+            ),
+            None => (None, None),
+        };
+        Ok(LocalMemorySyncStatus {
+            tenant_id: tenant_id.to_string(),
+            source_id: source_id.to_string(),
+            pending_count: non_negative_count(&counts, "pending_count")?,
+            syncing_count: non_negative_count(&counts, "syncing_count")?,
+            retry_scheduled_count: non_negative_count(&counts, "retry_scheduled_count")?,
+            synced_count: non_negative_count(&counts, "synced_count")?,
+            oldest_unsynced_at_unix_ms: counts.try_get("oldest_unsynced_at_unix_ms").db()?,
+            next_retry_at_unix_ms: counts.try_get("next_retry_at_unix_ms").db()?,
+            last_synced_at_unix_ms: counts.try_get("last_synced_at_unix_ms").db()?,
+            last_error,
+            last_error_at_unix_ms,
+        })
+    }
+}
+
+fn non_negative_count(
+    row: &sqlx::sqlite::SqliteRow,
+    field: &str,
+) -> Result<u64, ClientStorageError> {
+    u64::try_from(row.try_get::<i64, _>(field).db()?)
+        .map_err(|_| ClientStorageError::InvalidState(format!("invalid Memory {field}")))
+}
+
+fn validate_scope(tenant_id: &str, source_id: &str) -> Result<(), ClientStorageError> {
+    for (label, value) in [("tenant_id", tenant_id), ("source_id", source_id)] {
+        if value.trim().is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
+            return Err(ClientStorageError::InvalidState(format!(
+                "Memory {label} must contain 1..=256 non-control characters"
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -453,5 +531,83 @@ mod tests {
             .await
             .expect("due")
             .is_some());
+    }
+
+    #[tokio::test]
+    async fn sync_status_is_scoped_and_never_exposes_payloads() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        for (record_id, tenant_id, now) in [
+            ("message-1", "user-1", 1_000),
+            ("message-2", "user-1", 2_000),
+            ("message-other", "user-2", 3_000),
+        ] {
+            storage
+                .enqueue_memory_record(
+                    record_id,
+                    tenant_id,
+                    "local_agent",
+                    "conversation-1",
+                    &json!({"message_id": record_id, "secret_content": "not returned"}),
+                    now,
+                )
+                .await
+                .expect("enqueue");
+        }
+        let synced = storage
+            .claim_next_memory_record("claim-1", 4_000, 14_000)
+            .await
+            .expect("claim")
+            .expect("record");
+        storage
+            .complete_memory_record(
+                &synced.source_id,
+                &synced.record_id,
+                "claim-1",
+                synced.version,
+                5_000,
+            )
+            .await
+            .expect("complete");
+        let failed = storage
+            .claim_next_memory_record("claim-2", 6_000, 16_000)
+            .await
+            .expect("claim")
+            .expect("record");
+        storage
+            .retry_memory_record(
+                &failed.source_id,
+                &failed.record_id,
+                "claim-2",
+                failed.version,
+                "Memory offline",
+                20_000,
+                7_000,
+            )
+            .await
+            .expect("retry");
+
+        let status = storage
+            .get_memory_sync_status("user-1", "local_agent")
+            .await
+            .expect("status");
+        assert_eq!(status.synced_count, 1);
+        assert_eq!(status.retry_scheduled_count, 1);
+        assert_eq!(status.pending_count, 0);
+        assert_eq!(status.unsynced_count(), 1);
+        assert_eq!(status.oldest_unsynced_at_unix_ms, Some(2_000));
+        assert_eq!(status.next_retry_at_unix_ms, Some(20_000));
+        assert_eq!(status.last_synced_at_unix_ms, Some(5_000));
+        assert_eq!(status.last_error.as_deref(), Some("Memory offline"));
+        assert_eq!(status.last_error_at_unix_ms, Some(7_000));
+
+        let other = storage
+            .get_memory_sync_status("user-2", "local_agent")
+            .await
+            .expect("other status");
+        assert_eq!(other.pending_count, 1);
+        assert_eq!(other.synced_count, 0);
+        assert_eq!(other.last_error, None);
     }
 }

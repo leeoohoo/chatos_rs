@@ -40,8 +40,8 @@ pub use chatos_local_agent_ports::{
     LocalAgentTaskStore, LocalAgentToolStore, LocalCapabilityPolicySnapshot,
     LocalCapabilitySnapshotStore, LocalConversationStore, LocalMemoryContextCacheStore,
     LocalMemoryOutboxRecord, LocalMemoryOutboxStatus, LocalMemoryOutboxStore,
-    LocalModelConfigSnapshot, LocalModelConfigSnapshotStore, LocalPluginInstallationStore,
-    RunTransition,
+    LocalMemorySyncStatus, LocalModelConfigSnapshot, LocalModelConfigSnapshotStore,
+    LocalPluginInstallationStore, RunTransition,
 };
 use run_record::{decode_event, decode_run};
 use schema::RUN_SELECT;

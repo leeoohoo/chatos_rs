@@ -24,8 +24,9 @@ pub use memory_cache::LocalMemoryContextCacheStore;
 pub use memory_outbox::{LocalMemoryOutboxRecord, LocalMemoryOutboxStatus, LocalMemoryOutboxStore};
 
 pub use chatos_local_agent_protocol::{
-    LocalCapabilityPolicySnapshot, LocalJsonSchemaOutputFormat, LocalModelConfigSnapshot,
-    MAX_CAPABILITY_INSTRUCTIONS_BYTES, MAX_CAPABILITY_ITEMS, MAX_CONTROL_PLANE_SNAPSHOT_BYTES,
+    LocalCapabilityPolicySnapshot, LocalJsonSchemaOutputFormat, LocalMemorySyncStatus,
+    LocalModelConfigSnapshot, MAX_CAPABILITY_INSTRUCTIONS_BYTES, MAX_CAPABILITY_ITEMS,
+    MAX_CONTROL_PLANE_SNAPSHOT_BYTES,
 };
 
 #[derive(Debug, Error)]

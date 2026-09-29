@@ -12,6 +12,7 @@ use std::{fmt, str::FromStr};
 
 mod control_plane;
 mod conversation;
+mod memory;
 mod plugin;
 mod task;
 mod tool;
@@ -32,6 +33,7 @@ pub use conversation::{
     StartConversationTurnCommand, LOCAL_CONVERSATION_MAX_ATTACHMENTS,
     LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE,
 };
+pub use memory::{GetMemorySyncStatusCommand, LocalMemorySyncStatus};
 pub use plugin::{
     GetPluginInstallationCommand, ListPluginInstallationsCommand, LocalPluginInstallationRecord,
     LocalPluginInstallationSpec, PutPluginInstallationCommand, RemovePluginInstallationCommand,
@@ -48,7 +50,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 15;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 16;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -77,6 +79,7 @@ impl HostRequestEnvelope {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HostCommand {
     Health,
+    GetMemorySyncStatus(GetMemorySyncStatusCommand),
     PutModelConfigSnapshot(PutModelConfigSnapshotCommand),
     GetModelConfigSnapshot(GetModelConfigSnapshotCommand),
     PutCapabilityPolicySnapshot(PutCapabilityPolicySnapshotCommand),
@@ -115,6 +118,7 @@ impl HostCommand {
     pub fn validate(&self) -> Result<(), String> {
         match self {
             Self::Health => Ok(()),
+            Self::GetMemorySyncStatus(command) => command.validate(),
             Self::PutModelConfigSnapshot(command) => command.validate(),
             Self::GetModelConfigSnapshot(command) => command.validate(),
             Self::PutCapabilityPolicySnapshot(command) => command.validate(),
@@ -570,6 +574,9 @@ pub enum HostResult {
         service: String,
         storage_ready: bool,
         recovered_claims: u64,
+    },
+    MemorySyncStatus {
+        status: LocalMemorySyncStatus,
     },
     ModelConfigSnapshot {
         snapshot: LocalModelConfigSnapshot,
