@@ -12,8 +12,8 @@ use chatos_local_agent_protocol::{
     LocalAgentToolClaim, LocalAgentToolCommitResult, LocalAgentToolInvocationRecord,
     LocalAgentToolOutcome, LocalConversationDetail, LocalConversationHistoryPage,
     LocalConversationPage, LocalConversationTurnStart, LocalConversationTurnUpdate,
-    LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalTaskGraph,
-    LocalTaskGraphListScope, LocalTaskGraphPage, ResumeConversationTurnCommand,
+    LocalPluginInstallationPage, LocalPluginInstallationRecord, LocalPluginInstallationSpec,
+    LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage, ResumeConversationTurnCommand,
     StartConversationTurnCommand,
 };
 use serde::{Deserialize, Serialize};
@@ -310,18 +310,22 @@ pub trait LocalPluginInstallationStore: Send + Sync {
 
     async fn get_plugin_installation(
         &self,
+        owner_user_id: &str,
         installation_id: &str,
     ) -> Result<Option<LocalPluginInstallationRecord>, ClientStorageError>;
 
     async fn list_plugin_installations(
         &self,
         owner_user_id: &str,
+        before_updated_at_unix_ms: Option<i64>,
+        before_installation_id: Option<&str>,
         limit: u32,
-    ) -> Result<Vec<LocalPluginInstallationRecord>, ClientStorageError>;
+    ) -> Result<LocalPluginInstallationPage, ClientStorageError>;
 
     async fn remove_plugin_installation(
         &self,
         command: &IdempotentCommand,
+        owner_user_id: &str,
         installation_id: &str,
         expected_version: u64,
         now_unix_ms: i64,

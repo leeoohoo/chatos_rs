@@ -116,11 +116,13 @@ impl PutPluginInstallationCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetPluginInstallationCommand {
+    pub owner_user_id: String,
     pub installation_id: String,
 }
 
 impl GetPluginInstallationCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("installation_id", &self.installation_id)
     }
 }
@@ -128,33 +130,71 @@ impl GetPluginInstallationCommand {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ListPluginInstallationsCommand {
     pub owner_user_id: String,
+    pub before_updated_at_unix_ms: Option<i64>,
+    pub before_installation_id: Option<String>,
     pub limit: u32,
 }
 
 impl ListPluginInstallationsCommand {
     pub fn validate(&self) -> Result<(), String> {
         validate_identifier("owner_user_id", &self.owner_user_id)?;
-        if self.limit == 0 || self.limit > 500 {
-            return Err("limit must be between 1 and 500".to_string());
+        if self.limit == 0 || self.limit > 200 {
+            return Err("limit must be between 1 and 200".to_string());
         }
-        Ok(())
+        match (
+            self.before_updated_at_unix_ms,
+            self.before_installation_id.as_deref(),
+        ) {
+            (None, None) => Ok(()),
+            (Some(timestamp), Some(installation_id)) if timestamp >= 0 => {
+                validate_identifier("before_installation_id", installation_id)
+            }
+            _ => Err(
+                "before_updated_at_unix_ms and before_installation_id must be supplied together"
+                    .to_string(),
+            ),
+        }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RemovePluginInstallationCommand {
+    pub owner_user_id: String,
     pub installation_id: String,
     pub expected_version: u64,
 }
 
 impl RemovePluginInstallationCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("installation_id", &self.installation_id)?;
         if self.expected_version == 0 {
             return Err("expected_version must be greater than zero".to_string());
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalPluginInstallationSummary {
+    pub installation_id: String,
+    pub owner_user_id: String,
+    pub plugin_id: String,
+    pub release_id: String,
+    pub component_id: String,
+    pub component_revision: String,
+    pub server_id: String,
+    pub enabled: bool,
+    pub version: u64,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalPluginInstallationPage {
+    pub installations: Vec<LocalPluginInstallationSummary>,
+    pub next_before_updated_at_unix_ms: Option<i64>,
+    pub next_before_installation_id: Option<String>,
 }
 
 const fn default_true() -> bool {
@@ -191,5 +231,34 @@ mod tests {
         let encoded = serde_json::to_string(&spec).expect("serialize");
         assert!(encoded.contains("keychain:plugin-1/api-token"));
         assert!(!encoded.contains("secret_value"));
+    }
+
+    #[test]
+    fn installation_list_cursor_is_paired_and_bounded() {
+        let valid = ListPluginInstallationsCommand {
+            owner_user_id: "user-1".to_string(),
+            before_updated_at_unix_ms: Some(1_000),
+            before_installation_id: Some("install-1".to_string()),
+            limit: 50,
+        };
+        assert!(valid.validate().is_ok());
+        assert!(ListPluginInstallationsCommand {
+            before_installation_id: None,
+            ..valid.clone()
+        }
+        .validate()
+        .is_err());
+        assert!(ListPluginInstallationsCommand {
+            owner_user_id: String::new(),
+            ..valid.clone()
+        }
+        .validate()
+        .is_err());
+        assert!(ListPluginInstallationsCommand {
+            limit: 201,
+            ..valid
+        }
+        .validate()
+        .is_err());
     }
 }

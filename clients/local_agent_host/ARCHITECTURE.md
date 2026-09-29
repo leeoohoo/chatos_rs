@@ -60,6 +60,8 @@ IPC v19 makes the local Task Graph repository independently discoverable after r
 
 IPC v20 applies the same account boundary to the local Conversation fact store. Conversation discovery is a bounded stable page over `(updated_at_unix_ms DESC, conversation_id ASC)`, while detail, history and every Turn mutation verify the owner before loading or changing durable state. Native clients can rebuild the complete chat sidebar after reconnect without a server Conversation index, and switching accounts does not merge local histories.
 
+IPC v21 and SQLite v17 apply account isolation to the local Plugin installation registry. The paged index returns only identity, revision, enabled state and timestamps; launch configuration and credential references remain in owner-scoped detail responses. An installation's owner is immutable, and CAS update/removal SQL includes that owner so an identifier and version from another account cannot transfer or delete the local installation.
+
 ## Server-removal boundary
 
 The completed client localization must allow these directories to be physically deleted:

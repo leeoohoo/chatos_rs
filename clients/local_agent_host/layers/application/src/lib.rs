@@ -28,6 +28,8 @@ mod control_plane_runtime;
 #[cfg(test)]
 mod conversation_query_tests;
 mod conversation_runtime;
+#[cfg(test)]
+mod plugin_query_tests;
 mod plugin_runtime;
 mod profile;
 mod run_factory;

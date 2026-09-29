@@ -36,8 +36,9 @@ pub use conversation::{
 };
 pub use memory::{GetMemorySyncStatusCommand, LocalMemorySyncStatus};
 pub use plugin::{
-    GetPluginInstallationCommand, ListPluginInstallationsCommand, LocalPluginInstallationRecord,
-    LocalPluginInstallationSpec, PutPluginInstallationCommand, RemovePluginInstallationCommand,
+    GetPluginInstallationCommand, ListPluginInstallationsCommand, LocalPluginInstallationPage,
+    LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalPluginInstallationSummary,
+    PutPluginInstallationCommand, RemovePluginInstallationCommand,
 };
 pub use run_query::{ListRunsCommand, LocalAgentRunListScope, LocalAgentRunPage};
 
@@ -55,7 +56,7 @@ pub use tool::{
     LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 20;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 21;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -636,7 +637,7 @@ pub enum HostResult {
         installation: LocalPluginInstallationRecord,
     },
     PluginInstallations {
-        installations: Vec<LocalPluginInstallationRecord>,
+        page: LocalPluginInstallationPage,
     },
     Conversation {
         conversation: LocalConversationDetail,

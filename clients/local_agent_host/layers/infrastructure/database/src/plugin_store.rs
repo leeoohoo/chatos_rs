@@ -6,7 +6,9 @@ use super::{
     SqliteClientStorage, SqliteResultExt,
 };
 use async_trait::async_trait;
-use chatos_local_agent_protocol::{LocalPluginInstallationRecord, LocalPluginInstallationSpec};
+use chatos_local_agent_protocol::{
+    LocalPluginInstallationPage, LocalPluginInstallationRecord, LocalPluginInstallationSpec,
+};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 
 const INSTALLATION_SELECT: &str =
@@ -35,9 +37,11 @@ impl LocalPluginInstallationStore for SqliteClientStorage {
                 return Ok(replay);
             }
             let current_version = sqlx::query_scalar::<_, i64>(
-                "SELECT version FROM local_plugin_installations WHERE installation_id = ?",
+                "SELECT version FROM local_plugin_installations \
+                 WHERE installation_id = ? AND owner_user_id = ?",
             )
             .bind(&installation.installation_id)
+            .bind(&installation.owner_user_id)
             .fetch_optional(&mut *connection)
             .await
             .db()?;
@@ -73,11 +77,13 @@ impl LocalPluginInstallationStore for SqliteClientStorage {
                     .await?;
                 }
             }
-            let stored = fetch_installation(&mut connection, &installation.installation_id)
-                .await?
-                .ok_or_else(|| {
-                    ClientStorageError::NotFound(installation.installation_id.clone())
-                })?;
+            let stored = fetch_installation_for_owner(
+                &mut connection,
+                &installation.owner_user_id,
+                &installation.installation_id,
+            )
+            .await?
+            .ok_or_else(|| ClientStorageError::NotFound(installation.installation_id.clone()))?;
             Self::record_receipt(&mut connection, command, &stored, now_unix_ms).await?;
             Ok(stored)
         }
@@ -87,40 +93,34 @@ impl LocalPluginInstallationStore for SqliteClientStorage {
 
     async fn get_plugin_installation(
         &self,
+        owner_user_id: &str,
         installation_id: &str,
     ) -> Result<Option<LocalPluginInstallationRecord>, ClientStorageError> {
         let mut connection = self.pool.acquire().await.db()?;
-        fetch_installation(&mut connection, installation_id).await
+        fetch_installation_for_owner(&mut connection, owner_user_id, installation_id).await
     }
 
     async fn list_plugin_installations(
         &self,
         owner_user_id: &str,
+        before_updated_at_unix_ms: Option<i64>,
+        before_installation_id: Option<&str>,
         limit: u32,
-    ) -> Result<Vec<LocalPluginInstallationRecord>, ClientStorageError> {
-        if !(1..=500).contains(&limit) {
-            return Err(ClientStorageError::InvalidState(
-                "plugin installation limit must be between 1 and 500".to_string(),
-            ));
-        }
-        let mut connection = self.pool.acquire().await.db()?;
-        sqlx::query(&format!(
-            "{INSTALLATION_SELECT} WHERE owner_user_id = ? \
-             ORDER BY updated_at_unix_ms DESC, installation_id LIMIT ?"
-        ))
-        .bind(owner_user_id)
-        .bind(i64::from(limit))
-        .fetch_all(&mut *connection)
+    ) -> Result<LocalPluginInstallationPage, ClientStorageError> {
+        super::plugin_query_store::list_installations(
+            self,
+            owner_user_id,
+            before_updated_at_unix_ms,
+            before_installation_id,
+            limit,
+        )
         .await
-        .db()?
-        .into_iter()
-        .map(decode_installation)
-        .collect()
     }
 
     async fn remove_plugin_installation(
         &self,
         command: &IdempotentCommand,
+        owner_user_id: &str,
         installation_id: &str,
         expected_version: u64,
         now_unix_ms: i64,
@@ -131,18 +131,21 @@ impl LocalPluginInstallationStore for SqliteClientStorage {
             if let Some(replay) = Self::replay(&mut connection, command).await? {
                 return Ok(replay);
             }
-            let existing = fetch_installation(&mut connection, installation_id)
-                .await?
-                .ok_or_else(|| ClientStorageError::NotFound(installation_id.to_string()))?;
+            let existing =
+                fetch_installation_for_owner(&mut connection, owner_user_id, installation_id)
+                    .await?
+                    .ok_or_else(|| ClientStorageError::NotFound(installation_id.to_string()))?;
             if existing.version != expected_version {
                 return Err(ClientStorageError::Conflict(format!(
                     "plugin installation version changed: {installation_id}"
                 )));
             }
             let deleted = sqlx::query(
-                "DELETE FROM local_plugin_installations WHERE installation_id = ? AND version = ?",
+                "DELETE FROM local_plugin_installations \
+                 WHERE installation_id = ? AND owner_user_id = ? AND version = ?",
             )
             .bind(installation_id)
+            .bind(owner_user_id)
             .bind(i64::try_from(expected_version).map_err(|_| {
                 ClientStorageError::InvalidState("plugin version exceeds i64".to_string())
             })?)
@@ -219,14 +222,13 @@ async fn update_installation(
     now_unix_ms: i64,
 ) -> Result<(), ClientStorageError> {
     let result = sqlx::query(
-        "UPDATE local_plugin_installations SET owner_user_id = ?, plugin_id = ?, \
-         release_id = ?, release_digest = ?, component_id = ?, component_revision = ?, \
+        "UPDATE local_plugin_installations SET plugin_id = ?, release_id = ?, \
+         release_digest = ?, component_id = ?, component_revision = ?, \
          server_id = ?, executable_path = ?, args_json = ?, working_directory = ?, \
          environment_secret_refs_json = ?, tool_prefix = ?, allowed_tools_json = ?, enabled = ?, \
          version = version + 1, updated_at_unix_ms = ? \
-         WHERE installation_id = ? AND version = ?",
+         WHERE installation_id = ? AND owner_user_id = ? AND version = ?",
     )
-    .bind(&installation.owner_user_id)
     .bind(&installation.plugin_id)
     .bind(&installation.release_id)
     .bind(&installation.release_digest)
@@ -250,6 +252,7 @@ async fn update_installation(
     .bind(installation.enabled)
     .bind(now_unix_ms)
     .bind(&installation.installation_id)
+    .bind(&installation.owner_user_id)
     .bind(current_version)
     .execute(&mut *connection)
     .await;
@@ -267,17 +270,21 @@ async fn update_installation(
     }
 }
 
-async fn fetch_installation(
+async fn fetch_installation_for_owner(
     connection: &mut SqliteConnection,
+    owner_user_id: &str,
     installation_id: &str,
 ) -> Result<Option<LocalPluginInstallationRecord>, ClientStorageError> {
-    sqlx::query(&format!("{INSTALLATION_SELECT} WHERE installation_id = ?"))
-        .bind(installation_id)
-        .fetch_optional(&mut *connection)
-        .await
-        .db()?
-        .map(decode_installation)
-        .transpose()
+    sqlx::query(&format!(
+        "{INSTALLATION_SELECT} WHERE installation_id = ? AND owner_user_id = ?"
+    ))
+    .bind(installation_id)
+    .bind(owner_user_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .db()?
+    .map(decode_installation)
+    .transpose()
 }
 
 fn decode_installation(
@@ -379,20 +386,20 @@ mod tests {
             .expect("update");
         assert_eq!(updated.version, 2);
         assert_eq!(updated.spec.release_id, "release-2");
-        assert_eq!(
-            storage
-                .list_plugin_installations("user-1", 10)
-                .await
-                .expect("list"),
-            vec![updated.clone()]
-        );
+        let page = storage
+            .list_plugin_installations("user-1", None, None, 10)
+            .await
+            .expect("list");
+        assert_eq!(page.installations.len(), 1);
+        assert_eq!(page.installations[0].installation_id, "install-1");
+        assert_eq!(page.installations[0].version, updated.version);
         let removed = storage
-            .remove_plugin_installation(&command("remove-1"), "install-1", 2, 30)
+            .remove_plugin_installation(&command("remove-1"), "user-1", "install-1", 2, 30)
             .await
             .expect("remove");
         assert_eq!(removed, updated);
         assert!(storage
-            .get_plugin_installation("install-1")
+            .get_plugin_installation("user-1", "install-1")
             .await
             .expect("get")
             .is_none());

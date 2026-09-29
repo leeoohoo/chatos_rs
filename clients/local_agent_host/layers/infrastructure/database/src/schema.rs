@@ -370,3 +370,7 @@ pub(super) const SCHEMA_V16: &[&str] = &[
        approval_status, status, created_at_unix_ms, invocation_id\
      )",
 ];
+
+pub(super) const SCHEMA_V17: &[&str] =
+    &["CREATE INDEX local_plugin_installations_owner_updated ON \
+     local_plugin_installations(owner_user_id, updated_at_unix_ms DESC, installation_id DESC)"];

@@ -27,6 +27,7 @@ mod memory_cache_store;
 mod memory_outbox_store;
 mod migration;
 mod model_snapshot_store;
+mod plugin_query_store;
 mod plugin_store;
 mod run_commands;
 mod run_query_store;

@@ -27,23 +27,29 @@ impl LocalAgentRuntime {
             HostCommand::GetPluginInstallation(command) => {
                 let installation = self
                     .store
-                    .get_plugin_installation(&command.installation_id)
+                    .get_plugin_installation(&command.owner_user_id, &command.installation_id)
                     .await?
                     .ok_or(ClientStorageError::NotFound(command.installation_id))?;
                 Ok(HostResult::PluginInstallation { installation })
             }
             HostCommand::ListPluginInstallations(command) => {
-                let installations = self
+                let page = self
                     .store
-                    .list_plugin_installations(&command.owner_user_id, command.limit)
+                    .list_plugin_installations(
+                        &command.owner_user_id,
+                        command.before_updated_at_unix_ms,
+                        command.before_installation_id.as_deref(),
+                        command.limit,
+                    )
                     .await?;
-                Ok(HostResult::PluginInstallations { installations })
+                Ok(HostResult::PluginInstallations { page })
             }
             HostCommand::RemovePluginInstallation(command) => {
                 let installation = self
                     .store
                     .remove_plugin_installation(
                         idempotency,
+                        &command.owner_user_id,
                         &command.installation_id,
                         command.expected_version,
                         self.now()?,
@@ -124,6 +130,8 @@ mod tests {
                 "list-plugin-1",
                 HostCommand::ListPluginInstallations(ListPluginInstallationsCommand {
                     owner_user_id: "user-1".to_string(),
+                    before_updated_at_unix_ms: None,
+                    before_installation_id: None,
                     limit: 10,
                 }),
             ))
@@ -131,13 +139,14 @@ mod tests {
             .expect("list");
         assert!(matches!(
             listed,
-            HostResult::PluginInstallations { installations } if installations.len() == 1
+            HostResult::PluginInstallations { page } if page.installations.len() == 1
         ));
 
         runtime
             .try_handle(request(
                 "remove-plugin-1",
                 HostCommand::RemovePluginInstallation(RemovePluginInstallationCommand {
+                    owner_user_id: "user-1".to_string(),
                     installation_id: "install-1".to_string(),
                     expected_version: 1,
                 }),
@@ -148,6 +157,7 @@ mod tests {
             .handle(request(
                 "get-plugin-missing",
                 HostCommand::GetPluginInstallation(GetPluginInstallationCommand {
+                    owner_user_id: "user-1".to_string(),
                     installation_id: "install-1".to_string(),
                 }),
             ))
