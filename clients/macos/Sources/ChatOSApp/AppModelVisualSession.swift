@@ -15,7 +15,7 @@ enum VisualSessionPollingPolicy {
     ) -> Duration {
         if !hasSessions { return .seconds(5) }
         if !hasSelectedConversation || !isSelectedSessionExpanded {
-            return .seconds(2)
+            return .seconds(15)
         }
         return .milliseconds(450)
     }
@@ -46,15 +46,37 @@ extension AppModel {
                     isSelectedSessionExpanded: isSelectedSessionExpanded
                 ) ? selectedPresentation?.session.adapterSessionID : nil
                 let preferredAdapterSessionIDs = selectedAdapterSessionID.map { Set([$0]) } ?? []
+                let existingFrames = Dictionary(uniqueKeysWithValues:
+                    (self?.visualSessionStore.presentations ?? []).compactMap { presentation in
+                        presentation.frameImage.map {
+                            (VisualSessionFrameIdentity(
+                                adapterSessionID: presentation.session.adapterSessionID,
+                                frameSequence: presentation.session.frameSequence
+                            ), $0)
+                        }
+                    }
+                )
+                let knownFrameSequences = Dictionary(uniqueKeysWithValues:
+                    existingFrames.keys.map { ($0.adapterSessionID, $0.frameSequence) }
+                )
                 let sessions = await service.fetchPluginVisualSessions(
-                    loadFrameDataForAdapterSessionIDs: preferredAdapterSessionIDs
+                    loadFrameDataForAdapterSessionIDs: preferredAdapterSessionIDs,
+                    knownFrameSequencesByAdapterSessionID: knownFrameSequences
                 )
                 guard !Task.isCancelled else { return }
-                self?.applyPluginVisualSessions(sessions)
+                let preparedSessions = await VisualSessionFrameDecoder.prepare(
+                    sessions,
+                    reusing: existingFrames
+                )
+                guard !Task.isCancelled else { return }
+                self?.applyPluginVisualSessions(preparedSessions)
+                let nextHasSelectedConversation = self?.currentConversationID != nil
+                let nextIsSelectedSessionExpanded = nextHasSelectedConversation
+                    && self?.visualSessionStore.selectedPresentation?.isExpanded == true
                 let interval = VisualSessionPollingPolicy.interval(
                     hasSessions: !sessions.isEmpty,
-                    hasSelectedConversation: hasSelectedConversation,
-                    isSelectedSessionExpanded: isSelectedSessionExpanded
+                    hasSelectedConversation: nextHasSelectedConversation,
+                    isSelectedSessionExpanded: nextIsSelectedSessionExpanded
                 )
                 do {
                     try await Task.sleep(for: interval)
@@ -97,7 +119,7 @@ extension AppModel {
         selectVisualSession(offset: 1)
     }
 
-    func applyPluginVisualSessions(_ sessions: [PluginVisualSession]) {
+    func applyPluginVisualSessions(_ preparedSessions: [PreparedVisualSession]) {
         guard let conversationID = currentConversationID else {
             visualSessionStore.update([], selectedAdapterSessionID: nil)
             return
@@ -106,28 +128,32 @@ extension AppModel {
         let previousPresentations = Dictionary(uniqueKeysWithValues:
             visualSessionStore.presentations.map { ($0.session.adapterSessionID, $0) }
         )
-        let matchingSessions = sessions
-            .filter { $0.owner.conversationID == conversationID }
+        let matchingSessions = preparedSessions
+            .filter { $0.session.owner.conversationID == conversationID }
             .sorted { lhs, rhs in
-                let lhsDate = lhs.capturedAt ?? .distantPast
-                let rhsDate = rhs.capturedAt ?? .distantPast
+                let lhsDate = lhs.session.capturedAt ?? .distantPast
+                let rhsDate = rhs.session.capturedAt ?? .distantPast
                 if lhsDate != rhsDate { return lhsDate > rhsDate }
-                return lhs.adapterSessionID < rhs.adapterSessionID
+                return lhs.session.adapterSessionID < rhs.session.adapterSessionID
             }
 
         let presentations = matchingSessions.map { incoming -> VisualSessionPresentation in
-            var session = incoming
-            if session.frameData == nil,
-               let previous = previousPresentations[session.adapterSessionID],
-               previous.session.frameSequence == session.frameSequence {
-                session.frameData = previous.session.frameData
-            }
+            let session = incoming.session
+            let previous = previousPresentations[session.adapterSessionID]
+            let frameImage = incoming.frameImage
+                ?? previous.flatMap {
+                    $0.session.frameSequence == session.frameSequence ? $0.frameImage : nil
+                }
             let key = session.adapterSessionID
             let isExpanded = visualSessionExpansion[key]
-                ?? previousPresentations[key]?.isExpanded
+                ?? previous?.isExpanded
                 ?? true
             visualSessionExpansion[key] = isExpanded
-            return .init(session: session, isExpanded: isExpanded)
+            return .init(
+                session: session,
+                isExpanded: isExpanded,
+                frameImage: frameImage
+            )
         }
 
         let activeAdapterSessionIDs = Set(presentations.map(\.session.adapterSessionID))
@@ -142,7 +168,7 @@ extension AppModel {
             selectedAdapterSessionID: selectedAdapterSessionID
         )
 
-        let activeKeys = Set(sessions.map(\.adapterSessionID))
+        let activeKeys = Set(preparedSessions.map(\.session.adapterSessionID))
         visualSessionExpansion = visualSessionExpansion.filter { activeKeys.contains($0.key) }
     }
 

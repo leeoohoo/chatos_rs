@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct VisualSessionOverlayHost: View {
@@ -77,8 +76,8 @@ struct VisualSessionOverlay: View {
 
                 ZStack {
                     Color(nsColor: .windowBackgroundColor)
-                    if let frameImage {
-                        Image(nsImage: frameImage)
+                    if let frameImage = session.frameImage {
+                        Image(decorative: frameImage.image, scale: 1)
                             .resizable()
                             .interpolation(.high)
                             .antialiased(true)
@@ -148,20 +147,18 @@ struct VisualSessionOverlay: View {
         }
     }
 
-    private var frameImage: NSImage? {
-        session.session.frameData.flatMap(NSImage.init(data:))
-    }
-
     private let overlayWidth: CGFloat = 376
 
     private var imageAreaHeight: CGFloat {
-        guard let frameImage,
-              frameImage.size.width > 0,
-              frameImage.size.height > 0 else {
+        guard let frameImage = session.frameImage,
+              frameImage.image.width > 0,
+              frameImage.image.height > 0 else {
             return 178
         }
 
-        let fittedHeight = overlayWidth * frameImage.size.height / frameImage.size.width
+        let fittedHeight = overlayWidth
+            * CGFloat(frameImage.image.height)
+            / CGFloat(frameImage.image.width)
         return min(max(fittedHeight, 178), 260)
     }
 

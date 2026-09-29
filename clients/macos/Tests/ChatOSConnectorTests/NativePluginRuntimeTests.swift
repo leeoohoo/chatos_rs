@@ -1838,6 +1838,22 @@ struct NativePluginRuntimeTests {
         #expect(sessions.first(where: { $0.adapterSessionID == "adapter-browser" })?.frameData == frame)
         #expect(sessions.first(where: { $0.adapterSessionID == "adapter-computer" })?.frameData == nil)
         #expect(sessions.first(where: { $0.adapterSessionID == "adapter-computer" })?.owner.taskTitle == "整理桌面文件")
+
+        let unchangedSessions = NativePluginVisualSessionReader.read(
+            descriptors: [
+                try descriptor(
+                    adapterSessionID: "adapter-browser-unchanged",
+                    componentKey: "browser-cdp",
+                    taskTitle: "检查网站",
+                    boundAt: Date(timeIntervalSince1970: 30)
+                ),
+            ],
+            now: ISO8601DateFormatter().date(from: "2026-08-28T03:00:01Z")!,
+            loadFrameDataForAdapterSessionIDs: ["adapter-browser-unchanged"],
+            knownFrameSequencesByAdapterSessionID: ["adapter-browser-unchanged": 3]
+        )
+        #expect(unchangedSessions.count == 1)
+        #expect(unchangedSessions.first?.frameData == nil)
     }
 
     @Test("computer use adapters hold an exclusive desktop lease until their session closes")

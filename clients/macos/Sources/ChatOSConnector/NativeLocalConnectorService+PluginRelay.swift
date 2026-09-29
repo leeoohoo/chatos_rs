@@ -29,12 +29,14 @@ extension NativeLocalConnectorService {
     }
 
     public func fetchPluginVisualSessions(
-        loadFrameDataForAdapterSessionIDs: Set<String>? = nil
+        loadFrameDataForAdapterSessionIDs: Set<String>? = nil,
+        knownFrameSequencesByAdapterSessionID: [String: UInt64] = [:]
     ) async -> [PluginVisualSession] {
         let descriptors = await pluginRuntimeStore.visualDescriptors()
         return NativePluginVisualSessionReader.read(
             descriptors: descriptors,
-            loadFrameDataForAdapterSessionIDs: loadFrameDataForAdapterSessionIDs
+            loadFrameDataForAdapterSessionIDs: loadFrameDataForAdapterSessionIDs,
+            knownFrameSequencesByAdapterSessionID: knownFrameSequencesByAdapterSessionID
         )
     }
 

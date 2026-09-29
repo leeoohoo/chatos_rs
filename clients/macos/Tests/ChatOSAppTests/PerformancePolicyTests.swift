@@ -50,12 +50,12 @@ struct PerformancePolicyTests {
             hasSessions: true,
             hasSelectedConversation: false,
             isSelectedSessionExpanded: true
-        ) == .seconds(2))
+        ) == .seconds(15))
         #expect(VisualSessionPollingPolicy.interval(
             hasSessions: true,
             hasSelectedConversation: true,
             isSelectedSessionExpanded: false
-        ) == .seconds(2))
+        ) == .seconds(15))
         #expect(VisualSessionPollingPolicy.interval(
             hasSessions: true,
             hasSelectedConversation: true,
