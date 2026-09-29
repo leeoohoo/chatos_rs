@@ -23,6 +23,7 @@ impl LocalAgentRuntime {
                 let snapshot = self
                     .store
                     .get_model_config_snapshot(
+                        &command.owner_user_id,
                         &command.model_config_ref,
                         &command.model_config_revision,
                     )
@@ -46,6 +47,7 @@ impl LocalAgentRuntime {
                 let snapshot = self
                     .store
                     .get_capability_snapshot(
+                        &command.owner_user_id,
                         &command.profile_key,
                         &command.capability_policy_revision,
                     )
@@ -83,8 +85,9 @@ mod tests {
         }
     }
 
-    fn snapshot(model: &str) -> LocalModelConfigSnapshot {
+    fn snapshot(owner_user_id: &str, model: &str) -> LocalModelConfigSnapshot {
         LocalModelConfigSnapshot {
+            owner_user_id: owner_user_id.to_string(),
             model_config_ref: "default".to_string(),
             model_config_revision: "revision-1".to_string(),
             credential_ref: "keychain:model/default".to_string(),
@@ -114,7 +117,7 @@ mod tests {
         let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
         runtime.initialize().await.expect("initialize");
         let put = HostCommand::PutModelConfigSnapshot(PutModelConfigSnapshotCommand {
-            snapshot: snapshot("model-a"),
+            snapshot: snapshot("user-1", "model-a"),
         });
         let first = runtime
             .try_handle(request("put-model-1", put.clone()))
@@ -130,6 +133,7 @@ mod tests {
             .try_handle(request(
                 "get-model-1",
                 HostCommand::GetModelConfigSnapshot(GetModelConfigSnapshotCommand {
+                    owner_user_id: "user-1".to_string(),
                     model_config_ref: "default".to_string(),
                     model_config_revision: "revision-1".to_string(),
                 }),
@@ -141,11 +145,47 @@ mod tests {
             HostResult::ModelConfigSnapshot { snapshot } if snapshot.model == "model-a"
         ));
 
+        runtime
+            .try_handle(request(
+                "put-model-2",
+                HostCommand::PutModelConfigSnapshot(PutModelConfigSnapshotCommand {
+                    snapshot: snapshot("user-2", "model-b"),
+                }),
+            ))
+            .await
+            .expect("put second owner");
+        let second_owner = runtime
+            .try_handle(request(
+                "get-model-2",
+                HostCommand::GetModelConfigSnapshot(GetModelConfigSnapshotCommand {
+                    owner_user_id: "user-2".to_string(),
+                    model_config_ref: "default".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                }),
+            ))
+            .await
+            .expect("get second owner");
+        assert!(matches!(
+            second_owner,
+            HostResult::ModelConfigSnapshot { snapshot } if snapshot.model == "model-b"
+        ));
+        let cross_owner = runtime
+            .handle(request(
+                "get-model-3",
+                HostCommand::GetModelConfigSnapshot(GetModelConfigSnapshotCommand {
+                    owner_user_id: "user-3".to_string(),
+                    model_config_ref: "default".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                }),
+            ))
+            .await;
+        assert_eq!(cross_owner.error.expect("not found").code, "not_found");
+
         let mismatch = runtime
             .handle(request(
                 "put-model-1",
                 HostCommand::PutModelConfigSnapshot(PutModelConfigSnapshotCommand {
-                    snapshot: snapshot("model-b"),
+                    snapshot: snapshot("user-1", "model-b"),
                 }),
             ))
             .await;
@@ -156,6 +196,7 @@ mod tests {
                 "put-policy-1",
                 HostCommand::PutCapabilityPolicySnapshot(PutCapabilityPolicySnapshotCommand {
                     snapshot: LocalCapabilityPolicySnapshot {
+                        owner_user_id: "user-1".to_string(),
                         profile_key: "main_chat".to_string(),
                         capability_policy_revision: "policy-1".to_string(),
                         instructions: Some("local policy".to_string()),
@@ -170,6 +211,7 @@ mod tests {
             .try_handle(request(
                 "get-policy-1",
                 HostCommand::GetCapabilityPolicySnapshot(GetCapabilityPolicySnapshotCommand {
+                    owner_user_id: "user-1".to_string(),
                     profile_key: "main_chat".to_string(),
                     capability_policy_revision: "policy-1".to_string(),
                 }),

@@ -8,9 +8,10 @@ use super::{
 use async_trait::async_trait;
 use sqlx::Row;
 
-const SNAPSHOT_SELECT: &str = "SELECT profile_key, capability_policy_revision, instructions, \
+const SNAPSHOT_SELECT: &str =
+    "SELECT owner_user_id, profile_key, capability_policy_revision, instructions, \
      prefixed_input_items_json, tools_json FROM local_capability_policy_snapshots \
-     WHERE profile_key = ? AND capability_policy_revision = ?";
+     WHERE owner_user_id = ? AND profile_key = ? AND capability_policy_revision = ?";
 
 #[async_trait]
 impl LocalCapabilitySnapshotStore for SqliteClientStorage {
@@ -36,6 +37,7 @@ impl LocalCapabilitySnapshotStore for SqliteClientStorage {
             }
             if let Some(current) = fetch_snapshot(
                 &mut connection,
+                &snapshot.owner_user_id,
                 &snapshot.profile_key,
                 &snapshot.capability_policy_revision,
             )
@@ -52,10 +54,11 @@ impl LocalCapabilitySnapshotStore for SqliteClientStorage {
             }
             sqlx::query(
                 "INSERT INTO local_capability_policy_snapshots(\
-                 profile_key, capability_policy_revision, instructions, \
+                 owner_user_id, profile_key, capability_policy_revision, instructions, \
                  prefixed_input_items_json, tools_json, created_at_unix_ms) \
-                 VALUES(?, ?, ?, ?, ?, ?)",
+                 VALUES(?, ?, ?, ?, ?, ?, ?)",
             )
+            .bind(&snapshot.owner_user_id)
             .bind(&snapshot.profile_key)
             .bind(&snapshot.capability_policy_revision)
             .bind(&snapshot.instructions)
@@ -74,20 +77,29 @@ impl LocalCapabilitySnapshotStore for SqliteClientStorage {
 
     async fn get_capability_snapshot(
         &self,
+        owner_user_id: &str,
         profile_key: &str,
         capability_policy_revision: &str,
     ) -> Result<Option<LocalCapabilityPolicySnapshot>, ClientStorageError> {
         let mut connection = self.pool.acquire().await.db()?;
-        fetch_snapshot(&mut connection, profile_key, capability_policy_revision).await
+        fetch_snapshot(
+            &mut connection,
+            owner_user_id,
+            profile_key,
+            capability_policy_revision,
+        )
+        .await
     }
 }
 
 async fn fetch_snapshot(
     connection: &mut sqlx::SqliteConnection,
+    owner_user_id: &str,
     profile_key: &str,
     capability_policy_revision: &str,
 ) -> Result<Option<LocalCapabilityPolicySnapshot>, ClientStorageError> {
     let row = sqlx::query(SNAPSHOT_SELECT)
+        .bind(owner_user_id)
         .bind(profile_key)
         .bind(capability_policy_revision)
         .fetch_optional(&mut *connection)
@@ -97,6 +109,7 @@ async fn fetch_snapshot(
         let prefixed_input_items: String = row.try_get("prefixed_input_items_json").db()?;
         let tools: String = row.try_get("tools_json").db()?;
         let snapshot = LocalCapabilityPolicySnapshot {
+            owner_user_id: row.try_get("owner_user_id").db()?,
             profile_key: row.try_get("profile_key").db()?,
             capability_policy_revision: row.try_get("capability_policy_revision").db()?,
             instructions: row.try_get("instructions").db()?,
@@ -123,8 +136,9 @@ mod tests {
         }
     }
 
-    fn snapshot(instructions: &str) -> LocalCapabilityPolicySnapshot {
+    fn snapshot(owner_user_id: &str, instructions: &str) -> LocalCapabilityPolicySnapshot {
         LocalCapabilityPolicySnapshot {
+            owner_user_id: owner_user_id.to_string(),
             profile_key: "main_chat".to_string(),
             capability_policy_revision: "policy-1".to_string(),
             instructions: Some(instructions.to_string()),
@@ -134,29 +148,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn identical_capability_revisions_are_isolated_by_owner() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        storage
+            .put_capability_snapshot(
+                &command("put-owner-1", "policy-a"),
+                &snapshot("user-1", "policy a"),
+                1_000,
+            )
+            .await
+            .expect("put first owner");
+        storage
+            .put_capability_snapshot(
+                &command("put-owner-2", "policy-b"),
+                &snapshot("user-2", "policy b"),
+                2_000,
+            )
+            .await
+            .expect("put second owner");
+
+        let first = storage
+            .get_capability_snapshot("user-1", "main_chat", "policy-1")
+            .await
+            .expect("get first owner")
+            .expect("first snapshot");
+        let second = storage
+            .get_capability_snapshot("user-2", "main_chat", "policy-1")
+            .await
+            .expect("get second owner")
+            .expect("second snapshot");
+        assert_eq!(first.instructions.as_deref(), Some("policy a"));
+        assert_eq!(second.instructions.as_deref(), Some("policy b"));
+        assert!(storage
+            .get_capability_snapshot("user-3", "main_chat", "policy-1")
+            .await
+            .expect("cross-owner read")
+            .is_none());
+    }
+
+    #[tokio::test]
     async fn immutable_snapshot_round_trips_and_rejects_revision_reuse() {
         let storage = SqliteClientStorage::connect_memory()
             .await
             .expect("storage");
         storage
-            .put_capability_snapshot(&command("put-1", "local"), &snapshot("local policy"), 1_000)
+            .put_capability_snapshot(
+                &command("put-1", "local"),
+                &snapshot("user-1", "local policy"),
+                1_000,
+            )
             .await
             .expect("put snapshot");
         storage
-            .put_capability_snapshot(&command("put-2", "local"), &snapshot("local policy"), 2_000)
+            .put_capability_snapshot(
+                &command("put-2", "local"),
+                &snapshot("user-1", "local policy"),
+                2_000,
+            )
             .await
             .expect("idempotent put");
         assert_eq!(
             storage
-                .get_capability_snapshot("main_chat", "policy-1")
+                .get_capability_snapshot("user-1", "main_chat", "policy-1")
                 .await
                 .expect("get snapshot"),
-            Some(snapshot("local policy"))
+            Some(snapshot("user-1", "local policy"))
         );
         let error = storage
             .put_capability_snapshot(
                 &command("put-3", "different"),
-                &snapshot("different policy"),
+                &snapshot("user-1", "different policy"),
                 3_000,
             )
             .await
@@ -176,7 +239,7 @@ mod tests {
         storage
             .put_capability_snapshot(
                 &command("put-restart", "restart"),
-                &snapshot("restart policy"),
+                &snapshot("user-1", "restart policy"),
                 1_000,
             )
             .await
@@ -189,10 +252,10 @@ mod tests {
             .expect("reopen storage");
         assert_eq!(
             reopened
-                .get_capability_snapshot("main_chat", "policy-1")
+                .get_capability_snapshot("user-1", "main_chat", "policy-1")
                 .await
                 .expect("get snapshot"),
-            Some(snapshot("restart policy"))
+            Some(snapshot("user-1", "restart policy"))
         );
         reopened.pool.close().await;
         drop(reopened);

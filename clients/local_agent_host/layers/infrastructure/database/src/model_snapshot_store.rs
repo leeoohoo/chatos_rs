@@ -9,11 +9,11 @@ use async_trait::async_trait;
 use sqlx::Row;
 
 const SNAPSHOT_SELECT: &str =
-    "SELECT model_config_ref, model_config_revision, credential_ref, base_url, model, provider, \
+    "SELECT owner_user_id, model_config_ref, model_config_revision, credential_ref, base_url, model, provider, \
      supports_responses, supports_images, instructions, temperature, max_output_tokens, \
      thinking_level, include_prompt_cache_retention, request_body_limit_bytes, \
      max_transient_retries, output_format_json FROM local_model_config_snapshots \
-     WHERE model_config_ref = ? AND model_config_revision = ?";
+     WHERE owner_user_id = ? AND model_config_ref = ? AND model_config_revision = ?";
 
 #[async_trait]
 impl LocalModelConfigSnapshotStore for SqliteClientStorage {
@@ -39,6 +39,7 @@ impl LocalModelConfigSnapshotStore for SqliteClientStorage {
             }
             if let Some(current) = fetch_snapshot(
                 &mut connection,
+                &snapshot.owner_user_id,
                 &snapshot.model_config_ref,
                 &snapshot.model_config_revision,
             )
@@ -63,11 +64,18 @@ impl LocalModelConfigSnapshotStore for SqliteClientStorage {
 
     async fn get_model_config_snapshot(
         &self,
+        owner_user_id: &str,
         model_config_ref: &str,
         model_config_revision: &str,
     ) -> Result<Option<LocalModelConfigSnapshot>, ClientStorageError> {
         let mut connection = self.pool.acquire().await.db()?;
-        fetch_snapshot(&mut connection, model_config_ref, model_config_revision).await
+        fetch_snapshot(
+            &mut connection,
+            owner_user_id,
+            model_config_ref,
+            model_config_revision,
+        )
+        .await
     }
 }
 
@@ -78,12 +86,13 @@ async fn insert_snapshot(
 ) -> Result<(), ClientStorageError> {
     sqlx::query(
         "INSERT INTO local_model_config_snapshots(\
-         model_config_ref, model_config_revision, credential_ref, base_url, model, provider, \
+         owner_user_id, model_config_ref, model_config_revision, credential_ref, base_url, model, provider, \
          supports_responses, supports_images, instructions, temperature, max_output_tokens, \
          thinking_level, include_prompt_cache_retention, request_body_limit_bytes, \
          max_transient_retries, output_format_json, created_at_unix_ms) \
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
+    .bind(&snapshot.owner_user_id)
     .bind(&snapshot.model_config_ref)
     .bind(&snapshot.model_config_revision)
     .bind(&snapshot.credential_ref)
@@ -115,10 +124,12 @@ async fn insert_snapshot(
 
 async fn fetch_snapshot(
     connection: &mut sqlx::SqliteConnection,
+    owner_user_id: &str,
     model_config_ref: &str,
     model_config_revision: &str,
 ) -> Result<Option<LocalModelConfigSnapshot>, ClientStorageError> {
     let row = sqlx::query(SNAPSHOT_SELECT)
+        .bind(owner_user_id)
         .bind(model_config_ref)
         .bind(model_config_revision)
         .fetch_optional(&mut *connection)
@@ -137,6 +148,7 @@ fn decode_snapshot(
     let retries: Option<i64> = row.try_get("max_transient_retries").db()?;
     let output_format: Option<String> = row.try_get("output_format_json").db()?;
     let snapshot = LocalModelConfigSnapshot {
+        owner_user_id: row.try_get("owner_user_id").db()?,
         model_config_ref: row.try_get("model_config_ref").db()?,
         model_config_revision: row.try_get("model_config_revision").db()?,
         credential_ref: row.try_get("credential_ref").db()?,
@@ -202,8 +214,9 @@ mod tests {
         }
     }
 
-    fn snapshot(model: &str) -> LocalModelConfigSnapshot {
+    fn snapshot(owner_user_id: &str, model: &str) -> LocalModelConfigSnapshot {
         LocalModelConfigSnapshot {
+            owner_user_id: owner_user_id.to_string(),
             model_config_ref: "default".to_string(),
             model_config_revision: "revision-1".to_string(),
             credential_ref: "keychain:model/default".to_string(),
@@ -224,6 +237,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn identical_model_revisions_are_isolated_by_owner() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        storage
+            .put_model_config_snapshot(
+                &command("put-owner-1", "model-a"),
+                &snapshot("user-1", "model-a"),
+                1_000,
+            )
+            .await
+            .expect("put first owner");
+        storage
+            .put_model_config_snapshot(
+                &command("put-owner-2", "model-b"),
+                &snapshot("user-2", "model-b"),
+                2_000,
+            )
+            .await
+            .expect("put second owner");
+
+        let first = storage
+            .get_model_config_snapshot("user-1", "default", "revision-1")
+            .await
+            .expect("get first owner")
+            .expect("first snapshot");
+        let second = storage
+            .get_model_config_snapshot("user-2", "default", "revision-1")
+            .await
+            .expect("get second owner")
+            .expect("second snapshot");
+        assert_eq!(first.model, "model-a");
+        assert_eq!(second.model, "model-b");
+        assert!(storage
+            .get_model_config_snapshot("user-3", "default", "revision-1")
+            .await
+            .expect("cross-owner read")
+            .is_none());
+    }
+
+    #[tokio::test]
     async fn immutable_model_snapshot_survives_reopen_without_an_api_key_column() {
         let database_path = std::env::temp_dir().join(format!(
             "chatos-local-model-config-{}.sqlite",
@@ -233,11 +287,19 @@ mod tests {
             .await
             .expect("storage");
         storage
-            .put_model_config_snapshot(&command("put-1", "model-a"), &snapshot("model-a"), 1_000)
+            .put_model_config_snapshot(
+                &command("put-1", "model-a"),
+                &snapshot("user-1", "model-a"),
+                1_000,
+            )
             .await
             .expect("put snapshot");
         storage
-            .put_model_config_snapshot(&command("put-2", "model-a"), &snapshot("model-a"), 2_000)
+            .put_model_config_snapshot(
+                &command("put-2", "model-a"),
+                &snapshot("user-1", "model-a"),
+                2_000,
+            )
             .await
             .expect("idempotent put");
         let columns: Vec<String> = sqlx::query("PRAGMA table_info(local_model_config_snapshots)")
@@ -256,13 +318,17 @@ mod tests {
             .expect("reopen storage");
         assert_eq!(
             reopened
-                .get_model_config_snapshot("default", "revision-1")
+                .get_model_config_snapshot("user-1", "default", "revision-1")
                 .await
                 .expect("get snapshot"),
-            Some(snapshot("model-a"))
+            Some(snapshot("user-1", "model-a"))
         );
         let error = reopened
-            .put_model_config_snapshot(&command("put-3", "model-b"), &snapshot("model-b"), 3_000)
+            .put_model_config_snapshot(
+                &command("put-3", "model-b"),
+                &snapshot("user-1", "model-b"),
+                3_000,
+            )
             .await
             .expect_err("revision reuse must fail");
         assert!(matches!(error, ClientStorageError::Conflict(_)));

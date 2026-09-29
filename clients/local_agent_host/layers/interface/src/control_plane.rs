@@ -13,6 +13,7 @@ pub const MAX_CONTROL_PLANE_SNAPSHOT_BYTES: usize = 1024 * 1024;
 /// this record.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LocalCapabilityPolicySnapshot {
+    pub owner_user_id: String,
     pub profile_key: String,
     pub capability_policy_revision: String,
     pub instructions: Option<String>,
@@ -22,6 +23,7 @@ pub struct LocalCapabilityPolicySnapshot {
 
 impl LocalCapabilityPolicySnapshot {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("profile_key", &self.profile_key)?;
         validate_identifier(
             "capability_policy_revision",
@@ -55,6 +57,7 @@ pub struct LocalJsonSchemaOutputFormat {
 /// persisted.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LocalModelConfigSnapshot {
+    pub owner_user_id: String,
     pub model_config_ref: String,
     pub model_config_revision: String,
     pub credential_ref: String,
@@ -75,6 +78,7 @@ pub struct LocalModelConfigSnapshot {
 
 impl LocalModelConfigSnapshot {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("model_config_ref", &self.model_config_ref)?;
         validate_identifier("model_config_revision", &self.model_config_revision)?;
         validate_text("credential_ref", &self.credential_ref, 512)?;
@@ -126,12 +130,14 @@ impl PutModelConfigSnapshotCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetModelConfigSnapshotCommand {
+    pub owner_user_id: String,
     pub model_config_ref: String,
     pub model_config_revision: String,
 }
 
 impl GetModelConfigSnapshotCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("model_config_ref", &self.model_config_ref)?;
         validate_identifier("model_config_revision", &self.model_config_revision)
     }
@@ -150,12 +156,14 @@ impl PutCapabilityPolicySnapshotCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetCapabilityPolicySnapshotCommand {
+    pub owner_user_id: String,
     pub profile_key: String,
     pub capability_policy_revision: String,
 }
 
 impl GetCapabilityPolicySnapshotCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("profile_key", &self.profile_key)?;
         validate_identifier(
             "capability_policy_revision",
@@ -203,6 +211,7 @@ mod tests {
     #[test]
     fn model_snapshot_contains_reference_but_has_no_api_key_field() {
         let snapshot = LocalModelConfigSnapshot {
+            owner_user_id: "user-1".to_string(),
             model_config_ref: "default".to_string(),
             model_config_revision: "revision-1".to_string(),
             credential_ref: "keychain:model/default".to_string(),
@@ -222,6 +231,7 @@ mod tests {
         };
         snapshot.validate().expect("valid snapshot");
         let encoded = serde_json::to_value(snapshot).expect("serialize");
+        assert_eq!(encoded["owner_user_id"], "user-1");
         assert_eq!(encoded["credential_ref"], "keychain:model/default");
         assert!(encoded.get("api_key").is_none());
     }

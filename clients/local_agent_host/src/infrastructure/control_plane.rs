@@ -17,13 +17,17 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-type RevisionKey = (String, String);
+type RevisionKey = (String, String, String);
 
 #[async_trait]
 pub trait LocalModelCredentialResolver: Send + Sync {
     /// Resolves one native credential-store reference for a single model
     /// request. Implementations must not persist or log the returned secret.
-    async fn resolve_model_api_key(&self, credential_ref: &str) -> Result<String, String>;
+    async fn resolve_model_api_key(
+        &self,
+        owner_user_id: &str,
+        credential_ref: &str,
+    ) -> Result<String, String>;
 }
 
 /// Control-plane registry populated by the native client's authenticated
@@ -72,6 +76,7 @@ impl LocalControlPlaneSnapshot {
         })?;
         let command = snapshot_command(
             "model",
+            &snapshot.owner_user_id,
             &snapshot.model_config_ref,
             &snapshot.model_config_revision,
             snapshot,
@@ -85,11 +90,13 @@ impl LocalControlPlaneSnapshot {
 
     pub fn publish_model_runtime(
         &self,
+        owner_user_id: impl Into<String>,
         model_config_ref: impl Into<String>,
         model_config_revision: impl Into<String>,
         runtime: TransientLocalModelRuntime,
     ) -> Result<(), String> {
         let key = revision_key(
+            owner_user_id.into(),
             "model_config_ref",
             model_config_ref.into(),
             "model_config_revision",
@@ -104,11 +111,13 @@ impl LocalControlPlaneSnapshot {
 
     pub async fn publish_capabilities(
         &self,
+        owner_user_id: impl Into<String>,
         profile_key: impl Into<String>,
         capability_policy_revision: impl Into<String>,
         capabilities: ResolvedLocalCapabilities,
     ) -> Result<(), String> {
         let key = revision_key(
+            owner_user_id.into(),
             "profile_key",
             profile_key.into(),
             "capability_policy_revision",
@@ -119,6 +128,7 @@ impl LocalControlPlaneSnapshot {
         if let Some(store) = &self.capability_store {
             let command = snapshot_command(
                 "capability",
+                &snapshot.owner_user_id,
                 &snapshot.profile_key,
                 &snapshot.capability_policy_revision,
                 &snapshot,
@@ -137,10 +147,12 @@ impl LocalControlPlaneSnapshot {
 
     pub fn remove_model_runtime(
         &self,
+        owner_user_id: &str,
         model_config_ref: &str,
         model_config_revision: &str,
     ) -> Result<bool, String> {
         let key = revision_key(
+            owner_user_id.to_string(),
             "model_config_ref",
             model_config_ref.to_string(),
             "model_config_revision",
@@ -158,10 +170,12 @@ impl LocalControlPlaneSnapshot {
     /// remains authoritative so active Runs can still resolve the revision.
     pub fn evict_capabilities(
         &self,
+        owner_user_id: &str,
         profile_key: &str,
         capability_policy_revision: &str,
     ) -> Result<bool, String> {
         let key = revision_key(
+            owner_user_id.to_string(),
             "profile_key",
             profile_key.to_string(),
             "capability_policy_revision",
@@ -180,10 +194,12 @@ impl LocalControlPlaneSnapshot {
 impl LocalModelRuntimeResolver for LocalControlPlaneSnapshot {
     async fn resolve_model_runtime(
         &self,
+        owner_user_id: &str,
         model_config_ref: &str,
         model_config_revision: &str,
     ) -> Result<TransientLocalModelRuntime, String> {
         let key = revision_key(
+            owner_user_id.to_string(),
             "model_config_ref",
             model_config_ref.to_string(),
             "model_config_revision",
@@ -206,20 +222,20 @@ impl LocalModelRuntimeResolver for LocalControlPlaneSnapshot {
             &self.model_credentials,
         ) else {
             return Err(format!(
-                "model runtime revision is not loaded: {model_config_ref}@{model_config_revision}"
+                "model runtime revision is not loaded for {owner_user_id}: {model_config_ref}@{model_config_revision}"
             ));
         };
         let snapshot = store
-            .get_model_config_snapshot(model_config_ref, model_config_revision)
+            .get_model_config_snapshot(owner_user_id, model_config_ref, model_config_revision)
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| {
                 format!(
-                    "model config revision is not loaded: {model_config_ref}@{model_config_revision}"
+                    "model config revision is not loaded for {owner_user_id}: {model_config_ref}@{model_config_revision}"
                 )
             })?;
         let api_key = credentials
-            .resolve_model_api_key(&snapshot.credential_ref)
+            .resolve_model_api_key(owner_user_id, &snapshot.credential_ref)
             .await?;
         Ok(TransientLocalModelRuntime {
             runner: Arc::clone(runner),
@@ -232,10 +248,12 @@ impl LocalModelRuntimeResolver for LocalControlPlaneSnapshot {
 impl LocalCapabilityResolver for LocalControlPlaneSnapshot {
     async fn resolve_capabilities(
         &self,
+        owner_user_id: &str,
         profile_key: &str,
         capability_policy_revision: &str,
     ) -> Result<ResolvedLocalCapabilities, String> {
         let key = revision_key(
+            owner_user_id.to_string(),
             "profile_key",
             profile_key.to_string(),
             "capability_policy_revision",
@@ -252,16 +270,16 @@ impl LocalCapabilityResolver for LocalControlPlaneSnapshot {
         }
         let Some(store) = &self.capability_store else {
             return Err(format!(
-                "capability revision is not loaded: {profile_key}@{capability_policy_revision}"
+                "capability revision is not loaded for {owner_user_id}: {profile_key}@{capability_policy_revision}"
             ));
         };
         let stored = store
-            .get_capability_snapshot(profile_key, capability_policy_revision)
+            .get_capability_snapshot(owner_user_id, profile_key, capability_policy_revision)
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| {
                 format!(
-                    "capability revision is not loaded: {profile_key}@{capability_policy_revision}"
+                    "capability revision is not loaded for {owner_user_id}: {profile_key}@{capability_policy_revision}"
                 )
             })?;
         let capabilities = decode_capabilities(stored);
@@ -278,8 +296,9 @@ fn encode_capabilities(
     capabilities: &ResolvedLocalCapabilities,
 ) -> LocalCapabilityPolicySnapshot {
     LocalCapabilityPolicySnapshot {
-        profile_key: key.0.clone(),
-        capability_policy_revision: key.1.clone(),
+        owner_user_id: key.0.clone(),
+        profile_key: key.1.clone(),
+        capability_policy_revision: key.2.clone(),
         instructions: capabilities.instructions.clone(),
         prefixed_input_items: capabilities.prefixed_input_items.clone(),
         tools: capabilities.tools.clone(),
@@ -343,26 +362,32 @@ fn now_unix_ms() -> Result<i64, String> {
 
 fn snapshot_command<T: serde::Serialize>(
     kind: &str,
+    owner_user_id: &str,
     reference: &str,
     revision: &str,
     snapshot: &T,
 ) -> Result<IdempotentCommand, String> {
     Ok(IdempotentCommand {
-        command_id: format!("internal-control-plane-{kind}:{reference}:{revision}"),
+        command_id: format!("internal-control-plane-{kind}:{owner_user_id}:{reference}:{revision}"),
         request_fingerprint: serde_json::to_string(snapshot).map_err(|error| error.to_string())?,
     })
 }
 
 fn revision_key(
+    owner_user_id: String,
     first_name: &str,
     first: String,
     second_name: &str,
     second: String,
 ) -> Result<RevisionKey, String> {
-    for (name, value) in [(first_name, first.as_str()), (second_name, second.as_str())] {
+    for (name, value) in [
+        ("owner_user_id", owner_user_id.as_str()),
+        (first_name, first.as_str()),
+        (second_name, second.as_str()),
+    ] {
         if value.trim().is_empty() || value.len() > 256 {
             return Err(format!("{name} must be 1..=256 characters"));
         }
     }
-    Ok((first, second))
+    Ok((owner_user_id, first, second))
 }

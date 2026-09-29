@@ -380,3 +380,45 @@ pub(super) const SCHEMA_V18: &[&str] = &[
        tenant_id, status, next_attempt_at_unix_ms, created_at_unix_ms, source_id, record_id\
      )",
 ];
+
+/// Control-plane snapshots are authenticated-account state. Versions 11 and
+/// 12 predated that boundary, so v19 intentionally discards only those two
+/// caches instead of assigning ownerless rows to an account.
+pub(super) const SCHEMA_V19: &[&str] = &[
+    "DROP TABLE local_capability_policy_snapshots",
+    "CREATE TABLE local_capability_policy_snapshots (\
+       owner_user_id TEXT NOT NULL,\
+       profile_key TEXT NOT NULL,\
+       capability_policy_revision TEXT NOT NULL,\
+       instructions TEXT,\
+       prefixed_input_items_json TEXT NOT NULL,\
+       tools_json TEXT NOT NULL,\
+       created_at_unix_ms INTEGER NOT NULL,\
+       PRIMARY KEY(owner_user_id, profile_key, capability_policy_revision)\
+     )",
+    "DROP TABLE local_model_config_snapshots",
+    "CREATE TABLE local_model_config_snapshots (\
+       owner_user_id TEXT NOT NULL,\
+       model_config_ref TEXT NOT NULL,\
+       model_config_revision TEXT NOT NULL,\
+       credential_ref TEXT NOT NULL,\
+       base_url TEXT NOT NULL,\
+       model TEXT NOT NULL,\
+       provider TEXT NOT NULL,\
+       supports_responses INTEGER NOT NULL CHECK(supports_responses IN (0, 1)),\
+       supports_images INTEGER CHECK(supports_images IN (0, 1)),\
+       instructions TEXT,\
+       temperature REAL,\
+       max_output_tokens INTEGER,\
+       thinking_level TEXT,\
+       include_prompt_cache_retention INTEGER NOT NULL \
+         CHECK(include_prompt_cache_retention IN (0, 1)),\
+       request_body_limit_bytes INTEGER,\
+       max_transient_retries INTEGER,\
+       output_format_json TEXT,\
+       created_at_unix_ms INTEGER NOT NULL,\
+       PRIMARY KEY(owner_user_id, model_config_ref, model_config_revision)\
+     )",
+    "DELETE FROM local_agent_command_receipts \
+       WHERE command_id LIKE 'internal-control-plane-%'",
+];

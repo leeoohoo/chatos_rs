@@ -62,6 +62,8 @@ IPC v22 closes the remaining account boundary on generic Run inspection. `get_ru
 
 IPC v23 binds execution workers to the signed-in account. Model claims, Tool claims and ready-Task materialization all carry the active owner into their SQLite selection predicates, so a Host launched for one account cannot execute queued work left by another local account. The optional Memory outbox worker uses the same owner as its tenant filter for record claims, expired-lease recovery and retry timers; it cannot upload or mutate another account's pending records with the active account's credential. SQLite v18 adds the matching tenant-first runnable index. The standalone process therefore requires `--owner-user-id`; native clients restart it with the newly authenticated owner when accounts change, while account data remains in the shared client-owned database.
 
+IPC v24 and SQLite v19 make the authenticated owner the first key of both control-plane snapshot types. Model configs, capability policies, process-local caches and credential resolution are selected by `owner_user_id` plus their existing reference/revision, and the Planner always supplies the owner frozen into the claimed Run. Two accounts may therefore publish identical references and revisions without collision, while a cross-account lookup is not found. Ownerless v11/v12 control-plane cache rows are intentionally discarded during v19 migration and are republished after authentication; no secret value is added to IPC or SQLite.
+
 Native clients may choose `LocalAgentHostAssembly::with_external_tool_worker`. In that mode Swift or C# claims and commits platform tools through IPC, while Rust still owns model scheduling plus the two Task creation tools and wakes immediately after each native tool receipt. This keeps platform permissions and UI-bound tools in the native process without duplicating the Agent loop.
 
 Protocol v15 retains the optional `include_tool_names` and `exclude_tool_names` Tool claim filters. The Assembly's Rust worker includes only the two reserved Task tools, and Coordinator IPC automatically excludes them from native claims. Explicit overlapping filters are rejected.
@@ -140,7 +142,7 @@ Example health request:
 
 ```json
 {
-  "protocol_version": 23,
+  "protocol_version": 24,
   "command_id": "health-019",
   "command": {
     "type": "health"

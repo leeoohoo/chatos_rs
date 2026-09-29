@@ -14,11 +14,14 @@ use std::sync::{
     Arc,
 };
 
+const OWNER: &str = "user-1";
+
 #[tokio::test]
 async fn capabilities_are_resolved_by_exact_profile_and_revision() {
     let snapshot = LocalControlPlaneSnapshot::new();
     snapshot
         .publish_capabilities(
+            OWNER,
             MAIN_CHAT_PROFILE_KEY,
             "policy-1",
             ResolvedLocalCapabilities {
@@ -29,21 +32,55 @@ async fn capabilities_are_resolved_by_exact_profile_and_revision() {
         .await
         .expect("publish");
     let resolved = snapshot
-        .resolve_capabilities(MAIN_CHAT_PROFILE_KEY, "policy-1")
+        .resolve_capabilities(OWNER, MAIN_CHAT_PROFILE_KEY, "policy-1")
         .await
         .expect("resolve");
     assert_eq!(resolved.instructions.as_deref(), Some("main chat"));
     assert!(snapshot
-        .resolve_capabilities(TASK_RUNNER_PROFILE_KEY, "policy-1")
+        .resolve_capabilities(OWNER, TASK_RUNNER_PROFILE_KEY, "policy-1")
         .await
         .is_err());
     assert!(snapshot
-        .resolve_capabilities(MAIN_CHAT_PROFILE_KEY, "policy-2")
+        .resolve_capabilities(OWNER, MAIN_CHAT_PROFILE_KEY, "policy-2")
         .await
         .is_err());
     assert!(snapshot
-        .evict_capabilities(MAIN_CHAT_PROFILE_KEY, "policy-1")
+        .evict_capabilities(OWNER, MAIN_CHAT_PROFILE_KEY, "policy-1")
         .expect("remove"));
+}
+
+#[tokio::test]
+async fn capability_cache_keeps_identical_revisions_separate_by_owner() {
+    let snapshot = LocalControlPlaneSnapshot::new();
+    for (owner, instructions) in [("user-1", "policy a"), ("user-2", "policy b")] {
+        snapshot
+            .publish_capabilities(
+                owner,
+                MAIN_CHAT_PROFILE_KEY,
+                "policy-shared",
+                ResolvedLocalCapabilities {
+                    instructions: Some(instructions.to_string()),
+                    ..ResolvedLocalCapabilities::default()
+                },
+            )
+            .await
+            .expect("publish owner policy");
+    }
+
+    let first = snapshot
+        .resolve_capabilities("user-1", MAIN_CHAT_PROFILE_KEY, "policy-shared")
+        .await
+        .expect("resolve first owner");
+    let second = snapshot
+        .resolve_capabilities("user-2", MAIN_CHAT_PROFILE_KEY, "policy-shared")
+        .await
+        .expect("resolve second owner");
+    assert_eq!(first.instructions.as_deref(), Some("policy a"));
+    assert_eq!(second.instructions.as_deref(), Some("policy b"));
+    assert!(snapshot
+        .resolve_capabilities("user-3", MAIN_CHAT_PROFILE_KEY, "policy-shared")
+        .await
+        .is_err());
 }
 
 #[tokio::test]
@@ -56,6 +93,7 @@ async fn capabilities_reload_from_sqlite_after_process_cache_is_recreated() {
     let first = LocalControlPlaneSnapshot::new().with_capability_store(storage.clone());
     first
         .publish_capabilities(
+            OWNER,
             MAIN_CHAT_PROFILE_KEY,
             "policy-durable",
             ResolvedLocalCapabilities {
@@ -69,7 +107,7 @@ async fn capabilities_reload_from_sqlite_after_process_cache_is_recreated() {
 
     let restarted = LocalControlPlaneSnapshot::new().with_capability_store(storage);
     let resolved = restarted
-        .resolve_capabilities(MAIN_CHAT_PROFILE_KEY, "policy-durable")
+        .resolve_capabilities(OWNER, MAIN_CHAT_PROFILE_KEY, "policy-durable")
         .await
         .expect("resolve persisted revision");
     assert_eq!(resolved.instructions.as_deref(), Some("durable policy"));
@@ -84,6 +122,7 @@ async fn oversized_capabilities_are_rejected_before_entering_memory() {
     let snapshot = LocalControlPlaneSnapshot::new();
     let error = snapshot
         .publish_capabilities(
+            OWNER,
             MAIN_CHAT_PROFILE_KEY,
             "policy-too-large",
             ResolvedLocalCapabilities {
@@ -104,8 +143,12 @@ struct Credentials {
 
 #[async_trait]
 impl LocalModelCredentialResolver for Credentials {
-    async fn resolve_model_api_key(&self, credential_ref: &str) -> Result<String, String> {
-        if credential_ref != "keychain:model/default" {
+    async fn resolve_model_api_key(
+        &self,
+        owner_user_id: &str,
+        credential_ref: &str,
+    ) -> Result<String, String> {
+        if owner_user_id != OWNER || credential_ref != "keychain:model/default" {
             return Err("unexpected credential reference".to_string());
         }
         self.resolutions.fetch_add(1, Ordering::SeqCst);
@@ -141,7 +184,7 @@ async fn model_config_rehydrates_from_sqlite_and_resolves_secret_only_on_demand(
         credentials.clone(),
     );
     let runtime = restarted
-        .resolve_model_runtime("default", "revision-1")
+        .resolve_model_runtime(OWNER, "default", "revision-1")
         .await
         .expect("rehydrate runtime");
     assert!(Arc::ptr_eq(&runtime.runner, &runner));
@@ -160,6 +203,7 @@ async fn model_config_rehydrates_from_sqlite_and_resolves_secret_only_on_demand(
 
 fn model_snapshot() -> LocalModelConfigSnapshot {
     LocalModelConfigSnapshot {
+        owner_user_id: OWNER.to_string(),
         model_config_ref: "default".to_string(),
         model_config_revision: "revision-1".to_string(),
         credential_ref: "keychain:model/default".to_string(),

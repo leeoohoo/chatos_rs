@@ -12,7 +12,11 @@ pub struct ChildEnvironmentModelCredentialResolver;
 
 #[async_trait]
 impl LocalModelCredentialResolver for ChildEnvironmentModelCredentialResolver {
-    async fn resolve_model_api_key(&self, credential_ref: &str) -> Result<String, String> {
+    async fn resolve_model_api_key(
+        &self,
+        _owner_user_id: &str,
+        credential_ref: &str,
+    ) -> Result<String, String> {
         let variable = environment_variable_name(credential_ref)?;
         std::env::var(variable).map_err(|error| {
             format!("model credential environment variable {variable} is unavailable: {error}")

@@ -26,6 +26,8 @@ mod conversation_store;
 mod memory_cache_store;
 mod memory_outbox_store;
 mod migration;
+#[cfg(test)]
+mod migration_tests;
 mod model_snapshot_store;
 mod plugin_query_store;
 mod plugin_store;

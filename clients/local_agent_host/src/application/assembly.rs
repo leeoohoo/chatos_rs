@@ -215,6 +215,7 @@ mod tests {
     impl LocalModelRuntimeResolver for ModelResolver {
         async fn resolve_model_runtime(
             &self,
+            _owner_user_id: &str,
             _model_config_ref: &str,
             _model_config_revision: &str,
         ) -> Result<crate::TransientLocalModelRuntime, String> {
@@ -228,6 +229,7 @@ mod tests {
     impl LocalCapabilityResolver for Capabilities {
         async fn resolve_capabilities(
             &self,
+            _owner_user_id: &str,
             _profile_key: &str,
             _capability_policy_revision: &str,
         ) -> Result<crate::ResolvedLocalCapabilities, String> {

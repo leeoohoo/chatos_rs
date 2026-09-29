@@ -25,6 +25,7 @@ pub struct TransientLocalModelRuntime {
 pub trait LocalModelRuntimeResolver: Send + Sync {
     async fn resolve_model_runtime(
         &self,
+        owner_user_id: &str,
         model_config_ref: &str,
         model_config_revision: &str,
     ) -> Result<TransientLocalModelRuntime, String>;
@@ -37,11 +38,12 @@ where
 {
     async fn resolve_model_runtime(
         &self,
+        owner_user_id: &str,
         model_config_ref: &str,
         model_config_revision: &str,
     ) -> Result<TransientLocalModelRuntime, String> {
         (**self)
-            .resolve_model_runtime(model_config_ref, model_config_revision)
+            .resolve_model_runtime(owner_user_id, model_config_ref, model_config_revision)
             .await
     }
 }
@@ -57,6 +59,7 @@ pub struct ResolvedLocalCapabilities {
 pub trait LocalCapabilityResolver: Send + Sync {
     async fn resolve_capabilities(
         &self,
+        owner_user_id: &str,
         profile_key: &str,
         capability_policy_revision: &str,
     ) -> Result<ResolvedLocalCapabilities, String>;
@@ -69,11 +72,12 @@ where
 {
     async fn resolve_capabilities(
         &self,
+        owner_user_id: &str,
         profile_key: &str,
         capability_policy_revision: &str,
     ) -> Result<ResolvedLocalCapabilities, String> {
         (**self)
-            .resolve_capabilities(profile_key, capability_policy_revision)
+            .resolve_capabilities(owner_user_id, profile_key, capability_policy_revision)
             .await
     }
 }
@@ -157,13 +161,18 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
         let mut transient = self
             .model_resolver
             .resolve_model_runtime(
+                &claim.run.owner_user_id,
                 &claim.run.model_config_ref,
                 &claim.run.model_config_revision,
             )
             .await?;
         let capabilities = self
             .capability_resolver
-            .resolve_capabilities(self.profile_key, &claim.run.capability_policy_revision)
+            .resolve_capabilities(
+                &claim.run.owner_user_id,
+                self.profile_key,
+                &claim.run.capability_policy_revision,
+            )
             .await?;
         transient.model_config.instructions = merge_instructions(
             capabilities.instructions,
@@ -445,7 +454,48 @@ fn tool_output_items(continuation: &Value) -> Result<Vec<Value>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chatos_ai_runtime::AiRuntime;
     use chatos_local_agent_protocol::{LocalAgentRunRecord, LocalAgentRunStatus};
+
+    struct OwnerCheckingModelResolver;
+
+    #[async_trait]
+    impl LocalModelRuntimeResolver for OwnerCheckingModelResolver {
+        async fn resolve_model_runtime(
+            &self,
+            owner_user_id: &str,
+            _model_config_ref: &str,
+            _model_config_revision: &str,
+        ) -> Result<TransientLocalModelRuntime, String> {
+            if owner_user_id != "user-1" {
+                return Err("wrong model owner".to_string());
+            }
+            Ok(TransientLocalModelRuntime {
+                runner: Arc::new(ContextualTurnRunner::new(AiRuntime::new(None), None)),
+                model_config: ModelRuntimeConfig {
+                    model: "test-model".to_string(),
+                    ..ModelRuntimeConfig::default()
+                },
+            })
+        }
+    }
+
+    struct OwnerCheckingCapabilityResolver;
+
+    #[async_trait]
+    impl LocalCapabilityResolver for OwnerCheckingCapabilityResolver {
+        async fn resolve_capabilities(
+            &self,
+            owner_user_id: &str,
+            _profile_key: &str,
+            _capability_policy_revision: &str,
+        ) -> Result<ResolvedLocalCapabilities, String> {
+            if owner_user_id != "user-1" {
+                return Err("wrong capability owner".to_string());
+            }
+            Ok(ResolvedLocalCapabilities::default())
+        }
+    }
 
     fn claim(checkpoint: Value, continuation_input: Option<Value>) -> LocalAgentRunClaim {
         LocalAgentRunClaim {
@@ -477,6 +527,22 @@ mod tests {
                 updated_at_unix_ms: 2,
             },
         }
+    }
+
+    #[tokio::test]
+    async fn planner_resolves_control_plane_state_for_the_run_owner() {
+        let planner = ControlPlaneLocalAiStepPlanner::main_chat(
+            OwnerCheckingModelResolver,
+            OwnerCheckingCapabilityResolver,
+        );
+        let prepared = planner
+            .prepare_ai_step(&claim(Value::Null, None))
+            .await
+            .expect("prepare owner-scoped step");
+        assert_eq!(
+            prepared.request.runtime_options.caller_model.as_deref(),
+            Some("test-model")
+        );
     }
 
     #[test]
