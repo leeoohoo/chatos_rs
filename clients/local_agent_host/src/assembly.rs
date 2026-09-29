@@ -1,0 +1,154 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Required Notice: Copyright (c) 2025 AI Chat Team
+
+use crate::{
+    ChatosAiRuntimeStepExecutor, ControlPlaneLocalAiStepPlanner, DurableAiProfile,
+    LocalAgentHostCoordinator, LocalAgentScheduler, LocalCapabilityResolver,
+    LocalModelRuntimeResolver, LocalToolRegistry, LocalToolScheduler, NamedReadOnlyTools,
+    MAIN_CHAT_PROFILE_KEY, TASK_RUNNER_PROFILE_KEY,
+};
+use chatos_local_agent_runtime::{LocalAgentProfileRegistry, LocalAgentRuntime};
+use std::sync::Arc;
+
+/// Fully assembled durable execution services for one native client process.
+/// Platform code owns storage creation and concrete control-plane/tool adapters;
+/// the shared Host owns Profile registration and scheduler wiring.
+pub struct LocalAgentHostAssembly {
+    runtime: Arc<LocalAgentRuntime>,
+    coordinator: Arc<LocalAgentHostCoordinator>,
+}
+
+impl LocalAgentHostAssembly {
+    pub fn new<M, C, I, S>(
+        runtime: Arc<LocalAgentRuntime>,
+        model_resolver: M,
+        capability_resolver: C,
+        tools: LocalToolRegistry,
+        read_only_tools: I,
+    ) -> Result<Self, String>
+    where
+        M: LocalModelRuntimeResolver + 'static,
+        C: LocalCapabilityResolver + 'static,
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let model_resolver: Arc<dyn LocalModelRuntimeResolver> = Arc::new(model_resolver);
+        let capability_resolver: Arc<dyn LocalCapabilityResolver> = Arc::new(capability_resolver);
+        let safety = NamedReadOnlyTools::new(read_only_tools);
+        let mut profiles = LocalAgentProfileRegistry::new();
+        profiles.register(
+            MAIN_CHAT_PROFILE_KEY,
+            DurableAiProfile::new(
+                ChatosAiRuntimeStepExecutor::new(ControlPlaneLocalAiStepPlanner::main_chat(
+                    Arc::clone(&model_resolver),
+                    Arc::clone(&capability_resolver),
+                )),
+                safety.clone(),
+            ),
+        )?;
+        profiles.register(
+            TASK_RUNNER_PROFILE_KEY,
+            DurableAiProfile::new(
+                ChatosAiRuntimeStepExecutor::new(ControlPlaneLocalAiStepPlanner::task_runner(
+                    model_resolver,
+                    capability_resolver,
+                )),
+                safety,
+            ),
+        )?;
+        let model_scheduler =
+            LocalAgentScheduler::new(Arc::clone(&runtime), profiles, "local-model-worker")?;
+        let tool_scheduler =
+            LocalToolScheduler::new(Arc::clone(&runtime), tools, "local-tool-worker")?;
+        let coordinator = Arc::new(LocalAgentHostCoordinator::new(
+            Arc::clone(&runtime),
+            Some(model_scheduler),
+            Some(tool_scheduler),
+        )?);
+        Ok(Self {
+            runtime,
+            coordinator,
+        })
+    }
+
+    pub fn runtime(&self) -> Arc<LocalAgentRuntime> {
+        Arc::clone(&self.runtime)
+    }
+
+    pub fn coordinator(&self) -> Arc<LocalAgentHostCoordinator> {
+        Arc::clone(&self.coordinator)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::LocalToolExecutor;
+    use async_trait::async_trait;
+    use chatos_client_storage::SqliteClientStorage;
+    use chatos_local_agent_protocol::{LocalAgentToolInvocationRecord, LocalAgentToolOutcome};
+
+    struct ModelResolver;
+
+    #[async_trait]
+    impl LocalModelRuntimeResolver for ModelResolver {
+        async fn resolve_model_runtime(
+            &self,
+            _model_config_ref: &str,
+            _model_config_revision: &str,
+        ) -> Result<crate::TransientLocalModelRuntime, String> {
+            Err("not used while assembling".to_string())
+        }
+    }
+
+    struct Capabilities;
+
+    #[async_trait]
+    impl LocalCapabilityResolver for Capabilities {
+        async fn resolve_capabilities(
+            &self,
+            _profile_key: &str,
+            _capability_policy_revision: &str,
+        ) -> Result<crate::ResolvedLocalCapabilities, String> {
+            Ok(crate::ResolvedLocalCapabilities::default())
+        }
+    }
+
+    struct ReadFile;
+
+    #[async_trait]
+    impl LocalToolExecutor for ReadFile {
+        async fn execute_tool(
+            &self,
+            _invocation: &LocalAgentToolInvocationRecord,
+        ) -> Result<LocalAgentToolOutcome, String> {
+            Ok(LocalAgentToolOutcome::Succeeded {
+                output: serde_json::json!({"content": "ok"}),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn assembles_both_profiles_and_tool_scheduler() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = Arc::new(LocalAgentRuntime::new(storage));
+        runtime.initialize().await.expect("initialize");
+        let mut tools = LocalToolRegistry::new();
+        tools.register("read_file", ReadFile).expect("tool");
+        let assembly = LocalAgentHostAssembly::new(
+            Arc::clone(&runtime),
+            ModelResolver,
+            Capabilities,
+            tools,
+            ["read_file"],
+        )
+        .expect("assembly");
+
+        assert!(Arc::ptr_eq(&assembly.runtime(), &runtime));
+        assembly.coordinator().wake();
+    }
+}

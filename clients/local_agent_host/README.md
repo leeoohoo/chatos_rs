@@ -25,6 +25,8 @@ The library-level schedulers execute one registered Profile step or one tool inv
 
 `ControlPlaneLocalAiStepPlanner` provides the shared Main Chat and Task Runner planning boundary. It resolves the exact model and capability revisions for each step, keeps the resolved API key in transient runtime objects only, and reconstructs Responses history from the durable checkpoint plus tool or user continuation payload.
 
+`LocalAgentHostAssembly` is the native-client composition root. Given one initialized Runtime plus concrete model, capability and platform-tool adapters, it registers both production Profile keys and constructs the model Scheduler, tool Scheduler and Coordinator with one shared safety policy.
+
 `LocalToolScheduler` claims one persisted invocation, routes it through `LocalToolRegistry`, and commits the result. Executor infrastructure errors on side-effecting calls become `needs_review`; read-only executor errors become ordinary failed tool results that the next model step can inspect.
 
 ## Run locally

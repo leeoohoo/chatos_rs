@@ -30,6 +30,22 @@ pub trait LocalModelRuntimeResolver: Send + Sync {
     ) -> Result<TransientLocalModelRuntime, String>;
 }
 
+#[async_trait]
+impl<T> LocalModelRuntimeResolver for Arc<T>
+where
+    T: LocalModelRuntimeResolver + ?Sized,
+{
+    async fn resolve_model_runtime(
+        &self,
+        model_config_ref: &str,
+        model_config_revision: &str,
+    ) -> Result<TransientLocalModelRuntime, String> {
+        (**self)
+            .resolve_model_runtime(model_config_ref, model_config_revision)
+            .await
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ResolvedLocalCapabilities {
     pub instructions: Option<String>,
@@ -44,6 +60,22 @@ pub trait LocalCapabilityResolver: Send + Sync {
         profile_key: &str,
         capability_policy_revision: &str,
     ) -> Result<ResolvedLocalCapabilities, String>;
+}
+
+#[async_trait]
+impl<T> LocalCapabilityResolver for Arc<T>
+where
+    T: LocalCapabilityResolver + ?Sized,
+{
+    async fn resolve_capabilities(
+        &self,
+        profile_key: &str,
+        capability_policy_revision: &str,
+    ) -> Result<ResolvedLocalCapabilities, String> {
+        (**self)
+            .resolve_capabilities(profile_key, capability_policy_revision)
+            .await
+    }
 }
 
 pub struct ControlPlaneLocalAiStepPlanner {

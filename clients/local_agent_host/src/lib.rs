@@ -3,10 +3,12 @@
 
 //! IPC transport for the client-owned Local Agent Host.
 
+mod assembly;
 mod coordinator;
 mod scheduler;
 mod tool_scheduler;
 
+pub use assembly::LocalAgentHostAssembly;
 pub use chatos_agent_profiles::{
     ChatosAiRuntimeStepExecutor, ConservativeToolSafetyPolicy, ControlPlaneLocalAiStepPlanner,
     DurableAiProfile, LocalAiStepExecutor, LocalAiStepPlanner, LocalCapabilityResolver,
