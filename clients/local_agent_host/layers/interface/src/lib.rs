@@ -56,7 +56,7 @@ pub use tool::{
     LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 22;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 23;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -228,12 +228,14 @@ impl CreateRunCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClaimNextRunCommand {
+    pub owner_user_id: String,
     pub worker_id: String,
     pub lease_duration_ms: u64,
 }
 
 impl ClaimNextRunCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("worker_id", &self.worker_id)?;
         if !(1_000..=300_000).contains(&self.lease_duration_ms) {
             return Err("lease_duration_ms must be between 1000 and 300000".to_string());

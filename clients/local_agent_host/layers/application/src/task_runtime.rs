@@ -48,11 +48,13 @@ impl LocalAgentRuntime {
 
     pub async fn start_next_task_run(
         &self,
+        owner_user_id: &str,
     ) -> Result<Option<LocalAgentRunRecord>, LocalAgentRuntimeError> {
         let now = self.now()?;
         Ok(self
             .store
             .start_next_task_run(
+                owner_user_id,
                 &format!("task-run-{}", Uuid::new_v4()),
                 &format!("task-run-event-{}", Uuid::new_v4()),
                 now,
@@ -313,7 +315,7 @@ mod tests {
         assert_eq!(graph.tasks[1].status, LocalTaskStatus::Pending);
 
         runtime
-            .start_next_task_run()
+            .start_next_task_run("user-1")
             .await
             .expect("start task")
             .expect("task Run");

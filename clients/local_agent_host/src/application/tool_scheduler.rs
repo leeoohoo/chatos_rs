@@ -84,6 +84,7 @@ pub enum LocalToolSchedulerError {
 pub struct LocalToolScheduler {
     runtime: Arc<LocalAgentRuntime>,
     tools: LocalToolRegistry,
+    owner_user_id: String,
     worker_id: String,
     lease_duration_ms: u64,
     include_tool_names: Option<Vec<String>>,
@@ -94,8 +95,14 @@ impl LocalToolScheduler {
     pub fn new(
         runtime: Arc<LocalAgentRuntime>,
         tools: LocalToolRegistry,
+        owner_user_id: impl Into<String>,
         worker_id: impl Into<String>,
     ) -> Result<Self, String> {
+        let owner_user_id = owner_user_id.into();
+        let owner_user_id = owner_user_id.trim();
+        if owner_user_id.is_empty() || owner_user_id.len() > 256 {
+            return Err("Local tool owner user id must be 1..=256 characters".to_string());
+        }
         let worker_id = worker_id.into();
         let worker_id = worker_id.trim();
         if worker_id.is_empty() || worker_id.len() > 256 {
@@ -107,6 +114,7 @@ impl LocalToolScheduler {
         Ok(Self {
             runtime,
             tools,
+            owner_user_id: owner_user_id.to_string(),
             worker_id: worker_id.to_string(),
             lease_duration_ms: 300_000,
             include_tool_names: None,
@@ -130,6 +138,7 @@ impl LocalToolScheduler {
         exclude_tool_names: Vec<String>,
     ) -> Result<Self, String> {
         ClaimNextToolCommand {
+            owner_user_id: self.owner_user_id.clone(),
             worker_id: self.worker_id.clone(),
             lease_duration_ms: self.lease_duration_ms,
             include_tool_names: include_tool_names.clone(),
@@ -147,6 +156,7 @@ impl LocalToolScheduler {
             .try_handle(envelope(
                 "tool-scheduler-claim",
                 HostCommand::ClaimNextTool(ClaimNextToolCommand {
+                    owner_user_id: self.owner_user_id.clone(),
                     worker_id: self.worker_id.clone(),
                     lease_duration_ms: self.lease_duration_ms,
                     include_tool_names: self.include_tool_names.clone(),
@@ -259,6 +269,7 @@ mod tests {
             .try_handle(envelope(
                 "claim-run",
                 HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                    owner_user_id: "user-1".to_string(),
                     worker_id: "model-worker".to_string(),
                     lease_duration_ms: 10_000,
                 }),
@@ -293,7 +304,8 @@ mod tests {
             .expect("wait for tool");
         let mut tools = LocalToolRegistry::new();
         tools.register("read_file", ReadFileTool).expect("tool");
-        let scheduler = LocalToolScheduler::new(runtime, tools, "tool-worker").expect("scheduler");
+        let scheduler =
+            LocalToolScheduler::new(runtime, tools, "user-1", "tool-worker").expect("scheduler");
 
         let ToolSchedulerTick::Committed(result) = scheduler.run_once().await.expect("tool step")
         else {

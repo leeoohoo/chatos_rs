@@ -110,6 +110,7 @@ async fn wait_for_user(
     let claim = storage
         .claim_next_run(
             &idempotency(&format!("claim-{suffix}")),
+            "user-1",
             "worker-1",
             &format!("token-{suffix}"),
             now,
@@ -215,6 +216,7 @@ async fn terminal_runs_reconcile_turns_and_assistant_messages() {
     let claim = storage
         .claim_next_run(
             &idempotency("claim-success"),
+            "user-1",
             "worker-1",
             "token-success",
             3_000,
@@ -301,6 +303,7 @@ async fn terminal_runs_reconcile_turns_and_assistant_messages() {
     let claim = storage
         .claim_next_run(
             &idempotency("claim-failure"),
+            "user-1",
             "worker-1",
             "token-failure",
             8_000,
@@ -567,6 +570,7 @@ async fn guidance_interrupts_an_active_claim_and_is_delivered_once() {
     let claim = storage
         .claim_next_run(
             &idempotency("claim-before-guidance"),
+            "user-1",
             "worker-1",
             "token-before-guidance",
             3_000,
@@ -630,6 +634,7 @@ async fn guidance_interrupts_an_active_claim_and_is_delivered_once() {
     let guided_claim = storage
         .claim_next_run(
             &idempotency("claim-after-guidance"),
+            "user-1",
             "worker-1",
             "token-after-guidance",
             6_000,

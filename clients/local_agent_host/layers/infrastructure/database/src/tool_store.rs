@@ -88,6 +88,7 @@ impl LocalAgentToolStore for SqliteClientStorage {
     async fn claim_next_tool(
         &self,
         command: &IdempotentCommand,
+        owner_user_id: &str,
         worker_id: &str,
         claim_token: &str,
         now_unix_ms: i64,
@@ -109,9 +110,11 @@ impl LocalAgentToolStore for SqliteClientStorage {
                 "SELECT invocation_id, tool_name FROM local_agent_tool_invocations \
                  WHERE status = 'pending' \
                  AND approval_status IN ('not_required','approved') AND run_id IN (\
-                   SELECT run_id FROM local_agent_runs WHERE status = 'waiting_tool_result'\
+                   SELECT run_id FROM local_agent_runs \
+                   WHERE owner_user_id = ? AND status = 'waiting_tool_result'\
                  ) ORDER BY created_at_unix_ms, invocation_id",
             )
+            .bind(owner_user_id)
             .fetch_all(&mut *connection)
             .await
             .db()?;

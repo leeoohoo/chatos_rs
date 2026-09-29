@@ -365,6 +365,7 @@ mod tests {
             .try_handle(request(
                 "claim-turn-control",
                 HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                    owner_user_id: "user-1".to_string(),
                     worker_id: "model-worker".to_string(),
                     lease_duration_ms: 10_000,
                 }),
@@ -501,6 +502,7 @@ mod tests {
             .try_handle(request(
                 "claim-guided-turn",
                 HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                    owner_user_id: "user-1".to_string(),
                     worker_id: "model-worker".to_string(),
                     lease_duration_ms: 10_000,
                 }),

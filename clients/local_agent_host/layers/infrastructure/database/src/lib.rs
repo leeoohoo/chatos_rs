@@ -396,6 +396,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
     async fn claim_next_run(
         &self,
         command: &IdempotentCommand,
+        owner_user_id: &str,
         worker_id: &str,
         claim_token: &str,
         now_unix_ms: i64,
@@ -413,11 +414,12 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 .db()?;
             let candidate = sqlx::query(
                 "SELECT run_id FROM local_agent_runs \
-                 WHERE iteration < max_iterations AND (\
+                 WHERE owner_user_id = ? AND iteration < max_iterations AND (\
                     status IN ('queued', 'model_ready', 'continuation_ready') OR \
                     (status = 'retry_scheduled' AND next_attempt_at_unix_ms <= ?)\
                  ) ORDER BY created_at_unix_ms, run_id LIMIT 1",
             )
+            .bind(owner_user_id)
             .bind(now_unix_ms)
             .fetch_optional(&mut *connection)
             .await

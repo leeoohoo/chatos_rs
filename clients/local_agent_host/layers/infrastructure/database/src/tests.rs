@@ -59,6 +59,7 @@ async fn create_and_claim_are_atomic_and_idempotent() {
     let claim = storage
         .claim_next_run(
             &command("claim-1", "claim"),
+            "user-1",
             "worker-1",
             "token-1",
             2_000,
@@ -74,6 +75,7 @@ async fn create_and_claim_are_atomic_and_idempotent() {
     assert!(storage
         .claim_next_run(
             &command("claim-2", "claim-next"),
+            "user-1",
             "worker-2",
             "token-2",
             2_001,
@@ -130,6 +132,7 @@ async fn expired_unknown_step_requires_review_instead_of_replay() {
     storage
         .claim_next_run(
             &command("claim-1", "claim"),
+            "user-1",
             "worker-1",
             &Uuid::new_v4().to_string(),
             2_000,
@@ -179,6 +182,7 @@ async fn expired_claim_cannot_commit_a_late_step() {
     let claim = storage
         .claim_next_run(
             &command("claim-1", "claim"),
+            "user-1",
             "worker-1",
             "token-1",
             2_000,

@@ -64,6 +64,8 @@ IPC v21 and SQLite v17 apply account isolation to the local Plugin installation 
 
 IPC v22 extends that boundary from the Run index to direct Run operations and the event stream. Native detail, resume, cancel, list and wait requests carry an owner account, and SQLite checks it inside the relevant query or write transaction. Only trusted in-process workers may use the unscoped lookup required to reconcile a claim whose owner came from the claimed Run itself.
 
+IPC v23 makes the authenticated account an execution boundary as well as a query boundary. The standalone composition root receives one active owner and passes it to the model and Tool schedulers; Run claims, Tool claims and Task-to-Run materialization include that owner in SQLite selection. Account switching is a Host lifecycle event: the native client stops the old process and launches a new one for the new owner, preventing dormant work from another account from running in the background.
+
 ## Server-removal boundary
 
 The completed client localization must allow these directories to be physically deleted:

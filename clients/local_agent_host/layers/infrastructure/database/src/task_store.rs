@@ -120,6 +120,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
 
     async fn start_next_task_run(
         &self,
+        owner_user_id: &str,
         run_id: &str,
         event_id: &str,
         now_unix_ms: i64,
@@ -128,6 +129,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         Self::begin_immediate(&mut connection).await.db()?;
         let result = super::task_lifecycle::start_next_task_run(
             &mut connection,
+            owner_user_id,
             run_id,
             event_id,
             now_unix_ms,
@@ -470,7 +472,7 @@ mod tests {
         assert_eq!(loaded, created);
 
         storage
-            .start_next_task_run("run-root", "event-run-root", 30_000)
+            .start_next_task_run("user-1", "run-root", "event-run-root", 30_000)
             .await
             .expect("start task")
             .expect("ready task");

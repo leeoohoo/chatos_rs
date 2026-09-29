@@ -271,13 +271,14 @@ mod tests {
         now_unix_ms: i64,
     ) {
         storage
-            .start_next_task_run(run_id, &format!("start-{run_id}"), now_unix_ms)
+            .start_next_task_run("user-1", run_id, &format!("start-{run_id}"), now_unix_ms)
             .await
             .expect("start Task Run")
             .expect("runnable Task");
         let claim = storage
             .claim_next_run(
                 &command(&format!("claim-{run_id}")),
+                "user-1",
                 "worker-1",
                 &format!("token-{run_id}"),
                 now_unix_ms + 1,

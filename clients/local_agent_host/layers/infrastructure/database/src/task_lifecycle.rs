@@ -7,6 +7,7 @@ use sqlx::{Row, SqliteConnection};
 
 pub(super) async fn start_next_task_run(
     connection: &mut SqliteConnection,
+    owner_user_id: &str,
     run_id: &str,
     event_id: &str,
     now_unix_ms: i64,
@@ -16,9 +17,10 @@ pub(super) async fn start_next_task_run(
          t.model_config_ref, t.model_config_revision, t.capability_policy_revision, \
          t.input_json, t.max_iterations, t.version FROM local_tasks t \
          JOIN local_task_graphs g ON g.graph_id = t.graph_id \
-         WHERE t.status = 'ready' AND t.active_run_id IS NULL \
+         WHERE g.owner_user_id = ? AND t.status = 'ready' AND t.active_run_id IS NULL \
          ORDER BY t.created_at_unix_ms, t.task_id LIMIT 1",
     )
+    .bind(owner_user_id)
     .fetch_optional(&mut *connection)
     .await
     .db()?;
@@ -267,13 +269,14 @@ mod tests {
         now: i64,
     ) {
         storage
-            .start_next_task_run(run_id, &format!("event-start-{run_id}"), now)
+            .start_next_task_run("user-1", run_id, &format!("event-start-{run_id}"), now)
             .await
             .expect("start task")
             .expect("ready task");
         let claim = storage
             .claim_next_run(
                 &command(&format!("claim-{run_id}")),
+                "user-1",
                 "worker-1",
                 &format!("token-{run_id}"),
                 now + 1,
@@ -341,7 +344,7 @@ mod tests {
         assert_eq!(after_failure.tasks[2].status, LocalTaskStatus::Blocked);
         assert_eq!(after_failure.tasks[3].status, LocalTaskStatus::Blocked);
         assert!(storage
-            .start_next_task_run("run-none", "event-none", 4_000)
+            .start_next_task_run("user-1", "run-none", "event-none", 4_000)
             .await
             .expect("start next")
             .is_none());
@@ -357,7 +360,7 @@ mod tests {
             .await
             .expect("create graph");
         let run = storage
-            .start_next_task_run("run-cancel", "event-start-cancel", 2_000)
+            .start_next_task_run("user-1", "run-cancel", "event-start-cancel", 2_000)
             .await
             .expect("start task")
             .expect("ready task");

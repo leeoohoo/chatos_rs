@@ -202,6 +202,7 @@ impl LocalAgentRuntime {
                     .store
                     .claim_next_run(
                         &idempotency,
+                        &command.owner_user_id,
                         &command.worker_id,
                         &Uuid::new_v4().to_string(),
                         now,
@@ -245,6 +246,7 @@ impl LocalAgentRuntime {
                     .store
                     .claim_next_tool(
                         &idempotency,
+                        &command.owner_user_id,
                         &command.worker_id,
                         &Uuid::new_v4().to_string(),
                         now,
@@ -621,6 +623,7 @@ mod tests {
             .handle(envelope(
                 "claim-1",
                 HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                    owner_user_id: "user-1".to_string(),
                     worker_id: "worker-1".to_string(),
                     lease_duration_ms: 10_000,
                 }),
@@ -687,6 +690,7 @@ mod tests {
             .handle(envelope(
                 "claim-1",
                 HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                    owner_user_id: "user-1".to_string(),
                     worker_id: "worker-1".to_string(),
                     lease_duration_ms: 10_000,
                 }),

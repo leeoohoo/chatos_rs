@@ -48,6 +48,7 @@ async fn tool_batch_is_durable_and_resumes_after_all_results() {
         .handle(envelope(
             "claim-run-1",
             HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                owner_user_id: "user-1".to_string(),
                 worker_id: "model-worker".to_string(),
                 lease_duration_ms: 10_000,
             }),
@@ -98,6 +99,7 @@ async fn tool_batch_is_durable_and_resumes_after_all_results() {
             .handle(envelope(
                 &format!("claim-tool-{index}"),
                 HostCommand::ClaimNextTool(ClaimNextToolCommand {
+                    owner_user_id: "user-1".to_string(),
                     worker_id: "tool-worker".to_string(),
                     lease_duration_ms: 10_000,
                     include_tool_names: None,
@@ -156,6 +158,7 @@ async fn tool_batch_is_durable_and_resumes_after_all_results() {
         .handle(envelope(
             "claim-run-2",
             HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                owner_user_id: "user-1".to_string(),
                 worker_id: "model-worker".to_string(),
                 lease_duration_ms: 10_000,
             }),

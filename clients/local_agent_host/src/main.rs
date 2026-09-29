@@ -20,6 +20,7 @@ enum IpcMode {
 
 struct Options {
     database: PathBuf,
+    owner_user_id: String,
     mode: IpcMode,
     read_only_tools: Vec<String>,
     memory: Option<MemoryOptions>,
@@ -87,6 +88,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Some((source_id, sync_worker)) => {
             LocalAgentHostAssembly::with_external_tool_worker_and_memory(
                 runtime,
+                options.owner_user_id,
                 control_plane.clone(),
                 control_plane,
                 options.read_only_tools,
@@ -96,6 +98,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
         None => LocalAgentHostAssembly::with_external_tool_worker(
             runtime,
+            options.owner_user_id,
             control_plane.clone(),
             control_plane,
             options.read_only_tools,
@@ -135,6 +138,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
     let mut database = None;
+    let mut owner_user_id = None;
     let mut mode = None;
     let mut read_only_tools = Vec::new();
     let mut memory_base_url = None;
@@ -147,6 +151,10 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
             "--database" => {
                 index += 1;
                 database = Some(required_value(&arguments, index, "--database")?.into());
+            }
+            "--owner-user-id" => {
+                index += 1;
+                owner_user_id = Some(required_value(&arguments, index, "--owner-user-id")?.into());
             }
             "--read-only-tool" => {
                 index += 1;
@@ -204,6 +212,7 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
     };
     Ok(Options {
         database: database.ok_or_else(|| "--database is required".to_string())?,
+        owner_user_id: owner_user_id.ok_or_else(|| "--owner-user-id is required".to_string())?,
         mode: mode.ok_or_else(|| "one IPC mode is required".to_string())?,
         read_only_tools,
         memory,
@@ -240,6 +249,7 @@ fn set_mode(target: &mut Option<IpcMode>, value: IpcMode) -> Result<(), String> 
 fn print_help() {
     eprintln!("ChatOS Local Agent Host");
     eprintln!("  --database <path>   Client-owned SQLite database");
+    eprintln!("  --owner-user-id <id>  Scope model and tool workers to the signed-in account");
     eprintln!("  --read-only-tool <name>  Mark a native tool as replay-safe; repeat as needed");
     eprintln!("  --memory-base-url <url>  Enable retained Memory compose and record sync");
     eprintln!("  --memory-source-id <id>  Memory source paired with --memory-base-url");
@@ -288,6 +298,8 @@ mod tests {
             [
                 "--database",
                 "/tmp/local-agent.sqlite",
+                "--owner-user-id",
+                "user-1",
                 "--read-only-tool",
                 "read_file",
                 "--read-only-tool",
@@ -303,6 +315,7 @@ mod tests {
             options.read_only_tools,
             vec!["read_file".to_string(), "list_files".to_string()]
         );
+        assert_eq!(options.owner_user_id, "user-1");
         assert!(matches!(options.mode, IpcMode::Stdio));
         assert!(options.memory.is_none());
         assert!(parse_options(vec!["--api-key".to_string(), "secret".to_string()]).is_err());
@@ -310,6 +323,13 @@ mod tests {
             "--memory-access-token".to_string(),
             "secret".to_string()
         ])
+        .is_err());
+        assert!(parse_options(
+            ["--database", "/tmp/local-agent.sqlite", "--stdio"]
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        )
         .is_err());
     }
 
@@ -319,6 +339,8 @@ mod tests {
             [
                 "--database",
                 "/tmp/local-agent.sqlite",
+                "--owner-user-id",
+                "user-1",
                 "--memory-base-url",
                 "https://memory.example.test",
                 "--memory-source-id",
@@ -340,6 +362,8 @@ mod tests {
             [
                 "--database",
                 "/tmp/local-agent.sqlite",
+                "--owner-user-id",
+                "user-1",
                 "--memory-base-url",
                 "https://memory.example.test",
                 "--stdio",

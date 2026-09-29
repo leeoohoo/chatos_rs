@@ -60,6 +60,8 @@ IPC v21 and SQLite v17 make local Plugin installation discovery account-scoped a
 
 IPC v22 closes the remaining account boundary on generic Run inspection. `get_run`, `resume_run`, `cancel_run`, `list_events` and `wait_events` all require the owner account; SQLite owner predicates protect detail reads and mutations, while event queries join through the owning Run. Trusted in-process schedulers retain a separate non-IPC lookup for claim reconciliation, so native callers cannot bypass the account-scoped contract.
 
+IPC v23 binds execution workers to the signed-in account. Model claims, Tool claims and ready-Task materialization all carry the active owner into their SQLite selection predicates, so a Host launched for one account cannot execute queued work left by another local account. The standalone process therefore requires `--owner-user-id`; native clients restart it with the newly authenticated owner when accounts change, while account data remains in the shared client-owned database.
+
 Native clients may choose `LocalAgentHostAssembly::with_external_tool_worker`. In that mode Swift or C# claims and commits platform tools through IPC, while Rust still owns model scheduling plus the two Task creation tools and wakes immediately after each native tool receipt. This keeps platform permissions and UI-bound tools in the native process without duplicating the Agent loop.
 
 Protocol v15 retains the optional `include_tool_names` and `exclude_tool_names` Tool claim filters. The Assembly's Rust worker includes only the two reserved Task tools, and Coordinator IPC automatically excludes them from native claims. Explicit overlapping filters are rejected.
@@ -91,6 +93,7 @@ On macOS or Linux:
 ```bash
 cargo run -p chatos_local_agent_host -- \
   --database /absolute/path/to/local-agent.sqlite \
+  --owner-user-id authenticated-user-id \
   --memory-base-url https://memory.example.com \
   --memory-source-id local_agent \
   --read-only-tool read_file \
@@ -104,6 +107,7 @@ For an embedded child process on any platform:
 ```bash
 cargo run -p chatos_local_agent_host -- \
   --database /absolute/path/to/local-agent.sqlite \
+  --owner-user-id authenticated-user-id \
   --stdio
 ```
 
@@ -112,6 +116,7 @@ On Windows, use a per-user pipe in the reserved namespace:
 ```powershell
 cargo run -p chatos_local_agent_host -- `
   --database C:\absolute\path\local-agent.sqlite `
+  --owner-user-id authenticated-user-id `
   --read-only-tool read_file `
   --pipe \\.\pipe\chatos-local-agent-USER-SCOPE
 ```
@@ -135,7 +140,7 @@ Example health request:
 
 ```json
 {
-  "protocol_version": 22,
+  "protocol_version": 23,
   "command_id": "health-019",
   "command": {
     "type": "health"

@@ -503,13 +503,19 @@ mod tests {
 
     async fn finish_next_success(storage: &SqliteClientStorage, run_id: &str, now_unix_ms: i64) {
         storage
-            .start_next_task_run(run_id, &format!("event-start-{run_id}"), now_unix_ms)
+            .start_next_task_run(
+                "user-1",
+                run_id,
+                &format!("event-start-{run_id}"),
+                now_unix_ms,
+            )
             .await
             .expect("start task")
             .expect("ready task");
         let claim = storage
             .claim_next_run(
                 &command(&format!("claim-{run_id}")),
+                "user-1",
                 "worker-1",
                 &format!("token-{run_id}"),
                 now_unix_ms + 1,
@@ -602,7 +608,7 @@ mod tests {
             .await
             .expect("create graph");
         let run = storage
-            .start_next_task_run("run-root", "event-run-created", 2_000)
+            .start_next_task_run("user-1", "run-root", "event-run-created", 2_000)
             .await
             .expect("start task")
             .expect("run");
@@ -646,7 +652,7 @@ mod tests {
             .expect("retry task");
         assert_eq!(retried.status, LocalTaskGraphStatus::Pending);
         storage
-            .start_next_task_run("run-root-retry", "event-run-retry", 5_000)
+            .start_next_task_run("user-1", "run-root-retry", "event-run-retry", 5_000)
             .await
             .expect("start retry")
             .expect("retry run");
@@ -724,7 +730,7 @@ mod tests {
         );
 
         storage
-            .start_next_task_run("run-root-restarted", "event-new-root", 6_000)
+            .start_next_task_run("user-1", "run-root-restarted", "event-new-root", 6_000)
             .await
             .expect("start restarted root")
             .expect("restarted Run");

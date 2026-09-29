@@ -56,6 +56,7 @@ async fn prepare_claimed_tool(
         .handle(envelope(
             "claim-run",
             HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                owner_user_id: "user-1".to_string(),
                 worker_id: "model-worker".to_string(),
                 lease_duration_ms: 10_000,
             }),
@@ -94,6 +95,7 @@ async fn prepare_claimed_tool(
         .handle(envelope(
             "claim-tool",
             HostCommand::ClaimNextTool(ClaimNextToolCommand {
+                owner_user_id: "user-1".to_string(),
                 worker_id: "tool-worker".to_string(),
                 lease_duration_ms: 1_000,
                 include_tool_names: None,
@@ -138,6 +140,7 @@ async fn expired_read_only_tool_is_requeued() {
         .handle(envelope(
             "claim-tool-again",
             HostCommand::ClaimNextTool(ClaimNextToolCommand {
+                owner_user_id: "user-1".to_string(),
                 worker_id: "tool-worker-2".to_string(),
                 lease_duration_ms: 1_000,
                 include_tool_names: None,
@@ -223,6 +226,7 @@ async fn tool_claim_filters_partition_reserved_and_platform_tools() {
         .handle(envelope(
             "claim-filtered-run",
             HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                owner_user_id: "user-1".to_string(),
                 worker_id: "model-worker".to_string(),
                 lease_duration_ms: 10_000,
             }),
@@ -267,6 +271,7 @@ async fn tool_claim_filters_partition_reserved_and_platform_tools() {
         .handle(envelope(
             "claim-reserved-tool",
             HostCommand::ClaimNextTool(ClaimNextToolCommand {
+                owner_user_id: "user-1".to_string(),
                 worker_id: "rust-worker".to_string(),
                 lease_duration_ms: 10_000,
                 include_tool_names: Some(vec!["create_task".to_string()]),
@@ -284,6 +289,7 @@ async fn tool_claim_filters_partition_reserved_and_platform_tools() {
         .handle(envelope(
             "claim-platform-tool",
             HostCommand::ClaimNextTool(ClaimNextToolCommand {
+                owner_user_id: "user-1".to_string(),
                 worker_id: "native-worker".to_string(),
                 lease_duration_ms: 10_000,
                 include_tool_names: None,
@@ -328,6 +334,7 @@ async fn waiting_user_resume_preserves_checkpoint_and_supplies_input() {
         .handle(envelope(
             "claim-user-wait",
             HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                owner_user_id: "user-1".to_string(),
                 worker_id: "model-worker".to_string(),
                 lease_duration_ms: 10_000,
             }),

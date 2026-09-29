@@ -43,13 +43,14 @@ fn graph() -> CreateTaskGraphCommand {
 
 async fn finish_root(storage: &SqliteClientStorage) {
     storage
-        .start_next_task_run("run-root", "event-start-run-root", 2_000)
+        .start_next_task_run("user-1", "run-root", "event-start-run-root", 2_000)
         .await
         .expect("start root")
         .expect("root Run");
     let claim = storage
         .claim_next_run(
             &command("claim-root"),
+            "user-1",
             "worker-1",
             "token-root",
             2_001,
@@ -96,7 +97,7 @@ async fn force_restart_cancels_running_descendant() {
         .expect("create graph");
     finish_root(&storage).await;
     storage
-        .start_next_task_run("run-child", "event-start-child", 3_000)
+        .start_next_task_run("user-1", "run-child", "event-start-child", 3_000)
         .await
         .expect("start child")
         .expect("child Run");

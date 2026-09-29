@@ -130,6 +130,7 @@ pub trait LocalAgentRunStore: Send + Sync {
     async fn claim_next_run(
         &self,
         command: &IdempotentCommand,
+        owner_user_id: &str,
         worker_id: &str,
         claim_token: &str,
         now_unix_ms: i64,
@@ -243,6 +244,7 @@ pub trait LocalAgentTaskStore: Send + Sync {
 
     async fn start_next_task_run(
         &self,
+        owner_user_id: &str,
         run_id: &str,
         event_id: &str,
         now_unix_ms: i64,
@@ -293,6 +295,7 @@ pub trait LocalAgentToolStore: Send + Sync {
     async fn claim_next_tool(
         &self,
         command: &IdempotentCommand,
+        owner_user_id: &str,
         worker_id: &str,
         claim_token: &str,
         now_unix_ms: i64,

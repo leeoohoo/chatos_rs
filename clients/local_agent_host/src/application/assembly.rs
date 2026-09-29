@@ -22,6 +22,7 @@ pub struct LocalAgentHostAssembly {
 impl LocalAgentHostAssembly {
     pub fn new<M, C, I, S>(
         runtime: Arc<LocalAgentRuntime>,
+        owner_user_id: impl Into<String>,
         model_resolver: M,
         capability_resolver: C,
         tools: LocalToolRegistry,
@@ -35,6 +36,7 @@ impl LocalAgentHostAssembly {
     {
         Self::build(
             runtime,
+            owner_user_id.into(),
             model_resolver,
             capability_resolver,
             Some(tools),
@@ -48,6 +50,7 @@ impl LocalAgentHostAssembly {
     /// native client through IPC. Rust retains the reserved Task tools.
     pub fn with_external_tool_worker<M, C, I, S>(
         runtime: Arc<LocalAgentRuntime>,
+        owner_user_id: impl Into<String>,
         model_resolver: M,
         capability_resolver: C,
         read_only_tools: I,
@@ -60,6 +63,7 @@ impl LocalAgentHostAssembly {
     {
         Self::build(
             runtime,
+            owner_user_id.into(),
             model_resolver,
             capability_resolver,
             None,
@@ -73,6 +77,7 @@ impl LocalAgentHostAssembly {
     /// persistence enabled for both production Profiles.
     pub fn with_external_tool_worker_and_memory<M, C, I, S>(
         runtime: Arc<LocalAgentRuntime>,
+        owner_user_id: impl Into<String>,
         model_resolver: M,
         capability_resolver: C,
         read_only_tools: I,
@@ -87,6 +92,7 @@ impl LocalAgentHostAssembly {
     {
         Self::build(
             runtime,
+            owner_user_id.into(),
             model_resolver,
             capability_resolver,
             None,
@@ -98,6 +104,7 @@ impl LocalAgentHostAssembly {
 
     fn build<M, C, I, S>(
         runtime: Arc<LocalAgentRuntime>,
+        owner_user_id: String,
         model_resolver: M,
         capability_resolver: C,
         tools: Option<LocalToolRegistry>,
@@ -142,16 +149,24 @@ impl LocalAgentHostAssembly {
                 safety,
             ),
         )?;
-        let model_scheduler =
-            LocalAgentScheduler::new(Arc::clone(&runtime), profiles, "local-model-worker")?;
+        let model_scheduler = LocalAgentScheduler::new(
+            Arc::clone(&runtime),
+            profiles,
+            owner_user_id.clone(),
+            "local-model-worker",
+        )?;
         let external_tool_worker = tools.is_none();
         let mut tools = tools.unwrap_or_default();
         let task_tools: Arc<dyn LocalToolExecutor> =
             Arc::new(LocalTaskToolExecutor::new(Arc::clone(&runtime)));
         tools.register_shared(CREATE_TASK_TOOL, Arc::clone(&task_tools))?;
         tools.register_shared(CREATE_TASKS_TOOL, task_tools)?;
-        let mut tool_scheduler =
-            LocalToolScheduler::new(Arc::clone(&runtime), tools, "local-tool-worker")?;
+        let mut tool_scheduler = LocalToolScheduler::new(
+            Arc::clone(&runtime),
+            tools,
+            owner_user_id,
+            "local-tool-worker",
+        )?;
         if external_tool_worker {
             tool_scheduler = tool_scheduler.with_tool_filter(
                 Some(vec![
@@ -247,6 +262,7 @@ mod tests {
         tools.register("read_file", ReadFile).expect("tool");
         let assembly = LocalAgentHostAssembly::new(
             Arc::clone(&runtime),
+            "user-1",
             ModelResolver,
             Capabilities,
             tools,
@@ -269,6 +285,7 @@ mod tests {
         runtime.initialize().await.expect("initialize");
         let assembly = LocalAgentHostAssembly::with_external_tool_worker(
             Arc::clone(&runtime),
+            "user-1",
             ModelResolver,
             Capabilities,
             ["read_file"],

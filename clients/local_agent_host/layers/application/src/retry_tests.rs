@@ -53,6 +53,7 @@ async fn retry_preserves_the_next_model_attempt_across_claims() {
         .try_handle(envelope(
             "claim-1",
             HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                owner_user_id: "user-1".to_string(),
                 worker_id: "worker-1".to_string(),
                 lease_duration_ms: 10_000,
             }),
@@ -102,6 +103,7 @@ async fn retry_preserves_the_next_model_attempt_across_claims() {
         .try_handle(envelope(
             "claim-2",
             HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                owner_user_id: "user-1".to_string(),
                 worker_id: "worker-1".to_string(),
                 lease_duration_ms: 10_000,
             }),
@@ -138,6 +140,7 @@ async fn retry_preserves_the_next_model_attempt_across_claims() {
         .try_handle(envelope(
             "claim-3",
             HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                owner_user_id: "user-1".to_string(),
                 worker_id: "worker-1".to_string(),
                 lease_duration_ms: 10_000,
             }),

@@ -32,6 +32,7 @@ pub enum LocalAgentSchedulerError {
 pub struct LocalAgentScheduler {
     runtime: Arc<LocalAgentRuntime>,
     profiles: LocalAgentProfileRegistry,
+    owner_user_id: String,
     worker_id: String,
     lease_duration_ms: u64,
 }
@@ -40,8 +41,14 @@ impl LocalAgentScheduler {
     pub fn new(
         runtime: Arc<LocalAgentRuntime>,
         profiles: LocalAgentProfileRegistry,
+        owner_user_id: impl Into<String>,
         worker_id: impl Into<String>,
     ) -> Result<Self, String> {
+        let owner_user_id = owner_user_id.into();
+        let owner_user_id = owner_user_id.trim();
+        if owner_user_id.is_empty() || owner_user_id.len() > 256 {
+            return Err("Local Agent owner user id must be 1..=256 characters".to_string());
+        }
         let worker_id = worker_id.into();
         let worker_id = worker_id.trim();
         if worker_id.is_empty() || worker_id.len() > 256 {
@@ -53,6 +60,7 @@ impl LocalAgentScheduler {
         Ok(Self {
             runtime,
             profiles,
+            owner_user_id: owner_user_id.to_string(),
             worker_id: worker_id.to_string(),
             lease_duration_ms: 300_000,
         })
@@ -69,11 +77,14 @@ impl LocalAgentScheduler {
     /// Claims and executes at most one durable step. The caller owns wakeups
     /// and retry timers, so an idle Host does not create polling receipts.
     pub async fn run_once(&self) -> Result<SchedulerTick, LocalAgentSchedulerError> {
-        self.runtime.start_next_task_run().await?;
+        self.runtime
+            .start_next_task_run(&self.owner_user_id)
+            .await?;
         let claim_result = self
             .runtime
             .try_handle(envelope(
                 HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                    owner_user_id: self.owner_user_id.clone(),
                     worker_id: self.worker_id.clone(),
                     lease_duration_ms: self.lease_duration_ms,
                 }),
@@ -248,7 +259,8 @@ mod tests {
         profiles
             .register("test_success", SuccessProfile)
             .expect("profile");
-        let scheduler = LocalAgentScheduler::new(runtime, profiles, "worker-1").expect("scheduler");
+        let scheduler =
+            LocalAgentScheduler::new(runtime, profiles, "user-1", "worker-1").expect("scheduler");
 
         let tick = scheduler.run_once().await.expect("run once");
         let SchedulerTick::Committed(run) = tick else {
@@ -312,7 +324,8 @@ mod tests {
                 },
             )
             .expect("profile");
-        let scheduler = LocalAgentScheduler::new(runtime, profiles, "worker-1").expect("scheduler");
+        let scheduler =
+            LocalAgentScheduler::new(runtime, profiles, "user-1", "worker-1").expect("scheduler");
 
         let SchedulerTick::Committed(interrupted) = scheduler.run_once().await.expect("interrupt")
         else {
@@ -366,8 +379,9 @@ mod tests {
         profiles
             .register("test_success", SuccessProfile)
             .expect("profile");
-        let scheduler = LocalAgentScheduler::new(Arc::clone(&runtime), profiles, "worker-1")
-            .expect("scheduler");
+        let scheduler =
+            LocalAgentScheduler::new(Arc::clone(&runtime), profiles, "user-1", "worker-1")
+                .expect("scheduler");
 
         assert!(matches!(
             scheduler.run_once().await.expect("run task"),

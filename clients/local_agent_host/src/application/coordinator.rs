@@ -340,12 +340,13 @@ mod tests {
             .register("coordinator", ModelProfile)
             .expect("profile");
         let model_scheduler =
-            LocalAgentScheduler::new(Arc::clone(&runtime), profiles, "model-worker")
+            LocalAgentScheduler::new(Arc::clone(&runtime), profiles, "user-1", "model-worker")
                 .expect("model scheduler");
         let mut tools = LocalToolRegistry::new();
         tools.register("read_file", ReadFile).expect("tool");
-        let tool_scheduler = LocalToolScheduler::new(Arc::clone(&runtime), tools, "tool-worker")
-            .expect("tool scheduler");
+        let tool_scheduler =
+            LocalToolScheduler::new(Arc::clone(&runtime), tools, "user-1", "tool-worker")
+                .expect("tool scheduler");
         let coordinator = Arc::new(
             LocalAgentHostCoordinator::new(
                 Arc::clone(&runtime),
@@ -360,6 +361,7 @@ mod tests {
             protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
             command_id: "claim-native-tool".to_string(),
             command: HostCommand::ClaimNextTool(ClaimNextToolCommand {
+                owner_user_id: "user-1".to_string(),
                 worker_id: "native-worker".to_string(),
                 lease_duration_ms: 10_000,
                 include_tool_names: None,

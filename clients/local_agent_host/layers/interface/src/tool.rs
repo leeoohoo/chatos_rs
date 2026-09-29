@@ -141,6 +141,7 @@ impl LocalAgentToolBatch {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClaimNextToolCommand {
+    pub owner_user_id: String,
     pub worker_id: String,
     pub lease_duration_ms: u64,
     #[serde(default)]
@@ -151,6 +152,7 @@ pub struct ClaimNextToolCommand {
 
 impl ClaimNextToolCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("worker_id", &self.worker_id)?;
         if !(1_000..=300_000).contains(&self.lease_duration_ms) {
             return Err("lease_duration_ms must be between 1000 and 300000".to_string());
@@ -325,6 +327,7 @@ mod tests {
     #[test]
     fn claim_filter_rejects_overlap_and_duplicates() {
         let overlap = ClaimNextToolCommand {
+            owner_user_id: "user-1".to_string(),
             worker_id: "worker-1".to_string(),
             lease_duration_ms: 10_000,
             include_tool_names: Some(vec!["create_task".to_string()]),
@@ -333,6 +336,7 @@ mod tests {
         assert!(overlap.validate().is_err());
 
         let duplicates = ClaimNextToolCommand {
+            owner_user_id: "user-1".to_string(),
             worker_id: "worker-1".to_string(),
             lease_duration_ms: 10_000,
             include_tool_names: None,

@@ -51,6 +51,7 @@ async fn approval_gate_blocks_claim_and_persists_approve_or_reject() {
         .try_handle(request(
             "claim-run",
             HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                owner_user_id: "user-1".to_string(),
                 worker_id: "model-worker".to_string(),
                 lease_duration_ms: 10_000,
             }),
@@ -96,6 +97,7 @@ async fn approval_gate_blocks_claim_and_persists_approve_or_reject() {
         .try_handle(request(
             "claim-before-approval",
             HostCommand::ClaimNextTool(ClaimNextToolCommand {
+                owner_user_id: "user-1".to_string(),
                 worker_id: "native-worker".to_string(),
                 lease_duration_ms: 10_000,
                 include_tool_names: None,
@@ -175,6 +177,7 @@ async fn approval_gate_blocks_claim_and_persists_approve_or_reject() {
         .try_handle(request(
             "claim-after-approval",
             HostCommand::ClaimNextTool(ClaimNextToolCommand {
+                owner_user_id: "user-1".to_string(),
                 worker_id: "native-worker".to_string(),
                 lease_duration_ms: 10_000,
                 include_tool_names: None,
