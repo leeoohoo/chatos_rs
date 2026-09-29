@@ -127,6 +127,13 @@ async fn cancel_active_run(
             "task Run changed while cancelling: {run_id}"
         )));
     }
+    super::tool_store::fail_open_invocations_for_cancelled_run(
+        connection,
+        &run_id,
+        reason,
+        now_unix_ms,
+    )
+    .await?;
     SqliteClientStorage::insert_event(
         connection,
         run_event_id,
@@ -172,21 +179,7 @@ pub(super) async fn retry_task(
             "only failed or cancelled tasks can be retried: {task_id}"
         )));
     }
-    let unsatisfied: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM local_task_dependencies d \
-         JOIN local_tasks prerequisite ON prerequisite.graph_id = d.graph_id \
-         AND prerequisite.task_id = d.prerequisite_task_id \
-         WHERE d.graph_id = ? AND d.task_id = ? AND prerequisite.status <> 'succeeded'",
-    )
-    .bind(&graph_id)
-    .bind(task_id)
-    .fetch_one(&mut *connection)
-    .await?;
-    if unsatisfied != 0 {
-        return Err(ClientStorageError::Conflict(format!(
-            "task prerequisites are not satisfied: {task_id}"
-        )));
-    }
+    require_satisfied_prerequisites(connection, &graph_id, task_id).await?;
     reset_blocked_descendants(connection, &graph_id, task_id, now_unix_ms).await?;
     let updated = sqlx::query(
         "UPDATE local_tasks SET status = 'ready', active_run_id = NULL, \
@@ -212,6 +205,149 @@ pub(super) async fn retry_task(
         .ok_or_else(|| ClientStorageError::NotFound(graph_id.clone()))?;
     SqliteClientStorage::record_receipt(connection, command, &graph, now_unix_ms).await?;
     Ok(graph)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn restart_task(
+    connection: &mut SqliteConnection,
+    command: &IdempotentCommand,
+    task_id: &str,
+    expected_version: u64,
+    reason: &str,
+    run_event_prefix: &str,
+    now_unix_ms: i64,
+) -> Result<LocalTaskGraph, ClientStorageError> {
+    if let Some(replay) = SqliteClientStorage::replay(connection, command).await? {
+        return Ok(replay);
+    }
+    let row = sqlx::query(
+        "SELECT graph_id, status, active_run_id, version FROM local_tasks WHERE task_id = ?",
+    )
+    .bind(task_id)
+    .fetch_optional(&mut *connection)
+    .await?
+    .ok_or_else(|| ClientStorageError::NotFound(task_id.to_string()))?;
+    let graph_id: String = row.try_get("graph_id")?;
+    let status = LocalTaskStatus::from_str(&row.try_get::<String, _>("status")?)
+        .map_err(ClientStorageError::InvalidState)?;
+    let version = u64::try_from(row.try_get::<i64, _>("version")?)
+        .map_err(|_| ClientStorageError::InvalidState("invalid task version".to_string()))?;
+    if version != expected_version {
+        return Err(ClientStorageError::Conflict(format!(
+            "task version changed: {task_id}"
+        )));
+    }
+    if !matches!(
+        status,
+        LocalTaskStatus::Running
+            | LocalTaskStatus::Succeeded
+            | LocalTaskStatus::Failed
+            | LocalTaskStatus::Cancelled
+    ) {
+        return Err(ClientStorageError::Conflict(format!(
+            "only started or terminal tasks can be restarted: {task_id}"
+        )));
+    }
+    require_satisfied_prerequisites(connection, &graph_id, task_id).await?;
+
+    let reset_version = if status == LocalTaskStatus::Running {
+        cancel_active_run(
+            connection,
+            task_id,
+            row.try_get("active_run_id")?,
+            reason,
+            &format!("{run_event_prefix}-target"),
+            now_unix_ms,
+        )
+        .await?;
+        version
+            .checked_add(1)
+            .ok_or_else(|| ClientStorageError::InvalidState("task version overflow".to_string()))?
+    } else {
+        version
+    };
+
+    let running_descendants = sqlx::query(
+        "WITH RECURSIVE descendants(task_id) AS (\
+           SELECT task_id FROM local_task_dependencies \
+           WHERE graph_id = ? AND prerequisite_task_id = ? \
+           UNION \
+           SELECT d.task_id FROM local_task_dependencies d \
+           JOIN descendants parent ON parent.task_id = d.prerequisite_task_id \
+           WHERE d.graph_id = ?\
+         ) SELECT task_id, active_run_id FROM local_tasks WHERE graph_id = ? \
+         AND status = 'running' AND task_id IN (SELECT task_id FROM descendants) \
+         ORDER BY task_id",
+    )
+    .bind(&graph_id)
+    .bind(task_id)
+    .bind(&graph_id)
+    .bind(&graph_id)
+    .fetch_all(&mut *connection)
+    .await?;
+    for (index, descendant) in running_descendants.into_iter().enumerate() {
+        let descendant_id: String = descendant.try_get("task_id")?;
+        cancel_active_run(
+            connection,
+            &descendant_id,
+            descendant.try_get("active_run_id")?,
+            reason,
+            &format!("{run_event_prefix}-descendant-{index}"),
+            now_unix_ms,
+        )
+        .await?;
+    }
+
+    reset_descendants(connection, &graph_id, task_id, now_unix_ms).await?;
+    let updated = sqlx::query(
+        "UPDATE local_tasks SET status = 'ready', active_run_id = NULL, \
+         version = version + 1, updated_at_unix_ms = ? \
+         WHERE task_id = ? AND graph_id = ? AND version = ?",
+    )
+    .bind(now_unix_ms)
+    .bind(task_id)
+    .bind(&graph_id)
+    .bind(
+        i64::try_from(reset_version)
+            .map_err(|_| ClientStorageError::InvalidState("task version overflow".to_string()))?,
+    )
+    .execute(&mut *connection)
+    .await?;
+    if updated.rows_affected() != 1 {
+        return Err(ClientStorageError::Conflict(format!(
+            "task changed while restarting: {task_id}"
+        )));
+    }
+    propagate_blocked(connection, &graph_id, now_unix_ms).await?;
+    unlock_satisfied(connection, &graph_id, now_unix_ms).await?;
+    let graph = fetch_graph(connection, &graph_id)
+        .await?
+        .ok_or_else(|| ClientStorageError::NotFound(graph_id.clone()))?;
+    SqliteClientStorage::record_receipt(connection, command, &graph, now_unix_ms).await?;
+    Ok(graph)
+}
+
+async fn require_satisfied_prerequisites(
+    connection: &mut SqliteConnection,
+    graph_id: &str,
+    task_id: &str,
+) -> Result<(), ClientStorageError> {
+    let unsatisfied: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM local_task_dependencies d \
+         JOIN local_tasks prerequisite ON prerequisite.graph_id = d.graph_id \
+         AND prerequisite.task_id = d.prerequisite_task_id \
+         WHERE d.graph_id = ? AND d.task_id = ? AND prerequisite.status <> 'succeeded'",
+    )
+    .bind(graph_id)
+    .bind(task_id)
+    .fetch_one(&mut *connection)
+    .await?;
+    if unsatisfied != 0 {
+        return Err(ClientStorageError::Conflict(format!(
+            "task prerequisites are not satisfied: {task_id}"
+        )));
+    }
+    Ok(())
 }
 
 async fn reset_blocked_descendants(
@@ -242,10 +378,38 @@ async fn reset_blocked_descendants(
     Ok(())
 }
 
+async fn reset_descendants(
+    connection: &mut SqliteConnection,
+    graph_id: &str,
+    task_id: &str,
+    now_unix_ms: i64,
+) -> Result<(), ClientStorageError> {
+    sqlx::query(
+        "WITH RECURSIVE descendants(task_id) AS (\
+           SELECT task_id FROM local_task_dependencies \
+           WHERE graph_id = ? AND prerequisite_task_id = ? \
+           UNION \
+           SELECT d.task_id FROM local_task_dependencies d \
+           JOIN descendants parent ON parent.task_id = d.prerequisite_task_id \
+           WHERE d.graph_id = ?\
+         ) UPDATE local_tasks SET status = 'pending', active_run_id = NULL, \
+         version = version + 1, updated_at_unix_ms = ? WHERE graph_id = ? \
+         AND task_id IN (SELECT task_id FROM descendants)",
+    )
+    .bind(graph_id)
+    .bind(task_id)
+    .bind(graph_id)
+    .bind(now_unix_ms)
+    .bind(graph_id)
+    .execute(&mut *connection)
+    .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LocalAgentRunStore, LocalAgentTaskStore};
+    use crate::{LocalAgentRunStore, LocalAgentTaskStore, RunTransition};
     use chatos_local_agent_protocol::{
         CreateTaskGraphCommand, LocalAgentRunStatus, LocalTaskDependency, LocalTaskGraphStatus,
         LocalTaskSpec,
@@ -289,6 +453,50 @@ mod tests {
                 Vec::new()
             },
         }
+    }
+
+    async fn finish_next_success(storage: &SqliteClientStorage, run_id: &str, now_unix_ms: i64) {
+        storage
+            .start_next_task_run(run_id, &format!("event-start-{run_id}"), now_unix_ms)
+            .await
+            .expect("start task")
+            .expect("ready task");
+        let claim = storage
+            .claim_next_run(
+                &command(&format!("claim-{run_id}")),
+                "worker-1",
+                &format!("token-{run_id}"),
+                now_unix_ms + 1,
+                now_unix_ms + 10_000,
+                &format!("event-claim-{run_id}"),
+            )
+            .await
+            .expect("claim run")
+            .expect("run claim");
+        storage
+            .apply_transition(
+                &command(&format!("finish-{run_id}")),
+                &RunTransition {
+                    run_id: claim.run.run_id,
+                    claim_token: claim.claim_token,
+                    expected_version: claim.run.version,
+                    expected_status: LocalAgentRunStatus::ModelRunning,
+                    next_status: LocalAgentRunStatus::Succeeded,
+                    next_model_attempt: 1,
+                    next_attempt_at_unix_ms: None,
+                    pending_tool_batch: None,
+                    tool_batch: None,
+                    checkpoint: None,
+                    clear_continuation_input: true,
+                    terminal_outcome: Some(json!({"status": "succeeded"})),
+                    event_id: format!("event-finish-{run_id}"),
+                    event_type: "run_succeeded".to_string(),
+                    event_payload: json!({"status": "succeeded"}),
+                    occurred_at_unix_ms: now_unix_ms + 2,
+                },
+            )
+            .await
+            .expect("finish run");
     }
 
     #[tokio::test]
@@ -409,5 +617,146 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["run-root-retry", "run-root"]
         );
+    }
+
+    #[tokio::test]
+    async fn force_restart_rewinds_descendants_and_preserves_run_history() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        storage
+            .create_task_graph(&command("create"), &graph("graph-1", true), 1_000)
+            .await
+            .expect("create graph");
+        finish_next_success(&storage, "run-root", 2_000).await;
+        finish_next_success(&storage, "run-child", 3_000).await;
+        let completed = storage
+            .get_task_graph("graph-1")
+            .await
+            .expect("get graph")
+            .expect("graph");
+        assert_eq!(completed.status, LocalTaskGraphStatus::Succeeded);
+        let root = completed
+            .tasks
+            .iter()
+            .find(|task| task.task_id == "task-root")
+            .expect("root task");
+        let restart_command = command("restart-root");
+        let restarted = storage
+            .restart_task(
+                &restart_command,
+                "task-root",
+                root.version,
+                "refresh upstream output",
+                "event-restart",
+                4_000,
+            )
+            .await
+            .expect("restart root");
+        assert_eq!(restarted.status, LocalTaskGraphStatus::Pending);
+        assert_eq!(restarted.tasks[0].status, LocalTaskStatus::Pending);
+        assert_eq!(restarted.tasks[1].status, LocalTaskStatus::Ready);
+        assert_eq!(
+            storage
+                .restart_task(
+                    &restart_command,
+                    "task-root",
+                    root.version,
+                    "refresh upstream output",
+                    "different-event-prefix",
+                    5_000,
+                )
+                .await
+                .expect("replay restart"),
+            restarted
+        );
+
+        storage
+            .start_next_task_run("run-root-restarted", "event-new-root", 6_000)
+            .await
+            .expect("start restarted root")
+            .expect("restarted Run");
+        let running = storage
+            .get_task_graph("graph-1")
+            .await
+            .expect("get running graph")
+            .expect("graph");
+        let running_root = running
+            .tasks
+            .iter()
+            .find(|task| task.task_id == "task-root")
+            .expect("running root");
+        let restarted_again = storage
+            .restart_task(
+                &command("restart-running-root"),
+                "task-root",
+                running_root.version,
+                "replace active attempt",
+                "event-restart-running",
+                7_000,
+            )
+            .await
+            .expect("restart running root");
+        assert_eq!(restarted_again.status, LocalTaskGraphStatus::Pending);
+        let cancelled = storage
+            .get_run("run-root-restarted")
+            .await
+            .expect("get cancelled Run")
+            .expect("cancelled Run");
+        assert_eq!(cancelled.status, LocalAgentRunStatus::Cancelled);
+        let history = storage
+            .list_task_runs("task-root", 10)
+            .await
+            .expect("root history");
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].run_id, "run-root-restarted");
+        assert_eq!(history[1].run_id, "run-root");
+    }
+
+    #[tokio::test]
+    async fn force_restart_cancels_running_descendant() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        storage
+            .create_task_graph(&command("create"), &graph("graph-1", true), 1_000)
+            .await
+            .expect("create graph");
+        finish_next_success(&storage, "run-root", 2_000).await;
+        storage
+            .start_next_task_run("run-child", "event-start-child", 3_000)
+            .await
+            .expect("start child")
+            .expect("child Run");
+        let running = storage
+            .get_task_graph("graph-1")
+            .await
+            .expect("get graph")
+            .expect("graph");
+        let root = running
+            .tasks
+            .iter()
+            .find(|task| task.task_id == "task-root")
+            .expect("root task");
+        let restarted = storage
+            .restart_task(
+                &command("restart-root"),
+                "task-root",
+                root.version,
+                "invalidate active descendant",
+                "event-restart",
+                4_000,
+            )
+            .await
+            .expect("restart root");
+        assert_eq!(restarted.status, LocalTaskGraphStatus::Pending);
+        assert_eq!(restarted.tasks[0].status, LocalTaskStatus::Pending);
+        assert_eq!(restarted.tasks[1].status, LocalTaskStatus::Ready);
+        let child_run = storage
+            .get_run("run-child")
+            .await
+            .expect("get child Run")
+            .expect("child Run");
+        assert_eq!(child_run.status, LocalAgentRunStatus::Cancelled);
     }
 }

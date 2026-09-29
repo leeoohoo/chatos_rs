@@ -4,8 +4,9 @@
 use super::*;
 use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
-    ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand, CreateRunCommand, HostCommand,
-    HostRequestEnvelope, HostResult, LocalAgentRunClaim, LocalAgentToolCall, LocalAgentToolClaim,
+    CancelRunCommand, ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand,
+    CommitToolCommand, CreateRunCommand, HostCommand, HostRequestEnvelope, HostResult,
+    LocalAgentRunClaim, LocalAgentToolCall, LocalAgentToolClaim, LocalAgentToolOutcome,
     ResumeRunCommand, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde_json::json;
@@ -151,6 +152,42 @@ async fn expired_read_only_tool_is_requeued() {
         first_claim.invocation.invocation_id
     );
     assert!(second_claim.invocation.version > first_claim.invocation.version);
+}
+
+#[tokio::test]
+async fn cancelling_run_invalidates_outstanding_tool_claim() {
+    let (runtime, _, tool_claim) = prepare_claimed_tool(false).await;
+    let cancelled = runtime
+        .handle(envelope(
+            "cancel-run-with-tool",
+            HostCommand::CancelRun(CancelRunCommand {
+                run_id: "run-tool-recovery".to_string(),
+                expected_version: None,
+                reason: "task was restarted".to_string(),
+            }),
+        ))
+        .await;
+    let run = match cancelled.result.expect("cancelled Run") {
+        HostResult::Run { run } => run,
+        result => panic!("unexpected result: {result:?}"),
+    };
+    assert_eq!(run.status, LocalAgentRunStatus::Cancelled);
+
+    let late_commit = runtime
+        .handle(envelope(
+            "late-tool-commit",
+            HostCommand::CommitTool(CommitToolCommand {
+                invocation_id: tool_claim.invocation.invocation_id,
+                claim_token: tool_claim.claim_token,
+                expected_version: tool_claim.invocation.version,
+                outcome: LocalAgentToolOutcome::Succeeded {
+                    output: json!({"content": "late"}),
+                },
+            }),
+        ))
+        .await;
+    assert!(!late_commit.ok);
+    assert_eq!(late_commit.error.expect("conflict").code, "conflict");
 }
 
 #[tokio::test]

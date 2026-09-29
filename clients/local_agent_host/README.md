@@ -38,7 +38,7 @@ The in-process assembly reserves `create_task` and `create_tasks_with_prerequisi
 
 Native clients may choose `LocalAgentHostAssembly::with_external_tool_worker`. In that mode Swift or C# claims and commits platform tools through IPC, while Rust still owns model scheduling plus the two Task creation tools and wakes immediately after each native tool receipt. This keeps platform permissions and UI-bound tools in the native process without duplicating the Agent loop.
 
-Protocol v7 retains the optional `include_tool_names` and `exclude_tool_names` Tool claim filters. The Assembly's Rust worker includes only the two reserved Task tools, and Coordinator IPC automatically excludes them from native claims. Explicit overlapping filters are rejected.
+Protocol v8 retains the optional `include_tool_names` and `exclude_tool_names` Tool claim filters. The Assembly's Rust worker includes only the two reserved Task tools, and Coordinator IPC automatically excludes them from native claims. Explicit overlapping filters are rejected.
 
 `LocalToolScheduler` claims one persisted invocation, routes it through `LocalToolRegistry`, and commits the result. Executor infrastructure errors on side-effecting calls become `needs_review`; read-only executor errors become ordinary failed tool results that the next model step can inspect.
 
@@ -85,7 +85,7 @@ Example health request:
 
 ```json
 {
-  "protocol_version": 7,
+  "protocol_version": 8,
   "command_id": "health-019",
   "command": {
     "type": "health"
@@ -113,6 +113,7 @@ Mutating commands use `command_id` as an idempotency key. Reusing a key with dif
 - `get_task_runs`
 - `cancel_task`
 - `retry_task`
+- `restart_task`
 
 `create_task_graph` validates the complete acyclic graph and writes it in one SQLite transaction. Tasks without prerequisites start as `ready`; dependent tasks start as `pending`. Graph creation uses the same command receipt mechanism as Run mutations, so an identical `command_id` replay returns the original graph and a mismatched replay is rejected.
 
@@ -121,6 +122,8 @@ The model scheduler atomically materializes each `ready` Task as one Run. A term
 `get_task_graph` derives its aggregate status from the authoritative Task rows instead of maintaining a second mutable status column. A graph is `pending` before work starts, `running` once any Task has started while runnable work remains, `succeeded` when every Task succeeds, `failed` when terminal execution contains a failure, and `cancelled` when cancellation ends the graph without a failure. Retrying a Task immediately re-derives the graph status from the reset DAG.
 
 `get_task_runs` returns up to 100 Runs owned by one Task, newest first. This includes superseded failed or cancelled Runs after retry, allowing Task Inspector to show the complete local execution history. Unknown Task IDs return `not_found`.
+
+`restart_task` is an explicit, version-protected force restart for a running or terminal Task. It atomically cancels any active Run for that Task and all running transitive descendants, invalidates their outstanding tool claims, resets the target to `ready`, and rewinds every transitive descendant to `pending`. Previous Runs remain in local history. Tasks that have never started and blocked Tasks cannot be force-restarted, and the target's prerequisites must still be satisfied.
 
 A successful claim moves one runnable Run to `model_running`, increments its iteration and version, and returns a random claim token. `commit_step` requires the exact token and version. If the Host stops before commit, an expired `model_running` claim is moved to `needs_review`; it is never silently replayed.
 

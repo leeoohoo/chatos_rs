@@ -143,6 +143,30 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         .await;
         Self::finish_write(&mut connection, result).await
     }
+
+    async fn restart_task(
+        &self,
+        command: &IdempotentCommand,
+        task_id: &str,
+        expected_version: u64,
+        reason: &str,
+        run_event_prefix: &str,
+        now_unix_ms: i64,
+    ) -> Result<LocalTaskGraph, ClientStorageError> {
+        let mut connection = self.pool.acquire().await?;
+        Self::begin_immediate(&mut connection).await?;
+        let result = super::task_commands::restart_task(
+            &mut connection,
+            command,
+            task_id,
+            expected_version,
+            reason,
+            run_event_prefix,
+            now_unix_ms,
+        )
+        .await;
+        Self::finish_write(&mut connection, result).await
+    }
 }
 
 async fn insert_graph(

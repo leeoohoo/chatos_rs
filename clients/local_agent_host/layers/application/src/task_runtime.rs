@@ -4,12 +4,42 @@
 use super::{LocalAgentRuntime, LocalAgentRuntimeError};
 use chatos_local_agent_ports::{ClientStorageError, IdempotentCommand};
 use chatos_local_agent_protocol::{
-    CancelTaskCommand, CreateTaskGraphCommand, GetTaskRunsCommand, LocalAgentRunRecord,
-    LocalTaskGraph, RetryTaskCommand,
+    CancelTaskCommand, CreateTaskGraphCommand, GetTaskRunsCommand, HostCommand, HostResult,
+    LocalAgentRunRecord, LocalTaskGraph, RestartTaskCommand, RetryTaskCommand,
 };
 use uuid::Uuid;
 
 impl LocalAgentRuntime {
+    pub(super) async fn handle_task_command(
+        &self,
+        idempotency: &IdempotentCommand,
+        command: HostCommand,
+    ) -> Result<HostResult, LocalAgentRuntimeError> {
+        match command {
+            HostCommand::CreateTaskGraph(command) => Ok(HostResult::TaskGraph {
+                graph: self.create_task_graph(idempotency, command).await?,
+            }),
+            HostCommand::GetTaskGraph(command) => Ok(HostResult::TaskGraph {
+                graph: self.get_task_graph(&command.graph_id).await?,
+            }),
+            HostCommand::GetTaskRuns(command) => {
+                let task_id = command.task_id.clone();
+                let runs = self.get_task_runs(command).await?;
+                Ok(HostResult::TaskRuns { task_id, runs })
+            }
+            HostCommand::CancelTask(command) => Ok(HostResult::TaskGraph {
+                graph: self.cancel_task(idempotency, command).await?,
+            }),
+            HostCommand::RetryTask(command) => Ok(HostResult::TaskGraph {
+                graph: self.retry_task(idempotency, command).await?,
+            }),
+            HostCommand::RestartTask(command) => Ok(HostResult::TaskGraph {
+                graph: self.restart_task(idempotency, command).await?,
+            }),
+            _ => unreachable!("non-task command routed to task runtime"),
+        }
+    }
+
     pub async fn start_next_task_run(
         &self,
     ) -> Result<Option<LocalAgentRunRecord>, LocalAgentRuntimeError> {
@@ -89,6 +119,24 @@ impl LocalAgentRuntime {
             )
             .await?)
     }
+
+    pub(super) async fn restart_task(
+        &self,
+        idempotency: &IdempotentCommand,
+        command: RestartTaskCommand,
+    ) -> Result<LocalTaskGraph, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .restart_task(
+                idempotency,
+                &command.task_id,
+                command.expected_version,
+                &command.reason,
+                &format!("task-restart-event-{}", Uuid::new_v4()),
+                self.now()?,
+            )
+            .await?)
+    }
 }
 
 #[cfg(test)]
@@ -96,9 +144,9 @@ mod tests {
     use super::*;
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
-        CancelTaskCommand, GetTaskGraphCommand, GetTaskRunsCommand, HostCommand,
-        HostRequestEnvelope, HostResult, LocalTaskDependency, LocalTaskGraphStatus, LocalTaskSpec,
-        LocalTaskStatus, RetryTaskCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+        CancelTaskCommand, GetTaskGraphCommand, GetTaskRunsCommand, HostRequestEnvelope,
+        LocalTaskDependency, LocalTaskGraphStatus, LocalTaskSpec, LocalTaskStatus,
+        RestartTaskCommand, RetryTaskCommand, LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use serde_json::json;
     use std::sync::Arc;
@@ -231,6 +279,38 @@ mod tests {
             HostResult::TaskGraph { graph } => graph,
             result => panic!("unexpected result: {result:?}"),
         };
+        assert_eq!(graph.tasks[0].status, LocalTaskStatus::Ready);
+        assert_eq!(graph.tasks[1].status, LocalTaskStatus::Pending);
+
+        runtime
+            .start_next_task_run()
+            .await
+            .expect("start task")
+            .expect("task Run");
+        let running = runtime
+            .get_task_graph("graph-1")
+            .await
+            .expect("running graph");
+        let root = running
+            .tasks
+            .iter()
+            .find(|task| task.task_id == "task-1")
+            .expect("root task");
+        let restart = request(
+            "restart-task-1",
+            HostCommand::RestartTask(RestartTaskCommand {
+                task_id: "task-1".to_string(),
+                expected_version: root.version,
+                reason: "restart active task".to_string(),
+            }),
+        );
+        let restarted = runtime.handle(restart.clone()).await;
+        assert_eq!(runtime.handle(restart).await, restarted);
+        let graph = match restarted.result.expect("restart result") {
+            HostResult::TaskGraph { graph } => graph,
+            result => panic!("unexpected result: {result:?}"),
+        };
+        assert_eq!(graph.status, LocalTaskGraphStatus::Pending);
         assert_eq!(graph.tasks[0].status, LocalTaskStatus::Ready);
         assert_eq!(graph.tasks[1].status, LocalTaskStatus::Pending);
     }

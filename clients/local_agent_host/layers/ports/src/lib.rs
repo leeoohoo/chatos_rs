@@ -182,6 +182,17 @@ pub trait LocalAgentTaskStore: Send + Sync {
         expected_version: u64,
         now_unix_ms: i64,
     ) -> Result<LocalTaskGraph, ClientStorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    async fn restart_task(
+        &self,
+        command: &IdempotentCommand,
+        task_id: &str,
+        expected_version: u64,
+        reason: &str,
+        run_event_prefix: &str,
+        now_unix_ms: i64,
+    ) -> Result<LocalTaskGraph, ClientStorageError>;
 }
 
 #[async_trait]

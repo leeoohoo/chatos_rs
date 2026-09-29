@@ -566,6 +566,13 @@ impl LocalAgentRunStore for SqliteClientStorage {
                     "run changed while cancelling: {run_id}"
                 )));
             }
+            tool_store::fail_open_invocations_for_cancelled_run(
+                &mut connection,
+                run_id,
+                reason,
+                now_unix_ms,
+            )
+            .await?;
             Self::insert_event(
                 &mut connection,
                 event_id,

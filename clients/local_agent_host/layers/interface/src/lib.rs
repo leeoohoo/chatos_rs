@@ -16,7 +16,7 @@ mod tool;
 pub use task::{
     CancelTaskCommand, CreateTaskGraphCommand, GetTaskGraphCommand, GetTaskRunsCommand,
     LocalTaskDependency, LocalTaskGraph, LocalTaskGraphStatus, LocalTaskRecord, LocalTaskSpec,
-    LocalTaskStatus, RetryTaskCommand,
+    LocalTaskStatus, RestartTaskCommand, RetryTaskCommand,
 };
 pub use tool::{
     ClaimNextToolCommand, CommitToolCommand, LocalAgentToolBatch, LocalAgentToolCall,
@@ -24,7 +24,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 7;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 8;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -68,6 +68,7 @@ pub enum HostCommand {
     GetTaskRuns(GetTaskRunsCommand),
     CancelTask(CancelTaskCommand),
     RetryTask(RetryTaskCommand),
+    RestartTask(RestartTaskCommand),
 }
 
 impl HostCommand {
@@ -89,6 +90,7 @@ impl HostCommand {
             Self::GetTaskRuns(command) => command.validate(),
             Self::CancelTask(command) => command.validate(),
             Self::RetryTask(command) => command.validate(),
+            Self::RestartTask(command) => command.validate(),
         }
     }
 }

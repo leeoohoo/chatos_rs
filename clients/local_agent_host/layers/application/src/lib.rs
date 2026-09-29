@@ -297,23 +297,12 @@ impl LocalAgentRuntime {
                     next_cursor,
                 })
             }
-            HostCommand::CreateTaskGraph(command) => Ok(HostResult::TaskGraph {
-                graph: self.create_task_graph(&idempotency, command).await?,
-            }),
-            HostCommand::GetTaskGraph(command) => Ok(HostResult::TaskGraph {
-                graph: self.get_task_graph(&command.graph_id).await?,
-            }),
-            HostCommand::GetTaskRuns(command) => {
-                let task_id = command.task_id.clone();
-                let runs = self.get_task_runs(command).await?;
-                Ok(HostResult::TaskRuns { task_id, runs })
-            }
-            HostCommand::CancelTask(command) => Ok(HostResult::TaskGraph {
-                graph: self.cancel_task(&idempotency, command).await?,
-            }),
-            HostCommand::RetryTask(command) => Ok(HostResult::TaskGraph {
-                graph: self.retry_task(&idempotency, command).await?,
-            }),
+            command @ (HostCommand::CreateTaskGraph(_)
+            | HostCommand::GetTaskGraph(_)
+            | HostCommand::GetTaskRuns(_)
+            | HostCommand::CancelTask(_)
+            | HostCommand::RetryTask(_)
+            | HostCommand::RestartTask(_)) => self.handle_task_command(&idempotency, command).await,
         }
     }
 

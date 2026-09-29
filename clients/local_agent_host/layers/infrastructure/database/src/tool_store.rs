@@ -42,6 +42,25 @@ pub(crate) async fn insert_tool_batch(
     Ok(())
 }
 
+pub(crate) async fn fail_open_invocations_for_cancelled_run(
+    connection: &mut SqliteConnection,
+    run_id: &str,
+    reason: &str,
+    now_unix_ms: i64,
+) -> Result<u64, ClientStorageError> {
+    let updated = sqlx::query(
+        "UPDATE local_agent_tool_invocations SET status = 'failed', result_json = NULL, \
+         error_text = ?, version = version + 1, claim_token = NULL, claim_until_unix_ms = NULL, \
+         updated_at_unix_ms = ? WHERE run_id = ? AND status IN ('pending', 'running')",
+    )
+    .bind(format!("owning Run was cancelled: {reason}"))
+    .bind(now_unix_ms)
+    .bind(run_id)
+    .execute(&mut *connection)
+    .await?;
+    Ok(updated.rows_affected())
+}
+
 #[async_trait]
 impl LocalAgentToolStore for SqliteClientStorage {
     async fn recover_expired_tool_claims(

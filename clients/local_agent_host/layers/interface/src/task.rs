@@ -199,6 +199,23 @@ impl RetryTaskCommand {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RestartTaskCommand {
+    pub task_id: String,
+    pub expected_version: u64,
+    pub reason: String,
+}
+
+impl RestartTaskCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("task_id", &self.task_id)?;
+        if self.expected_version == 0 {
+            return Err("expected_version must be greater than zero".to_string());
+        }
+        validate_text("reason", &self.reason, 4_000)
+    }
+}
+
 impl GetTaskGraphCommand {
     pub fn validate(&self) -> Result<(), String> {
         validate_identifier("graph_id", &self.graph_id)
@@ -459,6 +476,31 @@ mod tests {
         assert!(GetTaskRunsCommand {
             task_id: "task-1".to_string(),
             limit: 0,
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn validates_force_restart_reason_and_version() {
+        assert!(RestartTaskCommand {
+            task_id: "task-1".to_string(),
+            expected_version: 2,
+            reason: "rerun with fresh outputs".to_string(),
+        }
+        .validate()
+        .is_ok());
+        assert!(RestartTaskCommand {
+            task_id: "task-1".to_string(),
+            expected_version: 0,
+            reason: "rerun".to_string(),
+        }
+        .validate()
+        .is_err());
+        assert!(RestartTaskCommand {
+            task_id: "task-1".to_string(),
+            expected_version: 2,
+            reason: " ".to_string(),
         }
         .validate()
         .is_err());
