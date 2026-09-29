@@ -6,7 +6,9 @@ use crate::{
     LocalToolSchedulerError, SchedulerTick, ToolSchedulerTick,
 };
 use async_trait::async_trait;
-use chatos_local_agent_protocol::{HostRequestEnvelope, HostResponseEnvelope};
+use chatos_local_agent_protocol::{
+    HostCommand, HostRequestEnvelope, HostResponseEnvelope, HostResult,
+};
 use chatos_local_agent_runtime::{LocalAgentRuntime, LocalAgentRuntimeError};
 use std::{sync::Arc, time::Duration};
 use thiserror::Error;
@@ -29,6 +31,7 @@ pub struct LocalAgentHostCoordinator {
     model_scheduler: Option<LocalAgentScheduler>,
     tool_scheduler: Option<LocalToolScheduler>,
     wakeup: Arc<Notify>,
+    activity: watch::Sender<u64>,
 }
 
 impl LocalAgentHostCoordinator {
@@ -40,11 +43,13 @@ impl LocalAgentHostCoordinator {
         if model_scheduler.is_none() && tool_scheduler.is_none() {
             return Err("Local Agent coordinator requires a model or tool scheduler".to_string());
         }
+        let (activity, _) = watch::channel(0);
         Ok(Self {
             runtime,
             model_scheduler,
             tool_scheduler,
             wakeup: Arc::new(Notify::new()),
+            activity,
         })
     }
 
@@ -89,14 +94,22 @@ impl LocalAgentHostCoordinator {
             }
             let mut progressed = false;
             if let Some(scheduler) = self.model_scheduler.as_ref() {
-                progressed |= matches!(scheduler.run_once().await?, SchedulerTick::Committed(_));
+                let committed = matches!(scheduler.run_once().await?, SchedulerTick::Committed(_));
+                if committed {
+                    self.signal_activity();
+                }
+                progressed |= committed;
             }
             if *shutdown.borrow() {
                 return Ok(());
             }
             if let Some(scheduler) = self.tool_scheduler.as_ref() {
-                progressed |=
+                let committed =
                     matches!(scheduler.run_once().await?, ToolSchedulerTick::Committed(_));
+                if committed {
+                    self.signal_activity();
+                }
+                progressed |= committed;
             }
             if !progressed {
                 return Ok(());
@@ -113,17 +126,62 @@ impl LocalAgentHostCoordinator {
             u64::try_from(next_retry_at.saturating_sub(now).max(0)).unwrap_or(0),
         ))
     }
+
+    fn signal_activity(&self) {
+        self.activity
+            .send_modify(|value| *value = value.wrapping_add(1));
+    }
+
+    async fn wait_for_events(
+        &self,
+        request: HostRequestEnvelope,
+        timeout_ms: u64,
+    ) -> HostResponseEnvelope {
+        let mut activity = self.activity.subscribe();
+        let mut response = self.runtime.handle(request.clone()).await;
+        if !response.ok || response_has_events(&response) {
+            return response;
+        }
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => return response,
+                changed = activity.changed() => {
+                    if changed.is_err() {
+                        return response;
+                    }
+                    response = self.runtime.handle(request.clone()).await;
+                    if !response.ok || response_has_events(&response) {
+                        return response;
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[async_trait]
 impl HostRequestHandler for LocalAgentHostCoordinator {
     async fn handle_request(&self, request: HostRequestEnvelope) -> HostResponseEnvelope {
+        if let HostCommand::WaitEvents(command) = &request.command {
+            return self
+                .wait_for_events(request.clone(), command.timeout_ms)
+                .await;
+        }
         let response = self.runtime.handle(request).await;
         if response.ok {
             self.wake();
+            self.signal_activity();
         }
         response
     }
+}
+
+fn response_has_events(response: &HostResponseEnvelope) -> bool {
+    matches!(
+        response.result.as_ref(),
+        Some(HostResult::Events { events, .. }) if !events.is_empty()
+    )
 }
 
 fn system_now_unix_ms() -> Result<i64, LocalAgentCoordinatorError> {
@@ -144,7 +202,8 @@ mod tests {
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
         CreateRunCommand, HostCommand, HostResult, LocalAgentRunClaim,
-        LocalAgentToolInvocationRecord, LocalAgentToolOutcome, LOCAL_AGENT_PROTOCOL_VERSION,
+        LocalAgentToolInvocationRecord, LocalAgentToolOutcome, WaitEventsCommand,
+        LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileRegistry};
     use serde_json::json;
@@ -228,6 +287,23 @@ mod tests {
             let coordinator = Arc::clone(&coordinator);
             tokio::spawn(async move { coordinator.run_until_shutdown(shutdown_rx).await })
         };
+        let wait_task = {
+            let coordinator = Arc::clone(&coordinator);
+            tokio::spawn(async move {
+                coordinator
+                    .handle_request(HostRequestEnvelope {
+                        protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+                        command_id: "wait-coordinator-events".to_string(),
+                        command: HostCommand::WaitEvents(WaitEventsCommand {
+                            after_cursor: 0,
+                            limit: 50,
+                            run_id: Some("run-coordinator".to_string()),
+                            timeout_ms: 2_000,
+                        }),
+                    })
+                    .await
+            })
+        };
         let (mut client, server) = tokio::io::duplex(16 * 1024);
         let ipc_task = tokio::spawn(serve_stream(server, Arc::clone(&coordinator)));
         let request = HostRequestEnvelope {
@@ -255,6 +331,8 @@ mod tests {
             .expect("response");
         let response = decode_response(&response).expect("decode");
         assert!(response.ok);
+        let waited = wait_task.await.expect("wait join");
+        assert!(response_has_events(&waited));
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         loop {
             let response = runtime

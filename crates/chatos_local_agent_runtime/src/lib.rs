@@ -278,6 +278,26 @@ impl LocalAgentRuntime {
                     next_cursor,
                 })
             }
+            HostCommand::WaitEvents(command) => {
+                // The bare Runtime provides the same immediate snapshot as
+                // list_events. LocalAgentHostCoordinator adds the bounded wait.
+                let events = self
+                    .store
+                    .list_events(
+                        command.after_cursor,
+                        command.limit,
+                        command.run_id.as_deref(),
+                    )
+                    .await?;
+                let next_cursor = events
+                    .last()
+                    .map(|event| event.cursor)
+                    .unwrap_or(command.after_cursor);
+                Ok(HostResult::Events {
+                    events,
+                    next_cursor,
+                })
+            }
         }
     }
 

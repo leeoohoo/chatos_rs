@@ -76,7 +76,7 @@ Example health request:
 
 ```json
 {
-  "protocol_version": 2,
+  "protocol_version": 3,
   "command_id": "health-019",
   "command": {
     "type": "health"
@@ -98,6 +98,7 @@ Mutating commands use `command_id` as an idempotency key. Reusing a key with dif
 - `resume_run`
 - `cancel_run`
 - `list_events`
+- `wait_events`
 
 A successful claim moves one runnable Run to `model_running`, increments its iteration and version, and returns a random claim token. `commit_step` requires the exact token and version. If the Host stops before commit, an expired `model_running` claim is moved to `needs_review`; it is never silently replayed.
 
@@ -106,6 +107,8 @@ A successful claim moves one runnable Run to `model_running`, increments its ite
 Each Run also stores an opaque Profile checkpoint plus a one-shot continuation payload. Tool results and explicit `resume_run` input survive Host restarts and are cleared only after the next claimed model step commits.
 
 Transient model retries persist `model_attempt` in the Run itself and do not consume a pending tool/user continuation. A restarted Host therefore continues with the exact request inputs and next attempt, without resetting the provider retry budget.
+
+`wait_events` performs a bounded long poll (at most 60 seconds) from a durable event cursor. External native Tool Workers wait for `tool_batch_requested`, then use `claim_next_tool` and `commit_tool`; timeout responses preserve the supplied cursor and contain an empty event page.
 
 ## Verification
 

@@ -18,7 +18,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 2;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 3;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -56,6 +56,7 @@ pub enum HostCommand {
     ResumeRun(ResumeRunCommand),
     CancelRun(CancelRunCommand),
     ListEvents(ListEventsCommand),
+    WaitEvents(WaitEventsCommand),
 }
 
 impl HostCommand {
@@ -71,6 +72,7 @@ impl HostCommand {
             Self::ResumeRun(command) => command.validate(),
             Self::CancelRun(command) => command.validate(),
             Self::ListEvents(command) => command.validate(),
+            Self::WaitEvents(command) => command.validate(),
         }
     }
 }
@@ -215,6 +217,29 @@ pub struct ListEventsCommand {
     pub after_cursor: i64,
     pub limit: u32,
     pub run_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WaitEventsCommand {
+    pub after_cursor: i64,
+    pub limit: u32,
+    pub run_id: Option<String>,
+    pub timeout_ms: u64,
+}
+
+impl WaitEventsCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        ListEventsCommand {
+            after_cursor: self.after_cursor,
+            limit: self.limit,
+            run_id: self.run_id.clone(),
+        }
+        .validate()?;
+        if self.timeout_ms == 0 || self.timeout_ms > 60_000 {
+            return Err("timeout_ms must be between 1 and 60000".to_string());
+        }
+        Ok(())
+    }
 }
 
 impl ListEventsCommand {
@@ -565,6 +590,14 @@ mod tests {
             after_cursor: 0,
             limit: LOCAL_AGENT_MAX_EVENT_PAGE_SIZE + 1,
             run_id: None,
+        }
+        .validate()
+        .is_err());
+        assert!(WaitEventsCommand {
+            after_cursor: 0,
+            limit: 10,
+            run_id: None,
+            timeout_ms: 60_001,
         }
         .validate()
         .is_err());
