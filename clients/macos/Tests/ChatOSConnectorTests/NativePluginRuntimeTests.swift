@@ -140,6 +140,16 @@ struct NativePluginRuntimeTests {
         throw CocoaError(.fileReadNoSuchFile)
     }
 
+    private func waitForFile(at url: URL) async throws {
+        for _ in 0..<100 {
+            if FileManager.default.fileExists(atPath: url.path) {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw CocoaError(.fileReadNoSuchFile)
+    }
+
     private func processExists(_ pid: pid_t) -> Bool {
         kill(pid, 0) == 0 || errno == EPERM
     }
@@ -1961,7 +1971,7 @@ struct NativePluginRuntimeTests {
                 timeout: .milliseconds(150)
             )
         }
-        try await Task.sleep(for: .milliseconds(35))
+        try await waitForFile(at: first.4)
         let secondCall = Task {
             try await store.call(
                 adapterSessionID: "adapter-second",
