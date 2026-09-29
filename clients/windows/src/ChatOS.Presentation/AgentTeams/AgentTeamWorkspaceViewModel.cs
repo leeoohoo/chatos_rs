@@ -86,6 +86,12 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
     [ObservableProperty]
     private bool _isBusy;
 
+    [ObservableProperty]
+    private bool _hasEarlierMessages;
+
+    [ObservableProperty]
+    private bool _isLoadingEarlierMessages;
+
     public async Task OpenAsync(
         string ownerUserId,
         WorkspaceProject project,
@@ -258,6 +264,43 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
         return revisions;
     }
 
+    public async Task LoadEarlierMessagesAsync()
+    {
+        using var context = RequireContext(CancellationToken.None);
+        var room = SelectedRoom;
+        var cursor = Messages.FirstOrDefault();
+        if (room is null || cursor is null || !HasEarlierMessages || IsLoadingEarlierMessages)
+            return;
+
+        await _refreshGate.WaitAsync(context.Token).ConfigureAwait(false);
+        try
+        {
+            await _dispatcher.InvokeAsync(() => IsLoadingEarlierMessages = true, context.Token)
+                .ConfigureAwait(false);
+            var page = await _service.ListEarlierMessagesAsync(context.Owner, room.Id,
+                cursor.CreatedAtUnixMs, cursor.Id, cancellationToken: context.Token)
+                .ConfigureAwait(false);
+            EnsureCurrent(context.Generation, context.Token);
+            await _dispatcher.InvokeAsync(() =>
+            {
+                var messages = page.Messages.Concat(Messages)
+                    .DistinctBy(message => message.Id, StringComparer.Ordinal)
+                    .OrderBy(message => message.CreatedAtUnixMs)
+                    .ThenBy(message => message.Id, StringComparer.Ordinal)
+                    .ToArray();
+                Replace(Messages, messages);
+                ReplaceMessageItems(messages, MemberProfiles);
+                HasEarlierMessages = page.HasMore;
+            }, context.Token).ConfigureAwait(false);
+        }
+        finally
+        {
+            await _dispatcher.InvokeAsync(() => IsLoadingEarlierMessages = false,
+                CancellationToken.None).ConfigureAwait(false);
+            _refreshGate.Release();
+        }
+    }
+
     private async Task LoadSelectedRoomAsync(SessionContext context)
     {
         var room = SelectedRoom;
@@ -267,18 +310,22 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
         EnsureCurrent(context.Generation, context.Token);
         await _dispatcher.InvokeAsync(() =>
         {
+            var preserveEarlier = _loadedRoomId == snapshot.Room.Id;
+            var messages = snapshot.Messages
+                .Concat(preserveEarlier ? Messages : Enumerable.Empty<AgentMessage>())
+                .DistinctBy(message => message.Id, StringComparer.Ordinal)
+                .OrderBy(message => message.CreatedAtUnixMs)
+                .ThenBy(message => message.Id, StringComparer.Ordinal)
+                .ToArray();
             SelectedRoom = snapshot.Room;
             Replace(Members, snapshot.Members);
             Replace(MemberProfiles, snapshot.Profiles);
-            Replace(Messages, snapshot.Messages);
-            var agentNames = Agents.Concat(snapshot.Profiles)
-                .GroupBy(agent => agent.Id, StringComparer.Ordinal)
-                .ToDictionary(group => group.Key, group => group.Last().Draft.Name,
-                    StringComparer.Ordinal);
-            Replace(MessageItems, snapshot.Messages.Select(message =>
-                new AgentMessageItemViewModel(message,
-                    message.SenderAgentId is not null &&
-                    agentNames.TryGetValue(message.SenderAgentId, out var name) ? name : null)));
+            Replace(Messages, messages);
+            ReplaceMessageItems(messages, snapshot.Profiles);
+            HasEarlierMessages = preserveEarlier
+                ? HasEarlierMessages
+                : snapshot.HasEarlierMessages;
+            var agentNames = AgentNames(snapshot.Profiles);
             Replace(Todos, snapshot.Todos);
             Replace(TodoItems, snapshot.Todos.Select(todo =>
                 new AgentTodoItemViewModel(todo,
@@ -303,6 +350,8 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
         MemberProfiles.Clear();
         Messages.Clear();
         MessageItems.Clear();
+        HasEarlierMessages = false;
+        IsLoadingEarlierMessages = false;
         Todos.Clear();
         TodoItems.Clear();
         SelectedTodoProgress.Clear();
@@ -317,6 +366,23 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
         SelectedTodo = null;
         SelectedAsset = null;
     }
+
+    private void ReplaceMessageItems(
+        IEnumerable<AgentMessage> messages,
+        IEnumerable<AgentProfile> roomProfiles)
+    {
+        var agentNames = AgentNames(roomProfiles);
+        Replace(MessageItems, messages.Select(message =>
+            new AgentMessageItemViewModel(message,
+                message.SenderAgentId is not null &&
+                agentNames.TryGetValue(message.SenderAgentId, out var name) ? name : null)));
+    }
+
+    private Dictionary<string, string> AgentNames(IEnumerable<AgentProfile> roomProfiles) =>
+        Agents.Concat(roomProfiles)
+            .GroupBy(agent => agent.Id, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Last().Draft.Name,
+                StringComparer.Ordinal);
 
     private async void OnServiceChanged(object? sender, AgentTeamChangedEventArgs args)
     {

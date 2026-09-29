@@ -148,6 +148,12 @@
                                 </ScrollViewer>
 
                                 <ListView Grid.Row="3" Padding="14,6" Background="Transparent" BorderThickness="0" HorizontalContentAlignment="Stretch" ItemsSource="{x:Bind ViewModel.MessageItems}" SelectionMode="None">
+                                    <ListView.Header>
+                                        <Grid Padding="0,5,0,7" Visibility="{x:Bind ViewModel.HasEarlierMessages, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <Button HorizontalAlignment="Center" Click="OnLoadEarlierMessagesClick" Content="加载更早消息" Style="{StaticResource ChatOSSecondaryButtonStyle}" Visibility="{x:Bind ViewModel.IsLoadingEarlierMessages, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
+                                            <ProgressRing Width="20" Height="20" HorizontalAlignment="Center" IsActive="{x:Bind ViewModel.IsLoadingEarlierMessages, Mode=OneWay}" Visibility="{x:Bind ViewModel.IsLoadingEarlierMessages, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        </Grid>
+                                    </ListView.Header>
                                     <ListView.ItemContainerStyle>
                                         <Style TargetType="ListViewItem">
                                             <Setter Property="HorizontalContentAlignment" Value="Stretch" />

@@ -258,4 +258,9 @@ public sealed record AgentTeamSnapshot(
     IReadOnlyList<AgentTeamAsset> Assets,
     IReadOnlyList<AgentRequirementSurvey> RequirementSurveys,
     IReadOnlyList<AgentStaffingProposal> StaffingProposals,
-    IReadOnlyList<AgentRunSummary> Runs);
+    IReadOnlyList<AgentRunSummary> Runs,
+    bool HasEarlierMessages = false);
+
+public sealed record AgentMessagePage(
+    IReadOnlyList<AgentMessage> Messages,
+    bool HasMore);

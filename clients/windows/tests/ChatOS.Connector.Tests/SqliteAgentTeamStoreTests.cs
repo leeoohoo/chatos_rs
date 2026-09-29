@@ -152,6 +152,33 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MessagesPageBackwardWithoutDuplicatesAtEqualTimestamps()
+    {
+        var agent = await CreateAgentAsync("alice", "分页 Agent");
+        var room = await _store.OpenHumanAgentDirectAsync("alice", agent.Id);
+        for (var index = 0; index < 5; index++)
+        {
+            await _store.PostMessageAsync("alice", room.Id,
+                new AgentMessageDraft(AgentMessageSenderKind.Human, null, $"message-{index}"));
+        }
+
+        var all = await _store.ListMessagesAsync("alice", room.Id, 20);
+        var latest = await _store.ListMessagesAsync("alice", room.Id, 2);
+        var middle = await _store.ListMessagesAsync("alice", room.Id, 2,
+            cancellationToken: default,
+            beforeCreatedAtUnixMs: latest[0].CreatedAtUnixMs,
+            beforeMessageId: latest[0].Id);
+        var oldest = await _store.ListMessagesAsync("alice", room.Id, 2,
+            cancellationToken: default,
+            beforeCreatedAtUnixMs: middle[0].CreatedAtUnixMs,
+            beforeMessageId: middle[0].Id);
+
+        var paged = oldest.Concat(middle).Concat(latest).ToArray();
+        Assert.Equal(all.Select(message => message.Id), paged.Select(message => message.Id));
+        Assert.Equal(paged.Length, paged.Select(message => message.Id).Distinct().Count());
+    }
+
+    [Fact]
     public async Task AgentMentionsRespectHopAndRootRunLimits()
     {
         var (manager, worker, room) = await CreateConfiguredTeamAsync();

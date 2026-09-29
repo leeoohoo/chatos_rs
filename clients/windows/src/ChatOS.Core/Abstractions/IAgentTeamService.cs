@@ -77,6 +77,15 @@ public interface IAgentTeamService
         string roomId,
         CancellationToken cancellationToken = default);
 
+    Task<AgentMessagePage> ListEarlierMessagesAsync(
+        string ownerUserId,
+        string roomId,
+        long beforeCreatedAtUnixMs,
+        string beforeMessageId,
+        int limit = 60,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(new AgentMessagePage([], false));
+
     Task<AgentPostResult> PostHumanMessageAsync(
         string ownerUserId,
         string roomId,

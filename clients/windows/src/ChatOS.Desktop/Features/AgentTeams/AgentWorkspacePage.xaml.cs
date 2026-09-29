@@ -35,6 +35,9 @@ public sealed partial class AgentWorkspacePage : Page
     private async void OnRefreshClick(object sender, RoutedEventArgs e) =>
         await IgnoreFailureAsync(() => ViewModel.RefreshAsync());
 
+    private async void OnLoadEarlierMessagesClick(object sender, RoutedEventArgs e) =>
+        await IgnoreFailureAsync(ViewModel.LoadEarlierMessagesAsync);
+
     private async void OnRunAgentsClick(object sender, RoutedEventArgs e) =>
         await IgnoreFailureAsync(ViewModel.DrainAsync);
 

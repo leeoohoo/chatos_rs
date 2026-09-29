@@ -83,7 +83,9 @@ public interface IAgentTeamStore
         string roomId,
         int limit = 200,
         bool includeAttachmentPayloads = false,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        long? beforeCreatedAtUnixMs = null,
+        string? beforeMessageId = null);
 
     Task<AgentMessage?> GetMessageAsync(
         string ownerUserId,

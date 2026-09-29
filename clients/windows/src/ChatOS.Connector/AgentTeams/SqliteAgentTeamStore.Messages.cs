@@ -10,23 +10,42 @@ public sealed partial class SqliteAgentTeamStore
         string roomId,
         int limit = 200,
         bool includeAttachmentPayloads = false,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        long? beforeCreatedAtUnixMs = null,
+        string? beforeMessageId = null)
     {
         if (limit is < 1 or > 1_000)
         {
             throw AgentTeamValidation.Invalid(nameof(limit));
         }
+        if (beforeCreatedAtUnixMs.HasValue != (beforeMessageId is not null) ||
+            beforeCreatedAtUnixMs is < 0)
+        {
+            throw AgentTeamValidation.Invalid(nameof(beforeMessageId));
+        }
+        if (beforeMessageId is not null)
+        {
+            AgentTeamValidation.Identifier(beforeMessageId, nameof(beforeMessageId));
+        }
+
+        var cursorPredicate = beforeCreatedAtUnixMs is null
+            ? string.Empty
+            : "AND (created_at_unix_ms < @p3 OR (created_at_unix_ms = @p3 AND id < @p4))";
+        object[] queryValues = beforeCreatedAtUnixMs is null
+            ? new object[] { ownerUserId, roomId, limit }
+            : [ownerUserId, roomId, limit, beforeCreatedAtUnixMs.Value, beforeMessageId!];
 
         await using var connection = await database.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         var rows = new List<MessageRow>();
-        using (var command = Command(connection, null, """
+        using (var command = Command(connection, null, $"""
             SELECT id, sender_kind, sender_agent_id, content, reply_to_message_id,
                 root_message_id, hop_count, created_at_unix_ms
             FROM agent_messages
             WHERE owner_user_id = @p0 AND room_id = @p1
+                {cursorPredicate}
             ORDER BY created_at_unix_ms DESC, id DESC
             LIMIT @p2
-            """, ownerUserId, roomId, limit))
+            """, queryValues))
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
         {
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
@@ -46,16 +65,17 @@ public sealed partial class SqliteAgentTeamStore
         rows.Reverse();
         var mentions = rows.ToDictionary(value => value.Id,
             _ => new List<string>(), StringComparer.Ordinal);
-        using (var mentionCommand = Command(connection, null, """
+        using (var mentionCommand = Command(connection, null, $"""
             WITH recent AS (
                 SELECT id FROM agent_messages
                 WHERE owner_user_id = @p0 AND room_id = @p1
+                    {cursorPredicate}
                 ORDER BY created_at_unix_ms DESC, id DESC LIMIT @p2
             )
             SELECT m.message_id, m.agent_id FROM agent_message_mentions m
             JOIN recent r ON r.id = m.message_id
             WHERE m.owner_user_id = @p0 ORDER BY m.message_id, m.agent_id
-            """, ownerUserId, roomId, limit))
+            """, queryValues))
         await using (var reader = await mentionCommand.ExecuteReaderAsync(cancellationToken)
             .ConfigureAwait(false))
         {
@@ -79,6 +99,7 @@ public sealed partial class SqliteAgentTeamStore
             WITH recent AS (
                 SELECT id FROM agent_messages
                 WHERE owner_user_id = @p0 AND room_id = @p1
+                    {cursorPredicate}
                 ORDER BY created_at_unix_ms DESC, id DESC LIMIT @p2
             )
             SELECT a.message_id, a.id, a.name, a.mime_type, a.kind, a.byte_count,
@@ -86,7 +107,7 @@ public sealed partial class SqliteAgentTeamStore
             FROM agent_message_attachments a JOIN recent r ON r.id = a.message_id
             {payloadJoin}
             WHERE a.owner_user_id = @p0 ORDER BY a.message_id, a.id
-            """, ownerUserId, roomId, limit))
+            """, queryValues))
         await using (var reader = await attachmentCommand.ExecuteReaderAsync(cancellationToken)
             .ConfigureAwait(false))
         {
