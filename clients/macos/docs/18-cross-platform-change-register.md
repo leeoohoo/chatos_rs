@@ -140,7 +140,7 @@ Windows 状态只允许使用：
 - macOS 状态：代码与自动化已验证。
 - Windows 是否需要代码修改：需要。Windows 原先只有登录、会话恢复和退出能力。
 - Windows 必做项：接入相同注册协议；实现邀请码、验证码、密码确认、重发倒计时和注册后自动登录；访问令牌继续只写入 Windows Credential Manager；覆盖 API payload、校验和工作区切换测试；完成 Windows 真机邮箱注册与高 DPI 视觉验收。
-- Windows 状态：`待自动化验证`；注册协议、WinUI 流程、双语界面和测试已实现，等待 Windows CI 后进入真机验收。
+- Windows 状态：`待真机验收`；注册协议、WinUI 流程、双语界面、Windows 原生测试和自包含安装包均已验证。
 
 ### CP-20260928-002：Agent 运行参数由配置中心统一管理
 
@@ -150,7 +150,7 @@ Windows 状态只允许使用：
 - macOS 状态：代码与自动化已验证。
 - Windows 是否需要代码修改：需要。Windows Agent 团队原先固定使用 16 次模型调用、5 次瞬时重试和 3 分钟请求超时。
 - Windows 必做项：解码并验证 `native_agent_runtime_settings`；与 managed trust 同轮刷新；调度器在每个 Run 开始时冻结当前配置并应用模型调用、重试、请求和整轮超时；无配置时使用共享产品默认值；完成 Windows CI 与长 Run 真机验收。
-- Windows 状态：`待自动化验证`；managed config 映射、原子内存快照和调度器接线已实现，等待 Windows CI。
+- Windows 状态：`待真机验收`；managed config 映射、原子内存快照、调度器接线、Windows 原生测试和自包含安装包均已验证。
 
 ## 新记录模板
 
