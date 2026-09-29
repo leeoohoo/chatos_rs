@@ -19,7 +19,7 @@ The current milestone provides:
 - a local tool registry and one-invocation Tool Scheduler;
 - a client-owned MCP stdio process/session adapter with local tool discovery and execution;
 - durable installed-Plugin/MCP snapshots in the client-owned SQLite database;
-- a client-owned Conversation/Turn/Message fact source with atomic Main Chat Run creation;
+- a client-owned Conversation/Turn/Message fact source with atomic Main Chat Run creation and control;
 - durable local Message attachment references without storing file bodies in SQLite;
 - idempotent Task Graph terminal summaries written back to their source Conversation;
 - an event-driven Host Coordinator that drains model and tool work to quiescence;
@@ -43,9 +43,11 @@ The in-process assembly reserves `create_task` and `create_tasks_with_prerequisi
 
 Native clients may choose `LocalAgentHostAssembly::with_external_tool_worker`. In that mode Swift or C# claims and commits platform tools through IPC, while Rust still owns model scheduling plus the two Task creation tools and wakes immediately after each native tool receipt. This keeps platform permissions and UI-bound tools in the native process without duplicating the Agent loop.
 
-Protocol v11 retains the optional `include_tool_names` and `exclude_tool_names` Tool claim filters. The Assembly's Rust worker includes only the two reserved Task tools, and Coordinator IPC automatically excludes them from native claims. Explicit overlapping filters are rejected.
+Protocol v12 retains the optional `include_tool_names` and `exclude_tool_names` Tool claim filters. The Assembly's Rust worker includes only the two reserved Task tools, and Coordinator IPC automatically excludes them from native claims. Explicit overlapping filters are rejected.
 
 Main Chat conversations are now written to the local SQLite fact source rather than a server Task Runner or `chatos` conversation runtime. Starting a Turn atomically creates the Turn, its user Message, and one queued `main_chat` Run owned by that Turn. A conversation version compare-and-swap rejects stale composers, while a partial unique index permits only one active Turn per conversation. Successful Runs append a deterministic assistant Message and close the Turn in the same transaction; failed or cancelled Runs close the Turn without inventing an assistant response. Historical server conversations are intentionally not migrated.
+
+Ask User continuation and user-initiated stop use Conversation-specific commands rather than bypassing the Conversation repository with generic Run mutations. `resume_conversation_turn` checks exact Conversation and Run versions, appends the reply Message and attachment references, advances the Run to `continuation_ready`, and increments the Conversation version in one transaction. `cancel_conversation_turn` verifies Turn ownership, cancels its Run, invalidates open tool invocations, closes the Turn, and increments the Conversation version atomically. Durable command receipts make both operations replay-safe.
 
 User Messages can include up to 32 local attachment records. SQLite stores only display metadata, byte size, canonical SHA-256 and an opaque `authorized_local_ref` in the `local-attachment:<token>` namespace; raw paths, URLs, file bodies and unrestricted Base64 are rejected or excluded from database and IPC attachment fields. Turn creation commits attachment rows in the same transaction as the Message and Run. The Main Chat planner sends the model a bounded attachment manifest so a capability-approved native tool can resolve the opaque reference and verify its hash locally. Arbitrary attachment metadata is retained for the client UI but is not forwarded to the model.
 
@@ -100,7 +102,7 @@ Example health request:
 
 ```json
 {
-  "protocol_version": 11,
+  "protocol_version": 12,
   "command_id": "health-019",
   "command": {
     "type": "health"
@@ -137,6 +139,8 @@ Mutating commands use `command_id` as an idempotency key. Reusing a key with dif
 - `get_conversation`
 - `list_conversations`
 - `start_conversation_turn`
+- `resume_conversation_turn`
+- `cancel_conversation_turn`
 
 `create_task_graph` validates the complete acyclic graph and writes it in one SQLite transaction. Tasks without prerequisites start as `ready`; dependent tasks start as `pending`. Graph creation uses the same command receipt mechanism as Run mutations, so an identical `command_id` replay returns the original graph and a mismatched replay is rejected.
 

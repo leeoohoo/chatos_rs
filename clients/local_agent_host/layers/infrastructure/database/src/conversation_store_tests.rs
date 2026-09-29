@@ -2,8 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use chatos_local_agent_ports::LocalAgentRunStore;
-use chatos_local_agent_protocol::{LocalAgentRunStatus, LocalConversationAttachmentSpec};
+use chatos_local_agent_ports::{LocalAgentRunStore, RunTransition};
+use chatos_local_agent_protocol::{
+    CancelConversationTurnCommand, LocalAgentRunStatus, LocalConversationAttachmentSpec,
+    ResumeConversationTurnCommand,
+};
 use serde_json::{json, Value};
 
 fn idempotency(command_id: &str) -> IdempotentCommand {
@@ -95,6 +98,51 @@ async fn start(
             now,
         )
         .await
+}
+
+async fn wait_for_user(
+    storage: &SqliteClientStorage,
+    run_id: &str,
+    suffix: &str,
+    now: i64,
+) -> LocalAgentRunRecord {
+    let claim = storage
+        .claim_next_run(
+            &idempotency(&format!("claim-{suffix}")),
+            "worker-1",
+            &format!("token-{suffix}"),
+            now,
+            now + 10_000,
+            &format!("event-claim-{suffix}"),
+        )
+        .await
+        .expect("claim")
+        .expect("claimed Run");
+    assert_eq!(claim.run.run_id, run_id);
+    storage
+        .apply_transition(
+            &idempotency(&format!("wait-{suffix}")),
+            &RunTransition {
+                run_id: claim.run.run_id,
+                claim_token: claim.claim_token,
+                expected_version: claim.run.version,
+                expected_status: LocalAgentRunStatus::ModelRunning,
+                next_status: LocalAgentRunStatus::WaitingUser,
+                next_model_attempt: 1,
+                next_attempt_at_unix_ms: None,
+                pending_tool_batch: None,
+                tool_batch: None,
+                checkpoint: Some(json!({"prompt": "continue?"})),
+                clear_continuation_input: true,
+                terminal_outcome: None,
+                event_id: format!("event-wait-{suffix}"),
+                event_type: "run_waiting_user".to_string(),
+                event_payload: json!({"prompt": "continue?"}),
+                occurred_at_unix_ms: now + 1_000,
+            },
+        )
+        .await
+        .expect("wait for user")
 }
 
 #[tokio::test]
@@ -293,4 +341,144 @@ async fn terminal_runs_reconcile_turns_and_assistant_messages() {
     assert_eq!(failed.conversation.version, 3);
     assert_eq!(failed.turns[0].status, LocalConversationTurnStatus::Failed);
     assert_eq!(failed.messages.len(), 1);
+}
+
+#[tokio::test]
+async fn resume_turn_is_atomic_idempotent_and_rejects_stale_versions() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    create(&storage, "conversation-resume").await;
+    let initial = turn("conversation-resume", 1, "resume");
+    start(&storage, &initial, 2_000).await.expect("start Turn");
+    let waiting = wait_for_user(&storage, &initial.run_id, "resume", 3_000).await;
+
+    let mut command = ResumeConversationTurnCommand {
+        conversation_id: "conversation-resume".to_string(),
+        expected_conversation_version: 2,
+        turn_id: initial.turn_id.clone(),
+        expected_run_version: waiting.version,
+        expected_run_status: LocalAgentRunStatus::WaitingUser,
+        message_id: "message-resume-answer".to_string(),
+        message: "continue locally".to_string(),
+        message_metadata: json!({"source": "ask_user"}),
+        attachments: vec![LocalConversationAttachmentSpec {
+            attachment_id: "attachment-resume-answer".to_string(),
+            display_name: "answer.txt".to_string(),
+            media_type: "text/plain".to_string(),
+            byte_size: 5,
+            sha256: "b".repeat(64),
+            authorized_local_ref: "local-attachment:answer".to_string(),
+            metadata: json!({}),
+        }],
+        reason: "user replied".to_string(),
+    };
+    let continuation = json!({
+        "type": "resume",
+        "reason": "user replied",
+        "input": {"message": "continue locally", "attachments": command.attachments}
+    });
+
+    command.expected_conversation_version = 3;
+    assert!(matches!(
+        storage
+            .resume_conversation_turn(
+                &idempotency("resume-stale-conversation"),
+                &command,
+                &continuation,
+                "event-resume-stale",
+                5_000,
+            )
+            .await,
+        Err(ClientStorageError::Conflict(_))
+    ));
+    command.expected_conversation_version = 2;
+    command.expected_run_version += 1;
+    assert!(matches!(
+        storage
+            .resume_conversation_turn(
+                &idempotency("resume-stale-run"),
+                &command,
+                &continuation,
+                "event-resume-stale-run",
+                5_000,
+            )
+            .await,
+        Err(ClientStorageError::Conflict(_))
+    ));
+    let unchanged = storage
+        .get_conversation("conversation-resume")
+        .await
+        .expect("get unchanged conversation")
+        .expect("conversation");
+    assert_eq!(unchanged.conversation.version, 2);
+    assert_eq!(unchanged.messages.len(), 1);
+    assert_eq!(unchanged.attachments.len(), 0);
+
+    command.expected_run_version = waiting.version;
+    let receipt = idempotency("resume-conversation-turn");
+    let resumed = storage
+        .resume_conversation_turn(&receipt, &command, &continuation, "event-resume", 6_000)
+        .await
+        .expect("resume Turn");
+    assert_eq!(resumed.conversation.version, 3);
+    assert_eq!(resumed.run.status, LocalAgentRunStatus::ContinuationReady);
+    assert_eq!(resumed.run.continuation_input, Some(continuation.clone()));
+    assert_eq!(resumed.message.as_ref().expect("message").ordinal, 2);
+    assert_eq!(resumed.attachments.len(), 1);
+
+    let replay = storage
+        .resume_conversation_turn(&receipt, &command, &continuation, "ignored-event", 7_000)
+        .await
+        .expect("replay resume");
+    assert_eq!(replay, resumed);
+    let after_replay = storage
+        .get_conversation("conversation-resume")
+        .await
+        .expect("get replayed conversation")
+        .expect("conversation");
+    assert_eq!(after_replay.messages.len(), 2);
+    assert_eq!(after_replay.attachments.len(), 1);
+}
+
+#[tokio::test]
+async fn cancel_turn_reconciles_the_owned_run_without_assistant_message() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    create(&storage, "conversation-stop").await;
+    let initial = turn("conversation-stop", 1, "stop");
+    let started = start(&storage, &initial, 2_000).await.expect("start Turn");
+    let command = CancelConversationTurnCommand {
+        conversation_id: "conversation-stop".to_string(),
+        expected_conversation_version: 2,
+        turn_id: initial.turn_id,
+        expected_run_version: Some(started.run.version),
+        reason: "user stopped".to_string(),
+    };
+    let receipt = idempotency("cancel-conversation-turn");
+    let cancelled = storage
+        .cancel_conversation_turn(&receipt, &command, "event-stop", 3_000)
+        .await
+        .expect("cancel Turn");
+    assert_eq!(cancelled.conversation.version, 3);
+    assert_eq!(cancelled.run.status, LocalAgentRunStatus::Cancelled);
+    assert_eq!(
+        cancelled.turn.status,
+        LocalConversationTurnStatus::Cancelled
+    );
+    assert!(cancelled.message.is_none());
+    assert!(cancelled.attachments.is_empty());
+
+    let replay = storage
+        .cancel_conversation_turn(&receipt, &command, "ignored-event", 4_000)
+        .await
+        .expect("replay cancel");
+    assert_eq!(replay, cancelled);
+    let detail = storage
+        .get_conversation("conversation-stop")
+        .await
+        .expect("get cancelled conversation")
+        .expect("conversation");
+    assert_eq!(detail.messages.len(), 1);
 }

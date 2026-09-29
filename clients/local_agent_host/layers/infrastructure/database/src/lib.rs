@@ -15,10 +15,12 @@ use sqlx::{
 };
 use std::{path::Path, str::FromStr, time::Duration};
 
+mod conversation_commands;
 mod conversation_lifecycle;
 mod conversation_store;
 mod migration;
 mod plugin_store;
+mod run_commands;
 mod run_record;
 mod schema;
 mod task_commands;
@@ -613,75 +615,12 @@ impl LocalAgentRunStore for SqliteClientStorage {
             if let Some(replay) = Self::replay(&mut connection, command).await.db()? {
                 return Ok(replay);
             }
-            let current = Self::fetch_run_on(&mut connection, run_id)
-                .await
-                .db()?
-                .ok_or_else(|| ClientStorageError::NotFound(run_id.to_string()))?;
-            if current.status.is_terminal() {
-                return Err(ClientStorageError::Conflict(format!(
-                    "terminal run cannot be cancelled: {run_id}"
-                )));
-            }
-            if expected_version.is_some_and(|value| value != current.version) {
-                return Err(ClientStorageError::Conflict(format!(
-                    "run version changed: {run_id}"
-                )));
-            }
-            let updated = sqlx::query(
-                "UPDATE local_agent_runs SET status = 'cancelled', version = version + 1, \
-                 claim_token = NULL, claim_until_unix_ms = NULL, next_attempt_at_unix_ms = NULL, \
-                 pending_tool_batch_json = NULL, continuation_input_json = NULL, \
-                 terminal_outcome_json = ?, updated_at_unix_ms = ? \
-                 WHERE run_id = ? AND version = ?",
-            )
-            .bind(serde_json::to_string(
-                &serde_json::json!({"reason": reason}),
-            )?)
-            .bind(now_unix_ms)
-            .bind(run_id)
-            .bind(current.version as i64)
-            .execute(&mut *connection)
-            .await
-            .db()?;
-            if updated.rows_affected() != 1 {
-                return Err(ClientStorageError::Conflict(format!(
-                    "run changed while cancelling: {run_id}"
-                )));
-            }
-            tool_store::fail_open_invocations_for_cancelled_run(
+            let run = run_commands::cancel_run_on(
                 &mut connection,
                 run_id,
+                expected_version,
                 reason,
-                now_unix_ms,
-            )
-            .await
-            .db()?;
-            Self::insert_event(
-                &mut connection,
                 event_id,
-                run_id,
-                "run_cancelled",
-                &serde_json::json!({"reason": reason}),
-                now_unix_ms,
-            )
-            .await
-            .db()?;
-            let run = Self::fetch_run_on(&mut connection, run_id)
-                .await
-                .db()?
-                .ok_or_else(|| ClientStorageError::NotFound(run_id.to_string()))?;
-            task_lifecycle::reconcile_task_after_run(&mut connection, &run, now_unix_ms)
-                .await
-                .db()?;
-            task_conversation_writeback::write_back_terminal_graph(
-                &mut connection,
-                &run,
-                now_unix_ms,
-            )
-            .await?;
-            conversation_lifecycle::reconcile_conversation_after_run(
-                &mut connection,
-                &run,
                 now_unix_ms,
             )
             .await?;

@@ -16,10 +16,11 @@ mod task;
 mod tool;
 
 pub use conversation::{
-    CreateConversationCommand, GetConversationCommand, ListConversationsCommand,
-    LocalConversationAttachmentRecord, LocalConversationAttachmentSpec, LocalConversationDetail,
-    LocalConversationMessageRecord, LocalConversationMessageRole, LocalConversationRecord,
-    LocalConversationTurnRecord, LocalConversationTurnStart, LocalConversationTurnStatus,
+    CancelConversationTurnCommand, CreateConversationCommand, GetConversationCommand,
+    ListConversationsCommand, LocalConversationAttachmentRecord, LocalConversationAttachmentSpec,
+    LocalConversationDetail, LocalConversationMessageRecord, LocalConversationMessageRole,
+    LocalConversationRecord, LocalConversationTurnRecord, LocalConversationTurnStart,
+    LocalConversationTurnStatus, LocalConversationTurnUpdate, ResumeConversationTurnCommand,
     StartConversationTurnCommand, LOCAL_CONVERSATION_MAX_ATTACHMENTS,
 };
 pub use plugin::{
@@ -38,7 +39,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 11;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 12;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -91,6 +92,8 @@ pub enum HostCommand {
     GetConversation(GetConversationCommand),
     ListConversations(ListConversationsCommand),
     StartConversationTurn(StartConversationTurnCommand),
+    ResumeConversationTurn(ResumeConversationTurnCommand),
+    CancelConversationTurn(CancelConversationTurnCommand),
 }
 
 impl HostCommand {
@@ -121,6 +124,8 @@ impl HostCommand {
             Self::GetConversation(command) => command.validate(),
             Self::ListConversations(command) => command.validate(),
             Self::StartConversationTurn(command) => command.validate(),
+            Self::ResumeConversationTurn(command) => command.validate(),
+            Self::CancelConversationTurn(command) => command.validate(),
         }
     }
 }
@@ -582,6 +587,9 @@ pub enum HostResult {
     },
     ConversationTurnStarted {
         result: Box<LocalConversationTurnStart>,
+    },
+    ConversationTurnUpdated {
+        result: Box<LocalConversationTurnUpdate>,
     },
 }
 

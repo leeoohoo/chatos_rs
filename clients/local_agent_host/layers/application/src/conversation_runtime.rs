@@ -4,7 +4,8 @@
 use super::{new_event_id, LocalAgentRuntime, LocalAgentRuntimeError};
 use chatos_local_agent_ports::{ClientStorageError, IdempotentCommand};
 use chatos_local_agent_protocol::{
-    CreateConversationCommand, HostCommand, HostResult, LocalAgentRunRecord, LocalAgentRunStatus,
+    CancelConversationTurnCommand, CreateConversationCommand, HostCommand, HostResult,
+    LocalAgentRunRecord, LocalAgentRunStatus, ResumeConversationTurnCommand,
     StartConversationTurnCommand,
 };
 use serde_json::json;
@@ -35,6 +36,18 @@ impl LocalAgentRuntime {
             HostCommand::StartConversationTurn(command) => {
                 let result = self.start_conversation_turn(idempotency, command).await?;
                 Ok(HostResult::ConversationTurnStarted {
+                    result: Box::new(result),
+                })
+            }
+            HostCommand::ResumeConversationTurn(command) => {
+                let result = self.resume_conversation_turn(idempotency, command).await?;
+                Ok(HostResult::ConversationTurnUpdated {
+                    result: Box::new(result),
+                })
+            }
+            HostCommand::CancelConversationTurn(command) => {
+                let result = self.cancel_conversation_turn(idempotency, command).await?;
+                Ok(HostResult::ConversationTurnUpdated {
                     result: Box::new(result),
                 })
             }
@@ -99,6 +112,44 @@ impl LocalAgentRuntime {
             .start_conversation_turn(idempotency, &command, &run, &new_event_id(), now)
             .await?)
     }
+
+    async fn resume_conversation_turn(
+        &self,
+        idempotency: &IdempotentCommand,
+        command: ResumeConversationTurnCommand,
+    ) -> Result<chatos_local_agent_protocol::LocalConversationTurnUpdate, LocalAgentRuntimeError>
+    {
+        let continuation_input = json!({
+            "type": "resume",
+            "reason": &command.reason,
+            "input": {
+                "message": &command.message,
+                "attachments": &command.attachments,
+            }
+        });
+        Ok(self
+            .store
+            .resume_conversation_turn(
+                idempotency,
+                &command,
+                &continuation_input,
+                &new_event_id(),
+                self.now()?,
+            )
+            .await?)
+    }
+
+    async fn cancel_conversation_turn(
+        &self,
+        idempotency: &IdempotentCommand,
+        command: CancelConversationTurnCommand,
+    ) -> Result<chatos_local_agent_protocol::LocalConversationTurnUpdate, LocalAgentRuntimeError>
+    {
+        Ok(self
+            .store
+            .cancel_conversation_turn(idempotency, &command, &new_event_id(), self.now()?)
+            .await?)
+    }
 }
 
 #[cfg(test)]
@@ -106,9 +157,10 @@ mod tests {
     use super::*;
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
+        CancelConversationTurnCommand, ClaimNextRunCommand, CommitStepCommand,
         GetConversationCommand, HostRequestEnvelope, ListConversationsCommand,
-        LocalConversationAttachmentSpec, LocalConversationMessageRole, LocalConversationTurnStatus,
-        LOCAL_AGENT_PROTOCOL_VERSION,
+        LocalAgentStepOutcome, LocalConversationAttachmentSpec, LocalConversationMessageRole,
+        LocalConversationTurnStatus, ResumeConversationTurnCommand, LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use std::sync::Arc;
 
@@ -229,5 +281,117 @@ mod tests {
             listed,
             HostResult::Conversations { conversations } if conversations.len() == 1
         ));
+    }
+
+    #[tokio::test]
+    async fn host_routes_conversation_resume_and_stop_with_version_checks() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
+        runtime.initialize().await.expect("initialize");
+        runtime
+            .try_handle(request(
+                "create-conversation-control",
+                HostCommand::CreateConversation(create_conversation()),
+            ))
+            .await
+            .expect("create conversation");
+        runtime
+            .try_handle(request(
+                "start-turn-control",
+                HostCommand::StartConversationTurn(start_turn(1)),
+            ))
+            .await
+            .expect("start Turn");
+        let claim = runtime
+            .try_handle(request(
+                "claim-turn-control",
+                HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                    worker_id: "model-worker".to_string(),
+                    lease_duration_ms: 10_000,
+                }),
+            ))
+            .await
+            .expect("claim Run");
+        let HostResult::Claim { claim: Some(claim) } = claim else {
+            panic!("unexpected claim result")
+        };
+        let waiting = runtime
+            .try_handle(request(
+                "wait-turn-control",
+                HostCommand::CommitStep(CommitStepCommand {
+                    run_id: claim.run.run_id,
+                    claim_token: claim.claim_token,
+                    expected_version: claim.run.version,
+                    outcome: LocalAgentStepOutcome::WaitForUser {
+                        prompt: json!({"question": "continue?"}),
+                        checkpoint: json!({"response_id": "response-1"}),
+                    },
+                }),
+            ))
+            .await
+            .expect("wait for user");
+        let HostResult::Run { run: waiting } = waiting else {
+            panic!("unexpected wait result")
+        };
+
+        let resumed = runtime
+            .try_handle(request(
+                "resume-turn-control",
+                HostCommand::ResumeConversationTurn(ResumeConversationTurnCommand {
+                    conversation_id: "conversation-1".to_string(),
+                    expected_conversation_version: 2,
+                    turn_id: "turn-1".to_string(),
+                    expected_run_version: waiting.version,
+                    expected_run_status: LocalAgentRunStatus::WaitingUser,
+                    message_id: "message-2".to_string(),
+                    message: "continue".to_string(),
+                    message_metadata: json!({"source": "ask_user"}),
+                    attachments: Vec::new(),
+                    reason: "user replied".to_string(),
+                }),
+            ))
+            .await
+            .expect("resume Turn");
+        let HostResult::ConversationTurnUpdated { result: resumed } = resumed else {
+            panic!("unexpected resume result")
+        };
+        assert_eq!(resumed.conversation.version, 3);
+        assert_eq!(resumed.run.status, LocalAgentRunStatus::ContinuationReady);
+        assert_eq!(
+            resumed
+                .run
+                .continuation_input
+                .as_ref()
+                .expect("continuation")["input"]["message"],
+            "continue"
+        );
+
+        let cancelled = runtime
+            .try_handle(request(
+                "cancel-turn-control",
+                HostCommand::CancelConversationTurn(CancelConversationTurnCommand {
+                    conversation_id: "conversation-1".to_string(),
+                    expected_conversation_version: resumed.conversation.version,
+                    turn_id: "turn-1".to_string(),
+                    expected_run_version: Some(resumed.run.version),
+                    reason: "user stopped".to_string(),
+                }),
+            ))
+            .await
+            .expect("cancel Turn");
+        let HostResult::ConversationTurnUpdated { result: cancelled } = cancelled else {
+            panic!("unexpected cancel result")
+        };
+        assert_eq!(cancelled.conversation.version, 4);
+        assert_eq!(cancelled.run.status, LocalAgentRunStatus::Cancelled);
+        assert_eq!(
+            cancelled.turn.status,
+            LocalConversationTurnStatus::Cancelled
+        );
+        assert!(cancelled.message.is_none());
     }
 }

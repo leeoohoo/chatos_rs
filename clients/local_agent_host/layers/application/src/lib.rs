@@ -315,7 +315,9 @@ impl LocalAgentRuntime {
             command @ (HostCommand::CreateConversation(_)
             | HostCommand::GetConversation(_)
             | HostCommand::ListConversations(_)
-            | HostCommand::StartConversationTurn(_)) => {
+            | HostCommand::StartConversationTurn(_)
+            | HostCommand::ResumeConversationTurn(_)
+            | HostCommand::CancelConversationTurn(_)) => {
                 self.handle_conversation_command(&idempotency, command)
                     .await
             }

@@ -8,9 +8,9 @@ use super::{
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     CreateConversationCommand, LocalAgentRunRecord, LocalConversationAttachmentRecord,
-    LocalConversationDetail, LocalConversationMessageRecord, LocalConversationMessageRole,
-    LocalConversationRecord, LocalConversationTurnRecord, LocalConversationTurnStart,
-    LocalConversationTurnStatus, StartConversationTurnCommand,
+    LocalConversationAttachmentSpec, LocalConversationDetail, LocalConversationMessageRecord,
+    LocalConversationMessageRole, LocalConversationRecord, LocalConversationTurnRecord,
+    LocalConversationTurnStart, LocalConversationTurnStatus, StartConversationTurnCommand,
 };
 use serde_json::json;
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
@@ -149,61 +149,17 @@ impl LocalConversationStore for SqliteClientStorage {
             .execute(&mut *connection)
             .await
             .map_err(|error| map_turn_insert_error(error, &turn.conversation_id))?;
-            let ordinal = next_message_ordinal(&mut connection, &turn.conversation_id).await?;
-            sqlx::query(
-                "INSERT INTO local_conversation_messages(\
-                 message_id, conversation_id, turn_id, ordinal, role, content_json, \
-                 metadata_json, created_at_unix_ms) VALUES(?, ?, ?, ?, 'user', ?, ?, ?)",
+            insert_user_message_on(
+                &mut connection,
+                &turn.conversation_id,
+                &turn.turn_id,
+                &turn.message_id,
+                &turn.message,
+                &turn.message_metadata,
+                &turn.attachments,
+                now_unix_ms,
             )
-            .bind(&turn.message_id)
-            .bind(&turn.conversation_id)
-            .bind(&turn.turn_id)
-            .bind(ordinal)
-            .bind(serde_json::to_string(&json!({"text": turn.message}))?)
-            .bind(serde_json::to_string(&turn.message_metadata)?)
-            .bind(now_unix_ms)
-            .execute(&mut *connection)
-            .await
-            .db()?;
-            for (index, attachment) in turn.attachments.iter().enumerate() {
-                let ordinal = i64::try_from(index + 1).map_err(|_| {
-                    ClientStorageError::InvalidState("attachment ordinal exceeds i64".to_string())
-                })?;
-                let byte_size = i64::try_from(attachment.byte_size).map_err(|_| {
-                    ClientStorageError::InvalidState("attachment byte_size exceeds i64".to_string())
-                })?;
-                let inserted = sqlx::query(
-                    "INSERT INTO local_conversation_message_attachments(\
-                     attachment_id, conversation_id, turn_id, message_id, ordinal, \
-                     display_name, media_type, byte_size, sha256, authorized_local_ref, \
-                     metadata_json, created_at_unix_ms) \
-                     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                )
-                .bind(&attachment.attachment_id)
-                .bind(&turn.conversation_id)
-                .bind(&turn.turn_id)
-                .bind(&turn.message_id)
-                .bind(ordinal)
-                .bind(&attachment.display_name)
-                .bind(&attachment.media_type)
-                .bind(byte_size)
-                .bind(&attachment.sha256)
-                .bind(&attachment.authorized_local_ref)
-                .bind(serde_json::to_string(&attachment.metadata)?)
-                .bind(now_unix_ms)
-                .execute(&mut *connection)
-                .await;
-                if let Err(error) = inserted {
-                    return Err(if is_unique_violation(&error) {
-                        ClientStorageError::Conflict(format!(
-                            "attachment id already exists: {}",
-                            attachment.attachment_id
-                        ))
-                    } else {
-                        ClientStorageError::database(error)
-                    });
-                }
-            }
+            .await?;
             let updated = sqlx::query(
                 "UPDATE local_conversations SET version = version + 1, updated_at_unix_ms = ? \
                  WHERE conversation_id = ? AND version = ?",
@@ -265,6 +221,42 @@ impl LocalConversationStore for SqliteClientStorage {
         .await;
         Self::finish_write(&mut connection, result).await
     }
+
+    async fn resume_conversation_turn(
+        &self,
+        command: &IdempotentCommand,
+        turn: &chatos_local_agent_protocol::ResumeConversationTurnCommand,
+        continuation_input: &serde_json::Value,
+        event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<chatos_local_agent_protocol::LocalConversationTurnUpdate, ClientStorageError> {
+        super::conversation_commands::resume_conversation_turn(
+            self,
+            command,
+            turn,
+            continuation_input,
+            event_id,
+            now_unix_ms,
+        )
+        .await
+    }
+
+    async fn cancel_conversation_turn(
+        &self,
+        command: &IdempotentCommand,
+        turn: &chatos_local_agent_protocol::CancelConversationTurnCommand,
+        event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<chatos_local_agent_protocol::LocalConversationTurnUpdate, ClientStorageError> {
+        super::conversation_commands::cancel_conversation_turn(
+            self,
+            command,
+            turn,
+            event_id,
+            now_unix_ms,
+        )
+        .await
+    }
 }
 
 fn map_turn_insert_error(error: sqlx::Error, conversation_id: &str) -> ClientStorageError {
@@ -294,7 +286,81 @@ pub(super) async fn next_message_ordinal(
         .ok_or_else(|| ClientStorageError::InvalidState("message ordinal overflow".to_string()))
 }
 
-async fn fetch_conversation(
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn insert_user_message_on(
+    connection: &mut SqliteConnection,
+    conversation_id: &str,
+    turn_id: &str,
+    message_id: &str,
+    message: &str,
+    message_metadata: &serde_json::Value,
+    attachments: &[LocalConversationAttachmentSpec],
+    now_unix_ms: i64,
+) -> Result<(), ClientStorageError> {
+    let ordinal = next_message_ordinal(connection, conversation_id).await?;
+    let inserted = sqlx::query(
+        "INSERT INTO local_conversation_messages(\
+         message_id, conversation_id, turn_id, ordinal, role, content_json, \
+         metadata_json, created_at_unix_ms) VALUES(?, ?, ?, ?, 'user', ?, ?, ?)",
+    )
+    .bind(message_id)
+    .bind(conversation_id)
+    .bind(turn_id)
+    .bind(ordinal)
+    .bind(serde_json::to_string(&json!({"text": message}))?)
+    .bind(serde_json::to_string(message_metadata)?)
+    .bind(now_unix_ms)
+    .execute(&mut *connection)
+    .await;
+    if let Err(error) = inserted {
+        return Err(if is_unique_violation(&error) {
+            ClientStorageError::Conflict(format!("message id already exists: {message_id}"))
+        } else {
+            ClientStorageError::database(error)
+        });
+    }
+    for (index, attachment) in attachments.iter().enumerate() {
+        let attachment_ordinal = i64::try_from(index + 1).map_err(|_| {
+            ClientStorageError::InvalidState("attachment ordinal exceeds i64".to_string())
+        })?;
+        let byte_size = i64::try_from(attachment.byte_size).map_err(|_| {
+            ClientStorageError::InvalidState("attachment byte_size exceeds i64".to_string())
+        })?;
+        let inserted = sqlx::query(
+            "INSERT INTO local_conversation_message_attachments(\
+             attachment_id, conversation_id, turn_id, message_id, ordinal, display_name, \
+             media_type, byte_size, sha256, authorized_local_ref, metadata_json, \
+             created_at_unix_ms) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&attachment.attachment_id)
+        .bind(conversation_id)
+        .bind(turn_id)
+        .bind(message_id)
+        .bind(attachment_ordinal)
+        .bind(&attachment.display_name)
+        .bind(&attachment.media_type)
+        .bind(byte_size)
+        .bind(&attachment.sha256)
+        .bind(&attachment.authorized_local_ref)
+        .bind(serde_json::to_string(&attachment.metadata)?)
+        .bind(now_unix_ms)
+        .execute(&mut *connection)
+        .await;
+        if let Err(error) = inserted {
+            return Err(if is_unique_violation(&error) {
+                ClientStorageError::Conflict(format!(
+                    "attachment id already exists: {}",
+                    attachment.attachment_id
+                ))
+            } else {
+                ClientStorageError::database(error)
+            });
+        }
+    }
+    Ok(())
+}
+
+pub(super) async fn fetch_conversation(
     connection: &mut SqliteConnection,
     conversation_id: &str,
 ) -> Result<Option<LocalConversationDetail>, ClientStorageError> {
@@ -348,7 +414,7 @@ async fn fetch_conversation(
     }))
 }
 
-async fn fetch_conversation_record(
+pub(super) async fn fetch_conversation_record(
     connection: &mut SqliteConnection,
     conversation_id: &str,
 ) -> Result<Option<LocalConversationRecord>, ClientStorageError> {

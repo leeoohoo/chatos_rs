@@ -60,55 +60,126 @@ impl StartConversationTurnCommand {
         ] {
             validate_identifier(field, value)?;
         }
-        if self.message.trim().is_empty() {
-            if self.attachments.is_empty() {
-                return Err("message or attachments must be provided".to_string());
-            }
-        } else {
-            validate_text("message", &self.message, LOCAL_AGENT_MAX_INPUT_BYTES)?;
-        }
-        if self.attachments.len() > LOCAL_CONVERSATION_MAX_ATTACHMENTS {
-            return Err(format!(
-                "attachments exceeds the {LOCAL_CONVERSATION_MAX_ATTACHMENTS} item limit"
-            ));
-        }
-        let mut attachment_ids = HashSet::with_capacity(self.attachments.len());
-        for attachment in &self.attachments {
-            attachment.validate()?;
-            if !attachment_ids.insert(attachment.attachment_id.as_str()) {
-                return Err(format!(
-                    "duplicate attachment_id: {}",
-                    attachment.attachment_id
-                ));
-            }
-        }
-        let attachment_size = serde_json::to_vec(&self.attachments)
-            .map_err(|error| format!("attachments are not serializable: {error}"))?
-            .len();
+        validate_message_payload(&self.message, &self.message_metadata, &self.attachments)?;
         if self.max_iterations == 0 {
             return Err("max_iterations must be greater than zero".to_string());
         }
-        let metadata_size = serde_json::to_vec(&self.message_metadata)
-            .map_err(|error| format!("message_metadata is not serializable: {error}"))?
-            .len();
-        if metadata_size > LOCAL_AGENT_MAX_INPUT_BYTES {
-            return Err(format!(
-                "message_metadata exceeds the {LOCAL_AGENT_MAX_INPUT_BYTES} byte limit"
-            ));
-        }
-        let total_input_size = self
-            .message
-            .len()
-            .saturating_add(metadata_size)
-            .saturating_add(attachment_size);
-        if total_input_size > LOCAL_AGENT_MAX_INPUT_BYTES {
-            return Err(format!(
-                "message, metadata, and attachments exceed the \
-                 {LOCAL_AGENT_MAX_INPUT_BYTES} byte limit"
-            ));
-        }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ResumeConversationTurnCommand {
+    pub conversation_id: String,
+    pub expected_conversation_version: u64,
+    pub turn_id: String,
+    pub expected_run_version: u64,
+    pub expected_run_status: crate::LocalAgentRunStatus,
+    pub message_id: String,
+    pub message: String,
+    #[serde(default)]
+    pub message_metadata: Value,
+    #[serde(default)]
+    pub attachments: Vec<LocalConversationAttachmentSpec>,
+    pub reason: String,
+}
+
+impl ResumeConversationTurnCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        for (field, value) in [
+            ("conversation_id", self.conversation_id.as_str()),
+            ("turn_id", self.turn_id.as_str()),
+            ("message_id", self.message_id.as_str()),
+        ] {
+            validate_identifier(field, value)?;
+        }
+        if self.expected_conversation_version == 0 || self.expected_run_version == 0 {
+            return Err("expected versions must be greater than zero".to_string());
+        }
+        if !matches!(
+            self.expected_run_status,
+            crate::LocalAgentRunStatus::WaitingUser
+                | crate::LocalAgentRunStatus::Paused
+                | crate::LocalAgentRunStatus::NeedsReview
+        ) {
+            return Err(
+                "only waiting_user, paused, or needs_review Turns can be resumed".to_string(),
+            );
+        }
+        validate_text("reason", &self.reason, 4_000)?;
+        validate_message_payload(&self.message, &self.message_metadata, &self.attachments)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CancelConversationTurnCommand {
+    pub conversation_id: String,
+    pub expected_conversation_version: u64,
+    pub turn_id: String,
+    pub expected_run_version: Option<u64>,
+    pub reason: String,
+}
+
+impl CancelConversationTurnCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("conversation_id", &self.conversation_id)?;
+        validate_identifier("turn_id", &self.turn_id)?;
+        if self.expected_conversation_version == 0 || self.expected_run_version == Some(0) {
+            return Err("expected versions must be greater than zero".to_string());
+        }
+        validate_text("reason", &self.reason, 4_000)
+    }
+}
+
+fn validate_message_payload(
+    message: &str,
+    message_metadata: &Value,
+    attachments: &[LocalConversationAttachmentSpec],
+) -> Result<(), String> {
+    if message.trim().is_empty() {
+        if attachments.is_empty() {
+            return Err("message or attachments must be provided".to_string());
+        }
+    } else {
+        validate_text("message", message, LOCAL_AGENT_MAX_INPUT_BYTES)?;
+    }
+    if attachments.len() > LOCAL_CONVERSATION_MAX_ATTACHMENTS {
+        return Err(format!(
+            "attachments exceeds the {LOCAL_CONVERSATION_MAX_ATTACHMENTS} item limit"
+        ));
+    }
+    let mut attachment_ids = HashSet::with_capacity(attachments.len());
+    for attachment in attachments {
+        attachment.validate()?;
+        if !attachment_ids.insert(attachment.attachment_id.as_str()) {
+            return Err(format!(
+                "duplicate attachment_id: {}",
+                attachment.attachment_id
+            ));
+        }
+    }
+    let attachment_size = serde_json::to_vec(attachments)
+        .map_err(|error| format!("attachments are not serializable: {error}"))?
+        .len();
+    let metadata_size = serde_json::to_vec(message_metadata)
+        .map_err(|error| format!("message_metadata is not serializable: {error}"))?
+        .len();
+    if metadata_size > LOCAL_AGENT_MAX_INPUT_BYTES {
+        return Err(format!(
+            "message_metadata exceeds the {LOCAL_AGENT_MAX_INPUT_BYTES} byte limit"
+        ));
+    }
+    let total_input_size = message
+        .len()
+        .saturating_add(metadata_size)
+        .saturating_add(attachment_size);
+    if total_input_size > LOCAL_AGENT_MAX_INPUT_BYTES {
+        return Err(format!(
+            "message, metadata, and attachments exceed the \
+             {LOCAL_AGENT_MAX_INPUT_BYTES} byte limit"
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -331,6 +402,15 @@ pub struct LocalConversationTurnStart {
     pub run: LocalAgentRunRecord,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LocalConversationTurnUpdate {
+    pub conversation: LocalConversationRecord,
+    pub turn: LocalConversationTurnRecord,
+    pub message: Option<LocalConversationMessageRecord>,
+    pub attachments: Vec<LocalConversationAttachmentRecord>,
+    pub run: LocalAgentRunRecord,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,5 +460,37 @@ mod tests {
         let mut raw_path = command();
         raw_path.attachments[0].authorized_local_ref = "/tmp/brief.pdf".to_string();
         assert!(raw_path.validate().is_err());
+    }
+
+    #[test]
+    fn conversation_turn_updates_require_versions_and_resumable_status() {
+        let mut resume = ResumeConversationTurnCommand {
+            conversation_id: "conversation-1".to_string(),
+            expected_conversation_version: 2,
+            turn_id: "turn-1".to_string(),
+            expected_run_version: 3,
+            expected_run_status: crate::LocalAgentRunStatus::WaitingUser,
+            message_id: "message-2".to_string(),
+            message: "yes".to_string(),
+            message_metadata: json!({}),
+            attachments: Vec::new(),
+            reason: "user replied".to_string(),
+        };
+        assert!(resume.validate().is_ok());
+        resume.expected_run_status = crate::LocalAgentRunStatus::Queued;
+        assert!(resume.validate().is_err());
+        resume.expected_run_status = crate::LocalAgentRunStatus::WaitingUser;
+        resume.expected_conversation_version = 0;
+        assert!(resume.validate().is_err());
+
+        assert!(CancelConversationTurnCommand {
+            conversation_id: "conversation-1".to_string(),
+            expected_conversation_version: 2,
+            turn_id: "turn-1".to_string(),
+            expected_run_version: Some(3),
+            reason: "user stopped".to_string(),
+        }
+        .validate()
+        .is_ok());
     }
 }
