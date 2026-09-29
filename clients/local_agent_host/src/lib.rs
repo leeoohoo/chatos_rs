@@ -8,9 +8,10 @@ mod scheduler;
 mod tool_scheduler;
 
 pub use chatos_agent_profiles::{
-    ChatosAiRuntimeStepExecutor, ConservativeToolSafetyPolicy, DurableAiProfile,
-    LocalAiStepExecutor, LocalAiStepPlanner, NamedReadOnlyTools, PreparedLocalAiStep,
-    ToolSafetyPolicy,
+    ChatosAiRuntimeStepExecutor, ConservativeToolSafetyPolicy, ControlPlaneLocalAiStepPlanner,
+    DurableAiProfile, LocalAiStepExecutor, LocalAiStepPlanner, LocalCapabilityResolver,
+    LocalModelRuntimeResolver, NamedReadOnlyTools, PreparedLocalAiStep, ResolvedLocalCapabilities,
+    ToolSafetyPolicy, TransientLocalModelRuntime, MAIN_CHAT_PROFILE_KEY, TASK_RUNNER_PROFILE_KEY,
 };
 pub use coordinator::{LocalAgentCoordinatorError, LocalAgentHostCoordinator};
 pub use scheduler::{LocalAgentScheduler, LocalAgentSchedulerError, SchedulerTick};

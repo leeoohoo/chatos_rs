@@ -4,9 +4,15 @@
 //! Shared business-profile adapters for the durable Local Agent runtime.
 
 mod ai_step;
+mod planner;
 
 pub use ai_step::{
     reduce_ai_step_outcome, ChatosAiRuntimeStepExecutor, ConservativeToolSafetyPolicy,
     DurableAiProfile, LocalAiStepExecutor, LocalAiStepPlanner, NamedReadOnlyTools,
     PreparedLocalAiStep, ToolSafetyPolicy,
+};
+pub use planner::{
+    ControlPlaneLocalAiStepPlanner, LocalCapabilityResolver, LocalModelRuntimeResolver,
+    ResolvedLocalCapabilities, TransientLocalModelRuntime, MAIN_CHAT_PROFILE_KEY,
+    TASK_RUNNER_PROFILE_KEY,
 };
