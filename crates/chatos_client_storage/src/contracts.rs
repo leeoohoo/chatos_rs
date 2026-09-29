@@ -55,6 +55,7 @@ pub struct RunTransition {
     pub expected_version: u64,
     pub expected_status: LocalAgentRunStatus,
     pub next_status: LocalAgentRunStatus,
+    pub next_model_attempt: u32,
     pub next_attempt_at_unix_ms: Option<i64>,
     pub pending_tool_batch: Option<Value>,
     pub tool_batch: Option<LocalAgentToolBatch>,

@@ -4,7 +4,7 @@
 pub(super) const RUN_SELECT: &str =
     "SELECT run_id, owner_user_id, owner_entity_type, owner_entity_id, profile_key, \
      model_config_ref, model_config_revision, capability_policy_revision, input_json, status, \
-     iteration, max_iterations, version, claim_token, claim_until_unix_ms, \
+     iteration, model_attempt, max_iterations, version, claim_token, claim_until_unix_ms, \
      next_attempt_at_unix_ms, pending_tool_batch_json, terminal_outcome_json, \
      checkpoint_json, continuation_input_json, created_at_unix_ms, updated_at_unix_ms \
      FROM local_agent_runs WHERE run_id = ?";
@@ -94,3 +94,6 @@ pub(super) const SCHEMA_V3: &[&str] = &[
     "ALTER TABLE local_agent_runs ADD COLUMN checkpoint_json TEXT NOT NULL DEFAULT 'null'",
     "ALTER TABLE local_agent_runs ADD COLUMN continuation_input_json TEXT",
 ];
+
+pub(super) const SCHEMA_V4: &[&str] =
+    &["ALTER TABLE local_agent_runs ADD COLUMN model_attempt INTEGER NOT NULL DEFAULT 1 CHECK(model_attempt > 0)"];

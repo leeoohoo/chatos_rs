@@ -18,6 +18,7 @@ fn run(now: i64) -> LocalAgentRunRecord {
         input: serde_json::json!({"message": "hello"}),
         status: LocalAgentRunStatus::Queued,
         iteration: 0,
+        model_attempt: 1,
         max_iterations: 8,
         version: 1,
         claim_token: None,
@@ -92,6 +93,7 @@ async fn create_and_claim_are_atomic_and_idempotent() {
                 expected_version: claim.run.version,
                 expected_status: LocalAgentRunStatus::ModelRunning,
                 next_status: LocalAgentRunStatus::RetryScheduled,
+                next_model_attempt: 2,
                 next_attempt_at_unix_ms: Some(20_000),
                 pending_tool_batch: None,
                 tool_batch: None,
@@ -194,6 +196,7 @@ async fn expired_claim_cannot_commit_a_late_step() {
                 expected_version: claim.run.version,
                 expected_status: LocalAgentRunStatus::ModelRunning,
                 next_status: LocalAgentRunStatus::Succeeded,
+                next_model_attempt: 1,
                 next_attempt_at_unix_ms: None,
                 pending_tool_batch: None,
                 tool_batch: None,
@@ -211,7 +214,7 @@ async fn expired_claim_cannot_commit_a_late_step() {
 }
 
 #[tokio::test]
-async fn version_two_database_migrates_checkpoint_columns() {
+async fn version_two_database_migrates_checkpoint_and_attempt_columns() {
     let database_path = std::env::temp_dir().join(format!(
         "chatos-local-agent-migration-{}.sqlite",
         Uuid::new_v4()
@@ -265,6 +268,7 @@ async fn version_two_database_migrates_checkpoint_columns() {
         .expect("create after migration");
     assert_eq!(created.checkpoint, serde_json::Value::Null);
     assert!(created.continuation_input.is_none());
+    assert_eq!(created.model_attempt, 1);
     storage.pool.close().await;
     drop(storage);
     for path in [

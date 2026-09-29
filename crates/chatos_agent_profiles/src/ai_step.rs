@@ -28,7 +28,6 @@ pub struct PreparedLocalAiStep {
     pub runner: Arc<ContextualTurnRunner>,
     pub request: ContextualTurnRequest,
     pub reason: String,
-    pub model_attempt: usize,
 }
 
 #[async_trait]
@@ -67,19 +66,13 @@ impl LocalAiStepExecutor for ChatosAiRuntimeStepExecutor {
         if prepared.reason.trim().is_empty() {
             return Err("Local AI step reason must not be empty".to_string());
         }
-        if prepared.model_attempt == 0 {
-            return Err("Local AI model attempt must be greater than zero".to_string());
-        }
         let iteration = usize::try_from(claim.run.iteration)
             .map_err(|_| "Local Agent iteration exceeds usize".to_string())?;
+        let model_attempt = usize::try_from(claim.run.model_attempt)
+            .map_err(|_| "Local Agent model attempt exceeds usize".to_string())?;
         prepared
             .runner
-            .execute_once(
-                prepared.request,
-                iteration,
-                prepared.reason,
-                prepared.model_attempt,
-            )
+            .execute_once(prepared.request, iteration, prepared.reason, model_attempt)
             .await
     }
 }
@@ -209,6 +202,8 @@ pub fn reduce_ai_step_outcome(
                 .ok_or_else(|| "model retry timestamp overflow".to_string())?;
             Ok(LocalAgentStepOutcome::Retry {
                 resume_at_unix_ms,
+                next_model_attempt: u32::try_from(next_model_attempt)
+                    .map_err(|_| "model attempt exceeds u32".to_string())?,
                 reason: json!({
                     "error": error,
                     "retry_kind": retry_kind,

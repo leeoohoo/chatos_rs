@@ -68,7 +68,7 @@ Example health request:
 
 ```json
 {
-  "protocol_version": 1,
+  "protocol_version": 2,
   "command_id": "health-019",
   "command": {
     "type": "health"
@@ -96,6 +96,8 @@ A successful claim moves one runnable Run to `model_running`, increments its ite
 `wait_for_tool` persists every call before execution. Read-only calls whose lease expires return to `pending`; side-effecting calls with an unknown result move both the invocation and Run to `needs_review`. A completed batch moves the Run to `continuation_ready` only after every call has a durable result.
 
 Each Run also stores an opaque Profile checkpoint plus a one-shot continuation payload. Tool results and explicit `resume_run` input survive Host restarts and are cleared only after the next claimed model step commits.
+
+Transient model retries persist `model_attempt` in the Run itself. A restarted Host therefore continues with the exact next attempt and cannot accidentally reset the provider retry budget.
 
 ## Verification
 

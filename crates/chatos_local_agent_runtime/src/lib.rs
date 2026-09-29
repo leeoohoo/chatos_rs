@@ -299,6 +299,7 @@ fn create_run_record(command: CreateRunCommand, now: i64) -> LocalAgentRunRecord
         input: command.input,
         status: LocalAgentRunStatus::Queued,
         iteration: 0,
+        model_attempt: 1,
         max_iterations: command.max_iterations,
         version: 1,
         claim_token: None,
@@ -336,6 +337,12 @@ fn transition_for_outcome(
         | LocalAgentStepOutcome::WaitForTool { checkpoint, .. }
         | LocalAgentStepOutcome::WaitForUser { checkpoint, .. } => Some(checkpoint.clone()),
         _ => None,
+    };
+    let next_model_attempt = match &outcome {
+        LocalAgentStepOutcome::Retry {
+            next_model_attempt, ..
+        } => *next_model_attempt,
+        _ => 1,
     };
     let (next_status, next_attempt, pending_tool_batch, terminal_outcome, event_type, payload) =
         match outcome {
@@ -387,6 +394,7 @@ fn transition_for_outcome(
             ),
             LocalAgentStepOutcome::Retry {
                 resume_at_unix_ms,
+                next_model_attempt,
                 reason,
             } => (
                 LocalAgentRunStatus::RetryScheduled,
@@ -394,7 +402,11 @@ fn transition_for_outcome(
                 None,
                 None,
                 "retry_scheduled",
-                json!({"resume_at_unix_ms": resume_at_unix_ms, "reason": reason}),
+                json!({
+                    "resume_at_unix_ms": resume_at_unix_ms,
+                    "next_model_attempt": next_model_attempt,
+                    "reason": reason
+                }),
             ),
             LocalAgentStepOutcome::Pause { reason } => (
                 LocalAgentRunStatus::Paused,
@@ -438,6 +450,7 @@ fn transition_for_outcome(
         expected_version,
         expected_status: LocalAgentRunStatus::ModelRunning,
         next_status,
+        next_model_attempt,
         next_attempt_at_unix_ms: next_attempt,
         pending_tool_batch,
         tool_batch,
@@ -739,5 +752,7 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod retry_tests;
 #[cfg(test)]
 mod tool_tests;

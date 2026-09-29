@@ -18,7 +18,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 1;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 2;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -256,6 +256,7 @@ pub enum LocalAgentStepOutcome {
     },
     Retry {
         resume_at_unix_ms: i64,
+        next_model_attempt: u32,
         reason: String,
     },
     Pause {
@@ -299,10 +300,14 @@ impl LocalAgentStepOutcome {
             }
             Self::Retry {
                 resume_at_unix_ms,
+                next_model_attempt,
                 reason,
             } => {
                 if *resume_at_unix_ms <= 0 {
                     return Err("resume_at_unix_ms must be positive".to_string());
+                }
+                if *next_model_attempt < 2 {
+                    return Err("next_model_attempt must be at least 2".to_string());
                 }
                 validate_text("reason", reason, 4_000)
             }
@@ -395,6 +400,7 @@ pub struct LocalAgentRunRecord {
     pub input: Value,
     pub status: LocalAgentRunStatus,
     pub iteration: u32,
+    pub model_attempt: u32,
     pub max_iterations: u32,
     pub version: u64,
     pub claim_token: Option<String>,
