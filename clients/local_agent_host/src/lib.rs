@@ -119,22 +119,25 @@ pub mod unix {
     };
     use tokio::net::UnixListener;
 
-    pub async fn serve(
-        socket_path: &Path,
-        runtime: Arc<LocalAgentRuntime>,
-    ) -> Result<(), HostTransportError> {
+    pub async fn serve<H>(socket_path: &Path, handler: Arc<H>) -> Result<(), HostTransportError>
+    where
+        H: HostRequestHandler + ?Sized + 'static,
+    {
         prepare_socket_path(socket_path)?;
         let listener = UnixListener::bind(socket_path)?;
         fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600))?;
-        let result = accept_until_shutdown(listener, runtime).await;
+        let result = accept_until_shutdown(listener, handler).await;
         let _ = fs::remove_file(socket_path);
         result
     }
 
-    async fn accept_until_shutdown(
+    async fn accept_until_shutdown<H>(
         listener: UnixListener,
-        runtime: Arc<LocalAgentRuntime>,
-    ) -> Result<(), HostTransportError> {
+        handler: Arc<H>,
+    ) -> Result<(), HostTransportError>
+    where
+        H: HostRequestHandler + ?Sized + 'static,
+    {
         loop {
             tokio::select! {
                 signal = tokio::signal::ctrl_c() => {
@@ -143,9 +146,9 @@ pub mod unix {
                 }
                 accepted = listener.accept() => {
                     let (stream, _) = accepted?;
-                    let runtime = Arc::clone(&runtime);
+                    let handler = Arc::clone(&handler);
                     tokio::spawn(async move {
-                        if let Err(error) = serve_stream(stream, runtime).await {
+                        if let Err(error) = serve_stream(stream, handler).await {
                             eprintln!("Local Agent IPC connection ended: {error}");
                         }
                     });
@@ -192,10 +195,10 @@ pub mod windows {
         },
     };
 
-    pub async fn serve(
-        pipe_name: &str,
-        runtime: Arc<LocalAgentRuntime>,
-    ) -> Result<(), HostTransportError> {
+    pub async fn serve<H>(pipe_name: &str, handler: Arc<H>) -> Result<(), HostTransportError>
+    where
+        H: HostRequestHandler + ?Sized + 'static,
+    {
         validate_pipe_name(pipe_name)?;
         let mut first = true;
         loop {
@@ -208,9 +211,9 @@ pub mod windows {
                 }
                 connected = server.connect() => {
                     connected?;
-                    let runtime = Arc::clone(&runtime);
+                    let handler = Arc::clone(&handler);
                     tokio::spawn(async move {
-                        if let Err(error) = serve_stream(server, runtime).await {
+                        if let Err(error) = serve_stream(server, handler).await {
                             eprintln!("Local Agent IPC connection ended: {error}");
                         }
                     });

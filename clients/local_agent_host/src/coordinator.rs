@@ -136,7 +136,10 @@ fn system_now_unix_ms() -> Result<i64, LocalAgentCoordinatorError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LocalToolExecutor, LocalToolRegistry};
+    use crate::{
+        decode_response, read_frame, serve_stream, write_frame, LocalToolExecutor,
+        LocalToolRegistry,
+    };
     use async_trait::async_trait;
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
@@ -225,24 +228,32 @@ mod tests {
             let coordinator = Arc::clone(&coordinator);
             tokio::spawn(async move { coordinator.run_until_shutdown(shutdown_rx).await })
         };
-        let response = coordinator
-            .handle_request(HostRequestEnvelope {
-                protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
-                command_id: "create-coordinator".to_string(),
-                command: HostCommand::CreateRun(CreateRunCommand {
-                    run_id: "run-coordinator".to_string(),
-                    owner_user_id: "user-1".to_string(),
-                    owner_entity_type: "conversation".to_string(),
-                    owner_entity_id: "conversation-1".to_string(),
-                    profile_key: "coordinator".to_string(),
-                    model_config_ref: "model-1".to_string(),
-                    model_config_revision: "revision-1".to_string(),
-                    capability_policy_revision: "policy-1".to_string(),
-                    input: json!({"message": "hello"}),
-                    max_iterations: 4,
-                }),
-            })
-            .await;
+        let (mut client, server) = tokio::io::duplex(16 * 1024);
+        let ipc_task = tokio::spawn(serve_stream(server, Arc::clone(&coordinator)));
+        let request = HostRequestEnvelope {
+            protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+            command_id: "create-coordinator".to_string(),
+            command: HostCommand::CreateRun(CreateRunCommand {
+                run_id: "run-coordinator".to_string(),
+                owner_user_id: "user-1".to_string(),
+                owner_entity_type: "conversation".to_string(),
+                owner_entity_id: "conversation-1".to_string(),
+                profile_key: "coordinator".to_string(),
+                model_config_ref: "model-1".to_string(),
+                model_config_revision: "revision-1".to_string(),
+                capability_policy_revision: "policy-1".to_string(),
+                input: json!({"message": "hello"}),
+                max_iterations: 4,
+            }),
+        };
+        write_frame(&mut client, &serde_json::to_vec(&request).expect("request"))
+            .await
+            .expect("write");
+        let response = read_frame(&mut client)
+            .await
+            .expect("read")
+            .expect("response");
+        let response = decode_response(&response).expect("decode");
         assert!(response.ok);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         loop {
@@ -270,5 +281,7 @@ mod tests {
         }
         shutdown_tx.send(true).expect("shutdown");
         task.await.expect("join").expect("coordinator");
+        drop(client);
+        ipc_task.await.expect("IPC join").expect("IPC server");
     }
 }
