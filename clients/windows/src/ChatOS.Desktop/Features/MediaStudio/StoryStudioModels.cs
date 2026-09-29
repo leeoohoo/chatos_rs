@@ -89,7 +89,7 @@ public sealed record StorySegmentDocument(
             ArchivedFrames.Any(archived => archived is null) ||
             !SafeJob(PendingVideoJobId, 512) || !SafeJob(PendingVideoJobStatus, 80) ||
             !SafeDigest(PendingVideoRequestDigest) ||
-            PendingVideoGuidance is not ("frames" or "source-video") ||
+            PendingVideoGuidance is not ("frames" or "source-video" or "previous-video") ||
             (PendingVideoJobId is null) != (PendingVideoRequestDigest is null) ||
             PendingVideoJobId is null && PendingVideoJobStatus is not null ||
             PendingVideoJobId is null && PendingVideoGuidance != "frames" ||

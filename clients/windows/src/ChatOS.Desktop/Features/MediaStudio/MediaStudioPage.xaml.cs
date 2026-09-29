@@ -234,7 +234,26 @@ public sealed partial class MediaStudioPage : Page
         var segment = StoryViewModel.SelectedSegment;
         if (segment?.VideoPath is not { Length: > 0 })
         {
-            await StoryViewModel.GenerateVideoAsync();
+            if (!StoryViewModel.CanGenerateFromPreviousVideo)
+            {
+                await StoryViewModel.GenerateVideoAsync();
+                return;
+            }
+            var guidanceDialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = "选择视频连续性输入",
+                Content = StoryViewModel.PreviousVideoGenerationSummary,
+                PrimaryButtonText = "延续上一段成片",
+                SecondaryButtonText = "仅按本段首尾帧",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Primary,
+            };
+            var guidanceResult = await guidanceDialog.ShowAsync();
+            if (guidanceResult == ContentDialogResult.Primary)
+                await StoryViewModel.GenerateVideoFromPreviousAsync(segment.Id);
+            else if (guidanceResult == ContentDialogResult.Secondary)
+                await StoryViewModel.GenerateVideoAsync();
             return;
         }
 

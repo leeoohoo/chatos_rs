@@ -13,6 +13,13 @@ public sealed partial class StoryStudioViewModel
     public bool CanRegenerateFromCurrentVideo => !IsBusy &&
         SelectedSegment?.VideoPath is { Length: > 0 } path && ReferenceVideoCanLoad(path) &&
         ProjectVideoModel is { } model && VideoGenerationProfile.ForModel(model.ModelName).SupportsReferenceVideo;
+    public bool CanGenerateFromPreviousVideo => CanGenerateVideo && SelectedSegment is { } segment &&
+        string.IsNullOrWhiteSpace(segment.VideoPath) && !segment.HasPendingVideoJob &&
+        ProjectVideoModel is { } model && CanUsePreviousVideo(segment, model);
+    public string PreviousVideoGenerationSummary => SelectedSegment is { } segment &&
+        PreviousSegment(segment) is { } previous
+        ? $"{segment.NumberLabel} · {segment.Title} 可以把上一段“{previous.Title}”的完整成片作为延续参考。选择延续模式会从上一段结束时的运动、人物状态和光线自然接入；也可以只使用本段首尾帧。"
+        : string.Empty;
     public string GenerateVideoActionLabel => SelectedSegment?.VideoPath is { Length: > 0 }
         ? "准备重新生成该段视频"
         : "生成该段视频";
@@ -36,21 +43,30 @@ public sealed partial class StoryStudioViewModel
             if (segment is null || !segment.HasPendingVideoJob) return string.Empty;
             return VideoJobMatches(segment, ProjectVideoModel)
                 ? $"已有任务 {ShortJobId(segment.PendingVideoJobId)} · {segment.PendingVideoJobStatus ?? "等待查询"}；可继续查询并下载，不会重复提交。"
-                : $"已有任务 {ShortJobId(segment.PendingVideoJobId)}，但模型、提示词、时长或帧已改变；为避免重复扣费，已禁止重新提交。";
+                : $"已有任务 {ShortJobId(segment.PendingVideoJobId)}，但模型、提示词、时长或参考输入已改变；为避免重复扣费，已禁止重新提交。";
         }
     }
 
     public Task GenerateVideoAsync(CancellationToken cancellationToken = default) =>
-        RunSelectedVideoAsync(false, false, false, null, cancellationToken);
+        RunSelectedVideoAsync(false, false, StoryVideoGuidance.Frames, null, cancellationToken);
+
+    public Task GenerateVideoFromPreviousAsync(
+        string expectedSegmentId,
+        CancellationToken cancellationToken = default) =>
+        RunSelectedVideoAsync(
+            false, false, StoryVideoGuidance.PreviousVideo, expectedSegmentId, cancellationToken);
 
     public Task RegenerateSelectedVideoAsync(
         string confirmedSegmentId,
         bool useOriginalVideo,
         CancellationToken cancellationToken = default) =>
-        RunSelectedVideoAsync(false, true, useOriginalVideo, confirmedSegmentId, cancellationToken);
+        RunSelectedVideoAsync(
+            false, true,
+            useOriginalVideo ? StoryVideoGuidance.SourceVideo : StoryVideoGuidance.Frames,
+            confirmedSegmentId, cancellationToken);
 
     public Task ResumeSelectedVideoAsync(CancellationToken cancellationToken = default) =>
-        RunSelectedVideoAsync(true, false, false, null, cancellationToken);
+        RunSelectedVideoAsync(true, false, StoryVideoGuidance.Frames, null, cancellationToken);
 
     public async Task AbandonSelectedVideoJobAsync(CancellationToken cancellationToken = default)
     {
@@ -83,17 +99,18 @@ public sealed partial class StoryStudioViewModel
     private async Task RunSelectedVideoAsync(
         bool resume,
         bool confirmedRegeneration,
-        bool useOriginalVideo,
-        string? confirmedSegmentId,
+        StoryVideoGuidance requestedGuidance,
+        string? expectedSegmentId,
         CancellationToken cancellationToken)
     {
         var context = CaptureGenerationContext();
         var model = ProjectVideoModel;
         if (context is null || model is null || (resume && !CanResumeSelectedVideo) ||
             (!resume && !CanGenerateVideo)) return;
+        if (expectedSegmentId is not null && expectedSegmentId != context.Segment.Id) return;
         if (!resume && context.Segment.VideoPath is { Length: > 0 })
         {
-            if (!confirmedRegeneration || confirmedSegmentId != context.Segment.Id)
+            if (!confirmedRegeneration || expectedSegmentId != context.Segment.Id)
             {
                 StatusMessage = "该分段已有完成视频，请先确认重新生成；当前版本不会被直接覆盖。";
                 return;
@@ -101,10 +118,16 @@ public sealed partial class StoryStudioViewModel
         }
         var guidance = resume
             ? ParseGuidance(context.Segment.PendingVideoGuidance)
-            : useOriginalVideo ? StoryVideoGuidance.SourceVideo : StoryVideoGuidance.Frames;
+            : requestedGuidance;
         if (guidance == StoryVideoGuidance.SourceVideo && !CanUseSourceVideo(context.Segment, model))
         {
             ErrorMessage = "当前模型或视频不支持参考原成片重新生成；请选择仅按首尾帧重做。";
+            return;
+        }
+        if (guidance == StoryVideoGuidance.PreviousVideo &&
+            !CanUsePreviousVideo(context.Segment, model))
+        {
+            ErrorMessage = "上一段成片或当前模型不支持视频延续；请选择仅按本段首尾帧生成。";
             return;
         }
         _generationCancellation?.Cancel();
@@ -150,9 +173,15 @@ public sealed partial class StoryStudioViewModel
         var seconds = profile.Durations.OrderBy(value => Math.Abs(value - context.Segment.Seconds)).First();
         context.Segment.Seconds = seconds;
         var prompt = BuildVideoPrompt(context.Segment, guidance);
-        var referenceVideo = guidance == StoryVideoGuidance.SourceVideo
-            ? await LoadVideoReferenceAsync(context.Segment.VideoPath!, cancellationToken)
-            : null;
+        var referencePath = guidance switch
+        {
+            StoryVideoGuidance.SourceVideo => context.Segment.VideoPath,
+            StoryVideoGuidance.PreviousVideo => PreviousSegment(context.Segment)?.VideoPath,
+            _ => null,
+        };
+        var referenceVideo = referencePath is null
+            ? null
+            : await LoadVideoReferenceAsync(referencePath, cancellationToken);
         var first = referenceVideo is null
             ? await LoadFrameAsync(context.Segment.FirstFramePath, cancellationToken)
             : null;
@@ -166,7 +195,9 @@ public sealed partial class StoryStudioViewModel
             ReferenceVideo = referenceVideo,
             ReferencePurpose = referenceVideo is null
                 ? VideoGenerationReferencePurpose.Reference
-                : VideoGenerationReferencePurpose.Edit,
+                : guidance == StoryVideoGuidance.PreviousVideo
+                    ? VideoGenerationReferencePurpose.Extend
+                    : VideoGenerationReferencePurpose.Edit,
         };
         var digest = VideoRequestDigest(context.Segment, videoModel, profile, prompt, seconds, guidance);
         var progress = new Progress<VideoGenerationProgress>(value =>
@@ -247,6 +278,7 @@ public sealed partial class StoryStudioViewModel
         if (model is null || string.IsNullOrWhiteSpace(segment.PendingVideoRequestDigest)) return false;
         var guidance = ParseGuidance(segment.PendingVideoGuidance);
         if (guidance == StoryVideoGuidance.SourceVideo && !CanUseSourceVideo(segment, model)) return false;
+        if (guidance == StoryVideoGuidance.PreviousVideo && !CanUsePreviousVideo(segment, model)) return false;
         var profile = VideoGenerationProfile.ForModel(model.ModelName);
         var seconds = profile.Durations.OrderBy(value => Math.Abs(value - segment.Seconds)).First();
         var prompt = BuildVideoPrompt(segment, guidance);
@@ -270,7 +302,7 @@ public sealed partial class StoryStudioViewModel
                 ? document.LastFrameAsset ?? string.Empty
                 : string.Empty,
             GuidanceKey(guidance),
-            guidance == StoryVideoGuidance.SourceVideo ? document.VideoAsset ?? string.Empty : string.Empty);
+            ReferenceVideoAsset(segment, guidance));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
     }
 
@@ -305,6 +337,8 @@ public sealed partial class StoryStudioViewModel
         OnPropertyChanged(nameof(CanAbandonSelectedVideoJob));
         OnPropertyChanged(nameof(SelectedVideoJobLabel));
         OnPropertyChanged(nameof(CanRegenerateFromCurrentVideo));
+        OnPropertyChanged(nameof(CanGenerateFromPreviousVideo));
+        OnPropertyChanged(nameof(PreviousVideoGenerationSummary));
         OnPropertyChanged(nameof(GenerateVideoActionLabel));
         OnPropertyChanged(nameof(VideoRegenerationSummary));
     }
@@ -314,6 +348,8 @@ public sealed partial class StoryStudioViewModel
         var continuity = BuildContinuityContext(segment);
         if (guidance == StoryVideoGuidance.SourceVideo)
             continuity = $"{continuity}\n参考视频就是本段当前成片。保留未要求改变的人物、场景、构图与节奏，并按视频提示词和附加创作要求完成修改。".Trim();
+        else if (guidance == StoryVideoGuidance.PreviousVideo)
+            continuity = $"{continuity}\n参考视频就是紧邻本段之前的完整成片。延续它结尾的镜头方向、运动速度、人物动作和光线变化，从其结束状态自然进入本段，不要重演上一段内容。".Trim();
         return StoryPromptCatalog.RenderVideo(segment.VideoPrompt, continuity, CreativeRequirements);
     }
 
@@ -341,16 +377,43 @@ public sealed partial class StoryStudioViewModel
         segment.VideoPath is { Length: > 0 } path && ReferenceVideoCanLoad(path) &&
         VideoGenerationProfile.ForModel(model.ModelName).SupportsReferenceVideo;
 
-    private static StoryVideoGuidance ParseGuidance(string value) =>
-        value == "source-video" ? StoryVideoGuidance.SourceVideo : StoryVideoGuidance.Frames;
+    private bool CanUsePreviousVideo(StorySegmentEditor segment, MediaGenerationModel model) =>
+        PreviousSegment(segment)?.VideoPath is { Length: > 0 } path && ReferenceVideoCanLoad(path) &&
+        VideoGenerationProfile.ForModel(model.ModelName).SupportsReferenceVideo;
 
-    private static string GuidanceKey(StoryVideoGuidance guidance) =>
-        guidance == StoryVideoGuidance.SourceVideo ? "source-video" : "frames";
+    private StorySegmentEditor? PreviousSegment(StorySegmentEditor segment)
+    {
+        var index = Segments.IndexOf(segment);
+        return index > 0 ? Segments[index - 1] : null;
+    }
+
+    private string ReferenceVideoAsset(StorySegmentEditor segment, StoryVideoGuidance guidance) =>
+        guidance switch
+        {
+            StoryVideoGuidance.SourceVideo => segment.ToDocument().VideoAsset ?? string.Empty,
+            StoryVideoGuidance.PreviousVideo => PreviousSegment(segment)?.ToDocument().VideoAsset ?? string.Empty,
+            _ => string.Empty,
+        };
+
+    private static StoryVideoGuidance ParseGuidance(string value) => value switch
+    {
+        "source-video" => StoryVideoGuidance.SourceVideo,
+        "previous-video" => StoryVideoGuidance.PreviousVideo,
+        _ => StoryVideoGuidance.Frames,
+    };
+
+    private static string GuidanceKey(StoryVideoGuidance guidance) => guidance switch
+    {
+        StoryVideoGuidance.SourceVideo => "source-video",
+        StoryVideoGuidance.PreviousVideo => "previous-video",
+        _ => "frames",
+    };
 
     private enum StoryVideoGuidance
     {
         Frames,
         SourceVideo,
+        PreviousVideo,
     }
 
     private static string ShortJobId(string? value) => string.IsNullOrWhiteSpace(value)
