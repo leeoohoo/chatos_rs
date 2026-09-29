@@ -531,8 +531,8 @@ private struct PetQuickChatEmptyState: View {
 }
 
 struct PetQuickChatTaskInspectorView: View {
-    @EnvironmentObject private var model: AppModel
     @StateObject private var viewModel: TaskReplyInspectorViewModel
+    @Environment(\.locale) private var locale
     private let selection: TaskReplySelection
     private let onClose: () -> Void
 
@@ -584,9 +584,9 @@ struct PetQuickChatTaskInspectorView: View {
                     .frame(width: 32, height: 32)
                     .background(AppPalette.ai.opacity(0.1), in: Circle())
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(model.localized("任务详情与执行过程", english: "Task Details and Execution"))
+                    Text(localized("任务详情与执行过程", english: "Task Details and Execution"))
                         .font(.system(size: 15, weight: .semibold))
-                    Text(viewModel.task?.title ?? model.localized(
+                    Text(viewModel.task?.title ?? localized(
                         "正在读取任务信息…",
                         english: "Loading task information…"
                     ))
@@ -604,7 +604,7 @@ struct PetQuickChatTaskInspectorView: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.plain)
-                .help(model.localized("刷新", english: "Refresh"))
+                .help(localized("刷新", english: "Refresh"))
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 11, weight: .semibold))
@@ -612,24 +612,32 @@ struct PetQuickChatTaskInspectorView: View {
                         .background(Color(nsColor: .controlBackgroundColor), in: Circle())
                 }
                 .buttonStyle(.plain)
-                .help(model.localized("关闭", english: "Close"))
+                .help(localized("关闭", english: "Close"))
             }
 
             Picker(
-                model.localized("查看内容", english: "View"),
+                localized("查看内容", english: "View"),
                 selection: Binding(
                     get: { viewModel.section },
                     set: { viewModel.selectSection($0) }
                 )
             ) {
                 ForEach(TaskReplyInspectorSection.allCases, id: \.self) { section in
-                    Text(section.title(language: model.interfaceLanguage)).tag(section)
+                    Text(section.title(language: interfaceLanguage)).tag(section)
                 }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
         }
         .padding(16)
+    }
+
+    private var interfaceLanguage: ChatOSLanguage {
+        locale.identifier.lowercased().hasPrefix("en") ? .english : .simplifiedChinese
+    }
+
+    private func localized(_ chinese: String, english: String) -> String {
+        interfaceLanguage == .english ? english : chinese
     }
 }
 
