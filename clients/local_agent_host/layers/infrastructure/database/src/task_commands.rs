@@ -4,7 +4,7 @@
 use super::{
     task_lifecycle::{propagate_blocked, reconcile_task_after_run, unlock_satisfied},
     task_store::fetch_graph,
-    ClientStorageError, IdempotentCommand, IntoClientStorageResult, SqliteClientStorage,
+    ClientStorageError, IdempotentCommand, SqliteClientStorage, SqliteResultExt,
 };
 use chatos_local_agent_protocol::{LocalTaskGraph, LocalTaskStatus};
 use sqlx::{Row, SqliteConnection};
@@ -20,10 +20,7 @@ pub(super) async fn cancel_task(
     run_event_id: &str,
     now_unix_ms: i64,
 ) -> Result<LocalTaskGraph, ClientStorageError> {
-    if let Some(replay) = SqliteClientStorage::replay(connection, command)
-        .await
-        .into_storage()?
-    {
+    if let Some(replay) = SqliteClientStorage::replay(connection, command).await? {
         return Ok(replay);
     }
     let row = sqlx::query(
@@ -32,12 +29,12 @@ pub(super) async fn cancel_task(
     .bind(task_id)
     .fetch_optional(&mut *connection)
     .await
-    .into_storage()?
+    .db()?
     .ok_or_else(|| ClientStorageError::NotFound(task_id.to_string()))?;
-    let graph_id: String = row.try_get("graph_id").into_storage()?;
-    let status = LocalTaskStatus::from_str(&row.try_get::<String, _>("status").into_storage()?)
+    let graph_id: String = row.try_get("graph_id").db()?;
+    let status = LocalTaskStatus::from_str(&row.try_get::<String, _>("status").db()?)
         .map_err(ClientStorageError::InvalidState)?;
-    let version = u64::try_from(row.try_get::<i64, _>("version").into_storage()?)
+    let version = u64::try_from(row.try_get::<i64, _>("version").db()?)
         .map_err(|_| ClientStorageError::InvalidState("invalid task version".to_string()))?;
     if expected_version.is_some_and(|expected| expected != version) {
         return Err(ClientStorageError::Conflict(format!(
@@ -56,13 +53,12 @@ pub(super) async fn cancel_task(
         cancel_active_run(
             connection,
             task_id,
-            row.try_get("active_run_id").into_storage()?,
+            row.try_get("active_run_id").db()?,
             reason,
             run_event_id,
             now_unix_ms,
         )
-        .await
-        .into_storage()?;
+        .await?;
     } else {
         let updated =
             sqlx::query(
@@ -77,23 +73,18 @@ pub(super) async fn cancel_task(
             })?)
             .execute(&mut *connection)
             .await
-            .into_storage()?;
+            .db()?;
         if updated.rows_affected() != 1 {
             return Err(ClientStorageError::Conflict(format!(
                 "task changed while cancelling: {task_id}"
             )));
         }
-        propagate_blocked(connection, &graph_id, now_unix_ms)
-            .await
-            .into_storage()?;
+        propagate_blocked(connection, &graph_id, now_unix_ms).await?;
     }
     let graph = fetch_graph(connection, &graph_id)
-        .await
-        .into_storage()?
+        .await?
         .ok_or_else(|| ClientStorageError::NotFound(graph_id.clone()))?;
-    SqliteClientStorage::record_receipt(connection, command, &graph, now_unix_ms)
-        .await
-        .into_storage()?;
+    SqliteClientStorage::record_receipt(connection, command, &graph, now_unix_ms).await?;
     Ok(graph)
 }
 
@@ -109,8 +100,7 @@ async fn cancel_active_run(
         ClientStorageError::InvalidState(format!("running task has no active Run: {task_id}"))
     })?;
     let current = SqliteClientStorage::fetch_run_on(connection, &run_id)
-        .await
-        .into_storage()?
+        .await?
         .ok_or_else(|| ClientStorageError::NotFound(run_id.clone()))?;
     if current.status.is_terminal() {
         return Err(ClientStorageError::Conflict(format!(
@@ -134,7 +124,7 @@ async fn cancel_active_run(
     )
     .execute(&mut *connection)
     .await
-    .into_storage()?;
+    .db()?;
     if updated.rows_affected() != 1 {
         return Err(ClientStorageError::Conflict(format!(
             "task Run changed while cancelling: {run_id}"
@@ -146,8 +136,7 @@ async fn cancel_active_run(
         reason,
         now_unix_ms,
     )
-    .await
-    .into_storage()?;
+    .await?;
     SqliteClientStorage::insert_event(
         connection,
         run_event_id,
@@ -156,11 +145,9 @@ async fn cancel_active_run(
         &serde_json::json!({"reason": reason, "task_id": task_id}),
         now_unix_ms,
     )
-    .await
-    .into_storage()?;
+    .await?;
     let cancelled = SqliteClientStorage::fetch_run_on(connection, &run_id)
-        .await
-        .into_storage()?
+        .await?
         .ok_or_else(|| ClientStorageError::NotFound(run_id.clone()))?;
     reconcile_task_after_run(connection, &cancelled, now_unix_ms).await
 }
@@ -172,22 +159,19 @@ pub(super) async fn retry_task(
     expected_version: u64,
     now_unix_ms: i64,
 ) -> Result<LocalTaskGraph, ClientStorageError> {
-    if let Some(replay) = SqliteClientStorage::replay(connection, command)
-        .await
-        .into_storage()?
-    {
+    if let Some(replay) = SqliteClientStorage::replay(connection, command).await? {
         return Ok(replay);
     }
     let row = sqlx::query("SELECT graph_id, status, version FROM local_tasks WHERE task_id = ?")
         .bind(task_id)
         .fetch_optional(&mut *connection)
         .await
-        .into_storage()?
+        .db()?
         .ok_or_else(|| ClientStorageError::NotFound(task_id.to_string()))?;
-    let graph_id: String = row.try_get("graph_id").into_storage()?;
-    let status = LocalTaskStatus::from_str(&row.try_get::<String, _>("status").into_storage()?)
+    let graph_id: String = row.try_get("graph_id").db()?;
+    let status = LocalTaskStatus::from_str(&row.try_get::<String, _>("status").db()?)
         .map_err(ClientStorageError::InvalidState)?;
-    let version = u64::try_from(row.try_get::<i64, _>("version").into_storage()?)
+    let version = u64::try_from(row.try_get::<i64, _>("version").db()?)
         .map_err(|_| ClientStorageError::InvalidState("invalid task version".to_string()))?;
     if version != expected_version {
         return Err(ClientStorageError::Conflict(format!(
@@ -199,12 +183,8 @@ pub(super) async fn retry_task(
             "only failed or cancelled tasks can be retried: {task_id}"
         )));
     }
-    require_satisfied_prerequisites(connection, &graph_id, task_id)
-        .await
-        .into_storage()?;
-    reset_blocked_descendants(connection, &graph_id, task_id, now_unix_ms)
-        .await
-        .into_storage()?;
+    require_satisfied_prerequisites(connection, &graph_id, task_id).await?;
+    reset_blocked_descendants(connection, &graph_id, task_id, now_unix_ms).await?;
     let updated = sqlx::query(
         "UPDATE local_tasks SET status = 'ready', active_run_id = NULL, \
          version = version + 1, updated_at_unix_ms = ? WHERE task_id = ? AND version = ?",
@@ -217,25 +197,21 @@ pub(super) async fn retry_task(
     )
     .execute(&mut *connection)
     .await
-    .into_storage()?;
+    .db()?;
     if updated.rows_affected() != 1 {
         return Err(ClientStorageError::Conflict(format!(
             "task changed while retrying: {task_id}"
         )));
     }
-    propagate_blocked(connection, &graph_id, now_unix_ms)
-        .await
-        .into_storage()?;
-    unlock_satisfied(connection, &graph_id, now_unix_ms)
-        .await
-        .into_storage()?;
+    propagate_blocked(connection, &graph_id, now_unix_ms).await?;
+    unlock_satisfied(connection, &graph_id, now_unix_ms).await?;
     let graph = fetch_graph(connection, &graph_id)
         .await
-        .into_storage()?
+        .db()?
         .ok_or_else(|| ClientStorageError::NotFound(graph_id.clone()))?;
     SqliteClientStorage::record_receipt(connection, command, &graph, now_unix_ms)
         .await
-        .into_storage()?;
+        .db()?;
     Ok(graph)
 }
 
@@ -251,7 +227,7 @@ pub(super) async fn restart_task(
 ) -> Result<LocalTaskGraph, ClientStorageError> {
     if let Some(replay) = SqliteClientStorage::replay(connection, command)
         .await
-        .into_storage()?
+        .db()?
     {
         return Ok(replay);
     }
@@ -261,12 +237,12 @@ pub(super) async fn restart_task(
     .bind(task_id)
     .fetch_optional(&mut *connection)
     .await
-    .into_storage()?
+    .db()?
     .ok_or_else(|| ClientStorageError::NotFound(task_id.to_string()))?;
-    let graph_id: String = row.try_get("graph_id").into_storage()?;
-    let status = LocalTaskStatus::from_str(&row.try_get::<String, _>("status").into_storage()?)
+    let graph_id: String = row.try_get("graph_id").db()?;
+    let status = LocalTaskStatus::from_str(&row.try_get::<String, _>("status").db()?)
         .map_err(ClientStorageError::InvalidState)?;
-    let version = u64::try_from(row.try_get::<i64, _>("version").into_storage()?)
+    let version = u64::try_from(row.try_get::<i64, _>("version").db()?)
         .map_err(|_| ClientStorageError::InvalidState("invalid task version".to_string()))?;
     if version != expected_version {
         return Err(ClientStorageError::Conflict(format!(
@@ -286,19 +262,19 @@ pub(super) async fn restart_task(
     }
     require_satisfied_prerequisites(connection, &graph_id, task_id)
         .await
-        .into_storage()?;
+        .db()?;
 
     let reset_version = if status == LocalTaskStatus::Running {
         cancel_active_run(
             connection,
             task_id,
-            row.try_get("active_run_id").into_storage()?,
+            row.try_get("active_run_id").db()?,
             reason,
             &format!("{run_event_prefix}-target"),
             now_unix_ms,
         )
         .await
-        .into_storage()?;
+        .db()?;
         version
             .checked_add(1)
             .ok_or_else(|| ClientStorageError::InvalidState("task version overflow".to_string()))?
@@ -324,24 +300,24 @@ pub(super) async fn restart_task(
     .bind(&graph_id)
     .fetch_all(&mut *connection)
     .await
-    .into_storage()?;
+    .db()?;
     for (index, descendant) in running_descendants.into_iter().enumerate() {
-        let descendant_id: String = descendant.try_get("task_id").into_storage()?;
+        let descendant_id: String = descendant.try_get("task_id").db()?;
         cancel_active_run(
             connection,
             &descendant_id,
-            descendant.try_get("active_run_id").into_storage()?,
+            descendant.try_get("active_run_id").db()?,
             reason,
             &format!("{run_event_prefix}-descendant-{index}"),
             now_unix_ms,
         )
         .await
-        .into_storage()?;
+        .db()?;
     }
 
     reset_descendants(connection, &graph_id, task_id, now_unix_ms)
         .await
-        .into_storage()?;
+        .db()?;
     let updated = sqlx::query(
         "UPDATE local_tasks SET status = 'ready', active_run_id = NULL, \
          version = version + 1, updated_at_unix_ms = ? \
@@ -356,7 +332,7 @@ pub(super) async fn restart_task(
     )
     .execute(&mut *connection)
     .await
-    .into_storage()?;
+    .db()?;
     if updated.rows_affected() != 1 {
         return Err(ClientStorageError::Conflict(format!(
             "task changed while restarting: {task_id}"
@@ -364,17 +340,17 @@ pub(super) async fn restart_task(
     }
     propagate_blocked(connection, &graph_id, now_unix_ms)
         .await
-        .into_storage()?;
+        .db()?;
     unlock_satisfied(connection, &graph_id, now_unix_ms)
         .await
-        .into_storage()?;
+        .db()?;
     let graph = fetch_graph(connection, &graph_id)
         .await
-        .into_storage()?
+        .db()?
         .ok_or_else(|| ClientStorageError::NotFound(graph_id.clone()))?;
     SqliteClientStorage::record_receipt(connection, command, &graph, now_unix_ms)
         .await
-        .into_storage()?;
+        .db()?;
     Ok(graph)
 }
 
@@ -393,7 +369,7 @@ async fn require_satisfied_prerequisites(
     .bind(task_id)
     .fetch_one(&mut *connection)
     .await
-    .into_storage()?;
+    .db()?;
     if unsatisfied != 0 {
         return Err(ClientStorageError::Conflict(format!(
             "task prerequisites are not satisfied: {task_id}"
@@ -427,7 +403,7 @@ async fn reset_blocked_descendants(
     .bind(graph_id)
     .execute(&mut *connection)
     .await
-    .into_storage()?;
+    .db()?;
     Ok(())
 }
 
@@ -456,7 +432,7 @@ async fn reset_descendants(
     .bind(graph_id)
     .execute(&mut *connection)
     .await
-    .into_storage()?;
+    .db()?;
     Ok(())
 }
 

@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    ClientStorageError, IdempotentCommand, IntoClientStorageResult, LocalAgentTaskStore,
-    SqliteClientStorage,
+    ClientStorageError, IdempotentCommand, LocalAgentTaskStore, SqliteClientStorage,
+    SqliteResultExt,
 };
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
@@ -22,27 +22,22 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         now_unix_ms: i64,
     ) -> Result<LocalTaskGraph, ClientStorageError> {
         graph.validate().map_err(ClientStorageError::InvalidState)?;
-        let mut connection = self.pool.acquire().await.into_storage()?;
-        Self::begin_immediate(&mut connection)
-            .await
-            .into_storage()?;
+        let mut connection = self.pool.acquire().await.db()?;
+        Self::begin_immediate(&mut connection).await.db()?;
         let result = async {
-            if let Some(replay) = Self::replay(&mut connection, command)
-                .await
-                .into_storage()?
-            {
+            if let Some(replay) = Self::replay(&mut connection, command).await.db()? {
                 return Ok(replay);
             }
             insert_graph(&mut connection, graph, now_unix_ms)
                 .await
-                .into_storage()?;
+                .db()?;
             let created = fetch_graph(&mut connection, &graph.graph_id)
                 .await
-                .into_storage()?
+                .db()?
                 .ok_or_else(|| ClientStorageError::NotFound(graph.graph_id.clone()))?;
             Self::record_receipt(&mut connection, command, &created, now_unix_ms)
                 .await
-                .into_storage()?;
+                .db()?;
             Ok(created)
         }
         .await;
@@ -53,7 +48,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         &self,
         graph_id: &str,
     ) -> Result<Option<LocalTaskGraph>, ClientStorageError> {
-        let mut connection = self.pool.acquire().await.into_storage()?;
+        let mut connection = self.pool.acquire().await.db()?;
         fetch_graph(&mut connection, graph_id).await
     }
 
@@ -67,13 +62,13 @@ impl LocalAgentTaskStore for SqliteClientStorage {
                 "task Run limit must be between 1 and 100".to_string(),
             ));
         }
-        let mut connection = self.pool.acquire().await.into_storage()?;
+        let mut connection = self.pool.acquire().await.db()?;
         let exists =
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM local_tasks WHERE task_id = ?")
                 .bind(task_id)
                 .fetch_one(&mut *connection)
                 .await
-                .into_storage()?;
+                .db()?;
         if exists == 0 {
             return Err(ClientStorageError::NotFound(task_id.to_string()));
         }
@@ -91,7 +86,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         .bind(i64::from(limit))
         .fetch_all(&mut *connection)
         .await
-        .into_storage()?
+        .db()?
         .into_iter()
         .map(super::decode_run)
         .collect()
@@ -103,10 +98,8 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         event_id: &str,
         now_unix_ms: i64,
     ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError> {
-        let mut connection = self.pool.acquire().await.into_storage()?;
-        Self::begin_immediate(&mut connection)
-            .await
-            .into_storage()?;
+        let mut connection = self.pool.acquire().await.db()?;
+        Self::begin_immediate(&mut connection).await.db()?;
         let result = super::task_lifecycle::start_next_task_run(
             &mut connection,
             run_id,
@@ -126,10 +119,8 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         run_event_id: &str,
         now_unix_ms: i64,
     ) -> Result<LocalTaskGraph, ClientStorageError> {
-        let mut connection = self.pool.acquire().await.into_storage()?;
-        Self::begin_immediate(&mut connection)
-            .await
-            .into_storage()?;
+        let mut connection = self.pool.acquire().await.db()?;
+        Self::begin_immediate(&mut connection).await.db()?;
         let result = super::task_commands::cancel_task(
             &mut connection,
             command,
@@ -150,10 +141,8 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         expected_version: u64,
         now_unix_ms: i64,
     ) -> Result<LocalTaskGraph, ClientStorageError> {
-        let mut connection = self.pool.acquire().await.into_storage()?;
-        Self::begin_immediate(&mut connection)
-            .await
-            .into_storage()?;
+        let mut connection = self.pool.acquire().await.db()?;
+        Self::begin_immediate(&mut connection).await.db()?;
         let result = super::task_commands::retry_task(
             &mut connection,
             command,
@@ -174,10 +163,8 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         run_event_prefix: &str,
         now_unix_ms: i64,
     ) -> Result<LocalTaskGraph, ClientStorageError> {
-        let mut connection = self.pool.acquire().await.into_storage()?;
-        Self::begin_immediate(&mut connection)
-            .await
-            .into_storage()?;
+        let mut connection = self.pool.acquire().await.db()?;
+        Self::begin_immediate(&mut connection).await.db()?;
         let result = super::task_commands::restart_task(
             &mut connection,
             command,
@@ -258,7 +245,7 @@ async fn insert_graph(
         .bind(&dependency.prerequisite_task_id)
         .execute(&mut *connection)
         .await
-        .into_storage()?;
+        .db()?;
     }
     Ok(())
 }
@@ -291,7 +278,7 @@ pub(super) async fn fetch_graph(
     .bind(graph_id)
     .fetch_optional(&mut *connection)
     .await
-    .into_storage()?;
+    .db()?;
     let Some(graph) = graph else { return Ok(None) };
     let tasks = sqlx::query(
         "SELECT task_id, graph_id, title, profile_key, model_config_ref, \
@@ -302,7 +289,7 @@ pub(super) async fn fetch_graph(
     .bind(graph_id)
     .fetch_all(&mut *connection)
     .await
-    .into_storage()?
+    .db()?
     .into_iter()
     .map(|row| decode_task(row, &graph))
     .collect::<Result<Vec<_>, _>>()?;
@@ -313,51 +300,51 @@ pub(super) async fn fetch_graph(
     .bind(graph_id)
     .fetch_all(&mut *connection)
     .await
-    .into_storage()?
+    .db()?
     .into_iter()
     .map(|row| {
         Ok(LocalTaskDependency {
-            task_id: row.try_get("task_id").into_storage()?,
-            prerequisite_task_id: row.try_get("prerequisite_task_id").into_storage()?,
+            task_id: row.try_get("task_id").db()?,
+            prerequisite_task_id: row.try_get("prerequisite_task_id").db()?,
         })
     })
     .collect::<Result<Vec<_>, ClientStorageError>>()?;
     let status = LocalTaskGraphStatus::derive(&tasks);
     Ok(Some(LocalTaskGraph {
-        graph_id: graph.try_get("graph_id").into_storage()?,
-        owner_user_id: graph.try_get("owner_user_id").into_storage()?,
-        source_entity_type: graph.try_get("source_entity_type").into_storage()?,
-        source_entity_id: graph.try_get("source_entity_id").into_storage()?,
+        graph_id: graph.try_get("graph_id").db()?,
+        owner_user_id: graph.try_get("owner_user_id").db()?,
+        source_entity_type: graph.try_get("source_entity_type").db()?,
+        source_entity_id: graph.try_get("source_entity_id").db()?,
         status,
         tasks,
         dependencies,
-        created_at_unix_ms: graph.try_get("created_at_unix_ms").into_storage()?,
+        created_at_unix_ms: graph.try_get("created_at_unix_ms").db()?,
     }))
 }
 
 fn decode_task(row: SqliteRow, graph: &SqliteRow) -> Result<LocalTaskRecord, ClientStorageError> {
-    let input: String = row.try_get("input_json").into_storage()?;
-    let status: String = row.try_get("status").into_storage()?;
+    let input: String = row.try_get("input_json").db()?;
+    let status: String = row.try_get("status").db()?;
     Ok(LocalTaskRecord {
-        graph_id: row.try_get("graph_id").into_storage()?,
-        owner_user_id: graph.try_get("owner_user_id").into_storage()?,
-        source_entity_type: graph.try_get("source_entity_type").into_storage()?,
-        source_entity_id: graph.try_get("source_entity_id").into_storage()?,
-        task_id: row.try_get("task_id").into_storage()?,
-        title: row.try_get("title").into_storage()?,
-        profile_key: row.try_get("profile_key").into_storage()?,
-        model_config_ref: row.try_get("model_config_ref").into_storage()?,
-        model_config_revision: row.try_get("model_config_revision").into_storage()?,
-        capability_policy_revision: row.try_get("capability_policy_revision").into_storage()?,
+        graph_id: row.try_get("graph_id").db()?,
+        owner_user_id: graph.try_get("owner_user_id").db()?,
+        source_entity_type: graph.try_get("source_entity_type").db()?,
+        source_entity_id: graph.try_get("source_entity_id").db()?,
+        task_id: row.try_get("task_id").db()?,
+        title: row.try_get("title").db()?,
+        profile_key: row.try_get("profile_key").db()?,
+        model_config_ref: row.try_get("model_config_ref").db()?,
+        model_config_revision: row.try_get("model_config_revision").db()?,
+        capability_policy_revision: row.try_get("capability_policy_revision").db()?,
         input: serde_json::from_str(&input)?,
-        max_iterations: u32::try_from(row.try_get::<i64, _>("max_iterations").into_storage()?)
+        max_iterations: u32::try_from(row.try_get::<i64, _>("max_iterations").db()?)
             .map_err(|_| ClientStorageError::InvalidState("invalid max_iterations".to_string()))?,
         status: LocalTaskStatus::from_str(&status).map_err(ClientStorageError::InvalidState)?,
-        active_run_id: row.try_get("active_run_id").into_storage()?,
-        version: u64::try_from(row.try_get::<i64, _>("version").into_storage()?)
+        active_run_id: row.try_get("active_run_id").db()?,
+        version: u64::try_from(row.try_get::<i64, _>("version").db()?)
             .map_err(|_| ClientStorageError::InvalidState("invalid task version".to_string()))?,
-        created_at_unix_ms: row.try_get("created_at_unix_ms").into_storage()?,
-        updated_at_unix_ms: row.try_get("updated_at_unix_ms").into_storage()?,
+        created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
+        updated_at_unix_ms: row.try_get("updated_at_unix_ms").db()?,
     })
 }
 

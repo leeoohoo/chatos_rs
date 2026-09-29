@@ -17,6 +17,7 @@ The current milestone provides:
 - local `create_task` and `create_tasks_with_prerequisites` tool executors;
 - a `chatos_ai_runtime` single-step Profile adapter and conservative tool-safety policy;
 - a local tool registry and one-invocation Tool Scheduler;
+- a client-owned MCP stdio process/session adapter with local tool discovery and execution;
 - an event-driven Host Coordinator that drains model and tool work to quiescence;
 - monotonic, replayable event cursors;
 - conservative crash recovery to `needs_review`;
@@ -41,6 +42,8 @@ Native clients may choose `LocalAgentHostAssembly::with_external_tool_worker`. I
 Protocol v8 retains the optional `include_tool_names` and `exclude_tool_names` Tool claim filters. The Assembly's Rust worker includes only the two reserved Task tools, and Coordinator IPC automatically excludes them from native claims. Explicit overlapping filters are rejected.
 
 `LocalToolScheduler` claims one persisted invocation, routes it through `LocalToolRegistry`, and commits the result. Executor infrastructure errors on side-effecting calls become `needs_review`; read-only executor errors become ordinary failed tool results that the next model step can inspect.
+
+`LocalMcpStdioSession` launches installed Plugin MCP processes directly on the client, performs the MCP initialize handshake, follows paginated `tools/list`, prefixes tool names per local server, and registers `tools/call` executors in `LocalToolRegistry`. It does not call or depend on `mcp_management_service`. The default process environment is empty; native integration must explicitly provide the minimum environment required by the signed Plugin release. Transport loss or timeout invalidates the session so an unknown side-effect result cannot be silently replayed, while an MCP `isError` response is committed as a known failed tool result.
 
 ## Run locally
 

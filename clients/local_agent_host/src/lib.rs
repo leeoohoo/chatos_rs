@@ -19,7 +19,10 @@ pub use chatos_agent_profiles::{
     LocalModelRuntimeResolver, NamedReadOnlyTools, PreparedLocalAiStep, ResolvedLocalCapabilities,
     ToolSafetyPolicy, TransientLocalModelRuntime, MAIN_CHAT_PROFILE_KEY, TASK_RUNNER_PROFILE_KEY,
 };
-pub use infrastructure::LocalControlPlaneSnapshot;
+pub use infrastructure::{
+    LocalControlPlaneSnapshot, LocalMcpServerConfig, LocalMcpStdioSession, LocalMcpToolDefinition,
+    LocalMcpToolSet,
+};
 pub use interface::{
     decode_response, read_frame, serve_reader_writer, serve_stream, write_frame,
     HostRequestHandler, HostTransportError,

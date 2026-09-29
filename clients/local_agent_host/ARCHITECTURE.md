@@ -14,13 +14,15 @@ local_agent_host/
 │   └── infrastructure/database/   SQLite implementation of the storage ports
 └── src/
     ├── application/               schedulers, coordinator, assembly, local Task tools
-    ├── infrastructure/            database/control-plane composition adapters
+    ├── infrastructure/            database/control-plane/local MCP adapters
     ├── interface/                 stdio, Unix socket, and Windows named-pipe IPC
     ├── lib.rs                     public composition root
     └── main.rs                    standalone process entry point
 ```
 
 The application runtime depends on `ports` and `interface`; it does not depend on the SQLite implementation. The Host composition root selects SQLite and wires it into the runtime.
+
+The local MCP adapter owns Plugin process startup, MCP session initialization, tool discovery and invocation. Marketplace metadata and signed artifacts may still come from the retained Plugin control plane, but no tool execution request is routed through `mcp_management_service`.
 
 ## Server-removal boundary
 
