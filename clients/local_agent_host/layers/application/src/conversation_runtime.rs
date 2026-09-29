@@ -23,7 +23,7 @@ impl LocalAgentRuntime {
             HostCommand::GetConversation(command) => Ok(HostResult::Conversation {
                 conversation: self
                     .store
-                    .get_conversation(&command.conversation_id)
+                    .get_conversation(&command.owner_user_id, &command.conversation_id)
                     .await?
                     .ok_or(ClientStorageError::NotFound(command.conversation_id))?,
             }),
@@ -31,6 +31,7 @@ impl LocalAgentRuntime {
                 page: Box::new(
                     self.store
                         .get_conversation_history(
+                            &command.owner_user_id,
                             &command.conversation_id,
                             command.before_ordinal,
                             command.limit,
@@ -39,9 +40,14 @@ impl LocalAgentRuntime {
                 ),
             }),
             HostCommand::ListConversations(command) => Ok(HostResult::Conversations {
-                conversations: self
+                page: self
                     .store
-                    .list_conversations(&command.owner_user_id, command.limit)
+                    .list_conversations(
+                        &command.owner_user_id,
+                        command.before_updated_at_unix_ms,
+                        command.before_conversation_id.as_deref(),
+                        command.limit,
+                    )
                     .await?,
             }),
             HostCommand::StartConversationTurn(command) => {
@@ -94,7 +100,7 @@ impl LocalAgentRuntime {
     {
         let conversation = self
             .store
-            .get_conversation(&command.conversation_id)
+            .get_conversation(&command.owner_user_id, &command.conversation_id)
             .await?
             .ok_or_else(|| ClientStorageError::NotFound(command.conversation_id.clone()))?;
         let now = self.now()?;
@@ -206,6 +212,7 @@ mod tests {
 
     fn start_turn(expected_conversation_version: u64) -> StartConversationTurnCommand {
         StartConversationTurnCommand {
+            owner_user_id: "user-1".to_string(),
             conversation_id: "conversation-1".to_string(),
             expected_conversation_version,
             turn_id: "turn-1".to_string(),
@@ -281,6 +288,7 @@ mod tests {
             .try_handle(request(
                 "get-conversation-1",
                 HostCommand::GetConversation(GetConversationCommand {
+                    owner_user_id: "user-1".to_string(),
                     conversation_id: "conversation-1".to_string(),
                 }),
             ))
@@ -299,6 +307,8 @@ mod tests {
                 "list-conversation-1",
                 HostCommand::ListConversations(ListConversationsCommand {
                     owner_user_id: "user-1".to_string(),
+                    before_updated_at_unix_ms: None,
+                    before_conversation_id: None,
                     limit: 10,
                 }),
             ))
@@ -306,13 +316,14 @@ mod tests {
             .expect("list conversations");
         assert!(matches!(
             listed,
-            HostResult::Conversations { conversations } if conversations.len() == 1
+            HostResult::Conversations { page } if page.conversations.len() == 1
         ));
 
         let history = runtime
             .try_handle(request(
                 "get-conversation-history-1",
                 HostCommand::GetConversationHistory(GetConversationHistoryCommand {
+                    owner_user_id: "user-1".to_string(),
                     conversation_id: "conversation-1".to_string(),
                     before_ordinal: None,
                     limit: 10,
@@ -386,6 +397,7 @@ mod tests {
             .try_handle(request(
                 "resume-turn-control",
                 HostCommand::ResumeConversationTurn(ResumeConversationTurnCommand {
+                    owner_user_id: "user-1".to_string(),
                     conversation_id: "conversation-1".to_string(),
                     expected_conversation_version: 2,
                     turn_id: "turn-1".to_string(),
@@ -418,6 +430,7 @@ mod tests {
             .try_handle(request(
                 "cancel-turn-control",
                 HostCommand::CancelConversationTurn(CancelConversationTurnCommand {
+                    owner_user_id: "user-1".to_string(),
                     conversation_id: "conversation-1".to_string(),
                     expected_conversation_version: resumed.conversation.version,
                     turn_id: "turn-1".to_string(),
@@ -466,6 +479,7 @@ mod tests {
             .try_handle(request(
                 "guide-turn",
                 HostCommand::GuideConversationTurn(GuideConversationTurnCommand {
+                    owner_user_id: "user-1".to_string(),
                     conversation_id: "conversation-1".to_string(),
                     expected_conversation_version: 2,
                     turn_id: "turn-1".to_string(),

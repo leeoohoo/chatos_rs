@@ -2,7 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    conversation_store::{fetch_conversation, fetch_conversation_record, insert_user_message_on},
+    conversation_store::{
+        fetch_conversation, fetch_conversation_record_for_owner, insert_user_message_on,
+    },
     run_commands, ClientStorageError, IdempotentCommand, SqliteClientStorage, SqliteResultExt,
 };
 use chatos_local_agent_protocol::{
@@ -30,6 +32,7 @@ pub(super) async fn resume_conversation_turn(
         }
         verify_conversation_version(
             &mut connection,
+            &turn.owner_user_id,
             &turn.conversation_id,
             turn.expected_conversation_version,
         )
@@ -127,6 +130,7 @@ pub(super) async fn cancel_conversation_turn(
         }
         verify_conversation_version(
             &mut connection,
+            &turn.owner_user_id,
             &turn.conversation_id,
             turn.expected_conversation_version,
         )
@@ -174,6 +178,7 @@ pub(super) async fn guide_conversation_turn(
         }
         verify_conversation_version(
             &mut connection,
+            &turn.owner_user_id,
             &turn.conversation_id,
             turn.expected_conversation_version,
         )
@@ -335,12 +340,14 @@ async fn enforce_pending_guidance_limit(
 
 async fn verify_conversation_version(
     connection: &mut SqliteConnection,
+    owner_user_id: &str,
     conversation_id: &str,
     expected_version: u64,
 ) -> Result<(), ClientStorageError> {
-    let conversation = fetch_conversation_record(connection, conversation_id)
-        .await?
-        .ok_or_else(|| ClientStorageError::NotFound(conversation_id.to_string()))?;
+    let conversation =
+        fetch_conversation_record_for_owner(connection, owner_user_id, conversation_id)
+            .await?
+            .ok_or_else(|| ClientStorageError::NotFound(conversation_id.to_string()))?;
     if conversation.version != expected_version {
         return Err(ClientStorageError::Conflict(format!(
             "conversation version changed: {conversation_id}"

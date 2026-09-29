@@ -195,6 +195,7 @@ mod tests {
             self.runtime
                 .try_handle(envelope(
                     HostCommand::GuideConversationTurn(GuideConversationTurnCommand {
+                        owner_user_id: "user-1".to_string(),
                         conversation_id: "conversation-guided-scheduler".to_string(),
                         expected_conversation_version: 2,
                         turn_id: "turn-guided-scheduler".to_string(),
@@ -282,6 +283,7 @@ mod tests {
         runtime
             .try_handle(envelope(
                 HostCommand::StartConversationTurn(StartConversationTurnCommand {
+                    owner_user_id: "user-1".to_string(),
                     conversation_id: "conversation-guided-scheduler".to_string(),
                     expected_conversation_version: 1,
                     turn_id: "turn-guided-scheduler".to_string(),

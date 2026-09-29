@@ -25,6 +25,8 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod control_plane_runtime;
+#[cfg(test)]
+mod conversation_query_tests;
 mod conversation_runtime;
 mod plugin_runtime;
 mod profile;

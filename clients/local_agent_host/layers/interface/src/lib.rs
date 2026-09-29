@@ -29,10 +29,10 @@ pub use conversation::{
     GetConversationHistoryCommand, GuideConversationTurnCommand, ListConversationsCommand,
     LocalConversationAttachmentRecord, LocalConversationAttachmentSpec, LocalConversationDetail,
     LocalConversationHistoryPage, LocalConversationMessageRecord, LocalConversationMessageRole,
-    LocalConversationRecord, LocalConversationTurnRecord, LocalConversationTurnStart,
-    LocalConversationTurnStatus, LocalConversationTurnUpdate, ResumeConversationTurnCommand,
-    StartConversationTurnCommand, LOCAL_CONVERSATION_MAX_ATTACHMENTS,
-    LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE,
+    LocalConversationPage, LocalConversationRecord, LocalConversationTurnRecord,
+    LocalConversationTurnStart, LocalConversationTurnStatus, LocalConversationTurnUpdate,
+    ResumeConversationTurnCommand, StartConversationTurnCommand,
+    LOCAL_CONVERSATION_MAX_ATTACHMENTS, LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE,
 };
 pub use memory::{GetMemorySyncStatusCommand, LocalMemorySyncStatus};
 pub use plugin::{
@@ -55,7 +55,7 @@ pub use tool::{
     LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 19;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 20;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -642,7 +642,7 @@ pub enum HostResult {
         conversation: LocalConversationDetail,
     },
     Conversations {
-        conversations: Vec<LocalConversationRecord>,
+        page: LocalConversationPage,
     },
     ConversationHistory {
         page: Box<LocalConversationHistoryPage>,

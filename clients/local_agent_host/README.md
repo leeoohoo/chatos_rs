@@ -54,6 +54,8 @@ IPC v18 and SQLite v16 add the durable tool-approval gate. Side-effecting model 
 
 IPC v19 adds `list_task_graphs` as the account-scoped Task Inspector index. Active, terminal, and complete views use a stable descending `(updated_at_unix_ms, graph_id)` cursor and return bounded summaries instead of complete DAGs; `get_task_graph` loads one selected DAG. Task Graph detail, Task Run history, cancel, retry, and restart commands now all require the owner account and treat a cross-account identifier as not found.
 
+IPC v20 makes `list_conversations` a stable account-scoped page instead of a one-shot bounded list. Pages use `(updated_at_unix_ms DESC, conversation_id ASC)` and expose an explicit paired cursor. Conversation detail, history, Turn start, guidance, resume, and cancel commands now require the owner account; a Conversation identifier from another signed-in account is treated as not found before any Run or Message state can change.
+
 Native clients may choose `LocalAgentHostAssembly::with_external_tool_worker`. In that mode Swift or C# claims and commits platform tools through IPC, while Rust still owns model scheduling plus the two Task creation tools and wakes immediately after each native tool receipt. This keeps platform permissions and UI-bound tools in the native process without duplicating the Agent loop.
 
 Protocol v15 retains the optional `include_tool_names` and `exclude_tool_names` Tool claim filters. The Assembly's Rust worker includes only the two reserved Task tools, and Coordinator IPC automatically excludes them from native claims. Explicit overlapping filters are rejected.
@@ -129,7 +131,7 @@ Example health request:
 
 ```json
 {
-  "protocol_version": 19,
+  "protocol_version": 20,
   "command_id": "health-019",
   "command": {
     "type": "health"

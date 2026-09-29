@@ -21,6 +21,7 @@ mod conversation_commands;
 mod conversation_guidance;
 mod conversation_history;
 mod conversation_lifecycle;
+mod conversation_query_store;
 mod conversation_store;
 mod memory_cache_store;
 mod memory_outbox_store;

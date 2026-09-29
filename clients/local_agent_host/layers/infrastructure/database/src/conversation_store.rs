@@ -9,8 +9,9 @@ use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     CreateConversationCommand, LocalAgentRunRecord, LocalConversationAttachmentRecord,
     LocalConversationAttachmentSpec, LocalConversationDetail, LocalConversationMessageRecord,
-    LocalConversationMessageRole, LocalConversationRecord, LocalConversationTurnRecord,
-    LocalConversationTurnStart, LocalConversationTurnStatus, StartConversationTurnCommand,
+    LocalConversationMessageRole, LocalConversationPage, LocalConversationRecord,
+    LocalConversationTurnRecord, LocalConversationTurnStart, LocalConversationTurnStatus,
+    StartConversationTurnCommand,
 };
 use serde_json::json;
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
@@ -69,20 +70,23 @@ impl LocalConversationStore for SqliteClientStorage {
 
     async fn get_conversation(
         &self,
+        owner_user_id: &str,
         conversation_id: &str,
     ) -> Result<Option<LocalConversationDetail>, ClientStorageError> {
         let mut connection = self.pool.acquire().await.db()?;
-        fetch_conversation(&mut connection, conversation_id).await
+        fetch_conversation_for_owner(&mut connection, owner_user_id, conversation_id).await
     }
 
     async fn get_conversation_history(
         &self,
+        owner_user_id: &str,
         conversation_id: &str,
         before_ordinal: Option<u64>,
         limit: u32,
     ) -> Result<chatos_local_agent_protocol::LocalConversationHistoryPage, ClientStorageError> {
         super::conversation_history::get_conversation_history(
             self,
+            owner_user_id,
             conversation_id,
             before_ordinal,
             limit,
@@ -93,27 +97,18 @@ impl LocalConversationStore for SqliteClientStorage {
     async fn list_conversations(
         &self,
         owner_user_id: &str,
+        before_updated_at_unix_ms: Option<i64>,
+        before_conversation_id: Option<&str>,
         limit: u32,
-    ) -> Result<Vec<LocalConversationRecord>, ClientStorageError> {
-        if !(1..=200).contains(&limit) {
-            return Err(ClientStorageError::InvalidState(
-                "conversation limit must be between 1 and 200".to_string(),
-            ));
-        }
-        let mut connection = self.pool.acquire().await.db()?;
-        sqlx::query(
-            "SELECT conversation_id, owner_user_id, title, version, created_at_unix_ms, \
-             updated_at_unix_ms FROM local_conversations WHERE owner_user_id = ? \
-             ORDER BY updated_at_unix_ms DESC, conversation_id LIMIT ?",
+    ) -> Result<LocalConversationPage, ClientStorageError> {
+        super::conversation_query_store::list_conversations(
+            self,
+            owner_user_id,
+            before_updated_at_unix_ms,
+            before_conversation_id,
+            limit,
         )
-        .bind(owner_user_id)
-        .bind(i64::from(limit))
-        .fetch_all(&mut *connection)
         .await
-        .db()?
-        .into_iter()
-        .map(decode_conversation)
-        .collect()
     }
 
     async fn start_conversation_turn(
@@ -131,9 +126,13 @@ impl LocalConversationStore for SqliteClientStorage {
             if let Some(replay) = Self::replay(&mut connection, command).await? {
                 return Ok(replay);
             }
-            let conversation = fetch_conversation_record(&mut connection, &turn.conversation_id)
-                .await?
-                .ok_or_else(|| ClientStorageError::NotFound(turn.conversation_id.clone()))?;
+            let conversation = fetch_conversation_record_for_owner(
+                &mut connection,
+                &turn.owner_user_id,
+                &turn.conversation_id,
+            )
+            .await?
+            .ok_or_else(|| ClientStorageError::NotFound(turn.conversation_id.clone()))?;
             if conversation.version != turn.expected_conversation_version {
                 return Err(ClientStorageError::Conflict(format!(
                     "conversation version changed: {}",
@@ -462,7 +461,42 @@ pub(super) async fn fetch_conversation_record(
     .transpose()
 }
 
-fn decode_conversation(row: SqliteRow) -> Result<LocalConversationRecord, ClientStorageError> {
+pub(super) async fn fetch_conversation_record_for_owner(
+    connection: &mut SqliteConnection,
+    owner_user_id: &str,
+    conversation_id: &str,
+) -> Result<Option<LocalConversationRecord>, ClientStorageError> {
+    sqlx::query(
+        "SELECT conversation_id, owner_user_id, title, version, created_at_unix_ms, \
+         updated_at_unix_ms FROM local_conversations \
+         WHERE conversation_id = ? AND owner_user_id = ?",
+    )
+    .bind(conversation_id)
+    .bind(owner_user_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .db()?
+    .map(decode_conversation)
+    .transpose()
+}
+
+async fn fetch_conversation_for_owner(
+    connection: &mut SqliteConnection,
+    owner_user_id: &str,
+    conversation_id: &str,
+) -> Result<Option<LocalConversationDetail>, ClientStorageError> {
+    if fetch_conversation_record_for_owner(connection, owner_user_id, conversation_id)
+        .await?
+        .is_none()
+    {
+        return Ok(None);
+    }
+    fetch_conversation(connection, conversation_id).await
+}
+
+pub(super) fn decode_conversation(
+    row: SqliteRow,
+) -> Result<LocalConversationRecord, ClientStorageError> {
     Ok(LocalConversationRecord {
         conversation_id: row.try_get("conversation_id").db()?,
         owner_user_id: row.try_get("owner_user_id").db()?,

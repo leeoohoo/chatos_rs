@@ -3,7 +3,7 @@
 
 use super::{
     conversation_store::{
-        decode_attachment, decode_message, decode_turn, fetch_conversation_record,
+        decode_attachment, decode_message, decode_turn, fetch_conversation_record_for_owner,
     },
     ClientStorageError, SqliteClientStorage, SqliteResultExt,
 };
@@ -16,6 +16,7 @@ use sqlx::SqliteConnection;
 
 pub(super) async fn get_conversation_history(
     storage: &SqliteClientStorage,
+    owner_user_id: &str,
     conversation_id: &str,
     before_ordinal: Option<u64>,
     limit: u32,
@@ -39,9 +40,10 @@ pub(super) async fn get_conversation_history(
         ));
     }
     let mut connection = storage.pool.acquire().await.db()?;
-    let conversation = fetch_conversation_record(&mut connection, conversation_id)
-        .await?
-        .ok_or_else(|| ClientStorageError::NotFound(conversation_id.to_string()))?;
+    let conversation =
+        fetch_conversation_record_for_owner(&mut connection, owner_user_id, conversation_id)
+            .await?
+            .ok_or_else(|| ClientStorageError::NotFound(conversation_id.to_string()))?;
     let mut messages = fetch_messages(
         &mut connection,
         conversation_id,

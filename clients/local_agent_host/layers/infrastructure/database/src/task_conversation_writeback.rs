@@ -331,6 +331,7 @@ mod tests {
             .await
             .expect("create Conversation");
         let turn = StartConversationTurnCommand {
+            owner_user_id: "user-1".to_string(),
             conversation_id: "conversation-1".to_string(),
             expected_conversation_version: 1,
             turn_id: "turn-1".to_string(),
@@ -447,7 +448,7 @@ mod tests {
             .expect("cancel pending Task");
 
         let conversation = storage
-            .get_conversation("conversation-1")
+            .get_conversation("user-1", "conversation-1")
             .await
             .expect("load Conversation")
             .expect("Conversation");

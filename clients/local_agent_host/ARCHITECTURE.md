@@ -58,6 +58,8 @@ Tool authorization is a Host-owned durable state machine in IPC v18 and SQLite v
 
 IPC v19 makes the local Task Graph repository independently discoverable after restart. The owner-scoped index returns bounded Graph summaries with active/terminal/all filtering and a stable `(updated_at_unix_ms, graph_id)` cursor; complete DAGs remain an explicit detail read. Every external Task Graph read and mutation carries the owner account, so account switching cannot expose or mutate another account's local Task data by identifier.
 
+IPC v20 applies the same account boundary to the local Conversation fact store. Conversation discovery is a bounded stable page over `(updated_at_unix_ms DESC, conversation_id ASC)`, while detail, history and every Turn mutation verify the owner before loading or changing durable state. Native clients can rebuild the complete chat sidebar after reconnect without a server Conversation index, and switching accounts does not merge local histories.
+
 ## Server-removal boundary
 
 The completed client localization must allow these directories to be physically deleted:

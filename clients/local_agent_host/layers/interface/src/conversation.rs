@@ -26,6 +26,7 @@ impl CreateConversationCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StartConversationTurnCommand {
+    pub owner_user_id: String,
     pub conversation_id: String,
     pub expected_conversation_version: u64,
     pub turn_id: String,
@@ -44,6 +45,7 @@ pub struct StartConversationTurnCommand {
 
 impl StartConversationTurnCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("conversation_id", &self.conversation_id)?;
         if self.expected_conversation_version == 0 {
             return Err("expected_conversation_version must be greater than zero".to_string());
@@ -71,6 +73,7 @@ impl StartConversationTurnCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ResumeConversationTurnCommand {
+    pub owner_user_id: String,
     pub conversation_id: String,
     pub expected_conversation_version: u64,
     pub turn_id: String,
@@ -87,6 +90,7 @@ pub struct ResumeConversationTurnCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GuideConversationTurnCommand {
+    pub owner_user_id: String,
     pub conversation_id: String,
     pub expected_conversation_version: u64,
     pub turn_id: String,
@@ -102,6 +106,7 @@ pub struct GuideConversationTurnCommand {
 impl GuideConversationTurnCommand {
     pub fn validate(&self) -> Result<(), String> {
         for (field, value) in [
+            ("owner_user_id", self.owner_user_id.as_str()),
             ("conversation_id", self.conversation_id.as_str()),
             ("turn_id", self.turn_id.as_str()),
             ("message_id", self.message_id.as_str()),
@@ -118,6 +123,7 @@ impl GuideConversationTurnCommand {
 impl ResumeConversationTurnCommand {
     pub fn validate(&self) -> Result<(), String> {
         for (field, value) in [
+            ("owner_user_id", self.owner_user_id.as_str()),
             ("conversation_id", self.conversation_id.as_str()),
             ("turn_id", self.turn_id.as_str()),
             ("message_id", self.message_id.as_str()),
@@ -144,6 +150,7 @@ impl ResumeConversationTurnCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CancelConversationTurnCommand {
+    pub owner_user_id: String,
     pub conversation_id: String,
     pub expected_conversation_version: u64,
     pub turn_id: String,
@@ -153,6 +160,7 @@ pub struct CancelConversationTurnCommand {
 
 impl CancelConversationTurnCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("conversation_id", &self.conversation_id)?;
         validate_identifier("turn_id", &self.turn_id)?;
         if self.expected_conversation_version == 0 || self.expected_run_version == Some(0) {
@@ -274,17 +282,20 @@ impl LocalConversationAttachmentSpec {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetConversationCommand {
+    pub owner_user_id: String,
     pub conversation_id: String,
 }
 
 impl GetConversationCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("conversation_id", &self.conversation_id)
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetConversationHistoryCommand {
+    pub owner_user_id: String,
     pub conversation_id: String,
     pub before_ordinal: Option<u64>,
     pub limit: u32,
@@ -292,6 +303,7 @@ pub struct GetConversationHistoryCommand {
 
 impl GetConversationHistoryCommand {
     pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("conversation_id", &self.conversation_id)?;
         if self.before_ordinal == Some(0) {
             return Err("before_ordinal must be greater than zero".to_string());
@@ -308,6 +320,8 @@ impl GetConversationHistoryCommand {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ListConversationsCommand {
     pub owner_user_id: String,
+    pub before_updated_at_unix_ms: Option<i64>,
+    pub before_conversation_id: Option<String>,
     pub limit: u32,
 }
 
@@ -317,7 +331,19 @@ impl ListConversationsCommand {
         if self.limit == 0 || self.limit > 200 {
             return Err("limit must be between 1 and 200".to_string());
         }
-        Ok(())
+        match (
+            self.before_updated_at_unix_ms,
+            self.before_conversation_id.as_deref(),
+        ) {
+            (None, None) => Ok(()),
+            (Some(timestamp), Some(conversation_id)) if timestamp >= 0 => {
+                validate_identifier("before_conversation_id", conversation_id)
+            }
+            _ => Err(
+                "before_updated_at_unix_ms and before_conversation_id must be supplied together"
+                    .to_string(),
+            ),
+        }
     }
 }
 
@@ -329,6 +355,13 @@ pub struct LocalConversationRecord {
     pub version: u64,
     pub created_at_unix_ms: i64,
     pub updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalConversationPage {
+    pub conversations: Vec<LocalConversationRecord>,
+    pub next_before_updated_at_unix_ms: Option<i64>,
+    pub next_before_conversation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -492,6 +525,7 @@ mod tests {
 
     fn command() -> StartConversationTurnCommand {
         StartConversationTurnCommand {
+            owner_user_id: "user-1".to_string(),
             conversation_id: "conversation-1".to_string(),
             expected_conversation_version: 1,
             turn_id: "turn-1".to_string(),
@@ -527,6 +561,7 @@ mod tests {
     #[test]
     fn conversation_turn_updates_require_versions_and_resumable_status() {
         let mut resume = ResumeConversationTurnCommand {
+            owner_user_id: "user-1".to_string(),
             conversation_id: "conversation-1".to_string(),
             expected_conversation_version: 2,
             turn_id: "turn-1".to_string(),
@@ -546,6 +581,7 @@ mod tests {
         assert!(resume.validate().is_err());
 
         assert!(CancelConversationTurnCommand {
+            owner_user_id: "user-1".to_string(),
             conversation_id: "conversation-1".to_string(),
             expected_conversation_version: 2,
             turn_id: "turn-1".to_string(),
@@ -556,6 +592,7 @@ mod tests {
         .is_ok());
 
         assert!(GuideConversationTurnCommand {
+            owner_user_id: "user-1".to_string(),
             conversation_id: "conversation-1".to_string(),
             expected_conversation_version: 2,
             turn_id: "turn-1".to_string(),
@@ -572,6 +609,7 @@ mod tests {
     #[test]
     fn history_page_requires_a_bounded_positive_cursor() {
         assert!(GetConversationHistoryCommand {
+            owner_user_id: "user-1".to_string(),
             conversation_id: "conversation-1".to_string(),
             before_ordinal: None,
             limit: LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE,
@@ -579,9 +617,39 @@ mod tests {
         .validate()
         .is_ok());
         assert!(GetConversationHistoryCommand {
+            owner_user_id: "user-1".to_string(),
             conversation_id: "conversation-1".to_string(),
             before_ordinal: Some(0),
             limit: 10,
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn conversation_list_cursor_is_paired_and_owner_scoped() {
+        let valid = ListConversationsCommand {
+            owner_user_id: "user-1".to_string(),
+            before_updated_at_unix_ms: Some(1_000),
+            before_conversation_id: Some("conversation-1".to_string()),
+            limit: 50,
+        };
+        assert!(valid.validate().is_ok());
+        assert!(ListConversationsCommand {
+            before_conversation_id: None,
+            ..valid.clone()
+        }
+        .validate()
+        .is_err());
+        assert!(ListConversationsCommand {
+            owner_user_id: String::new(),
+            ..valid.clone()
+        }
+        .validate()
+        .is_err());
+        assert!(ListConversationsCommand {
+            limit: 201,
+            ..valid
         }
         .validate()
         .is_err());

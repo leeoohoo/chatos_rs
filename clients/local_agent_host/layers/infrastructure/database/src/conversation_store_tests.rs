@@ -30,6 +30,7 @@ fn turn(
     suffix: &str,
 ) -> StartConversationTurnCommand {
     StartConversationTurnCommand {
+        owner_user_id: "user-1".to_string(),
         conversation_id: conversation_id.to_string(),
         expected_conversation_version,
         turn_id: format!("turn-{suffix}"),
@@ -163,7 +164,7 @@ async fn turn_start_is_atomic_and_rejects_stale_or_concurrent_writes() {
         .expect("get stale Run")
         .is_none());
     let after_stale = storage
-        .get_conversation("conversation-1")
+        .get_conversation("user-1", "conversation-1")
         .await
         .expect("get conversation")
         .expect("conversation");
@@ -248,7 +249,7 @@ async fn terminal_runs_reconcile_turns_and_assistant_messages() {
         .await
         .expect("complete Run");
     let succeeded = storage
-        .get_conversation("conversation-success")
+        .get_conversation("user-1", "conversation-success")
         .await
         .expect("get success conversation")
         .expect("success conversation");
@@ -281,7 +282,7 @@ async fn terminal_runs_reconcile_turns_and_assistant_messages() {
         .await
         .expect("cancel Run");
     let cancelled = storage
-        .get_conversation("conversation-cancel")
+        .get_conversation("user-1", "conversation-cancel")
         .await
         .expect("get cancelled conversation")
         .expect("cancelled conversation");
@@ -334,7 +335,7 @@ async fn terminal_runs_reconcile_turns_and_assistant_messages() {
         .await
         .expect("fail Run");
     let failed = storage
-        .get_conversation("conversation-failure")
+        .get_conversation("user-1", "conversation-failure")
         .await
         .expect("get failed conversation")
         .expect("failed conversation");
@@ -354,6 +355,7 @@ async fn resume_turn_is_atomic_idempotent_and_rejects_stale_versions() {
     let waiting = wait_for_user(&storage, &initial.run_id, "resume", 3_000).await;
 
     let mut command = ResumeConversationTurnCommand {
+        owner_user_id: "user-1".to_string(),
         conversation_id: "conversation-resume".to_string(),
         expected_conversation_version: 2,
         turn_id: initial.turn_id.clone(),
@@ -407,7 +409,7 @@ async fn resume_turn_is_atomic_idempotent_and_rejects_stale_versions() {
         Err(ClientStorageError::Conflict(_))
     ));
     let unchanged = storage
-        .get_conversation("conversation-resume")
+        .get_conversation("user-1", "conversation-resume")
         .await
         .expect("get unchanged conversation")
         .expect("conversation");
@@ -433,7 +435,7 @@ async fn resume_turn_is_atomic_idempotent_and_rejects_stale_versions() {
         .expect("replay resume");
     assert_eq!(replay, resumed);
     let after_replay = storage
-        .get_conversation("conversation-resume")
+        .get_conversation("user-1", "conversation-resume")
         .await
         .expect("get replayed conversation")
         .expect("conversation");
@@ -450,6 +452,7 @@ async fn cancel_turn_reconciles_the_owned_run_without_assistant_message() {
     let initial = turn("conversation-stop", 1, "stop");
     let started = start(&storage, &initial, 2_000).await.expect("start Turn");
     let command = CancelConversationTurnCommand {
+        owner_user_id: "user-1".to_string(),
         conversation_id: "conversation-stop".to_string(),
         expected_conversation_version: 2,
         turn_id: initial.turn_id,
@@ -476,7 +479,7 @@ async fn cancel_turn_reconciles_the_owned_run_without_assistant_message() {
         .expect("replay cancel");
     assert_eq!(replay, cancelled);
     let detail = storage
-        .get_conversation("conversation-stop")
+        .get_conversation("user-1", "conversation-stop")
         .await
         .expect("get cancelled conversation")
         .expect("conversation");
@@ -522,7 +525,7 @@ async fn history_pages_are_bounded_chronological_and_cursor_stable() {
     }
 
     let latest = storage
-        .get_conversation_history("conversation-history", None, 2)
+        .get_conversation_history("user-1", "conversation-history", None, 2)
         .await
         .expect("latest history page");
     assert_eq!(
@@ -539,7 +542,12 @@ async fn history_pages_are_bounded_chronological_and_cursor_stable() {
     assert_eq!(latest.attachments[0].message_id, "message-two");
 
     let older = storage
-        .get_conversation_history("conversation-history", latest.next_before_ordinal, 2)
+        .get_conversation_history(
+            "user-1",
+            "conversation-history",
+            latest.next_before_ordinal,
+            2,
+        )
         .await
         .expect("older history page");
     assert_eq!(older.messages.len(), 1);
@@ -569,6 +577,7 @@ async fn guidance_interrupts_an_active_claim_and_is_delivered_once() {
         .expect("claim")
         .expect("claimed Run");
     let command = GuideConversationTurnCommand {
+        owner_user_id: "user-1".to_string(),
         conversation_id: "conversation-guidance".to_string(),
         expected_conversation_version: 2,
         turn_id: initial.turn_id.clone(),

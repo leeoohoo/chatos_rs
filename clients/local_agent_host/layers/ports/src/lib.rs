@@ -11,7 +11,7 @@ use chatos_local_agent_protocol::{
     LocalAgentToolApprovalDecision, LocalAgentToolApprovalResult, LocalAgentToolBatch,
     LocalAgentToolClaim, LocalAgentToolCommitResult, LocalAgentToolInvocationRecord,
     LocalAgentToolOutcome, LocalConversationDetail, LocalConversationHistoryPage,
-    LocalConversationRecord, LocalConversationTurnStart, LocalConversationTurnUpdate,
+    LocalConversationPage, LocalConversationTurnStart, LocalConversationTurnUpdate,
     LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalTaskGraph,
     LocalTaskGraphListScope, LocalTaskGraphPage, ResumeConversationTurnCommand,
     StartConversationTurnCommand,
@@ -375,11 +375,13 @@ pub trait LocalConversationStore: Send + Sync {
 
     async fn get_conversation(
         &self,
+        owner_user_id: &str,
         conversation_id: &str,
     ) -> Result<Option<LocalConversationDetail>, ClientStorageError>;
 
     async fn get_conversation_history(
         &self,
+        owner_user_id: &str,
         conversation_id: &str,
         before_ordinal: Option<u64>,
         limit: u32,
@@ -388,8 +390,10 @@ pub trait LocalConversationStore: Send + Sync {
     async fn list_conversations(
         &self,
         owner_user_id: &str,
+        before_updated_at_unix_ms: Option<i64>,
+        before_conversation_id: Option<&str>,
         limit: u32,
-    ) -> Result<Vec<LocalConversationRecord>, ClientStorageError>;
+    ) -> Result<LocalConversationPage, ClientStorageError>;
 
     async fn start_conversation_turn(
         &self,
