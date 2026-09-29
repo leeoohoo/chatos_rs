@@ -60,6 +60,7 @@ pub struct RunTransition {
     pub pending_tool_batch: Option<Value>,
     pub tool_batch: Option<LocalAgentToolBatch>,
     pub checkpoint: Option<Value>,
+    pub clear_continuation_input: bool,
     pub terminal_outcome: Option<Value>,
     pub event_id: String,
     pub event_type: String,

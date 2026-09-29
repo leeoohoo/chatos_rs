@@ -97,7 +97,7 @@ A successful claim moves one runnable Run to `model_running`, increments its ite
 
 Each Run also stores an opaque Profile checkpoint plus a one-shot continuation payload. Tool results and explicit `resume_run` input survive Host restarts and are cleared only after the next claimed model step commits.
 
-Transient model retries persist `model_attempt` in the Run itself. A restarted Host therefore continues with the exact next attempt and cannot accidentally reset the provider retry budget.
+Transient model retries persist `model_attempt` in the Run itself and do not consume a pending tool/user continuation. A restarted Host therefore continues with the exact request inputs and next attempt, without resetting the provider retry budget.
 
 ## Verification
 

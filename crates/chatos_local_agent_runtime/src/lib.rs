@@ -344,6 +344,7 @@ fn transition_for_outcome(
         } => *next_model_attempt,
         _ => 1,
     };
+    let clear_continuation_input = !matches!(&outcome, LocalAgentStepOutcome::Retry { .. });
     let (next_status, next_attempt, pending_tool_batch, terminal_outcome, event_type, payload) =
         match outcome {
             LocalAgentStepOutcome::Continue { checkpoint }
@@ -455,6 +456,7 @@ fn transition_for_outcome(
         pending_tool_batch,
         tool_batch,
         checkpoint,
+        clear_continuation_input,
         terminal_outcome,
         event_id: new_event_id(),
         event_type: event_type.to_string(),

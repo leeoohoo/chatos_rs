@@ -494,7 +494,8 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 "UPDATE local_agent_runs SET status = ?, model_attempt = ?, version = version + 1, \
                  claim_token = NULL, claim_until_unix_ms = NULL, next_attempt_at_unix_ms = ?, \
                  pending_tool_batch_json = ?, terminal_outcome_json = ?, \
-                 checkpoint_json = COALESCE(?, checkpoint_json), continuation_input_json = NULL, \
+                 checkpoint_json = COALESCE(?, checkpoint_json), \
+                 continuation_input_json = CASE WHEN ? THEN NULL ELSE continuation_input_json END, \
                  updated_at_unix_ms = ? \
                  WHERE run_id = ? AND status = ? AND version = ? AND claim_token = ? \
                  AND claim_until_unix_ms > ?",
@@ -505,6 +506,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
             .bind(json_option(&transition.pending_tool_batch)?)
             .bind(json_option(&transition.terminal_outcome)?)
             .bind(json_option(&transition.checkpoint)?)
+            .bind(transition.clear_continuation_input)
             .bind(transition.occurred_at_unix_ms)
             .bind(&transition.run_id)
             .bind(transition.expected_status.as_str())
