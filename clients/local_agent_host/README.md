@@ -21,6 +21,7 @@ The current milestone provides:
 - durable installed-Plugin/MCP snapshots in the client-owned SQLite database;
 - a client-owned Conversation/Turn/Message fact source with atomic Main Chat Run creation;
 - durable local Message attachment references without storing file bodies in SQLite;
+- idempotent Task Graph terminal summaries written back to their source Conversation;
 - an event-driven Host Coordinator that drains model and tool work to quiescence;
 - monotonic, replayable event cursors;
 - conservative crash recovery to `needs_review`;
@@ -47,6 +48,8 @@ Protocol v11 retains the optional `include_tool_names` and `exclude_tool_names` 
 Main Chat conversations are now written to the local SQLite fact source rather than a server Task Runner or `chatos` conversation runtime. Starting a Turn atomically creates the Turn, its user Message, and one queued `main_chat` Run owned by that Turn. A conversation version compare-and-swap rejects stale composers, while a partial unique index permits only one active Turn per conversation. Successful Runs append a deterministic assistant Message and close the Turn in the same transaction; failed or cancelled Runs close the Turn without inventing an assistant response. Historical server conversations are intentionally not migrated.
 
 User Messages can include up to 32 local attachment records. SQLite stores only display metadata, byte size, canonical SHA-256 and an opaque `authorized_local_ref` in the `local-attachment:<token>` namespace; raw paths, URLs, file bodies and unrestricted Base64 are rejected or excluded from database and IPC attachment fields. Turn creation commits attachment rows in the same transaction as the Message and Run. The Main Chat planner sends the model a bounded attachment manifest so a capability-approved native tool can resolve the opaque reference and verify its hash locally. Arbitrary attachment metadata is retained for the client UI but is not forwarded to the model.
+
+Task Graphs created by a Main Chat Turn retain `conversation_turn` as their source. When the graph becomes terminal, SQLite appends one structured assistant Message containing the graph status and per-Task terminal outcome to that source Conversation in the same transaction as the final Task mutation. A terminal signature prevents duplicate delivery, while a later retry or restart creates a new generation and therefore a new summary. Pending Task cancellation follows the same path without requiring a Task Run. No server callback or `chatos/backend` message proxy participates.
 
 Installed Plugin MCP configurations are created, queried, updated and removed through version-protected Host commands and stored by the Local Agent SQLite repository. Records freeze Plugin release/component revisions, executable location and the allowed tool set. Environment entries store native credential references only; `LocalPluginSecretResolver` resolves their values transiently from Keychain or Credential Manager immediately before local process launch.
 

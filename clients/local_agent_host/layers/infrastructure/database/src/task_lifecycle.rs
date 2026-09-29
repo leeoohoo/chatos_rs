@@ -346,4 +346,42 @@ mod tests {
             .expect("start next")
             .is_none());
     }
+
+    #[tokio::test]
+    async fn generic_run_cancellation_reconciles_its_task_graph() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        storage
+            .create_task_graph(&command("create-cancel-graph"), &graph(), 1_000)
+            .await
+            .expect("create graph");
+        let run = storage
+            .start_next_task_run("run-cancel", "event-start-cancel", 2_000)
+            .await
+            .expect("start task")
+            .expect("ready task");
+        storage
+            .cancel_run(
+                &command("cancel-run"),
+                &run.run_id,
+                Some(run.version),
+                "user cancelled Run",
+                "event-cancel-run",
+                3_000,
+            )
+            .await
+            .expect("cancel Run");
+
+        let graph = storage
+            .get_task_graph("graph-lifecycle")
+            .await
+            .expect("get graph")
+            .expect("graph");
+        assert_eq!(graph.status, LocalTaskGraphStatus::Cancelled);
+        assert_eq!(graph.tasks[0].status, LocalTaskStatus::Cancelled);
+        assert!(graph.tasks[1..]
+            .iter()
+            .all(|task| task.status == LocalTaskStatus::Blocked));
+    }
 }

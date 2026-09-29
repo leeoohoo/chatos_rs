@@ -245,3 +245,18 @@ pub(super) const SCHEMA_V8: &[&str] = &[
        message_id, ordinal\
      )",
 ];
+
+pub(super) const SCHEMA_V9: &[&str] = &[
+    "CREATE TABLE local_task_graph_writebacks (\
+       graph_id TEXT NOT NULL,\
+       generation INTEGER NOT NULL CHECK(generation > 0),\
+       terminal_signature TEXT NOT NULL,\
+       message_id TEXT NOT NULL UNIQUE,\
+       terminal_status TEXT NOT NULL CHECK(terminal_status IN ('succeeded','failed','cancelled')),\
+       created_at_unix_ms INTEGER NOT NULL,\
+       PRIMARY KEY(graph_id, generation),\
+       FOREIGN KEY(graph_id) REFERENCES local_task_graphs(graph_id) ON DELETE CASCADE,\
+       FOREIGN KEY(message_id) REFERENCES local_conversation_messages(message_id) ON DELETE CASCADE,\
+       UNIQUE(graph_id, terminal_signature)\
+     )",
+];

@@ -32,6 +32,8 @@ The local database is the authoritative Main Chat fact source. `start_conversati
 
 Message attachments follow a reference-only boundary. The database owns immutable attachment metadata, ordering, byte size and SHA-256, while the file body remains in the client filesystem behind an opaque authorization reference. The Planner may disclose the bounded manifest to the model, but only a capability-approved native tool may resolve the reference and read content. Large file bytes and Base64 never enter IPC, SQLite, Run input checkpoints, logs or the retained server control planes.
 
+Task completion also stays inside the local database boundary. A Task Graph sourced from a local `conversation_turn` writes each distinct terminal generation back as a structured assistant Message. The terminal Task transition, writeback ledger row, Conversation version update and durable event share one SQLite transaction. Retrying or restarting a terminal graph produces another generation; replaying the same terminal state does not duplicate the Message. Graphs from non-Conversation sources do not use this projection.
+
 The local MCP adapter owns Plugin process startup, MCP session initialization, tool discovery and invocation. Marketplace metadata and signed artifacts may still come from the retained Plugin control plane, but no tool execution request is routed through `mcp_management_service`.
 
 Installed Plugin/MCP snapshots are application data behind a storage port and are implemented by the local SQLite adapter. Only credential-store references are durable; native Keychain/Credential Manager adapters resolve secret values into the child-process environment at launch time.

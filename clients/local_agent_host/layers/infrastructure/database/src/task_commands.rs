@@ -2,6 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
+    task_conversation_writeback::write_back_graph,
     task_lifecycle::{propagate_blocked, reconcile_task_after_run, unlock_satisfied},
     task_store::fetch_graph,
     ClientStorageError, IdempotentCommand, SqliteClientStorage, SqliteResultExt,
@@ -84,6 +85,7 @@ pub(super) async fn cancel_task(
     let graph = fetch_graph(connection, &graph_id)
         .await?
         .ok_or_else(|| ClientStorageError::NotFound(graph_id.clone()))?;
+    write_back_graph(connection, &graph_id, now_unix_ms).await?;
     SqliteClientStorage::record_receipt(connection, command, &graph, now_unix_ms).await?;
     Ok(graph)
 }

@@ -22,6 +22,7 @@ mod plugin_store;
 mod run_record;
 mod schema;
 mod task_commands;
+mod task_conversation_writeback;
 mod task_lifecycle;
 mod task_store;
 mod tool_store;
@@ -514,6 +515,12 @@ impl LocalAgentRunStore for SqliteClientStorage {
             )
             .await
             .db()?;
+            task_conversation_writeback::write_back_terminal_graph(
+                &mut connection,
+                &run,
+                transition.occurred_at_unix_ms,
+            )
+            .await?;
             conversation_lifecycle::reconcile_conversation_after_run(
                 &mut connection,
                 &run,
@@ -582,9 +589,6 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 .await
                 .db()?
                 .ok_or_else(|| ClientStorageError::NotFound(run_id.to_string()))?;
-            task_lifecycle::reconcile_task_after_run(&mut connection, &run, now_unix_ms)
-                .await
-                .db()?;
             Self::record_receipt(&mut connection, command, &run, now_unix_ms)
                 .await
                 .db()?;
@@ -666,6 +670,15 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 .await
                 .db()?
                 .ok_or_else(|| ClientStorageError::NotFound(run_id.to_string()))?;
+            task_lifecycle::reconcile_task_after_run(&mut connection, &run, now_unix_ms)
+                .await
+                .db()?;
+            task_conversation_writeback::write_back_terminal_graph(
+                &mut connection,
+                &run,
+                now_unix_ms,
+            )
+            .await?;
             conversation_lifecycle::reconcile_conversation_after_run(
                 &mut connection,
                 &run,
