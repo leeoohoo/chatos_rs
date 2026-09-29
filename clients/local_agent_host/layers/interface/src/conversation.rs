@@ -4,7 +4,9 @@
 use crate::{validate_identifier, validate_text, LocalAgentRunRecord, LOCAL_AGENT_MAX_INPUT_BYTES};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{fmt, str::FromStr};
+use std::{collections::HashSet, fmt, str::FromStr};
+
+pub const LOCAL_CONVERSATION_MAX_ATTACHMENTS: usize = 32;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateConversationCommand {
@@ -31,6 +33,8 @@ pub struct StartConversationTurnCommand {
     pub message: String,
     #[serde(default)]
     pub message_metadata: Value,
+    #[serde(default)]
+    pub attachments: Vec<LocalConversationAttachmentSpec>,
     pub model_config_ref: String,
     pub model_config_revision: String,
     pub capability_policy_revision: String,
@@ -56,7 +60,31 @@ impl StartConversationTurnCommand {
         ] {
             validate_identifier(field, value)?;
         }
-        validate_text("message", &self.message, LOCAL_AGENT_MAX_INPUT_BYTES)?;
+        if self.message.trim().is_empty() {
+            if self.attachments.is_empty() {
+                return Err("message or attachments must be provided".to_string());
+            }
+        } else {
+            validate_text("message", &self.message, LOCAL_AGENT_MAX_INPUT_BYTES)?;
+        }
+        if self.attachments.len() > LOCAL_CONVERSATION_MAX_ATTACHMENTS {
+            return Err(format!(
+                "attachments exceeds the {LOCAL_CONVERSATION_MAX_ATTACHMENTS} item limit"
+            ));
+        }
+        let mut attachment_ids = HashSet::with_capacity(self.attachments.len());
+        for attachment in &self.attachments {
+            attachment.validate()?;
+            if !attachment_ids.insert(attachment.attachment_id.as_str()) {
+                return Err(format!(
+                    "duplicate attachment_id: {}",
+                    attachment.attachment_id
+                ));
+            }
+        }
+        let attachment_size = serde_json::to_vec(&self.attachments)
+            .map_err(|error| format!("attachments are not serializable: {error}"))?
+            .len();
         if self.max_iterations == 0 {
             return Err("max_iterations must be greater than zero".to_string());
         }
@@ -66,6 +94,76 @@ impl StartConversationTurnCommand {
         if metadata_size > LOCAL_AGENT_MAX_INPUT_BYTES {
             return Err(format!(
                 "message_metadata exceeds the {LOCAL_AGENT_MAX_INPUT_BYTES} byte limit"
+            ));
+        }
+        let total_input_size = self
+            .message
+            .len()
+            .saturating_add(metadata_size)
+            .saturating_add(attachment_size);
+        if total_input_size > LOCAL_AGENT_MAX_INPUT_BYTES {
+            return Err(format!(
+                "message, metadata, and attachments exceed the \
+                 {LOCAL_AGENT_MAX_INPUT_BYTES} byte limit"
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LocalConversationAttachmentSpec {
+    pub attachment_id: String,
+    pub display_name: String,
+    pub media_type: String,
+    pub byte_size: u64,
+    pub sha256: String,
+    /// Opaque reference issued by a native-client authorization adapter. This
+    /// is not an unrestricted filesystem path and is resolved only at use time.
+    pub authorized_local_ref: String,
+    #[serde(default)]
+    pub metadata: Value,
+}
+
+impl LocalConversationAttachmentSpec {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("attachment_id", &self.attachment_id)?;
+        validate_text("display_name", &self.display_name, 1_000)?;
+        validate_text("media_type", &self.media_type, 255)?;
+        let reference_token = self
+            .authorized_local_ref
+            .strip_prefix("local-attachment:")
+            .ok_or_else(|| {
+                "authorized_local_ref must use the local-attachment:<token> format".to_string()
+            })?;
+        if reference_token.is_empty()
+            || reference_token.len() > 200
+            || !reference_token
+                .bytes()
+                .all(|value| value.is_ascii_alphanumeric() || b"-_.".contains(&value))
+        {
+            return Err(
+                "authorized_local_ref token must contain 1..=200 ASCII letters, digits, '-', '_' or '.'"
+                    .to_string(),
+            );
+        }
+        if self.byte_size > i64::MAX as u64 {
+            return Err("byte_size exceeds the local database limit".to_string());
+        }
+        if self.sha256.len() != 64
+            || !self
+                .sha256
+                .bytes()
+                .all(|value| value.is_ascii_digit() || (b'a'..=b'f').contains(&value))
+        {
+            return Err("sha256 must be 64 lowercase hexadecimal characters".to_string());
+        }
+        let metadata_size = serde_json::to_vec(&self.metadata)
+            .map_err(|error| format!("attachment metadata is not serializable: {error}"))?
+            .len();
+        if metadata_size > LOCAL_AGENT_MAX_INPUT_BYTES {
+            return Err(format!(
+                "attachment metadata exceeds the {LOCAL_AGENT_MAX_INPUT_BYTES} byte limit"
             ));
         }
         Ok(())
@@ -201,10 +299,27 @@ pub struct LocalConversationMessageRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LocalConversationAttachmentRecord {
+    pub attachment_id: String,
+    pub conversation_id: String,
+    pub turn_id: String,
+    pub message_id: String,
+    pub ordinal: u64,
+    pub display_name: String,
+    pub media_type: String,
+    pub byte_size: u64,
+    pub sha256: String,
+    pub authorized_local_ref: String,
+    pub metadata: Value,
+    pub created_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LocalConversationDetail {
     pub conversation: LocalConversationRecord,
     pub turns: Vec<LocalConversationTurnRecord>,
     pub messages: Vec<LocalConversationMessageRecord>,
+    pub attachments: Vec<LocalConversationAttachmentRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -212,5 +327,58 @@ pub struct LocalConversationTurnStart {
     pub conversation: LocalConversationRecord,
     pub turn: LocalConversationTurnRecord,
     pub message: LocalConversationMessageRecord,
+    pub attachments: Vec<LocalConversationAttachmentRecord>,
     pub run: LocalAgentRunRecord,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn attachment(attachment_id: &str) -> LocalConversationAttachmentSpec {
+        LocalConversationAttachmentSpec {
+            attachment_id: attachment_id.to_string(),
+            display_name: "brief.pdf".to_string(),
+            media_type: "application/pdf".to_string(),
+            byte_size: 42,
+            sha256: "a".repeat(64),
+            authorized_local_ref: "local-attachment:authority-1".to_string(),
+            metadata: json!({}),
+        }
+    }
+
+    fn command() -> StartConversationTurnCommand {
+        StartConversationTurnCommand {
+            conversation_id: "conversation-1".to_string(),
+            expected_conversation_version: 1,
+            turn_id: "turn-1".to_string(),
+            message_id: "message-1".to_string(),
+            run_id: "run-1".to_string(),
+            message: String::new(),
+            message_metadata: json!({}),
+            attachments: vec![attachment("attachment-1")],
+            model_config_ref: "model-1".to_string(),
+            model_config_revision: "revision-1".to_string(),
+            capability_policy_revision: "policy-1".to_string(),
+            max_iterations: 8,
+        }
+    }
+
+    #[test]
+    fn attachment_only_turn_is_valid_but_duplicate_or_noncanonical_hash_is_not() {
+        assert!(command().validate().is_ok());
+
+        let mut duplicate = command();
+        duplicate.attachments.push(attachment("attachment-1"));
+        assert!(duplicate.validate().is_err());
+
+        let mut uppercase_hash = command();
+        uppercase_hash.attachments[0].sha256 = "A".repeat(64);
+        assert!(uppercase_hash.validate().is_err());
+
+        let mut raw_path = command();
+        raw_path.attachments[0].authorized_local_ref = "/tmp/brief.pdf".to_string();
+        assert!(raw_path.validate().is_err());
+    }
 }

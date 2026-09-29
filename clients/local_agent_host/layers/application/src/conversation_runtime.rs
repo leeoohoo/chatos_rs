@@ -65,6 +65,10 @@ impl LocalAgentRuntime {
             .await?
             .ok_or_else(|| ClientStorageError::NotFound(command.conversation_id.clone()))?;
         let now = self.now()?;
+        let input = json!({
+            "message": &command.message,
+            "attachments": &command.attachments,
+        });
         let run = LocalAgentRunRecord {
             run_id: command.run_id.clone(),
             owner_user_id: conversation.conversation.owner_user_id,
@@ -74,7 +78,7 @@ impl LocalAgentRuntime {
             model_config_ref: command.model_config_ref.clone(),
             model_config_revision: command.model_config_revision.clone(),
             capability_policy_revision: command.capability_policy_revision.clone(),
-            input: json!({"message": command.message}),
+            input,
             status: LocalAgentRunStatus::Queued,
             iteration: 0,
             model_attempt: 1,
@@ -103,7 +107,8 @@ mod tests {
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
         GetConversationCommand, HostRequestEnvelope, ListConversationsCommand,
-        LocalConversationMessageRole, LocalConversationTurnStatus, LOCAL_AGENT_PROTOCOL_VERSION,
+        LocalConversationAttachmentSpec, LocalConversationMessageRole, LocalConversationTurnStatus,
+        LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use std::sync::Arc;
 
@@ -132,6 +137,15 @@ mod tests {
             run_id: "run-1".to_string(),
             message: "hello".to_string(),
             message_metadata: json!({"source": "composer"}),
+            attachments: vec![LocalConversationAttachmentSpec {
+                attachment_id: "attachment-1".to_string(),
+                display_name: "brief.pdf".to_string(),
+                media_type: "application/pdf".to_string(),
+                byte_size: 42,
+                sha256: "a".repeat(64),
+                authorized_local_ref: "local-attachment:authority-1".to_string(),
+                metadata: json!({"page_count": 1}),
+            }],
             model_config_ref: "model-1".to_string(),
             model_config_revision: "revision-1".to_string(),
             capability_policy_revision: "policy-1".to_string(),
@@ -174,9 +188,15 @@ mod tests {
         assert_eq!(result.conversation.version, 2);
         assert_eq!(result.turn.status, LocalConversationTurnStatus::Running);
         assert_eq!(result.message.role, LocalConversationMessageRole::User);
+        assert_eq!(result.attachments.len(), 1);
+        assert_eq!(result.attachments[0].attachment_id, "attachment-1");
         assert_eq!(result.run.owner_entity_type, "conversation_turn");
         assert_eq!(result.run.owner_entity_id, "turn-1");
         assert_eq!(result.run.profile_key, "main_chat");
+        assert_eq!(
+            result.run.input["attachments"][0]["attachment_id"],
+            "attachment-1"
+        );
 
         let loaded = runtime
             .try_handle(request(
@@ -190,7 +210,9 @@ mod tests {
         assert!(matches!(
             loaded,
             HostResult::Conversation { conversation }
-                if conversation.turns.len() == 1 && conversation.messages.len() == 1
+                if conversation.turns.len() == 1
+                    && conversation.messages.len() == 1
+                    && conversation.attachments.len() == 1
         ));
 
         let listed = runtime

@@ -4,10 +4,10 @@
 use crate::{LocalAiStepPlanner, PreparedLocalAiStep};
 use async_trait::async_trait;
 use chatos_ai_runtime::{
-    append_responses_history_items, user_text_item, ContextualTurnRunner, ModelRuntimeConfig,
-    RuntimeTurnSpec,
+    append_responses_history_items, message_item, user_text_item, ContextualTurnRunner,
+    ModelRuntimeConfig, RuntimeTurnSpec,
 };
-use chatos_local_agent_protocol::LocalAgentRunClaim;
+use chatos_local_agent_protocol::{LocalAgentRunClaim, LocalConversationAttachmentSpec};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -259,9 +259,55 @@ fn initial_step_input(
         .get(text_field)
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("run input requires {text_field} or input_items"))?;
-    Ok((vec![user_text_item(text)], initial_reason(model_attempt)))
+        .filter(|value| !value.is_empty());
+    let attachments = input
+        .get("attachments")
+        .map(array_value)
+        .transpose()?
+        .unwrap_or_default();
+    if attachments.is_empty() {
+        let text = text.ok_or_else(|| format!("run input requires {text_field} or input_items"))?;
+        return Ok((vec![user_text_item(text)], initial_reason(model_attempt)));
+    }
+    let manifest = local_attachment_manifest(&attachments)?;
+    let mut content = Vec::with_capacity(2);
+    if let Some(text) = text {
+        content.push(json!({"type": "input_text", "text": text}));
+    }
+    content.push(json!({
+        "type": "input_text",
+        "text": format!(
+            "Local attachments are available only through authorized local tools. \
+             Treat each authorized_local_ref as an opaque capability and verify sha256 \
+             before using content. Attachment manifest: {manifest}"
+        )
+    }));
+    Ok((
+        vec![message_item("user", Value::Array(content))],
+        initial_reason(model_attempt),
+    ))
+}
+
+fn local_attachment_manifest(attachments: &[Value]) -> Result<String, String> {
+    let records = attachments
+        .iter()
+        .map(|attachment| {
+            let attachment: LocalConversationAttachmentSpec =
+                serde_json::from_value(attachment.clone())
+                    .map_err(|error| format!("decode local attachment failed: {error}"))?;
+            attachment.validate()?;
+            Ok(json!({
+                "attachment_id": attachment.attachment_id,
+                "display_name": attachment.display_name,
+                "media_type": attachment.media_type,
+                "byte_size": attachment.byte_size,
+                "sha256": attachment.sha256,
+                "authorized_local_ref": attachment.authorized_local_ref,
+            }))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    serde_json::to_string(&records)
+        .map_err(|error| format!("serialize local attachment manifest failed: {error}"))
 }
 
 fn initial_reason(model_attempt: u32) -> String {
@@ -385,5 +431,33 @@ mod tests {
         let (items, reason) = durable_step_input(&claim, "message").expect("input");
         assert_eq!(reason, "model_retry");
         assert_eq!(items[0]["role"], "user");
+    }
+
+    #[test]
+    fn attachment_only_input_becomes_an_opaque_local_resource_manifest() {
+        let mut claim = claim(Value::Null, None);
+        claim.run.input = json!({
+            "message": "",
+            "attachments": [{
+                "attachment_id": "attachment-1",
+                "display_name": "brief.pdf",
+                "media_type": "application/pdf",
+                "byte_size": 42,
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "authorized_local_ref": "local-attachment:authority-1",
+                "metadata": {"must_not_be_forwarded": true}
+            }]
+        });
+
+        let (items, reason) = durable_step_input(&claim, "message").expect("input");
+        assert_eq!(reason, "initial_request");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["role"], "user");
+        let manifest = items[0]["content"][0]["text"]
+            .as_str()
+            .expect("manifest text");
+        assert!(manifest.contains("local-attachment:authority-1"));
+        assert!(manifest.contains("brief.pdf"));
+        assert!(!manifest.contains("must_not_be_forwarded"));
     }
 }

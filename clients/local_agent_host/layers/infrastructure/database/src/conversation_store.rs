@@ -7,10 +7,10 @@ use super::{
 };
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
-    CreateConversationCommand, LocalAgentRunRecord, LocalConversationDetail,
-    LocalConversationMessageRecord, LocalConversationMessageRole, LocalConversationRecord,
-    LocalConversationTurnRecord, LocalConversationTurnStart, LocalConversationTurnStatus,
-    StartConversationTurnCommand,
+    CreateConversationCommand, LocalAgentRunRecord, LocalConversationAttachmentRecord,
+    LocalConversationDetail, LocalConversationMessageRecord, LocalConversationMessageRole,
+    LocalConversationRecord, LocalConversationTurnRecord, LocalConversationTurnStart,
+    LocalConversationTurnStatus, StartConversationTurnCommand,
 };
 use serde_json::json;
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
@@ -165,6 +165,45 @@ impl LocalConversationStore for SqliteClientStorage {
             .execute(&mut *connection)
             .await
             .db()?;
+            for (index, attachment) in turn.attachments.iter().enumerate() {
+                let ordinal = i64::try_from(index + 1).map_err(|_| {
+                    ClientStorageError::InvalidState("attachment ordinal exceeds i64".to_string())
+                })?;
+                let byte_size = i64::try_from(attachment.byte_size).map_err(|_| {
+                    ClientStorageError::InvalidState("attachment byte_size exceeds i64".to_string())
+                })?;
+                let inserted = sqlx::query(
+                    "INSERT INTO local_conversation_message_attachments(\
+                     attachment_id, conversation_id, turn_id, message_id, ordinal, \
+                     display_name, media_type, byte_size, sha256, authorized_local_ref, \
+                     metadata_json, created_at_unix_ms) \
+                     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&attachment.attachment_id)
+                .bind(&turn.conversation_id)
+                .bind(&turn.turn_id)
+                .bind(&turn.message_id)
+                .bind(ordinal)
+                .bind(&attachment.display_name)
+                .bind(&attachment.media_type)
+                .bind(byte_size)
+                .bind(&attachment.sha256)
+                .bind(&attachment.authorized_local_ref)
+                .bind(serde_json::to_string(&attachment.metadata)?)
+                .bind(now_unix_ms)
+                .execute(&mut *connection)
+                .await;
+                if let Err(error) = inserted {
+                    return Err(if is_unique_violation(&error) {
+                        ClientStorageError::Conflict(format!(
+                            "attachment id already exists: {}",
+                            attachment.attachment_id
+                        ))
+                    } else {
+                        ClientStorageError::database(error)
+                    });
+                }
+            }
             let updated = sqlx::query(
                 "UPDATE local_conversations SET version = version + 1, updated_at_unix_ms = ? \
                  WHERE conversation_id = ? AND version = ?",
@@ -213,6 +252,11 @@ impl LocalConversationStore for SqliteClientStorage {
                     .into_iter()
                     .find(|record| record.message_id == turn.message_id)
                     .ok_or_else(|| ClientStorageError::NotFound(turn.message_id.clone()))?,
+                attachments: detail
+                    .attachments
+                    .into_iter()
+                    .filter(|record| record.message_id == turn.message_id)
+                    .collect(),
                 run: run.clone(),
             };
             Self::record_receipt(&mut connection, command, &started, now_unix_ms).await?;
@@ -281,10 +325,26 @@ async fn fetch_conversation(
     .into_iter()
     .map(decode_message)
     .collect::<Result<Vec<_>, _>>()?;
+    let attachments = sqlx::query(
+        "SELECT a.attachment_id, a.conversation_id, a.turn_id, a.message_id, a.ordinal, \
+         a.display_name, a.media_type, a.byte_size, a.sha256, a.authorized_local_ref, \
+         a.metadata_json, a.created_at_unix_ms \
+         FROM local_conversation_message_attachments a \
+         JOIN local_conversation_messages m ON m.message_id = a.message_id \
+         WHERE a.conversation_id = ? ORDER BY m.ordinal, a.ordinal",
+    )
+    .bind(conversation_id)
+    .fetch_all(&mut *connection)
+    .await
+    .db()?
+    .into_iter()
+    .map(decode_attachment)
+    .collect::<Result<Vec<_>, _>>()?;
     Ok(Some(LocalConversationDetail {
         conversation,
         turns,
         messages,
+        attachments,
     }))
 }
 
@@ -346,6 +406,26 @@ fn decode_message(row: SqliteRow) -> Result<LocalConversationMessageRecord, Clie
     })
 }
 
+fn decode_attachment(
+    row: SqliteRow,
+) -> Result<LocalConversationAttachmentRecord, ClientStorageError> {
+    let metadata: String = row.try_get("metadata_json").db()?;
+    Ok(LocalConversationAttachmentRecord {
+        attachment_id: row.try_get("attachment_id").db()?,
+        conversation_id: row.try_get("conversation_id").db()?,
+        turn_id: row.try_get("turn_id").db()?,
+        message_id: row.try_get("message_id").db()?,
+        ordinal: decode_u64(&row, "ordinal")?,
+        display_name: row.try_get("display_name").db()?,
+        media_type: row.try_get("media_type").db()?,
+        byte_size: decode_u64(&row, "byte_size")?,
+        sha256: row.try_get("sha256").db()?,
+        authorized_local_ref: row.try_get("authorized_local_ref").db()?,
+        metadata: serde_json::from_str(&metadata)?,
+        created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
+    })
+}
+
 fn decode_u64(row: &SqliteRow, field: &str) -> Result<u64, ClientStorageError> {
     let value: i64 = row.try_get(field).db()?;
     u64::try_from(value)
@@ -353,288 +433,5 @@ fn decode_u64(row: &SqliteRow, field: &str) -> Result<u64, ClientStorageError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use chatos_local_agent_ports::LocalAgentRunStore;
-    use chatos_local_agent_protocol::LocalAgentRunStatus;
-    use serde_json::{json, Value};
-
-    fn idempotency(command_id: &str) -> IdempotentCommand {
-        IdempotentCommand {
-            command_id: command_id.to_string(),
-            request_fingerprint: command_id.to_string(),
-        }
-    }
-
-    fn conversation(conversation_id: &str) -> CreateConversationCommand {
-        CreateConversationCommand {
-            conversation_id: conversation_id.to_string(),
-            owner_user_id: "user-1".to_string(),
-            title: "Local conversation".to_string(),
-        }
-    }
-
-    fn turn(
-        conversation_id: &str,
-        expected_conversation_version: u64,
-        suffix: &str,
-    ) -> StartConversationTurnCommand {
-        StartConversationTurnCommand {
-            conversation_id: conversation_id.to_string(),
-            expected_conversation_version,
-            turn_id: format!("turn-{suffix}"),
-            message_id: format!("message-{suffix}"),
-            run_id: format!("run-{suffix}"),
-            message: format!("hello {suffix}"),
-            message_metadata: json!({"source": "test"}),
-            model_config_ref: "model-1".to_string(),
-            model_config_revision: "revision-1".to_string(),
-            capability_policy_revision: "policy-1".to_string(),
-            max_iterations: 8,
-        }
-    }
-
-    fn run(turn: &StartConversationTurnCommand, now: i64) -> LocalAgentRunRecord {
-        LocalAgentRunRecord {
-            run_id: turn.run_id.clone(),
-            owner_user_id: "user-1".to_string(),
-            owner_entity_type: "conversation_turn".to_string(),
-            owner_entity_id: turn.turn_id.clone(),
-            profile_key: "main_chat".to_string(),
-            model_config_ref: turn.model_config_ref.clone(),
-            model_config_revision: turn.model_config_revision.clone(),
-            capability_policy_revision: turn.capability_policy_revision.clone(),
-            input: json!({"message": turn.message}),
-            status: LocalAgentRunStatus::Queued,
-            iteration: 0,
-            model_attempt: 1,
-            max_iterations: turn.max_iterations,
-            version: 1,
-            claim_token: None,
-            claim_until_unix_ms: None,
-            next_attempt_at_unix_ms: None,
-            pending_tool_batch: None,
-            checkpoint: Value::Null,
-            continuation_input: None,
-            terminal_outcome: None,
-            created_at_unix_ms: now,
-            updated_at_unix_ms: now,
-        }
-    }
-
-    async fn create(
-        storage: &SqliteClientStorage,
-        conversation_id: &str,
-    ) -> LocalConversationDetail {
-        storage
-            .create_conversation(
-                &idempotency(&format!("create-{conversation_id}")),
-                &conversation(conversation_id),
-                1_000,
-            )
-            .await
-            .expect("create conversation")
-    }
-
-    async fn start(
-        storage: &SqliteClientStorage,
-        turn: &StartConversationTurnCommand,
-        now: i64,
-    ) -> Result<LocalConversationTurnStart, ClientStorageError> {
-        storage
-            .start_conversation_turn(
-                &idempotency(&format!("start-{}", turn.turn_id)),
-                turn,
-                &run(turn, now),
-                &format!("event-{}", turn.turn_id),
-                now,
-            )
-            .await
-    }
-
-    #[tokio::test]
-    async fn turn_start_is_atomic_and_rejects_stale_or_concurrent_writes() {
-        let storage = SqliteClientStorage::connect_memory()
-            .await
-            .expect("storage");
-        create(&storage, "conversation-1").await;
-
-        let stale = turn("conversation-1", 2, "stale");
-        assert!(matches!(
-            start(&storage, &stale, 2_000).await,
-            Err(ClientStorageError::Conflict(_))
-        ));
-        assert!(storage
-            .get_run(&stale.run_id)
-            .await
-            .expect("get stale Run")
-            .is_none());
-        let after_stale = storage
-            .get_conversation("conversation-1")
-            .await
-            .expect("get conversation")
-            .expect("conversation");
-        assert!(after_stale.turns.is_empty());
-        assert!(after_stale.messages.is_empty());
-
-        let first = turn("conversation-1", 1, "first");
-        let started = start(&storage, &first, 3_000).await.expect("start first");
-        assert_eq!(started.conversation.version, 2);
-        assert_eq!(started.turn.status, LocalConversationTurnStatus::Running);
-        assert_eq!(started.message.ordinal, 1);
-        assert_eq!(started.run.status, LocalAgentRunStatus::Queued);
-
-        let concurrent = turn("conversation-1", 2, "concurrent");
-        assert!(matches!(
-            start(&storage, &concurrent, 4_000).await,
-            Err(ClientStorageError::Conflict(_))
-        ));
-        assert!(storage
-            .get_run(&concurrent.run_id)
-            .await
-            .expect("get concurrent Run")
-            .is_none());
-    }
-
-    #[tokio::test]
-    async fn terminal_runs_reconcile_turns_and_assistant_messages() {
-        let storage = SqliteClientStorage::connect_memory()
-            .await
-            .expect("storage");
-        create(&storage, "conversation-success").await;
-        let success_turn = turn("conversation-success", 1, "success");
-        start(&storage, &success_turn, 2_000)
-            .await
-            .expect("start success Turn");
-        let claim = storage
-            .claim_next_run(
-                &idempotency("claim-success"),
-                "worker-1",
-                "token-success",
-                3_000,
-                13_000,
-                "event-claim-success",
-            )
-            .await
-            .expect("claim")
-            .expect("claimed Run");
-        storage
-            .apply_transition(
-                &idempotency("complete-success"),
-                &chatos_local_agent_ports::RunTransition {
-                    run_id: claim.run.run_id,
-                    claim_token: claim.claim_token,
-                    expected_version: claim.run.version,
-                    expected_status: LocalAgentRunStatus::ModelRunning,
-                    next_status: LocalAgentRunStatus::Succeeded,
-                    next_model_attempt: 1,
-                    next_attempt_at_unix_ms: None,
-                    pending_tool_batch: None,
-                    tool_batch: None,
-                    checkpoint: None,
-                    clear_continuation_input: true,
-                    terminal_outcome: Some(json!({"answer": "done"})),
-                    event_id: "event-success".to_string(),
-                    event_type: "run_succeeded".to_string(),
-                    event_payload: json!({"answer": "done"}),
-                    occurred_at_unix_ms: 4_000,
-                },
-            )
-            .await
-            .expect("complete Run");
-        let succeeded = storage
-            .get_conversation("conversation-success")
-            .await
-            .expect("get success conversation")
-            .expect("success conversation");
-        assert_eq!(succeeded.conversation.version, 3);
-        assert_eq!(
-            succeeded.turns[0].status,
-            LocalConversationTurnStatus::Succeeded
-        );
-        assert_eq!(succeeded.messages.len(), 2);
-        assert_eq!(
-            succeeded.messages[1].role,
-            LocalConversationMessageRole::Assistant
-        );
-        assert_eq!(succeeded.messages[1].content, json!({"answer": "done"}));
-
-        create(&storage, "conversation-cancel").await;
-        let cancel_turn = turn("conversation-cancel", 1, "cancel");
-        let started = start(&storage, &cancel_turn, 5_000)
-            .await
-            .expect("start cancelled Turn");
-        storage
-            .cancel_run(
-                &idempotency("cancel-run"),
-                &started.run.run_id,
-                Some(started.run.version),
-                "user cancelled",
-                "event-cancel",
-                6_000,
-            )
-            .await
-            .expect("cancel Run");
-        let cancelled = storage
-            .get_conversation("conversation-cancel")
-            .await
-            .expect("get cancelled conversation")
-            .expect("cancelled conversation");
-        assert_eq!(cancelled.conversation.version, 3);
-        assert_eq!(
-            cancelled.turns[0].status,
-            LocalConversationTurnStatus::Cancelled
-        );
-        assert_eq!(cancelled.messages.len(), 1);
-
-        create(&storage, "conversation-failure").await;
-        let failure_turn = turn("conversation-failure", 1, "failure");
-        start(&storage, &failure_turn, 7_000)
-            .await
-            .expect("start failed Turn");
-        let claim = storage
-            .claim_next_run(
-                &idempotency("claim-failure"),
-                "worker-1",
-                "token-failure",
-                8_000,
-                18_000,
-                "event-claim-failure",
-            )
-            .await
-            .expect("claim")
-            .expect("claimed Run");
-        storage
-            .apply_transition(
-                &idempotency("complete-failure"),
-                &chatos_local_agent_ports::RunTransition {
-                    run_id: claim.run.run_id,
-                    claim_token: claim.claim_token,
-                    expected_version: claim.run.version,
-                    expected_status: LocalAgentRunStatus::ModelRunning,
-                    next_status: LocalAgentRunStatus::Failed,
-                    next_model_attempt: 1,
-                    next_attempt_at_unix_ms: None,
-                    pending_tool_batch: None,
-                    tool_batch: None,
-                    checkpoint: None,
-                    clear_continuation_input: true,
-                    terminal_outcome: Some(json!({"error": "provider rejected request"})),
-                    event_id: "event-failure".to_string(),
-                    event_type: "run_failed".to_string(),
-                    event_payload: json!({"error": "provider rejected request"}),
-                    occurred_at_unix_ms: 9_000,
-                },
-            )
-            .await
-            .expect("fail Run");
-        let failed = storage
-            .get_conversation("conversation-failure")
-            .await
-            .expect("get failed conversation")
-            .expect("failed conversation");
-        assert_eq!(failed.conversation.version, 3);
-        assert_eq!(failed.turns[0].status, LocalConversationTurnStatus::Failed);
-        assert_eq!(failed.messages.len(), 1);
-    }
-}
+#[path = "conversation_store_tests.rs"]
+mod tests;

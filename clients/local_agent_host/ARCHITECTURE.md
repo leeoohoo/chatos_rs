@@ -30,6 +30,8 @@ IPC interface → application runtime → LocalConversationStore port → local 
 
 The local database is the authoritative Main Chat fact source. `start_conversation_turn` commits the queued Run, running Turn, user Message, conversation version change, durable event and idempotency receipt as one transaction. Terminal Run transitions reconcile the owning Turn and, on success only, append the assistant Message inside that Run transaction. The runtime does not import or call the old `chatos` conversation backend, and no historical server data migration is part of this boundary.
 
+Message attachments follow a reference-only boundary. The database owns immutable attachment metadata, ordering, byte size and SHA-256, while the file body remains in the client filesystem behind an opaque authorization reference. The Planner may disclose the bounded manifest to the model, but only a capability-approved native tool may resolve the reference and read content. Large file bytes and Base64 never enter IPC, SQLite, Run input checkpoints, logs or the retained server control planes.
+
 The local MCP adapter owns Plugin process startup, MCP session initialization, tool discovery and invocation. Marketplace metadata and signed artifacts may still come from the retained Plugin control plane, but no tool execution request is routed through `mcp_management_service`.
 
 Installed Plugin/MCP snapshots are application data behind a storage port and are implemented by the local SQLite adapter. Only credential-store references are durable; native Keychain/Credential Manager adapters resolve secret values into the child-process environment at launch time.
