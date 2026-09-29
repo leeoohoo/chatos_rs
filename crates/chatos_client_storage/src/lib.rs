@@ -17,18 +17,20 @@ use sqlx::{
 use std::{path::Path, str::FromStr, time::Duration};
 
 mod contracts;
+mod migration;
 mod schema;
+mod task_store;
 mod tool_store;
 
 pub use contracts::{ClientStorageError, IdempotentCommand, LocalAgentRunStore, RunTransition};
-use schema::{RUN_SELECT, SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4};
+use schema::RUN_SELECT;
+pub use task_store::LocalAgentTaskStore;
 pub use tool_store::LocalAgentToolStore;
 
-const SCHEMA_VERSION: i64 = 4;
+pub trait LocalAgentStore: LocalAgentRunStore + LocalAgentToolStore + LocalAgentTaskStore {}
 
-pub trait LocalAgentStore: LocalAgentRunStore + LocalAgentToolStore {}
-
-impl<T> LocalAgentStore for T where T: LocalAgentRunStore + LocalAgentToolStore {}
+impl<T> LocalAgentStore for T where T: LocalAgentRunStore + LocalAgentToolStore + LocalAgentTaskStore
+{}
 
 #[derive(Debug, Clone)]
 pub struct SqliteClientStorage {
@@ -73,100 +75,6 @@ impl SqliteClientStorage {
         let storage = Self { pool };
         storage.migrate().await?;
         Ok(storage)
-    }
-
-    async fn migrate(&self) -> Result<(), ClientStorageError> {
-        let mut connection = self.pool.acquire().await?;
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS client_schema_migrations (\
-             version INTEGER PRIMARY KEY NOT NULL, applied_at_unix_ms INTEGER NOT NULL)",
-        )
-        .execute(&mut *connection)
-        .await?;
-        let version = sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT MAX(version) FROM client_schema_migrations",
-        )
-        .fetch_one(&mut *connection)
-        .await?
-        .unwrap_or(0);
-        if version > SCHEMA_VERSION {
-            return Err(ClientStorageError::InvalidState(format!(
-                "database schema version {version} is newer than supported {SCHEMA_VERSION}"
-            )));
-        }
-        if version < 1 {
-            Self::begin_immediate(&mut connection).await?;
-            let result = Self::apply_schema_v1(&mut connection).await;
-            Self::finish_write(&mut connection, result).await?;
-        }
-        if version < 2 {
-            Self::begin_immediate(&mut connection).await?;
-            let result = Self::apply_schema_v2(&mut connection).await;
-            Self::finish_write(&mut connection, result).await?;
-        }
-        if version < 3 {
-            Self::begin_immediate(&mut connection).await?;
-            let result = Self::apply_schema_v3(&mut connection).await;
-            Self::finish_write(&mut connection, result).await?;
-        }
-        if version < 4 {
-            Self::begin_immediate(&mut connection).await?;
-            let result = Self::apply_schema_v4(&mut connection).await;
-            Self::finish_write(&mut connection, result).await?;
-        }
-        Ok(())
-    }
-
-    async fn apply_schema_v1(connection: &mut SqliteConnection) -> Result<(), ClientStorageError> {
-        for statement in SCHEMA_V1 {
-            sqlx::query(statement).execute(&mut *connection).await?;
-        }
-        sqlx::query(
-            "INSERT INTO client_schema_migrations(version, applied_at_unix_ms) \
-             VALUES(1, CAST(strftime('%s','now') AS INTEGER) * 1000)",
-        )
-        .execute(&mut *connection)
-        .await?;
-        Ok(())
-    }
-
-    async fn apply_schema_v2(connection: &mut SqliteConnection) -> Result<(), ClientStorageError> {
-        for statement in SCHEMA_V2 {
-            sqlx::query(statement).execute(&mut *connection).await?;
-        }
-        sqlx::query(
-            "INSERT INTO client_schema_migrations(version, applied_at_unix_ms) \
-             VALUES(2, CAST(strftime('%s','now') AS INTEGER) * 1000)",
-        )
-        .execute(&mut *connection)
-        .await?;
-        Ok(())
-    }
-
-    async fn apply_schema_v3(connection: &mut SqliteConnection) -> Result<(), ClientStorageError> {
-        for statement in SCHEMA_V3 {
-            sqlx::query(statement).execute(&mut *connection).await?;
-        }
-        sqlx::query(
-            "INSERT INTO client_schema_migrations(version, applied_at_unix_ms) \
-             VALUES(3, CAST(strftime('%s','now') AS INTEGER) * 1000)",
-        )
-        .execute(&mut *connection)
-        .await?;
-        Ok(())
-    }
-
-    async fn apply_schema_v4(connection: &mut SqliteConnection) -> Result<(), ClientStorageError> {
-        for statement in SCHEMA_V4 {
-            sqlx::query(statement).execute(&mut *connection).await?;
-        }
-        sqlx::query(
-            "INSERT INTO client_schema_migrations(version, applied_at_unix_ms) \
-             VALUES(4, CAST(strftime('%s','now') AS INTEGER) * 1000)",
-        )
-        .execute(&mut *connection)
-        .await?;
-        Ok(())
     }
 
     pub(crate) async fn begin_immediate(

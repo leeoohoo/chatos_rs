@@ -10,6 +10,7 @@ The current milestone provides:
 - Run claim leases and compare-and-swap transitions;
 - a shared `LocalAgentProfile` registry and one-step Host scheduler;
 - a durable Tool Invocation Ledger with per-call claims and results;
+- a durable Task DAG repository with atomic, idempotent graph creation;
 - a `chatos_ai_runtime` single-step Profile adapter and conservative tool-safety policy;
 - a local tool registry and one-invocation Tool Scheduler;
 - an event-driven Host Coordinator that drains model and tool work to quiescence;
@@ -17,7 +18,7 @@ The current milestone provides:
 - conservative crash recovery to `needs_review`;
 - length-prefixed JSON over Unix sockets, Windows named pipes, or stdio.
 
-The standalone binary does not yet ship a control-plane model planner or platform tool adapters, so it does not replace the production conversation path by itself. Main Chat and Task Runner planners resolve each model request without persisting credentials, while native tool workers consume the durable Tool Invocation Ledger.
+The standalone binary does not yet wire authenticated production control-plane feeds or platform tool adapters, so it does not replace the production conversation path by itself. Main Chat and Task Runner planners resolve each model request without persisting credentials, while native tool workers consume the durable Tool Invocation Ledger.
 
 The library-level schedulers execute one registered Profile step or one tool invocation at a time and commit through the same durable protocol. `LocalAgentHostCoordinator` combines them into a long-running loop: successful IPC commands wake it immediately, each wake drains model and tool work until no durable progress remains, and `retry_scheduled` Runs arm a timer for the earliest persisted retry deadline. Idle operation does not poll. All stdio, Unix socket and Windows named-pipe transports accept the same `HostRequestHandler`, so an embedded client can route IPC directly through the Coordinator. The standalone binary still uses an empty runtime because production Profile and platform-tool registration belongs to the native client integration.
 
@@ -76,7 +77,7 @@ Example health request:
 
 ```json
 {
-  "protocol_version": 3,
+  "protocol_version": 4,
   "command_id": "health-019",
   "command": {
     "type": "health"
@@ -99,6 +100,12 @@ Mutating commands use `command_id` as an idempotency key. Reusing a key with dif
 - `cancel_run`
 - `list_events`
 - `wait_events`
+- `create_task_graph`
+- `get_task_graph`
+
+`create_task_graph` validates the complete acyclic graph and writes it in one SQLite transaction. Tasks without prerequisites start as `ready`; dependent tasks start as `pending`. Graph creation uses the same command receipt mechanism as Run mutations, so an identical `command_id` replay returns the original graph and a mismatched replay is rejected.
+
+Task-to-Run scheduling, dependency completion/unlock, and graph terminal-state reduction are not implemented yet. The Task DAG is durable authority in this milestone, but does not start work by itself.
 
 A successful claim moves one runnable Run to `model_running`, increments its iteration and version, and returns a random claim token. `commit_step` requires the exact token and version. If the Host stops before commit, an expired `model_running` claim is moved to `needs_review`; it is never silently replayed.
 

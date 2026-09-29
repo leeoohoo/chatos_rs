@@ -97,3 +97,51 @@ pub(super) const SCHEMA_V3: &[&str] = &[
 
 pub(super) const SCHEMA_V4: &[&str] =
     &["ALTER TABLE local_agent_runs ADD COLUMN model_attempt INTEGER NOT NULL DEFAULT 1 CHECK(model_attempt > 0)"];
+
+pub(super) const SCHEMA_V5: &[&str] = &[
+    "CREATE TABLE local_task_graphs (\
+       graph_id TEXT PRIMARY KEY NOT NULL,\
+       owner_user_id TEXT NOT NULL,\
+       source_entity_type TEXT NOT NULL,\
+       source_entity_id TEXT NOT NULL,\
+       created_at_unix_ms INTEGER NOT NULL\
+     )",
+    "CREATE INDEX local_task_graphs_source ON local_task_graphs(\
+       owner_user_id, source_entity_type, source_entity_id, created_at_unix_ms\
+     )",
+    "CREATE TABLE local_tasks (\
+       task_id TEXT PRIMARY KEY NOT NULL,\
+       graph_id TEXT NOT NULL,\
+       title TEXT NOT NULL,\
+       profile_key TEXT NOT NULL,\
+       model_config_ref TEXT NOT NULL,\
+       model_config_revision TEXT NOT NULL,\
+       capability_policy_revision TEXT NOT NULL,\
+       input_json TEXT NOT NULL,\
+       max_iterations INTEGER NOT NULL CHECK(max_iterations > 0),\
+       status TEXT NOT NULL CHECK(status IN (\
+         'pending','ready','running','succeeded','failed','cancelled','blocked'\
+       )),\
+       active_run_id TEXT,\
+       version INTEGER NOT NULL CHECK(version > 0),\
+       created_at_unix_ms INTEGER NOT NULL,\
+       updated_at_unix_ms INTEGER NOT NULL,\
+       FOREIGN KEY(graph_id) REFERENCES local_task_graphs(graph_id) ON DELETE CASCADE,\
+       FOREIGN KEY(active_run_id) REFERENCES local_agent_runs(run_id),\
+       UNIQUE(graph_id, task_id)\
+     )",
+    "CREATE INDEX local_tasks_graph_status ON local_tasks(graph_id, status, task_id)",
+    "CREATE TABLE local_task_dependencies (\
+       graph_id TEXT NOT NULL,\
+       task_id TEXT NOT NULL,\
+       prerequisite_task_id TEXT NOT NULL,\
+       PRIMARY KEY(graph_id, task_id, prerequisite_task_id),\
+       FOREIGN KEY(graph_id) REFERENCES local_task_graphs(graph_id) ON DELETE CASCADE,\
+       FOREIGN KEY(graph_id, task_id) REFERENCES local_tasks(graph_id, task_id) ON DELETE CASCADE,\
+       FOREIGN KEY(graph_id, prerequisite_task_id) REFERENCES local_tasks(graph_id, task_id) ON DELETE CASCADE,\
+       CHECK(task_id <> prerequisite_task_id)\
+     )",
+    "CREATE INDEX local_task_dependencies_prerequisite ON local_task_dependencies(\
+       graph_id, prerequisite_task_id, task_id\
+     )",
+];

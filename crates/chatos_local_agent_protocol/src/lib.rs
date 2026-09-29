@@ -10,15 +10,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{fmt, str::FromStr};
 
+mod task;
 mod tool;
 
+pub use task::{
+    CreateTaskGraphCommand, GetTaskGraphCommand, LocalTaskDependency, LocalTaskGraph,
+    LocalTaskRecord, LocalTaskSpec, LocalTaskStatus,
+};
 pub use tool::{
     ClaimNextToolCommand, CommitToolCommand, LocalAgentToolBatch, LocalAgentToolCall,
     LocalAgentToolClaim, LocalAgentToolCommitResult, LocalAgentToolInvocationRecord,
     LocalAgentToolOutcome, LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 3;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 4;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -57,6 +62,8 @@ pub enum HostCommand {
     CancelRun(CancelRunCommand),
     ListEvents(ListEventsCommand),
     WaitEvents(WaitEventsCommand),
+    CreateTaskGraph(CreateTaskGraphCommand),
+    GetTaskGraph(GetTaskGraphCommand),
 }
 
 impl HostCommand {
@@ -73,6 +80,8 @@ impl HostCommand {
             Self::CancelRun(command) => command.validate(),
             Self::ListEvents(command) => command.validate(),
             Self::WaitEvents(command) => command.validate(),
+            Self::CreateTaskGraph(command) => command.validate(),
+            Self::GetTaskGraph(command) => command.validate(),
         }
     }
 }
@@ -512,6 +521,9 @@ pub enum HostResult {
     Events {
         events: Vec<LocalAgentEventRecord>,
         next_cursor: i64,
+    },
+    TaskGraph {
+        graph: LocalTaskGraph,
     },
 }
 

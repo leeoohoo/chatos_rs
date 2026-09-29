@@ -28,6 +28,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod profile;
+mod task_runtime;
 
 pub use profile::{LocalAgentProfile, LocalAgentProfileRegistry};
 
@@ -297,6 +298,14 @@ impl LocalAgentRuntime {
                     events,
                     next_cursor,
                 })
+            }
+            HostCommand::CreateTaskGraph(command) => {
+                let graph = self.create_task_graph(&idempotency, command).await?;
+                Ok(HostResult::TaskGraph { graph })
+            }
+            HostCommand::GetTaskGraph(command) => {
+                let graph = self.get_task_graph(&command.graph_id).await?;
+                Ok(HostResult::TaskGraph { graph })
             }
         }
     }
