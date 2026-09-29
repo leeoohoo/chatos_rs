@@ -6,7 +6,8 @@ import Foundation
 extension PetOverlayWindowController {
     func applyQuickChatSize(_ size: NSSize) {
         applyPanelSize(size, to: messagePanel)
-        if messagePanel.isVisible {
+        applyPanelSize(size, to: messageInputPanel)
+        if messagePanel.isVisible || messageInputPanel.isVisible {
             positionMessagePanel()
             positionRunningActivityPanel()
             positionActivityPanel()
@@ -96,7 +97,9 @@ extension PetOverlayWindowController {
         guard let petWindow = window,
               let screen = petWindow.screen ?? NSScreen.main else { return }
         let visible = screen.visibleFrame
-        let bubble = messagePanel.frame.size
+        let bubble = isMessageInputActive
+            ? messageInputPanel.frame.size
+            : messagePanel.frame.size
         let pet = petWindow.frame
         let preferredAbove = pet.maxY + 10
         let y = preferredAbove + bubble.height <= visible.maxY
@@ -104,7 +107,9 @@ extension PetOverlayWindowController {
             : pet.minY - bubble.height - 10
         let centeredX = pet.midX - bubble.width / 2
         let x = min(max(centeredX, visible.minX + 8), visible.maxX - bubble.width - 8)
-        messagePanel.setFrameOrigin(NSPoint(x: x, y: y))
+        let origin = NSPoint(x: x, y: y)
+        messagePanel.setFrameOrigin(origin)
+        messageInputPanel.setFrameOrigin(origin)
     }
 
     func positionFileWorkbenchPanel() {
@@ -147,6 +152,7 @@ extension PetOverlayWindowController {
 
     private func activityBaseAnchorFrame(petWindow: NSWindow) -> NSRect {
         if fileWorkbenchPanel.isVisible { return fileWorkbenchPanel.frame }
+        if messageInputPanel.isVisible { return messageInputPanel.frame }
         if messagePanel.isVisible { return messagePanel.frame }
         return petWindow.frame
     }

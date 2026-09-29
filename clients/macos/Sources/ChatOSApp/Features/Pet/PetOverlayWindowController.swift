@@ -11,6 +11,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
     private let preferences: PetPreferencesStore
     weak var model: AppModel?
     let messagePanel: NSPanel
+    let messageInputPanel: NSPanel
     let activityPanel: NSPanel
     let runningActivityPanel: NSPanel
     let fileWorkbenchPanel: NSPanel
@@ -28,6 +29,8 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
     var lastDragOriginX: CGFloat?
     private var isPetRequestedVisible = false
     private var isScreenAwake = true
+    private var applicationBeforeMessageInput: NSRunningApplication?
+    var isMessageInputActive = false
 
     init(
         model: AppModel,
@@ -51,6 +54,9 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         self.messagePanel = PetOverlayPanelFactory.makePanel(
             size: PetOverlayLayout.compactMessageSize,
             acceptsKeyboardInput: true
+        )
+        self.messageInputPanel = PetOverlayPanelFactory.makeActiveInputPanel(
+            size: PetOverlayLayout.compactMessageSize
         )
         self.activityPanel = PetOverlayPanelFactory.makePanel(
             size: PetOverlayLayout.compactMessageSize,
@@ -80,9 +86,14 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
 
         petPanel.title = "ChatOS Pet"
         messagePanel.title = "ChatOS Quick Chat"
+        messageInputPanel.title = "ChatOS Quick Chat Input"
         activityPanel.title = "ChatOS Activity"
         runningActivityPanel.title = "ChatOS Running Tasks"
         fileWorkbenchPanel.title = "ChatOS File Workbench"
+
+        (messagePanel as? PetMessagePanel)?.onTextInputFocusRequest = { [weak self] responder in
+            self?.activateApplicationForMessageInput(responder)
+        }
 
         petPanel.delegate = self
         petPanel.contentView = PetInteractionHostingView(
@@ -199,8 +210,10 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
             updateActivityVisibility()
         } else {
             dismissTaskInspector()
+            restoreApplicationAfterMessageInput()
             window.orderOut(nil)
             messagePanel.orderOut(nil)
+            messageInputPanel.orderOut(nil)
             fileWorkbenchPanel.orderOut(nil)
             runningActivityPanel.orderOut(nil)
             activityPanel.orderOut(nil)
@@ -282,7 +295,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
             lastDragOriginX = currentX
             return
         }
-        if messagePanel.isVisible {
+        if messagePanel.isVisible || messageInputPanel.isVisible {
             positionMessagePanel()
         }
         if fileWorkbenchPanel.isVisible {
@@ -499,6 +512,15 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
             : [.managed, .ignoresCycle]
         window?.collectionBehavior = behavior
         messagePanel.collectionBehavior = behavior
+        // The activating editor is transient. Giving it `.managed` moves it to
+        // the Space that owns ChatOS's main window instead of the Space where
+        // the user clicked the pet.
+        messageInputPanel.collectionBehavior = [
+            .canJoinAllSpaces,
+            .fullScreenAuxiliary,
+            .transient,
+            .ignoresCycle,
+        ]
         fileWorkbenchPanel.collectionBehavior = behavior
         runningActivityPanel.collectionBehavior = behavior
         activityPanel.collectionBehavior = behavior
@@ -516,12 +538,84 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
     func updateMessageVisibility() {
         guard window?.isVisible == true,
               interactionState.isQuickChatPresented else {
+            restoreApplicationAfterMessageInput()
             messagePanel.orderOut(nil)
+            messageInputPanel.orderOut(nil)
             return
         }
-        attachMessagePanelIfNeeded()
         positionMessagePanel()
-        messagePanel.orderFrontRegardless()
+        if isMessageInputActive {
+            messageInputPanel.orderFrontRegardless()
+        } else {
+            attachMessagePanelIfNeeded()
+            messagePanel.orderFrontRegardless()
+        }
+    }
+
+    private func activateApplicationForMessageInput(_ responder: NSResponder) {
+        guard interactionState.isQuickChatPresented,
+              messagePanel.isVisible,
+              messagePanel.firstResponder === responder else { return }
+
+        if NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            != Bundle.main.bundleIdentifier {
+            applicationBeforeMessageInput = NSWorkspace.shared.frontmostApplication
+        }
+
+        guard let contentView = messagePanel.contentView else { return }
+        let panelFrame = messagePanel.frame
+        dismissTaskInspector()
+        if let parent = messagePanel.parent {
+            parent.removeChildWindow(messagePanel)
+        }
+        messagePanel.makeFirstResponder(nil)
+        messagePanel.contentView = nil
+        messageInputPanel.setFrame(panelFrame, display: false)
+        messageInputPanel.contentMinSize = messagePanel.contentMinSize
+        messageInputPanel.contentMaxSize = messagePanel.contentMaxSize
+        contentView.frame = NSRect(origin: .zero, size: panelFrame.size)
+        messageInputPanel.contentView = contentView
+        isMessageInputActive = true
+
+        // This panel was created as an ordinary activating window before any
+        // input method session began. Put it on the current Space and make it
+        // key before process activation so macOS selects it instead of a main
+        // ChatOS window that may live on another Space.
+        messageInputPanel.orderFrontRegardless()
+        messageInputPanel.makeKey()
+        NSApp.activate(ignoringOtherApps: true)
+        messageInputPanel.makeKeyAndOrderFront(nil)
+        messageInputPanel.makeFirstResponder(responder)
+        if messageInputPanel.isVisible, messageInputPanel.isOnActiveSpace {
+            messagePanel.orderOut(nil)
+        } else {
+            restoreApplicationAfterMessageInput()
+            messagePanel.orderFrontRegardless()
+        }
+    }
+
+    private func restoreApplicationAfterMessageInput() {
+        let previousApplication = applicationBeforeMessageInput
+        let wasMessageInputActive = isMessageInputActive
+        applicationBeforeMessageInput = nil
+        if wasMessageInputActive {
+            messageInputPanel.makeFirstResponder(nil)
+            let contentView = messageInputPanel.contentView
+            messageInputPanel.orderOut(nil)
+            messageInputPanel.contentView = nil
+            messagePanel.contentView = contentView
+            contentView?.frame = NSRect(origin: .zero, size: messagePanel.frame.size)
+            isMessageInputActive = false
+            attachMessagePanelIfNeeded()
+        }
+
+        // If the user has already switched to a different application, preserve
+        // that choice. Only return focus when ChatOS still owns activation.
+        guard NSApp.isActive,
+              let previousApplication,
+              !previousApplication.isTerminated,
+              !previousApplication.isActive else { return }
+        previousApplication.activate()
     }
 
     private func updateFileWorkbenchVisibility() {
@@ -603,6 +697,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
     ) {
         guard let model, let petWindow = window else { return }
         dismissTaskInspector()
+        let conversationPanel = isMessageInputActive ? messageInputPanel : messagePanel
 
         let size = NSSize(width: 720, height: 620)
         let panel = PetTaskInspectorPanel(
@@ -616,7 +711,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         panel.hasShadow = true
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
-        panel.collectionBehavior = messagePanel.collectionBehavior
+        panel.collectionBehavior = conversationPanel.collectionBehavior
         panel.level = NSWindow.Level(rawValue: activityPanel.level.rawValue + 1)
         panel.onCancel = { [weak self] in self?.dismissTaskInspector() }
         panel.contentView = NSHostingView(
@@ -630,26 +725,27 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
 
         let layout = PetTaskInspectorPlacement.layout(
             size: size,
-            conversationFrame: messagePanel.frame,
-            visibleFrame: (messagePanel.screen ?? petWindow.screen ?? NSScreen.main)?.visibleFrame ?? .zero
+            conversationFrame: conversationPanel.frame,
+            visibleFrame: (conversationPanel.screen ?? petWindow.screen ?? NSScreen.main)?.visibleFrame ?? .zero
         )
         messagePanel.setFrameOrigin(layout.conversationOrigin)
+        messageInputPanel.setFrameOrigin(layout.conversationOrigin)
         panel.setFrameOrigin(layout.inspectorOrigin)
         positionRunningActivityPanel()
         positionActivityPanel()
-        messagePanel.addChildWindow(panel, ordered: .above)
+        conversationPanel.addChildWindow(panel, ordered: .above)
         panel.makeKeyAndOrderFront(nil)
         taskInspectorPanel = panel
     }
 
     private func dismissTaskInspector() {
         guard let panel = taskInspectorPanel else { return }
-        if panel.parent === messagePanel {
-            messagePanel.removeChildWindow(panel)
+        if let parent = panel.parent {
+            parent.removeChildWindow(panel)
         }
         panel.orderOut(nil)
         taskInspectorPanel = nil
-        if messagePanel.isVisible {
+        if messagePanel.isVisible || messageInputPanel.isVisible {
             positionMessagePanel()
             positionRunningActivityPanel()
             positionActivityPanel()
