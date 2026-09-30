@@ -50,7 +50,7 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             ownerUserID: "user-1",
             modelConfigRef: "model-1",
             modelConfigRevision: "model-revision-1",
-            credentialRef: "env:CHATOS_LOCAL_AGENT_MODEL_1",
+            credentialRef: "env:CHATOS_LOCAL_AGENT_MODEL_MODEL_1",
             baseURL: "https://example.invalid/v1",
             model: "model-1",
             provider: "openai",
@@ -78,6 +78,18 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             capabilityPolicyRevision: "capability-revision-1"
         )
         XCTAssertEqual(loadedCapabilities, capabilities)
+        try await lifecycle.restart(
+            ownerUserID: "user-1",
+            credentialEnvironment: ["CHATOS_LOCAL_AGENT_MODEL_MODEL_1": "test-only-secret"]
+        )
+        owner = await lifecycle.activeOwnerUserID
+        XCTAssertEqual(owner, "user-1")
+        let persistedModel = try await controlPlane.model(
+            ownerUserID: "user-1",
+            modelConfigRef: "model-1",
+            modelConfigRevision: "model-revision-1"
+        )
+        XCTAssertEqual(persistedModel, model)
         await XCTAssertThrowsErrorAsync {
             _ = try await conversations.create(
                 ownerUserID: "another-user",

@@ -31,13 +31,36 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         if managedProcess?.process.isRunning == true, activeOwnerUserID == ownerUserID {
             return
         }
+        try await launch(ownerUserID: ownerUserID, credentialEnvironment: [:])
+    }
+
+    /// Restarts the Host with model credentials visible only to the child
+    /// process. Callers must source these values from Keychain and discard the
+    /// dictionary after this method returns.
+    public func restart(
+        ownerUserID: String,
+        credentialEnvironment: [String: String]
+    ) async throws {
+        try Self.validate(ownerUserID: ownerUserID)
+        try Self.validate(credentialEnvironment: credentialEnvironment)
+        try await launch(
+            ownerUserID: ownerUserID,
+            credentialEnvironment: credentialEnvironment
+        )
+    }
+
+    private func launch(
+        ownerUserID: String,
+        credentialEnvironment: [String: String]
+    ) async throws {
         stopLocked()
         do {
             let configuration = configuration
             let managed = try await Task.detached(priority: .userInitiated) {
                 try ManagedLocalAgentHostProcess.launch(
                     configuration: configuration,
-                    ownerUserID: ownerUserID
+                    ownerUserID: ownerUserID,
+                    credentialEnvironment: credentialEnvironment
                 )
             }.value
             managedProcess = managed
@@ -109,6 +132,26 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
             throw NativeLocalAgentHostError.invalidOwner
         }
     }
+
+    private static func validate(credentialEnvironment: [String: String]) throws {
+        guard credentialEnvironment.count <= 64 else {
+            throw NativeLocalAgentHostError.invalidCredentialEnvironment
+        }
+        for (name, value) in credentialEnvironment {
+            guard name.hasPrefix("CHATOS_LOCAL_AGENT_MODEL_"),
+                  name.count <= 128,
+                  name.unicodeScalars.allSatisfy({ scalar in
+                      CharacterSet.uppercaseLetters.contains(scalar)
+                          || CharacterSet.decimalDigits.contains(scalar)
+                          || scalar == "_"
+                  }),
+                  !value.isEmpty,
+                  value.lengthOfBytes(using: .utf8) <= 64 * 1_024,
+                  !value.contains("\0") else {
+                throw NativeLocalAgentHostError.invalidCredentialEnvironment
+            }
+        }
+    }
 }
 
 enum NativeLocalAgentHostError: LocalizedError, Equatable {
@@ -118,6 +161,7 @@ enum NativeLocalAgentHostError: LocalizedError, Equatable {
     case notRunning
     case invalidCommand
     case ownerMismatch
+    case invalidCredentialEnvironment
     case invalidFrame
     case invalidResponse
     case hostError(code: String, message: String, retryable: Bool)
@@ -136,6 +180,8 @@ enum NativeLocalAgentHostError: LocalizedError, Equatable {
             "Local Agent Host command must be a JSON object with a type."
         case .ownerMismatch:
             "Local Agent Host command owner does not match the active account."
+        case .invalidCredentialEnvironment:
+            "Local Agent Host credential environment is invalid."
         case .invalidFrame:
             "Local Agent Host returned an invalid frame."
         case .invalidResponse:
@@ -159,7 +205,8 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
 
     static func launch(
         configuration: NativeLocalAgentHostConfiguration,
-        ownerUserID: String
+        ownerUserID: String,
+        credentialEnvironment: [String: String]
     ) throws -> ManagedLocalAgentHostProcess {
         let executable = configuration.executableURL.standardizedFileURL
         let values = try executable.resourceValues(forKeys: [
@@ -195,7 +242,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
             "--owner-user-id", ownerUserID,
             "--stdio",
         ]
-        process.environment = safeEnvironment()
+        process.environment = safeEnvironment(credentialEnvironment: credentialEnvironment)
         process.standardInput = inputPipe
         process.standardOutput = outputPipe
         process.standardError = errorPipe
@@ -274,12 +321,16 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         return try LocalAgentHostFrameCodec.read(from: output)
     }
 
-    private static func safeEnvironment() -> [String: String] {
+    private static func safeEnvironment(
+        credentialEnvironment: [String: String]
+    ) -> [String: String] {
         let allowed = ["HOME", "LANG", "LC_ALL", "PATH", "SHELL", "TMPDIR", "USER"]
         let source = ProcessInfo.processInfo.environment
-        return Dictionary(uniqueKeysWithValues: allowed.compactMap { key in
+        var environment = Dictionary(uniqueKeysWithValues: allowed.compactMap { key in
             source[key].map { (key, $0) }
         })
+        environment.merge(credentialEnvironment) { _, credential in credential }
+        return environment
     }
 }
 
