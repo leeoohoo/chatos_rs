@@ -6,7 +6,6 @@
 use chatos_local_agent_protocol::{
     HostRequestEnvelope, HostResponseEnvelope, LOCAL_AGENT_MAX_FRAME_BYTES,
 };
-use chatos_local_agent_runtime::LocalAgentRuntime;
 use std::{io, sync::Arc};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -14,13 +13,6 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 #[async_trait::async_trait]
 pub trait HostRequestHandler: Send + Sync {
     async fn handle_request(&self, request: HostRequestEnvelope) -> HostResponseEnvelope;
-}
-
-#[async_trait::async_trait]
-impl HostRequestHandler for LocalAgentRuntime {
-    async fn handle_request(&self, request: HostRequestEnvelope) -> HostResponseEnvelope {
-        self.handle(request).await
-    }
 }
 
 #[derive(Debug, Error)]
@@ -304,6 +296,16 @@ mod tests {
     use chatos_local_agent_protocol::{
         HostCommand, HostRequestEnvelope, HostResult, LOCAL_AGENT_PROTOCOL_VERSION,
     };
+    use chatos_local_agent_runtime::LocalAgentRuntime;
+
+    struct TestRuntimeHandler(LocalAgentRuntime);
+
+    #[async_trait::async_trait]
+    impl HostRequestHandler for TestRuntimeHandler {
+        async fn handle_request(&self, request: HostRequestEnvelope) -> HostResponseEnvelope {
+            self.0.handle(request).await
+        }
+    }
 
     #[tokio::test]
     async fn framed_ipc_serves_health_over_multiple_messages() {
@@ -312,10 +314,11 @@ mod tests {
                 .await
                 .expect("storage"),
         );
-        let runtime = Arc::new(LocalAgentRuntime::new(storage));
+        let runtime = LocalAgentRuntime::new(storage);
         runtime.initialize("user-1").await.expect("runtime");
+        let handler = Arc::new(TestRuntimeHandler(runtime));
         let (mut client, server) = tokio::io::duplex(16 * 1024);
-        let server_task = tokio::spawn(serve_stream(server, runtime));
+        let server_task = tokio::spawn(serve_stream(server, handler));
 
         for index in 0..2 {
             let request = HostRequestEnvelope {
