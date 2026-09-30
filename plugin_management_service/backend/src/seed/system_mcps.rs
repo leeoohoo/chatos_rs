@@ -7,9 +7,22 @@ use super::*;
 #[cfg(test)]
 use chatos_mcp::system_mcp_descriptor_by_resource_id;
 
-pub(super) async fn remove_retired_system_mcps(store: &AppStore) -> Result<(), String> {
-    let active_resource_ids = system_mcp_catalog()
+fn is_retired_execution_mcp(descriptor: &SystemMcpDescriptor) -> bool {
+    matches!(
+        descriptor.key,
+        chatos_plugin_management_sdk::SystemMcpKey::TaskProcessLog
+            | chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService
+    )
+}
+
+fn active_system_mcp_catalog() -> impl Iterator<Item = &'static SystemMcpDescriptor> {
+    system_mcp_catalog()
         .iter()
+        .filter(|descriptor| !is_retired_execution_mcp(descriptor))
+}
+
+pub(super) async fn remove_retired_system_mcps(store: &AppStore) -> Result<(), String> {
+    let active_resource_ids = active_system_mcp_catalog()
         .map(|descriptor| descriptor.resource_id.to_string())
         .collect::<Vec<_>>();
     store
@@ -27,7 +40,7 @@ pub(super) async fn remove_retired_system_mcps(store: &AppStore) -> Result<(), S
 }
 
 pub(super) async fn seed_system_mcps(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
-    for descriptor in system_mcp_catalog() {
+    for descriptor in active_system_mcp_catalog() {
         seed_system_mcp(store, admin_user_id, descriptor).await?;
     }
     Ok(())
@@ -157,9 +170,15 @@ pub(super) fn provider_skills_for_builtin_mcp(kind: BuiltinMcpKind) -> Value {
 
 #[cfg(test)]
 pub(super) fn builtin_kinds() -> Vec<BuiltinMcpKind> {
-    system_mcp_catalog()
-        .iter()
+    active_system_mcp_catalog()
         .filter_map(|descriptor| descriptor.embedded_kind)
+        .collect()
+}
+
+#[cfg(test)]
+pub(super) fn active_system_mcp_resource_ids() -> Vec<&'static str> {
+    active_system_mcp_catalog()
+        .map(|descriptor| descriptor.resource_id)
         .collect()
 }
 

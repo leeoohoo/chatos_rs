@@ -17,27 +17,12 @@ pub(super) async fn seed_agent_bindings(
             .delete_bindings_for_agent(descriptor.key.as_str())
             .await?;
     }
-    // The conversation agent is an orchestration boundary, not an execution agent.  Keep its
-    // direct tool surface deterministic: every real capability (including notes, files, shell and
-    // Plugin MCPs) is selected inside the Task Runner run.  Delete all older/default/override MCP
-    // bindings on every seed so a retired direct tool cannot survive an upgrade.
+    // Durable task orchestration is local. The conversation agent receives its reserved task
+    // tools from Local Agent Host rather than from a managed service MCP, so remove every legacy
+    // Task Runner binding during reconciliation.
     store
         .delete_mcp_bindings_for_agent(CHATOS_CONVERSATION_AGENT_KEY)
         .await?;
-    for agent_key in CHATOS_TASK_RUNNER_AGENT_KEYS {
-        seed_agent_mcp_binding_with_tool_policy(
-            store,
-            admin_user_id,
-            agent_key,
-            CHATOS_TASK_RUNNER_MCP_RESOURCE_ID,
-            true,
-            10,
-            BindingConditions::default(),
-            CHATOS_TASK_RUNNER_DEFAULT_TOOL_ALLOWLIST,
-            &[],
-        )
-        .await?;
-    }
     for (agent_key, kind, required, priority) in
         [(TASK_RUNNER_RUN_AGENT_KEY, BuiltinMcpKind::AskUser, true, 20)]
     {
@@ -49,17 +34,6 @@ pub(super) async fn seed_agent_bindings(
             resource_id.as_str(),
             required,
             priority,
-        )
-        .await?;
-    }
-    for agent_key in TASK_RUNNER_PHASE_AGENT_KEYS {
-        seed_agent_mcp_binding(
-            store,
-            admin_user_id,
-            agent_key,
-            TASK_PROCESS_LOG_MCP_RESOURCE_ID,
-            true,
-            15,
         )
         .await?;
     }
