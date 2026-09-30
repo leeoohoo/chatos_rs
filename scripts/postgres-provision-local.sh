@@ -18,7 +18,6 @@ if [[ -z "$postgres_admin_password" || -z "$default_app_password" || -z "$defaul
 fi
 
 database_specs=(
-  "chatos:chatos_app:chatos_migrator"
   "configuration_center:config_center_app:config_center_migrator"
   "user_service:user_service_app:user_service_migrator"
   "plugin_management_service:plugin_management_app:plugin_management_migrator"

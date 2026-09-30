@@ -60,17 +60,6 @@ services:
         MIGRATION_BIN_NAME: migrate
         CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
 
-  chatos-backend:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.rust-service
-      args:
-        MANIFEST_PATH: Cargo.toml
-        PACKAGE_NAME: chat_app_server_rs
-        BIN_NAME: chat_app_server_rs
-        MIGRATION_BIN_NAME: migrate
-        CARGO_TARGET_CACHE_ID: ${CHATOS_CARGO_TARGET_CACHE_ID:-chatos-rust-target-1.94-j4}
-
   official-website-backend:
     build:
       context: ..

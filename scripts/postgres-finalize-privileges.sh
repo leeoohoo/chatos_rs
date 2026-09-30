@@ -23,7 +23,6 @@ if [[ -z "$postgres_admin_password" ]]; then
 fi
 
 database_specs=(
-  "chatos:chatos_app"
   "configuration_center:config_center_app"
   "user_service:user_service_app"
   "plugin_management_service:plugin_management_app"
