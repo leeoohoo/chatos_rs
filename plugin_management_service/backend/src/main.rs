@@ -89,11 +89,6 @@ async fn resolve_downstream_services(config: &mut AppConfig) {
         config.user_service_base_url.as_str(),
     )
     .await;
-    config.task_runner_base_url = chatos_service_runtime::resolve_service_base_url(
-        "task-runner",
-        config.task_runner_base_url.as_str(),
-    )
-    .await;
 }
 
 fn init_tracing() {

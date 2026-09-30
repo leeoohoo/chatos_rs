@@ -16,7 +16,6 @@ pub struct AppConfig {
     pub database_url: String,
     pub user_service_base_url: String,
     pub user_service_request_timeout: Duration,
-    pub task_runner_base_url: String,
     pub cors_origins: Vec<String>,
     pub internal_api_secrets: HashMap<String, String>,
     pub require_signed_internal_requests: bool,
@@ -71,9 +70,6 @@ impl AppConfig {
                 "PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL",
             )?,
             user_service_request_timeout: Duration::from_millis(user_service_request_timeout_ms),
-            task_runner_base_url: require_config_center_secret(
-                "PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL",
-            )?,
             cors_origins: cors_origins.clone(),
             internal_api_secrets: caller_internal_api_secrets()?,
             require_signed_internal_requests: required_bool(
@@ -196,10 +192,8 @@ impl AppConfig {
                 Some(secret.as_str()),
                 &[
                     "change_me_plugin_management_internal_secret",
-                    "change_me_plugin_management_task_runner_secret",
                     "change_me_plugin_management_local_connector_secret",
                     "change_me_plugin_management_memory_engine_secret",
-                    "change_me_plugin_management_mcp_management_secret",
                 ],
             )?;
         }
@@ -244,20 +238,12 @@ fn caller_internal_api_secrets() -> Result<HashMap<String, String>, String> {
             "PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET",
         ),
         (
-            "task-runner",
-            "PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET",
-        ),
-        (
             "local-connector-service",
             "PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET",
         ),
         (
             "memory-engine",
             "PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET",
-        ),
-        (
-            "mcp-management-service",
-            "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
         ),
     ]
     .into_iter()
