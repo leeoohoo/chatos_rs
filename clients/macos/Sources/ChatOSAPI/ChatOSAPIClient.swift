@@ -54,7 +54,7 @@ public actor ChatOSAPIClient {
         return authenticationSessionID
     }
 
-    enum Service { case chatOS, userService, memoryEngine }
+    enum Service { case userService, memoryEngine }
 
     func request<Response: Decodable & Sendable>(
         _ endpoint: String,
@@ -62,7 +62,7 @@ public actor ChatOSAPIClient {
         body: Data? = nil,
         additionalHeaders: [String: String] = [:],
         timeoutInterval: TimeInterval? = nil,
-        service: Service = .chatOS,
+        service: Service,
         expectedAuthenticationSessionID: UUID? = nil
     ) async throws -> Response {
         if let expectedAuthenticationSessionID {
@@ -146,29 +146,24 @@ public actor ChatOSAPIClient {
     func requestVoid(
         _ endpoint: String,
         method: String,
-        service: Service = .chatOS
+        service: Service
     ) async throws {
         let _: EmptyResponse = try await request(endpoint, method: method, service: service)
     }
 
-    private func makeURL(endpoint: String, service: Service = .chatOS) -> URL? {
-        var baseURL = configuration.baseURL
-        if service != .chatOS {
-            guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false),
-                  components.query == nil, components.fragment == nil, components.user == nil, components.password == nil else { return nil }
-            var path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            if path == "api/chatos" { path = "" }
-            else if path.hasSuffix("/api/chatos") { path = String(path.dropLast("/api/chatos".count)) }
-            else if !path.isEmpty { return nil }
-            let servicePath = switch service {
-            case .chatOS: "/api/chatos"
-            case .userService: "/api/user"
-            case .memoryEngine: "/api/memory"
-            }
-            components.path = (path.isEmpty ? "" : "/" + path) + servicePath
-            guard let resolved = components.url else { return nil }
-            baseURL = resolved
+    private func makeURL(endpoint: String, service: Service) -> URL? {
+        guard var components = URLComponents(
+            url: configuration.baseURL,
+            resolvingAgainstBaseURL: false
+        ), components.query == nil, components.fragment == nil,
+           components.user == nil, components.password == nil else { return nil }
+        let prefix = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let servicePath = switch service {
+        case .userService: "/api/user"
+        case .memoryEngine: "/api/memory"
         }
+        components.path = (prefix.isEmpty ? "" : "/" + prefix) + servicePath
+        guard let baseURL = components.url else { return nil }
         let base = baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let cleanedEndpoint = endpoint.hasPrefix("/") ? endpoint : "/\(endpoint)"
         return URL(string: base + cleanedEndpoint)

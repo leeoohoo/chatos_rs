@@ -7,7 +7,7 @@ import XCTest
 final class ChatOSMediaGenerationServiceTests: XCTestCase {
     func testResumeVideoOnlyQueriesExistingNewAPITask() async throws {
         let transport = NewAPIVideoTransport()
-        let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!), accessToken: "token", transport: transport)
+        let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://example.com")!), accessToken: "token", transport: transport)
         let service = ChatOSMediaGenerationService(client: client, providerTransport: transport, videoPollIntervalNanoseconds: 0)
         let progress = VideoProgressRecorder()
         let result = try await service.resumeVideo(.init(modelConfigID: "h3", prompt: "original prompt", size: "768P", seconds: 15), jobID: "video-h3") {
@@ -23,7 +23,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
 
     func testAllStoryReferencesAreAttachedToImageEdits() async throws {
         let transport = MediaGenerationTransport()
-        let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!), accessToken: "token", transport: transport)
+        let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://example.com")!), accessToken: "token", transport: transport)
         let service = ChatOSMediaGenerationService(client: client, providerTransport: transport)
         _ = try await service.generateImage(.init(modelConfigID: "image-model", prompt: "Compose the scene", size: nil, count: 1,
             referenceImages: [.init(name: "character.png", mimeType: "image/png", base64Data: Data("character-bytes".utf8).base64EncodedString()),
@@ -45,7 +45,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
     func testLoadsUsableModelsFromExistingCatalogWithoutRequiringTaskUsage() async throws {
         let transport = MediaGenerationTransport()
         let client = ChatOSAPIClient(
-            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+            configuration: .init(baseURL: URL(string: "https://example.com")!),
             accessToken: "token",
             transport: transport
         )
@@ -63,7 +63,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
     func testGenerateImageFetchesSecretThenCallsConfiguredProviderDirectly() async throws {
         let transport = MediaGenerationTransport()
         let client = ChatOSAPIClient(
-            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+            configuration: .init(baseURL: URL(string: "https://example.com")!),
             accessToken: "token",
             transport: transport
         )
@@ -107,7 +107,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
     func testGenerateImageEncodesOptionalReferenceImage() async throws {
         let transport = MediaGenerationTransport()
         let client = ChatOSAPIClient(
-            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+            configuration: .init(baseURL: URL(string: "https://example.com")!),
             accessToken: "token",
             transport: transport
         )
@@ -149,7 +149,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         let transport = MediaGenerationTransport()
         let progress = VideoProgressRecorder()
         let client = ChatOSAPIClient(
-            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+            configuration: .init(baseURL: URL(string: "https://example.com")!),
             accessToken: "token",
             transport: transport
         )
@@ -270,7 +270,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
     func testGenerateVideoSendsFirstFrameDataURLDirectlyToNewAPI() async throws {
         let transport = MediaGenerationTransport()
         let client = ChatOSAPIClient(
-            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+            configuration: .init(baseURL: URL(string: "https://example.com")!),
             accessToken: "token",
             transport: transport
         )
@@ -537,7 +537,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
 
     private func unifiedVideoService(_ transport: NewAPIVideoTransport) -> ChatOSMediaGenerationService {
         ChatOSMediaGenerationService(
-            client: ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!), transport: transport),
+            client: ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://example.com")!), transport: transport),
             providerTransport: transport, videoPollIntervalNanoseconds: 0
         )
     }

@@ -83,7 +83,7 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
             summaryError: nil
         )
         let client = ChatOSAPIClient(
-            configuration: .init(baseURL: URL(string: "https://app.example/prefix/api/chatos")!),
+            configuration: .init(baseURL: URL(string: "https://app.example/prefix")!),
             accessToken: "user-token",
             transport: transport
         )
@@ -162,11 +162,11 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         }
     }
 
-    func testUnsupportedBasePathDoesNotGuessOrLeakToken() async throws {
+    func testInvalidGatewayRootDoesNotLeakToken() async throws {
         let (scope, transport, _) = try fixture()
-        let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://app.example/unknown-api")!), accessToken: "token", transport: transport)
+        let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://user:password@app.example")!), accessToken: "token", transport: transport)
         let service = try await ChatOSMemoryEngineService(client: client, scope: scope)
-        do { try await service.ensureThread(); XCTFail("Unknown gateway layout") }
+        do { try await service.ensureThread(); XCTFail("Invalid gateway root") }
         catch { XCTAssertEqual(error as? ChatOSAPIError, .invalidEndpoint) }
         let count = await transport.requests.count
         XCTAssertEqual(count, 0)
@@ -177,7 +177,7 @@ final class ChatOSMemoryEngineServiceTests: XCTestCase {
         let scope = try AgentMemoryScope(tenantID: "user/a?&b", profile: "story", projectID: UUID(), runID: UUID(), runtimeScope: "story:v1")
         let transport = MemoryTransport(scope: scope, refreshToken: refreshToken, foreignTenant: foreignTenant,
                                         statusCode: statusCode, summaryError: summaryError)
-        let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://app.example/prefix/api/chatos")!), accessToken: "user-token", transport: transport)
+        let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://app.example/prefix")!), accessToken: "user-token", transport: transport)
         return (scope, transport, client)
     }
     private func records(_ scope: AgentMemoryScope) -> [AgentMemoryEntry] {

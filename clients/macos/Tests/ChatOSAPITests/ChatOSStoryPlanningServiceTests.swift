@@ -94,7 +94,7 @@ final class ChatOSStoryPlanningServiceTests: XCTestCase {
         XCTAssertEqual(nativeCalls.count, 2)
         XCTAssertEqual(nativeCalls[1].url.path, "/prefix/v1/responses")
         let transport = StoryPlanningTransport()
-        let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://app.example/api/chatos")!), accessToken: "alice", transport: transport)
+        let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://app.example")!), accessToken: "alice", transport: transport)
         let model = try await ChatOSStoryPlanningService(client: client, transport: transport).makeAgentModel(configID: "text", policy: .init())
         try await client.setAccessToken("bob")
         do { _ = try await model.complete(messages: [], tools: [], timeout: 30); XCTFail("Old account model must not be called") } catch {}
@@ -167,7 +167,7 @@ final class ChatOSStoryPlanningServiceTests: XCTestCase {
               schema: Data(#"{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}"#.utf8))
     }
     private func makeService(_ transport: StoryPlanningTransport) -> ChatOSStoryPlanningService {
-        let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://app.example/api/chatos")!), accessToken: "token", transport: transport)
+        let client = ChatOSAPIClient(configuration: .init(baseURL: URL(string: "https://app.example")!), accessToken: "token", transport: transport)
         return .init(client: client, transport: transport)
     }
 }

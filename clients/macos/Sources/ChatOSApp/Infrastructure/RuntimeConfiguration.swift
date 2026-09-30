@@ -86,13 +86,13 @@ enum RuntimeConfiguration {
         if requestedProfile == "production" {
             return .init(
                 identifier: "production",
-                apiBaseURL: URL(string: "https://gateway.jgoool.com/api/chatos")!,
+                apiBaseURL: URL(string: "https://gateway.jgoool.com")!,
                 connectorBaseURL: URL(string: "https://connector.jgoool.com")!
             )
         }
         return .init(
             identifier: "local",
-            apiBaseURL: URL(string: "http://127.0.0.1:9080/api/chatos")!,
+            apiBaseURL: URL(string: "http://127.0.0.1:9080")!,
             connectorBaseURL: URL(string: "http://127.0.0.1:9080/api/connector")!
         )
     }

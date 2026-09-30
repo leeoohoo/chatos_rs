@@ -6,7 +6,7 @@ final class ChatOSWeChatCompanionServiceTests: XCTestCase {
     func testBindingFlowUsesUserServiceGatewayAndDecodesCodeImage() async throws {
         let transport = WeChatCompanionTransport()
         let service = ChatOSWeChatCompanionService(client: ChatOSAPIClient(
-            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+            configuration: .init(baseURL: URL(string: "https://example.com")!),
             accessToken: "desktop-token",
             transport: transport
         ))

@@ -6,7 +6,7 @@ import XCTest
 final class ChatOSAPIClientErrorTests: XCTestCase {
     func testHTMLGatewayFailureUsesFriendlyMessage() async throws {
         let client = ChatOSAPIClient(
-            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+            configuration: .init(baseURL: URL(string: "https://example.com")!),
             transport: APIErrorTransport(
                 response: HTTPResponse(
                     statusCode: 503,
@@ -17,7 +17,10 @@ final class ChatOSAPIClientErrorTests: XCTestCase {
         )
 
         do {
-            let _: ErrorResponseDTO = try await client.request("/history")
+            let _: ErrorResponseDTO = try await client.request(
+                "/history",
+                service: .userService
+            )
             XCTFail("Expected request to fail")
         } catch let error as ChatOSAPIError {
             XCTAssertEqual(
@@ -29,7 +32,7 @@ final class ChatOSAPIClientErrorTests: XCTestCase {
 
     func testNestedJSONErrorMessageIsPreserved() async throws {
         let client = ChatOSAPIClient(
-            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+            configuration: .init(baseURL: URL(string: "https://example.com")!),
             transport: APIErrorTransport(
                 response: HTTPResponse(
                     statusCode: 404,
@@ -40,7 +43,10 @@ final class ChatOSAPIClientErrorTests: XCTestCase {
         )
 
         do {
-            let _: ErrorResponseDTO = try await client.request("/missing")
+            let _: ErrorResponseDTO = try await client.request(
+                "/missing",
+                service: .userService
+            )
             XCTFail("Expected request to fail")
         } catch let error as ChatOSAPIError {
             XCTAssertEqual(
@@ -57,7 +63,7 @@ final class ChatOSAPIClientErrorTests: XCTestCase {
 
     func testRegistrationProxySurfacesActionableUpstreamDetail() async throws {
         let client = ChatOSAPIClient(
-            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+            configuration: .init(baseURL: URL(string: "https://example.com")!),
             transport: APIErrorTransport(
                 response: HTTPResponse(
                     statusCode: 400,
@@ -68,7 +74,11 @@ final class ChatOSAPIClientErrorTests: XCTestCase {
         )
 
         do {
-            let _: ErrorResponseDTO = try await client.request("/auth/register", method: "POST")
+            let _: ErrorResponseDTO = try await client.request(
+                "/auth/register",
+                method: "POST",
+                service: .userService
+            )
             XCTFail("Expected request to fail")
         } catch let error as ChatOSAPIError {
             XCTAssertEqual(
@@ -84,7 +94,7 @@ final class ChatOSAPIClientErrorTests: XCTestCase {
     func testAuthenticatedUnauthorizedRequestClearsCredentialAndPublishesExpiration() async throws {
         let store = APIErrorCredentialStore(token: "expired-token")
         let client = ChatOSAPIClient(
-            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+            configuration: .init(baseURL: URL(string: "https://example.com")!),
             accessToken: "expired-token",
             credentialStore: store,
             transport: APIErrorTransport(
@@ -106,7 +116,10 @@ final class ChatOSAPIClientErrorTests: XCTestCase {
         defer { NotificationCenter.default.removeObserver(observer) }
 
         do {
-            let _: ErrorResponseDTO = try await client.request("/auth/me")
+            let _: ErrorResponseDTO = try await client.request(
+                "/auth/me",
+                service: .userService
+            )
             XCTFail("Expected request to fail")
         } catch let error as ChatOSAPIError {
             XCTAssertEqual(error, .unauthorized)

@@ -281,14 +281,14 @@
         <key>production</key>
         <dict>
             <key>APIBaseURL</key>
-            <string>https://gateway.jgoool.com/api/chatos</string>
+            <string>https://gateway.jgoool.com</string>
             <key>ConnectorBaseURL</key>
             <string>https://connector.jgoool.com</string>
         </dict>
         <key>local</key>
         <dict>
             <key>APIBaseURL</key>
-            <string>http://127.0.0.1:9080/api/chatos</string>
+            <string>http://127.0.0.1:9080</string>
             <key>ConnectorBaseURL</key>
             <string>http://127.0.0.1:9080/api/connector</string>
         </dict>

@@ -151,7 +151,7 @@ final class ChatOSAuthenticationServiceTests: XCTestCase {
             ),
         ])
         let client = ChatOSAPIClient(
-            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+            configuration: .init(baseURL: URL(string: "https://example.com")!),
             accessToken: "token",
             transport: transport
         )
@@ -171,7 +171,7 @@ final class ChatOSAuthenticationServiceTests: XCTestCase {
         store: MemoryCredentialStore
     ) -> ChatOSAuthenticationService {
         let client = ChatOSAPIClient(
-            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+            configuration: .init(baseURL: URL(string: "https://example.com")!),
             credentialStore: store,
             transport: transport
         )
