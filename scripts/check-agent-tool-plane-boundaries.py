@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -63,6 +64,25 @@ for manifest in local_host_manifests:
                 f"{relative}: Local Agent Host depends on retired server plane "
                 f"({retired_dependency!r})"
             )
+
+protocol_source = read("clients/local_agent_host/layers/interface/src/lib.rs")
+protocol_match = re.search(
+    r"LOCAL_AGENT_PROTOCOL_VERSION:\s*u32\s*=\s*(\d+)", protocol_source
+)
+if protocol_match is None:
+    ERRORS.append("Local Agent Host protocol version declaration is missing")
+else:
+    protocol_version = protocol_match.group(1)
+    require(
+        "clients/macos/Sources/ChatOSConnector/NativeLocalAgentHostLifecycle.swift",
+        f"static let version = {protocol_version}",
+        "the Rust Local Agent Host protocol version",
+    )
+    require(
+        "clients/windows/src/ChatOS.Connector/LocalAgent/WindowsLocalAgentHostLifecycle.cs",
+        f"private const int ProtocolVersion = {protocol_version};",
+        "the Rust Local Agent Host protocol version",
+    )
 
 catalog = "agent/src/catalog.rs"
 catalog_text = read(catalog)

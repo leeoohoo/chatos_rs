@@ -1,6 +1,10 @@
 import ChatOSCore
 import Foundation
 
+private enum NativeLocalAgentHostProtocol {
+    static let version = 32
+}
+
 public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
     public let executableURL: URL
     public let databaseURL: URL
@@ -106,7 +110,7 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         }
         let commandID = "native-command-\(UUID().uuidString.lowercased())"
         let envelope: [String: Any] = [
-            "protocol_version": 32,
+            "protocol_version": NativeLocalAgentHostProtocol.version,
             "command_id": commandID,
             "command": commandObject,
         ]
@@ -114,7 +118,7 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         let responseData = try managedProcess.roundTrip(request)
         guard let response = try JSONSerialization.jsonObject(with: responseData)
             as? [String: Any],
-              response["protocol_version"] as? Int == 32,
+              response["protocol_version"] as? Int == NativeLocalAgentHostProtocol.version,
               response["command_id"] as? String == commandID,
               let ok = response["ok"] as? Bool else {
             throw NativeLocalAgentHostError.invalidResponse
@@ -309,7 +313,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
     private func verifyHealth() throws {
         let commandID = "native-health-\(UUID().uuidString.lowercased())"
         let request = HealthRequest(
-            protocolVersion: 31,
+            protocolVersion: NativeLocalAgentHostProtocol.version,
             commandId: commandID,
             command: .init(type: "health")
         )
@@ -318,7 +322,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
             HealthResponse.self,
             from: payload
         )
-        guard response.protocolVersion == 31,
+        guard response.protocolVersion == NativeLocalAgentHostProtocol.version,
               response.commandId == commandID else {
             throw NativeLocalAgentHostError.invalidResponse
         }
