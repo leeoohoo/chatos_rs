@@ -211,7 +211,7 @@ fn external_target(surface: &str, uri: &axum::http::Uri) -> String {
 fn validate_proof_fields(
     proof: &DeviceProofVerificationRequest,
 ) -> Result<(), (axum::http::StatusCode, Json<serde_json::Value>)> {
-    if !matches!(proof.surface.as_str(), "user" | "chatos" | "local")
+    if !matches!(proof.surface.as_str(), "user" | "local")
         || !matches!(
             proof.method.as_str(),
             "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
@@ -291,9 +291,10 @@ mod tests {
     #[test]
     fn canonical_payload_binds_request_and_device() {
         let proof = DeviceProofVerificationRequest {
-            surface: "chatos".to_string(),
+            surface: "local".to_string(),
             method: "POST".to_string(),
-            target: "/api/chatos/agent/chat/send".to_string(),
+            target: "/api/local/companion/devices/device-1/conversations/conversation-1/messages"
+                .to_string(),
             body_sha512: "a".repeat(86),
             client_session_id: "session-1".to_string(),
             device_id: "phone-1".to_string(),
@@ -305,7 +306,7 @@ mod tests {
         assert_eq!(
             signature_payload(&proof),
             format!(
-                "chatos-device-proof-v1\nchatos\nPOST\n/api/chatos/agent/chat/send\n{}\nsession-1\nphone-1\n123\nnonce-1234567890",
+                "chatos-device-proof-v1\nlocal\nPOST\n/api/local/companion/devices/device-1/conversations/conversation-1/messages\n{}\nsession-1\nphone-1\n123\nnonce-1234567890",
                 "a".repeat(86)
             )
         );
@@ -315,9 +316,10 @@ mod tests {
     fn signature_rejects_changed_request_content_or_target() {
         let key_pair = Ed25519KeyPair::from_seed_unchecked(&[7_u8; 32]).expect("test key");
         let proof = DeviceProofVerificationRequest {
-            surface: "chatos".to_string(),
+            surface: "local".to_string(),
             method: "POST".to_string(),
-            target: "/api/chatos/agent/chat/send".to_string(),
+            target: "/api/local/companion/devices/device-1/conversations/conversation-1/messages"
+                .to_string(),
             body_sha512: URL_SAFE_NO_PAD.encode(Sha512::digest(br#"{"message":"hello"}"#)),
             client_session_id: "session-1".to_string(),
             device_id: "phone-1234567890".to_string(),
@@ -344,12 +346,31 @@ mod tests {
             .is_err());
 
         let mut changed_target = proof;
-        changed_target.target = "/api/chatos/agent/chat/stop".to_string();
+        changed_target.target =
+            "/api/local/companion/devices/device-1/conversations/conversation-1/stop".to_string();
         assert!(verifier
             .verify(
                 signature_payload(&changed_target).as_bytes(),
                 signature.as_ref()
             )
             .is_err());
+    }
+
+    #[test]
+    fn validation_rejects_removed_chatos_surface() {
+        let proof = DeviceProofVerificationRequest {
+            surface: "chatos".to_string(),
+            method: "POST".to_string(),
+            target: "/api/chatos/agent/chat/send".to_string(),
+            body_sha512: URL_SAFE_NO_PAD.encode(Sha512::digest(b"{}")),
+            client_session_id: "session-1".to_string(),
+            device_id: "phone-1234567890".to_string(),
+            timestamp: Utc::now().timestamp(),
+            nonce: "nonce-1234567890".to_string(),
+            signature_algorithm: "ed25519".to_string(),
+            signature: "signature".to_string(),
+        };
+
+        assert!(validate_proof_fields(&proof).is_err());
     }
 }
