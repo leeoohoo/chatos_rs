@@ -203,9 +203,6 @@ pub fn system_mcp_product_skill_binding(
 }
 
 pub fn system_mcp_provider_skills(key: SystemMcpKey) -> Vec<SystemMcpProviderSkill> {
-    if key == SystemMcpKey::TaskManager {
-        return Vec::new();
-    }
     let descriptor = system_mcp_descriptor(key);
     if let Some(kind) = descriptor.embedded_kind {
         return builtin_provider_skills(kind, descriptor.display_name);

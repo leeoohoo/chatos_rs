@@ -134,9 +134,6 @@ pub enum BuiltinMcpKind {
     TerminalController,
     RequirementSurveyRead,
     RequirementSurveyWrite,
-    /// Legacy compatibility only. The Task Manager builtin MCP is no longer exposed
-    /// through catalogs, config parsing, prompts, or task runner execution.
-    TaskManager,
     Notepad,
     AgentBuilder,
     AskUser,
@@ -154,7 +151,6 @@ impl BuiltinMcpKind {
             Self::TerminalController => "TerminalController",
             Self::RequirementSurveyRead => "RequirementSurveyRead",
             Self::RequirementSurveyWrite => "RequirementSurveyWrite",
-            Self::TaskManager => "TaskManager",
             Self::Notepad => "Notepad",
             Self::AgentBuilder => "AgentBuilder",
             Self::AskUser => "AskUser",
@@ -172,7 +168,6 @@ impl BuiltinMcpKind {
             Self::TerminalController => TERMINAL_CONTROLLER_SERVER_NAME,
             Self::RequirementSurveyRead => REQUIREMENT_SURVEY_READ_SERVER_NAME,
             Self::RequirementSurveyWrite => REQUIREMENT_SURVEY_WRITE_SERVER_NAME,
-            Self::TaskManager => "task_manager",
             Self::Notepad => NOTEPAD_SERVER_NAME,
             Self::AgentBuilder => AGENT_BUILDER_SERVER_NAME,
             Self::AskUser => ASK_USER_SERVER_NAME,
@@ -190,7 +185,6 @@ impl BuiltinMcpKind {
             Self::TerminalController => Some(TERMINAL_CONTROLLER_MCP_ID),
             Self::RequirementSurveyRead => Some(REQUIREMENT_SURVEY_READ_MCP_ID),
             Self::RequirementSurveyWrite => Some(REQUIREMENT_SURVEY_WRITE_MCP_ID),
-            Self::TaskManager => None,
             Self::Notepad => Some(NOTEPAD_MCP_ID),
             Self::AgentBuilder => Some(AGENT_BUILDER_MCP_ID),
             Self::AskUser => Some(ASK_USER_MCP_ID),
@@ -206,7 +200,6 @@ impl BuiltinMcpKind {
             Self::TerminalController => Some(TERMINAL_CONTROLLER_COMMAND),
             Self::RequirementSurveyRead => Some(REQUIREMENT_SURVEY_READ_COMMAND),
             Self::RequirementSurveyWrite => Some(REQUIREMENT_SURVEY_WRITE_COMMAND),
-            Self::TaskManager => None,
             Self::Notepad => Some(NOTEPAD_COMMAND),
             Self::AgentBuilder => Some(AGENT_BUILDER_COMMAND),
             Self::AskUser => Some(ASK_USER_COMMAND),
@@ -488,7 +481,6 @@ mod tests {
         assert!(configurable.contains(&BuiltinMcpKind::AgentBuilder));
 
         let runtime = default_runtime_builtin_kinds();
-        assert!(!runtime.contains(&BuiltinMcpKind::TaskManager));
         assert!(!runtime.contains(&BuiltinMcpKind::AgentBuilder));
         assert!(!runtime.contains(&BuiltinMcpKind::MemorySkillReader));
     }

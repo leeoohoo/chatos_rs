@@ -152,7 +152,6 @@ fn section_id_for_kind(kind: BuiltinMcpKind) -> Option<&'static str> {
         BuiltinMcpKind::TerminalController => Some(SECTION_TERMINAL_CONTROLLER),
         BuiltinMcpKind::RequirementSurveyRead => Some(SECTION_REQUIREMENT_SURVEY_READ),
         BuiltinMcpKind::RequirementSurveyWrite => Some(SECTION_REQUIREMENT_SURVEY_WRITE),
-        BuiltinMcpKind::TaskManager => None,
         BuiltinMcpKind::Notepad => Some(SECTION_NOTEPAD),
         BuiltinMcpKind::AskUser => Some(SECTION_ASK_USER),
         BuiltinMcpKind::RemoteConnectionController => Some(SECTION_REMOTE_CONNECTION_CONTROLLER),

@@ -50,7 +50,6 @@ impl AppStore {
             limit,
             offset,
         ) = list_parameters(user, query);
-        let retired = RETIRED_TASK_MANAGER_MCP_RESOURCE_IDS.to_vec();
         let total = sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM plugin_mcps WHERE
              ($1 OR ((owner_user_id=$2 AND visibility=$3) OR visibility=$4))
@@ -58,16 +57,10 @@ impl AppStore {
              AND ($1 OR TRUE) AND ($6 OR visibility<>$7)
              AND ($8::text IS NULL OR visibility=$8) AND ($9::bool IS NULL OR enabled=$9)
              AND ($10::text IS NULL OR runtime_kind=$10)
-             AND ($11::text IS NULL OR name ILIKE $11 OR display_name ILIKE $11 OR data->>'description' ILIKE $11)
-             AND NOT ((visibility=$7 OR source_kind=$12 OR runtime_kind=ANY($13))
-               AND (id=ANY($14) OR lower(name)=$15 OR lower(COALESCE(data#>>'{runtime,server_name}',''))=$15
-                 OR lower(COALESCE(data#>>'{runtime,system_key}',''))=$15
-                 OR lower(COALESCE(data#>>'{runtime,builtin_kind}',''))=ANY($16)))"
+             AND ($11::text IS NULL OR name ILIKE $11 OR display_name ILIKE $11 OR data->>'description' ILIKE $11)"
         ).bind(is_admin).bind(&owner).bind(VISIBILITY_PRIVATE).bind(VISIBILITY_PUBLIC)
             .bind(&owner_filter).bind(include_system).bind(VISIBILITY_SYSTEM_PRIVATE).bind(&visibility)
-            .bind(enabled).bind(&runtime).bind(search.clone()).bind(SOURCE_KIND_SYSTEM_SEED)
-            .bind(vec![RUNTIME_KIND_SYSTEM,RUNTIME_KIND_BUILTIN]).bind(retired.clone())
-            .bind(RETIRED_TASK_MANAGER_MCP_SERVER_NAME).bind(vec![RETIRED_TASK_MANAGER_MCP_KIND_NAME.to_ascii_lowercase(),RETIRED_TASK_MANAGER_MCP_SERVER_NAME.to_string()])
+            .bind(enabled).bind(&runtime).bind(search.clone())
             .fetch_one(&self.pool).await.map_err(db_error)?;
         let items = decode_all(sqlx::query_scalar(
             "SELECT data FROM plugin_mcps WHERE
@@ -76,17 +69,11 @@ impl AppStore {
              AND ($8::text IS NULL OR visibility=$8) AND ($9::bool IS NULL OR enabled=$9)
              AND ($10::text IS NULL OR runtime_kind=$10)
              AND ($11::text IS NULL OR name ILIKE $11 OR display_name ILIKE $11 OR data->>'description' ILIKE $11)
-             AND NOT ((visibility=$7 OR source_kind=$12 OR runtime_kind=ANY($13))
-               AND (id=ANY($14) OR lower(name)=$15 OR lower(COALESCE(data#>>'{runtime,server_name}',''))=$15
-                 OR lower(COALESCE(data#>>'{runtime,system_key}',''))=$15
-                 OR lower(COALESCE(data#>>'{runtime,builtin_kind}',''))=ANY($16)))
-             ORDER BY updated_at DESC,(data->>'created_at')::timestamptz DESC LIMIT $17 OFFSET $18"
+             ORDER BY updated_at DESC,(data->>'created_at')::timestamptz DESC LIMIT $12 OFFSET $13"
         ).bind(is_admin).bind(owner).bind(VISIBILITY_PRIVATE).bind(VISIBILITY_PUBLIC)
             .bind(owner_filter).bind(include_system).bind(VISIBILITY_SYSTEM_PRIVATE).bind(visibility)
-            .bind(enabled).bind(runtime).bind(search).bind(SOURCE_KIND_SYSTEM_SEED)
-            .bind(vec![RUNTIME_KIND_SYSTEM,RUNTIME_KIND_BUILTIN]).bind(retired)
-            .bind(RETIRED_TASK_MANAGER_MCP_SERVER_NAME).bind(vec![RETIRED_TASK_MANAGER_MCP_KIND_NAME.to_ascii_lowercase(),RETIRED_TASK_MANAGER_MCP_SERVER_NAME.to_string()])
-            .bind(limit).bind(offset).fetch_all(&self.pool).await.map_err(db_error)?)?;
+            .bind(enabled).bind(runtime).bind(search).bind(limit).bind(offset)
+            .fetch_all(&self.pool).await.map_err(db_error)?)?;
         Ok(ListResponse {
             items,
             total: u64::try_from(total).unwrap_or(u64::MAX),
@@ -98,7 +85,7 @@ impl AppStore {
     }
 
     pub async fn list_system_mcps(&self) -> Result<Vec<McpRecord>, String> {
-        let records: Vec<McpRecord> = decode_all(
+        decode_all(
             sqlx::query_scalar(
                 "SELECT data FROM plugin_mcps WHERE visibility=$1 ORDER BY display_name,name",
             )
@@ -106,53 +93,17 @@ impl AppStore {
             .fetch_all(&self.pool)
             .await
             .map_err(db_error)?,
-        )?;
-        Ok(records
-            .into_iter()
-            .filter(|record| !is_retired_task_manager_mcp(record))
-            .collect())
+        )
     }
 
     pub async fn list_all_mcps_for_admin_catalog(&self) -> Result<Vec<McpRecord>, String> {
-        let records: Vec<McpRecord> = decode_all(
+        decode_all(
             sqlx::query_scalar(
                 "SELECT data FROM plugin_mcps ORDER BY visibility,display_name,name",
             )
             .fetch_all(&self.pool)
             .await
             .map_err(db_error)?,
-        )?;
-        Ok(records
-            .into_iter()
-            .filter(|record| !is_retired_task_manager_mcp(record))
-            .collect())
-    }
-
-    pub async fn delete_retired_task_manager_mcp(&self) -> Result<(), String> {
-        let records = self
-            .list_all_mcps_for_admin_catalog_including_retired()
-            .await?;
-        let mut ids = RETIRED_TASK_MANAGER_MCP_RESOURCE_IDS
-            .iter()
-            .map(|item| item.to_string())
-            .collect::<Vec<_>>();
-        ids.extend(
-            records
-                .into_iter()
-                .filter(is_retired_task_manager_mcp)
-                .map(|record| record.id),
-        );
-        self.delete_mcp_resources(&ids).await.map(|_| ())
-    }
-
-    async fn list_all_mcps_for_admin_catalog_including_retired(
-        &self,
-    ) -> Result<Vec<McpRecord>, String> {
-        decode_all(
-            sqlx::query_scalar("SELECT data FROM plugin_mcps")
-                .fetch_all(&self.pool)
-                .await
-                .map_err(db_error)?,
         )
     }
 
@@ -449,19 +400,6 @@ pub(super) fn db_error(error: sqlx::Error) -> String {
     }
 }
 
-#[cfg(test)]
-mod postgres_error_tests {
-    use super::*;
-
-    #[test]
-    fn unique_violation_detection_does_not_accept_legacy_database_errors() {
-        assert!(is_unique_violation(
-            "postgres_unique_violation: duplicate key"
-        ));
-        assert!(!is_unique_violation("unclassified duplicate key error"));
-    }
-}
-
 pub(super) async fn fetch_one<T: DeserializeOwned>(
     query: &str,
     id: &str,
@@ -486,84 +424,15 @@ pub fn normalized(value: Option<&str>) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-const RETIRED_TASK_MANAGER_MCP_RESOURCE_IDS: &[&str] = &["builtin_task_manager", "task_manager"];
-const RETIRED_TASK_MANAGER_MCP_SERVER_NAME: &str = "task_manager";
-const RETIRED_TASK_MANAGER_MCP_SYSTEM_KEY: &str = "task_manager";
-const RETIRED_TASK_MANAGER_MCP_KIND_NAME: &str = "TaskManager";
-
-pub(crate) fn is_retired_task_manager_mcp(record: &McpRecord) -> bool {
-    let system = record.visibility == VISIBILITY_SYSTEM_PRIVATE
-        || record.source_kind == SOURCE_KIND_SYSTEM_SEED
-        || matches!(
-            record.runtime.kind.as_str(),
-            RUNTIME_KIND_SYSTEM | RUNTIME_KIND_BUILTIN
-        );
-    system
-        && (RETIRED_TASK_MANAGER_MCP_RESOURCE_IDS
-            .iter()
-            .any(|value| record.id.eq_ignore_ascii_case(value))
-            || record
-                .name
-                .eq_ignore_ascii_case(RETIRED_TASK_MANAGER_MCP_SERVER_NAME)
-            || record.runtime.server_name.as_deref().is_some_and(|value| {
-                value.eq_ignore_ascii_case(RETIRED_TASK_MANAGER_MCP_SERVER_NAME)
-            })
-            || record.runtime.system_key.as_deref().is_some_and(|value| {
-                value.eq_ignore_ascii_case(RETIRED_TASK_MANAGER_MCP_SYSTEM_KEY)
-            })
-            || record.runtime.builtin_kind.as_deref().is_some_and(|value| {
-                value.eq_ignore_ascii_case(RETIRED_TASK_MANAGER_MCP_KIND_NAME)
-                    || value.eq_ignore_ascii_case(RETIRED_TASK_MANAGER_MCP_SERVER_NAME)
-            }))
-}
-
 #[cfg(test)]
-mod retired_mcp_tests {
+mod postgres_error_tests {
     use super::*;
-    fn mcp_record(
-        visibility: &str,
-        source_kind: &str,
-        runtime_kind: &str,
-        name: &str,
-    ) -> McpRecord {
-        McpRecord {
-            id: name.to_string(),
-            owner_user_id: "admin".to_string(),
-            owner_kind: OWNER_KIND_SYSTEM.to_string(),
-            visibility: visibility.to_string(),
-            source_kind: source_kind.to_string(),
-            name: name.to_string(),
-            display_name: name.to_string(),
-            description: None,
-            enabled: true,
-            runtime: McpRuntime {
-                kind: runtime_kind.to_string(),
-                system_key: Some(name.to_string()),
-                server_name: Some(name.to_string()),
-                ..McpRuntime::default()
-            },
-            security: ResourceSecurity::default(),
-            metadata: ResourceMetadata::default(),
-            plugin_component: PluginComponentOwnership::default(),
-            created_by: "admin".to_string(),
-            updated_by: "admin".to_string(),
-            created_at: "now".to_string(),
-            updated_at: "now".to_string(),
-        }
-    }
+
     #[test]
-    fn retired_task_manager_detection_only_matches_system_records() {
-        assert!(is_retired_task_manager_mcp(&mcp_record(
-            VISIBILITY_SYSTEM_PRIVATE,
-            SOURCE_KIND_SYSTEM_SEED,
-            RUNTIME_KIND_SYSTEM,
-            "task_manager"
-        )));
-        assert!(!is_retired_task_manager_mcp(&mcp_record(
-            VISIBILITY_PRIVATE,
-            SOURCE_KIND_USER_CREATED,
-            RUNTIME_KIND_HTTP,
-            "task_manager"
-        )));
+    fn unique_violation_detection_does_not_accept_legacy_database_errors() {
+        assert!(is_unique_violation(
+            "postgres_unique_violation: duplicate key"
+        ));
+        assert!(!is_unique_violation("unclassified duplicate key error"));
     }
 }

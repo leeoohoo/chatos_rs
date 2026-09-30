@@ -20,9 +20,6 @@ impl SystemMcpToolCatalog {
 }
 
 pub fn system_mcp_tool_catalog(key: SystemMcpKey) -> Result<SystemMcpToolCatalog, String> {
-    if key == SystemMcpKey::TaskManager {
-        return Err("Task Manager builtin MCP has been removed".to_string());
-    }
     if let Some(kind) = system_mcp_descriptor(key).embedded_kind {
         return crate::builtin_tool_catalog(kind).map(SystemMcpToolCatalog::Static);
     }

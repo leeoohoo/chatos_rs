@@ -64,7 +64,6 @@ pub fn builtin_tool_catalog(kind: BuiltinMcpKind) -> Result<Vec<Value>, String> 
         }
         BuiltinMcpKind::RequirementSurveyRead => Ok(requirement_survey_read_catalog()),
         BuiltinMcpKind::RequirementSurveyWrite => Ok(requirement_survey_write_catalog()),
-        BuiltinMcpKind::TaskManager => Err("TaskManager builtin MCP has been removed".to_string()),
         BuiltinMcpKind::Notepad => NotepadBuiltinService::new(NotepadOptions {
             server_name,
             store: NotepadStoreRef::new(store),

@@ -15,7 +15,6 @@ pub(super) async fn remove_retired_system_mcps(store: &AppStore) -> Result<(), S
     store
         .remove_system_seed_mcps_except(active_resource_ids.as_slice())
         .await?;
-    store.delete_retired_task_manager_mcp().await?;
     for resource_id in [
         "system_mcp_sandbox_images",
         "system_mcp_project_environment",
