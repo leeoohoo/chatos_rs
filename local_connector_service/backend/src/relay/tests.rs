@@ -202,7 +202,7 @@ async fn pending_reaper_removes_expired_requests() {
 #[test]
 fn inter_instance_protocol_contains_only_dispatch_and_response_messages() {
     let dispatch = InterInstanceRelayMessage::Dispatch {
-        request: request("request-3"),
+        request: Box::new(request("request-3")),
         requester_instance_id: "instance-a".to_string(),
     };
     assert_eq!(serde_json::to_value(dispatch).unwrap()["type"], "dispatch");

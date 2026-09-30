@@ -98,7 +98,7 @@ struct DistributedRelay {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum InterInstanceRelayMessage {
     Dispatch {
-        request: RelayRequest,
+        request: Box<RelayRequest>,
         requester_instance_id: String,
     },
     Response {
@@ -393,7 +393,7 @@ impl ConnectorRelay {
                 .publish_instance_message(
                     target_instance.as_str(),
                     &InterInstanceRelayMessage::Dispatch {
-                        request,
+                        request: Box::new(request),
                         requester_instance_id: distributed.instance_id.clone(),
                     },
                 )
