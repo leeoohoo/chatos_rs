@@ -98,6 +98,15 @@ public sealed class WindowsLocalAgentConversationRuntimeSettingsService :
             cancellationToken).ConfigureAwait(false));
     }
 
+    internal async Task<WindowsLocalAgentConversationRuntimeSelection> ResolveSelectionAsync(
+        string conversationId,
+        CancellationToken cancellationToken = default)
+    {
+        var settings = await EnsureSettingsAsync(conversationId, cancellationToken)
+            .ConfigureAwait(false);
+        return new(settings, SnapshotFor(settings));
+    }
+
     private async Task<WindowsLocalAgentConversationRuntimeSettings> EnsureSettingsAsync(
         string conversationId,
         CancellationToken cancellationToken)
@@ -218,3 +227,7 @@ public sealed class WindowsLocalAgentConversationRuntimeSettingsService :
         return normalized;
     }
 }
+
+internal sealed record WindowsLocalAgentConversationRuntimeSelection(
+    WindowsLocalAgentConversationRuntimeSettings Settings,
+    WindowsLocalAgentModelSnapshot ModelSnapshot);

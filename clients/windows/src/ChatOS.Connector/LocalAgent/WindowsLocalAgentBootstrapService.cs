@@ -20,6 +20,7 @@ public sealed class WindowsLocalAgentBootstrapService
     private readonly WindowsLocalAgentControlPlaneClient _controlPlane;
     private readonly WindowsLocalAgentModelCredentialStore _credentials;
     private readonly WindowsLocalAgentConversationRuntimeSettingsService _runtimeSettings;
+    private readonly WindowsLocalAgentConversationCommandService _conversationCommands;
     private readonly ChatOSApiClient _api;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -28,12 +29,14 @@ public sealed class WindowsLocalAgentBootstrapService
         WindowsLocalAgentControlPlaneClient controlPlane,
         WindowsLocalAgentModelCredentialStore credentials,
         WindowsLocalAgentConversationRuntimeSettingsService runtimeSettings,
+        WindowsLocalAgentConversationCommandService conversationCommands,
         ChatOSApiClient api)
     {
         _host = host;
         _controlPlane = controlPlane;
         _credentials = credentials;
         _runtimeSettings = runtimeSettings;
+        _conversationCommands = conversationCommands;
         _api = api;
     }
 
@@ -48,6 +51,7 @@ public sealed class WindowsLocalAgentBootstrapService
         try
         {
             _runtimeSettings.Reset();
+            _conversationCommands.Reset();
             Current = null;
             if (_host.ActiveOwnerUserId is { } activeOwner &&
                 !string.Equals(activeOwner, ownerUserId, StringComparison.Ordinal))
@@ -151,6 +155,7 @@ public sealed class WindowsLocalAgentBootstrapService
                 options,
                 mainCapabilities);
             _runtimeSettings.Configure(ownerUserId, result);
+            _conversationCommands.Configure(ownerUserId, result);
             Current = result;
             return result;
         }
@@ -163,6 +168,7 @@ public sealed class WindowsLocalAgentBootstrapService
     public void Reset()
     {
         _runtimeSettings.Reset();
+        _conversationCommands.Reset();
         Current = null;
     }
 

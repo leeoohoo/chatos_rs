@@ -35,6 +35,10 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<WindowsLocalAgentConversationRuntimeSettingsService>();
             services.AddSingleton<IConversationRuntimeSettingsService>(provider =>
                 provider.GetRequiredService<WindowsLocalAgentConversationRuntimeSettingsService>());
+            services.AddSingleton<WindowsLocalAgentConversationClient>();
+            services.AddSingleton<WindowsLocalAgentConversationCommandService>();
+            services.AddSingleton<IConversationCommandService>(provider =>
+                provider.GetRequiredService<WindowsLocalAgentConversationCommandService>());
             services.AddSingleton<WindowsLocalAgentBootstrapService>();
             services.AddSingleton<ILocalAgentHostLifecycle>(provider =>
                 provider.GetRequiredService<WindowsLocalAgentHostLifecycle>());
