@@ -318,11 +318,12 @@ extension AppModel {
         _ disposition: PetActivityDisposition,
         to activity: PetActivity
     ) async throws {
-        try await petActivityInboxService.apply(disposition, to: activity)
+        try await petActivityService?.apply(disposition, to: activity)
     }
 
     func recoverPetActivities() async throws -> [PetActivity] {
-        try await petActivityInboxService.fetchOpenActivities(limit: 500)
+        guard let petActivityService else { return [] }
+        return try await petActivityService.fetchOpenActivities(limit: 500)
     }
 
 }

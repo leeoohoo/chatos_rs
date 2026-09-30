@@ -175,8 +175,8 @@ final class PetOverlayCoordinator {
     }
 
     private func startRealtime() {
-        guard realtimeTask == nil, let model else { return }
-        let realtime = model.realtimeService
+        guard realtimeTask == nil,
+              let realtime = model?.petActivityService else { return }
         realtimeTask = Task { [weak self] in
             let stream = await realtime.petActivityEvents()
             do {

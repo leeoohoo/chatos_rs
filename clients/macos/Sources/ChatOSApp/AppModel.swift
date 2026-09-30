@@ -98,13 +98,12 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     }
 
     let conversationService: NativeLocalAgentConversationService?
-    let realtimeService: ChatOSRealtimeClient
     let commandService: NativeLocalAgentConversationService?
+    let petActivityService: NativeLocalAgentPetActivityService?
     let turnProcessService: ChatOSTurnProcessService
     let messageTaskGraphService: ChatOSMessageTaskGraphService
     let runtimeSettingsService: ChatOSConversationRuntimeSettingsService
     let askUserPromptService: ChatOSAskUserPromptService
-    let petActivityInboxService: ChatOSPetActivityInboxService
     let workspaceService: ChatOSWorkspaceService
     let localConnectorService: NativeLocalConnectorService
     let localAgentHost: (any LocalAgentHostClientServicing)?
@@ -162,7 +161,6 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             client: apiClient,
             credentialStore: credentialStore
         )
-        let remoteConversationService = ChatOSConversationService(client: apiClient)
         let historyStore = ConversationHistoryStore()
         let connectorTicketProvider = ChatOSLocalConnectorPairingTicketProvider(client: apiClient)
         let remoteConnectionService = NativeRemoteConnectionService(
@@ -224,6 +222,9 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         }
         self.localAgentHost = localAgentHost
         self.conversationService = localAgentConversationService
+        self.petActivityService = localAgentHost.map {
+            NativeLocalAgentPetActivityService(host: $0)
+        }
         self.workspaceService = ChatOSWorkspaceService(client: apiClient)
         self.projectConversationService = ChatOSProjectConversationService(client: apiClient)
         let localProjectsService = NativeLocalProjectsService(
@@ -355,11 +356,6 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         self.messageTaskGraphService = ChatOSMessageTaskGraphService(client: apiClient)
         self.runtimeSettingsService = ChatOSConversationRuntimeSettingsService(client: apiClient)
         self.askUserPromptService = ChatOSAskUserPromptService(client: apiClient)
-        self.petActivityInboxService = ChatOSPetActivityInboxService(client: apiClient)
-        self.realtimeService = ChatOSRealtimeClient(
-            apiClient: apiClient,
-            conversationService: remoteConversationService
-        )
         idleSleepController.setEnabled(preventsIdleSystemSleep)
         authentication.$phase
             .removeDuplicates()

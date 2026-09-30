@@ -133,8 +133,10 @@ extension AppModel {
         localAgentHostError = nil
         guard let localAgentHost else { return }
         let commandService = commandService
+        let petActivityService = petActivityService
         Task {
             await commandService?.reset()
+            await petActivityService?.reset()
             await localAgentHost.stop()
         }
     }
@@ -156,6 +158,7 @@ extension AppModel {
                     ownerUserID: ownerUserID,
                     bootstrap: bootstrap
                 )
+                await self?.petActivityService?.configure(ownerUserID: ownerUserID)
                 self?.localAgentHostError = nil
             } catch is CancellationError {
             } catch {
