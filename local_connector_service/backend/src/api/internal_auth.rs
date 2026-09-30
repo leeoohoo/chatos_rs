@@ -8,22 +8,9 @@ use crate::config::AppConfig;
 use crate::models::CurrentUser;
 
 pub(super) const TOKEN_AUDIENCE: &str = "local-connector-service";
-pub(super) const MCP_RELAY_SCOPE: &str = "relay.mcp";
-pub(super) const TERMINAL_RELAY_SCOPE: &str = "relay.terminal";
-pub(super) const REMOTE_CONNECTION_RELAY_SCOPE: &str = "remote-connection.execute";
-pub(super) const SKILL_RELAY_SCOPE: &str = "relay.skill";
-pub(super) const PLUGIN_RELAY_SCOPE: &str = "plugin.execute";
-pub(super) const PLUGIN_UI_READ_SCOPE: &str = "plugin.ui.read";
-pub(super) const PLUGIN_ARTIFACT_READ_SCOPE: &str = "plugin.artifact.read";
-pub(super) const PLUGIN_ARTIFACT_WRITE_SCOPE: &str = "plugin.artifact.write";
-pub(super) const WORKSPACE_DIRECTORY_WRITE_SCOPE: &str = "workspace.directory.write";
-pub(super) const SANDBOX_ROUTING_READ_SCOPE: &str = "sandbox-routing.read";
-pub(super) const SANDBOX_SERVICE_SCOPE: &str = "sandbox.service";
 pub(super) const SYSTEM_STATS_READ_SCOPE: &str = "system.stats.read";
-pub(super) const PROJECT_CONTEXT_AUTHORIZE_SCOPE: &str = "project-context.authorize";
 
 const CHATOS_CALLER: &str = "chatos-backend";
-const MCP_MANAGEMENT_CALLER: &str = "mcp-management-service";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct InternalServiceRequestIdentity {
@@ -147,144 +134,13 @@ struct InternalAccess {
 }
 
 fn internal_access_for_request(method: &Method, path: &str) -> Option<InternalAccess> {
-    let parts = path.trim_matches('/').split('/').collect::<Vec<_>>();
-    match (method, parts.as_slice()) {
-        (&Method::POST, ["api", "local-connectors", "project-context", "authorize"]) => {
-            Some(InternalAccess {
-                scope: PROJECT_CONTEXT_AUTHORIZE_SCOPE,
-                allowed_callers: &[MCP_MANAGEMENT_CALLER],
-            })
-        }
-        (&Method::POST, ["api", "local-connectors", "relay", _, "mcp"]) => Some(InternalAccess {
-            scope: MCP_RELAY_SCOPE,
-            allowed_callers: &[MCP_MANAGEMENT_CALLER],
-        }),
-        (
-            &Method::POST,
-            ["api", "local-connectors", "relay", _, "skills", "prepare" | "execute" | "cancel"],
-        ) => Some(InternalAccess {
-            scope: SKILL_RELAY_SCOPE,
-            allowed_callers: &[MCP_MANAGEMENT_CALLER],
-        }),
-        (
-            &Method::POST,
-            ["api", "local-connectors", "relay", _, "plugins", "prepare" | "execute" | "cancel"],
-        ) => Some(InternalAccess {
-            scope: PLUGIN_RELAY_SCOPE,
-            allowed_callers: &[MCP_MANAGEMENT_CALLER],
-        }),
-        (&Method::POST, ["api", "local-connectors", "relay", _, "plugins", "ui", "assets"]) => {
-            Some(InternalAccess {
-                scope: PLUGIN_UI_READ_SCOPE,
-                allowed_callers: &[CHATOS_CALLER],
-            })
-        }
-        (
-            &Method::POST,
-            ["api", "local-connectors", "relay", _, "plugins", "artifacts", "list" | "read"],
-        ) => Some(InternalAccess {
-            scope: PLUGIN_ARTIFACT_READ_SCOPE,
-            allowed_callers: &[CHATOS_CALLER],
-        }),
-        (
-            &Method::POST,
-            ["api", "local-connectors", "relay", _, "plugins", "artifacts", "create" | "update"],
-        ) => Some(InternalAccess {
-            scope: PLUGIN_ARTIFACT_WRITE_SCOPE,
-            allowed_callers: &[CHATOS_CALLER],
-        }),
-        (
-            &Method::POST,
-            ["api", "local-connectors", "relay", _, "workspaces", _, "directories"],
-        ) => Some(InternalAccess {
-            scope: WORKSPACE_DIRECTORY_WRITE_SCOPE,
-            allowed_callers: &[CHATOS_CALLER],
-        }),
-        (&Method::GET, ["api", "local-connectors", "relay", _, "workspaces", _, "directories"]) => {
-            Some(InternalAccess {
-                scope: WORKSPACE_DIRECTORY_WRITE_SCOPE,
-                allowed_callers: &[CHATOS_CALLER],
-            })
-        }
-        (&Method::POST, ["api", "local-connectors", "relay", _, "workspaces", _, "filesystem"]) => {
-            Some(InternalAccess {
-                scope: WORKSPACE_DIRECTORY_WRITE_SCOPE,
-                allowed_callers: &[CHATOS_CALLER],
-            })
-        }
-        (
-            &Method::POST,
-            ["api", "local-connectors", "relay", _, "remote-connections", "test" | "command" | "sftp"],
-        ) => Some(InternalAccess {
-            scope: REMOTE_CONNECTION_RELAY_SCOPE,
-            allowed_callers: &[CHATOS_CALLER],
-        }),
-        (&Method::GET, ["api", "local-connectors", "sandbox-pairings"]) => Some(InternalAccess {
-            scope: SANDBOX_ROUTING_READ_SCOPE,
-            allowed_callers: &[MCP_MANAGEMENT_CALLER],
-        }),
-        (&Method::GET, ["api", "local-connectors", "system", "stats"]) => Some(InternalAccess {
+    match (method, path) {
+        (&Method::GET, "/api/local-connectors/system/stats") => Some(InternalAccess {
             scope: SYSTEM_STATS_READ_SCOPE,
-            allowed_callers: &[MCP_MANAGEMENT_CALLER, CHATOS_CALLER],
+            allowed_callers: &[CHATOS_CALLER],
         }),
-        (
-            &Method::POST,
-            ["api", "local-connectors", "sandbox-facade", _, "api", "local", "sandbox", "images", "mcp"],
-        ) => Some(InternalAccess {
-            scope: SANDBOX_SERVICE_SCOPE,
-            allowed_callers: &[MCP_MANAGEMENT_CALLER],
-        }),
-        (&Method::GET, ["api", "local-connectors", "sandbox-facade", _, "api", "sandboxes", _]) => {
-            Some(InternalAccess {
-                scope: SANDBOX_SERVICE_SCOPE,
-                allowed_callers: &[MCP_MANAGEMENT_CALLER],
-            })
-        }
-        (
-            &Method::POST,
-            ["api", "local-connectors", "sandbox-facade", _, "api", "sandboxes", _, "mcp"],
-        ) => Some(InternalAccess {
-            scope: SANDBOX_SERVICE_SCOPE,
-            allowed_callers: &[MCP_MANAGEMENT_CALLER],
-        }),
-        (
-            &Method::POST,
-            ["api", "local-connectors", "relay", _, "terminal", "exec" | "sessions" | "input"],
-        )
-        | (&Method::GET, ["api", "local-connectors", "relay", _, "terminal", "ws"]) => {
-            Some(InternalAccess {
-                scope: TERMINAL_RELAY_SCOPE,
-                allowed_callers: &[MCP_MANAGEMENT_CALLER],
-            })
-        }
         _ => None,
     }
-}
-
-pub(super) fn require_chatos_service_caller(user: &CurrentUser) -> Result<(), ApiError> {
-    let owner_user_id = user.owner_user_id.as_deref().unwrap_or_default();
-    if user.principal_type == "service"
-        && !owner_user_id.is_empty()
-        && user.user_id == format!("service:{CHATOS_CALLER}:{owner_user_id}")
-    {
-        return Ok(());
-    }
-    Err(ApiError::forbidden(
-        "Plugin UI asset relay is restricted to ChatOS backend",
-    ))
-}
-
-pub(super) fn require_mcp_management_service_caller(user: &CurrentUser) -> Result<(), ApiError> {
-    let owner_user_id = user.owner_user_id.as_deref().unwrap_or_default();
-    if user.principal_type == "service"
-        && !owner_user_id.is_empty()
-        && user.user_id == format!("service:{MCP_MANAGEMENT_CALLER}:{owner_user_id}")
-    {
-        return Ok(());
-    }
-    Err(ApiError::forbidden(
-        "Local Sandbox MCP execution is restricted to MCP Management Service",
-    ))
 }
 
 fn header_text<'a>(headers: &'a HeaderMap, key: &'static str) -> Option<&'a str> {

@@ -307,6 +307,7 @@ impl ConnectorRelay {
             .store(level == PlatformPressureLevel::Critical, Ordering::Relaxed);
     }
 
+    #[cfg(test)]
     pub(crate) async fn new_terminal_sessions_paused(&self) -> bool {
         if self.platform_pressure_critical.load(Ordering::Relaxed) {
             return true;

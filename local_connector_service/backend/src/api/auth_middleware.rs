@@ -540,21 +540,18 @@ mod tests {
     #[tokio::test]
     async fn public_listener_rejects_internal_service_identity() {
         let secret = "a-long-public-boundary-test-secret";
-        let config = crate::config::AppConfig::for_plugin_artifact_relay_test(secret);
+        let config = crate::config::AppConfig::for_auth_test(secret);
         let auth_state = AuthState::for_test(config).expect("test auth state");
         let token = chatos_service_runtime::issue_internal_service_token(
             secret,
             "chatos-backend",
             super::super::internal_auth::TOKEN_AUDIENCE,
-            "relay.mcp",
+            super::super::internal_auth::SYSTEM_STATS_READ_SCOPE,
             60,
         )
         .expect("internal token");
         let app = Router::new()
-            .route(
-                "/api/local-connectors/relay/device-1/mcp",
-                get(|| async { "ok" }),
-            )
+            .route("/api/local-connectors/system/stats", get(|| async { "ok" }))
             .route_layer(middleware::from_fn_with_state(
                 auth_state,
                 require_public_auth,
@@ -562,7 +559,7 @@ mod tests {
         let response = app
             .oneshot(
                 Request::builder()
-                    .uri("/api/local-connectors/relay/device-1/mcp")
+                    .uri("/api/local-connectors/system/stats")
                     .header("x-local-connector-caller", "chatos-backend")
                     .header("x-local-connector-internal-token", token)
                     .body(axum::body::Body::empty())
