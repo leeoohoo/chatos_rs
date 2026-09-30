@@ -8,7 +8,7 @@ DOCKER_BOOTSTRAP_FILE := $(if $(wildcard docker/bootstrap.conf),docker/bootstrap
 .PHONY: local-dev local-dev-stop local-dev-status local-dev-logs postgres-up postgres-migrate postgres-verify postgres-down
 .PHONY: build build-rust build-frontends build-macos-client build-windows-client build-browser-plugin build-computer-use-plugin build-document-plugin build-plugins
 .PHONY: test smoke smoke-repo smoke-local-project-entry verify verify-fast test-rust-workspaces check-frontends code-size-report hotspot-line-warnings
-.PHONY: test-chat-app-server test-user-service test-task-runner-service test-local-connector-service test-mcp-management-service test-memory-engine
+.PHONY: test-chat-app-server test-user-service test-local-connector-service test-memory-engine
 .PHONY: test-macos-client test-windows-client test-browser-plugin test-computer-use-plugin test-document-plugin test-plugins
 .PHONY: type-check-admin-console
 
@@ -147,7 +147,7 @@ build-document-plugin:
 
 build-plugins: build-browser-plugin build-computer-use-plugin build-document-plugin
 
-test: smoke test-chat-app-server test-user-service test-task-runner-service test-local-connector-service test-mcp-management-service test-memory-engine
+test: smoke test-chat-app-server test-user-service test-local-connector-service test-memory-engine
 
 smoke: smoke-repo
 
@@ -183,14 +183,8 @@ test-chat-app-server:
 test-user-service:
 	@cd user_service/backend && cargo test -q
 
-test-task-runner-service:
-	@cargo test -p task_runner_service_backend -q
-
 test-local-connector-service:
 	@cargo test -p local_connector_service_backend -q
-
-test-mcp-management-service:
-	@cargo test -p mcp_management_service_backend -q
 
 test-memory-engine:
 	@cd memory_engine/backend && cargo test -q

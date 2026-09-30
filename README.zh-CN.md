@@ -94,10 +94,9 @@ Windows 客户端使用相同的产品协议与视觉语言，同时拥有独立
 | --- | --- |
 | `clients/macos` | Swift 6.2 / SwiftUI 原生客户端与 macOS Local Connector。 |
 | `clients/windows` | .NET 8 / WinUI 3 原生客户端、Windows Local Connector、Network Guard 与安装器。 |
+| `clients/local_agent_host` | 由原生客户端内嵌的 Rust 本地任务、工具、调度与执行宿主。 |
 | `chatos/backend` | ChatOS 主 API 与对话编排服务。 |
-| `task_runner_service/backend` | 后台任务 API、Worker、Scheduler 与工具运行时。 |
 | `memory_engine/backend` | 会话摘要与分层项目/主题记忆。 |
-| `mcp_management_service/backend` | MCP 能力物化、路由与运行会话。 |
 | `plugin_management_service/backend` | 插件目录、版本、安装包与运行能力元数据。 |
 | `local_connector_service/backend` | 原生 Local Connector 的云端路由与协调。 |
 | `user_service/backend` | 账号、认证、模型供应商与用户设置。 |

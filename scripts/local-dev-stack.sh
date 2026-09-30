@@ -37,10 +37,6 @@ DOCKER_APP_SERVICES=(
   memory-engine-worker
   plugin-management-backend
   local-connector-service-backend
-  mcp-management-service-backend
-  task-runner-backend
-  task-runner-worker
-  task-runner-scheduler
   chatos-backend
   official-website-backend
   admin-console-frontend
@@ -54,10 +50,6 @@ BACKEND_SERVICES=(
   "memory-engine-worker|memory-engine|memory_engine/backend/Cargo.toml|-|-|memory_engine|MEMORY_ENGINE_API_ENABLED=false MEMORY_ENGINE_WORKER_ENABLED=true"
   "plugin-management-backend|plugin-management-service|plugin_management_service/backend/Cargo.toml|/api/health|39260|plugin_management_service_backend|-"
   "local-connector-service-backend|local-connector-service|local_connector_service/backend/Cargo.toml|/api/health|39230|local_connector_service_backend|-"
-  "mcp-management-service-backend|mcp-management-service|mcp_management_service/backend/Cargo.toml|/health|39280|mcp_management_service_backend|-"
-  "task-runner-backend|task-runner|task_runner_service/backend/Cargo.toml|/api/health|39090|task_runner_service_backend|TASK_RUNNER_ROLE=api TASK_RUNNER_WORKER_ID=task-runner-api-local"
-  "task-runner-worker|task-runner|task_runner_service/backend/Cargo.toml|-|-|task_runner_service_backend|TASK_RUNNER_ROLE=worker TASK_RUNNER_WORKER_ID=task-runner-worker-local"
-  "task-runner-scheduler|task-runner|task_runner_service/backend/Cargo.toml|-|-|task_runner_service_backend|TASK_RUNNER_ROLE=scheduler TASK_RUNNER_WORKER_ID=task-runner-scheduler-local"
   "chatos-backend|chatos-backend|chatos/backend/Cargo.toml|/health|3997|chat_app_server_rs|-"
   "official-website-backend|official-website|official_website_service/backend/Cargo.toml|/health|39250|official_website_service_backend|-"
 )

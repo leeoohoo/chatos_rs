@@ -157,18 +157,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "argon2"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c3610892ee6e0cbce8ae2700349fcf8f98adb0dbfbee85aec3c9179d29cc072"
-dependencies = [
- "base64ct",
- "blake2",
- "cpufeatures 0.2.17",
- "password-hash",
-]
-
-[[package]]
 name = "asn1-rs"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -531,15 +519,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 dependencies = [
  "serde_core",
-]
-
-[[package]]
-name = "blake2"
-version = "0.10.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
-dependencies = [
- "digest 0.10.7",
 ]
 
 [[package]]
@@ -2905,50 +2884,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
-name = "mcp_management_service_backend"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "axum",
- "axum-server",
- "chatos_agent",
- "chatos_config_sdk",
- "chatos_mcp",
- "chatos_mcp_management_sdk",
- "chatos_mcp_runtime",
- "chatos_mcp_service",
- "chatos_plugin_management_sdk",
- "chatos_postgres",
- "chatos_queue_observability",
- "chatos_service_runtime",
- "chrono",
- "futures-util",
- "hex",
- "jsonwebtoken",
- "lapin",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "rand 0.10.2",
- "redis",
- "reqwest",
- "rustls",
- "rustls-pemfile",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "sqlx",
- "tokio",
- "tower",
- "tower-http 0.7.0",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "urlencoding",
- "uuid",
-]
-
-[[package]]
 name = "md-5"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3376,17 +3311,6 @@ dependencies = [
  "redox_syscall 0.5.18",
  "smallvec",
  "windows-link",
-]
-
-[[package]]
-name = "password-hash"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "346f04948ba92c43e8469c1ee6736c7563d71012b17d40745260fe106aac2166"
-dependencies = [
- "base64ct",
- "rand_core 0.6.4",
- "subtle",
 ]
 
 [[package]]
@@ -4920,59 +4844,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "task_runner_service_backend"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "async-trait",
- "axum",
- "axum-server",
- "chatos_agent",
- "chatos_ai_runtime",
- "chatos_cloud_agent_protocol",
- "chatos_cloud_agent_runtime",
- "chatos_config_sdk",
- "chatos_mcp",
- "chatos_mcp_gateway",
- "chatos_mcp_management_sdk",
- "chatos_mcp_runtime",
- "chatos_mcp_service",
- "chatos_plugin_management_sdk",
- "chatos_postgres",
- "chatos_queue_observability",
- "chatos_service_runtime",
- "chatos_terminal_runtime",
- "chrono",
- "futures-util",
- "hex",
- "lapin",
- "libc",
- "memory_engine_sdk",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "parking_lot",
- "rand 0.10.2",
- "reqwest",
- "rustls",
- "rustls-pemfile",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "sqlx",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tower",
- "tower-http 0.7.0",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "urlencoding",
- "uuid",
-]
-
-[[package]]
 name = "tcp-stream"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5139,7 +5010,6 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
- "tokio-util",
 ]
 
 [[package]]

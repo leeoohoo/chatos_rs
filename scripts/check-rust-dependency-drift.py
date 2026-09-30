@@ -31,6 +31,9 @@ BASELINE: dict[str, dict[str, str]] = {
         "tower-http": "0.7",
         "sqlx": "0.8.6",
     },
+    "clients/local_agent_host/layers/infrastructure/database/Cargo.toml": {
+        "sqlx": "workspace",
+    },
     "config_center_service/backend/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",
@@ -53,11 +56,6 @@ BASELINE: dict[str, dict[str, str]] = {
         "tower-http": "0.7",
         "sqlx": "0.8.6",
     },
-    "mcp_management_service/backend/Cargo.toml": {
-        "axum": "0.8",
-        "tower-http": "0.7",
-        "sqlx": "workspace",
-    },
     "memory_engine/backend/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",
@@ -68,11 +66,6 @@ BASELINE: dict[str, dict[str, str]] = {
         "tower-http": "0.7",
     },
     "plugin_management_service/backend/Cargo.toml": {
-        "axum": "0.8",
-        "tower-http": "0.7",
-        "sqlx": "0.8.6",
-    },
-    "task_runner_service/backend/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",
         "sqlx": "0.8.6",

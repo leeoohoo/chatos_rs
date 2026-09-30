@@ -10,8 +10,6 @@ manifests=(
   "user_service/backend/Cargo.toml"
   "plugin_management_service/backend/Cargo.toml"
   "local_connector_service/backend/Cargo.toml"
-  "task_runner_service/backend/Cargo.toml"
-  "mcp_management_service/backend/Cargo.toml"
   "memory_engine/backend/Cargo.toml"
   "chatos/backend/Cargo.toml"
 )
