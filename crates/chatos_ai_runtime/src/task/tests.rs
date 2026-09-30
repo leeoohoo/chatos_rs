@@ -27,7 +27,7 @@ fn task_run_spec_serializes_model_config_id_and_builds_turn_request() {
         .with_model_config_id("model_cfg_1")
         .with_memory_scope(Some(MemoryScope::thread(
             "tenant_1",
-            "task_runner",
+            "task_execution",
             "task_1",
         )))
         .with_prefixed_input_items(vec![json!({"role":"system","content":"prefix"})])
@@ -294,7 +294,7 @@ fn task_runtime_config_serializes_runtime_shape() {
 
 #[test]
 fn task_memory_runtime_config_serializes_direct_memory_settings() {
-    let memory = TaskMemoryRuntimeConfig::new("http://127.0.0.1:1", "task_runner")
+    let memory = TaskMemoryRuntimeConfig::new("http://127.0.0.1:1", "task_execution")
         .with_timeout_ms(500)
         .with_compose_context(false)
         .with_record_scope(Some(MemoryRecordScope::message_thread(
@@ -308,7 +308,7 @@ fn task_memory_runtime_config_serializes_direct_memory_settings() {
     let memory = decoded.memory_engine.expect("memory config");
 
     assert_eq!(memory.base_url, "http://127.0.0.1:1");
-    assert_eq!(memory.source_id, "task_runner");
+    assert_eq!(memory.source_id, "task_execution");
     assert_eq!(memory.timeout_ms, 500);
     assert!(!memory.compose_context);
     assert_eq!(
@@ -359,7 +359,7 @@ async fn task_runtime_config_can_disable_mcp() {
 
 #[tokio::test]
 async fn task_runtime_config_builds_with_memory_engine_config() {
-    let memory = TaskMemoryRuntimeConfig::new("http://127.0.0.1:1", "task_runner")
+    let memory = TaskMemoryRuntimeConfig::new("http://127.0.0.1:1", "task_execution")
         .with_timeout_ms(100)
         .with_record_scope(Some(MemoryRecordScope::message_thread(
             "tenant_1", "thread_1",
@@ -375,7 +375,7 @@ async fn task_runtime_config_builds_with_memory_engine_config() {
 
 #[tokio::test]
 async fn task_runtime_config_builds_with_injected_memory_http_client() {
-    let memory = TaskMemoryRuntimeConfig::new("https://127.0.0.1:1", "task_runner")
+    let memory = TaskMemoryRuntimeConfig::new("https://127.0.0.1:1", "task_execution")
         .with_record_scope(Some(MemoryRecordScope::message_thread(
             "tenant_1", "thread_1",
         )));
@@ -472,7 +472,7 @@ fn task_run_execution_wraps_runtime_init_failure_report() {
 }
 
 #[tokio::test]
-async fn task_runner_report_captures_aborted_runtime() {
+async fn task_execution_report_captures_aborted_runtime() {
     let config = ModelRuntimeConfig::openai_compatible(
         "http://127.0.0.1:1/v1",
         "secret",

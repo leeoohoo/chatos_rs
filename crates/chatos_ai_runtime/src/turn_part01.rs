@@ -110,10 +110,10 @@ mod tests {
         let composer = MemoryContextComposer::new_direct(
             format!("http://{address}"),
             Duration::from_secs(1),
-            "task_runner",
+            "task_execution",
         )
         .expect("memory composer");
-        let scope = MemoryScope::thread("tenant-1", "task_runner", "thread-1");
+        let scope = MemoryScope::thread("tenant-1", "task_execution", "thread-1");
         let durable = vec![
             json!({"role":"user","content":"implement inventory cli"}),
             json!({"type":"reasoning","id":"rs-1","summary":[]}),
@@ -171,7 +171,7 @@ mod tests {
                     "id": "record-current-run",
                     "thread_id": "thread-1",
                     "tenant_id": "tenant-1",
-                    "source_id": "task_runner",
+                    "source_id": "task_execution",
                     "external_record_id": null,
                     "role": "system",
                     "record_type": "message",
@@ -201,10 +201,10 @@ mod tests {
         let composer = MemoryContextComposer::new_direct(
             format!("http://{address}"),
             Duration::from_secs(1),
-            "task_runner",
+            "task_execution",
         )
         .expect("memory composer");
-        let scope = MemoryScope::thread("tenant-1", "task_runner", "thread-1");
+        let scope = MemoryScope::thread("tenant-1", "task_execution", "thread-1");
         let durable = vec![
             json!({"role":"user","content":"build the backend"}),
             json!({"type":"reasoning","id":"rs-1","summary":[]}),
@@ -237,7 +237,7 @@ mod tests {
                     "id": "record-current-run",
                     "thread_id": "thread-1",
                     "tenant_id": "tenant-1",
-                    "source_id": "task_runner",
+                    "source_id": "task_execution",
                     "external_record_id": null,
                     "role": "system",
                     "record_type": "message",
@@ -267,10 +267,10 @@ mod tests {
         let composer = MemoryContextComposer::new_direct(
             format!("http://{address}"),
             Duration::from_secs(1),
-            "task_runner",
+            "task_execution",
         )
         .expect("memory composer");
-        let scope = MemoryScope::thread("tenant-1", "task_runner", "thread-1");
+        let scope = MemoryScope::thread("tenant-1", "task_execution", "thread-1");
         let durable = vec![
             json!({"role":"user","content":"build the backend"}),
             json!({
@@ -312,7 +312,7 @@ mod tests {
                     "id": "record-current-run",
                     "thread_id": "thread-1",
                     "tenant_id": "tenant-1",
-                    "source_id": "task_runner",
+                    "source_id": "task_execution",
                     "external_record_id": null,
                     "role": "system",
                     "record_type": "message",
@@ -342,10 +342,10 @@ mod tests {
         let composer = MemoryContextComposer::new_direct(
             format!("http://{address}"),
             Duration::from_secs(1),
-            "task_runner",
+            "task_execution",
         )
         .expect("memory composer");
-        let scope = MemoryScope::thread("tenant-1", "task_runner", "thread-1");
+        let scope = MemoryScope::thread("tenant-1", "task_execution", "thread-1");
 
         let input = build_contextual_input(
             Some(&composer),
@@ -395,10 +395,10 @@ mod tests {
         let composer = MemoryContextComposer::new_direct(
             format!("http://{address}"),
             Duration::from_secs(1),
-            "task_runner",
+            "task_execution",
         )
         .expect("memory composer");
-        let scope = MemoryScope::thread("tenant-1", "task_runner", "thread-1");
+        let scope = MemoryScope::thread("tenant-1", "task_execution", "thread-1");
 
         let first = build_contextual_input(
             Some(&composer),
@@ -525,7 +525,7 @@ mod tests {
             .with_caller_model("gpt-test")
             .with_record_options(RuntimeRecordOptions::persist_all())
             .with_memory_scope(Some(
-                MemoryScope::thread("tenant_1", "task_runner", "task_1")
+                MemoryScope::thread("tenant_1", "task_execution", "task_1")
                     .with_subject_id("contact_1"),
             ))
             .with_prefixed_input_items(vec![json!({"role":"system","content":"prefix"})])

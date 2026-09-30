@@ -28,12 +28,12 @@ pub(super) fn json_value_size_bytes(value: &Value) -> usize {
 
 pub(super) fn attach_runtime_debug(mut payload: Value, runtime_debug: &Value) -> Value {
     if let Some(map) = payload.as_object_mut() {
-        map.insert("task_runner_debug".to_string(), runtime_debug.clone());
+        map.insert("task_execution_debug".to_string(), runtime_debug.clone());
         payload
     } else {
         json!({
             "payload": payload,
-            "task_runner_debug": runtime_debug,
+            "task_execution_debug": runtime_debug,
         })
     }
 }

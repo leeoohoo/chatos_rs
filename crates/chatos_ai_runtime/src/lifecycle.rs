@@ -154,7 +154,7 @@ impl RuntimeLifecycleHook for TaskFinalizationLifecycleHook {
             .with_tools_enabled(false)
             .with_input_items(vec![json!({
                 "role": "system",
-                "content": "[Task Runner Finalization]\n工具执行预算即将结束。不要再调用任何工具。请根据已经完成的真实操作和验证结果，立即输出简洁、准确的最终总结；如仍有未完成项，明确说明实际状态，不要声称已完成。"
+                "content": "[Local Task Execution Finalization]\n工具执行预算即将结束。不要再调用任何工具。请根据已经完成的真实操作和验证结果，立即输出简洁、准确的最终总结；如仍有未完成项，明确说明实际状态，不要声称已完成。"
             })]))
     }
 }

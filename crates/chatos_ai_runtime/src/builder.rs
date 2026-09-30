@@ -127,7 +127,7 @@ mod tests {
             .with_memory_composer_direct(
                 "http://127.0.0.1:1",
                 Duration::from_millis(100),
-                "task_runner",
+                "task_execution",
             )
             .expect("composer")
             .with_max_iterations(3)

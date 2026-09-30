@@ -1,6 +1,6 @@
 # Local Agent Host architecture
 
-`clients/local_agent_host` is a self-contained client product, not an adapter over the server Task Runner.
+`clients/local_agent_host` is a self-contained client product, not an adapter over a server execution runtime.
 
 ## Layers
 
@@ -10,7 +10,7 @@ local_agent_host/
 │   ├── interface/                 IPC commands, results, and stable DTOs
 │   ├── ports/                     storage interfaces used by the application core
 │   ├── application/               durable Run/Task state machine
-│   ├── profiles/                  Main Chat and Task Runner business profiles
+│   ├── profiles/                  Main Chat and Task Execution business profiles
 │   └── infrastructure/database/   SQLite implementation of the storage ports
 └── src/
     ├── application/               schedulers, coordinator, assembly, local Task tools
@@ -34,7 +34,7 @@ Message attachments follow a reference-only boundary. The database owns immutabl
 
 Task completion also stays inside the local database boundary. A Task Graph sourced from a local `conversation_turn` writes each distinct terminal generation back as a structured assistant Message. The terminal Task transition, writeback ledger row, Conversation version update and durable event share one SQLite transaction. Retrying or restarting a terminal graph produces another generation; replaying the same terminal state does not duplicate the Message. Graphs from non-Conversation sources do not use this projection.
 
-The local MCP adapter owns Plugin process startup, MCP session initialization, tool discovery and invocation. Marketplace metadata and signed artifacts may still come from the retained Plugin control plane, but no tool execution request is routed through `mcp_management_service`.
+The local MCP adapter owns Plugin process startup, MCP session initialization, tool discovery and invocation. Marketplace metadata and signed artifacts may still come from the retained Plugin control plane, but no tool execution request is routed through a server.
 
 Installed Plugin/MCP snapshots are application data behind a storage port and are implemented by the local SQLite adapter. Only credential-store references are durable; native Keychain/Credential Manager adapters resolve secret values into the child-process environment at launch time.
 
@@ -46,7 +46,7 @@ IPC v15 exposes idempotent publication and exact-revision reads for both snapsho
 
 The standalone composition root now wires SQLite, both control-plane stores, a process-local AI runner, both Profiles, the reserved Rust Task tools, model/tool Schedulers and the Coordinator. Platform tools stay in the native process and use the external Tool Worker IPC path. For child-process deployments, the native launcher resolves a model secret from Keychain/Credential Manager and injects it into a dedicated environment variable referenced as `env:NAME`; the standalone Host never accepts a secret CLI argument. Embedded clients may provide a native credential resolver instead.
 
-Retained Memory is isolated in an infrastructure adapter and is enabled only by an explicit base URL plus source ID. Profiles own the business mapping from a Run to tenant/thread/turn and stable record IDs; the infrastructure adapter owns HTTP authentication and the concrete Memory SDK client. This keeps the direction `Profile policy → AI runtime Memory port → retained Memory adapter`. Main Chat scopes a Memory thread to the local Conversation, Task Runner scopes it to the local Task, and record routing derives the tenant from bounded Profile metadata so one Host can serve multiple users without a fixed-tenant writer. Access tokens and internal signing secrets are child-process environment inputs only and never cross IPC or SQLite.
+Retained Memory is isolated in an infrastructure adapter and is enabled only by an explicit base URL plus source ID. Profiles own the business mapping from a Run to tenant/thread/turn and stable record IDs; the infrastructure adapter owns HTTP authentication and the concrete Memory SDK client. This keeps the direction `Profile policy → AI runtime Memory port → retained Memory adapter`. Main Chat scopes a Memory thread to the local Conversation, Task Execution scopes it to the local Task, and record routing derives the tenant from bounded Profile metadata so one Host can serve multiple users without a fixed-tenant writer. Access tokens and internal signing secrets are child-process environment inputs only and never cross IPC or SQLite.
 
 Memory writes follow `AI runtime record port → LocalMemoryOutboxStore → SQLite v13`. Enqueue is immutable and idempotent by source plus stable record ID. The Coordinator owns a lease/CAS sync worker that sends one pending record at a time, marks success, and persists bounded failure diagnostics plus an exponential retry deadline; restarts reclaim expired leases. The claim lease is longer than the configured HTTP timeout, and completion/retry timestamps are taken after the remote request. A malformed durable payload is retained as visible retry state instead of terminating the Coordinator. Network failure is therefore sync state, not Run failure. Compose follows `MemoryContextComposer → retained Memory → LocalMemoryContextCacheStore`: SQLite v14 stores a successful response under the exact serialized scope. A remote failure uses that snapshot, and a first-run miss produces an empty context instead of stopping local execution.
 

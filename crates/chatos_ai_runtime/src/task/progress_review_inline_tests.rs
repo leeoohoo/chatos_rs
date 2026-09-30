@@ -117,7 +117,7 @@ mod tests {
             "success": true,
             "is_error": false,
             "result": {
-                "committed_paths": [{ "path": "TASK_RUNNER_PROGRESS_NOTE.md" }],
+                "committed_paths": [{ "path": "TASK_EXECUTION_PROGRESS_NOTE.md" }],
             },
         });
         assert!(!tool_result_is_meaningful_engineering_action(&payload));
@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn observation_and_task_bookkeeping_are_not_engineering_progress() {
         for name in [
-            "task_runner_update_task",
+            "task_execution_update_task",
             "task_run_process_record_process",
             "code_maintainer_read_read_file_raw",
         ] {
@@ -173,11 +173,11 @@ mod tests {
             "mdm-service/.progress-guard-placeholder",
             "UNBLOCK.md",
             "src/probe_progress_guard.py",
-            "TASK_RUNNER_TEMP_RESTORE.txt",
-            "task-runner-temp-unlock.txt",
+            "TASK_EXECUTION_TEMP_RESTORE.txt",
+            "task-execution-temp-unlock.txt",
             "ENABLE_TOOLS_AFTER_WRITE.md",
-            "docs/oms-order-entry-task-runner-notes.md",
-            "docs/task_runner_execution_notes.md",
+            "docs/oms-order-entry-task-execution-notes.md",
+            "docs/task_execution_notes.md",
         ] {
             let payload = json!({
                 "name": "code_maintainer_write_commit_edit_session",

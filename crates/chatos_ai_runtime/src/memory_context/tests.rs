@@ -25,13 +25,13 @@ fn memory_scope_builder_keeps_runtime_source_key() {
         recent_record_limit: Some(12),
         summary_limit: Some(3),
     };
-    let scope = MemoryScope::thread("tenant_1", "task_runner", "task_thread_1")
+    let scope = MemoryScope::thread("tenant_1", "task_execution", "task_thread_1")
         .with_subject_id("contact_1")
         .with_related_subject_ids(["project_1", "agent_1"])
         .with_policy(policy);
 
     assert_eq!(scope.tenant_id, "tenant_1");
-    assert_eq!(scope.source_id, "task_runner");
+    assert_eq!(scope.source_id, "task_execution");
     assert_eq!(scope.thread_id, "task_thread_1");
     assert_eq!(scope.subject_id.as_deref(), Some("contact_1"));
     assert_eq!(scope.related_subject_ids, vec!["project_1", "agent_1"]);
@@ -106,7 +106,7 @@ fn direct_composer_rejects_mismatched_scope_source_key() {
         .validate_scope_source(&matching)
         .expect("matching scope source");
 
-    let mismatched = MemoryScope::thread("tenant_1", "task_runner", "thread_1");
+    let mismatched = MemoryScope::thread("tenant_1", "task_execution", "thread_1");
     let err = composer
         .validate_scope_source(&mismatched)
         .expect_err("mismatched scope source");
@@ -439,7 +439,7 @@ fn compose_response_to_input_items_keeps_oldest_tool_output_prefix_stable() {
             "tool_calls": [{
                 "id": call_id,
                 "type": "function",
-                "function": {"name": "task_runner_list_tasks", "arguments": "{}"}
+                "function": {"name": "task_execution_list_tasks", "arguments": "{}"}
             }]
         })),
         summary_status: "pending".to_string(),
@@ -460,7 +460,7 @@ fn compose_response_to_input_items_keeps_oldest_tool_output_prefix_stable() {
             structured_payload: None,
             metadata: Some(json!({
                 "tool_call_id": call_id,
-                "name": "task_runner_list_tasks"
+                "name": "task_execution_list_tasks"
             })),
             summary_status: "pending".to_string(),
             summary_id: None,

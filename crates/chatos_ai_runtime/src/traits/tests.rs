@@ -79,7 +79,7 @@ fn save_record_input_builders_pack_runtime_metadata() {
         .with_conversation_turn_id("run_1")
         .with_message_id("message_1")
         .with_message_mode("task")
-        .with_message_source("task_runner")
+        .with_message_source("task_execution")
         .with_metadata(json!({"task_id": "task_1"}));
 
     assert_eq!(input.role, "user");
@@ -90,7 +90,7 @@ fn save_record_input_builders_pack_runtime_metadata() {
     assert_eq!(metadata["task_id"].as_str(), Some("task_1"));
     assert_eq!(metadata["conversation_turn_id"].as_str(), Some("run_1"));
     assert_eq!(metadata["message_mode"].as_str(), Some("task"));
-    assert_eq!(metadata["message_source"].as_str(), Some("task_runner"));
+    assert_eq!(metadata["message_source"].as_str(), Some("task_execution"));
 }
 
 #[test]
@@ -101,10 +101,10 @@ fn runtime_record_options_builders_configure_persistence() {
         .with_assistant_message_id("cloud-run:1:assistant")
         .with_tool_message_id_prefix("cloud-run:1:tool")
         .with_assistant_message_mode("task_assistant")
-        .with_assistant_message_source("task_runner")
+        .with_assistant_message_source("task_execution")
         .with_assistant_metadata(json!({"kind": "assistant"}))
         .with_tool_message_mode("task_tool")
-        .with_tool_message_source("task_runner")
+        .with_tool_message_source("task_execution")
         .with_tool_metadata(json!({"kind": "tool"}));
 
     assert!(options.persist_assistant_records);
@@ -160,7 +160,7 @@ fn assistant_record_input_preserves_structured_payload_and_tool_calls() {
         response_id: Some("resp_1".to_string()),
         response_status: Some("tool_calls".to_string()),
         message_mode: Some("task_run".to_string()),
-        message_source: Some("task_runner".to_string()),
+        message_source: Some("task_execution".to_string()),
         summary_status: None,
         summary_id: None,
         summarized_at: None,

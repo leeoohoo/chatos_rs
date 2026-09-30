@@ -571,7 +571,7 @@ mod tests {
             .clone()
             .expect("legacy value");
         assert_eq!(legacy["model"], payload["model"]);
-        assert_eq!(legacy["task_runner_debug"]["iteration"], 2);
+        assert_eq!(legacy["task_execution_debug"]["iteration"], 2);
     }
 
     #[test]

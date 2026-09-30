@@ -56,7 +56,7 @@ impl TaskRunSpec {
                 SaveRecordInput::user_message(task_id, prompt)
                     .with_conversation_turn_id(run_id)
                     .with_message_mode("task_run")
-                    .with_message_source("task_runner")
+                    .with_message_source("task_execution")
                     .with_metadata(metadata.clone()),
             ),
             tools: Vec::new(),
@@ -225,10 +225,10 @@ impl TaskRunSpec {
 fn task_record_options(metadata: Value) -> RuntimeRecordOptions {
     RuntimeRecordOptions::persist_all()
         .with_assistant_message_mode("task_run")
-        .with_assistant_message_source("task_runner")
+        .with_assistant_message_source("task_execution")
         .with_assistant_metadata(metadata.clone())
         .with_tool_message_mode("task_run")
-        .with_tool_message_source("task_runner")
+        .with_tool_message_source("task_execution")
         .with_tool_metadata(metadata)
 }
 

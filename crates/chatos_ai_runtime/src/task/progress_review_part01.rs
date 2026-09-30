@@ -183,12 +183,12 @@ fn project_path_component_is_non_engineering_progress(component: &str) -> bool {
         "placeholder",
         "sentinel",
         "probe",
-        "task-runner-notes",
-        "task_runner_notes",
-        "task-runner-progress",
-        "task_runner_progress",
-        "task_runner_progress_note",
-        "task-runner-progress-note",
+        "task-execution-notes",
+        "task_execution_notes",
+        "task-execution-progress",
+        "task_execution_progress",
+        "task_execution_progress_note",
+        "task-execution-progress-note",
         "execution-notes",
         "execution_notes",
         "inspection-note",
@@ -200,10 +200,10 @@ fn project_path_component_is_non_engineering_progress(component: &str) -> bool {
     .iter()
     .any(|marker| normalized.contains(marker))
         || [
-            ["task_runner", "temp"],
-            ["task-runner", "temp"],
-            ["task_runner", "notes"],
-            ["task-runner", "notes"],
+            ["task_execution", "temp"],
+            ["task-execution", "temp"],
+            ["task_execution", "notes"],
+            ["task-execution", "notes"],
             ["temp", "restore"],
         ]
         .iter()

@@ -1106,20 +1106,20 @@ async fn stream_parse_failure_retries_once_in_streaming_isolated_mode() {
 
     let diagnostics = diagnostics.lock().expect("diagnostics");
     assert_eq!(diagnostics.len(), 2);
-    assert_eq!(diagnostics[0]["task_runner_debug"]["request_attempt"], 1);
-    assert_eq!(diagnostics[0]["task_runner_debug"]["stream"], true);
+    assert_eq!(diagnostics[0]["task_execution_debug"]["request_attempt"], 1);
+    assert_eq!(diagnostics[0]["task_execution_debug"]["stream"], true);
     assert_eq!(
-        diagnostics[0]["task_runner_debug"]["thinking_level"],
+        diagnostics[0]["task_execution_debug"]["thinking_level"],
         "high"
     );
-    assert_eq!(diagnostics[1]["task_runner_debug"]["request_attempt"], 2);
-    assert_eq!(diagnostics[1]["task_runner_debug"]["stream"], true);
+    assert_eq!(diagnostics[1]["task_execution_debug"]["request_attempt"], 2);
+    assert_eq!(diagnostics[1]["task_execution_debug"]["stream"], true);
     assert_eq!(
-        diagnostics[1]["task_runner_debug"]["thinking_level"],
+        diagnostics[1]["task_execution_debug"]["thinking_level"],
         "high"
     );
     assert_eq!(
-        diagnostics[1]["task_runner_debug"]["connection_mode"],
+        diagnostics[1]["task_execution_debug"]["connection_mode"],
         "isolated_retry"
     );
 }
@@ -1466,7 +1466,7 @@ fn tool_result(
 ) -> ToolResult {
     ToolResult {
         tool_call_id: "call_1".to_string(),
-        name: "task_runner_service_list_tasks".to_string(),
+        name: "task_execution_list_tasks".to_string(),
         success,
         is_error,
         is_stream,
