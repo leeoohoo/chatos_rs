@@ -105,8 +105,7 @@ internal sealed partial class AgentTeamToolExecutor(
                     items = new
                     {
                         type = "string",
-                        @enum = new[] { "project_read", "project_write", "terminal",
-                            "requirement_survey_read", "requirement_survey_write" },
+                        @enum = new[] { "project_read", "project_write", "terminal" },
                     },
                     maxItems = 5,
                     uniqueItems = true,
@@ -269,10 +268,7 @@ internal sealed partial class AgentTeamToolExecutor(
         if (AgentProfilePermissions.CanManageStaff(profile))
             definitions = definitions.Concat(StaffingDefinitions);
         if (room.Kind == AgentConversationKind.ProjectTeam)
-        {
-            if (CanManageSurveys(profile, room)) definitions = definitions.Concat(SurveyDefinitions);
             definitions = definitions.Concat(AgentProjectToolExecutor.Definitions);
-        }
 
         var result = definitions.ToArray();
         if (delivery.Trigger == AgentDeliveryTrigger.Todo)
@@ -386,33 +382,6 @@ internal sealed partial class AgentTeamToolExecutor(
                 // Compatibility for a model call already in flight while upgrading from 3.0.4.
                 "asset_upsert" => await UpsertAssetAsync(
                     profile, room, arguments, cancellationToken).ConfigureAwait(false),
-                "skill_activate" => ActivateSkill(arguments),
-                "skill_list_resources" => ListSkillResources(arguments),
-                "skill_read_resource" => ReadSkillResource(arguments),
-                // Compatibility for an Agent call already in flight during the 3.0.5 upgrade.
-                "requirement_survey_skill_get" => ActivateSkill(
-                    JsonSerializer.SerializeToElement(new
-                    {
-                        skill_ref = RequiredString(arguments, "scenario") switch
-                        {
-                            "create_survey" => "SKreq-create",
-                            "read_results" => "SKreq-read",
-                            "resolve_survey" => "SKreq-resolve",
-                            "review_execution" => "SKreq-review",
-                            _ => throw AgentTeamValidation.Invalid("scenario"),
-                        },
-                    })),
-                "requirement_survey_create" => await CreateRequirementSurveyAsync(
-                    profile, room, delivery, vault, arguments, cancellationToken).ConfigureAwait(false),
-                "requirement_survey_list" => await ListRequirementSurveysAsync(
-                    profile, room, vault, arguments, cancellationToken).ConfigureAwait(false),
-                "requirement_survey_get" => await GetRequirementSurveyAsync(
-                    profile, room, vault, arguments, cancellationToken).ConfigureAwait(false),
-                "requirement_survey_project_tasks" =>
-                    await ListRequirementSurveyProjectTasksAsync(
-                        profile, room, vault, cancellationToken).ConfigureAwait(false),
-                "requirement_survey_resolve" => await ResolveRequirementSurveyAsync(
-                    profile, room, vault, arguments, cancellationToken).ConfigureAwait(false),
                 "agent_propose_member" => await ProposeMemberAsync(
                     profile, room, delivery, call.Id, arguments, cancellationToken)
                     .ConfigureAwait(false),
@@ -639,8 +608,7 @@ internal sealed partial class AgentTeamToolExecutor(
         var result = new HashSet<string>(StringComparer.Ordinal)
         {
             "todo_complete", "todo_block", "todo_progress", "chat_read_attachment",
-            "cycle_complete", "skill_activate", "skill_list_resources",
-            "skill_read_resource",
+            "cycle_complete",
         };
         if (capabilities.Contains(AgentTodoBuiltinCapability.ProjectRead))
             result.UnionWith(["project_list", "project_read", "project_search"]);
@@ -648,11 +616,6 @@ internal sealed partial class AgentTeamToolExecutor(
             result.Add("project_write");
         if (capabilities.Contains(AgentTodoBuiltinCapability.Terminal))
             result.Add("terminal_exec");
-        if (capabilities.Contains(AgentTodoBuiltinCapability.RequirementSurveyRead))
-            result.UnionWith(["requirement_survey_list", "requirement_survey_get",
-                "requirement_survey_project_tasks"]);
-        if (capabilities.Contains(AgentTodoBuiltinCapability.RequirementSurveyWrite))
-            result.UnionWith(["requirement_survey_create", "requirement_survey_resolve"]);
         return result;
     }
 

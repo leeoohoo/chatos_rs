@@ -17,7 +17,7 @@ public sealed partial class SqliteAgentTeamStore
         var messageId = $"asset-maintenance-message-{room.Id}";
         var deliveryId = $"asset-maintenance-delivery-{room.Id}";
         var content = $"""
-            你已被明确指定为“{room.Draft.Name}”的项目经理。请读取 Human 消息、团队目标、成员和 Todo 状态，主动维护真实的团队共享资产。信息充分时建立或更新“项目概览”和“当前进度”；信息不足时先用 requirement_survey_create 发起需求调研，不要写空模板或臆测内容。完成本轮实际处理后再结束通讯周期。
+            你已被明确指定为“{room.Draft.Name}”的项目经理。请读取 Human 消息、团队目标、成员和 Todo 状态，主动维护真实的团队共享资产。信息充分时建立或更新“项目概览”和“当前进度”；信息不足时明确记录缺失信息，不要写空模板或臆测内容。完成本轮实际处理后再结束通讯周期。
             """;
 
         using (var message = Command(connection, transaction, """

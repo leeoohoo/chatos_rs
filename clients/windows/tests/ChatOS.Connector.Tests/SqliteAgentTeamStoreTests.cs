@@ -329,8 +329,7 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
             ["状态更新后合同保持不变"],
             ["源码文件不超过 800 行"]);
         var plan = new AgentTodoExecutionPlan(true,
-            [AgentTodoBuiltinCapability.ProjectWrite,
-             AgentTodoBuiltinCapability.RequirementSurveyWrite]);
+            [AgentTodoBuiltinCapability.ProjectWrite, AgentTodoBuiltinCapability.Terminal]);
 
         var created = await _store.CreateTodoAsync("alice", new AgentTodoDraft(
             room.Id, worker.Id, "执行合同", "实现并测试", AgentTodoPriority.High,
@@ -343,7 +342,7 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
             ]));
 
         Assert.Equal(contract, created.Draft.ExecutionContract);
-        Assert.Contains(AgentTodoBuiltinCapability.RequirementSurveyRead,
+        Assert.Contains(AgentTodoBuiltinCapability.Terminal,
             created.Draft.ExecutionPlan!.Capabilities);
         Assert.True(created.Draft.ExecutionPlan.SelectedAtUnixMs > 0);
         Assert.Equal(2, created.Sources.Count);
@@ -654,56 +653,6 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
             "alice", room.ProjectId, AgentRequirementSurveyStatus.Submitted));
         Assert.Equal(resolved.Id, persisted.Id);
         Assert.Equal("双平台对齐后发布", persisted.Resolution?.Summary);
-    }
-
-    [Fact]
-    public async Task RequirementSurveySkillAuthorizesAnActiveNonManagerMember()
-    {
-        var manager = await CreateAgentAsync("alice", "经理");
-        var specialist = await _store.CreateAgentAsync("alice",
-            Draft("调研") with
-            {
-                ProfessionKey = "researcher",
-                DefaultSkillIds = ["requirement.survey.manage"],
-            });
-        var room = await _store.CreateRoomAsync(
-            "alice", "project-1", new("产品团队", "交付产品"), manager.Id);
-        await CompleteInitialMaintenanceAsync();
-        var member = await _store.UpsertMemberAsync("alice", room.Id, specialist.Id,
-            new("requirement_researcher", "负责需求调研"));
-        _ = await _store.PostMessageAsync("alice", room.Id,
-            new(AgentMessageSenderKind.Human, null, "请确认范围", [specialist.Id]));
-        var delivery = Assert.IsType<AgentDelivery>(
-            await _store.ClaimNextDeliveryAsync("alice"));
-        Assert.Equal(specialist.Id, delivery.TargetAgentId);
-        var executor = new AgentTeamToolExecutor(_store, null!);
-        var available = executor.AllDefinitions(specialist, room, delivery);
-        Assert.Contains(available, value => value.Name == "skill_activate");
-        Assert.DoesNotContain(available, value => value.Name == "todo_create");
-
-        var result = await executor.ExecuteAsync(specialist, member, room, delivery,
-            new AgentToolCall("survey", "requirement_survey_create", """
-                {"request_key":"scope-v1","title":"范围","purpose":"确认交付范围","questions":[{"key":"platform","prompt":"目标平台？","kind":"multiple_choice","options":[{"key":"windows","label":"Windows"},{"key":"macos","label":"macOS"}]}]}
-                """), CancellationToken.None);
-
-        Assert.True(result.EndsCycle);
-        var skill = await executor.ExecuteAsync(specialist, member, room, delivery,
-            new AgentToolCall("skill", "skill_activate",
-                "{\"skill_ref\":\"SKreq-create\"}"), CancellationToken.None);
-        using var skillDocument = System.Text.Json.JsonDocument.Parse(skill.Content);
-        Assert.Contains("requirement_survey_list",
-            skillDocument.RootElement.GetProperty("instructions").GetString(),
-            StringComparison.Ordinal);
-        var resource = await executor.ExecuteAsync(specialist, member, room, delivery,
-            new AgentToolCall("resource", "skill_read_resource",
-                "{\"skill_ref\":\"SKreq-create\",\"relative_path\":\"references/example.md\",\"max_chars\":80}"),
-            CancellationToken.None);
-        using var resourceDocument = System.Text.Json.JsonDocument.Parse(resource.Content);
-        Assert.True(resourceDocument.RootElement.GetProperty("truncated").GetBoolean());
-        Assert.Equal(64, resourceDocument.RootElement.GetProperty("sha256").GetString()!.Length);
-        var survey = Assert.Single(await _store.ListRequirementSurveysAsync(
-            "alice", room.ProjectId, AgentRequirementSurveyStatus.Pending));
-        Assert.Equal(specialist.Id, survey.CreatorAgentId);
     }
 
     [Theory]

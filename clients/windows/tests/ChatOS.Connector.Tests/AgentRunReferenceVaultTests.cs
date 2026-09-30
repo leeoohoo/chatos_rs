@@ -133,13 +133,13 @@ public sealed class AgentRunReferenceVaultTests : IAsyncLifetime
             scope = "Windows Todo path",
             expected_outputs = new[] { "tested implementation" },
             acceptance_criteria = new[] { "contract survives status updates" },
-            builtin_capabilities = new[] { "requirement_survey_write" },
+            builtin_capabilities = new[] { "project_write" },
             source_message_refs = new[] { sourceReference },
         });
         var createdTodo = await executor.ExecuteAsync(manager, member, room, delivery,
             new("todo-create", "todo_create", createArguments), CancellationToken.None, references);
         Assert.Contains("execution_contract", createdTodo.Content, StringComparison.Ordinal);
-        Assert.Contains("requirement_survey_read", createdTodo.Content, StringComparison.Ordinal);
+        Assert.Contains("project_write", createdTodo.Content, StringComparison.Ordinal);
         Assert.Contains("message_", createdTodo.Content, StringComparison.Ordinal);
         Assert.DoesNotContain(posted.Message.Id, createdTodo.Content, StringComparison.Ordinal);
 

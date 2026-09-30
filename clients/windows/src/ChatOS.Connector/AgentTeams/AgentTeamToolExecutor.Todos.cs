@@ -112,8 +112,7 @@ internal sealed partial class AgentTeamToolExecutor
                 .ConfigureAwait(false);
         return new AgentToolExecutionResult(Json(new
         {
-            builtin_capabilities = new[] { "project_read", "project_write", "terminal",
-                "requirement_survey_read", "requirement_survey_write" },
+            builtin_capabilities = new[] { "project_read", "project_write", "terminal" },
             plugins = plugins.Select(value => new
             {
                 plugin_ref = references.PluginReference(value.PluginId, value.DisplayName),
@@ -341,8 +340,6 @@ internal sealed partial class AgentTeamToolExecutor
         "project_read" => AgentTodoBuiltinCapability.ProjectRead,
         "project_write" => AgentTodoBuiltinCapability.ProjectWrite,
         "terminal" => AgentTodoBuiltinCapability.Terminal,
-        "requirement_survey_read" => AgentTodoBuiltinCapability.RequirementSurveyRead,
-        "requirement_survey_write" => AgentTodoBuiltinCapability.RequirementSurveyWrite,
         _ => throw AgentTeamValidation.Invalid("builtin_capabilities"),
     };
 
@@ -351,8 +348,6 @@ internal sealed partial class AgentTeamToolExecutor
         AgentTodoBuiltinCapability.ProjectRead => "project_read",
         AgentTodoBuiltinCapability.ProjectWrite => "project_write",
         AgentTodoBuiltinCapability.Terminal => "terminal",
-        AgentTodoBuiltinCapability.RequirementSurveyRead => "requirement_survey_read",
-        AgentTodoBuiltinCapability.RequirementSurveyWrite => "requirement_survey_write",
         _ => throw AgentTeamValidation.Invalid("builtin_capabilities"),
     };
 

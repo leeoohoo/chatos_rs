@@ -7,8 +7,6 @@ public enum AgentTodoBuiltinCapability
     ProjectRead,
     ProjectWrite,
     Terminal,
-    RequirementSurveyRead,
-    RequirementSurveyWrite,
 }
 
 public sealed record AgentTodoPluginSelection(
@@ -57,15 +55,8 @@ public sealed record AgentTodoExecutionPlan(
             throw AgentTeamValidation.Invalid(nameof(AgentTodoExecutionPlan));
         }
 
-        if (Capabilities.Contains(AgentTodoBuiltinCapability.RequirementSurveyWrite) &&
-            !Capabilities.Contains(AgentTodoBuiltinCapability.RequirementSurveyRead))
-        {
-            throw AgentTeamValidation.Invalid(nameof(BuiltinCapabilities));
-        }
-
-        if (!RequiresExecution && Capabilities.Any(value => value is not
-            (AgentTodoBuiltinCapability.ProjectRead or
-             AgentTodoBuiltinCapability.RequirementSurveyRead)))
+        if (!RequiresExecution && Capabilities.Any(value =>
+                value is not AgentTodoBuiltinCapability.ProjectRead))
         {
             throw AgentTeamValidation.Invalid(nameof(RequiresExecution));
         }
@@ -77,19 +68,7 @@ public sealed record AgentTodoExecutionPlan(
     private static IReadOnlyList<AgentTodoBuiltinCapability> CompleteDependencies(
         IReadOnlyList<AgentTodoBuiltinCapability> capabilities)
     {
-        var result = new List<AgentTodoBuiltinCapability>();
-        foreach (var capability in capabilities)
-        {
-            if (capability == AgentTodoBuiltinCapability.RequirementSurveyWrite &&
-                !result.Contains(AgentTodoBuiltinCapability.RequirementSurveyRead))
-            {
-                result.Add(AgentTodoBuiltinCapability.RequirementSurveyRead);
-            }
-
-            if (!result.Contains(capability)) result.Add(capability);
-        }
-
-        return result;
+        return capabilities.Distinct().ToArray();
     }
 }
 
