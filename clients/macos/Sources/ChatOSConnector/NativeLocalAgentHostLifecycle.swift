@@ -106,7 +106,7 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         }
         let commandID = "native-command-\(UUID().uuidString.lowercased())"
         let envelope: [String: Any] = [
-            "protocol_version": 31,
+            "protocol_version": 32,
             "command_id": commandID,
             "command": commandObject,
         ]
@@ -114,7 +114,7 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         let responseData = try managedProcess.roundTrip(request)
         guard let response = try JSONSerialization.jsonObject(with: responseData)
             as? [String: Any],
-              response["protocol_version"] as? Int == 31,
+              response["protocol_version"] as? Int == 32,
               response["command_id"] as? String == commandID,
               let ok = response["ok"] as? Bool else {
             throw NativeLocalAgentHostError.invalidResponse

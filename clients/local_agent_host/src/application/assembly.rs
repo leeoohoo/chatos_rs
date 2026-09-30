@@ -2,7 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    notepad_model_tools, LocalNotepadToolExecutor, NOTEPAD_READ_ONLY_TOOLS, NOTEPAD_TOOL_NAMES,
+    notepad_model_tools, requirement_survey_model_tools, LocalNotepadToolExecutor,
+    LocalRequirementSurveyToolExecutor, NOTEPAD_READ_ONLY_TOOLS, NOTEPAD_TOOL_NAMES,
+    REQUIREMENT_SURVEY_CREATE_TOOL, REQUIREMENT_SURVEY_TOOL_NAMES,
 };
 use crate::{
     ChatosAiRuntimeStepExecutor, ControlPlaneLocalAiStepPlanner, DurableAiProfile,
@@ -138,7 +140,8 @@ impl LocalAgentHostAssembly {
         .with_approval_exempt(
             approval_exempt_tools
                 .into_iter()
-                .chain([CREATE_TASK_TOOL.to_string(), CREATE_TASKS_TOOL.to_string()]),
+                .chain([CREATE_TASK_TOOL.to_string(), CREATE_TASKS_TOOL.to_string()])
+                .chain([REQUIREMENT_SURVEY_CREATE_TOOL.to_string()]),
         );
         let mut main_chat_planner = ControlPlaneLocalAiStepPlanner::main_chat(
             Arc::clone(&model_resolver),
@@ -146,12 +149,14 @@ impl LocalAgentHostAssembly {
         )
         .with_local_tools(notepad_model_tools())?
         .with_local_tool_prefixes(["notepad_"])?;
+        let mut task_tools = notepad_model_tools();
+        task_tools.extend(requirement_survey_model_tools());
         let mut task_execution_planner = ControlPlaneLocalAiStepPlanner::task_execution(
             Arc::clone(&model_resolver),
             Arc::clone(&capability_resolver),
         )
-        .with_local_tools(notepad_model_tools())?
-        .with_local_tool_prefixes(["notepad_"])?;
+        .with_local_tools(task_tools)?
+        .with_local_tool_prefixes(["notepad_", "requirement_survey_"])?;
         if let Some(source_id) = memory_source_id {
             main_chat_planner = main_chat_planner.with_memory_source_id(source_id.clone())?;
             task_execution_planner = task_execution_planner.with_memory_source_id(source_id)?;
@@ -185,6 +190,8 @@ impl LocalAgentHostAssembly {
         tools.register_shared(CREATE_TASKS_TOOL, task_tools)?;
         LocalNotepadToolExecutor::new(Arc::clone(&runtime), owner_user_id.clone())?
             .register_into(&mut tools)?;
+        LocalRequirementSurveyToolExecutor::new(Arc::clone(&runtime), owner_user_id.clone())?
+            .register_into(&mut tools)?;
         let mut tool_scheduler = LocalToolScheduler::new(
             Arc::clone(&runtime),
             tools,
@@ -195,6 +202,7 @@ impl LocalAgentHostAssembly {
             let internal_tools = [CREATE_TASK_TOOL, CREATE_TASKS_TOOL]
                 .into_iter()
                 .chain(NOTEPAD_TOOL_NAMES)
+                .chain(REQUIREMENT_SURVEY_TOOL_NAMES)
                 .map(str::to_string)
                 .collect();
             tool_scheduler = tool_scheduler.with_tool_filter(Some(internal_tools), Vec::new())?;
@@ -208,7 +216,8 @@ impl LocalAgentHostAssembly {
         .with_reserved_ipc_tools(
             [CREATE_TASK_TOOL, CREATE_TASKS_TOOL]
                 .into_iter()
-                .chain(NOTEPAD_TOOL_NAMES),
+                .chain(NOTEPAD_TOOL_NAMES)
+                .chain(REQUIREMENT_SURVEY_TOOL_NAMES),
         )?;
         if let Some(worker) = memory_sync_worker {
             coordinator = coordinator.with_memory_sync_worker(worker)?;

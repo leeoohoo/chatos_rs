@@ -37,6 +37,7 @@ mod notepad_support;
 mod plugin_query_store;
 mod plugin_store;
 mod remote_connection_store;
+mod requirement_survey_store;
 mod run_commands;
 mod run_owner_store;
 mod run_query_store;
@@ -62,7 +63,7 @@ pub use chatos_local_agent_ports::{
     LocalMemoryOutboxRecord, LocalMemoryOutboxStatus, LocalMemoryOutboxStore,
     LocalMemorySyncStatus, LocalModelConfigSnapshot, LocalModelConfigSnapshotStore,
     LocalNotepadImageWrite, LocalNotepadStore, LocalPluginInstallationStore,
-    LocalRemoteConnectionStore, RunTransition,
+    LocalRemoteConnectionStore, LocalRequirementSurveyStore, RunTransition,
 };
 use run_record::decode_run;
 use schema::RUN_SELECT;

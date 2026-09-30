@@ -15,6 +15,7 @@ use chatos_local_agent_protocol::{
     LocalConversationRuntimeSettings, LocalConversationTurnStart, LocalConversationTurnUpdate,
     LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail, LocalPluginInstallationPage,
     LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalRemoteConnection,
+    LocalRequirementSurvey, LocalRequirementSurveyResolution, LocalRequirementSurveyStatus,
     LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage,
     PutConversationRuntimeSettingsCommand, ResumeConversationTurnCommand,
     StartConversationTurnCommand, UpdateNotepadNoteCommand,
@@ -668,6 +669,37 @@ pub trait LocalAgentArtifactStore: Send + Sync {
     ) -> Result<(), ClientStorageError>;
 }
 
+#[async_trait]
+pub trait LocalRequirementSurveyStore: Send + Sync {
+    async fn create_requirement_survey(
+        &self,
+        command: &IdempotentCommand,
+        survey: &LocalRequirementSurvey,
+    ) -> Result<LocalRequirementSurvey, ClientStorageError>;
+
+    async fn list_requirement_surveys(
+        &self,
+        owner_user_id: &str,
+        project_resource_id: Option<&str>,
+        status: Option<LocalRequirementSurveyStatus>,
+        limit: u32,
+    ) -> Result<Vec<LocalRequirementSurvey>, ClientStorageError>;
+
+    async fn get_requirement_survey(
+        &self,
+        owner_user_id: &str,
+        survey_id: &str,
+    ) -> Result<Option<LocalRequirementSurvey>, ClientStorageError>;
+
+    async fn resolve_requirement_survey(
+        &self,
+        command: &IdempotentCommand,
+        survey: &LocalRequirementSurvey,
+        expected_version: u64,
+        run_event_id: &str,
+    ) -> Result<LocalRequirementSurveyResolution, ClientStorageError>;
+}
+
 pub trait LocalAgentStore:
     LocalAgentRunStore
     + LocalAgentToolStore
@@ -678,6 +710,7 @@ pub trait LocalAgentStore:
     + LocalNotepadStore
     + LocalRemoteConnectionStore
     + LocalAgentArtifactStore
+    + LocalRequirementSurveyStore
     + LocalCapabilitySnapshotStore
     + LocalModelConfigSnapshotStore
     + LocalMemoryOutboxStore
@@ -695,6 +728,7 @@ impl<T> LocalAgentStore for T where
         + LocalNotepadStore
         + LocalRemoteConnectionStore
         + LocalAgentArtifactStore
+        + LocalRequirementSurveyStore
         + LocalCapabilitySnapshotStore
         + LocalModelConfigSnapshotStore
         + LocalMemoryOutboxStore

@@ -18,6 +18,7 @@ mod memory;
 mod notepad;
 mod plugin;
 mod remote_connection;
+mod requirement_survey;
 mod response;
 mod run_query;
 mod task;
@@ -66,6 +67,13 @@ pub use remote_connection::{
     ListRemoteConnectionsCommand, LocalRemoteAuthenticationType, LocalRemoteConnection,
     LocalRemoteConnectionSpec, LocalRemoteHostKeyPolicy, UpdateRemoteConnectionCommand,
 };
+pub use requirement_survey::{
+    CreateRequirementSurveyCommand, GetRequirementSurveyCommand, ListRequirementSurveysCommand,
+    LocalRequirementSurvey, LocalRequirementSurveyQuestion, LocalRequirementSurveyResolution,
+    LocalRequirementSurveyResponseKind, LocalRequirementSurveyStatus,
+    ResolveRequirementSurveyCommand, LOCAL_REQUIREMENT_SURVEY_MAX_LIST_LIMIT,
+    LOCAL_REQUIREMENT_SURVEY_MAX_QUESTIONS,
+};
 pub use response::{HostError, HostResponseEnvelope, HostResult};
 pub use run_query::{ListRunsCommand, LocalAgentRunListScope, LocalAgentRunPage};
 
@@ -83,7 +91,7 @@ pub use tool::{
     LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 31;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 32;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -171,6 +179,10 @@ pub enum HostCommand {
     ListArtifacts(ListArtifactsCommand),
     GetArtifactData(GetArtifactDataCommand),
     DeleteArtifact(DeleteArtifactCommand),
+    CreateRequirementSurvey(CreateRequirementSurveyCommand),
+    ListRequirementSurveys(ListRequirementSurveysCommand),
+    GetRequirementSurvey(GetRequirementSurveyCommand),
+    ResolveRequirementSurvey(ResolveRequirementSurveyCommand),
 }
 
 impl HostCommand {
@@ -236,6 +248,10 @@ impl HostCommand {
             Self::ListArtifacts(command) => command.validate(),
             Self::GetArtifactData(command) => command.validate(),
             Self::DeleteArtifact(command) => command.validate(),
+            Self::CreateRequirementSurvey(command) => command.validate(),
+            Self::ListRequirementSurveys(command) => command.validate(),
+            Self::GetRequirementSurvey(command) => command.validate(),
+            Self::ResolveRequirementSurvey(command) => command.validate(),
         }
     }
 }

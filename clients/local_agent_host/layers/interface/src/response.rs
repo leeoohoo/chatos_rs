@@ -9,7 +9,8 @@ use crate::{
     LocalConversationRuntimeSettings, LocalConversationTurnStart, LocalConversationTurnUpdate,
     LocalMemorySyncStatus, LocalModelConfigSnapshot, LocalNotepadImage, LocalNotepadNote,
     LocalNotepadNoteDetail, LocalPluginInstallationPage, LocalPluginInstallationRecord,
-    LocalRemoteConnection, LocalTaskGraph, LocalTaskGraphPage, LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalRemoteConnection, LocalRequirementSurvey, LocalRequirementSurveyResolution,
+    LocalTaskGraph, LocalTaskGraphPage, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 
@@ -165,6 +166,15 @@ pub enum HostResult {
     },
     ArtifactDeleted {
         artifact_id: String,
+    },
+    RequirementSurvey {
+        survey: LocalRequirementSurvey,
+    },
+    RequirementSurveys {
+        surveys: Vec<LocalRequirementSurvey>,
+    },
+    RequirementSurveyResolved {
+        resolution: Box<LocalRequirementSurveyResolution>,
     },
 }
 

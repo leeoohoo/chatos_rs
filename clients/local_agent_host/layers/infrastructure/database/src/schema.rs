@@ -562,3 +562,31 @@ pub(super) const SCHEMA_V25: &[&str] = &[
        owner_user_id, updated_at_unix_ms DESC, artifact_id DESC\
      )",
 ];
+
+pub(super) const SCHEMA_V26: &[&str] = &[
+    "CREATE TABLE local_requirement_surveys (\
+       owner_user_id TEXT NOT NULL,\
+       survey_id TEXT NOT NULL,\
+       project_resource_id TEXT NOT NULL,\
+       source_conversation_id TEXT NOT NULL,\
+       source_run_id TEXT NOT NULL,\
+       source_task_id TEXT,\
+       title TEXT NOT NULL,\
+       description TEXT,\
+       questions_json TEXT NOT NULL,\
+       answers_json TEXT,\
+       status TEXT NOT NULL CHECK(status IN ('open','resolved')),\
+       version INTEGER NOT NULL CHECK(version > 0),\
+       created_at_unix_ms INTEGER NOT NULL,\
+       updated_at_unix_ms INTEGER NOT NULL,\
+       resolved_at_unix_ms INTEGER,\
+       PRIMARY KEY(owner_user_id, survey_id),\
+       FOREIGN KEY(source_run_id) REFERENCES local_agent_runs(run_id) ON DELETE CASCADE\
+     )",
+    "CREATE INDEX local_requirement_surveys_project_status ON local_requirement_surveys(\
+       owner_user_id, project_resource_id, status, updated_at_unix_ms DESC, survey_id DESC\
+     )",
+    "CREATE INDEX local_requirement_surveys_run ON local_requirement_surveys(\
+       owner_user_id, source_run_id, status\
+     )",
+];

@@ -11,10 +11,11 @@ pub use application::{
     LocalAgentCoordinatorError, LocalAgentHostAssembly, LocalAgentHostCoordinator,
     LocalAgentScheduler, LocalAgentSchedulerError, LocalMemoryContextCache,
     LocalMemoryOutboxWriter, LocalMemorySyncError, LocalMemorySyncWorker, LocalNotepadToolExecutor,
-    LocalTaskToolExecutor, LocalToolExecutor, LocalToolRegistry, LocalToolScheduler,
-    LocalToolSchedulerError, MemorySyncTick, SchedulerTick, ToolSchedulerTick, CREATE_TASKS_TOOL,
-    CREATE_TASK_TOOL, NOTEPAD_CREATE_NOTE_TOOL, NOTEPAD_LIST_FOLDERS_TOOL, NOTEPAD_LIST_NOTES_TOOL,
-    NOTEPAD_READ_NOTE_TOOL, NOTEPAD_UPDATE_NOTE_TOOL,
+    LocalRequirementSurveyToolExecutor, LocalTaskToolExecutor, LocalToolExecutor,
+    LocalToolRegistry, LocalToolScheduler, LocalToolSchedulerError, MemorySyncTick, SchedulerTick,
+    ToolSchedulerTick, CREATE_TASKS_TOOL, CREATE_TASK_TOOL, NOTEPAD_CREATE_NOTE_TOOL,
+    NOTEPAD_LIST_FOLDERS_TOOL, NOTEPAD_LIST_NOTES_TOOL, NOTEPAD_READ_NOTE_TOOL,
+    NOTEPAD_UPDATE_NOTE_TOOL, REQUIREMENT_SURVEY_CREATE_TOOL,
 };
 pub use chatos_agent_profiles::{
     ChatosAiRuntimeStepExecutor, ConservativeToolSafetyPolicy, ControlPlaneLocalAiStepPlanner,

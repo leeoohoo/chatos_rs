@@ -2,9 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 //! Durable, client-owned Local Agent state machine.
-//!
-//! Owns run creation, claim leases, one-step transitions, cancellation, event
-//! replay, and conservative recovery behind durable state contracts.
+//! Owns run creation, leases, transitions, cancellation, events,
 
 use chatos_local_agent_ports::{
     ClientStorageError, IdempotentCommand, LocalAgentStore, RunTransition,
@@ -37,6 +35,9 @@ mod plugin_query_tests;
 mod plugin_runtime;
 mod profile;
 mod remote_connection_runtime;
+mod requirement_survey_runtime;
+#[cfg(test)]
+mod requirement_survey_tests;
 mod run_factory;
 #[cfg(test)]
 mod task_query_tests;
@@ -451,6 +452,13 @@ impl LocalAgentRuntime {
             | HostCommand::GetArtifactData(_)
             | HostCommand::DeleteArtifact(_)) => {
                 self.handle_artifact_command(&idempotency, command).await
+            }
+            command @ (HostCommand::CreateRequirementSurvey(_)
+            | HostCommand::ListRequirementSurveys(_)
+            | HostCommand::GetRequirementSurvey(_)
+            | HostCommand::ResolveRequirementSurvey(_)) => {
+                self.handle_requirement_survey_command(&idempotency, command)
+                    .await
             }
         }
     }
