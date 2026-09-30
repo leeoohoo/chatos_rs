@@ -718,29 +718,6 @@ pub struct UpdateUserModelSettingsRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskRunnerTokenExchangeRequest {
-    #[serde(alias = "agent_account_id")]
-    pub task_runner_agent_account_id: String,
-    pub contact_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenExchangePrincipalSummary {
-    pub principal_type: String,
-    pub agent_account_id: String,
-    pub owner_user_id: String,
-    pub owner_username: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TaskRunnerTokenExchangeResponse {
-    pub access_token: String,
-    pub token_type: String,
-    pub expires_in: i64,
-    pub principal: TokenExchangePrincipalSummary,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthResponse {
     pub status: String,
     pub service: String,
@@ -752,10 +729,8 @@ pub struct SystemConfigResponse {
     pub service: String,
     pub issuer: String,
     pub user_service_audience: String,
-    pub task_runner_audience: String,
     pub database_url: String,
     pub user_access_ttl_seconds: i64,
-    pub task_runner_access_ttl_seconds: i64,
 }
 
 mod harness_credentials;

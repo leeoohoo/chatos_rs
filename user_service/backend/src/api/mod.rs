@@ -13,7 +13,7 @@ use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
 use crate::auth::{
-    bearer_token_from_headers, decode_any_user_service_token, unauthorized, CurrentPrincipal,
+    bearer_token_from_headers, decode_user_service_token, unauthorized, CurrentPrincipal,
 };
 use crate::models::{PRINCIPAL_TYPE_AGENT_ACCOUNT, PRINCIPAL_TYPE_HUMAN_USER};
 use crate::state::AppState;
@@ -27,7 +27,6 @@ mod internal_models;
 mod invite_codes;
 mod models;
 mod system;
-mod token_exchange;
 mod users;
 mod wechat_auth;
 
@@ -131,14 +130,6 @@ fn protected_api(state: AppState) -> Router<AppState> {
             "/api/model-configs/{id}/refresh",
             post(models::refresh_model_config_provider_models),
         )
-        .route(
-            "/api/token/exchange/task-runner",
-            post(token_exchange::exchange_task_runner_token),
-        )
-        .route(
-            "/api/token/exchange/agent",
-            post(token_exchange::exchange_task_runner_token),
-        )
         .route("/api/system/config", get(system::get_system_config))
         .route_layer(middleware::from_fn_with_state(state, require_auth))
 }
@@ -198,14 +189,6 @@ pub fn build_internal_router(state: AppState) -> Router {
                 "/api/internal/users/{user_id}/model-settings",
                 get(internal_models::get_user_model_settings),
             )
-            .route(
-                "/api/internal/task-runner/model-configs",
-                get(internal_models::list_task_model_configs),
-            )
-            .route(
-                "/api/internal/task-runner/model-configs/{model_config_id}",
-                get(internal_models::get_task_model_config),
-            )
             .with_state(state),
         "internal",
     )
@@ -257,7 +240,7 @@ pub async fn require_auth(
     }
 
     let token = bearer_token_from_headers(request.headers()).map_err(|err| unauthorized(&err))?;
-    let claims = decode_any_user_service_token(token.as_str(), &state.config)
+    let claims = decode_user_service_token(token.as_str(), &state.config)
         .map_err(|_| unauthorized("invalid or expired token"))?;
     let is_wechat_companion = claims
         .scopes
@@ -444,9 +427,7 @@ mod tests {
             jwt_secret: "test-secret".to_string(),
             jwt_issuer: "user_service".to_string(),
             user_service_audience: "user_service".to_string(),
-            task_runner_audience: "task_runner".to_string(),
             user_access_ttl_seconds: 3600,
-            task_runner_access_ttl_seconds: 3600,
             super_admin_username: "admin".to_string(),
             super_admin_password: "password".to_string(),
             super_admin_display_name: "Admin".to_string(),
@@ -454,7 +435,6 @@ mod tests {
             memory_engine_internal_api_secret: Some(
                 "test-memory-engine-user-service-secret".to_string(),
             ),
-            task_runner_internal_api_secret: None,
             downstream_request_timeout_ms: 5000,
             harness_provisioning_enabled: false,
             harness_base_url: None,
@@ -522,6 +502,12 @@ mod tests {
                 reqwest::Method::GET,
                 "/api/internal/users/user-1/model-configs/runtime",
             ),
+            (
+                reqwest::Method::GET,
+                "/api/internal/task-runner/model-configs",
+            ),
+            (reqwest::Method::POST, "/api/token/exchange/task-runner"),
+            (reqwest::Method::POST, "/api/token/exchange/agent"),
         ] {
             let status = client
                 .request(method, format!("{base_url}{path}"))
@@ -553,6 +539,14 @@ mod tests {
             (reqwest::Method::GET, "/api/users"),
             (reqwest::Method::GET, "/api/users/page"),
             (reqwest::Method::GET, "/api/users/options"),
+            (
+                reqwest::Method::GET,
+                "/api/internal/task-runner/model-configs",
+            ),
+            (
+                reqwest::Method::GET,
+                "/api/internal/task-runner/model-configs/model-1",
+            ),
         ] {
             let status = client
                 .request(method, format!("{base_url}{path}"))

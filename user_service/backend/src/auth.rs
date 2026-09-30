@@ -17,10 +17,7 @@ use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, Salt
 use argon2::Argon2;
 
 use crate::config::AppConfig;
-use crate::models::{
-    AgentAccountRecord, AuthUser, UserRecord, PRINCIPAL_TYPE_AGENT_ACCOUNT,
-    PRINCIPAL_TYPE_HUMAN_USER, USER_ROLE_SUPER_ADMIN,
-};
+use crate::models::{AuthUser, UserRecord, PRINCIPAL_TYPE_HUMAN_USER, USER_ROLE_SUPER_ADMIN};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthClaims {
@@ -216,43 +213,8 @@ pub fn issue_user_token_with_scopes(
     })
 }
 
-pub fn encode_agent_token(
-    config: &AppConfig,
-    agent: &AgentAccountRecord,
-    owner: &UserRecord,
-) -> Result<String, String> {
-    encode_token(
-        config,
-        AuthClaims {
-            iss: config.jwt_issuer.clone(),
-            aud: config.task_runner_audience.clone(),
-            sub: format!("agent:{}", agent.id),
-            exp: expiry_timestamp(config.task_runner_access_ttl_seconds),
-            iat: now_timestamp(),
-            jti: Uuid::new_v4().to_string(),
-            principal_type: PRINCIPAL_TYPE_AGENT_ACCOUNT.to_string(),
-            user_id: None,
-            username: Some(agent.username.clone()),
-            display_name: Some(agent.display_name.clone()),
-            role: None,
-            agent_account_id: Some(agent.id.clone()),
-            owner_user_id: Some(owner.id.clone()),
-            owner_username: Some(owner.username.clone()),
-            owner_display_name: Some(owner.display_name.clone()),
-            scopes: vec!["task_runner".to_string()],
-        },
-    )
-}
-
-pub fn decode_any_user_service_token(
-    token: &str,
-    config: &AppConfig,
-) -> Result<AuthClaims, String> {
-    match decode_token(token, config, config.user_service_audience.as_str()) {
-        Ok(claims) => Ok(claims),
-        Err(user_err) => decode_token(token, config, config.task_runner_audience.as_str())
-            .map_err(|task_err| format!("{user_err}; {task_err}")),
-    }
+pub fn decode_user_service_token(token: &str, config: &AppConfig) -> Result<AuthClaims, String> {
+    decode_token(token, config, config.user_service_audience.as_str())
 }
 
 pub fn bearer_token_from_headers(headers: &HeaderMap) -> Result<String, String> {
@@ -291,10 +253,6 @@ fn decode_token(token: &str, config: &AppConfig, audience: &str) -> Result<AuthC
 
 fn now_timestamp() -> usize {
     Utc::now().timestamp().max(0) as usize
-}
-
-fn expiry_timestamp(ttl_seconds: i64) -> usize {
-    (Utc::now().timestamp() + ttl_seconds.max(60)).max(0) as usize
 }
 
 pub fn unauthorized(message: &str) -> (StatusCode, Json<serde_json::Value>) {

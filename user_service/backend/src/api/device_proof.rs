@@ -12,7 +12,7 @@ use ring::signature::{UnparsedPublicKey, ED25519};
 use sha2::{Digest, Sha512};
 
 use crate::auth::{
-    bearer_token_from_headers, decode_any_user_service_token, AuthClaims, CurrentPrincipal,
+    bearer_token_from_headers, decode_user_service_token, AuthClaims, CurrentPrincipal,
 };
 use crate::models::{DeviceProofVerificationRequest, TokenVerifyResponse, VerifiedPrincipal};
 use crate::state::AppState;
@@ -37,7 +37,7 @@ pub(super) async fn verify_forwarded_request(
     Json(proof): Json<DeviceProofVerificationRequest>,
 ) -> ApiResult<TokenVerifyResponse> {
     let token = bearer_token_from_headers(&headers).map_err(|error| unauthorized(&error))?;
-    let claims = decode_any_user_service_token(token.as_str(), &state.config)
+    let claims = decode_user_service_token(token.as_str(), &state.config)
         .map_err(|_| unauthorized("invalid or expired token"))?;
     authenticate_claims(&state, &claims).await?;
     if claims

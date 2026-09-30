@@ -5,47 +5,32 @@
 It owns:
 
 - Chat OS human users
-- Task Runner agent accounts
-- The ownership relation from a real user to that user's agent accounts
-- Task Runner delegation token exchange
-- User-owned model configs shared by Chat OS, Task Runner, and memory_engine
+- User and device authentication
+- User-owned model configs shared by local clients and memory_engine
 
 ## Stack
 
 - Backend: Rust + Axum + PostgreSQL + JWT
 - Frontend: React + Vite + Ant Design
 
-## Ownership Model
-
-- A `human_user` is the real Chat OS user.
-- An `agent_account` is a Task Runner execution identity.
-- Every `agent_account` belongs to exactly one `human_user`.
-- A real user can create and manage that user's own agent accounts.
-- `super_admin` can manage all users and reassign agent ownership when needed.
-
 ## Current Integration Status
 
 The service is now integrated into the repository flow:
 
 - `chat_app_server_rs` can proxy `register`, `login`, and `me` to `user_service`
-- Chat OS can load the current user's agent accounts from `user_service`
-- Chat OS contact Task Runner config now uses `task_runner_agent_account_id`
-- Chat OS runtime can exchange the current human user's token plus `task_runner_agent_account_id` for a short-lived Task Runner token
-- `task_runner_service/backend` can validate Task Runner audience JWTs issued by `user_service`
 - Chat OS model config CRUD can proxy to `user_service`
-- `user_service` can sync concrete model configs into `task_runner_service` and `memory_engine`
-
-Backward compatibility is still kept for the old contact-level Task Runner username/password flow when `user_service` is not configured.
+- Local clients use the signed-in user's identity and fetch that user's model runtime config through the authenticated control plane
+- `user_service` exposes signed internal model runtime endpoints to approved callers and retains Memory Engine model settings
+- There is no Task Runner token audience, token exchange, internal caller, or task-model catalog API
 
 ## Unified Model Configs
 
 - `user_service` is now the source of truth for user-owned model configs.
-- A real user can keep provider credentials here and create that user's own agent accounts here.
+- A real user can keep provider credentials here for local execution and memory processing.
 - Creating a model config may omit `model`; `user_service` will call the provider-compatible `/models` endpoint and create one concrete config per returned model id.
-- Chat OS, `task_runner_service`, and `memory_engine` use those concrete model names from the shared configs.
-- `task_runner_service` and `memory_engine` receive synced runnable configs when downstream sync is configured.
+- Local clients and `memory_engine` use those concrete model names from the shared configs.
 - `memory_summary_model_config_id` must point to a config with a concrete `model`.
-- Memory summary thinking level is stored in model settings; Task Runner usage and thinking level are stored per model config.
+- Memory summary thinking level is stored in model settings; local execution usage and thinking level are stored per model config.
 
 ## Downstream Sync Environment
 
@@ -53,10 +38,6 @@ If you want model config changes in `user_service` to sync into the other servic
 
 - `MEMORY_ENGINE_BASE_URL=http://127.0.0.1:7081/api/memory-engine/v1`
 - `USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET=...`
-- `USER_SERVICE_TASK_RUNNER_BASE_URL=https://127.0.0.1:39092`
-- `USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET=...`
-- `TASK_RUNNER_MTLS_CA_CERT_PATH=...`
-- `TASK_RUNNER_MTLS_CLIENT_IDENTITY_PATH=...`
 - `USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS=5000`
 
 ## Harness Provisioning
@@ -149,11 +130,6 @@ Change the default password and JWT secret before production use.
 - `GET /api/users`
 - `POST /api/users`
 - `PATCH /api/users/:id`
-- `GET /api/agent-accounts`
-- `POST /api/agent-accounts`
-- `PATCH /api/agent-accounts/:id`
-- `POST /api/agent-accounts/:id/reset-password`
-- `POST /api/token/exchange/task-runner`
 - `GET /api/model-configs`
 - `POST /api/model-configs`
 - `PATCH /api/model-configs/:id`
