@@ -9,7 +9,7 @@ use crate::{
     LocalAgentHostCoordinator, LocalAgentScheduler, LocalCapabilityResolver, LocalMemorySyncWorker,
     LocalModelRuntimeResolver, LocalTaskToolExecutor, LocalToolExecutor, LocalToolRegistry,
     LocalToolScheduler, NamedReadOnlyTools, CREATE_TASKS_TOOL, CREATE_TASK_TOOL,
-    MAIN_CHAT_PROFILE_KEY, TASK_RUNNER_PROFILE_KEY,
+    MAIN_CHAT_PROFILE_KEY, TASK_EXECUTION_PROFILE_KEY,
 };
 use chatos_local_agent_runtime::{LocalAgentProfileRegistry, LocalAgentRuntime};
 use std::sync::Arc;
@@ -146,7 +146,7 @@ impl LocalAgentHostAssembly {
         )
         .with_local_tools(notepad_model_tools())?
         .with_local_tool_prefixes(["notepad_"])?;
-        let mut task_runner_planner = ControlPlaneLocalAiStepPlanner::task_runner(
+        let mut task_execution_planner = ControlPlaneLocalAiStepPlanner::task_execution(
             Arc::clone(&model_resolver),
             Arc::clone(&capability_resolver),
         )
@@ -154,7 +154,7 @@ impl LocalAgentHostAssembly {
         .with_local_tool_prefixes(["notepad_"])?;
         if let Some(source_id) = memory_source_id {
             main_chat_planner = main_chat_planner.with_memory_source_id(source_id.clone())?;
-            task_runner_planner = task_runner_planner.with_memory_source_id(source_id)?;
+            task_execution_planner = task_execution_planner.with_memory_source_id(source_id)?;
         }
         let mut profiles = LocalAgentProfileRegistry::new();
         profiles.register(
@@ -165,9 +165,9 @@ impl LocalAgentHostAssembly {
             ),
         )?;
         profiles.register(
-            TASK_RUNNER_PROFILE_KEY,
+            TASK_EXECUTION_PROFILE_KEY,
             DurableAiProfile::new(
-                ChatosAiRuntimeStepExecutor::new(task_runner_planner),
+                ChatosAiRuntimeStepExecutor::new(task_execution_planner),
                 safety,
             ),
         )?;

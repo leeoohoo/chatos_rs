@@ -379,7 +379,7 @@ mod tests {
                     tasks: vec![LocalTaskSpec {
                         task_id: "task-1".to_string(),
                         title: "Inspect project".to_string(),
-                        profile_key: "task_runner".to_string(),
+                        profile_key: "task_execution".to_string(),
                         model_config_ref: "model-1".to_string(),
                         model_config_revision: "revision-1".to_string(),
                         capability_policy_revision: "policy-1".to_string(),
@@ -423,7 +423,7 @@ mod tests {
                     tasks: vec![LocalTaskSpec {
                         task_id: "task-cancelled".to_string(),
                         title: "Cancelled task".to_string(),
-                        profile_key: "task_runner".to_string(),
+                        profile_key: "task_execution".to_string(),
                         model_config_ref: "model-1".to_string(),
                         model_config_revision: "revision-1".to_string(),
                         capability_policy_revision: "policy-1".to_string(),

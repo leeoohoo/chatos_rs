@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use std::{collections::HashSet, sync::Arc};
 
 pub const MAIN_CHAT_PROFILE_KEY: &str = "main_chat";
-pub const TASK_RUNNER_PROFILE_KEY: &str = "task_runner";
+pub const TASK_EXECUTION_PROFILE_KEY: &str = "task_execution";
 
 /// A model runtime resolved for one step. This type is deliberately neither
 /// serializable nor debuggable because `model_config` may contain credentials.
@@ -107,13 +107,13 @@ impl ControlPlaneLocalAiStepPlanner {
         )
     }
 
-    pub fn task_runner<M, C>(model_resolver: M, capability_resolver: C) -> Self
+    pub fn task_execution<M, C>(model_resolver: M, capability_resolver: C) -> Self
     where
         M: LocalModelRuntimeResolver + 'static,
         C: LocalCapabilityResolver + 'static,
     {
         Self::new(
-            TASK_RUNNER_PROFILE_KEY,
+            TASK_EXECUTION_PROFILE_KEY,
             "prompt",
             model_resolver,
             capability_resolver,

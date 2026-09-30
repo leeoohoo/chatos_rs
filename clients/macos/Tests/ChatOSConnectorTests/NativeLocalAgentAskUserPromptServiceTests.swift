@@ -159,7 +159,7 @@ private actor AskUserHostStub: LocalAgentHostClientServicing {
             "owner_user_id": "user-1",
             "owner_entity_type": task ? "task" : "conversation_turn",
             "owner_entity_id": task ? "task-1" : "turn-1",
-            "profile_key": task ? "task_runner" : "main_chat",
+            "profile_key": task ? "task_execution" : "main_chat",
             "input": input,
             "status": "waiting_user",
             "version": 4,

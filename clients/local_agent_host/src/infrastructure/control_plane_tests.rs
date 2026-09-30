@@ -4,7 +4,7 @@
 use super::{LocalControlPlaneSnapshot, LocalModelCredentialResolver, SqliteClientStorage};
 use crate::{
     LocalCapabilityResolver, LocalModelRuntimeResolver, ResolvedLocalCapabilities,
-    MAIN_CHAT_PROFILE_KEY, TASK_RUNNER_PROFILE_KEY,
+    MAIN_CHAT_PROFILE_KEY, TASK_EXECUTION_PROFILE_KEY,
 };
 use async_trait::async_trait;
 use chatos_ai_runtime::{AiRuntime, ContextualTurnRunner};
@@ -37,7 +37,7 @@ async fn capabilities_are_resolved_by_exact_profile_and_revision() {
         .expect("resolve");
     assert_eq!(resolved.instructions.as_deref(), Some("main chat"));
     assert!(snapshot
-        .resolve_capabilities(OWNER, TASK_RUNNER_PROFILE_KEY, "policy-1")
+        .resolve_capabilities(OWNER, TASK_EXECUTION_PROFILE_KEY, "policy-1")
         .await
         .is_err());
     assert!(snapshot

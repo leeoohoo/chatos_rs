@@ -37,7 +37,7 @@ async fn approval_gate_blocks_claim_and_persists_approve_or_reject() {
                 owner_user_id: "user-1".to_string(),
                 owner_entity_type: "task".to_string(),
                 owner_entity_id: "task-1".to_string(),
-                profile_key: "task_runner".to_string(),
+                profile_key: "task_execution".to_string(),
                 model_config_ref: "model-1".to_string(),
                 model_config_revision: "revision-1".to_string(),
                 capability_policy_revision: "policy-1".to_string(),

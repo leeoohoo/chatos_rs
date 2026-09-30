@@ -192,7 +192,7 @@ public sealed class WindowsLocalAgentBootstrapService
             _ = await _controlPlane.PublishCapabilitiesAsync(
                 new WindowsLocalAgentCapabilitySnapshot(
                     ownerUserId,
-                    "task_runner",
+                    "task_execution",
                     mainCapabilities.CapabilityPolicyRevision,
                     "Complete the durable local task objective and return a concrete result. Do not create nested tasks.",
                     [],

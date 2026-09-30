@@ -44,7 +44,7 @@ fn task_graph(graph_id: &str, task_id: &str, owner_user_id: &str) -> HostCommand
         tasks: vec![LocalTaskSpec {
             task_id: task_id.to_string(),
             title: format!("Task {task_id}"),
-            profile_key: "task_runner".to_string(),
+            profile_key: "task_execution".to_string(),
             model_config_ref: "model-1".to_string(),
             model_config_revision: "revision-1".to_string(),
             capability_policy_revision: "policy-1".to_string(),

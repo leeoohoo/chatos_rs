@@ -141,7 +141,7 @@ fn create_single_graph(
         tasks: vec![LocalTaskSpec {
             task_id: format!("local-task-{}-1", invocation.invocation_id),
             title: args.title,
-            profile_key: "task_runner".to_string(),
+            profile_key: "task_execution".to_string(),
             model_config_ref: parent.model_config_ref.clone(),
             model_config_revision: parent.model_config_revision.clone(),
             capability_policy_revision: parent.capability_policy_revision.clone(),
@@ -203,7 +203,7 @@ fn create_batch_graph(
         tasks.push(LocalTaskSpec {
             task_id,
             title: item.title,
-            profile_key: "task_runner".to_string(),
+            profile_key: "task_execution".to_string(),
             model_config_ref: parent.model_config_ref.clone(),
             model_config_revision: parent.model_config_revision.clone(),
             capability_policy_revision: parent.capability_policy_revision.clone(),

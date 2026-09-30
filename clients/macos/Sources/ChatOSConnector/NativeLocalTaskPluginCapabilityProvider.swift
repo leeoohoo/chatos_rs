@@ -13,7 +13,7 @@ struct NativeAgentPluginExecutionPresentation: Sendable {
         taskTitlePrefix: "Agent 群聊"
     )
     static let localTaskRunner = Self(
-        approvalSource: "local_agent_task_runner",
+        approvalSource: "local_agent_task_execution",
         approvalReasonPrefix: "本地任务请求执行 Plugin 操作",
         taskTitlePrefix: "本地任务"
     )

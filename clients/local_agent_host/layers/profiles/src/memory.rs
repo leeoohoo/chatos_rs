@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn task_memory_uses_task_thread_and_decodes_external_tool_results() {
-        let mut claim = claim("task_runner", json!({"prompt": "inspect repo"}));
+        let mut claim = claim("task_execution", json!({"prompt": "inspect repo"}));
         claim.run.iteration = 2;
         claim.run.continuation_input = Some(json!({
             "type": "tool_results",

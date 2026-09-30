@@ -95,7 +95,7 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
                     "owner_user_id": "user-1",
                     "owner_entity_type": "task",
                     "owner_entity_id": "task-2",
-                    "profile_key": "task_runner",
+                    "profile_key": "task_execution",
                     "input": [:],
                     "status": "failed",
                     "version": 3,

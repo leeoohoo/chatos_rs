@@ -475,7 +475,7 @@ mod tests {
             source_entity_id: "conversation-1".to_string(),
             task_id: format!("task-{}", status.as_str()),
             title: "Task".to_string(),
-            profile_key: "task_runner".to_string(),
+            profile_key: "task_execution".to_string(),
             model_config_ref: "model-1".to_string(),
             model_config_revision: "revision-1".to_string(),
             capability_policy_revision: "policy-1".to_string(),
@@ -493,7 +493,7 @@ mod tests {
         LocalTaskSpec {
             task_id: task_id.to_string(),
             title: task_id.to_string(),
-            profile_key: "task_runner".to_string(),
+            profile_key: "task_execution".to_string(),
             model_config_ref: "model-1".to_string(),
             model_config_revision: "revision-1".to_string(),
             capability_policy_revision: "policy-1".to_string(),
