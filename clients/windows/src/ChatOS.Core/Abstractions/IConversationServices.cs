@@ -2,14 +2,6 @@ using ChatOS.Core.Domain;
 
 namespace ChatOS.Core.Abstractions;
 
-public interface IConversationAttachmentService
-{
-    Task<IReadOnlyList<ConversationAttachmentReference>> UploadAsync(
-        IReadOnlyList<ConversationAttachmentDraft> attachments,
-        string conversationId,
-        CancellationToken cancellationToken = default);
-}
-
 public interface IConversationRuntimeSettingsService
 {
     Task<ConversationRuntimeSettings> FetchAsync(
