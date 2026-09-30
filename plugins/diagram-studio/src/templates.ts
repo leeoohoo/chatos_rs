@@ -98,7 +98,7 @@ export function architectureTemplate(): DiagramDocument {
     node('api-gateway', 'API Gateway', 510, 220, 'network', 'rounded', 'HTTPS · WebSocket', palette.cyan, {}, { icon: 'api' }),
     node('identity', '身份服务', 770, 70, 'service', 'rounded', 'OAuth · Session', palette.purple, {}, { icon: 'shield' }),
     node('order-service', '订单服务', 770, 220, 'service', 'rounded', 'REST · Events', palette.blue, {}, { icon: 'server' }),
-    node('task-runner', '任务执行器', 770, 370, 'service', 'rounded', 'AI · MCP', palette.orange, {}, { icon: 'container' }),
+    node('background-worker', '后台 Worker', 770, 370, 'service', 'rounded', 'Async jobs', palette.orange, {}, { icon: 'container' }),
     node('postgres', 'PostgreSQL', 1050, 110, 'database', 'rounded', 'Persistent data', palette.green, {}, { icon: 'database' }),
     node('redis', 'Redis', 1050, 260, 'database', 'rounded', 'Cache · Locks', palette.pink, {}, { icon: 'cache' }),
     node('event-bus', '事件总线', 1050, 410, 'queue', 'rounded', 'Async messages', palette.orange, {}, { icon: 'queue' })
@@ -107,12 +107,12 @@ export function architectureTemplate(): DiagramDocument {
     edge('e-web-gateway', 'web-app', 'api-gateway', 'HTTPS'),
     edge('e-gateway-identity', 'api-gateway', 'identity', 'Auth'),
     edge('e-gateway-order', 'api-gateway', 'order-service', 'REST'),
-    edge('e-gateway-runner', 'api-gateway', 'task-runner', 'Tasks'),
+    edge('e-gateway-worker', 'api-gateway', 'background-worker', 'Jobs'),
     edge('e-identity-db', 'identity', 'postgres', 'SQL'),
     edge('e-order-db', 'order-service', 'postgres', 'SQL'),
     edge('e-order-cache', 'order-service', 'redis', 'Cache'),
-    edge('e-runner-cache', 'task-runner', 'redis', 'Lease'),
-    edge('e-runner-events', 'task-runner', 'event-bus', 'Publish'),
+    edge('e-worker-cache', 'background-worker', 'redis', 'Lease'),
+    edge('e-worker-events', 'background-worker', 'event-bus', 'Publish'),
     edge('e-events-order', 'event-bus', 'order-service', 'Consume', true)
   ]);
 }

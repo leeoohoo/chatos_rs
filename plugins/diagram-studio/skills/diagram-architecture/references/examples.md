@@ -46,15 +46,15 @@ Do not repair this failure by changing arrow colors or spreading the same chain 
 
 ## Negative: ChatOS everything-at-once overview
 
-Bad: one canvas contains Client, ChatOS Backend, model provider, MCP Management, Plugin Management, Task Runner, execution environment, project memory, MongoDB, RabbitMQ, plus separate create/query, callback, persistence, synchronization, publish, and consume relationships.
+Bad: one canvas contains Client, Local Agent Host, model provider, Plugin Marketplace, local tool execution, retained memory, PostgreSQL, and relay infrastructure, plus separate create/query, callback, persistence, synchronization, publish, and consume relationships.
 
-Why it fails: it mixes a system-context view with Agent runtime and background-task process details. Reciprocal ChatOS ↔ Task Runner edges create a layout cycle, while both services connecting directly to every data dependency creates parallel edge stars.
+Why it fails: it mixes a system-context view with Agent runtime and background-task process details. Reciprocal client ↔ relay edges create a layout cycle, while both components connecting directly to every data dependency creates parallel edge stars.
 
 Repair as a diagram set:
 
-1. `ChatOS system context`: User → Client → ChatOS Core, with one relationship each to Model Provider, Tool Runtime, Background Tasks, and Data & Messaging.
-2. `Agent and MCP capability`: ChatOS Core, MCP Management, Plugin Management, and local/sandbox execution.
-3. `Background task execution`: ChatOS Core, Task Runner, execution environment, message broker, and result delivery.
+1. `ChatOS system context`: User → Native Client, with one relationship each to the local runtime and retained cloud control planes.
+2. `Agent and Plugin capability`: Local Agent Host, Plugin Marketplace, and local tool execution.
+3. `Background task execution`: Local Agent Host, authorized workspace, local process runtime, and result presentation.
 
 Do not preserve every relationship by merely spreading the nodes farther apart. Remove or aggregate relationships before layout.
 
