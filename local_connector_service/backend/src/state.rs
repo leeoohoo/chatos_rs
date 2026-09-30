@@ -79,7 +79,7 @@ impl AppState {
                 .map_err(|err| format!("load plugin management client config failed: {err}"))?;
         let plugin_management_client = PluginManagementClient::new(plugin_management_config)
             .map_err(|err| format!("initialize plugin management client failed: {err}"))?;
-        chatos_agent::require_task_runner_runtime_settings(&local_connector_snapshot)?;
+        chatos_agent::require_local_task_execution_settings(&local_connector_snapshot)?;
         chatos_agent::resolve_native_agent_runtime_settings(&local_connector_snapshot)?;
         let user_service_http =
             build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
@@ -170,8 +170,8 @@ impl AppState {
             .active_signer()
             .ok_or_else(|| "active relay signer is unavailable".to_string())?;
         validate_active_relay_signer_trust(&active_relay_signer, &remote_control_trust)?;
-        let task_runner_runtime_settings =
-            chatos_agent::require_task_runner_runtime_settings(&local_connector_snapshot)?;
+        let local_task_execution_settings =
+            chatos_agent::require_local_task_execution_settings(&local_connector_snapshot)?;
         let native_agent_runtime_settings =
             chatos_agent::resolve_native_agent_runtime_settings(&local_connector_snapshot)?;
         Ok(ManagedRuntimeConfigBundle {
@@ -182,7 +182,7 @@ impl AppState {
             stale: false,
             source: Some("configuration_center".to_string()),
             native_agent_runtime_settings,
-            task_runner_runtime_settings,
+            local_task_execution_settings,
             remote_control_trust,
         })
     }

@@ -18,26 +18,28 @@ pub const DEFAULT_AGENT_RUN_TIMEOUT_SECONDS: usize = 7_200;
 pub const DEFAULT_AGENT_MAX_NO_PROGRESS_ROUNDS: usize = 8;
 pub const DEFAULT_AGENT_CONTEXT_WINDOW_TOKENS: usize = 2_000_000;
 pub const DEFAULT_AGENT_OUTPUT_RESERVE_TOKENS: usize = 30_000;
-pub const TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY: &str = "task_runner.runtime.max_iterations";
-pub const TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY: &str =
-    "task_runner.runtime.review_checkpoint.read_only_iterations";
-pub const TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY: &str =
-    "task_runner.runtime.review_checkpoint.missing_read_failures";
-pub const TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY: &str =
-    "task_runner.runtime.review_checkpoint.repeat_interval_iterations";
-pub const TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY: &str = "task_runner.ai.prompt_cache.enabled";
-pub const TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY: &str =
-    "task_runner.ai.prompt_cache.retention_enabled";
-pub const DEFAULT_TASK_RUNNER_MAX_ITERATIONS: usize = 600;
-pub const DEFAULT_TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS: usize = 8;
-pub const DEFAULT_TASK_RUNNER_REVIEW_MISSING_READ_FAILURES: usize = 2;
-pub const DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL: usize = 8;
-pub const DEFAULT_TASK_RUNNER_PROMPT_CACHE_ENABLED: bool = true;
-pub const DEFAULT_TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED: bool = true;
+pub const LOCAL_TASK_EXECUTION_MAX_ITERATIONS_CONFIG_KEY: &str =
+    "local_agent.task_execution.max_iterations";
+pub const LOCAL_TASK_EXECUTION_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY: &str =
+    "local_agent.task_execution.review_checkpoint.read_only_iterations";
+pub const LOCAL_TASK_EXECUTION_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY: &str =
+    "local_agent.task_execution.review_checkpoint.missing_read_failures";
+pub const LOCAL_TASK_EXECUTION_REVIEW_REPEAT_INTERVAL_CONFIG_KEY: &str =
+    "local_agent.task_execution.review_checkpoint.repeat_interval_iterations";
+pub const LOCAL_TASK_EXECUTION_PROMPT_CACHE_ENABLED_CONFIG_KEY: &str =
+    "local_agent.task_execution.prompt_cache.enabled";
+pub const LOCAL_TASK_EXECUTION_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY: &str =
+    "local_agent.task_execution.prompt_cache.retention_enabled";
+pub const DEFAULT_LOCAL_TASK_EXECUTION_MAX_ITERATIONS: usize = 600;
+pub const DEFAULT_LOCAL_TASK_EXECUTION_REVIEW_READ_ONLY_ITERATIONS: usize = 8;
+pub const DEFAULT_LOCAL_TASK_EXECUTION_REVIEW_MISSING_READ_FAILURES: usize = 2;
+pub const DEFAULT_LOCAL_TASK_EXECUTION_REVIEW_REPEAT_INTERVAL: usize = 8;
+pub const DEFAULT_LOCAL_TASK_EXECUTION_PROMPT_CACHE_ENABLED: bool = true;
+pub const DEFAULT_LOCAL_TASK_EXECUTION_PROMPT_CACHE_RETENTION_ENABLED: bool = true;
 
 #[cfg_attr(feature = "managed-config", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TaskRunnerRuntimeSettings {
+pub struct LocalTaskExecutionSettings {
     pub max_iterations: usize,
     pub review_read_only_iterations: usize,
     pub review_missing_read_failures: usize,
@@ -132,7 +134,7 @@ pub struct ManagedRuntimeConfigBundle {
     pub stale: bool,
     pub source: Option<String>,
     pub native_agent_runtime_settings: NativeAgentRuntimeSettings,
-    pub task_runner_runtime_settings: TaskRunnerRuntimeSettings,
+    pub local_task_execution_settings: LocalTaskExecutionSettings,
     pub remote_control_trust: RemoteControlTrustConfigBundle,
 }
 
@@ -168,33 +170,37 @@ pub fn resolve_native_agent_runtime_settings(
 }
 
 #[cfg(feature = "managed-config")]
-pub fn require_task_runner_runtime_settings(
+pub fn require_local_task_execution_settings(
     snapshot: &chatos_config_sdk::ConfigSnapshot,
-) -> Result<TaskRunnerRuntimeSettings, String> {
-    Ok(TaskRunnerRuntimeSettings {
-        max_iterations: require_snapshot_usize(snapshot, TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY, 2)?,
+) -> Result<LocalTaskExecutionSettings, String> {
+    Ok(LocalTaskExecutionSettings {
+        max_iterations: require_snapshot_usize(
+            snapshot,
+            LOCAL_TASK_EXECUTION_MAX_ITERATIONS_CONFIG_KEY,
+            2,
+        )?,
         review_read_only_iterations: require_snapshot_usize(
             snapshot,
-            TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY,
+            LOCAL_TASK_EXECUTION_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY,
             1,
         )?,
         review_missing_read_failures: require_snapshot_usize(
             snapshot,
-            TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY,
+            LOCAL_TASK_EXECUTION_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY,
             1,
         )?,
         review_repeat_interval_iterations: require_snapshot_usize(
             snapshot,
-            TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
+            LOCAL_TASK_EXECUTION_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
             1,
         )?,
         prompt_cache_enabled: require_snapshot_bool(
             snapshot,
-            TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY,
+            LOCAL_TASK_EXECUTION_PROMPT_CACHE_ENABLED_CONFIG_KEY,
         )?,
         prompt_cache_retention_enabled: require_snapshot_bool(
             snapshot,
-            TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY,
+            LOCAL_TASK_EXECUTION_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY,
         )?,
     })
 }
@@ -285,8 +291,8 @@ mod tests {
             "agent.runtime.max_iterations"
         );
         assert_eq!(
-            TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY,
-            "task_runner.runtime.max_iterations"
+            LOCAL_TASK_EXECUTION_MAX_ITERATIONS_CONFIG_KEY,
+            "local_agent.task_execution.max_iterations"
         );
     }
 
@@ -309,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn strict_task_runner_runtime_settings_use_managed_values() {
+    fn strict_local_task_execution_settings_use_managed_values() {
         let snapshot = ConfigSnapshot {
             environment: "test".to_string(),
             service_name: "local-connector-service".to_string(),
@@ -317,27 +323,27 @@ mod tests {
             checksum: "checksum-7".to_string(),
             values: BTreeMap::from([
                 (
-                    TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY.to_string(),
+                    LOCAL_TASK_EXECUTION_MAX_ITERATIONS_CONFIG_KEY.to_string(),
                     json!(650),
                 ),
                 (
-                    TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY.to_string(),
+                    LOCAL_TASK_EXECUTION_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY.to_string(),
                     json!(12),
                 ),
                 (
-                    TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY.to_string(),
+                    LOCAL_TASK_EXECUTION_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY.to_string(),
                     json!(3),
                 ),
                 (
-                    TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY.to_string(),
+                    LOCAL_TASK_EXECUTION_REVIEW_REPEAT_INTERVAL_CONFIG_KEY.to_string(),
                     json!(9),
                 ),
                 (
-                    TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY.to_string(),
+                    LOCAL_TASK_EXECUTION_PROMPT_CACHE_ENABLED_CONFIG_KEY.to_string(),
                     json!(false),
                 ),
                 (
-                    TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY.to_string(),
+                    LOCAL_TASK_EXECUTION_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY.to_string(),
                     json!(false),
                 ),
             ]),
@@ -347,7 +353,7 @@ mod tests {
             source: None,
         };
 
-        let settings = require_task_runner_runtime_settings(&snapshot).expect("strict settings");
+        let settings = require_local_task_execution_settings(&snapshot).expect("strict settings");
 
         assert_eq!(settings.max_iterations, 650);
         assert_eq!(settings.review_read_only_iterations, 12);
@@ -358,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn strict_task_runner_runtime_settings_reject_missing_managed_values() {
+    fn strict_local_task_execution_settings_reject_missing_managed_values() {
         let snapshot = ConfigSnapshot {
             environment: "test".to_string(),
             service_name: "local-connector-service".to_string(),
@@ -371,26 +377,29 @@ mod tests {
             source: None,
         };
 
-        let error = require_task_runner_runtime_settings(&snapshot).expect_err("missing config");
+        let error = require_local_task_execution_settings(&snapshot).expect_err("missing config");
 
-        assert!(error.contains(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY));
+        assert!(error.contains(LOCAL_TASK_EXECUTION_MAX_ITERATIONS_CONFIG_KEY));
     }
 
     #[test]
-    fn strict_task_runner_runtime_settings_reject_out_of_range_values() {
+    fn strict_local_task_execution_settings_reject_out_of_range_values() {
         let snapshot = ConfigSnapshot {
             environment: "test".to_string(),
             service_name: "local-connector-service".to_string(),
             revision: 1,
             checksum: "checksum".to_string(),
-            values: BTreeMap::from([(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY.to_string(), json!(1))]),
+            values: BTreeMap::from([(
+                LOCAL_TASK_EXECUTION_MAX_ITERATIONS_CONFIG_KEY.to_string(),
+                json!(1),
+            )]),
             env: BTreeMap::new(),
             generated_at: "now".to_string(),
             stale: false,
             source: None,
         };
 
-        let error = require_task_runner_runtime_settings(&snapshot).expect_err("invalid config");
+        let error = require_local_task_execution_settings(&snapshot).expect_err("invalid config");
 
         assert!(error.contains("must be at least 2"));
     }
