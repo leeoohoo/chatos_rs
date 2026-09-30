@@ -14,7 +14,9 @@ mod account_scope;
 mod control_plane;
 mod conversation;
 mod memory;
+mod notepad;
 mod plugin;
+mod response;
 mod run_query;
 mod task;
 mod tool;
@@ -39,11 +41,20 @@ pub use conversation::{
     LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE,
 };
 pub use memory::{GetMemorySyncStatusCommand, LocalMemorySyncStatus};
+pub use notepad::{
+    CreateNotepadFolderCommand, CreateNotepadNoteCommand, DeleteNotepadFolderCommand,
+    DeleteNotepadNoteCommand, GetNotepadNoteCommand, InitializeNotepadCommand,
+    ListNotepadFoldersCommand, ListNotepadNotesCommand, LocalNotepadImage, LocalNotepadNote,
+    LocalNotepadNoteDetail, PutNotepadImageCommand, RenameNotepadFolderCommand,
+    UpdateNotepadNoteCommand, LOCAL_NOTEPAD_MAX_CONTENT_BYTES, LOCAL_NOTEPAD_MAX_IMAGE_BYTES,
+    LOCAL_NOTEPAD_MAX_LIST_LIMIT, LOCAL_NOTEPAD_MAX_TAGS,
+};
 pub use plugin::{
     GetPluginInstallationCommand, ListPluginInstallationsCommand, LocalPluginInstallationPage,
     LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalPluginInstallationSummary,
     PutPluginInstallationCommand, RemovePluginInstallationCommand,
 };
+pub use response::{HostError, HostResponseEnvelope, HostResult};
 pub use run_query::{ListRunsCommand, LocalAgentRunListScope, LocalAgentRunPage};
 
 pub use task::{
@@ -60,7 +71,7 @@ pub use tool::{
     LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 28;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 29;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -128,6 +139,17 @@ pub enum HostCommand {
     GuideConversationTurn(GuideConversationTurnCommand),
     ResumeConversationTurn(ResumeConversationTurnCommand),
     CancelConversationTurn(CancelConversationTurnCommand),
+    InitializeNotepad(InitializeNotepadCommand),
+    ListNotepadFolders(ListNotepadFoldersCommand),
+    CreateNotepadFolder(CreateNotepadFolderCommand),
+    RenameNotepadFolder(RenameNotepadFolderCommand),
+    DeleteNotepadFolder(DeleteNotepadFolderCommand),
+    ListNotepadNotes(ListNotepadNotesCommand),
+    CreateNotepadNote(CreateNotepadNoteCommand),
+    GetNotepadNote(GetNotepadNoteCommand),
+    UpdateNotepadNote(UpdateNotepadNoteCommand),
+    DeleteNotepadNote(DeleteNotepadNoteCommand),
+    PutNotepadImage(PutNotepadImageCommand),
 }
 
 impl HostCommand {
@@ -173,6 +195,17 @@ impl HostCommand {
             Self::GuideConversationTurn(command) => command.validate(),
             Self::ResumeConversationTurn(command) => command.validate(),
             Self::CancelConversationTurn(command) => command.validate(),
+            Self::InitializeNotepad(command) => command.validate(),
+            Self::ListNotepadFolders(command) => command.validate(),
+            Self::CreateNotepadFolder(command) => command.validate(),
+            Self::RenameNotepadFolder(command) => command.validate(),
+            Self::DeleteNotepadFolder(command) => command.validate(),
+            Self::ListNotepadNotes(command) => command.validate(),
+            Self::CreateNotepadNote(command) => command.validate(),
+            Self::GetNotepadNote(command) => command.validate(),
+            Self::UpdateNotepadNote(command) => command.validate(),
+            Self::DeleteNotepadNote(command) => command.validate(),
+            Self::PutNotepadImage(command) => command.validate(),
         }
     }
 }
@@ -579,134 +612,6 @@ pub struct LocalAgentEventRecord {
     pub event_type: String,
     pub payload: Value,
     pub created_at_unix_ms: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct HostResponseEnvelope {
-    pub protocol_version: u32,
-    pub command_id: String,
-    pub ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<HostResult>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<HostError>,
-}
-
-impl HostResponseEnvelope {
-    pub fn success(command_id: String, result: HostResult) -> Self {
-        Self {
-            protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
-            command_id,
-            ok: true,
-            result: Some(result),
-            error: None,
-        }
-    }
-
-    pub fn failure(command_id: String, error: HostError) -> Self {
-        Self {
-            protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
-            command_id,
-            ok: false,
-            result: None,
-            error: Some(error),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum HostResult {
-    Health {
-        service: String,
-        storage_ready: bool,
-        recovered_claims: u64,
-    },
-    MemorySyncStatus {
-        status: LocalMemorySyncStatus,
-    },
-    ModelConfigSnapshot {
-        snapshot: LocalModelConfigSnapshot,
-    },
-    CapabilityPolicySnapshot {
-        snapshot: LocalCapabilityPolicySnapshot,
-    },
-    Run {
-        run: LocalAgentRunRecord,
-    },
-    Runs {
-        page: LocalAgentRunPage,
-    },
-    Claim {
-        claim: Option<LocalAgentRunClaim>,
-    },
-    ToolClaim {
-        claim: Option<LocalAgentToolClaim>,
-    },
-    ToolCommit {
-        result: Box<LocalAgentToolCommitResult>,
-    },
-    PendingToolApprovals {
-        invocations: Vec<LocalAgentToolInvocationRecord>,
-    },
-    ToolApproval {
-        result: Box<LocalAgentToolApprovalResult>,
-    },
-    Events {
-        events: Vec<LocalAgentEventRecord>,
-        next_cursor: i64,
-    },
-    TaskGraph {
-        graph: LocalTaskGraph,
-    },
-    TaskGraphs {
-        page: LocalTaskGraphPage,
-    },
-    TaskRuns {
-        task_id: String,
-        runs: Vec<LocalAgentRunRecord>,
-    },
-    PluginInstallation {
-        installation: LocalPluginInstallationRecord,
-    },
-    PluginInstallations {
-        page: LocalPluginInstallationPage,
-    },
-    Conversation {
-        conversation: LocalConversationDetail,
-    },
-    Conversations {
-        page: LocalConversationPage,
-    },
-    ConversationHistory {
-        page: Box<LocalConversationHistoryPage>,
-    },
-    ConversationRuntimeSettings {
-        settings: LocalConversationRuntimeSettings,
-    },
-    ConversationTurnStarted {
-        result: Box<LocalConversationTurnStart>,
-    },
-    ConversationTurnUpdated {
-        result: Box<LocalConversationTurnUpdate>,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct HostError {
-    pub code: String,
-    pub message: String,
-    pub retryable: bool,
-}
-
-impl HostError {
-    pub fn new(code: impl Into<String>, message: impl Into<String>, retryable: bool) -> Self {
-        Self {
-            code: code.into(),
-            message: message.into(),
-            retryable,
-        }
-    }
 }
 
 pub fn validate_identifier(name: &str, value: &str) -> Result<(), String> {

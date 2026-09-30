@@ -31,6 +31,8 @@ mod migration;
 #[cfg(test)]
 mod migration_tests;
 mod model_snapshot_store;
+mod notepad_store;
+mod notepad_support;
 mod plugin_query_store;
 mod plugin_store;
 mod run_commands;
@@ -56,7 +58,8 @@ pub use chatos_local_agent_ports::{
     LocalCapabilitySnapshotStore, LocalConversationRuntimeSettingsStore, LocalConversationStore,
     LocalMemoryContextCacheStore, LocalMemoryOutboxRecord, LocalMemoryOutboxStatus,
     LocalMemoryOutboxStore, LocalMemorySyncStatus, LocalModelConfigSnapshot,
-    LocalModelConfigSnapshotStore, LocalPluginInstallationStore, RunTransition,
+    LocalModelConfigSnapshotStore, LocalNotepadImageWrite, LocalNotepadStore,
+    LocalPluginInstallationStore, RunTransition,
 };
 use run_record::decode_run;
 use schema::RUN_SELECT;

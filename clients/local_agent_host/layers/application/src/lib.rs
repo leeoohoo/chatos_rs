@@ -30,6 +30,7 @@ mod control_plane_runtime;
 mod conversation_query_tests;
 mod conversation_runtime;
 mod conversation_settings_runtime;
+mod notepad_runtime;
 #[cfg(test)]
 mod plugin_query_tests;
 mod plugin_runtime;
@@ -421,6 +422,19 @@ impl LocalAgentRuntime {
             | HostCommand::PutConversationRuntimeSettings(_)) => {
                 self.handle_conversation_settings_command(&idempotency, command)
                     .await
+            }
+            command @ (HostCommand::InitializeNotepad(_)
+            | HostCommand::ListNotepadFolders(_)
+            | HostCommand::CreateNotepadFolder(_)
+            | HostCommand::RenameNotepadFolder(_)
+            | HostCommand::DeleteNotepadFolder(_)
+            | HostCommand::ListNotepadNotes(_)
+            | HostCommand::CreateNotepadNote(_)
+            | HostCommand::GetNotepadNote(_)
+            | HostCommand::UpdateNotepadNote(_)
+            | HostCommand::DeleteNotepadNote(_)
+            | HostCommand::PutNotepadImage(_)) => {
+                self.handle_notepad_command(&idempotency, command).await
             }
         }
     }

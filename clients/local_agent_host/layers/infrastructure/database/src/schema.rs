@@ -464,3 +464,49 @@ pub(super) const SCHEMA_V22: &[&str] = &[
        owner_user_id, resource_kind, resource_id\
      ) WHERE resource_kind IS NOT NULL AND resource_id IS NOT NULL",
 ];
+
+pub(super) const SCHEMA_V23: &[&str] = &[
+    "CREATE TABLE local_notepad_folders (\
+       owner_user_id TEXT NOT NULL,\
+       path TEXT NOT NULL,\
+       created_at_unix_ms INTEGER NOT NULL,\
+       updated_at_unix_ms INTEGER NOT NULL,\
+       PRIMARY KEY(owner_user_id, path)\
+     )",
+    "CREATE TABLE local_notepad_notes (\
+       owner_user_id TEXT NOT NULL,\
+       note_id TEXT NOT NULL,\
+       title TEXT NOT NULL,\
+       folder TEXT NOT NULL,\
+       content TEXT NOT NULL,\
+       tags_json TEXT NOT NULL,\
+       version INTEGER NOT NULL CHECK(version > 0),\
+       created_at_unix_ms INTEGER NOT NULL,\
+       updated_at_unix_ms INTEGER NOT NULL,\
+       PRIMARY KEY(owner_user_id, note_id)\
+     )",
+    "CREATE INDEX local_notepad_notes_owner_updated ON local_notepad_notes(\
+       owner_user_id, updated_at_unix_ms DESC, note_id\
+     )",
+    "CREATE INDEX local_notepad_notes_owner_folder ON local_notepad_notes(\
+       owner_user_id, folder, updated_at_unix_ms DESC\
+     )",
+    "CREATE TABLE local_notepad_images (\
+       owner_user_id TEXT NOT NULL,\
+       image_id TEXT NOT NULL,\
+       note_id TEXT NOT NULL,\
+       name TEXT NOT NULL,\
+       mime_type TEXT NOT NULL,\
+       size INTEGER NOT NULL CHECK(size > 0),\
+       sha256 TEXT NOT NULL,\
+       data BLOB NOT NULL,\
+       created_at_unix_ms INTEGER NOT NULL,\
+       PRIMARY KEY(owner_user_id, image_id),\
+       FOREIGN KEY(owner_user_id, note_id) REFERENCES local_notepad_notes(\
+         owner_user_id, note_id\
+       ) ON DELETE CASCADE\
+     )",
+    "CREATE INDEX local_notepad_images_note ON local_notepad_images(\
+       owner_user_id, note_id, created_at_unix_ms\
+     )",
+];

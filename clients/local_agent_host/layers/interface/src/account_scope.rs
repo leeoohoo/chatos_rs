@@ -49,6 +49,17 @@ impl HostCommand {
             Self::GuideConversationTurn(command) => Some(&command.owner_user_id),
             Self::ResumeConversationTurn(command) => Some(&command.owner_user_id),
             Self::CancelConversationTurn(command) => Some(&command.owner_user_id),
+            Self::InitializeNotepad(command) => Some(&command.owner_user_id),
+            Self::ListNotepadFolders(command) => Some(&command.owner_user_id),
+            Self::CreateNotepadFolder(command) => Some(&command.owner_user_id),
+            Self::RenameNotepadFolder(command) => Some(&command.owner_user_id),
+            Self::DeleteNotepadFolder(command) => Some(&command.owner_user_id),
+            Self::ListNotepadNotes(command) => Some(&command.owner_user_id),
+            Self::CreateNotepadNote(command) => Some(&command.owner_user_id),
+            Self::GetNotepadNote(command) => Some(&command.owner_user_id),
+            Self::UpdateNotepadNote(command) => Some(&command.owner_user_id),
+            Self::DeleteNotepadNote(command) => Some(&command.owner_user_id),
+            Self::PutNotepadImage(command) => Some(&command.owner_user_id),
         }
     }
 }
