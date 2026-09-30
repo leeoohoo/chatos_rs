@@ -197,6 +197,11 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
                 .appendingPathComponent("Projects.sqlite3")
         )
+        let agentGroupChatService = NativeAgentGroupChatService(
+            databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
+                .appendingPathComponent("AgentGroupChat.sqlite3"),
+            agentArtifactStore: localAgentHost.map(NativeLocalAgentArtifactClient.init(host:))
+        )
 
         self.historyStore = historyStore
         self.authentication = AuthenticationViewModel(service: authenticationService)
@@ -234,7 +239,8 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 host: localAgentHost,
                 attachmentRootURL: attachmentRootURL,
                 projects: localProjectsService,
-                connector: localConnectorService
+                connector: localConnectorService,
+                agentGroupChats: agentGroupChatService
             )
             localAgentRuntimeSettingsService = settings
             localAgentPlatformToolWorker = worker
@@ -274,11 +280,6 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             }
         }
         self.localProjectsService = localProjectsService
-        let agentGroupChatService = NativeAgentGroupChatService(
-            databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
-                .appendingPathComponent("AgentGroupChat.sqlite3"),
-            agentArtifactStore: localAgentHost.map(NativeLocalAgentArtifactClient.init(host:))
-        )
         Task { await localConnectorService.setAgentGroupChatService(agentGroupChatService) }
         let agentSkillLibrary = LocalAgentSkillLibrary(
             fileURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()

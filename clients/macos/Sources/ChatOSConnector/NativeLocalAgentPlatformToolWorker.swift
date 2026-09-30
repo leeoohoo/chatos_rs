@@ -12,12 +12,18 @@ public enum NativeLocalAgentPlatformToolCatalog {
     private static let terminalReadOnlyToolNames = [
         "process_poll", "process_log", "process_wait",
     ]
+    private static let requirementSurveyReadOnlyToolNames =
+        NativeMCPRequirementSurveyTools.readToolNames.sorted()
     static let taskRunnerTerminalToolNames: Set<String> = [
         "execute_command", "process_poll", "process_log", "process_wait", "process_write",
         "process_kill",
     ]
+    static let taskRunnerRequirementSurveyToolNames =
+        NativeMCPRequirementSurveyTools.readToolNames
+            .union(NativeMCPRequirementSurveyTools.writeToolNames)
     public static let readOnlyToolNames = [attachmentReadToolName]
         + projectReadOnlyToolNames + terminalReadOnlyToolNames
+        + requirementSurveyReadOnlyToolNames
     public static let approvalExemptToolNames = [
         "open_edit_session", "stage_edit_batch", "abort_edit_session",
     ]
@@ -125,6 +131,8 @@ public enum NativeLocalAgentPlatformToolCatalog {
                   taskRunnerTerminalToolNames.contains(name) else { return nil }
             return capabilityTool(value)
         }
+        + NativeMCPRequirementSurveyTools.readToolDefinitions.map(capabilityTool)
+        + NativeMCPRequirementSurveyTools.writeToolDefinitions.map(capabilityTool)
 
     static var taskRunnerToolNames: Set<String> {
         Set(taskRunnerCapabilityTools.compactMap { value in
@@ -290,6 +298,7 @@ public actor NativeLocalAgentPlatformToolWorker {
         attachmentRootURL: URL,
         projects: NativeLocalProjectsService,
         connector: NativeLocalConnectorService,
+        agentGroupChats: NativeAgentGroupChatService,
         workerID: String = "macos-platform-tool-worker"
     ) {
         client = .init(host: host)
@@ -303,7 +312,8 @@ public actor NativeLocalAgentPlatformToolWorker {
                 projects: projects,
                 connector: connector,
                 writeStore: writeStore,
-                terminalStore: terminalStore
+                terminalStore: terminalStore,
+                agentGroupChats: agentGroupChats
             )
         )
         approvalHandler = NativeLocalAgentToolApprovalHandler(

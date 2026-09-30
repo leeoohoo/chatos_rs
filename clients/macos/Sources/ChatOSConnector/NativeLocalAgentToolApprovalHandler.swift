@@ -30,6 +30,7 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
                 || NativeLocalAgentPlatformToolCatalog.taskRunnerTerminalToolNames.contains(
                     $0.toolName
                 )
+                || NativeMCPRequirementSurveyTools.writeToolNames.contains($0.toolName)
         }) else { return false }
         let context = try await contextResolver.resolve(
             ownerUserID: ownerUserID,
@@ -110,6 +111,24 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
                 .init(level: "medium", reason: "本地任务请求终止运行中的命令。"),
                 "终止当前任务启动的本地命令",
                 "local-agent-terminal"
+            )
+        }
+        if invocation.toolName == "requirement_survey_create" {
+            return (
+                "requirement_survey_create",
+                ["create a project-bound requirement survey"],
+                .init(level: "medium", reason: "本地任务请求创建一张需要 Human 回答的需求调研单。"),
+                "在当前本地项目中创建需求调研单",
+                "local-agent-requirement-survey"
+            )
+        }
+        if invocation.toolName == "requirement_survey_resolve" {
+            return (
+                "requirement_survey_resolve",
+                ["resolve a submitted project survey"],
+                .init(level: "medium", reason: "本地任务请求写入需求调研解决方案和执行计划。"),
+                "写入当前本地项目的需求调研解决方案",
+                "local-agent-requirement-survey"
             )
         }
         return (
