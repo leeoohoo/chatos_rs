@@ -316,6 +316,19 @@ impl HostRequestHandler for LocalAgentHostCoordinator {
                 ),
             );
         }
+        if matches!(
+            request.command,
+            HostCommand::ClaimNextRun(_) | HostCommand::CommitStep(_)
+        ) {
+            return HostResponseEnvelope::failure(
+                request.command_id,
+                HostError::new(
+                    "reserved_command",
+                    "model Run claims and commits are owned by the built-in local worker",
+                    false,
+                ),
+            );
+        }
         if let Some(response) = self.reject_external_reserved_tool_commit(&request).await {
             return response;
         }

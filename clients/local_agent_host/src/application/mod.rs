@@ -5,6 +5,8 @@
 
 mod assembly;
 mod coordinator;
+#[cfg(test)]
+mod coordinator_worker_tests;
 mod memory_sync;
 #[cfg(test)]
 mod memory_sync_tests;
