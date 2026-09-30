@@ -175,10 +175,13 @@ extension AppModel {
     }
 
     func retryPetActivity(_ activity: PetActivity, instruction: String) async throws {
-        guard let messageID = activity.route.messageID?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !messageID.isEmpty,
-              let runID = activity.route.runID?.trimmingCharacters(in: .whitespacesAndNewlines),
+        guard let runID = activity.route.runID?.trimmingCharacters(in: .whitespacesAndNewlines),
               !runID.isEmpty else {
+            throw PetActivityActionError.retryUnavailable
+        }
+        let messageID = activity.route.messageID?.trimmingCharacters(in: .whitespacesAndNewlines)
+            .petNonEmpty ?? "local-run:\(runID)"
+        guard let messageTaskGraphService else {
             throw PetActivityActionError.retryUnavailable
         }
         _ = try await messageTaskGraphService.retryRun(
@@ -193,10 +196,14 @@ extension AppModel {
     }
 
     func cancelPetActivity(_ activity: PetActivity) async throws {
-        if let messageID = activity.route.messageID?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !messageID.isEmpty,
-           let taskID = activity.route.taskID?.trimmingCharacters(in: .whitespacesAndNewlines),
+        if let taskID = activity.route.taskID?.trimmingCharacters(in: .whitespacesAndNewlines),
            !taskID.isEmpty {
+            guard let messageTaskGraphService else {
+                throw PetActivityActionError.cancelUnavailable
+            }
+            let messageID = activity.route.messageID?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .petNonEmpty ?? "local-task:\(taskID)"
             try await messageTaskGraphService.cancelTask(
                 messageID: messageID,
                 taskID: taskID,
@@ -226,18 +233,21 @@ extension AppModel {
     }
 
     func loadPetTask(_ activity: PetActivity) async throws -> MessageTask {
-        guard let messageID = activity.route.messageID?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-              !messageID.isEmpty,
-              let taskID = activity.route.taskID?
+        guard let taskID = activity.route.taskID?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
               !taskID.isEmpty else {
             throw PetActivityActionError.taskDetailUnavailable
         }
+        let messageID = activity.route.messageID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .petNonEmpty ?? "local-task:\(taskID)"
         let lookup = MessageTaskLookup(
             sessionID: activity.route.conversationID,
             turnID: activity.route.turnID
         )
+        guard let messageTaskGraphService else {
+            throw PetActivityActionError.taskDetailUnavailable
+        }
         let task = try await messageTaskGraphService.fetchTask(
             messageID: messageID,
             taskID: taskID,
@@ -326,4 +336,8 @@ extension AppModel {
         return try await petActivityService.fetchOpenActivities(limit: 500)
     }
 
+}
+
+private extension String {
+    var petNonEmpty: String? { isEmpty ? nil : self }
 }

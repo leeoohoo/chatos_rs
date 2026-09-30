@@ -101,7 +101,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let commandService: NativeLocalAgentConversationService?
     let petActivityService: NativeLocalAgentPetActivityService?
     let turnProcessService: ChatOSTurnProcessService
-    let messageTaskGraphService: ChatOSMessageTaskGraphService
+    let messageTaskGraphService: NativeLocalAgentMessageTaskGraphService?
     let runtimeSettingsService: ChatOSConversationRuntimeSettingsService
     let askUserPromptService: ChatOSAskUserPromptService
     let workspaceService: ChatOSWorkspaceService
@@ -224,6 +224,9 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         self.conversationService = localAgentConversationService
         self.petActivityService = localAgentHost.map {
             NativeLocalAgentPetActivityService(host: $0)
+        }
+        self.messageTaskGraphService = localAgentHost.map {
+            NativeLocalAgentMessageTaskGraphService(host: $0)
         }
         self.workspaceService = ChatOSWorkspaceService(client: apiClient)
         self.projectConversationService = ChatOSProjectConversationService(client: apiClient)
@@ -353,7 +356,6 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         )
         self.commandService = localAgentConversationService
         self.turnProcessService = ChatOSTurnProcessService(client: apiClient)
-        self.messageTaskGraphService = ChatOSMessageTaskGraphService(client: apiClient)
         self.runtimeSettingsService = ChatOSConversationRuntimeSettingsService(client: apiClient)
         self.askUserPromptService = ChatOSAskUserPromptService(client: apiClient)
         idleSleepController.setEnabled(preventsIdleSystemSleep)

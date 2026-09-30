@@ -308,7 +308,7 @@ public actor NativeLocalAgentConversationService:
                 userMessage: userMessage,
                 finalAssistantMessage: replies.last?.message,
                 assistantReplies: replies,
-                isTaskGraphAvailable: false,
+                isTaskGraphAvailable: true,
                 status: status,
                 startedAt: Date(timeIntervalSince1970: Double(turn.createdAtUnixMs) / 1_000),
                 completedAt: status == .streaming ? nil

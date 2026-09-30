@@ -44,6 +44,7 @@ public struct LocalAgentEventRecord: Decodable, Sendable, Equatable {
     public let eventID: String
     public let runID: String
     public let eventType: String
+    public let payload: LocalAgentJSONValue?
     public let createdAtUnixMs: Int64
 
     private enum CodingKeys: String, CodingKey {
@@ -51,6 +52,7 @@ public struct LocalAgentEventRecord: Decodable, Sendable, Equatable {
         case eventID = "event_id"
         case runID = "run_id"
         case eventType = "event_type"
+        case payload
         case createdAtUnixMs = "created_at_unix_ms"
     }
 }

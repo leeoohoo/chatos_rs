@@ -134,9 +134,11 @@ extension AppModel {
         guard let localAgentHost else { return }
         let commandService = commandService
         let petActivityService = petActivityService
+        let messageTaskGraphService = messageTaskGraphService
         Task {
             await commandService?.reset()
             await petActivityService?.reset()
+            await messageTaskGraphService?.reset()
             await localAgentHost.stop()
         }
     }
@@ -159,6 +161,7 @@ extension AppModel {
                     bootstrap: bootstrap
                 )
                 await self?.petActivityService?.configure(ownerUserID: ownerUserID)
+                await self?.messageTaskGraphService?.configure(ownerUserID: ownerUserID)
                 self?.localAgentHostError = nil
             } catch is CancellationError {
             } catch {
