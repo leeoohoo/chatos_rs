@@ -110,7 +110,9 @@ extension NativeLocalConnectorService {
         let capability = LocalAgentCapabilityPolicySnapshot(
             ownerUserID: ownerUserID,
             profileKey: "main_chat",
-            capabilityPolicyRevision: "native-main-chat-v1"
+            capabilityPolicyRevision: "native-main-chat-v2",
+            instructions: "Use local_attachment_read for attachment content. Treat authorized_local_ref values as opaque and never infer or request filesystem paths.",
+            tools: NativeLocalAgentPlatformToolCatalog.capabilityTools
         )
         try await controlPlane.publishCapabilities(capability)
         return .init(

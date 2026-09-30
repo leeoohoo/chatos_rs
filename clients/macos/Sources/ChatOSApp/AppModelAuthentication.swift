@@ -138,6 +138,7 @@ extension AppModel {
         let askUserPromptService = askUserPromptService
         let turnProcessService = turnProcessService
         let runtimeSettingsService = runtimeSettingsService
+        let platformToolWorker = platformToolWorker
         Task {
             await commandService?.reset()
             await petActivityService?.reset()
@@ -145,6 +146,7 @@ extension AppModel {
             await askUserPromptService?.reset()
             await turnProcessService?.reset()
             await runtimeSettingsService?.reset()
+            await platformToolWorker?.reset()
             await localAgentHost.stop()
         }
     }
@@ -174,6 +176,7 @@ extension AppModel {
                 await self?.messageTaskGraphService?.configure(ownerUserID: ownerUserID)
                 await self?.askUserPromptService?.configure(ownerUserID: ownerUserID)
                 await self?.turnProcessService?.configure(ownerUserID: ownerUserID)
+                await self?.platformToolWorker?.configure(ownerUserID: ownerUserID)
                 self?.localAgentHostError = nil
             } catch is CancellationError {
             } catch {

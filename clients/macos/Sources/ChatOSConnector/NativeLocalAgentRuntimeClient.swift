@@ -69,6 +69,16 @@ public struct NativeLocalAgentRuntimeClient: Sendable {
         self.host = host
     }
 
+    public func run(ownerUserID: String, runID: String) async throws -> LocalAgentRunRecord {
+        let result: RunResult = try await host.request(GetRunCommand(
+            type: "get_run",
+            ownerUserID: ownerUserID,
+            runID: runID
+        ))
+        guard result.type == "run" else { throw NativeLocalAgentHostError.invalidResponse }
+        return result.run
+    }
+
     public func listRuns(
         ownerUserID: String,
         scope: String,
@@ -119,6 +129,18 @@ public struct NativeLocalAgentRuntimeClient: Sendable {
         ))
         guard result.type == "run" else { throw NativeLocalAgentHostError.invalidResponse }
         return result.run
+    }
+}
+
+private struct GetRunCommand: Encodable, Sendable {
+    let type: String
+    let ownerUserID: String
+    let runID: String
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case ownerUserID = "owner_user_id"
+        case runID = "run_id"
     }
 }
 

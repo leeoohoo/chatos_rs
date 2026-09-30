@@ -104,6 +104,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let messageTaskGraphService: NativeLocalAgentMessageTaskGraphService?
     let runtimeSettingsService: NativeLocalAgentConversationRuntimeSettingsService?
     let askUserPromptService: NativeLocalAgentAskUserPromptService?
+    let platformToolWorker: NativeLocalAgentPlatformToolWorker?
     let workspaceService: ChatOSWorkspaceService
     let localConnectorService: NativeLocalConnectorService
     let localAgentHost: (any LocalAgentHostClientServicing)?
@@ -214,19 +215,28 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         }
         let localAgentRuntimeSettingsService: NativeLocalAgentConversationRuntimeSettingsService?
         let localAgentConversationService: NativeLocalAgentConversationService?
+        let localAgentPlatformToolWorker: NativeLocalAgentPlatformToolWorker?
         if let localAgentHost {
+            let attachmentRootURL = RuntimeConfiguration.nativeConnectorStateURL
+                .deletingLastPathComponent()
+                .appendingPathComponent("LocalAgent/Attachments", isDirectory: true)
             let settings = NativeLocalAgentConversationRuntimeSettingsService(host: localAgentHost)
+            let worker = NativeLocalAgentPlatformToolWorker(
+                host: localAgentHost,
+                attachmentRootURL: attachmentRootURL
+            )
             localAgentRuntimeSettingsService = settings
+            localAgentPlatformToolWorker = worker
             localAgentConversationService = NativeLocalAgentConversationService(
                 host: localAgentHost,
-                attachmentRootURL: RuntimeConfiguration.nativeConnectorStateURL
-                    .deletingLastPathComponent()
-                    .appendingPathComponent("LocalAgent/Attachments", isDirectory: true),
-                runtimeSettings: settings
+                attachmentRootURL: attachmentRootURL,
+                runtimeSettings: settings,
+                platformToolWorker: worker
             )
         } else {
             localAgentRuntimeSettingsService = nil
             localAgentConversationService = nil
+            localAgentPlatformToolWorker = nil
         }
         self.localAgentHost = localAgentHost
         self.conversationService = localAgentConversationService
@@ -242,6 +252,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         self.askUserPromptService = localAgentHost.map {
             NativeLocalAgentAskUserPromptService(host: $0)
         }
+        self.platformToolWorker = localAgentPlatformToolWorker
         self.workspaceService = ChatOSWorkspaceService(client: apiClient)
         self.projectConversationService = ChatOSProjectConversationService(client: apiClient)
         let localProjectsService = NativeLocalProjectsService(

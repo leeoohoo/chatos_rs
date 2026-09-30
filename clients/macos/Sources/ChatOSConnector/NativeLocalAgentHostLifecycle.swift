@@ -5,15 +5,18 @@ public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
     public let executableURL: URL
     public let databaseURL: URL
     public let startupTimeout: Duration
+    public let readOnlyToolNames: [String]
 
     public init(
         executableURL: URL,
         databaseURL: URL,
-        startupTimeout: Duration = .seconds(10)
+        startupTimeout: Duration = .seconds(10),
+        readOnlyToolNames: [String] = NativeLocalAgentPlatformToolCatalog.readOnlyToolNames
     ) {
         self.executableURL = executableURL
         self.databaseURL = databaseURL
         self.startupTimeout = startupTimeout
+        self.readOnlyToolNames = readOnlyToolNames
     }
 }
 
@@ -241,7 +244,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
             "--database", database.path,
             "--owner-user-id", ownerUserID,
             "--stdio",
-        ]
+        ] + configuration.readOnlyToolNames.sorted().flatMap { ["--read-only-tool", $0] }
         process.environment = safeEnvironment(credentialEnvironment: credentialEnvironment)
         process.standardInput = inputPipe
         process.standardOutput = outputPipe

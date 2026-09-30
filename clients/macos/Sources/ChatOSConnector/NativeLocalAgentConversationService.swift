@@ -1,5 +1,4 @@
 import ChatOSCore
-import CryptoKit
 import Foundation
 
 public actor NativeLocalAgentConversationService:
@@ -15,16 +14,19 @@ public actor NativeLocalAgentConversationService:
     private let client: NativeLocalAgentConversationClient
     private let attachmentVault: NativeLocalAgentAttachmentVault
     private let runtimeSettings: NativeLocalAgentConversationRuntimeSettingsService
+    private let platformToolWorker: NativeLocalAgentPlatformToolWorker?
     private var context: Context?
 
     public init(
         host: any LocalAgentHostClientServicing,
         attachmentRootURL: URL,
-        runtimeSettings: NativeLocalAgentConversationRuntimeSettingsService
+        runtimeSettings: NativeLocalAgentConversationRuntimeSettingsService,
+        platformToolWorker: NativeLocalAgentPlatformToolWorker? = nil
     ) {
         self.client = NativeLocalAgentConversationClient(host: host)
         self.attachmentVault = NativeLocalAgentAttachmentVault(rootURL: attachmentRootURL)
         self.runtimeSettings = runtimeSettings
+        self.platformToolWorker = platformToolWorker
     }
 
     public func configure(
@@ -79,6 +81,7 @@ public actor NativeLocalAgentConversationService:
             modelConfigRevision: runtimeSelection.modelSnapshot.modelConfigRevision,
             capabilityPolicyRevision: context.capability.capabilityPolicyRevision
         ))
+        await platformToolWorker?.wake()
         return .init(
             accepted: true,
             turnID: result.turn.turnID,
@@ -116,6 +119,7 @@ public actor NativeLocalAgentConversationService:
             messageMetadata: .object(["source": .string("native_guidance")]),
             attachments: attachments
         ))
+        await platformToolWorker?.wake()
         return .init(
             accepted: true,
             turnID: result.turn.turnID,
@@ -384,49 +388,6 @@ public actor NativeLocalAgentConversationService:
         case .failed: "本地执行失败"
         case .cancelled: "本地执行已取消"
         }
-    }
-}
-
-private struct NativeLocalAgentAttachmentVault: Sendable {
-    let rootURL: URL
-
-    func authorize(
-        _ drafts: [ConversationAttachmentDraft],
-        ownerUserID: String,
-        conversationID: String
-    ) throws -> [LocalAgentConversationAttachmentSpec] {
-        try drafts.map { draft in
-            let token = UUID().uuidString.lowercased()
-            let directory = rootURL
-                .appendingPathComponent(safe(ownerUserID), isDirectory: true)
-                .appendingPathComponent(safe(conversationID), isDirectory: true)
-            try FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
-            let file = directory.appendingPathComponent(token, isDirectory: false)
-            try draft.data.write(to: file, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-            let digest = SHA256.hash(data: draft.data)
-                .map { String(format: "%02x", $0) }
-                .joined()
-            return .init(
-                attachmentID: draft.id,
-                displayName: draft.name,
-                mediaType: draft.mimeType,
-                byteSize: UInt64(draft.data.count),
-                sha256: digest,
-                authorizedLocalRef: "local-attachment:\(token)",
-                metadata: .object(["kind": .string(draft.kind.rawValue)])
-            )
-        }
-    }
-
-    private func safe(_ value: String) -> String {
-        value.unicodeScalars.map { scalar in
-            CharacterSet.alphanumerics.contains(scalar) || scalar == "-" ? String(scalar) : "_"
-        }.joined()
     }
 }
 
