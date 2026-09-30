@@ -41,7 +41,6 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
     public ObservableCollection<AgentTodoItemViewModel> TodoItems { get; } = [];
     public ObservableCollection<AgentTodoProgress> SelectedTodoProgress { get; } = [];
     public ObservableCollection<AgentTeamAsset> Assets { get; } = [];
-    public ObservableCollection<AgentRequirementSurvey> RequirementSurveys { get; } = [];
     public ObservableCollection<AgentStaffingProposal> StaffingProposals { get; } = [];
     public ObservableCollection<AgentRunSummary> Runs { get; } = [];
     public ObservableCollection<AgentRunItemViewModel> RunItems { get; } = [];
@@ -337,7 +336,6 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
                 new AgentTodoItemViewModel(todo,
                     agentNames.TryGetValue(todo.Draft.AgentId, out var name) ? name : null)));
             Replace(Assets, snapshot.Assets);
-            Replace(RequirementSurveys, snapshot.RequirementSurveys);
             Replace(StaffingProposals, snapshot.StaffingProposals);
             Replace(Runs, snapshot.Runs);
             var runItems = snapshot.Runs.Select(run =>
@@ -364,7 +362,6 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
         TodoItems.Clear();
         SelectedTodoProgress.Clear();
         Assets.Clear();
-        RequirementSurveys.Clear();
         StaffingProposals.Clear();
         Runs.Clear();
         RunItems.Clear();

@@ -141,15 +141,6 @@ public sealed partial class AgentTeamWorkspaceViewModel
                 asset.Revision, context.Token).ConfigureAwait(false);
         });
 
-    public Task SubmitRequirementSurveyAsync(
-        AgentRequirementSurvey survey,
-        AgentRequirementSubmission submission) =>
-        MutateRoomAsync("正在提交需求调研…", async (context, room) =>
-        {
-            await _service.SubmitRequirementSurveyAsync(context.Owner, room.Id,
-                survey.Id, submission, context.Token).ConfigureAwait(false);
-        });
-
     public Task ResolveStaffingProposalAsync(AgentStaffingProposal proposal, bool approve) =>
         MutateRoomAsync(approve ? "正在批准成员提案…" : "正在拒绝成员提案…",
             async (context, room) =>

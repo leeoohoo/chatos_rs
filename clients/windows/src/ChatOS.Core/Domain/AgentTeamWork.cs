@@ -256,7 +256,6 @@ public sealed record AgentTeamSnapshot(
     IReadOnlyList<AgentMessage> Messages,
     IReadOnlyList<AgentTodo> Todos,
     IReadOnlyList<AgentTeamAsset> Assets,
-    IReadOnlyList<AgentRequirementSurvey> RequirementSurveys,
     IReadOnlyList<AgentStaffingProposal> StaffingProposals,
     IReadOnlyList<AgentRunSummary> Runs,
     bool HasEarlierMessages = false);

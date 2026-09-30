@@ -244,43 +244,6 @@ public interface IAgentTeamStore
         int limit = 100,
         CancellationToken cancellationToken = default);
 
-    Task<AgentRequirementSurvey> CreateRequirementSurveyAsync(
-        string ownerUserId,
-        string teamRoomId,
-        string creatorAgentId,
-        string sourceDeliveryId,
-        string requestKey,
-        AgentRequirementSurveyDraft draft,
-        CancellationToken cancellationToken = default);
-
-    Task<IReadOnlyList<AgentRequirementSurvey>> ListRequirementSurveysAsync(
-        string ownerUserId,
-        string projectId,
-        AgentRequirementSurveyStatus? status = null,
-        int limit = 200,
-        CancellationToken cancellationToken = default);
-
-    Task<AgentRequirementSurvey?> GetRequirementSurveyAsync(
-        string ownerUserId,
-        string projectId,
-        string surveyId,
-        CancellationToken cancellationToken = default);
-
-    Task<AgentRequirementSurvey> SubmitRequirementSurveyAsync(
-        string ownerUserId,
-        string projectId,
-        string surveyId,
-        AgentRequirementSubmission submission,
-        CancellationToken cancellationToken = default);
-
-    Task<AgentRequirementSurvey> ResolveRequirementSurveyAsync(
-        string ownerUserId,
-        string projectId,
-        string surveyId,
-        string resolverAgentId,
-        AgentRequirementResolution resolution,
-        CancellationToken cancellationToken = default);
-
     Task<AgentStaffingProposal> CreateStaffingProposalAsync(
         string ownerUserId,
         string sourceRoomId,

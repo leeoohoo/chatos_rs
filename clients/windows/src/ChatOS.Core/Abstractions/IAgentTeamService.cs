@@ -153,25 +153,6 @@ public interface IAgentTeamService
         string assetId,
         CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<AgentRequirementSurvey>> ListProjectRequirementSurveysAsync(
-        string ownerUserId,
-        string projectId,
-        CancellationToken cancellationToken = default);
-
-    Task<AgentRequirementSurvey> SubmitProjectRequirementSurveyAsync(
-        string ownerUserId,
-        string projectId,
-        string surveyId,
-        AgentRequirementSubmission submission,
-        CancellationToken cancellationToken = default);
-
-    Task<AgentRequirementSurvey> SubmitRequirementSurveyAsync(
-        string ownerUserId,
-        string roomId,
-        string surveyId,
-        AgentRequirementSubmission submission,
-        CancellationToken cancellationToken = default);
-
     Task<AgentStaffingProposal> ResolveStaffingProposalAsync(
         string ownerUserId,
         string roomId,
