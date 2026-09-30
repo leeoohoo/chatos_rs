@@ -29,6 +29,7 @@ public sealed class WindowsLocalAgentBootstrapService
     private readonly WindowsLocalAgentMessageTaskGraphService _taskGraph;
     private readonly WindowsLocalAgentWorkspaceService _workspace;
     private readonly WindowsLocalAgentProjectConversationService _projectConversations;
+    private readonly WindowsLocalAgentNotepadService _notepad;
     private readonly ChatOSApiClient _api;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -46,6 +47,7 @@ public sealed class WindowsLocalAgentBootstrapService
         WindowsLocalAgentMessageTaskGraphService taskGraph,
         WindowsLocalAgentWorkspaceService workspace,
         WindowsLocalAgentProjectConversationService projectConversations,
+        WindowsLocalAgentNotepadService notepad,
         ChatOSApiClient api)
     {
         _host = host;
@@ -61,6 +63,7 @@ public sealed class WindowsLocalAgentBootstrapService
         _taskGraph = taskGraph;
         _workspace = workspace;
         _projectConversations = projectConversations;
+        _notepad = notepad;
         _api = api;
     }
 
@@ -84,6 +87,7 @@ public sealed class WindowsLocalAgentBootstrapService
             _taskGraph.Reset();
             _workspace.Reset();
             _projectConversations.Reset();
+            _notepad.Reset();
             Current = null;
             if (_host.ActiveOwnerUserId is { } activeOwner &&
                 !string.Equals(activeOwner, ownerUserId, StringComparison.Ordinal))
@@ -196,6 +200,7 @@ public sealed class WindowsLocalAgentBootstrapService
             _taskGraph.Configure(ownerUserId);
             _workspace.Configure(ownerUserId);
             _projectConversations.Configure(ownerUserId);
+            _notepad.Configure(ownerUserId);
             Current = result;
             return result;
         }
@@ -217,6 +222,7 @@ public sealed class WindowsLocalAgentBootstrapService
         _taskGraph.Reset();
         _workspace.Reset();
         _projectConversations.Reset();
+        _notepad.Reset();
         Current = null;
     }
 

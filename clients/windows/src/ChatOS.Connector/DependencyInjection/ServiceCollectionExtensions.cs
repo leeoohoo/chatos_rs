@@ -36,6 +36,10 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<IConversationRuntimeSettingsService>(provider =>
                 provider.GetRequiredService<WindowsLocalAgentConversationRuntimeSettingsService>());
             services.AddSingleton<WindowsLocalAgentConversationClient>();
+            services.AddSingleton<WindowsLocalAgentNotepadClient>();
+            services.AddSingleton<WindowsLocalAgentNotepadService>();
+            services.AddSingleton<INotepadService>(provider =>
+                provider.GetRequiredService<WindowsLocalAgentNotepadService>());
             services.AddSingleton<WindowsLocalAgentWorkspaceService>();
             services.AddSingleton<IWorkspaceRelationsService>(provider =>
                 provider.GetRequiredService<WindowsLocalAgentWorkspaceService>());
