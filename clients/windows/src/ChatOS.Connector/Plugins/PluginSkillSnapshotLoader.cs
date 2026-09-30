@@ -5,7 +5,7 @@ using ChatOS.Connector.Relay;
 
 namespace ChatOS.Connector.Plugins;
 
-internal static class PluginSkillSnapshotLoader
+internal static partial class PluginSkillSnapshotLoader
 {
     public const int ProtocolVersion = 2;
     private const int MaximumManifestBytes = 4 * 1024 * 1024;

@@ -38,6 +38,8 @@ public sealed class LocalAgentHostProcessTests
         AssertReadOnly(arguments, "project_search");
         AssertReadOnly(arguments, "capability_search");
         AssertReadOnly(arguments, "capability_describe");
+        AssertReadOnly(arguments, "capability_skill_activate");
+        AssertReadOnly(arguments, "capability_skill_read_resource");
         AssertApprovalExempt(arguments, "capability_invoke");
         Assert.DoesNotContain("project_write", arguments);
         Assert.DoesNotContain("terminal_exec", arguments);

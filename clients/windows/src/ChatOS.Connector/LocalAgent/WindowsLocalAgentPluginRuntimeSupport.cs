@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using ChatOS.Connector.Plugins;
 using ChatOS.Connector.Relay;
 
 namespace ChatOS.Connector.LocalAgent;
@@ -28,10 +29,16 @@ internal static class WindowsLocalAgentPluginRuntimeSupport
         return output;
     }
 
-    public static bool HasSkillGate(JsonElement definition) =>
-        definition.TryGetProperty("_meta", out var metadata) &&
-        metadata.ValueKind == JsonValueKind.Object &&
-        metadata.TryGetProperty("chatos/skillGate", out _);
+    public static PluginSkillGate? SkillGate(JsonElement definition)
+    {
+        if (!definition.TryGetProperty("_meta", out var metadata) ||
+            metadata.ValueKind != JsonValueKind.Object ||
+            !metadata.TryGetProperty("chatos/skillGate", out var declaration))
+        {
+            return null;
+        }
+        return PluginSkillGate.Parse(declaration);
+    }
 
     public static string Description(JsonElement definition) =>
         definition.TryGetProperty("description", out var value) &&

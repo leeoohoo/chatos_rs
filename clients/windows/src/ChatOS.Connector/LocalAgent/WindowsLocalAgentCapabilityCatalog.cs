@@ -203,6 +203,41 @@ internal static class WindowsLocalAgentCapabilityCatalog
         Parse("""
         {
           "type": "function",
+          "name": "capability_skill_activate",
+          "description": "Activate one fixed Plugin Skill required by tools returned from capability_describe and return its immutable instructions and resource index.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "plugin_option": { "type": "string", "minLength": 1, "maxLength": 80 },
+              "skill_name": { "type": "string", "minLength": 1, "maxLength": 120 }
+            },
+            "required": ["plugin_option", "skill_name"],
+            "additionalProperties": false
+          }
+        }
+        """),
+        Parse("""
+        {
+          "type": "function",
+          "name": "capability_skill_read_resource",
+          "description": "Read a bounded page of a text resource belonging to an activated fixed Plugin Skill.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "plugin_option": { "type": "string", "minLength": 1, "maxLength": 80 },
+              "skill_name": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "relative_path": { "type": "string", "minLength": 1, "maxLength": 500 },
+              "offset": { "type": "integer", "minimum": 0 },
+              "limit": { "type": "integer", "minimum": 1, "maximum": 64000 }
+            },
+            "required": ["plugin_option", "skill_name", "relative_path"],
+            "additionalProperties": false
+          }
+        }
+        """),
+        Parse("""
+        {
+          "type": "function",
           "name": "capability_invoke",
           "description": "Invoke a local Plugin tool previously returned by capability_describe. Plugin permissions and per-call approval remain enforced by the native client.",
           "parameters": {
@@ -224,7 +259,10 @@ internal static class WindowsLocalAgentCapabilityCatalog
         StringComparer.Ordinal);
 
     public static IReadOnlySet<string> PluginToolNames { get; } = new HashSet<string>(
-        ["capability_search", "capability_describe", "capability_invoke"],
+        [
+            "capability_search", "capability_describe", "capability_skill_activate",
+            "capability_skill_read_resource", "capability_invoke",
+        ],
         StringComparer.Ordinal);
 
     public static IReadOnlySet<string> TaskExecutionToolNames { get; } =

@@ -63,7 +63,8 @@ public sealed class WindowsLocalAgentControlPlaneTests
         Assert.Equal(
             new[] {
                 "project_list", "project_read", "project_search", "project_write", "terminal_exec",
-                "capability_search", "capability_describe", "capability_invoke",
+                "capability_search", "capability_describe", "capability_skill_activate",
+                "capability_skill_read_resource", "capability_invoke",
             },
             names);
         Assert.True(names.ToHashSet().SetEquals(
@@ -77,7 +78,8 @@ public sealed class WindowsLocalAgentControlPlaneTests
             "project_list", "project_read", "project_search", "project_write", "terminal_exec",
         }.ToHashSet().SetEquals(WindowsLocalAgentCapabilityCatalog.ProjectToolNames));
         Assert.True(new[] {
-            "capability_search", "capability_describe", "capability_invoke",
+            "capability_search", "capability_describe", "capability_skill_activate",
+            "capability_skill_read_resource", "capability_invoke",
         }.ToHashSet().SetEquals(WindowsLocalAgentCapabilityCatalog.PluginToolNames));
     }
 }

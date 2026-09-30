@@ -86,7 +86,8 @@ internal sealed class LocalAgentHostProcessLauncher : ILocalAgentHostProcessLaun
         foreach (var name in new[]
         {
             "local_attachment_read", "project_list", "project_read", "project_search",
-            "capability_search", "capability_describe",
+            "capability_search", "capability_describe", "capability_skill_activate",
+            "capability_skill_read_resource",
         })
         {
             start.ArgumentList.Add("--read-only-tool");

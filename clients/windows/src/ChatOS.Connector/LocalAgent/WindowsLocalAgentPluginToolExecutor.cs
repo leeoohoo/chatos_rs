@@ -18,7 +18,7 @@ public interface IWindowsLocalAgentPluginToolExecutor
     void Reset();
 }
 
-internal sealed class WindowsLocalAgentPluginToolExecutor(
+internal sealed partial class WindowsLocalAgentPluginToolExecutor(
     WindowsLocalAgentProjectToolExecutor projectTools,
     IInstalledPluginStore installedPlugins,
     ILocalPluginManagementService pluginManagement,
@@ -57,6 +57,10 @@ internal sealed class WindowsLocalAgentPluginToolExecutor(
         {
             "capability_search" => Search(session, arguments),
             "capability_describe" => await DescribeAsync(
+                session, arguments, cancellationToken).ConfigureAwait(false),
+            "capability_skill_activate" => await ActivateSkillAsync(
+                session, arguments, cancellationToken).ConfigureAwait(false),
+            "capability_skill_read_resource" => await ReadSkillResourceAsync(
                 session, arguments, cancellationToken).ConfigureAwait(false),
             "capability_invoke" => await InvokeAsync(
                 session, callId, arguments, cancellationToken).ConfigureAwait(false),
@@ -185,8 +189,14 @@ internal sealed class WindowsLocalAgentPluginToolExecutor(
                 description = tool.Description,
                 input_schema = tool.InputSchema,
                 approval = tool.Policy.ApprovalMode,
+                required_skills = tool.SkillGate?.CatalogSkillNames ?? Array.Empty<string>(),
             }),
-            omitted_skill_gated_tools = plugin.OmittedSkillGatedTools,
+            skills = plugin.Tools
+                .SelectMany(tool =>
+                    tool.SkillGate?.CatalogSkillNames ?? Array.Empty<string>())
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .Select(name => new { name, role = "leaf" }),
         }, JsonOptions);
     }
 
@@ -206,6 +216,18 @@ internal sealed class WindowsLocalAgentPluginToolExecutor(
             toolArguments.ValueKind != JsonValueKind.Object)
         {
             throw new InvalidOperationException("The Plugin tool arguments are invalid.");
+        }
+
+        if (tool.SkillGate is { } skillGate)
+        {
+            var missing = skillGate.RequiredSkillNames(toolArguments)
+                .Where(value => !plugin.ActivatedSkills.Contains(value))
+                .ToArray();
+            if (missing.Length > 0)
+            {
+                throw new InvalidOperationException(
+                    $"The Plugin tool requires activated Skills: {string.Join(", ", missing)}.");
+            }
         }
 
         var granted = runtimeSessions.Permissions(tool.AdapterSessionId);
@@ -276,7 +298,6 @@ internal sealed class WindowsLocalAgentPluginToolExecutor(
             option.Record, cancellationToken).ConfigureAwait(false);
         var tools = new List<PluginTool>();
         var adapterSessions = new List<string>();
-        var omittedSkillGatedTools = 0;
         try
         {
             foreach (var componentKey in componentKeys)
@@ -329,11 +350,6 @@ internal sealed class WindowsLocalAgentPluginToolExecutor(
                     adapterSessions.Add(adapterSessionId);
                     foreach (var definition in definitions)
                     {
-                        if (WindowsLocalAgentPluginRuntimeSupport.HasSkillGate(definition))
-                        {
-                            omittedSkillGatedTools++;
-                            continue;
-                        }
                         if (tools.Count >= MaximumTools) break;
                         var name = definition.GetProperty("name").GetString()!;
                         tools.Add(new PluginTool(
@@ -342,6 +358,7 @@ internal sealed class WindowsLocalAgentPluginToolExecutor(
                             WindowsLocalAgentPluginRuntimeSupport.Description(definition),
                             definition.GetProperty("inputSchema").Clone(),
                             PluginToolPolicy.Parse(definition),
+                            WindowsLocalAgentPluginRuntimeSupport.SkillGate(definition),
                             adapterSessionId,
                             identity));
                     }
@@ -365,11 +382,9 @@ internal sealed class WindowsLocalAgentPluginToolExecutor(
             if (tools.Count == 0)
             {
                 throw new InvalidOperationException(
-                    omittedSkillGatedTools > 0
-                        ? "The Plugin currently exposes only fixed-Skill-gated tools."
-                        : "The Plugin did not publish valid local tools.");
+                    "The Plugin did not publish valid local tools.");
             }
-            var loaded = new LoadedPlugin(tools, adapterSessions, omittedSkillGatedTools);
+            var loaded = new LoadedPlugin(tools, adapterSessions);
             session.Loaded.Add(option.Token, loaded);
             return loaded;
         }
@@ -445,45 +460,4 @@ internal sealed class WindowsLocalAgentPluginToolExecutor(
         }
     }
 
-    private sealed record PluginOption(
-        string Token,
-        LocalConnectorPlugin Catalog,
-        InstalledPluginRecord Record);
-
-    private sealed record PluginTool(
-        string Token,
-        string Name,
-        string Description,
-        JsonElement InputSchema,
-        PluginToolPolicy Policy,
-        string AdapterSessionId,
-        PluginRuntimeIdentity Identity);
-
-    private sealed record LoadedPlugin(
-        IReadOnlyList<PluginTool> Tools,
-        IReadOnlyList<string> AdapterSessionIds,
-        int OmittedSkillGatedTools);
-
-    private sealed class RunSession(
-        string ownerUserId,
-        string runId,
-        string conversationId,
-        string projectId,
-        string projectRoot,
-        string workspaceId,
-        string deviceId,
-        IReadOnlyList<PluginOption> options)
-    {
-        public string OwnerUserId { get; } = ownerUserId;
-        public string RunId { get; } = runId;
-        public string ConversationId { get; } = conversationId;
-        public string ProjectId { get; } = projectId;
-        public string ProjectRoot { get; } = projectRoot;
-        public string WorkspaceId { get; } = workspaceId;
-        public string DeviceId { get; } = deviceId;
-        public IReadOnlyList<PluginOption> Options { get; } = options;
-        public Dictionary<string, LoadedPlugin> Loaded { get; } = new(StringComparer.Ordinal);
-        public CancellationTokenSource Expiration { get; set; } = new();
-        public int DisposeStarted;
-    }
 }
