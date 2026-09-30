@@ -116,7 +116,7 @@ impl LocalRequirementSurveyToolExecutor {
         };
         Ok(json!({
             "survey": survey,
-            "next_action": "Stop execution and wait for the user to resolve this survey."
+            "run_state": "waiting_user"
         }))
     }
 
@@ -204,9 +204,13 @@ mod tests {
     use super::*;
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
+        ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand, CommitToolCommand,
         CreateConversationCommand, CreateRunCommand, GetRequirementSurveyCommand,
-        LocalAgentToolApprovalStatus, LocalAgentToolStatus, LocalConversationResourceBinding,
+        LocalAgentRunStatus, LocalAgentStepOutcome, LocalAgentToolApprovalStatus,
+        LocalAgentToolCall, LocalAgentToolStatus, LocalConversationResourceBinding,
+        ResolveRequirementSurveyCommand,
     };
+    use std::collections::BTreeMap;
 
     fn envelope(command_id: &str, command: HostCommand) -> HostRequestEnvelope {
         HostRequestEnvelope {
@@ -310,5 +314,189 @@ mod tests {
                 if survey.project_resource_id == "project-1"
                     && survey.source_task_id.as_deref() == Some("task-1")
         ));
+    }
+
+    #[tokio::test]
+    async fn survey_tool_commit_suspends_and_resolution_resumes_the_source_run() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = Arc::new(LocalAgentRuntime::new(storage));
+        runtime
+            .try_handle(envelope(
+                "conversation",
+                HostCommand::CreateConversation(CreateConversationCommand {
+                    conversation_id: "conversation-survey-flow".to_string(),
+                    owner_user_id: "user-1".to_string(),
+                    title: "Project".to_string(),
+                    resource: Some(LocalConversationResourceBinding {
+                        kind: LocalConversationResourceKind::Project,
+                        resource_id: "project-1".to_string(),
+                    }),
+                }),
+            ))
+            .await
+            .expect("conversation");
+        runtime
+            .try_handle(envelope(
+                "run",
+                HostCommand::CreateRun(CreateRunCommand {
+                    run_id: "run-survey-flow".to_string(),
+                    owner_user_id: "user-1".to_string(),
+                    owner_entity_type: "task".to_string(),
+                    owner_entity_id: "task-1".to_string(),
+                    profile_key: "task_execution".to_string(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: json!({
+                        "source_conversation_id": "conversation-survey-flow",
+                        "prompt": "build"
+                    }),
+                    max_iterations: 8,
+                }),
+            ))
+            .await
+            .expect("run");
+        let claimed = runtime
+            .try_handle(envelope(
+                "claim-run",
+                HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                    owner_user_id: "user-1".to_string(),
+                    worker_id: "model-worker".to_string(),
+                    lease_duration_ms: 30_000,
+                }),
+            ))
+            .await
+            .expect("claim run");
+        let HostResult::Claim { claim: Some(claim) } = claimed else {
+            panic!("expected run claim");
+        };
+        runtime
+            .try_handle(envelope(
+                "wait-tool",
+                HostCommand::CommitStep(CommitStepCommand {
+                    owner_user_id: "user-1".to_string(),
+                    run_id: claim.run.run_id,
+                    claim_token: claim.claim_token,
+                    expected_version: claim.run.version,
+                    outcome: LocalAgentStepOutcome::WaitForTool {
+                        batch_id: "survey-batch".to_string(),
+                        tool_calls: vec![LocalAgentToolCall {
+                            call_id: "survey-call".to_string(),
+                            tool_name: REQUIREMENT_SURVEY_CREATE_TOOL.to_string(),
+                            arguments: json!({
+                                "title": "Choose deployment",
+                                "questions": [{
+                                    "question_id": "deployment",
+                                    "prompt": "Where should this run?",
+                                    "response_kind": "single_choice",
+                                    "required": true,
+                                    "options": ["local", "cloud"]
+                                }]
+                            }),
+                            side_effecting: true,
+                            requires_approval: false,
+                        }],
+                        checkpoint: json!({"phase": "requirements"}),
+                    },
+                }),
+            ))
+            .await
+            .expect("wait for tool");
+        let claimed_tool = runtime
+            .try_handle(envelope(
+                "claim-tool",
+                HostCommand::ClaimNextTool(ClaimNextToolCommand {
+                    owner_user_id: "user-1".to_string(),
+                    worker_id: "local-tool-worker".to_string(),
+                    lease_duration_ms: 30_000,
+                    include_tool_names: Some(vec![REQUIREMENT_SURVEY_CREATE_TOOL.to_string()]),
+                    exclude_tool_names: Vec::new(),
+                }),
+            ))
+            .await
+            .expect("claim tool");
+        let HostResult::ToolClaim {
+            claim: Some(tool_claim),
+        } = claimed_tool
+        else {
+            panic!("expected tool claim");
+        };
+        let executor = LocalRequirementSurveyToolExecutor::new(Arc::clone(&runtime), "user-1")
+            .expect("executor");
+        let first_outcome = executor
+            .execute_tool(&tool_claim.invocation)
+            .await
+            .expect("execute survey tool");
+        let replayed_outcome = executor
+            .execute_tool(&tool_claim.invocation)
+            .await
+            .expect("replay survey tool");
+        assert_eq!(replayed_outcome, first_outcome);
+        let commit_command = CommitToolCommand {
+            owner_user_id: "user-1".to_string(),
+            invocation_id: tool_claim.invocation.invocation_id.clone(),
+            claim_token: tool_claim.claim_token.clone(),
+            expected_version: tool_claim.invocation.version,
+            outcome: first_outcome.clone(),
+        };
+        let committed = runtime
+            .try_handle(envelope(
+                "commit-survey-tool",
+                HostCommand::CommitTool(commit_command.clone()),
+            ))
+            .await
+            .expect("commit tool");
+        let HostResult::ToolCommit { result } = committed else {
+            panic!("expected tool commit");
+        };
+        assert_eq!(result.run.status, LocalAgentRunStatus::WaitingUser);
+        assert_eq!(result.run.checkpoint, json!({"phase": "requirements"}));
+        let replayed_commit = runtime
+            .try_handle(envelope(
+                "commit-survey-tool",
+                HostCommand::CommitTool(commit_command),
+            ))
+            .await
+            .expect("replay tool commit");
+        assert_eq!(replayed_commit, HostResult::ToolCommit { result });
+
+        let survey_id = format!("local-survey-{}", tool_claim.invocation.invocation_id);
+        let answers = BTreeMap::from([("deployment".to_string(), json!("local"))]);
+        let resolve_command = ResolveRequirementSurveyCommand {
+            owner_user_id: "user-1".to_string(),
+            survey_id: survey_id.clone(),
+            expected_version: 1,
+            answers,
+        };
+        let resolved = runtime
+            .try_handle(envelope(
+                "resolve-survey-flow",
+                HostCommand::ResolveRequirementSurvey(resolve_command.clone()),
+            ))
+            .await
+            .expect("resolve survey");
+        let HostResult::RequirementSurveyResolved { resolution } = &resolved else {
+            panic!("expected survey resolution");
+        };
+        assert_eq!(
+            resolution.resumed_run.status,
+            LocalAgentRunStatus::ContinuationReady
+        );
+        assert_eq!(
+            resolution.resumed_run.continuation_input.as_ref().unwrap()["survey_id"],
+            survey_id
+        );
+        let replayed_resolution = runtime
+            .try_handle(envelope(
+                "resolve-survey-flow",
+                HostCommand::ResolveRequirementSurvey(resolve_command),
+            ))
+            .await
+            .expect("replay survey resolution");
+        assert_eq!(replayed_resolution, resolved);
     }
 }

@@ -431,6 +431,56 @@ pub(super) async fn advance_run_after_tool(
     if remaining > 0 {
         return Ok(());
     }
+    let waiting_survey = sqlx::query(
+        "SELECT survey.survey_id, survey.project_resource_id \
+         FROM local_requirement_surveys survey \
+         INNER JOIN local_agent_tool_invocations invocation \
+           ON invocation.run_id = survey.source_run_id \
+          AND survey.survey_id = ('local-survey-' || invocation.invocation_id) \
+         WHERE survey.source_run_id = ? AND survey.status = 'open' \
+           AND invocation.batch_id = ? \
+           AND invocation.tool_name = 'requirement_survey_create' \
+           AND invocation.status = 'succeeded' \
+         ORDER BY survey.created_at_unix_ms, survey.survey_id LIMIT 1",
+    )
+    .bind(run_id)
+    .bind(batch_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .db()?;
+    if let Some(survey) = waiting_survey {
+        let survey_id: String = survey.try_get("survey_id").db()?;
+        let project_resource_id: String = survey.try_get("project_resource_id").db()?;
+        let payload = json!({
+            "survey_id": survey_id,
+            "project_resource_id": project_resource_id,
+            "batch_id": batch_id
+        });
+        let updated = sqlx::query(
+            "UPDATE local_agent_runs SET status = 'waiting_user', version = version + 1, \
+             pending_tool_batch_json = NULL, continuation_input_json = NULL, \
+             claim_token = NULL, claim_until_unix_ms = NULL, updated_at_unix_ms = ? \
+             WHERE run_id = ? AND status = 'waiting_tool_result'",
+        )
+        .bind(now_unix_ms)
+        .bind(run_id)
+        .execute(&mut *connection)
+        .await
+        .db()?;
+        if updated.rows_affected() == 1 {
+            SqliteClientStorage::insert_event(
+                connection,
+                event_id,
+                run_id,
+                "requirement_survey_waiting",
+                &payload,
+                now_unix_ms,
+            )
+            .await
+            .db()?;
+        }
+        return Ok(());
+    }
     let rows = sqlx::query(
         "SELECT invocation_id, run_id, batch_id, call_id, tool_name, arguments_json, \
          side_effecting, requires_approval, approval_status, approval_decided_by, \
