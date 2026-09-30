@@ -95,10 +95,3 @@ public struct ConversationAttachmentReference: Identifiable, Codable, Sendable, 
         case viewURL = "viewUrl"
     }
 }
-
-public protocol ConversationAttachmentUploading: Sendable {
-    func upload(
-        _ attachments: [ConversationAttachmentDraft],
-        conversationID: String
-    ) async throws -> [ConversationAttachmentReference]
-}

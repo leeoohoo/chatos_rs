@@ -54,7 +54,7 @@ public actor ChatOSAPIClient {
         return authenticationSessionID
     }
 
-    enum Service { case chatOS, userService, memoryEngine, taskRunner }
+    enum Service { case chatOS, userService, memoryEngine }
 
     public func webSocketURL(path: String, ticket: String) -> URL? {
         let base = configuration.baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -249,7 +249,6 @@ public actor ChatOSAPIClient {
             case .chatOS: "/api/chatos"
             case .userService: "/api/user"
             case .memoryEngine: "/api/memory"
-            case .taskRunner: "/api/task"
             }
             components.path = (path.isEmpty ? "" : "/" + path) + servicePath
             guard let resolved = components.url else { return nil }
