@@ -91,7 +91,7 @@ pub fn validate_stdio_environment_name(name: &str) -> Result<(), StdioPolicyViol
     ) || normalized.starts_with("LD_")
         || normalized.starts_with("DYLD_")
         || normalized.starts_with("XDG_")
-        || normalized.starts_with("MCP_MANAGEMENT_");
+        || normalized.starts_with("CHATOS_LOCAL_AGENT_");
     if !valid || controlled {
         return Err(StdioPolicyViolation::EnvironmentEntry);
     }
@@ -108,7 +108,7 @@ mod tests {
             "PATH",
             "CHATOS_CLOUD_STDIO_LAUNCH_SPEC_PATH",
             "LD_PRELOAD",
-            "MCP_MANAGEMENT_SECRET",
+            "CHATOS_LOCAL_AGENT_MODEL_PRIMARY",
         ] {
             assert_eq!(
                 validate_stdio_environment_name(name),
