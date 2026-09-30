@@ -16,6 +16,8 @@ internal sealed class CompanionRelayHandler(
     WindowsLocalAgentProjectConversationService projectConversations,
     IProjectRegistry projects,
     ILocalProjectsService localProjects,
+    IAgentTeamStore agentStore,
+    IAgentTeamService agentTeams,
     CommandApprovalCoordinator approvals) : IRelayRequestHandler
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
@@ -39,6 +41,11 @@ internal sealed class CompanionRelayHandler(
         "companion_ask_user_prompts_request",
         "companion_ask_user_submit_request",
         "companion_ask_user_cancel_request",
+        "companion_agent_workspace_request",
+        "companion_agent_conversation_request",
+        "companion_agent_messages_request",
+        "companion_agent_send_message_request",
+        "companion_agent_open_direct_request",
         "companion_approvals_request",
         "companion_resolve_approval_request",
     };
@@ -79,6 +86,16 @@ internal sealed class CompanionRelayHandler(
                 Read<AskUserSubmitRequest>(request), cancellationToken),
             "companion_ask_user_cancel_request" => await CancelPromptAsync(
                 Read<AskUserMutationRequest>(request), cancellationToken),
+            "companion_agent_workspace_request" => await AgentWorkspaceAsync(
+                owner, cancellationToken),
+            "companion_agent_conversation_request" => await AgentConversationAsync(
+                owner, Read<AgentConversationRequest>(request), cancellationToken),
+            "companion_agent_messages_request" => await AgentMessagesAsync(
+                owner, Read<AgentMessagesRequest>(request), cancellationToken),
+            "companion_agent_send_message_request" => await SendAgentMessageAsync(
+                owner, Read<AgentSendMessageRequest>(request), cancellationToken),
+            "companion_agent_open_direct_request" => await OpenAgentDirectAsync(
+                owner, Read<AgentOpenDirectRequest>(request), cancellationToken),
             "companion_approvals_request" => ApprovalList(),
             "companion_resolve_approval_request" => await ResolveApprovalAsync(
                 Read<ResolveApprovalRequest>(request), cancellationToken),
@@ -329,6 +346,227 @@ internal sealed class CompanionRelayHandler(
         return Element(new { success = true, prompt = PromptValue(prompt) });
     }
 
+    private async Task<JsonElement> AgentWorkspaceAsync(
+        string owner,
+        CancellationToken cancellationToken)
+    {
+        var profiles = await agentStore.ListAgentsAsync(owner, true, cancellationToken)
+            .ConfigureAwait(false);
+        var rooms = await agentStore.ListRoomsAsync(owner, null, false, cancellationToken)
+            .ConfigureAwait(false);
+        var activeRooms = rooms.Where(value => value.Status == AgentRoomStatus.Active).ToArray();
+        var summaries = new List<object>();
+        foreach (var room in activeRooms)
+        {
+            summaries.Add(await AgentConversationSummaryAsync(
+                owner, room, cancellationToken).ConfigureAwait(false));
+        }
+        return Element(new
+        {
+            teams = summaries.Where((_, index) =>
+                activeRooms[index].Kind == AgentConversationKind.ProjectTeam)
+                .ToArray(),
+            direct_conversations = summaries.Where((_, index) =>
+                activeRooms[index].Kind != AgentConversationKind.ProjectTeam).ToArray(),
+            agents = profiles.Where(value => value.Status == AgentProfileStatus.Active)
+                .Select(AgentSummary).ToArray(),
+        });
+    }
+
+    private async Task<JsonElement> AgentConversationAsync(
+        string owner,
+        AgentConversationRequest request,
+        CancellationToken cancellationToken)
+    {
+        var roomId = Require(request.RoomId, "room_id");
+        var room = await agentStore.GetRoomAsync(owner, roomId, cancellationToken)
+            .ConfigureAwait(false);
+        if (room is null || room.Status != AgentRoomStatus.Active)
+            throw new RelayRequestException(404, "Agent conversation was not found.");
+        return Element(await AgentConversationDetailAsync(owner, room, cancellationToken)
+            .ConfigureAwait(false));
+    }
+
+    private async Task<JsonElement> AgentMessagesAsync(
+        string owner,
+        AgentMessagesRequest request,
+        CancellationToken cancellationToken)
+    {
+        var roomId = Require(request.RoomId, "room_id");
+        if (request.BeforeMessageId is not null && request.AfterMessageId is not null)
+            throw new RelayRequestException(400, "Message cursors are mutually exclusive.");
+        var limit = Math.Clamp(request.Limit ?? 40, 1, 100);
+        IReadOnlyList<AgentMessage> messages;
+        var hasMore = false;
+        string? next = null;
+        if (request.BeforeMessageId is { } beforeId)
+        {
+            var before = await agentStore.GetMessageAsync(
+                owner, roomId, beforeId, cancellationToken).ConfigureAwait(false)
+                ?? throw new RelayRequestException(400, "Message cursor is invalid.");
+            var page = await agentStore.ListMessagesAsync(
+                owner, roomId, limit + 1, false, cancellationToken,
+                before.CreatedAtUnixMs, before.Id).ConfigureAwait(false);
+            hasMore = page.Count > limit;
+            messages = page.TakeLast(limit).ToArray();
+            next = hasMore ? messages.FirstOrDefault()?.Id : null;
+        }
+        else if (request.AfterMessageId is { } afterId)
+        {
+            var after = await agentStore.GetMessageAsync(
+                owner, roomId, afterId, cancellationToken).ConfigureAwait(false)
+                ?? throw new RelayRequestException(400, "Message cursor is invalid.");
+            var recent = await agentStore.ListMessagesAsync(
+                owner, roomId, 1000, false, cancellationToken).ConfigureAwait(false);
+            messages = recent.Where(value =>
+                value.CreatedAtUnixMs > after.CreatedAtUnixMs ||
+                value.CreatedAtUnixMs == after.CreatedAtUnixMs &&
+                string.CompareOrdinal(value.Id, after.Id) > 0).Take(limit).ToArray();
+        }
+        else
+        {
+            var page = await agentStore.ListMessagesAsync(
+                owner, roomId, limit + 1, false, cancellationToken).ConfigureAwait(false);
+            hasMore = page.Count > limit;
+            messages = page.TakeLast(limit).ToArray();
+            next = hasMore ? messages.FirstOrDefault()?.Id : null;
+        }
+        return Element(new
+        {
+            messages = messages.Select(AgentMessageValue).ToArray(),
+            next_cursor_message_id = next,
+            has_more = hasMore,
+        });
+    }
+
+    private async Task<JsonElement> SendAgentMessageAsync(
+        string owner,
+        AgentSendMessageRequest request,
+        CancellationToken cancellationToken)
+    {
+        _ = Require(request.ClientMessageId, "client_message_id");
+        var roomId = Require(request.RoomId, "room_id");
+        var room = await agentStore.GetRoomAsync(owner, roomId, cancellationToken)
+            .ConfigureAwait(false);
+        if (room is null || room.Status != AgentRoomStatus.Active)
+            throw new RelayRequestException(404, "Agent conversation was not found.");
+        if (room.Kind == AgentConversationKind.AgentAgentDirect)
+            throw new RelayRequestException(403, "Agent-to-Agent conversations are read-only.");
+        var result = await agentTeams.PostHumanMessageAsync(
+            owner,
+            roomId,
+            Require(request.Content, "content"),
+            request.MentionedAgentIds ?? [],
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        return Element(new
+        {
+            accepted = true,
+            message = AgentMessageValue(result.Message),
+            deduplicated = false,
+        });
+    }
+
+    private async Task<JsonElement> OpenAgentDirectAsync(
+        string owner,
+        AgentOpenDirectRequest request,
+        CancellationToken cancellationToken)
+    {
+        var room = await agentTeams.OpenDirectAsync(
+            owner, Require(request.AgentId, "agent_id"), cancellationToken).ConfigureAwait(false);
+        return Element(await AgentConversationDetailAsync(owner, room, cancellationToken)
+            .ConfigureAwait(false));
+    }
+
+    private async Task<object> AgentConversationDetailAsync(
+        string owner,
+        AgentRoom room,
+        CancellationToken cancellationToken)
+    {
+        var members = await agentStore.ListMembersAsync(
+            owner, room.Id, false, cancellationToken).ConfigureAwait(false);
+        var profiles = await agentStore.ListAgentsAsync(owner, true, cancellationToken)
+            .ConfigureAwait(false);
+        var byId = profiles.ToDictionary(value => value.Id, StringComparer.Ordinal);
+        return new
+        {
+            conversation = await AgentConversationSummaryAsync(
+                owner, room, cancellationToken).ConfigureAwait(false),
+            members = members.Where(value => byId.ContainsKey(value.AgentId)).Select(value => new
+            {
+                agent = AgentSummary(byId[value.AgentId]),
+                role = value.Draft.Role,
+                responsibility = value.Draft.Responsibility,
+            }).ToArray(),
+        };
+    }
+
+    private async Task<object> AgentConversationSummaryAsync(
+        string owner,
+        AgentRoom room,
+        CancellationToken cancellationToken)
+    {
+        var members = await agentStore.ListMembersAsync(
+            owner, room.Id, false, cancellationToken).ConfigureAwait(false);
+        var recent = await agentStore.ListMessagesAsync(
+            owner, room.Id, 1, false, cancellationToken).ConfigureAwait(false);
+        var last = recent.LastOrDefault();
+        return new
+        {
+            id = room.Id,
+            kind = room.Kind switch
+            {
+                AgentConversationKind.ProjectTeam => "project_team",
+                AgentConversationKind.HumanAgentDirect => "human_agent_direct",
+                _ => "agent_agent_direct",
+            },
+            title = room.Draft.Name,
+            goal = room.Draft.Goal,
+            project_id = room.ProjectId,
+            default_agent_id = room.DefaultAgentId,
+            member_count = members.Count,
+            can_send = room.Kind != AgentConversationKind.AgentAgentDirect,
+            updated_at_unix_ms = Math.Max(room.UpdatedAtUnixMs, last?.CreatedAtUnixMs ?? 0),
+            last_message = last is null ? null : AgentMessageValue(last),
+        };
+    }
+
+    private static object AgentSummary(AgentProfile profile) => new
+    {
+        id = profile.Id,
+        name = profile.Draft.Name,
+        description = profile.Draft.Description,
+        profession_key = profile.Draft.ProfessionKey,
+        status = profile.Status == AgentProfileStatus.Active ? "active" : "archived",
+        heartbeat_enabled = profile.Draft.HeartbeatEnabled,
+        last_heartbeat_at_unix_ms = profile.LastHeartbeatAtUnixMs,
+        updated_at_unix_ms = profile.UpdatedAtUnixMs,
+    };
+
+    private static object AgentMessageValue(AgentMessage message) => new
+    {
+        id = message.Id,
+        room_id = message.RoomId,
+        sender_kind = message.SenderKind switch
+        {
+            AgentMessageSenderKind.Human => "human",
+            AgentMessageSenderKind.Agent => "agent",
+            _ => "system",
+        },
+        sender_id = message.SenderAgentId ?? message.OwnerUserId,
+        content = message.Content,
+        mentioned_agent_ids = message.MentionedAgentIds,
+        reply_to_message_id = message.ReplyToMessageId,
+        created_at_unix_ms = message.CreatedAtUnixMs,
+        attachments = message.Attachments.Select(value => new
+        {
+            id = value.Id,
+            name = value.Name,
+            mime_type = value.MimeType,
+            size = value.ByteCount,
+            kind = value.Kind.ToString().ToLowerInvariant(),
+        }).ToArray(),
+    };
+
     private JsonElement ApprovalList() => Element(approvals.Snapshot().Select(ApprovalValue).ToArray());
 
     private async Task<JsonElement> ResolveApprovalAsync(
@@ -511,4 +749,16 @@ internal sealed class CompanionRelayHandler(
         IReadOnlyDictionary<string, string>? Values,
         JsonElement? Selection);
     private sealed record ResolveApprovalRequest(string? ApprovalId, string? Decision);
+    private sealed record AgentConversationRequest(string? RoomId);
+    private sealed record AgentMessagesRequest(
+        string? RoomId,
+        string? BeforeMessageId,
+        string? AfterMessageId,
+        int? Limit);
+    private sealed record AgentSendMessageRequest(
+        string? RoomId,
+        string? Content,
+        IReadOnlyList<string>? MentionedAgentIds,
+        string? ClientMessageId);
+    private sealed record AgentOpenDirectRequest(string? AgentId);
 }
