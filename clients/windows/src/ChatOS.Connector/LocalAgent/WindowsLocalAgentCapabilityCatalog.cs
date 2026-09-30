@@ -4,7 +4,7 @@ namespace ChatOS.Connector.LocalAgent;
 
 internal static class WindowsLocalAgentCapabilityCatalog
 {
-    public const string Revision = "native-windows-main-chat-v2";
+    public const string Revision = "native-windows-main-chat-v3";
 
     public static IReadOnlyList<JsonElement> MainChatTools { get; } =
     [
@@ -80,6 +80,102 @@ internal static class WindowsLocalAgentCapabilityCatalog
         }
         """),
     ];
+
+    public static IReadOnlyList<JsonElement> TaskExecutionTools { get; } =
+    [
+        Parse("""
+        {
+          "type": "function",
+          "name": "project_list",
+          "description": "List directories and files inside the project bound to this local task.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "description": "Project-relative directory; defaults to ." },
+              "include_files": { "type": "boolean", "default": true }
+            },
+            "additionalProperties": false
+          }
+        }
+        """),
+        Parse("""
+        {
+          "type": "function",
+          "name": "project_read",
+          "description": "Read a text or small binary file inside the project bound to this local task.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "minLength": 1 }
+            },
+            "required": ["path"],
+            "additionalProperties": false
+          }
+        }
+        """),
+        Parse("""
+        {
+          "type": "function",
+          "name": "project_search",
+          "description": "Search project-relative file names or text content.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "query": { "type": "string", "minLength": 1 },
+              "path": { "type": "string", "description": "Project-relative search root; defaults to ." },
+              "mode": { "type": "string", "enum": ["name", "content"], "default": "content" },
+              "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 }
+            },
+            "required": ["query"],
+            "additionalProperties": false
+          }
+        }
+        """),
+        Parse("""
+        {
+          "type": "function",
+          "name": "project_write",
+          "description": "Atomically create or update one UTF-8 text file inside the project. Host approval is required before execution.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "content": { "type": "string" },
+              "create_only": { "type": "boolean", "default": false }
+            },
+            "required": ["path", "content"],
+            "additionalProperties": false
+          }
+        }
+        """),
+        Parse("""
+        {
+          "type": "function",
+          "name": "terminal_exec",
+          "description": "Execute a bounded non-interactive command inside the project. Host approval is required before execution.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "command": { "type": "string", "minLength": 1 },
+              "arguments": {
+                "type": "array",
+                "items": { "type": "string" },
+                "maxItems": 100
+              },
+              "working_directory": { "type": "string", "description": "Project-relative directory; defaults to ." },
+              "timeout_ms": { "type": "integer", "minimum": 1000, "maximum": 900000 }
+            },
+            "required": ["command"],
+            "additionalProperties": false
+          }
+        }
+        """),
+    ];
+
+    public static IReadOnlySet<string> TaskExecutionToolNames { get; } =
+        TaskExecutionTools
+            .Select(tool => tool.GetProperty("name").GetString()!)
+            .ToHashSet(StringComparer.Ordinal);
 
     private static JsonElement Parse(string json)
     {

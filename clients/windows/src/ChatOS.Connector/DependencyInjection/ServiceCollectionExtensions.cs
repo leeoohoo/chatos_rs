@@ -55,6 +55,8 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<IProjectConversationService>(provider =>
                 provider.GetRequiredService<WindowsLocalAgentProjectConversationService>());
             services.AddSingleton<WindowsLocalAgentAttachmentVault>();
+            services.AddSingleton<WindowsLocalAgentProjectToolExecutor>();
+            services.AddSingleton<WindowsLocalAgentToolApprovalHandler>();
             services.AddSingleton<WindowsLocalAgentPlatformToolWorker>();
             services.AddSingleton<WindowsLocalAgentConversationCommandService>();
             services.AddSingleton<IConversationCommandService>(provider =>

@@ -83,8 +83,14 @@ internal sealed class LocalAgentHostProcessLauncher : ILocalAgentHostProcessLaun
         start.ArgumentList.Add("--memory-timeout-ms");
         start.ArgumentList.Add(((long)options.MemoryTimeout.TotalMilliseconds).ToString(
             System.Globalization.CultureInfo.InvariantCulture));
-        start.ArgumentList.Add("--read-only-tool");
-        start.ArgumentList.Add("local_attachment_read");
+        foreach (var name in new[]
+        {
+            "local_attachment_read", "project_list", "project_read", "project_search",
+        })
+        {
+            start.ArgumentList.Add("--read-only-tool");
+            start.ArgumentList.Add(name);
+        }
         start.ArgumentList.Add("--stdio");
         start.Environment.Clear();
         foreach (var name in AllowedEnvironmentVariables)

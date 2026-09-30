@@ -31,5 +31,19 @@ public sealed class LocalAgentHostProcessTests
         Assert.DoesNotContain("memory-secret", start.ArgumentList);
         Assert.Equal("memory-secret", start.Environment["CHATOS_MEMORY_ACCESS_TOKEN"]);
         Assert.Equal("model-secret", start.Environment["CHATOS_LOCAL_AGENT_MODEL_MODEL_1"]);
+        var arguments = start.ArgumentList.ToArray();
+        AssertReadOnly(arguments, "local_attachment_read");
+        AssertReadOnly(arguments, "project_list");
+        AssertReadOnly(arguments, "project_read");
+        AssertReadOnly(arguments, "project_search");
+        Assert.DoesNotContain("project_write", arguments);
+        Assert.DoesNotContain("terminal_exec", arguments);
+    }
+
+    private static void AssertReadOnly(IReadOnlyList<string> arguments, string toolName)
+    {
+        var index = Array.IndexOf(arguments.ToArray(), toolName);
+        Assert.True(index > 0);
+        Assert.Equal("--read-only-tool", arguments[index - 1]);
     }
 }

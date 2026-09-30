@@ -4,8 +4,26 @@ using ChatOS.Core.Abstractions;
 namespace ChatOS.Connector.LocalAgent;
 
 internal sealed record WindowsLocalToolInvocation(
-    string InvocationId, string RunId, string ToolName, JsonElement Arguments,
-    bool SideEffecting, ulong Version);
+    string InvocationId,
+    string RunId,
+    string BatchId,
+    string CallId,
+    string ToolName,
+    JsonElement Arguments,
+    bool SideEffecting,
+    bool RequiresApproval,
+    string ApprovalStatus,
+    string? ApprovalDecidedBy,
+    string? ApprovalReason,
+    long? ApprovalDecidedAtUnixMs,
+    string Status,
+    JsonElement? Result,
+    string? Error,
+    ulong Version,
+    string? ClaimToken,
+    long? ClaimUntilUnixMs,
+    long CreatedAtUnixMs,
+    long UpdatedAtUnixMs);
 internal sealed record WindowsLocalToolClaim(
     string WorkerId, string ClaimToken, WindowsLocalToolInvocation Invocation);
 internal sealed record ClaimLocalToolCommand(
@@ -25,16 +43,35 @@ public sealed class WindowsLocalAgentPlatformToolWorker
     private readonly ILocalAgentHostClient _host;
     private readonly WindowsLocalAgentConversationClient _conversations;
     private readonly WindowsLocalAgentAttachmentVault _vault;
+    private readonly WindowsLocalAgentProjectToolExecutor? _projectTools;
+    private readonly WindowsLocalAgentToolApprovalHandler? _approvals;
     private readonly object _gate = new();
     private string? _owner;
     private CancellationTokenSource? _polling;
+    private bool _pendingWake;
 
     public WindowsLocalAgentPlatformToolWorker(
         ILocalAgentHostClient host,
         WindowsLocalAgentConversationClient conversations,
+        WindowsLocalAgentAttachmentVault vault,
+        WindowsLocalAgentProjectToolExecutor projectTools,
+        WindowsLocalAgentToolApprovalHandler approvals)
+    {
+        _host = host;
+        _conversations = conversations;
+        _vault = vault;
+        _projectTools = projectTools;
+        _approvals = approvals;
+    }
+
+    internal WindowsLocalAgentPlatformToolWorker(
+        ILocalAgentHostClient host,
+        WindowsLocalAgentConversationClient conversations,
         WindowsLocalAgentAttachmentVault vault)
     {
-        _host = host; _conversations = conversations; _vault = vault;
+        _host = host;
+        _conversations = conversations;
+        _vault = vault;
     }
 
     public void Configure(string ownerUserId)
@@ -46,7 +83,13 @@ public sealed class WindowsLocalAgentPlatformToolWorker
 
     public void Reset()
     {
-        lock (_gate) { _owner = null; _polling?.Cancel(); _polling = null; }
+        lock (_gate)
+        {
+            _owner = null;
+            _pendingWake = false;
+            _polling?.Cancel();
+            _polling = null;
+        }
     }
 
     public void Wake() => Start(TimeSpan.FromMinutes(5));
@@ -55,7 +98,12 @@ public sealed class WindowsLocalAgentPlatformToolWorker
     {
         lock (_gate)
         {
-            if (_owner is null || _polling is not null) return;
+            if (_owner is null) return;
+            if (_polling is not null)
+            {
+                if (window != TimeSpan.Zero) _pendingWake = true;
+                return;
+            }
             _polling = new CancellationTokenSource();
             _ = PollAsync(_owner, window, _polling);
         }
@@ -69,9 +117,17 @@ public sealed class WindowsLocalAgentPlatformToolWorker
         {
             while (!source.IsCancellationRequested)
             {
+                if (_approvals is not null &&
+                    await _approvals.ResolveNextPendingAsync(owner, source.Token)
+                        .ConfigureAwait(false))
+                {
+                    delay = 250;
+                    continue;
+                }
                 var result = await _host.SendAsync<ClaimLocalToolCommand, ClaimLocalToolResult>(new(
                     "claim_next_tool", owner, "windows-platform-tool-worker", 30_000,
-                    [AttachmentTool], ["create_task", "create_tasks_with_prerequisites"]), source.Token)
+                    [AttachmentTool, .. WindowsLocalAgentCapabilityCatalog.TaskExecutionToolNames],
+                    ["create_task", "create_tasks_with_prerequisites"]), source.Token)
                     .ConfigureAwait(false);
                 if (result.Type != "tool_claim") throw new InvalidDataException("Invalid tool claim result.");
                 if (result.Claim is { } claim)
@@ -92,11 +148,18 @@ public sealed class WindowsLocalAgentPlatformToolWorker
         catch { if (window == TimeSpan.Zero) return; }
         finally
         {
+            var restart = false;
             lock (_gate)
             {
-                if (ReferenceEquals(_polling, source)) _polling = null;
+                if (ReferenceEquals(_polling, source))
+                {
+                    _polling = null;
+                    restart = _pendingWake && _owner == owner;
+                    _pendingWake = false;
+                }
             }
             source.Dispose();
+            if (restart) Start(TimeSpan.FromMinutes(5));
         }
     }
 
@@ -105,6 +168,15 @@ public sealed class WindowsLocalAgentPlatformToolWorker
     {
         try
         {
+            if (WindowsLocalAgentCapabilityCatalog.TaskExecutionToolNames.Contains(
+                    claim.Invocation.ToolName))
+            {
+                if (_projectTools is null)
+                    throw new InvalidOperationException("Local project tools are unavailable.");
+                var output = await _projectTools.ExecuteAsync(
+                    owner, claim.Invocation, cancellationToken).ConfigureAwait(false);
+                return JsonSerializer.SerializeToElement(new { type = "succeeded", output });
+            }
             if (claim.Invocation.ToolName != AttachmentTool ||
                 claim.Invocation.Arguments.ValueKind != JsonValueKind.Object)
                 throw new InvalidOperationException("Unsupported local platform tool.");

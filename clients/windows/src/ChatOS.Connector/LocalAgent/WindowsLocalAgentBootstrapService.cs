@@ -194,9 +194,9 @@ public sealed class WindowsLocalAgentBootstrapService
                     ownerUserId,
                     "task_execution",
                     mainCapabilities.CapabilityPolicyRevision,
-                    "Complete the durable local task objective and return a concrete result. Do not create nested tasks.",
+                    "Complete the durable local task objective using only the project bound to its source conversation. Project writes and terminal commands require Host approval. Do not create nested tasks.",
                     [],
-                    []),
+                    WindowsLocalAgentCapabilityCatalog.TaskExecutionTools),
                 cancellationToken).ConfigureAwait(false);
 
             var result = new WindowsLocalAgentBootstrapSnapshot(

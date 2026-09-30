@@ -52,4 +52,25 @@ public sealed class WindowsLocalAgentControlPlaneTests
         Assert.All(WindowsLocalAgentCapabilityCatalog.MainChatTools, tool =>
             Assert.Equal("function", tool.GetProperty("type").GetString()));
     }
+
+    [Fact]
+    public void TaskExecutionCatalogPublishesProjectAndTerminalTools()
+    {
+        var names = WindowsLocalAgentCapabilityCatalog.TaskExecutionTools
+            .Select(tool => tool.GetProperty("name").GetString()!)
+            .ToArray();
+
+        Assert.Equal(
+            new[] {
+                "project_list", "project_read", "project_search", "project_write", "terminal_exec",
+            },
+            names);
+        Assert.True(names.ToHashSet().SetEquals(
+            WindowsLocalAgentCapabilityCatalog.TaskExecutionToolNames));
+        Assert.All(WindowsLocalAgentCapabilityCatalog.TaskExecutionTools, tool =>
+        {
+            Assert.Equal("function", tool.GetProperty("type").GetString());
+            Assert.Equal(JsonValueKind.Object, tool.GetProperty("parameters").ValueKind);
+        });
+    }
 }
