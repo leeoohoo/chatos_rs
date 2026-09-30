@@ -6,14 +6,6 @@ use chatos_agent::{
     DEFAULT_AGENT_MAX_ITERATIONS, DEFAULT_AGENT_MAX_NO_PROGRESS_ROUNDS,
     DEFAULT_AGENT_MAX_REQUEST_RETRIES, DEFAULT_AGENT_OUTPUT_RESERVE_TOKENS,
     DEFAULT_AGENT_REQUEST_TIMEOUT_SECONDS, DEFAULT_AGENT_RUN_TIMEOUT_SECONDS,
-    DEFAULT_TASK_RUNNER_PROMPT_CACHE_ENABLED, DEFAULT_TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED,
-    DEFAULT_TASK_RUNNER_REVIEW_MISSING_READ_FAILURES,
-    DEFAULT_TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS, DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL,
-    TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY, TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY,
-    TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY,
-    TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY,
-    TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY,
-    TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
 };
 use chrono::Utc;
 use memory_engine_sdk::{
@@ -28,16 +20,12 @@ use crate::models::ConfigDefinitionRecord;
 mod configuration_center;
 #[path = "builtin/local_connector.rs"]
 mod local_connector;
-#[path = "builtin/mcp_management.rs"]
-mod mcp_management;
 #[path = "builtin/memory_engine.rs"]
 mod memory_engine;
 #[path = "builtin/plugin_management.rs"]
 mod plugin_management;
 #[path = "builtin/shared_chatos.rs"]
 mod shared_chatos;
-#[path = "builtin/task_runner.rs"]
-mod task_runner;
 #[path = "builtin/user_service.rs"]
 mod user_service;
 
@@ -46,9 +34,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
     let mut definitions = Vec::new();
     definitions.extend(configuration_center::definitions(&now));
     definitions.extend(shared_chatos::definitions(&now));
-    definitions.extend(task_runner::definitions(&now));
     definitions.extend(local_connector::definitions(&now));
-    definitions.extend(mcp_management::definitions(&now));
     definitions.extend(plugin_management::definitions(&now));
     definitions.extend(memory_engine::definitions(&now));
     definitions.extend(user_service::definitions(&now));
@@ -127,22 +113,6 @@ fn postgres_definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "Local Connector",
             1,
             8_500,
-        ),
-        (
-            "mcp_management",
-            "mcp-management-service",
-            "MCP_MANAGEMENT",
-            "MCP Management",
-            1,
-            8_600,
-        ),
-        (
-            "task_runner",
-            "task-runner",
-            "TASK_RUNNER",
-            "Task Runner",
-            3,
-            8_700,
         ),
         (
             "memory_engine",

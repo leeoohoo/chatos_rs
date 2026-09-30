@@ -462,7 +462,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
         definition(
             USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY,
             "下游请求超时（毫秒）",
-            "User Service 调用 Memory Engine、Task Runner 等下游服务时使用的默认超时时间",
+            "User Service 调用 Memory Engine 等下游服务时使用的默认超时时间",
             "User Service / Runtime",
             "service",
             Some("user-service"),

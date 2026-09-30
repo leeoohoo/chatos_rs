@@ -1,9 +1,6 @@
 pub const USER_PREFERENCE_CONFIG_KEYS: &[&str] =
     &["shared.ui.locale", "shared.ai.internal_context_locale"];
-pub const LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS: &[&str] = &[
-    "chatos.ai.max_iterations",
-    "task_runner.execution.max_iterations",
-];
+pub const LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS: &[&str] = &["chatos.ai.max_iterations"];
 pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "chatos.runtime.legacy_auth_database_url",
     "chatos.ui.local_project_creation_enabled",
@@ -11,20 +8,11 @@ pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "local_connector.coordination.relay_delivery_ack_timeout_ms",
     "local_connector.coordination.terminal_subscriber_refresh_seconds",
     "local_connector.coordination.terminal_subscriber_ttl_seconds",
-    "local_connector.security.task_runner_internal_api_secret",
     "local_connector.terminal.event_channel_capacity",
     "local_connector.terminal.max_active_sessions",
     "local_connector.terminal.max_event_bytes",
     "local_connector.terminal.max_subscribers_per_session",
     "local_connector.terminal.new_session_soft_limit",
-    "mcp_management.async_tool.local_queue_buffer",
-    "mcp_management.async_tool.result_outbox_batch_size",
-    "mcp_management.async_tool.result_outbox_reconcile_ms",
-    "mcp_management.downstream.sandbox_manager_internal_api_secret",
-    "mcp_management.downstream.sandbox_manager_service_base_url",
-    "mcp_management.runtime.embedded_work_dir",
-    "mcp_management.runtime.sandbox_image_tool_timeout_ms",
-    "mcp_management.runtime.sandbox_tool_timeout_ms",
     "memory_engine.runtime.mongodb_uri",
     "memory_engine.ai.openai_api_key",
     "memory_engine.ai.openai_base_url",
@@ -36,9 +24,6 @@ pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "plugin_management.oauth.public_base_url",
     "plugin_management.oauth.refresh_skew_seconds",
     "plugin_management.oauth.request_timeout_ms",
-    "plugin_management.downstream.mcp_management_internal_api_secret",
-    "plugin_management.downstream.task_runner_base_url",
-    "plugin_management.downstream.task_runner_internal_api_secret",
     "plugin_management.security.cloud_credential_encryption_secret",
     "project_service.runtime.database_url",
     "sandbox_manager.docker.build_cache_max_used_space",
@@ -59,37 +44,10 @@ pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "sandbox_manager.runtime.internal_mtls_port",
     "sandbox_manager.runtime.port",
     "sandbox_manager.security.agent_token_secret",
-    "sandbox_manager.security.mcp_management_internal_api_secret",
     "sandbox_manager.security.require_auth",
     "sandbox_manager.security.require_signed_internal_requests",
     "sandbox_manager.security.system_client_max_lease_ttl_seconds",
-    "sandbox_manager.security.task_runner_internal_api_secret",
-    "task_runner.cache.plugin_cloud_bundle_max_bytes",
-    "task_runner.cache.plugin_cloud_bundle_max_entries",
-    "task_runner.downstream.local_connector_internal_api_secret",
-    "task_runner.downstream.local_connector_service_base_url",
-    "task_runner.downstream.local_connector_service_request_timeout_ms",
-    "task_runner.downstream.plugin_connector_discovery_timeout_ms",
-    "task_runner.downstream.plugin_hook_relay_timeout_ms",
-    "task_runner.downstream.plugin_relay_timeout_ms",
-    "task_runner.downstream.sandbox_manager_base_url",
-    "task_runner.downstream.sandbox_manager_internal_api_secret",
-    "task_runner.execution.environment_mode",
-    "task_runner.memory.auto_summary_enabled",
-    "task_runner.queue.run_dispatch_mode",
-    "task_runner.queue.run_dispatch_outbox_batch_size",
-    "task_runner.queue.run_dispatch_outbox_reconcile_ms",
-    "task_runner.queue.run_dispatch_queue",
-    "task_runner.queue.run_dispatch_retry_delay_ms",
-    "task_runner.queue.run_dispatch_retry_queue",
-    "task_runner.sandbox.enabled",
-    "task_runner.sandbox.lease_ttl_seconds",
-    "task_runner.sandbox.manager_base_url",
-    "user_service.auth.task_runner_access_ttl_seconds",
-    "user_service.auth.task_runner_audience",
     "user_service.downstream.memory_engine_base_url",
-    "user_service.downstream.task_runner_base_url",
-    "user_service.downstream.task_runner_internal_api_secret",
 ];
 pub const PLATFORM_PRESSURE_LEVEL_CONFIG_KEY: &str = "platform.pressure.level";
 pub const PLATFORM_PRESSURE_CONTROLLER_ENABLED_CONFIG_KEY: &str =
@@ -111,9 +69,3 @@ pub const SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY: &str =
     "shared.downstream.plugin_management_service_internal_url";
 pub const SHARED_PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "shared.downstream.plugin_management_request_timeout_ms";
-pub const SHARED_MCP_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY: &str =
-    "shared.downstream.mcp_management_service_base_url";
-pub const SHARED_MCP_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
-    "shared.downstream.mcp_management_request_timeout_ms";
-pub const SHARED_MCP_MANAGEMENT_RUNTIME_SESSION_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
-    "shared.downstream.mcp_management_runtime_session_request_timeout_ms";

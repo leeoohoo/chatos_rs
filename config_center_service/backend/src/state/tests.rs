@@ -93,35 +93,6 @@ use crate::catalog::{
     PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
     PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
     PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-    TASK_RUNNER_ADMIN_DISPLAY_NAME_CONFIG_KEY, TASK_RUNNER_ADMIN_PASSWORD_CONFIG_KEY,
-    TASK_RUNNER_ADMIN_USERNAME_CONFIG_KEY, TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY,
-    TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_BATCH_SIZE_CONFIG_KEY,
-    TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_INTERVAL_MS_CONFIG_KEY,
-    TASK_RUNNER_ASK_USER_PROMPT_RETENTION_DAYS_CONFIG_KEY,
-    TASK_RUNNER_CALLBACK_TIMEOUT_MS_CONFIG_KEY, TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY,
-    TASK_RUNNER_DATABASE_URL_CONFIG_KEY, TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY,
-    TASK_RUNNER_HOST_CONFIG_KEY, TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-    TASK_RUNNER_MEMORY_TIMEOUT_MS_CONFIG_KEY, TASK_RUNNER_PORT_CONFIG_KEY,
-    TASK_RUNNER_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY,
-    TASK_RUNNER_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY,
-    TASK_RUNNER_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
-    TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY,
-    TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY,
-    TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY,
-    TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_QUEUE_CONFIG_KEY,
-    TASK_RUNNER_QUEUE_RABBITMQ_EXCHANGE_CONFIG_KEY,
-    TASK_RUNNER_QUEUE_RABBITMQ_RECONNECT_MS_CONFIG_KEY, TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY,
-    TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY,
-    TASK_RUNNER_QUEUE_RUN_EVENTS_ROUTING_KEY_CONFIG_KEY,
-    TASK_RUNNER_RUN_EVENT_CLEANUP_BATCH_SIZE_CONFIG_KEY,
-    TASK_RUNNER_RUN_EVENT_CLEANUP_INTERVAL_MS_CONFIG_KEY,
-    TASK_RUNNER_RUN_EVENT_RETENTION_DAYS_CONFIG_KEY, TASK_RUNNER_SCHEDULER_POLL_MS_CONFIG_KEY,
-    TASK_RUNNER_TERMINAL_CLEANUP_INTERVAL_MS_CONFIG_KEY,
-    TASK_RUNNER_TERMINAL_EXITED_SESSION_RETENTION_SECONDS_CONFIG_KEY,
-    TASK_RUNNER_TERMINAL_LOG_MAX_ENTRIES_CONFIG_KEY, TASK_RUNNER_TERMINAL_MAX_SESSIONS_CONFIG_KEY,
-    TASK_RUNNER_USER_SERVICE_BASE_URL_CONFIG_KEY,
-    TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-    TASK_RUNNER_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY, TASK_RUNNER_WORKSPACE_DIR_CONFIG_KEY,
     USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY, USER_SERVICE_EMAIL_FROM_CONFIG_KEY,
     USER_SERVICE_EMAIL_FROM_NAME_CONFIG_KEY, USER_SERVICE_HARNESS_BASE_URL_CONFIG_KEY,
     USER_SERVICE_HARNESS_PROJECT_PAT_PREFIX_CONFIG_KEY,
@@ -143,13 +114,7 @@ use crate::catalog::{
 
 #[test]
 fn legacy_agent_iteration_values_collapse_to_one_key() {
-    let mut values = BTreeMap::from([
-        ("chatos.ai.max_iterations".to_string(), json!(700)),
-        (
-            "task_runner.execution.max_iterations".to_string(),
-            json!(300),
-        ),
-    ]);
+    let mut values = BTreeMap::from([("chatos.ai.max_iterations".to_string(), json!(700))]);
 
     assert!(migrate_agent_iteration_values(&mut values, true));
     assert_eq!(
@@ -157,7 +122,6 @@ fn legacy_agent_iteration_values_collapse_to_one_key() {
         Some(&json!(700))
     );
     assert!(!values.contains_key("chatos.ai.max_iterations"));
-    assert!(!values.contains_key("task_runner.execution.max_iterations"));
 }
 
 #[test]
@@ -188,7 +152,6 @@ fn empty_draft_does_not_gain_an_unrequested_change() {
 fn audit_keys_replace_legacy_agent_keys_once() {
     let mut keys = vec![
         "chatos.ai.max_iterations".to_string(),
-        "task_runner.execution.max_iterations".to_string(),
         "shared.logging.level".to_string(),
     ];
 
@@ -202,116 +165,6 @@ fn audit_keys_replace_legacy_agent_keys_once() {
     assert!(!keys
         .iter()
         .any(|key| LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS.contains(&key.as_str())));
-}
-
-#[test]
-fn task_runner_iteration_inherits_shared_agent_limit_when_missing() {
-    let mut values = BTreeMap::from([(
-        chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY.to_string(),
-        json!(600),
-    )]);
-
-    assert!(ensure_task_runner_iteration_value(&mut values, json!(500)));
-    assert_eq!(
-        values.get(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY),
-        Some(&json!(600))
-    );
-}
-
-#[test]
-fn task_runner_iteration_keeps_explicit_service_limit() {
-    let mut values = BTreeMap::from([
-        (
-            chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY.to_string(),
-            json!(600),
-        ),
-        (
-            TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY.to_string(),
-            json!(900),
-        ),
-    ]);
-
-    assert!(!ensure_task_runner_iteration_value(&mut values, json!(500)));
-    assert_eq!(
-        values.get(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY),
-        Some(&json!(900))
-    );
-}
-
-#[test]
-fn task_runner_queue_mode_migration_replaces_inline_values() {
-    let definitions = builtin_definitions();
-    let defaults = task_runner_service_default_values(&definitions);
-    let mut values = BTreeMap::from([(
-        TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY.to_string(),
-        json!("inline"),
-    )]);
-
-    let changed_keys = ensure_task_runner_runtime_values(&mut values, &defaults);
-
-    assert!(changed_keys.contains(&TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY.to_string()));
-    assert!(
-        changed_keys.contains(&TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY.to_string())
-    );
-    assert_eq!(
-        values.get(TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY),
-        Some(&json!("rabbitmq"))
-    );
-    assert_eq!(
-        values.get(TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY),
-        Some(&json!("rabbitmq"))
-    );
-}
-
-#[test]
-fn task_runner_queue_mode_draft_migration_only_changes_explicit_inline_values() {
-    let mut values = BTreeMap::from([(
-        TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY.to_string(),
-        json!("inline"),
-    )]);
-
-    assert!(migrate_task_runner_queue_mode_draft(
-        &mut values,
-        TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY
-    ));
-    assert_eq!(
-        values.get(TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY),
-        Some(&json!("rabbitmq"))
-    );
-}
-
-#[test]
-fn platform_memory_engine_callers_replace_http_urls_with_mtls_defaults() {
-    let definitions = builtin_definitions();
-    let cases = [
-        (
-            TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-            task_runner_service_default_values(&definitions),
-            ensure_task_runner_runtime_values
-                as fn(&mut BTreeMap<String, Value>, &BTreeMap<String, Value>) -> Vec<String>,
-        ),
-        (
-            CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-            chatos_service_default_values(&definitions),
-            ensure_chatos_runtime_values,
-        ),
-    ];
-
-    for (key, defaults, ensure_values) in cases {
-        let mut values = BTreeMap::from([(
-            key.to_string(),
-            json!("http://memory-engine-backend:7081/api/memory-engine/v1"),
-        )]);
-
-        let changed_keys = ensure_values(&mut values, &defaults);
-
-        assert!(changed_keys.contains(&key.to_string()));
-        assert_eq!(values.get(key), defaults.get(key));
-        assert!(values
-            .get(key)
-            .and_then(Value::as_str)
-            .is_some_and(|value| value.starts_with("https://")));
-    }
 }
 
 #[test]
@@ -342,53 +195,14 @@ fn memory_engine_https_draft_migration_only_changes_explicit_http_values() {
 }
 
 #[test]
-fn local_connector_internal_urls_are_forced_to_mtls_defaults() {
-    let definitions = builtin_definitions();
-    let cases = [
-        (
-            CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
-            chatos_service_default_values(&definitions),
-            ensure_chatos_runtime_values
-                as fn(&mut BTreeMap<String, Value>, &BTreeMap<String, Value>) -> Vec<String>,
-        ),
-        (
-            MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
-            mcp_management_service_default_values(&definitions),
-            ensure_mcp_management_runtime_values,
-        ),
-    ];
-
-    for (key, defaults, ensure_values) in cases {
-        let mut values = BTreeMap::from([(
-            key.to_string(),
-            json!("http://local-connector-service-backend:39230"),
-        )]);
-        let changed_keys = ensure_values(&mut values, &defaults);
-        assert!(changed_keys.contains(&key.to_string()));
-        assert_eq!(values.get(key), defaults.get(key));
-        assert!(values
-            .get(key)
-            .and_then(Value::as_str)
-            .is_some_and(|value| value == "https://127.0.0.1:39232"));
-    }
-}
-
-#[test]
 fn plugin_management_internal_urls_are_forced_to_https_without_inserting_draft_keys() {
     let definitions = builtin_definitions();
-    let cases = [
-        (
-            SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY,
-            plugin_management_service_runtime_default_values(&definitions),
-            ensure_plugin_management_runtime_values
-                as fn(&mut BTreeMap<String, Value>, &BTreeMap<String, Value>) -> Vec<String>,
-        ),
-        (
-            MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL_CONFIG_KEY,
-            mcp_management_service_default_values(&definitions),
-            ensure_mcp_management_runtime_values,
-        ),
-    ];
+    let cases = [(
+        SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY,
+        plugin_management_service_runtime_default_values(&definitions),
+        ensure_plugin_management_runtime_values
+            as fn(&mut BTreeMap<String, Value>, &BTreeMap<String, Value>) -> Vec<String>,
+    )];
 
     for (key, defaults, ensure_values) in cases {
         let mut values = BTreeMap::from([(
@@ -407,16 +221,8 @@ fn plugin_management_internal_urls_are_forced_to_https_without_inserting_draft_k
 }
 
 #[test]
-fn chatos_mtls_publish_validation_rejects_http_and_port_collisions() {
+fn chatos_mtls_publish_validation_rejects_port_collisions() {
     let mut values = BTreeMap::from([
-        (
-            TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY.to_string(),
-            json!("http://chatos-backend:3997/api/agent/chat/task-runner/callback"),
-        ),
-        (
-            MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
-            json!("https://chatos-backend:3999"),
-        ),
         (CHATOS_BACKEND_PORT_CONFIG_KEY.to_string(), json!(3997)),
         (
             CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string(),
@@ -427,19 +233,11 @@ fn chatos_mtls_publish_validation_rejects_http_and_port_collisions() {
 
     validate_chatos_mtls_invariants(&values, &mut errors);
 
-    assert_eq!(errors.len(), 2);
-    assert!(errors.iter().any(|error| {
-        error.contains(TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY)
-            && error.contains("must use https://")
-    }));
+    assert_eq!(errors.len(), 1);
     assert!(errors
         .iter()
         .any(|error| error.contains("internal_mtls_port must differ")));
 
-    values.insert(
-        TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY.to_string(),
-        json!("https://chatos-backend:3999/api/agent/chat/task-runner/callback"),
-    );
     values.insert(
         CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string(),
         json!(3999),
@@ -447,398 +245,6 @@ fn chatos_mtls_publish_validation_rejects_http_and_port_collisions() {
     errors.clear();
     validate_chatos_mtls_invariants(&values, &mut errors);
     assert!(errors.is_empty());
-}
-
-#[test]
-fn task_runner_runtime_backfill_adds_all_service_defaults() {
-    let definitions = builtin_definitions();
-    let defaults = task_runner_service_default_values(&definitions);
-    let mut values = BTreeMap::from([(
-        chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY.to_string(),
-        json!(600),
-    )]);
-
-    let changed_keys = ensure_task_runner_runtime_values(&mut values, &defaults);
-
-    assert!(!changed_keys.is_empty());
-    for key in defaults.keys() {
-        assert!(
-            values.contains_key(key),
-            "missing Task Runner config key {key}"
-        );
-    }
-    assert_eq!(
-        values.get(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY),
-        Some(&json!(600))
-    );
-    assert!(changed_keys.contains(&TASK_RUNNER_HOST_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_PORT_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_DATABASE_URL_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_WORKSPACE_DIR_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_EXECUTION_TIMEOUT_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_AI_READ_TIMEOUT_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY.to_string()));
-    assert!(
-        changed_keys.contains(&TASK_RUNNER_PRESSURE_QUEUE_ELEVATED_MESSAGES_CONFIG_KEY.to_string())
-    );
-    assert!(
-        changed_keys.contains(&TASK_RUNNER_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY.to_string())
-    );
-    assert!(changed_keys.contains(&TASK_RUNNER_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_MEMORY_TIMEOUT_MS_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_RUN_EVENT_RETENTION_DAYS_CONFIG_KEY.to_string()));
-    assert!(
-        changed_keys.contains(&TASK_RUNNER_RUN_EVENT_CLEANUP_INTERVAL_MS_CONFIG_KEY.to_string())
-    );
-    assert!(changed_keys.contains(&TASK_RUNNER_RUN_EVENT_CLEANUP_BATCH_SIZE_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_TERMINAL_LOG_MAX_ENTRIES_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_TERMINAL_MAX_SESSIONS_CONFIG_KEY.to_string()));
-    assert!(changed_keys
-        .contains(&TASK_RUNNER_TERMINAL_EXITED_SESSION_RETENTION_SECONDS_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_TERMINAL_CLEANUP_INTERVAL_MS_CONFIG_KEY.to_string()));
-    assert!(
-        changed_keys.contains(&TASK_RUNNER_ASK_USER_PROMPT_RETENTION_DAYS_CONFIG_KEY.to_string())
-    );
-    assert!(changed_keys
-        .contains(&TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_INTERVAL_MS_CONFIG_KEY.to_string()));
-    assert!(changed_keys
-        .contains(&TASK_RUNNER_ASK_USER_PROMPT_CLEANUP_BATCH_SIZE_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_SCHEDULER_POLL_MS_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_TOOL_RESULT_MAX_CHARS_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_TOOL_RESULTS_TOTAL_MAX_CHARS_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY.to_string()));
-    assert!(
-        changed_keys.contains(&TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY.to_string())
-    );
-    assert_eq!(
-        values.get(TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY),
-        Some(&json!(true))
-    );
-    assert_eq!(
-        values.get(TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY),
-        Some(&json!(true))
-    );
-    assert!(changed_keys.contains(&TASK_RUNNER_CALLBACK_TIMEOUT_MS_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&TASK_RUNNER_ADMIN_PASSWORD_CONFIG_KEY.to_string()));
-}
-
-#[test]
-fn task_runner_snapshot_exposes_queue_environment_aliases() {
-    let definitions = builtin_definitions();
-    let values = BTreeMap::from([
-        (
-            TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_MODE_CONFIG_KEY.to_string(),
-            json!("rabbitmq"),
-        ),
-        (
-            TASK_RUNNER_QUEUE_RUN_EVENTS_PUBLISH_MODE_CONFIG_KEY.to_string(),
-            json!("rabbitmq"),
-        ),
-        (
-            TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY.to_string(),
-            json!(DEFAULT_LOCAL_RABBITMQ_URL),
-        ),
-        (
-            TASK_RUNNER_QUEUE_RABBITMQ_EXCHANGE_CONFIG_KEY.to_string(),
-            json!("task_runner"),
-        ),
-        (
-            TASK_RUNNER_QUEUE_RABBITMQ_RECONNECT_MS_CONFIG_KEY.to_string(),
-            json!(3_000),
-        ),
-        (
-            TASK_RUNNER_QUEUE_CALLBACK_DELIVERY_QUEUE_CONFIG_KEY.to_string(),
-            json!("task_runner.callback.delivery"),
-        ),
-        (
-            TASK_RUNNER_QUEUE_RUN_EVENTS_ROUTING_KEY_CONFIG_KEY.to_string(),
-            json!("task_runner.run.events.broadcast"),
-        ),
-    ]);
-
-    let snapshot = build_snapshot("local", "task-runner", 1, &definitions, &values)
-        .expect("Task Runner snapshot");
-
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_CALLBACK_DELIVERY_MODE"),
-        Some(&"rabbitmq".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_RUN_EVENTS_PUBLISH_MODE"),
-        Some(&"rabbitmq".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_RABBITMQ_URL"),
-        Some(&DEFAULT_LOCAL_RABBITMQ_URL.to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_RABBITMQ_RECONNECT_MS"),
-        Some(&"3000".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_RUN_EVENTS_ROUTING_KEY"),
-        Some(&"task_runner.run.events.broadcast".to_string())
-    );
-}
-
-#[test]
-fn task_runner_runtime_backfill_normalizes_legacy_root_vhost_url() {
-    let definitions = builtin_definitions();
-    let defaults = task_runner_service_default_values(&definitions);
-    let mut values = BTreeMap::from([(
-        TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY.to_string(),
-        json!("amqp://chatos:change_me_rabbitmq_password@127.0.0.1:5672/"),
-    )]);
-
-    let changed_keys = ensure_task_runner_runtime_values(&mut values, &defaults);
-
-    assert!(changed_keys.contains(&TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY.to_string()));
-    assert_eq!(
-        values.get(TASK_RUNNER_QUEUE_RABBITMQ_URL_CONFIG_KEY),
-        Some(&json!(DEFAULT_LOCAL_RABBITMQ_URL))
-    );
-}
-
-#[test]
-fn task_runner_snapshot_exposes_runtime_downstream_environment_aliases() {
-    let definitions = builtin_definitions();
-    let values = BTreeMap::from([
-        (TASK_RUNNER_HOST_CONFIG_KEY.to_string(), json!("127.0.0.1")),
-        (TASK_RUNNER_PORT_CONFIG_KEY.to_string(), json!(39090)),
-        (
-            TASK_RUNNER_DATABASE_URL_CONFIG_KEY.to_string(),
-            json!("postgresql://task_runner_app:change_me@127.0.0.1:5433/task_runner_service"),
-        ),
-        (TASK_RUNNER_WORKSPACE_DIR_CONFIG_KEY.to_string(), json!(".")),
-        (
-            TASK_RUNNER_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
-            json!("http://127.0.0.1:39190"),
-        ),
-        (
-            TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string(),
-            json!("https://127.0.0.1:39192"),
-        ),
-        (
-            TASK_RUNNER_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(5_000),
-        ),
-        (
-            TASK_RUNNER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY.to_string(),
-            json!("http://127.0.0.1:7081/api/memory-engine/v1"),
-        ),
-        (
-            TASK_RUNNER_MEMORY_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(30_000),
-        ),
-        (
-            TASK_RUNNER_SCHEDULER_POLL_MS_CONFIG_KEY.to_string(),
-            json!(15_000),
-        ),
-        (
-            TASK_RUNNER_CHATOS_CALLBACK_URL_CONFIG_KEY.to_string(),
-            json!("http://127.0.0.1:3997/api/task-runs/callback"),
-        ),
-        (
-            TASK_RUNNER_CALLBACK_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(12_000),
-        ),
-        ("task_runner.worker.concurrency".to_string(), json!(5)),
-        (
-            "task_runner.worker.claim_ttl_ms".to_string(),
-            json!(120_000),
-        ),
-        (
-            "task_runner.worker.poll_interval_ms".to_string(),
-            json!(1_000),
-        ),
-        (
-            TASK_RUNNER_ADMIN_USERNAME_CONFIG_KEY.to_string(),
-            json!("admin"),
-        ),
-        (
-            TASK_RUNNER_ADMIN_PASSWORD_CONFIG_KEY.to_string(),
-            json!("admin123456"),
-        ),
-        (
-            TASK_RUNNER_ADMIN_DISPLAY_NAME_CONFIG_KEY.to_string(),
-            json!("System Admin"),
-        ),
-    ]);
-
-    let snapshot = build_snapshot("local", "task-runner", 1, &definitions, &values)
-        .expect("Task Runner runtime snapshot");
-
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_HOST"),
-        Some(&"127.0.0.1".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_PORT"),
-        Some(&"39090".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_DATABASE_URL"),
-        Some(
-            &"postgresql://task_runner_app:change_me@127.0.0.1:5433/task_runner_service"
-                .to_string()
-        )
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_WORKSPACE_DIR"),
-        Some(&".".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_USER_SERVICE_BASE_URL"),
-        Some(&"http://127.0.0.1:39190".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL"),
-        Some(&"https://127.0.0.1:39192".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_MEMORY_ENGINE_BASE_URL"),
-        Some(&"http://127.0.0.1:7081/api/memory-engine/v1".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_MEMORY_TIMEOUT_MS"),
-        Some(&"30000".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_SCHEDULER_POLL_MS"),
-        Some(&"15000".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_CHATOS_CALLBACK_URL"),
-        Some(&"http://127.0.0.1:3997/api/task-runs/callback".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_CALLBACK_TIMEOUT_MS"),
-        Some(&"12000".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_WORKER_CONCURRENCY"),
-        Some(&"5".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_WORKER_CLAIM_TTL_MS"),
-        Some(&"120000".to_string())
-    );
-    assert_eq!(snapshot.env.get("TASK_RUNNER_WORKER_POLL_MS"), None);
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_EVENT_OUTBOX_RECONCILE_MS"),
-        Some(&"5000".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_EVENT_OUTBOX_BATCH_SIZE"),
-        Some(&"100".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_WORKER_CONTROL_QUEUE_PREFIX"),
-        Some(&"task_runner.worker.control".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_RUN_POST_PROCESS_QUEUE"),
-        Some(&"task_runner.run.post_process".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_RUN_POST_PROCESS_RETRY_QUEUE"),
-        Some(&"task_runner.run.post_process.retry".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("TASK_RUNNER_RUN_POST_PROCESS_DEAD_LETTER_QUEUE"),
-        Some(&"task_runner.run.post_process.dead".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("TASK_RUNNER_RUN_POST_PROCESS_MAX_DELIVERY_ATTEMPTS"),
-        Some(&"8".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("TASK_RUNNER_RUN_POST_PROCESS_RETRY_DELAY_MS"),
-        Some(&"5000".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("TASK_RUNNER_RUN_POST_PROCESS_OUTBOX_RECONCILE_MS"),
-        Some(&"5000".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("TASK_RUNNER_RUN_POST_PROCESS_OUTBOX_BATCH_SIZE"),
-        Some(&"100".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_ADMIN_USERNAME"),
-        Some(&"admin".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("TASK_RUNNER_ADMIN_DISPLAY_NAME"),
-        Some(&"System Admin".to_string())
-    );
-}
-
-#[test]
-fn mcp_management_runtime_backfill_normalizes_legacy_root_vhost_url() {
-    let definitions = builtin_definitions();
-    let defaults = mcp_management_service_default_values(&definitions);
-    let mut values = BTreeMap::from([(
-        MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY.to_string(),
-        json!("amqp://chatos:change_me_rabbitmq_password@127.0.0.1:5672/"),
-    )]);
-
-    let changed_keys = ensure_mcp_management_runtime_values(&mut values, &defaults);
-
-    assert!(changed_keys.contains(&MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY.to_string()));
-    assert_eq!(
-        values.get(MCP_MANAGEMENT_ASYNC_TOOL_RABBITMQ_URL_CONFIG_KEY),
-        Some(&json!(DEFAULT_LOCAL_RABBITMQ_URL))
-    );
-}
-
-#[test]
-fn mcp_management_runtime_backfill_replaces_legacy_local_dispatch_mode() {
-    let definitions = builtin_definitions();
-    let defaults = mcp_management_service_default_values(&definitions);
-    let mut values = BTreeMap::from([(
-        MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY.to_string(),
-        json!("local_queue"),
-    )]);
-
-    let changed_keys = ensure_mcp_management_runtime_values(&mut values, &defaults);
-
-    assert!(changed_keys.contains(&MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY.to_string()));
-    assert_eq!(
-        values.get(MCP_MANAGEMENT_ASYNC_TOOL_DISPATCH_MODE_CONFIG_KEY),
-        Some(&json!("rabbitmq"))
-    );
-}
-
-#[test]
-fn mcp_management_runtime_backfill_removes_retired_internal_callers() {
-    let definitions = builtin_definitions();
-    let defaults = mcp_management_service_default_values(&definitions);
-    let mut values = BTreeMap::from([(
-        MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS_CONFIG_KEY.to_string(),
-        json!("chatos,task-runner,project-service,configuration-center"),
-    )]);
-
-    let changed_keys = ensure_mcp_management_runtime_values(&mut values, &defaults);
-
-    assert!(changed_keys.contains(&MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS_CONFIG_KEY.to_string()));
-    assert_eq!(
-        values.get(MCP_MANAGEMENT_ALLOWED_INTERNAL_CALLERS_CONFIG_KEY),
-        Some(&json!("chatos,task-runner,configuration-center"))
-    );
 }
 
 #[test]
@@ -2208,7 +1614,6 @@ fn chatos_runtime_backfill_adds_all_service_defaults() {
     assert!(changed_keys.contains(&CHATOS_BACKEND_PORT_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&CHATOS_OPENAI_BASE_URL_CONFIG_KEY.to_string()));
@@ -2285,14 +1690,6 @@ fn chatos_snapshot_exposes_runtime_environment_aliases() {
         (
             CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
             json!(5_000),
-        ),
-        (
-            CHATOS_TASK_RUNNER_BASE_URL_CONFIG_KEY.to_string(),
-            json!("http://127.0.0.1:39090"),
-        ),
-        (
-            CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(30_000),
         ),
         (
             CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
@@ -2402,10 +1799,6 @@ fn chatos_snapshot_exposes_runtime_environment_aliases() {
     assert_eq!(
         snapshot.env.get("CHATOS_USER_SERVICE_BASE_URL"),
         Some(&"http://127.0.0.1:39190".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("CHATOS_TASK_RUNNER_REQUEST_TIMEOUT_MS"),
-        Some(&"30000".to_string())
     );
     assert_eq!(
         snapshot.env.get("CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL"),
