@@ -32,34 +32,6 @@ impl ConnectorRelay {
                 }
                 Ok(())
             }
-            InterInstanceRelayMessage::Send {
-                request,
-                requester_instance_id,
-            } => {
-                let delivery = self.send_to_local_session(&request).await;
-                let (status, body) = match delivery {
-                    Ok(()) => (202, serde_json::json!({ "delivered": true })),
-                    Err(error) => (503, serde_json::json!({ "error": error.message() })),
-                };
-                let distributed = self
-                    .distributed
-                    .as_ref()
-                    .ok_or_else(|| "distributed relay is not configured".to_string())?;
-                distributed
-                    .coordinator
-                    .publish_instance_message(
-                        requester_instance_id.as_str(),
-                        &InterInstanceRelayMessage::Response {
-                            response: RelayResponse {
-                                request_id: request.request_id,
-                                status,
-                                headers: BTreeMap::new(),
-                                body,
-                            },
-                        },
-                    )
-                    .await
-            }
             InterInstanceRelayMessage::Response { response } => {
                 let request_id = response.request_id.clone();
                 self.complete_response(response).await;
@@ -74,11 +46,86 @@ impl ConnectorRelay {
                 }
                 Ok(())
             }
-            InterInstanceRelayMessage::TerminalEvent { event } => {
-                self.publish_local_terminal_event(event).await;
-                Ok(())
-            }
         }
+    }
+
+    pub async fn handle_inbound_text_from(
+        &self,
+        source: RelaySessionIdentity,
+        text: &str,
+    ) -> Result<bool, String> {
+        let value = match serde_json::from_str::<Value>(text) {
+            Ok(value) => value,
+            Err(_) => return Ok(false),
+        };
+        let message_type = value
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !matches!(
+            message_type,
+            "companion_resources_response"
+                | "companion_resolve_resource_response"
+                | "companion_agent_workspace_response"
+                | "companion_agent_conversation_response"
+                | "companion_agent_messages_response"
+                | "companion_agent_send_message_response"
+                | "companion_agent_open_direct_response"
+                | "companion_approvals_response"
+                | "companion_resolve_approval_response"
+                | "companion_error_response"
+        ) {
+            if message_type.ends_with("_response")
+                && value.get("request_id").and_then(Value::as_str).is_some()
+            {
+                return Err(format!("unsupported relay response type `{message_type}`"));
+            }
+            return Ok(false);
+        }
+        let inbound: InboundRelayResponse =
+            serde_json::from_value(value).map_err(|err| err.to_string())?;
+        let response = RelayResponse {
+            request_id: inbound.request_id,
+            status: inbound.status.unwrap_or(200),
+            headers: inbound.headers.unwrap_or_default(),
+            body: inbound.body.unwrap_or_else(default_body),
+        };
+        if self
+            .complete_response_from_source(response.clone(), &source)
+            .await?
+        {
+            return Ok(true);
+        }
+        self.route_remote_response(response, &source).await
+    }
+
+    #[cfg(test)]
+    pub async fn handle_inbound_text(&self, text: &str) -> Result<bool, String> {
+        let request_id = serde_json::from_str::<Value>(text).ok().and_then(|value| {
+            value
+                .get("request_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        });
+        let source = {
+            let inner = self.inner.lock().await;
+            request_id
+                .as_deref()
+                .and_then(|id| inner.pending.get(id).map(|pending| pending.source.clone()))
+                .or_else(|| {
+                    inner
+                        .sessions
+                        .iter()
+                        .next()
+                        .map(|(device_id, session)| session.relay_identity(device_id))
+                })
+                .unwrap_or_else(|| RelaySessionIdentity {
+                    owner_user_id: "owner-1".to_string(),
+                    device_id: "device-1".to_string(),
+                    session_id: "session-1".to_string(),
+                })
+        };
+        self.handle_inbound_text_from(source, text).await
     }
 
     async fn complete_response(&self, response: RelayResponse) -> bool {
@@ -214,29 +261,6 @@ impl ConnectorRelay {
         Ok(presence)
     }
 
-    pub(super) async fn relay_session_identity(
-        &self,
-        owner_user_id: &str,
-        device_id: &str,
-    ) -> Result<RelaySessionIdentity, RelayError> {
-        if let Some(session) = self.local_session(device_id, owner_user_id).await {
-            return Ok(session.relay_identity(device_id));
-        }
-        let distributed = self.distributed.as_ref().ok_or(RelayError::Offline)?;
-        let presence = distributed
-            .coordinator
-            .device_presence(device_id)
-            .await
-            .map_err(RelayError::Coordination)?
-            .ok_or(RelayError::Offline)?;
-        if presence.owner_user_id != owner_user_id
-            || presence.instance_id == distributed.instance_id
-        {
-            return Err(RelayError::Offline);
-        }
-        Ok(presence.relay_identity())
-    }
-
     pub(super) async fn insert_pending_request(
         &self,
         request_id: &str,
@@ -260,7 +284,8 @@ impl ConnectorRelay {
                 limit: runtime.limits.max_pending_requests_per_device,
             });
         }
-        if let PendingRelayClass::Companion { client_session_id } = &class {
+        let PendingRelayClass::Companion { client_session_id } = &class;
+        {
             let companion_device_count = inner
                 .pending
                 .values()

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use redis::aio::ConnectionManager;
 use serde::{Deserialize, Serialize};
@@ -44,7 +44,6 @@ pub struct ValkeyCoordinator {
     connection: ConnectionManager,
     key_prefix: String,
     device_presence_ttl: Duration,
-    terminal_subscriber_ttl: Duration,
 }
 
 impl ValkeyCoordinator {
@@ -52,7 +51,6 @@ impl ValkeyCoordinator {
         valkey_url: &str,
         key_prefix: &str,
         device_presence_ttl: Duration,
-        terminal_subscriber_ttl: Duration,
     ) -> Result<Self, String> {
         let client = redis::Client::open(valkey_url)
             .map_err(|error| format!("parse Local Connector Valkey URL failed: {error}"))?;
@@ -65,7 +63,6 @@ impl ValkeyCoordinator {
             connection,
             key_prefix: key_prefix.trim_end_matches(':').to_string(),
             device_presence_ttl,
-            terminal_subscriber_ttl,
         })
     }
 
@@ -229,117 +226,6 @@ impl ValkeyCoordinator {
         Ok(pubsub)
     }
 
-    pub async fn register_terminal_subscriber(
-        &self,
-        terminal_session_id: &str,
-        instance_id: &str,
-    ) -> Result<(), String> {
-        let expires_at =
-            unix_timestamp_seconds().saturating_add(self.terminal_subscriber_ttl.as_secs().max(1));
-        let key_ttl = self
-            .terminal_subscriber_ttl
-            .as_secs()
-            .saturating_mul(2)
-            .max(1);
-        let script = redis::Script::new(
-            "redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2]); redis.call('EXPIRE', KEYS[1], ARGV[3]); return 1",
-        );
-        let mut connection = self.connection.clone();
-        script
-            .key(self.terminal_subscribers_key(terminal_session_id))
-            .arg(expires_at)
-            .arg(instance_id)
-            .arg(key_ttl)
-            .invoke_async::<i64>(&mut connection)
-            .await
-            .map_err(|error| {
-                format!("register Local Connector terminal subscriber failed: {error}")
-            })?;
-        Ok(())
-    }
-
-    pub async fn unregister_terminal_subscriber(
-        &self,
-        terminal_session_id: &str,
-        instance_id: &str,
-    ) -> Result<(), String> {
-        let mut connection = self.connection.clone();
-        redis::cmd("ZREM")
-            .arg(self.terminal_subscribers_key(terminal_session_id))
-            .arg(instance_id)
-            .query_async::<()>(&mut connection)
-            .await
-            .map_err(|error| {
-                format!("unregister Local Connector terminal subscriber failed: {error}")
-            })
-    }
-
-    pub async fn terminal_subscriber_instances(
-        &self,
-        terminal_session_id: &str,
-    ) -> Result<Vec<String>, String> {
-        let now = unix_timestamp_seconds();
-        let script = redis::Script::new(
-            "redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1]); return redis.call('ZRANGEBYSCORE', KEYS[1], ARGV[2], '+inf')",
-        );
-        let mut connection = self.connection.clone();
-        script
-            .key(self.terminal_subscribers_key(terminal_session_id))
-            .arg(now)
-            .arg(format!("({now}"))
-            .invoke_async(&mut connection)
-            .await
-            .map_err(|error| format!("load Local Connector terminal subscribers failed: {error}"))
-    }
-
-    pub async fn register_terminal_session_binding(
-        &self,
-        terminal_session_id: &str,
-        source: &RelaySessionIdentity,
-    ) -> Result<bool, String> {
-        let value = serde_json::to_string(source).map_err(|error| error.to_string())?;
-        let ttl = self
-            .terminal_subscriber_ttl
-            .as_secs()
-            .saturating_mul(2)
-            .max(1);
-        let script = redis::Script::new(
-            "local current = redis.call('GET', KEYS[1]); if current and current ~= ARGV[1] then return 0 end; redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2]); return 1",
-        );
-        let mut connection = self.connection.clone();
-        let registered: i64 = script
-            .key(self.terminal_session_binding_key(terminal_session_id))
-            .arg(value)
-            .arg(ttl)
-            .invoke_async(&mut connection)
-            .await
-            .map_err(|error| {
-                format!("register Local Connector terminal session binding failed: {error}")
-            })?;
-        Ok(registered == 1)
-    }
-
-    pub async fn terminal_session_binding(
-        &self,
-        terminal_session_id: &str,
-    ) -> Result<Option<RelaySessionIdentity>, String> {
-        let mut connection = self.connection.clone();
-        let value: Option<String> = redis::cmd("GET")
-            .arg(self.terminal_session_binding_key(terminal_session_id))
-            .query_async(&mut connection)
-            .await
-            .map_err(|error| {
-                format!("load Local Connector terminal session binding failed: {error}")
-            })?;
-        value
-            .map(|value| {
-                serde_json::from_str(&value).map_err(|error| {
-                    format!("parse Local Connector terminal session binding failed: {error}")
-                })
-            })
-            .transpose()
-    }
-
     async fn compare_and_expire_or_delete(
         &self,
         presence: &DevicePresence,
@@ -380,31 +266,6 @@ impl ValkeyCoordinator {
     fn instance_channel(&self, instance_id: &str) -> String {
         format!("{}:instance:{instance_id}", self.key_prefix)
     }
-
-    fn terminal_subscribers_key(&self, terminal_session_id: &str) -> String {
-        let digest = Sha256::digest(terminal_session_id.as_bytes());
-        format!(
-            "{}:terminal-subscribers:{}",
-            self.key_prefix,
-            hex::encode(digest)
-        )
-    }
-
-    fn terminal_session_binding_key(&self, terminal_session_id: &str) -> String {
-        let digest = Sha256::digest(terminal_session_id.as_bytes());
-        format!(
-            "{}:terminal-session-binding:{}",
-            self.key_prefix,
-            hex::encode(digest)
-        )
-    }
-}
-
-fn unix_timestamp_seconds() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
 }
 
 #[cfg(test)]

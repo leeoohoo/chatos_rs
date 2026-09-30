@@ -71,7 +71,6 @@ impl AppState {
             config.valkey_url.as_str(),
             config.valkey_key_prefix.as_str(),
             config.device_presence_ttl,
-            config.terminal_subscriber_ttl,
         )
         .await?;
         let plugin_management_config =
@@ -112,12 +111,6 @@ impl AppState {
         );
         tracing::info!(
             max_pending_requests_per_device = relay_runtime_limits.max_pending_requests_per_device,
-            terminal_max_event_bytes = relay_runtime_limits.terminal_max_event_bytes,
-            terminal_event_channel_capacity = relay_runtime_limits.terminal_event_channel_capacity,
-            terminal_max_active_sessions = relay_runtime_limits.terminal_max_active_sessions,
-            terminal_new_session_soft_limit = relay_runtime_limits.terminal_new_session_soft_limit,
-            terminal_max_subscribers_per_session =
-                relay_runtime_limits.terminal_max_subscribers_per_session,
             "local connector relay runtime limits are loaded from configuration center"
         );
         let relay = ConnectorRelay::new_distributed(
@@ -126,10 +119,8 @@ impl AppState {
             instance_id.clone(),
             valkey.clone(),
             config.relay_correlation_grace_ttl,
-            config.relay_delivery_ack_timeout,
         );
         relay.start_pending_reaper(RELAY_PENDING_REAPER_INTERVAL);
-        relay.set_platform_pressure_level(pressure.snapshot().level);
         spawn_local_connector_runtime_config_watcher(
             local_connector_config_center_client.clone(),
             relay.clone(),
@@ -342,12 +333,6 @@ fn apply_local_connector_runtime_snapshot(
         trusted_key_count = remote_control_trust.trusted_relay_public_keys.len(),
         signature_max_skew_seconds = remote_control_trust.signature_max_skew_seconds,
         max_pending_requests_per_device = relay_runtime_limits.max_pending_requests_per_device,
-        terminal_max_event_bytes = relay_runtime_limits.terminal_max_event_bytes,
-        terminal_event_channel_capacity = relay_runtime_limits.terminal_event_channel_capacity,
-        terminal_max_active_sessions = relay_runtime_limits.terminal_max_active_sessions,
-        terminal_new_session_soft_limit = relay_runtime_limits.terminal_new_session_soft_limit,
-        terminal_max_subscribers_per_session =
-            relay_runtime_limits.terminal_max_subscribers_per_session,
         "applied refreshed Local Connector relay runtime config from configuration center"
     );
     Ok(())

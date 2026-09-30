@@ -139,7 +139,6 @@ pub fn start_pressure_reporter(
                 }
             };
             if state.pressure.update(next.clone()) {
-                state.relay.set_platform_pressure_level(next.level);
                 tracing::info!(
                     revision = snapshot.revision,
                     pressure_level = ?next.level,
@@ -157,13 +156,9 @@ fn pressure_signal_from_relay_stats(
     stats: &LocalConnectorRelayStats,
     policy: &LocalConnectorPressurePolicy,
 ) -> ServicePressureSignal {
-    let terminal_critical = stats.terminal_sessions >= stats.terminal_max_active_sessions;
-    let relay_critical = stats.pending_relay_requests >= policy.pending_relay_critical;
-    let terminal_elevated = stats.terminal_sessions >= stats.terminal_new_session_soft_limit;
-    let relay_elevated = stats.pending_relay_requests >= policy.pending_relay_elevated;
-    let level = if terminal_critical || relay_critical {
+    let level = if stats.pending_relay_requests >= policy.pending_relay_critical {
         PlatformPressureLevel::Critical
-    } else if terminal_elevated || relay_elevated {
+    } else if stats.pending_relay_requests >= policy.pending_relay_elevated {
         PlatformPressureLevel::Elevated
     } else {
         PlatformPressureLevel::Normal
@@ -171,10 +166,7 @@ fn pressure_signal_from_relay_stats(
     ServicePressureSignal {
         level,
         reason: format!(
-            "Local Connector terminal_sessions={}/{} soft={}; pending_relay_requests={}",
-            stats.terminal_sessions,
-            stats.terminal_max_active_sessions,
-            stats.terminal_new_session_soft_limit,
+            "Local Connector pending_companion_requests={}",
             stats.pending_relay_requests
         ),
     }
@@ -249,39 +241,13 @@ mod tests {
         }
     }
 
-    fn stats(terminal_sessions: usize, pending_relay_requests: usize) -> LocalConnectorRelayStats {
+    fn stats(pending_relay_requests: usize) -> LocalConnectorRelayStats {
         LocalConnectorRelayStats {
             active_device_sessions: 1,
             pending_relay_requests,
-            terminal_sessions,
-            terminal_ws_subscribers: 0,
             max_pending_requests_per_device: 256,
-            terminal_max_event_bytes: 131_072,
-            terminal_event_channel_capacity: 1_024,
-            terminal_max_active_sessions: 10_000,
-            terminal_new_session_soft_limit: 8_000,
-            new_terminal_sessions_paused: terminal_sessions >= 8_000,
-            terminal_max_subscribers_per_session: 64,
             relay_signing_enabled: true,
         }
-    }
-
-    #[test]
-    fn terminal_soft_and_hard_limits_map_to_elevated_and_critical() {
-        let policy = LocalConnectorPressurePolicy::from_snapshot(&snapshot(1_000, 5_000, 5_000))
-            .expect("valid pressure policy");
-        assert_eq!(
-            pressure_signal_from_relay_stats(&stats(7_999, 0), &policy).level,
-            PlatformPressureLevel::Normal
-        );
-        assert_eq!(
-            pressure_signal_from_relay_stats(&stats(8_000, 0), &policy).level,
-            PlatformPressureLevel::Elevated
-        );
-        assert_eq!(
-            pressure_signal_from_relay_stats(&stats(10_000, 0), &policy).level,
-            PlatformPressureLevel::Critical
-        );
     }
 
     #[test]
@@ -289,11 +255,15 @@ mod tests {
         let policy = LocalConnectorPressurePolicy::from_snapshot(&snapshot(1_000, 5_000, 5_000))
             .expect("valid pressure policy");
         assert_eq!(
-            pressure_signal_from_relay_stats(&stats(0, 1_000), &policy).level,
+            pressure_signal_from_relay_stats(&stats(999), &policy).level,
+            PlatformPressureLevel::Normal
+        );
+        assert_eq!(
+            pressure_signal_from_relay_stats(&stats(1_000), &policy).level,
             PlatformPressureLevel::Elevated
         );
         assert_eq!(
-            pressure_signal_from_relay_stats(&stats(0, 5_000), &policy).level,
+            pressure_signal_from_relay_stats(&stats(5_000), &policy).level,
             PlatformPressureLevel::Critical
         );
     }

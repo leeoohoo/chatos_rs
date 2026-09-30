@@ -9,7 +9,6 @@ clients/macos/Tests/ChatOSConnectorTests/LocalAgentGroupChatSchedulerTests.swift
 clients/macos/Tests/ChatOSAppTests/StoryStudioTests.swift	1558	2026-12-31	Split Story Studio UI state and business action scenarios
 crates/chatos_ai_runtime/src/runtime/tests.rs	1479	2026-12-31	Split AI runtime tests by execution phase
 mcp_management_service/backend/src/api/mcp/tests.rs	1312	2026-12-31	Split MCP API tests by resource
-local_connector_service/backend/src/relay/tests.rs	1230	2026-12-31	Split relay protocol, reconnect, and authorization scenarios
 crates/chatos_cloud_agent_runtime/src/lib_inline_tests.rs	1128	2026-12-31	Move cloud runtime inline tests into layered test modules
 task_runner_service/backend/src/services/run_model_phase/completion/tests.rs	1102	2026-12-31	Split completion states and tool-call scenarios
 mcp/src/implementations/builtin/code_maintainer/tests.rs	1082	2026-12-31	Split code maintainer read, edit, and verification scenarios

@@ -1,19 +1,16 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
-use uuid::Uuid;
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 use crate::managed_config::RelayRuntimeLimits;
 use crate::models::LocalConnectorRelayStats;
-use crate::pressure::PlatformPressureLevel;
 use crate::relay_signature::PlatformRelaySigner;
 use crate::valkey_coordination::{
     DevicePresence, RelayCorrelation, RelaySessionIdentity, ValkeyCoordinator,
@@ -21,7 +18,6 @@ use crate::valkey_coordination::{
 
 #[path = "relay_distributed.rs"]
 mod distributed;
-mod terminal;
 #[cfg(test)]
 mod tests;
 
@@ -52,55 +48,6 @@ pub struct RelayRequest {
     pub platform_nonce: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PluginArtifactRelayAction {
-    List,
-    Read,
-    Create,
-    Update,
-}
-
-impl PluginArtifactRelayAction {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::List => "list",
-            Self::Read => "read",
-            Self::Create => "create",
-            Self::Update => "update",
-        }
-    }
-
-    pub const fn is_write(self) -> bool {
-        matches!(self, Self::Create | Self::Update)
-    }
-}
-
-pub fn plugin_artifact_relay_request(
-    owner_user_id: impl Into<String>,
-    device_id: impl Into<String>,
-    workspace_id: impl Into<String>,
-    action: PluginArtifactRelayAction,
-    body: Value,
-) -> RelayRequest {
-    let action = action.as_str();
-    RelayRequest {
-        message_type: format!("plugin_artifact_{action}_request"),
-        request_id: Uuid::new_v4().to_string(),
-        owner_user_id: owner_user_id.into(),
-        device_id: device_id.into(),
-        workspace_id: workspace_id.into(),
-        method: "POST".to_string(),
-        path: format!("/plugins/artifacts/{action}"),
-        headers: BTreeMap::new(),
-        body,
-        platform_signature: None,
-        platform_signature_key_id: None,
-        platform_signature_alg: None,
-        platform_timestamp: None,
-        platform_nonce: None,
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayResponse {
     pub request_id: String,
@@ -111,20 +58,6 @@ pub struct RelayResponse {
     pub body: Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TerminalRelayEvent {
-    #[serde(rename = "type")]
-    pub message_type: String,
-    pub terminal_session_id: String,
-    #[serde(default = "default_body")]
-    pub body: Value,
-}
-
-pub struct TerminalRelaySubscription {
-    pub id: String,
-    pub events: broadcast::Receiver<TerminalRelayEvent>,
-}
-
 #[derive(Debug, Deserialize)]
 struct InboundRelayResponse {
     #[serde(rename = "type")]
@@ -133,18 +66,6 @@ struct InboundRelayResponse {
     status: Option<u16>,
     headers: Option<BTreeMap<String, String>>,
     body: Option<Value>,
-}
-
-#[derive(Debug, Deserialize)]
-struct InboundTerminalEvent {
-    #[serde(rename = "type")]
-    message_type: String,
-    terminal_session_id: String,
-    body: Option<Value>,
-    data: Option<String>,
-    code: Option<i32>,
-    busy: Option<bool>,
-    error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -164,7 +85,6 @@ pub struct ConnectorRelay {
     runtime: Arc<RwLock<RelayRuntimeConfig>>,
     inner: Arc<Mutex<RelayState>>,
     distributed: Option<DistributedRelay>,
-    platform_pressure_critical: Arc<AtomicBool>,
 }
 
 #[derive(Clone)]
@@ -172,7 +92,6 @@ struct DistributedRelay {
     instance_id: String,
     coordinator: ValkeyCoordinator,
     correlation_grace_ttl: Duration,
-    delivery_ack_timeout: Duration,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -182,15 +101,8 @@ pub(crate) enum InterInstanceRelayMessage {
         request: RelayRequest,
         requester_instance_id: String,
     },
-    Send {
-        request: RelayRequest,
-        requester_instance_id: String,
-    },
     Response {
         response: RelayResponse,
-    },
-    TerminalEvent {
-        event: TerminalRelayEvent,
     },
 }
 
@@ -210,9 +122,6 @@ impl Default for ConnectorRelay {
 struct RelayState {
     sessions: HashMap<String, ActiveConnectorSession>,
     pending: HashMap<String, PendingRelayRequest>,
-    terminal_events: HashMap<String, broadcast::Sender<TerminalRelayEvent>>,
-    terminal_subscriptions: HashMap<String, HashSet<String>>,
-    terminal_sources: HashMap<String, RelaySessionIdentity>,
 }
 
 #[derive(Clone)]
@@ -231,7 +140,6 @@ struct PendingRelayRequest {
 
 #[derive(Clone)]
 enum PendingRelayClass {
-    General,
     Companion { client_session_id: String },
 }
 
@@ -277,7 +185,6 @@ impl ConnectorRelay {
             runtime: Arc::new(RwLock::new(RelayRuntimeConfig { limits, signer })),
             inner: Arc::new(Mutex::new(RelayState::default())),
             distributed: None,
-            platform_pressure_critical: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -287,7 +194,6 @@ impl ConnectorRelay {
         instance_id: String,
         coordinator: ValkeyCoordinator,
         correlation_grace_ttl: Duration,
-        delivery_ack_timeout: Duration,
     ) -> Self {
         Self {
             runtime: Arc::new(RwLock::new(RelayRuntimeConfig { limits, signer })),
@@ -296,25 +202,8 @@ impl ConnectorRelay {
                 instance_id,
                 coordinator,
                 correlation_grace_ttl,
-                delivery_ack_timeout,
             }),
-            platform_pressure_critical: Arc::new(AtomicBool::new(false)),
         }
-    }
-
-    pub(crate) fn set_platform_pressure_level(&self, level: PlatformPressureLevel) {
-        self.platform_pressure_critical
-            .store(level == PlatformPressureLevel::Critical, Ordering::Relaxed);
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn new_terminal_sessions_paused(&self) -> bool {
-        if self.platform_pressure_critical.load(Ordering::Relaxed) {
-            return true;
-        }
-        let limits = self.runtime_config().limits;
-        self.inner.lock().await.terminal_subscriptions.len()
-            >= limits.terminal_new_session_soft_limit
     }
 
     pub(crate) fn update_runtime_config(
@@ -409,15 +298,6 @@ impl ConnectorRelay {
         };
         Ok(presence.owner_user_id == owner_user_id
             && presence.instance_id != distributed.instance_id)
-    }
-
-    pub async fn dispatch(
-        &self,
-        request: RelayRequest,
-        timeout_duration: Duration,
-    ) -> Result<RelayResponse, RelayError> {
-        self.dispatch_with_class(request, timeout_duration, PendingRelayClass::General)
-            .await
     }
 
     pub async fn dispatch_companion(
@@ -541,118 +421,13 @@ impl ConnectorRelay {
         }
     }
 
-    pub async fn send(&self, request: RelayRequest) -> Result<(), RelayError> {
-        let request = self.sign_request(request)?;
-        if let Some(session) = self
-            .local_session(request.device_id.as_str(), request.owner_user_id.as_str())
-            .await
-        {
-            let text = serde_json::to_string(&request)
-                .map_err(|err| RelayError::RequestEncode(err.to_string()))?;
-            return session
-                .outbound
-                .send(text)
-                .await
-                .map_err(|_| RelayError::Offline);
-        }
-        let presence = self.remote_presence_for_request(&request).await?;
-        let target_instance = presence.instance_id.clone();
-        let distributed = self.distributed.as_ref().ok_or(RelayError::Offline)?;
-        let request_id = request.request_id.clone();
-        let receiver = self
-            .insert_pending_request(
-                request_id.as_str(),
-                presence.relay_identity(),
-                PendingRelayClass::General,
-                Instant::now() + distributed.delivery_ack_timeout,
-            )
-            .await?;
-        let _pending_cleanup = PendingRequestCleanupGuard::new(self.clone(), request_id.clone());
-        let correlation = RelayCorrelation {
-            requester_instance_id: distributed.instance_id.clone(),
-            source: presence.relay_identity(),
-        };
-        let correlation_ttl = distributed
-            .delivery_ack_timeout
-            .saturating_add(distributed.correlation_grace_ttl);
-        let registered = match distributed
-            .coordinator
-            .register_relay_correlation(request_id.as_str(), &correlation, correlation_ttl)
-            .await
-        {
-            Ok(registered) => registered,
-            Err(error) => {
-                self.remove_pending(request_id.as_str()).await;
-                return Err(RelayError::Coordination(error));
-            }
-        };
-        if !registered {
-            self.remove_pending(request_id.as_str()).await;
-            return Err(RelayError::DuplicateRequestId(request_id));
-        }
-        let publish_result = distributed
-            .coordinator
-            .publish_instance_message(
-                target_instance.as_str(),
-                &InterInstanceRelayMessage::Send {
-                    request,
-                    requester_instance_id: distributed.instance_id.clone(),
-                },
-            )
-            .await;
-        if let Err(error) = publish_result {
-            self.remove_pending(request_id.as_str()).await;
-            let _ = distributed
-                .coordinator
-                .delete_relay_correlation(request_id.as_str(), distributed.instance_id.as_str())
-                .await;
-            return Err(RelayError::Coordination(error));
-        }
-        match tokio::time::timeout(distributed.delivery_ack_timeout, receiver).await {
-            Ok(Ok(response)) if response.status < 400 => Ok(()),
-            Ok(Ok(response)) => Err(RelayError::Coordination(
-                response
-                    .body
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("remote Local Connector rejected relay delivery")
-                    .to_string(),
-            )),
-            Ok(Err(_)) => {
-                self.cleanup_request(request_id.as_str()).await;
-                Err(RelayError::ResponseChannelClosed)
-            }
-            Err(_) => {
-                self.cleanup_request(request_id.as_str()).await;
-                Err(RelayError::Timeout)
-            }
-        }
-    }
-
     pub async fn stats(&self) -> LocalConnectorRelayStats {
         let runtime = self.runtime_config();
         let inner = self.inner.lock().await;
-        let terminal_ws_subscribers = inner
-            .terminal_events
-            .values()
-            .map(broadcast::Sender::receiver_count)
-            .sum();
         LocalConnectorRelayStats {
             active_device_sessions: inner.sessions.len(),
             pending_relay_requests: inner.pending.len(),
-            terminal_sessions: inner.terminal_events.len(),
-            terminal_ws_subscribers,
             max_pending_requests_per_device: runtime.limits.max_pending_requests_per_device,
-            terminal_max_event_bytes: runtime.limits.terminal_max_event_bytes,
-            terminal_event_channel_capacity: runtime.limits.terminal_event_channel_capacity,
-            terminal_max_active_sessions: runtime.limits.terminal_max_active_sessions,
-            terminal_new_session_soft_limit: runtime.limits.terminal_new_session_soft_limit,
-            new_terminal_sessions_paused: self.platform_pressure_critical.load(Ordering::Relaxed)
-                || inner.terminal_subscriptions.len()
-                    >= runtime.limits.terminal_new_session_soft_limit,
-            terminal_max_subscribers_per_session: runtime
-                .limits
-                .terminal_max_subscribers_per_session,
             relay_signing_enabled: runtime.signer.is_some(),
         }
     }

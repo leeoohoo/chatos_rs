@@ -90,15 +90,7 @@ pub struct LocalConnectorSystemStatsResponse {
 pub struct LocalConnectorRelayStats {
     pub active_device_sessions: usize,
     pub pending_relay_requests: usize,
-    pub terminal_sessions: usize,
-    pub terminal_ws_subscribers: usize,
     pub max_pending_requests_per_device: usize,
-    pub terminal_max_event_bytes: usize,
-    pub terminal_event_channel_capacity: usize,
-    pub terminal_max_active_sessions: usize,
-    pub terminal_new_session_soft_limit: usize,
-    pub new_terminal_sessions_paused: bool,
-    pub terminal_max_subscribers_per_session: usize,
     pub relay_signing_enabled: bool,
 }
 
