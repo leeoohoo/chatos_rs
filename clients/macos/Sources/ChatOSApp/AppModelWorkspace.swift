@@ -18,6 +18,9 @@ extension AppModel {
 
         Task {
             do {
+                guard let workspaceService else {
+                    throw LocalConnectorCompanionResourceError.unavailable
+                }
                 let registry = try await localProjectsService.registry()
                 let loader = try ClientOwnedWorkspaceLoader(registry: registry, remote: workspaceService, ownerUserID: ownerUserID)
                 let deviceID = try? await localProjectsService.deviceID(ownerUserID: ownerUserID)

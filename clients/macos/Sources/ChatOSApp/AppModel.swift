@@ -105,10 +105,10 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let runtimeSettingsService: NativeLocalAgentConversationRuntimeSettingsService?
     let askUserPromptService: NativeLocalAgentAskUserPromptService?
     let platformToolWorker: NativeLocalAgentPlatformToolWorker?
-    let workspaceService: ChatOSWorkspaceService
+    let workspaceService: NativeLocalAgentWorkspaceService?
     let localConnectorService: NativeLocalConnectorService
     let localAgentHost: (any LocalAgentHostClientServicing)?
-    let projectConversationService: ChatOSProjectConversationService
+    let projectConversationService: NativeLocalAgentProjectConversationService?
     let localProjectsService: NativeLocalProjectsService
     let remoteConnectionService: NativeRemoteConnectionService
     let remoteFileService: NativeRemoteFileService
@@ -253,8 +253,15 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             NativeLocalAgentAskUserPromptService(host: $0)
         }
         self.platformToolWorker = localAgentPlatformToolWorker
-        self.workspaceService = ChatOSWorkspaceService(client: apiClient)
-        self.projectConversationService = ChatOSProjectConversationService(client: apiClient)
+        let workspaceService = localAgentHost.map {
+            NativeLocalAgentWorkspaceService(host: $0)
+        }
+        self.workspaceService = workspaceService
+        self.projectConversationService = localAgentHost.flatMap { host in
+            workspaceService.map {
+                NativeLocalAgentProjectConversationService(host: host, workspace: $0)
+            }
+        }
         let localProjectsService = NativeLocalProjectsService(
             connector: localConnectorService,
             databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()

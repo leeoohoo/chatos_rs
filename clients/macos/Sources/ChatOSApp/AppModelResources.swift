@@ -279,7 +279,8 @@ extension AppModel {
         }
         guard let owner = authenticatedUserID,
               var project = workspaceProject(id: projectID),
-              let contact = defaultProjectContact else {
+              let contact = defaultProjectContact,
+              let projectConversationService else {
             throw LocalConnectorCompanionResourceError.unavailable
         }
         let accountGeneration = workspaceAccountGeneration

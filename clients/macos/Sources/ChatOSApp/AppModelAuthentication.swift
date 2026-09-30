@@ -46,7 +46,6 @@ extension AppModel {
                     self?.refreshLocalAgentControlPlane(ownerUserID: session.user.id)
                 }
             )
-            refreshWorkspace()
             refreshRemoteConnections()
             refreshPluginApplications()
         case .signedOut:
@@ -118,6 +117,9 @@ extension AppModel {
                     await localAgentHost.stop()
                     return
                 }
+                await self?.workspaceService?.configure(ownerUserID: ownerUserID)
+                await self?.projectConversationService?.configure(ownerUserID: ownerUserID)
+                self?.refreshWorkspace()
             } catch is CancellationError {
                 await localAgentHost.stop()
             } catch {
@@ -139,6 +141,8 @@ extension AppModel {
         let turnProcessService = turnProcessService
         let runtimeSettingsService = runtimeSettingsService
         let platformToolWorker = platformToolWorker
+        let workspaceService = workspaceService
+        let projectConversationService = projectConversationService
         Task {
             await commandService?.reset()
             await petActivityService?.reset()
@@ -147,6 +151,8 @@ extension AppModel {
             await turnProcessService?.reset()
             await runtimeSettingsService?.reset()
             await platformToolWorker?.reset()
+            await workspaceService?.reset()
+            await projectConversationService?.reset()
             await localAgentHost.stop()
         }
     }
