@@ -1,6 +1,5 @@
 using ChatOS.Api.Http;
 using ChatOS.Api.Authentication;
-using ChatOS.Api.Projects;
 using ChatOS.Api.Notepad;
 using ChatOS.Api.Media;
 using ChatOS.Core.Abstractions;
@@ -35,7 +34,6 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAuthenticationService, AuthenticationService>();
         services.AddSingleton<ILocalConnectorPairingTicketService, LocalConnectorPairingTicketService>();
         services.AddSingleton<IRemoteConnectionCloudService, RemoteConnectionCloudService>();
-        services.AddSingleton<IProjectRunService, ProjectRunService>();
         services.AddSingleton<INotepadService, NotepadService>();
         services.AddSingleton<IMediaGenerationService, MediaGenerationService>();
         services.AddSingleton<IStoryPlanningService, StoryPlanningService>();
