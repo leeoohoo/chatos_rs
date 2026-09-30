@@ -74,7 +74,11 @@ pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "task_runner.sandbox.enabled",
     "task_runner.sandbox.lease_ttl_seconds",
     "task_runner.sandbox.manager_base_url",
+    "user_service.auth.task_runner_access_ttl_seconds",
+    "user_service.auth.task_runner_audience",
     "user_service.downstream.memory_engine_base_url",
+    "user_service.downstream.task_runner_base_url",
+    "user_service.downstream.task_runner_internal_api_secret",
 ];
 pub const PLATFORM_PRESSURE_LEVEL_CONFIG_KEY: &str = "platform.pressure.level";
 pub const PLATFORM_PRESSURE_CONTROLLER_ENABLED_CONFIG_KEY: &str =

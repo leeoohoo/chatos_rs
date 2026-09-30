@@ -334,7 +334,6 @@ impl AppState {
 
         tracing::info!(
             internal_mtls_port_key = USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY,
-            task_runner_base_url_key = USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
             harness_enabled_key = USER_SERVICE_HARNESS_PROVISIONING_ENABLED_CONFIG_KEY,
             "User Service runtime configuration is present in configuration center releases and snapshots"
         );

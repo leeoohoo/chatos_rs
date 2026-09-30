@@ -141,10 +141,8 @@ use crate::catalog::{
     USER_SERVICE_REGISTER_CODE_RESEND_SECONDS_CONFIG_KEY,
     USER_SERVICE_REGISTER_CODE_TTL_SECONDS_CONFIG_KEY, USER_SERVICE_SMTP_HOST_CONFIG_KEY,
     USER_SERVICE_SMTP_PASSWORD_CONFIG_KEY, USER_SERVICE_SMTP_PORT_CONFIG_KEY,
-    USER_SERVICE_SMTP_USERNAME_CONFIG_KEY, USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS_CONFIG_KEY,
-    USER_SERVICE_TASK_RUNNER_AUDIENCE_CONFIG_KEY, USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
-    USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
-    USER_SERVICE_USER_ACCESS_TTL_SECONDS_CONFIG_KEY, USER_SERVICE_USER_AUDIENCE_CONFIG_KEY,
+    USER_SERVICE_SMTP_USERNAME_CONFIG_KEY, USER_SERVICE_USER_ACCESS_TTL_SECONDS_CONFIG_KEY,
+    USER_SERVICE_USER_AUDIENCE_CONFIG_KEY,
 };
 
 #[test]
@@ -1901,14 +1899,6 @@ fn user_service_runtime_backfill_adds_all_service_defaults() {
         Some(&json!(39192))
     );
     assert_eq!(
-        values.get(USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY),
-        Some(&json!("https://task-runner-backend:39092"))
-    );
-    assert_eq!(
-        values.get(USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY),
-        Some(&json!("change_me_user_service_task_runner_secret"))
-    );
-    assert_eq!(
         values.get(USER_SERVICE_HARNESS_PROVISIONING_ENABLED_CONFIG_KEY),
         Some(&json!(true))
     );
@@ -1976,21 +1966,13 @@ fn explicit_local_admin_bootstrap_override_precedes_user_service_startup() {
 }
 
 #[test]
-fn user_service_runtime_snapshot_projects_internal_task_runner_url() {
+fn user_service_runtime_snapshot_projects_service_configuration() {
     let definitions = builtin_definitions();
     let values = BTreeMap::from([
         (USER_SERVICE_PORT_CONFIG_KEY.to_string(), json!(39190)),
         (
             USER_SERVICE_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string(),
             json!(39192),
-        ),
-        (
-            USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY.to_string(),
-            json!("https://task-runner-backend:39092"),
-        ),
-        (
-            USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY.to_string(),
-            json!("change_me_user_service_task_runner_secret"),
         ),
         (
             USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
@@ -2005,16 +1987,8 @@ fn user_service_runtime_snapshot_projects_internal_task_runner_url() {
             json!("user_service"),
         ),
         (
-            USER_SERVICE_TASK_RUNNER_AUDIENCE_CONFIG_KEY.to_string(),
-            json!("task_runner"),
-        ),
-        (
             USER_SERVICE_USER_ACCESS_TTL_SECONDS_CONFIG_KEY.to_string(),
             json!(43_200),
-        ),
-        (
-            USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS_CONFIG_KEY.to_string(),
-            json!(3_600),
         ),
         (
             USER_SERVICE_SUPER_ADMIN_USERNAME_CONFIG_KEY.to_string(),
@@ -2098,16 +2072,6 @@ fn user_service_runtime_snapshot_projects_internal_task_runner_url() {
         Some(&"39192".to_string())
     );
     assert_eq!(
-        snapshot.env.get("USER_SERVICE_TASK_RUNNER_BASE_URL"),
-        Some(&"https://task-runner-backend:39092".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET"),
-        Some(&"change_me_user_service_task_runner_secret".to_string())
-    );
-    assert_eq!(
         snapshot
             .env
             .get("USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS"),
@@ -2120,12 +2084,6 @@ fn user_service_runtime_snapshot_projects_internal_task_runner_url() {
     assert_eq!(
         snapshot.env.get("USER_SERVICE_USER_AUDIENCE"),
         Some(&"user_service".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS"),
-        Some(&"3600".to_string())
     );
     assert_eq!(
         snapshot.env.get("USER_SERVICE_SUPER_ADMIN_USERNAME"),

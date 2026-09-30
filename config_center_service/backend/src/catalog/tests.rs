@@ -2053,18 +2053,6 @@ fn catalog_exposes_user_service_runtime_routes_via_env_projection() {
     let definitions = builtin_definitions();
     for (key, env_alias, expected_value_type, expect_nullable) in [
         (
-            USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
-            "USER_SERVICE_TASK_RUNNER_BASE_URL",
-            "string",
-            false,
-        ),
-        (
-            USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
-            "USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET",
-            "string",
-            false,
-        ),
-        (
             USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS_CONFIG_KEY,
             "USER_SERVICE_DOWNSTREAM_REQUEST_TIMEOUT_MS",
             "duration_ms",
@@ -2083,20 +2071,8 @@ fn catalog_exposes_user_service_runtime_routes_via_env_projection() {
             false,
         ),
         (
-            USER_SERVICE_TASK_RUNNER_AUDIENCE_CONFIG_KEY,
-            "USER_SERVICE_TASK_RUNNER_AUDIENCE",
-            "string",
-            false,
-        ),
-        (
             USER_SERVICE_USER_ACCESS_TTL_SECONDS_CONFIG_KEY,
             "USER_SERVICE_USER_ACCESS_TTL_SECONDS",
-            "integer",
-            false,
-        ),
-        (
-            USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS_CONFIG_KEY,
-            "USER_SERVICE_TASK_RUNNER_ACCESS_TTL_SECONDS",
             "integer",
             false,
         ),
@@ -2274,14 +2250,6 @@ fn catalog_exposes_user_service_runtime_routes_via_env_projection() {
         assert_eq!(definition.nullable, expect_nullable);
         assert_eq!(definition.env_aliases, vec![env_alias.to_string()]);
     }
-
-    let callback_secret = definitions
-        .iter()
-        .find(|definition| {
-            definition.key == USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY
-        })
-        .expect("user service task runner internal secret");
-    assert_eq!(callback_secret.sensitivity, "secret");
 }
 
 #[test]

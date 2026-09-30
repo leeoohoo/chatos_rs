@@ -412,7 +412,6 @@ impl AppState {
         for key in [
             CHATOS_TASK_RUNNER_INTERNAL_BASE_URL_CONFIG_KEY,
             MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL_CONFIG_KEY,
-            USER_SERVICE_TASK_RUNNER_BASE_URL_CONFIG_KEY,
         ] {
             let is_https = values
                 .get(key)
