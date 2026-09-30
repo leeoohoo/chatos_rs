@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use super::{
+    notepad_model_tools, LocalNotepadToolExecutor, NOTEPAD_READ_ONLY_TOOLS, NOTEPAD_TOOL_NAMES,
+};
 use crate::{
     ChatosAiRuntimeStepExecutor, ControlPlaneLocalAiStepPlanner, DurableAiProfile,
     LocalAgentHostCoordinator, LocalAgentScheduler, LocalCapabilityResolver, LocalMemorySyncWorker,
@@ -120,16 +123,25 @@ impl LocalAgentHostAssembly {
     {
         let model_resolver: Arc<dyn LocalModelRuntimeResolver> = Arc::new(model_resolver);
         let capability_resolver: Arc<dyn LocalCapabilityResolver> = Arc::new(capability_resolver);
-        let safety = NamedReadOnlyTools::new(read_only_tools)
-            .with_approval_exempt([CREATE_TASK_TOOL, CREATE_TASKS_TOOL]);
+        let safety = NamedReadOnlyTools::new(
+            read_only_tools
+                .into_iter()
+                .map(Into::into)
+                .chain(NOTEPAD_READ_ONLY_TOOLS.map(str::to_string)),
+        )
+        .with_approval_exempt([CREATE_TASK_TOOL, CREATE_TASKS_TOOL]);
         let mut main_chat_planner = ControlPlaneLocalAiStepPlanner::main_chat(
             Arc::clone(&model_resolver),
             Arc::clone(&capability_resolver),
-        );
+        )
+        .with_local_tools(notepad_model_tools())?
+        .with_local_tool_prefixes(["notepad_"])?;
         let mut task_runner_planner = ControlPlaneLocalAiStepPlanner::task_runner(
             Arc::clone(&model_resolver),
             Arc::clone(&capability_resolver),
-        );
+        )
+        .with_local_tools(notepad_model_tools())?
+        .with_local_tool_prefixes(["notepad_"])?;
         if let Some(source_id) = memory_source_id {
             main_chat_planner = main_chat_planner.with_memory_source_id(source_id.clone())?;
             task_runner_planner = task_runner_planner.with_memory_source_id(source_id)?;
@@ -161,6 +173,8 @@ impl LocalAgentHostAssembly {
             Arc::new(LocalTaskToolExecutor::new(Arc::clone(&runtime)));
         tools.register_shared(CREATE_TASK_TOOL, Arc::clone(&task_tools))?;
         tools.register_shared(CREATE_TASKS_TOOL, task_tools)?;
+        LocalNotepadToolExecutor::new(Arc::clone(&runtime), owner_user_id.clone())?
+            .register_into(&mut tools)?;
         let mut tool_scheduler = LocalToolScheduler::new(
             Arc::clone(&runtime),
             tools,
@@ -168,13 +182,12 @@ impl LocalAgentHostAssembly {
             "local-tool-worker",
         )?;
         if external_tool_worker {
-            tool_scheduler = tool_scheduler.with_tool_filter(
-                Some(vec![
-                    CREATE_TASK_TOOL.to_string(),
-                    CREATE_TASKS_TOOL.to_string(),
-                ]),
-                Vec::new(),
-            )?;
+            let internal_tools = [CREATE_TASK_TOOL, CREATE_TASKS_TOOL]
+                .into_iter()
+                .chain(NOTEPAD_TOOL_NAMES)
+                .map(str::to_string)
+                .collect();
+            tool_scheduler = tool_scheduler.with_tool_filter(Some(internal_tools), Vec::new())?;
         }
         let mut coordinator = LocalAgentHostCoordinator::new(
             Arc::clone(&runtime),
@@ -182,7 +195,11 @@ impl LocalAgentHostAssembly {
             Some(model_scheduler),
             Some(tool_scheduler),
         )?
-        .with_reserved_ipc_tools([CREATE_TASK_TOOL, CREATE_TASKS_TOOL])?;
+        .with_reserved_ipc_tools(
+            [CREATE_TASK_TOOL, CREATE_TASKS_TOOL]
+                .into_iter()
+                .chain(NOTEPAD_TOOL_NAMES),
+        )?;
         if let Some(worker) = memory_sync_worker {
             coordinator = coordinator.with_memory_sync_worker(worker)?;
         }

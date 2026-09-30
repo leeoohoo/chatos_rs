@@ -10,7 +10,7 @@ use chatos_ai_runtime::{
 };
 use chatos_local_agent_protocol::{LocalAgentRunClaim, LocalConversationAttachmentSpec};
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 pub const MAIN_CHAT_PROFILE_KEY: &str = "main_chat";
 pub const TASK_RUNNER_PROFILE_KEY: &str = "task_runner";
@@ -89,6 +89,8 @@ pub struct ControlPlaneLocalAiStepPlanner {
     model_resolver: Arc<dyn LocalModelRuntimeResolver>,
     capability_resolver: Arc<dyn LocalCapabilityResolver>,
     memory_source_id: Option<String>,
+    local_tools: Vec<Value>,
+    local_tool_prefixes: Vec<String>,
 }
 
 impl ControlPlaneLocalAiStepPlanner {
@@ -134,7 +136,41 @@ impl ControlPlaneLocalAiStepPlanner {
             model_resolver: Arc::new(model_resolver),
             capability_resolver: Arc::new(capability_resolver),
             memory_source_id: None,
+            local_tools: Vec::new(),
+            local_tool_prefixes: Vec::new(),
         }
+    }
+
+    /// Adds client-owned tools to every resolved capability revision. A local
+    /// definition replaces a control-plane definition with the same name so
+    /// retired server implementations cannot shadow the on-device executor.
+    pub fn with_local_tools(mut self, tools: Vec<Value>) -> Result<Self, String> {
+        validate_unique_tool_names(&tools)?;
+        self.local_tools = tools;
+        Ok(self)
+    }
+
+    /// Reserves a client-owned tool namespace. Control-plane definitions in
+    /// that namespace are removed even when the local client intentionally
+    /// supports only a smaller replacement surface.
+    pub fn with_local_tool_prefixes<I, S>(mut self, prefixes: I) -> Result<Self, String>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.local_tool_prefixes = prefixes
+            .into_iter()
+            .map(Into::into)
+            .map(|prefix: String| prefix.trim().to_string())
+            .collect();
+        if self
+            .local_tool_prefixes
+            .iter()
+            .any(|prefix| prefix.is_empty())
+        {
+            return Err("local tool prefix must not be empty".to_string());
+        }
+        Ok(self)
     }
 
     pub fn with_memory_source_id(mut self, source_id: impl Into<String>) -> Result<Self, String> {
@@ -168,7 +204,7 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
             )
             .await?;
         apply_run_thinking_level(&mut transient.model_config, &claim.run.input)?;
-        let capabilities = self
+        let mut capabilities = self
             .capability_resolver
             .resolve_capabilities(
                 &claim.run.owner_user_id,
@@ -176,6 +212,11 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 &claim.run.capability_policy_revision,
             )
             .await?;
+        capabilities.tools = merge_local_tools(
+            capabilities.tools,
+            &self.local_tools,
+            &self.local_tool_prefixes,
+        )?;
         transient.model_config.instructions = merge_instructions(
             capabilities.instructions,
             transient.model_config.instructions,
@@ -217,6 +258,41 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 .unwrap_or_default(),
         })
     }
+}
+
+fn merge_local_tools(
+    mut controlled: Vec<Value>,
+    local: &[Value],
+    local_prefixes: &[String],
+) -> Result<Vec<Value>, String> {
+    let local_names = validate_unique_tool_names(local)?;
+    controlled.retain(|tool| {
+        tool_name(tool).is_none_or(|name| {
+            !local_names.contains(name)
+                && !local_prefixes.iter().any(|prefix| name.starts_with(prefix))
+        })
+    });
+    controlled.extend_from_slice(local);
+    Ok(controlled)
+}
+
+fn validate_unique_tool_names(tools: &[Value]) -> Result<HashSet<&str>, String> {
+    let mut names = HashSet::with_capacity(tools.len());
+    for tool in tools {
+        let name = tool_name(tool)
+            .filter(|name| !name.trim().is_empty())
+            .ok_or_else(|| "local tool definition is missing a name".to_string())?;
+        if !names.insert(name) {
+            return Err(format!("local tool definition is duplicated: {name}"));
+        }
+    }
+    Ok(names)
+}
+
+fn tool_name(tool: &Value) -> Option<&str> {
+    tool.get("name")
+        .and_then(Value::as_str)
+        .or_else(|| tool.pointer("/function/name").and_then(Value::as_str))
 }
 
 fn apply_run_thinking_level(config: &mut ModelRuntimeConfig, input: &Value) -> Result<(), String> {
@@ -595,6 +671,25 @@ mod tests {
         )
         .expect("disabled override");
         assert_eq!(config.thinking_level.as_deref(), Some("none"));
+    }
+
+    #[test]
+    fn local_tool_definitions_replace_control_plane_copies() {
+        let controlled = vec![
+            json!({"type": "function", "name": "notepad_read_note", "description": "server"}),
+            json!({"type": "function", "name": "notepad_delete_note"}),
+            json!({"type": "function", "name": "read_file"}),
+        ];
+        let local = vec![json!({
+            "type": "function",
+            "name": "notepad_read_note",
+            "description": "local"
+        })];
+        let merged =
+            merge_local_tools(controlled, &local, &["notepad_".to_string()]).expect("merge tools");
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0]["name"], "read_file");
+        assert_eq!(merged[1]["description"], "local");
     }
 
     #[test]
