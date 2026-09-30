@@ -11,7 +11,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@noble/hashes": "^2.2.0",
+    "@noble/hashes": "^2.4.0",
     "lucide-react": "^1.24.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
