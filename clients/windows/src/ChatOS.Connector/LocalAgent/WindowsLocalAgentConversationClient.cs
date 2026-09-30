@@ -109,6 +109,14 @@ internal sealed record GuideLocalConversationTurnCommand(
     JsonElement MessageMetadata,
     IReadOnlyList<WindowsLocalConversationAttachmentSpec> Attachments);
 
+internal sealed record ResumeLocalConversationTurnCommand(
+    string Type, string OwnerUserId, string ConversationId,
+    ulong ExpectedConversationVersion, string TurnId, ulong ExpectedRunVersion,
+    string ExpectedRunStatus, string MessageId, string Message,
+    JsonElement MessageMetadata,
+    IReadOnlyList<WindowsLocalConversationAttachmentSpec> Attachments,
+    string Reason);
+
 internal sealed record CancelLocalConversationTurnCommand(
     string Type,
     string OwnerUserId,
@@ -202,6 +210,17 @@ public sealed class WindowsLocalAgentConversationClient(ILocalAgentHostClient ho
     {
         var response = await host.SendAsync<
             CancelLocalConversationTurnCommand,
+            LocalConversationTurnMutationResult>(command, cancellationToken)
+            .ConfigureAwait(false);
+        return RequireMutation(response, "conversation_turn_updated");
+    }
+
+    internal async Task<WindowsLocalConversationTurnMutation> ResumeTurnAsync(
+        ResumeLocalConversationTurnCommand command,
+        CancellationToken cancellationToken)
+    {
+        var response = await host.SendAsync<
+            ResumeLocalConversationTurnCommand,
             LocalConversationTurnMutationResult>(command, cancellationToken)
             .ConfigureAwait(false);
         return RequireMutation(response, "conversation_turn_updated");

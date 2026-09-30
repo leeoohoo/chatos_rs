@@ -51,6 +51,9 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<WindowsLocalAgentPetActivityService>();
             services.AddSingleton<IPetActivityInboxService>(provider =>
                 provider.GetRequiredService<WindowsLocalAgentPetActivityService>());
+            services.AddSingleton<WindowsLocalAgentAskUserPromptService>();
+            services.AddSingleton<IAskUserPromptService>(provider =>
+                provider.GetRequiredService<WindowsLocalAgentAskUserPromptService>());
             services.AddSingleton<WindowsLocalAgentBootstrapService>();
             services.AddSingleton<ILocalAgentHostLifecycle>(provider =>
                 provider.GetRequiredService<WindowsLocalAgentHostLifecycle>());

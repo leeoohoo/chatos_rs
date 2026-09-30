@@ -25,6 +25,7 @@ public sealed class WindowsLocalAgentBootstrapService
     private readonly WindowsLocalAgentPlatformToolWorker _toolWorker;
     private readonly WindowsLocalAgentRealtimeClient _realtime;
     private readonly WindowsLocalAgentPetActivityService _petActivities;
+    private readonly WindowsLocalAgentAskUserPromptService _askUser;
     private readonly ChatOSApiClient _api;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -38,6 +39,7 @@ public sealed class WindowsLocalAgentBootstrapService
         WindowsLocalAgentPlatformToolWorker toolWorker,
         WindowsLocalAgentRealtimeClient realtime,
         WindowsLocalAgentPetActivityService petActivities,
+        WindowsLocalAgentAskUserPromptService askUser,
         ChatOSApiClient api)
     {
         _host = host;
@@ -49,6 +51,7 @@ public sealed class WindowsLocalAgentBootstrapService
         _toolWorker = toolWorker;
         _realtime = realtime;
         _petActivities = petActivities;
+        _askUser = askUser;
         _api = api;
     }
 
@@ -68,6 +71,7 @@ public sealed class WindowsLocalAgentBootstrapService
             _toolWorker.Reset();
             _realtime.Reset();
             _petActivities.Reset();
+            _askUser.Reset();
             Current = null;
             if (_host.ActiveOwnerUserId is { } activeOwner &&
                 !string.Equals(activeOwner, ownerUserId, StringComparison.Ordinal))
@@ -176,6 +180,7 @@ public sealed class WindowsLocalAgentBootstrapService
             _toolWorker.Configure(ownerUserId);
             _realtime.Configure(ownerUserId);
             _petActivities.Configure(ownerUserId);
+            _askUser.Configure(ownerUserId);
             Current = result;
             return result;
         }
@@ -193,6 +198,7 @@ public sealed class WindowsLocalAgentBootstrapService
         _toolWorker.Reset();
         _realtime.Reset();
         _petActivities.Reset();
+        _askUser.Reset();
         Current = null;
     }
 

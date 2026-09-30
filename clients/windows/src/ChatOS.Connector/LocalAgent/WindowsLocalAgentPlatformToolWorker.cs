@@ -17,8 +17,7 @@ internal sealed record CommitLocalToolCommand(
     ulong ExpectedVersion, JsonElement Outcome);
 internal sealed record CommitLocalToolResult(string Type, JsonElement Result);
 internal sealed record GetLocalRunCommand(string Type, string OwnerUserId, string RunId);
-internal sealed record WindowsLocalRun(string OwnerUserId, JsonElement Input);
-internal sealed record GetLocalRunResult(string Type, WindowsLocalRun Run);
+internal sealed record GetLocalRunResult(string Type, WindowsLocalAgentRun Run);
 
 public sealed class WindowsLocalAgentPlatformToolWorker
 {
