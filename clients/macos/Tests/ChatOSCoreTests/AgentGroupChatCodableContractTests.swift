@@ -272,34 +272,15 @@ final class AgentGroupChatCodableContractTests: XCTestCase {
         XCTAssertEqual(delivery.lane, .manager)
     }
 
-    func testRequirementSurveyWriteCapabilityAlwaysRequiresRead() throws {
+    func testTodoCapabilitiesAreDeduplicatedInStableOrder() throws {
         let plan = LocalAgentTodoExecutionPlan(
-            builtinCapabilities: [.requirementSurveyWrite]
+            builtinCapabilities: [.terminal, .projectRead, .terminal]
         )
         XCTAssertEqual(
             plan.builtinCapabilities,
-            [.requirementSurveyRead, .requirementSurveyWrite]
+            [.terminal, .projectRead]
         )
         XCTAssertNoThrow(try plan.validate())
-
-        let malformed = Data(#"""
-        {
-            "requiresExecution":true,
-            "builtinCapabilities":["requirement_survey_write"],
-            "plugins":[],
-            "selectionRevision":"local-v1",
-            "selectedAtUnixMs":0
-        }
-        """#.utf8)
-        let decoded = try JSONDecoder().decode(LocalAgentTodoExecutionPlan.self, from: malformed)
-        XCTAssertThrowsError(try decoded.validate()) { error in
-            XCTAssertEqual(
-                error.localizedDescription,
-                AgentGroupChatError.invalidField(
-                    "todoRequirementSurveyReadDependency"
-                ).localizedDescription
-            )
-        }
     }
 
     func testLegacyDefaultsRemainDecodable() throws {

@@ -16,8 +16,6 @@ public enum LocalAgentTodoBuiltinCapability: String, Codable, Sendable, CaseIter
     case projectRead = "project_read"
     case projectWrite = "project_write"
     case terminal
-    case requirementSurveyRead = "requirement_survey_read"
-    case requirementSurveyWrite = "requirement_survey_write"
 }
 
 /// Program-resolved Plugin selection. `pluginID` is persisted for execution but is never encoded
@@ -79,13 +77,9 @@ public struct LocalAgentTodoExecutionPlan: Codable, Sendable, Equatable {
               selectedAtUnixMs >= 0 else {
             throw AgentGroupChatError.invalidField("todoExecutionPlan")
         }
-        guard !builtinCapabilities.contains(.requirementSurveyWrite)
-                || builtinCapabilities.contains(.requirementSurveyRead) else {
-            throw AgentGroupChatError.invalidField("todoRequirementSurveyReadDependency")
-        }
         if !requiresExecution,
            builtinCapabilities.contains(where: {
-               $0 != .projectRead && $0 != .requirementSurveyRead
+               $0 != .projectRead
            }) {
             throw AgentGroupChatError.invalidField("todoRequiresExecution")
         }
@@ -99,15 +93,9 @@ public struct LocalAgentTodoExecutionPlan: Codable, Sendable, Equatable {
     public static func completingDependencies(
         in capabilities: [LocalAgentTodoBuiltinCapability]
     ) -> [LocalAgentTodoBuiltinCapability] {
-        var result: [LocalAgentTodoBuiltinCapability] = []
-        for capability in capabilities {
-            if capability == .requirementSurveyWrite,
-               !result.contains(.requirementSurveyRead) {
-                result.append(.requirementSurveyRead)
-            }
+        capabilities.reduce(into: []) { result, capability in
             if !result.contains(capability) { result.append(capability) }
         }
-        return result
     }
 }
 

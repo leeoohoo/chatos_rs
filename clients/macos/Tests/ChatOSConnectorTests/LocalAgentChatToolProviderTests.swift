@@ -1097,8 +1097,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             Set(try XCTUnwrap(optionsJSON["builtin_capabilities"] as? [String])),
             Set(LocalAgentTodoBuiltinCapability.allCases.map(\.rawValue))
         )
-        XCTAssertTrue(options.content.contains("requirement_survey_read"))
-        XCTAssertTrue(options.content.contains("requirement_survey_write"))
+        XCTAssertFalse(options.content.contains("requirement_survey_read"))
+        XCTAssertFalse(options.content.contains("requirement_survey_write"))
         let teamRef = try XCTUnwrap(
             (optionsJSON["teams"] as? [[String: Any]])?.first(where: {
                 ($0["name"] as? String) == second.draft.name

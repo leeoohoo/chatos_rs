@@ -35,8 +35,7 @@ struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
                 throw NativePluginRuntimeError.invalidMCPResponse("内置 MCP 工具定义无效")
             }
             let effect: AgentToolDefinition.Effect
-            if NativeMCPCodeWriteStore.toolNames.contains(name)
-                || NativeMCPRequirementSurveyTools.writeToolNames.contains(name) {
+            if NativeMCPCodeWriteStore.toolNames.contains(name) {
                 effect = .write
             } else if NativeMCPTerminalStore.toolNames.contains(name) {
                 effect = .terminal
@@ -93,8 +92,6 @@ struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
     private static let nativeDefinitions = NativeMCPCodeReadTools.toolDefinitions
         + NativeMCPCodeWriteStore.toolDefinitions
         + NativeMCPTerminalStore.toolDefinitions
-        + NativeMCPRequirementSurveyTools.readToolDefinitions
-        + NativeMCPRequirementSurveyTools.writeToolDefinitions
 
     /// Enumerates every native model-visible builtin through the same metadata path used by the
     /// live provider. Migration remains audit-only until the report is complete for all families.
@@ -119,10 +116,6 @@ struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
         if NativeMCPTerminalStore.toolNames.contains(toolName) {
             return ProductToolProviderID.terminal
         }
-        if NativeMCPRequirementSurveyTools.readToolNames.contains(toolName)
-            || NativeMCPRequirementSurveyTools.writeToolNames.contains(toolName) {
-            return ProductToolProviderID.requirementSurvey
-        }
         return ProductToolProviderID.projectRead
     }
 
@@ -140,16 +133,6 @@ struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
             ProductToolSkillBindingID.terminalProcessObservation
         case "process_write", "process_kill", "process":
             ProductToolSkillBindingID.terminalProcessControl
-        case "skill_activate", "skill_list_resources", "skill_read_resource":
-            ProductToolSkillBindingID.requirementSurveyControlPlane
-        case "requirement_survey_create":
-            ProductToolSkillBindingID.requirementSurveyCreate
-        case "requirement_survey_list", "requirement_survey_get":
-            ProductToolSkillBindingID.requirementSurveyReadResults
-        case "requirement_survey_resolve":
-            ProductToolSkillBindingID.requirementSurveyResolve
-        case "requirement_survey_project_tasks":
-            ProductToolSkillBindingID.requirementSurveyReviewExecution
         default:
             nil
         }
@@ -158,12 +141,6 @@ struct NativeAgentBuiltinToolProvider: AgentToolProvider, Sendable {
     private static func capability(for toolName: String) -> LocalAgentTodoBuiltinCapability {
         if NativeMCPCodeWriteStore.toolNames.contains(toolName) { return .projectWrite }
         if NativeMCPTerminalStore.toolNames.contains(toolName) { return .terminal }
-        if NativeMCPRequirementSurveyTools.writeToolNames.contains(toolName) {
-            return .requirementSurveyWrite
-        }
-        if NativeMCPRequirementSurveyTools.readToolNames.contains(toolName) {
-            return .requirementSurveyRead
-        }
         return .projectRead
     }
 }
@@ -181,21 +158,6 @@ extension NativeLocalConnectorService {
             throw NativePluginRuntimeError.invalidRequest("当前 Agent 会话没有绑定项目")
         }
         let projectRoot = resolvedProject.absoluteURL
-        if NativeMCPRequirementSurveyTools.readToolNames.contains(name)
-            || NativeMCPRequirementSurveyTools.writeToolNames.contains(name) {
-            guard let agentGroupChatService else {
-                throw NativePluginRuntimeError.invalidRequest("需求调研存储尚未连接")
-            }
-            let store = try await agentGroupChatService.store()
-            return try await NativeMCPRequirementSurveyTools(
-                store: store,
-                ownerUserID: runContext.ownerUserID,
-                projectID: runContext.projectID,
-                creatorAgentID: runContext.agentID,
-                sourceDeliveryID: runContext.deliveryID,
-                now: { Int64(Date().timeIntervalSince1970 * 1_000) }
-            ).call(name: name, arguments: arguments)
-        }
         if NativeMCPCodeReadTools.toolDefinitions.contains(where: {
             $0.jsonObject?["name"]?.jsonString == name
         }) {

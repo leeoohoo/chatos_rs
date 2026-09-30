@@ -96,9 +96,9 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             $0.providerID == ProductToolProviderID.localAgentChat
         }.flatMap(\.toolNames)
 
-        XCTAssertEqual(providerTools.count, 85)
-        XCTAssertEqual(Set(providerTools).count, 85)
-        XCTAssertEqual(nativeBuiltinTools.count, 34)
+        XCTAssertEqual(providerTools.count, 77)
+        XCTAssertEqual(Set(providerTools).count, 77)
+        XCTAssertEqual(nativeBuiltinTools.count, 26)
         XCTAssertEqual(localAgentChatTools.count, 33)
         XCTAssertEqual(Set(localAgentChatTools).count, 33)
         XCTAssertEqual(
@@ -106,12 +106,6 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
                 $0.providerID == ProductToolProviderID.capabilityBroker
             }.flatMap(\.toolNames).count,
             5
-        )
-        XCTAssertEqual(
-            bindings.first {
-                $0.id == ProductToolSkillBindingID.requirementSurveyControlPlane
-            }?.activationPolicy,
-            .controlPlane
         )
         XCTAssertEqual(
             bindings.first {

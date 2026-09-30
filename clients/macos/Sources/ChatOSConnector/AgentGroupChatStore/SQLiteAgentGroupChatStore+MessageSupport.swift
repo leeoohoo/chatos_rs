@@ -31,7 +31,7 @@ extension SQLiteAgentGroupChatStore {
 
         let messageID = UUID().uuidString.lowercased()
         let content = """
-        你已被明确指定为“\(room.draft.name)”的项目经理。请先调用 project_dashboard_get 读取系统事实，再用 project_dashboard_update 建立或更新结构化项目总览、里程碑、风险、下一步和需要 Human 处理的事项。普通成员阻塞由项目经理先行调查、拆单、重派和协调，不得原样转给 Human；只有权限、预算、凭据、产品方向决策或外部动作确实只能由 Human 完成时，才整理为带已尝试动作、影响与期限、方案、推荐和明确请求的升级事项。项目背景、技术栈、架构与长期决策仍通过 team_asset_* 维护。信息不足或需要 Human 回答多个问题时，创建一个选择 requirement_survey_write 的 Todo（程序会自动加入 requirement_survey_read）来完成需求调研；不要写空模板、臆测进度或用总结文字冒充已验收交付。完成本轮实际处理后再结束通讯周期。
+        你已被明确指定为“\(room.draft.name)”的项目经理。请先调用 project_dashboard_get 读取系统事实，再用 project_dashboard_update 建立或更新结构化项目总览、里程碑、风险、下一步和需要 Human 处理的事项。普通成员阻塞由项目经理先行调查、拆单、重派和协调，不得原样转给 Human；只有权限、预算、凭据、产品方向决策或外部动作确实只能由 Human 完成时，才整理为带已尝试动作、影响与期限、方案、推荐和明确请求的升级事项。项目背景、技术栈、架构与长期决策仍通过 team_asset_* 维护。信息不足时，在项目总览中记录需要 Human 处理的明确事项；不要写空模板、臆测进度或用总结文字冒充已验收交付。完成本轮实际处理后再结束通讯周期。
         """
         try execute(
             """

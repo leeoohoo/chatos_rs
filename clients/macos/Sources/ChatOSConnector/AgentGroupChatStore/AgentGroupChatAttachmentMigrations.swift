@@ -186,7 +186,7 @@ extension AgentGroupChatMigrations {
                 SELECT room.owner_user_id,
                        'asset-maintenance-message-' || replace(room.id, '-', ''),
                        room.id, 'system', 'system',
-                       '你是“' || room.name || '”的项目经理。请读取 Human 消息、团队目标、成员和 Todo 状态，主动维护真实的团队共享资产。信息充分时建立或更新“项目概览”和“当前进度”；信息不足时创建选择 requirement_survey_write 的 Todo（程序自动加入 requirement_survey_read）完成调研，不要在通讯层直接调用调研工具，也不要写空模板或臆测内容。完成本轮实际处理后再结束通讯周期。',
+                       '你是“' || room.name || '”的项目经理。请读取 Human 消息、团队目标、成员和 Todo 状态，主动维护真实的团队共享资产。信息充分时建立或更新“项目概览”和“当前进度”；信息不足时在项目总览中记录需要 Human 处理的明确事项，不要写空模板或臆测内容。完成本轮实际处理后再结束通讯周期。',
                        NULL, NULL, 'team-asset-maintenance:' || room.id || ':v1',
                        'asset-maintenance-message-' || replace(room.id, '-', ''),
                        0, \(timestamp)

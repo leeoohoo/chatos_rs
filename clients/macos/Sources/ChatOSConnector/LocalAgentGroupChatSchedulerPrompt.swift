@@ -17,21 +17,7 @@ extension LocalAgentGroupChatScheduler {
         let projectInstructions = LocalAgentPermission.canAccessLocalProjects(
             profile.draft.defaultSkillIDs
         ) ? LocalAgentPromptCatalog.render(.permissionLocalProjects) : ""
-        let requirementSurveySkill: String
-        if builtinCapabilities.contains(.requirementSurveyRead)
-            || builtinCapabilities.contains(.requirementSurveyWrite) {
-            let availableSkills = LocalAgentProgressiveSkillCatalog.requirementSurveyCatalog(
-                canWrite: builtinCapabilities.contains(.requirementSurveyWrite)
-            ).map { skill in
-                "- \(skill.skillRef) = \(skill.name) [\(skill.role)]: \(skill.description)"
-            }.joined(separator: "\n")
-            requirementSurveySkill = LocalAgentPromptCatalog.render(
-                .requirementSurveySkill,
-                values: ["skill_catalog": availableSkills]
-            )
-        } else {
-            requirementSurveySkill = ""
-        }
+        let requirementSurveySkill = ""
         let heartbeatDirective: String
         if delivery.triggerKind == .heartbeat {
             heartbeatDirective = LocalAgentPromptCatalog.render(

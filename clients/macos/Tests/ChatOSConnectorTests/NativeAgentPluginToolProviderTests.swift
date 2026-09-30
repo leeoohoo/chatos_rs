@@ -5,65 +5,11 @@ import Foundation
 import XCTest
 
 final class NativeAgentPluginToolProviderTests: XCTestCase {
-    func testRequirementSurveyUsesSharedProgressiveSkillTools() async throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("requirement-survey-skill-\(UUID().uuidString)")
-        let databaseURL = root.appendingPathComponent("chat.db")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let store = try SQLiteAgentGroupChatStore(databaseURL: databaseURL)
-        let tools = NativeMCPRequirementSurveyTools(
-            store: store,
-            ownerUserID: "alice",
-            projectID: "project-1",
-            creatorAgentID: "agent-1",
-            sourceDeliveryID: "delivery-1",
-            now: { 1 }
-        )
-
-        let result = try await tools.call(
-            name: "skill_activate",
-            arguments: [
-                "skill_ref": .string(
-                    LocalAgentProgressiveSkillCatalog.requirementSurveyResolveRef
-                ),
-            ]
-        )
-        let object = try XCTUnwrap(result.jsonObject)
-        XCTAssertEqual(object["name"]?.jsonString, "requirement-survey-resolve")
-        XCTAssertEqual(object["instructions_sha256"]?.jsonString?.count, 64)
-        XCTAssertTrue(object["instructions"]?.jsonString?.contains(
-            "requirement_survey_resolve"
-        ) == true)
-        XCTAssertEqual(
-            object["resources"]?.jsonArray?.first?.jsonObject?["relative_path"]?.jsonString,
-            "references/example.md"
-        )
-        XCTAssertEqual(
-            object["resources"]?.jsonArray?.first?.jsonObject?["sha256"]?.jsonString?.count,
-            64
-        )
-
-        let resource = try await tools.call(
-            name: "skill_read_resource",
-            arguments: [
-                "skill_ref": .string(
-                    LocalAgentProgressiveSkillCatalog.requirementSurveyResolveRef
-                ),
-                "relative_path": .string("references/example.md"),
-            ]
-        )
-        XCTAssertTrue(resource.jsonObject?["content"]?.jsonString?.contains(
-            "execution_steps"
-        ) == true)
-    }
-
     func testTodoAuthorizationCatalogUsesExecutorRuntimeToolDefinitions() {
         let cases: [(LocalAgentTodoBuiltinCapability, [NativeJSONValue])] = [
             (.projectRead, NativeMCPCodeReadTools.toolDefinitions),
             (.projectWrite, NativeMCPCodeWriteStore.toolDefinitions),
             (.terminal, NativeMCPTerminalStore.toolDefinitions),
-            (.requirementSurveyRead, NativeMCPRequirementSurveyTools.readToolDefinitions),
-            (.requirementSurveyWrite, NativeMCPRequirementSurveyTools.writeToolDefinitions),
         ]
 
         for (capability, definitions) in cases {
@@ -77,20 +23,6 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             XCTAssertFalse(descriptor.detail.isEmpty)
             XCTAssertFalse(descriptor.toolNames.isEmpty)
         }
-    }
-
-    func testRequirementSurveyCreateSchemaSupportsRankingQuestions() throws {
-        let create = try XCTUnwrap(
-            NativeMCPRequirementSurveyTools.writeToolDefinitions.first {
-                $0.jsonObject?["name"]?.jsonString == "requirement_survey_create"
-            }
-        )
-        let kinds = create.jsonObject?["inputSchema"]?.jsonObject?["properties"]?
-            .jsonObject?["questions"]?.jsonObject?["items"]?.jsonObject?["properties"]?
-            .jsonObject?["kind"]?.jsonObject?["enum"]?.jsonArray?
-            .compactMap(\.jsonString)
-
-        XCTAssertEqual(kinds, ["single_choice", "multiple_choice", "ranking"])
     }
 
     func testTodoProjectWriteCommitUsesExecutionPlanAuthorizationWithoutSecondApproval() async throws {
@@ -350,7 +282,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             ),
             executionPlan: .init(
                 builtinCapabilities: [
-                    .projectRead, .projectWrite, .terminal, .requirementSurveyRead,
+                    .projectRead, .projectWrite, .terminal,
                 ],
                 plugins: [.init(pluginID: "plugin-1", displayName: "test-agent-plugin")]
             )
@@ -471,13 +403,9 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         XCTAssertNil(builtinTools.first {
             $0.jsonObject?["name"]?.jsonString == "skill_activate"
         })
-        let surveyRead = try XCTUnwrap(builtinTools.first {
+        XCTAssertNil(builtinTools.first {
             $0.jsonObject?["name"]?.jsonString == "requirement_survey_get"
-        }?.jsonObject)
-        XCTAssertEqual(
-            surveyRead["required_skills"]?.jsonArray?.compactMap(\.jsonString),
-            ["requirement-survey", "requirement-survey-read-results"]
-        )
+        })
 
         let gated = try await broker.execute(.init(
             id: "invoke-gated",

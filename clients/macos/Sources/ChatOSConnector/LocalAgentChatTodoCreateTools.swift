@@ -138,7 +138,7 @@ extension LocalAgentChatToolProvider {
         ) ?? true
         if !requiresExecution,
            builtinCapabilities.contains(where: {
-               $0 != .projectRead && $0 != .requirementSurveyRead
+               $0 != .projectRead
            }) {
             return Self.structuredFailure(
                 code: "execution_required",
