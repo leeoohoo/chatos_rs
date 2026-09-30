@@ -50,4 +50,5 @@ extension ConversationCommandError: LocalizedError {
 public protocol ConversationCommandServicing: Sendable {
     func sendNewTurn(_ command: ConversationSendCommand) async throws -> ConversationCommandAck
     func sendGuidance(_ command: ConversationSendCommand) async throws -> ConversationCommandAck
+    func stopTurn(conversationID: String, turnID: String?) async throws
 }

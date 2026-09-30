@@ -90,6 +90,36 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             modelConfigRevision: "model-revision-1"
         )
         XCTAssertEqual(persistedModel, model)
+        let conversationService = NativeLocalAgentConversationService(
+            host: lifecycle,
+            attachmentRootURL: root.appendingPathComponent("attachments")
+        )
+        try await conversationService.configure(
+            ownerUserID: "user-1",
+            bootstrap: .init(
+                modelSnapshots: [model],
+                capabilitySnapshot: capabilities
+            )
+        )
+        let acknowledgement = try await conversationService.sendNewTurn(.init(
+            sessionID: "conversation-1",
+            turnID: "turn-1",
+            content: "hello locally"
+        ))
+        XCTAssertTrue(acknowledgement.accepted)
+        let localHistory = try await conversationService.fetchHistory(.init(
+            sessionID: "conversation-1",
+            requestGeneration: 1
+        ))
+        XCTAssertEqual(localHistory.turns.first?.id, "turn-1")
+        XCTAssertEqual(localHistory.turns.first?.userMessage.text, "hello locally")
+        let eventStream = await conversationService.events(sessionID: "conversation-1")
+        var eventIterator = eventStream.makeAsyncIterator()
+        let event = try await eventIterator.next()
+        XCTAssertEqual(event?.sessionID, "conversation-1")
+        XCTAssertEqual(event?.kind, .reconcile)
+        XCTAssertEqual(event?.eventName, "local_conversation_changed")
+        XCTAssertGreaterThan(event?.eventSequence ?? 0, 0)
         await XCTAssertThrowsErrorAsync {
             _ = try await conversations.create(
                 ownerUserID: "another-user",

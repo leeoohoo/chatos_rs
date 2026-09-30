@@ -132,7 +132,11 @@ extension AppModel {
         localAgentHostLifecycleTask = nil
         localAgentHostError = nil
         guard let localAgentHost else { return }
-        Task { await localAgentHost.stop() }
+        let commandService = commandService
+        Task {
+            await commandService?.reset()
+            await localAgentHost.stop()
+        }
     }
 
     private func refreshLocalAgentControlPlane(ownerUserID: String) {
@@ -140,14 +144,18 @@ extension AppModel {
         guard let host = localAgentHost as? NativeLocalAgentHostLifecycle else { return }
         localAgentBootstrapTask = Task { [weak self] in
             do {
-                _ = try await self?.localConnectorService.bootstrapLocalAgentHost(
+                guard let bootstrap = try await self?.localConnectorService.bootstrapLocalAgentHost(
                     host,
                     ownerUserID: ownerUserID
-                )
+                ) else { return }
                 guard !Task.isCancelled, self?.authenticatedUserID == ownerUserID else {
                     await host.stop()
                     return
                 }
+                try await self?.commandService?.configure(
+                    ownerUserID: ownerUserID,
+                    bootstrap: bootstrap
+                )
                 self?.localAgentHostError = nil
             } catch is CancellationError {
             } catch {

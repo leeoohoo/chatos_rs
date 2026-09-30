@@ -215,6 +215,9 @@ extension AppModel {
            !conversationID.isEmpty,
            let turnID = activity.route.turnID?.trimmingCharacters(in: .whitespacesAndNewlines),
            !turnID.isEmpty {
+            guard let commandService else {
+                throw PetActivityActionError.cancelUnavailable
+            }
             try await commandService.stopTurn(conversationID: conversationID, turnID: turnID)
             return
         }

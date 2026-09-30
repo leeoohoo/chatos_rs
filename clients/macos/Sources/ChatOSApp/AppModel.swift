@@ -97,9 +97,9 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         ]
     }
 
-    let conversationService: ChatOSConversationService
+    let conversationService: NativeLocalAgentConversationService?
     let realtimeService: ChatOSRealtimeClient
-    let commandService: ChatOSConversationCommandService
+    let commandService: NativeLocalAgentConversationService?
     let turnProcessService: ChatOSTurnProcessService
     let messageTaskGraphService: ChatOSMessageTaskGraphService
     let runtimeSettingsService: ChatOSConversationRuntimeSettingsService
@@ -162,7 +162,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             client: apiClient,
             credentialStore: credentialStore
         )
-        let conversationService = ChatOSConversationService(client: apiClient)
+        let remoteConversationService = ChatOSConversationService(client: apiClient)
         let historyStore = ConversationHistoryStore()
         let connectorTicketProvider = ChatOSLocalConnectorPairingTicketProvider(client: apiClient)
         let remoteConnectionService = NativeRemoteConnectionService(
@@ -211,10 +211,19 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             storyPlanner: remoteAgentServices
         )
         self.localConnectorService = localConnectorService
-        self.localAgentHost = RuntimeConfiguration.localAgentHostConfiguration.map {
+        let localAgentHost = RuntimeConfiguration.localAgentHostConfiguration.map {
             NativeLocalAgentHostLifecycle(configuration: $0)
         }
-        self.conversationService = conversationService
+        let localAgentConversationService = localAgentHost.map {
+            NativeLocalAgentConversationService(
+                host: $0,
+                attachmentRootURL: RuntimeConfiguration.nativeConnectorStateURL
+                    .deletingLastPathComponent()
+                    .appendingPathComponent("LocalAgent/Attachments", isDirectory: true)
+            )
+        }
+        self.localAgentHost = localAgentHost
+        self.conversationService = localAgentConversationService
         self.workspaceService = ChatOSWorkspaceService(client: apiClient)
         self.projectConversationService = ChatOSProjectConversationService(client: apiClient)
         let localProjectsService = NativeLocalProjectsService(
@@ -341,7 +350,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 .deletingLastPathComponent()
                 .appendingPathComponent("ProjectRunSettings.json")
         )
-        self.commandService = ChatOSConversationCommandService(client: apiClient)
+        self.commandService = localAgentConversationService
         self.turnProcessService = ChatOSTurnProcessService(client: apiClient)
         self.messageTaskGraphService = ChatOSMessageTaskGraphService(client: apiClient)
         self.runtimeSettingsService = ChatOSConversationRuntimeSettingsService(client: apiClient)
@@ -349,7 +358,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         self.petActivityInboxService = ChatOSPetActivityInboxService(client: apiClient)
         self.realtimeService = ChatOSRealtimeClient(
             apiClient: apiClient,
-            conversationService: conversationService
+            conversationService: remoteConversationService
         )
         idleSleepController.setEnabled(preventsIdleSystemSleep)
         authentication.$phase

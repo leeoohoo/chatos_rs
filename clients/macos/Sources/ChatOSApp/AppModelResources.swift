@@ -347,7 +347,7 @@ extension AppModel {
             initialTurns: [],
             historyStore: historyStore,
             remoteService: conversationService,
-            realtimeService: realtimeService,
+            realtimeService: conversationService,
             commandService: commandService,
             turnProcessService: turnProcessService,
             messageTaskGraphService: messageTaskGraphService,

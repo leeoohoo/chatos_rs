@@ -4,6 +4,14 @@ import Foundation
 public struct NativeLocalAgentBootstrapResult: Sendable, Equatable {
     public let modelSnapshots: [LocalAgentModelConfigSnapshot]
     public let capabilitySnapshot: LocalAgentCapabilityPolicySnapshot
+
+    public init(
+        modelSnapshots: [LocalAgentModelConfigSnapshot],
+        capabilitySnapshot: LocalAgentCapabilityPolicySnapshot
+    ) {
+        self.modelSnapshots = modelSnapshots
+        self.capabilitySnapshot = capabilitySnapshot
+    }
 }
 
 extension NativeLocalConnectorService {
