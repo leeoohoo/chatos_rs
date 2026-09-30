@@ -27,6 +27,8 @@ public sealed class WindowsLocalAgentBootstrapService
     private readonly WindowsLocalAgentPetActivityService _petActivities;
     private readonly WindowsLocalAgentAskUserPromptService _askUser;
     private readonly WindowsLocalAgentMessageTaskGraphService _taskGraph;
+    private readonly WindowsLocalAgentWorkspaceService _workspace;
+    private readonly WindowsLocalAgentProjectConversationService _projectConversations;
     private readonly ChatOSApiClient _api;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -42,6 +44,8 @@ public sealed class WindowsLocalAgentBootstrapService
         WindowsLocalAgentPetActivityService petActivities,
         WindowsLocalAgentAskUserPromptService askUser,
         WindowsLocalAgentMessageTaskGraphService taskGraph,
+        WindowsLocalAgentWorkspaceService workspace,
+        WindowsLocalAgentProjectConversationService projectConversations,
         ChatOSApiClient api)
     {
         _host = host;
@@ -55,6 +59,8 @@ public sealed class WindowsLocalAgentBootstrapService
         _petActivities = petActivities;
         _askUser = askUser;
         _taskGraph = taskGraph;
+        _workspace = workspace;
+        _projectConversations = projectConversations;
         _api = api;
     }
 
@@ -76,6 +82,8 @@ public sealed class WindowsLocalAgentBootstrapService
             _petActivities.Reset();
             _askUser.Reset();
             _taskGraph.Reset();
+            _workspace.Reset();
+            _projectConversations.Reset();
             Current = null;
             if (_host.ActiveOwnerUserId is { } activeOwner &&
                 !string.Equals(activeOwner, ownerUserId, StringComparison.Ordinal))
@@ -186,6 +194,8 @@ public sealed class WindowsLocalAgentBootstrapService
             _petActivities.Configure(ownerUserId);
             _askUser.Configure(ownerUserId);
             _taskGraph.Configure(ownerUserId);
+            _workspace.Configure(ownerUserId);
+            _projectConversations.Configure(ownerUserId);
             Current = result;
             return result;
         }
@@ -205,6 +215,8 @@ public sealed class WindowsLocalAgentBootstrapService
         _petActivities.Reset();
         _askUser.Reset();
         _taskGraph.Reset();
+        _workspace.Reset();
+        _projectConversations.Reset();
         Current = null;
     }
 

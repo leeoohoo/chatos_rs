@@ -1,7 +1,6 @@
 using ChatOS.Api.Http;
 using ChatOS.Api.Authentication;
 using ChatOS.Api.Projects;
-using ChatOS.Api.Workspace;
 using ChatOS.Api.Notepad;
 using ChatOS.Api.Media;
 using ChatOS.Core.Abstractions;
@@ -35,9 +34,6 @@ public static class ServiceCollectionExtensions
             client.Timeout = Timeout.InfiniteTimeSpan);
         services.AddSingleton<IAuthenticationService, AuthenticationService>();
         services.AddSingleton<ILocalConnectorPairingTicketService, LocalConnectorPairingTicketService>();
-        services.AddSingleton<WorkspaceService>();
-        services.AddSingleton<IWorkspaceRelationsService>(provider => provider.GetRequiredService<WorkspaceService>());
-        services.AddSingleton<IProjectConversationService, ProjectConversationService>();
         services.AddSingleton<IRemoteConnectionCloudService, RemoteConnectionCloudService>();
         services.AddSingleton<IProjectFilesystemService, ProjectFilesystemService>();
         services.AddSingleton<IProjectRunService, ProjectRunService>();
