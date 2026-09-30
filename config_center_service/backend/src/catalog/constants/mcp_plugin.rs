@@ -105,24 +105,18 @@ pub const MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "mcp_management.downstream.chatos_service_base_url";
 pub const MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "mcp_management.downstream.local_connector_service_base_url";
-pub const PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "plugin_management.downstream.task_runner_internal_api_secret";
 pub const PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "plugin_management.downstream.chatos_internal_api_secret";
 pub const PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "plugin_management.downstream.local_connector_internal_api_secret";
 pub const PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "plugin_management.downstream.memory_engine_internal_api_secret";
-pub const PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
-    "plugin_management.downstream.mcp_management_internal_api_secret";
 pub const PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY: &str =
     "plugin_management.security.require_signed_internal_requests";
 pub const PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "plugin_management.downstream.user_service_base_url";
 pub const PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY: &str =
     "plugin_management.downstream.user_service_request_timeout_ms";
-pub const PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL_CONFIG_KEY: &str =
-    "plugin_management.downstream.task_runner_base_url";
 pub const PLUGIN_MANAGEMENT_HOST_CONFIG_KEY: &str = "plugin_management.runtime.host";
 pub const PLUGIN_MANAGEMENT_PORT_CONFIG_KEY: &str = "plugin_management.runtime.port";
 pub const PLUGIN_MANAGEMENT_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =

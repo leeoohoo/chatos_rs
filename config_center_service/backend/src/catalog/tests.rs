@@ -722,11 +722,6 @@ fn catalog_exposes_plugin_management_runtime_routes_via_env_projection() {
             "duration_ms",
         ),
         (
-            PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL",
-            "string",
-        ),
-        (
             PLUGIN_MANAGEMENT_CORS_ORIGINS_CONFIG_KEY,
             "PLUGIN_MANAGEMENT_CORS_ORIGINS",
             "string",
@@ -1718,12 +1713,6 @@ fn catalog_exposes_runtime_secrets_for_task_runner_chatos_plugin_and_user_servic
             json!("change_me_chatos_memory_engine_secret"),
         ),
         (
-            PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET_CONFIG_KEY,
-            "plugin-management-service",
-            "PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET",
-            json!("change_me_plugin_management_task_runner_secret"),
-        ),
-        (
             PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
             "plugin-management-service",
             "PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET",
@@ -1734,12 +1723,6 @@ fn catalog_exposes_runtime_secrets_for_task_runner_chatos_plugin_and_user_servic
             "plugin-management-service",
             "PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET",
             json!("change_me_plugin_management_memory_engine_secret"),
-        ),
-        (
-            PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
-            "plugin-management-service",
-            "PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET",
-            json!("change_me_plugin_management_mcp_management_secret"),
         ),
         (
             USER_SERVICE_JWT_SECRET_CONFIG_KEY,
