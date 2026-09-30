@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "capture:showcase": "node scripts/capture-showcase.mjs",
     "preview": "vite preview",
     "type-check": "tsc --noEmit"
   },

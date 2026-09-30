@@ -126,12 +126,12 @@ fn status_targets() -> Vec<StatusTarget> {
     vec![
         target(
             0,
-            "Chat OS main",
-            "联系人驱动主聊天",
-            "OFFICIAL_WEBSITE_STATUS_CHATOS_URL",
-            "MAIN_BACKEND_PORT",
-            env_u16("BACKEND_PORT", 3997),
-            "/health",
+            "User Service",
+            "认证、账号与模型配置",
+            "OFFICIAL_WEBSITE_STATUS_USER_SERVICE_URL",
+            "USER_SERVICE_PORT",
+            39190,
+            "/api/health",
         ),
         target(
             1,
@@ -144,24 +144,33 @@ fn status_targets() -> Vec<StatusTarget> {
         ),
         target(
             2,
-            "User Service",
-            "真实用户与 agent 身份",
-            "OFFICIAL_WEBSITE_STATUS_USER_SERVICE_URL",
-            "USER_SERVICE_PORT",
-            39190,
+            "Plugin Marketplace",
+            "插件目录、发布与制品分发",
+            "OFFICIAL_WEBSITE_STATUS_PLUGIN_MANAGEMENT_URL",
+            "PLUGIN_MANAGEMENT_SERVICE_PORT",
+            39260,
+            "/api/health",
+        ),
+        target(
+            3,
+            "Configuration Center",
+            "共享配置控制面",
+            "OFFICIAL_WEBSITE_STATUS_CONFIG_CENTER_URL",
+            "CONFIG_CENTER_PORT",
+            39270,
+            "/health",
+        ),
+        target(
+            4,
+            "Companion Relay",
+            "设备配对与受控远程中继",
+            "OFFICIAL_WEBSITE_STATUS_LOCAL_CONNECTOR_URL",
+            "LOCAL_CONNECTOR_SERVICE_PORT",
+            39230,
             "/api/health",
         ),
         target(
             5,
-            "Task Runner",
-            "异步任务执行与回调",
-            "OFFICIAL_WEBSITE_STATUS_TASK_RUNNER_URL",
-            "TASK_RUNNER_BACKEND_PORT",
-            env_u16("TASK_RUNNER_PORT", 39090),
-            "/api/health",
-        ),
-        target(
-            6,
             "Official Website",
             "官网静态页与站点 API",
             "OFFICIAL_WEBSITE_STATUS_OFFICIAL_WEBSITE_URL",
@@ -241,6 +250,32 @@ fn env_bool(key: &str, default: bool) -> bool {
             )
         })
         .unwrap_or(default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::status_targets;
+
+    #[test]
+    fn status_topology_contains_only_retained_server_capabilities() {
+        let names = status_targets()
+            .into_iter()
+            .map(|target| target.name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![
+                "User Service",
+                "Memory Engine",
+                "Plugin Marketplace",
+                "Configuration Center",
+                "Companion Relay",
+                "Official Website",
+            ]
+        );
+        assert!(!names.contains(&"Chat OS main"));
+        assert!(!names.contains(&"Task Runner"));
+    }
 }
 
 fn normalized_env(key: &str) -> Option<String> {

@@ -13,6 +13,6 @@ Recommended filenames:
 - https://mixkit.co/free-stock-video/molding-clay-pottery-wheel-close-up-32085/
 - https://mixkit.co/free-stock-video/traversing-a-surface-of-curved-lines-of-colored-light-34074/
 
-`memory-engine.png`、`task-runner.png` 和 `sandbox-manager.png` 是旧的内部服务截图，不得再用于公开产品展示；官网当前使用与客户端代码结构一致的界面示意组件。
+`memory-engine.png`、`task-runner.png` 和 `sandbox-manager.png` 是未被页面引用的历史内部服务截图，不得再用于公开产品展示或自动采集；官网当前使用与客户端代码结构一致的界面示意组件。
 
 Before committing or publishing screenshots, remove tokens, private paths, usernames, project secrets, and unrelated local data.
