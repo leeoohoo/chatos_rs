@@ -22,39 +22,22 @@ use agent_bindings::local_agent_execution_optional_builtin_kinds;
 use agent_bindings::seed_agent_bindings;
 pub(crate) use agent_prompts::agent_prompt_profiles_for_agent;
 use agent_prompts::{backfill_agent_prompt_versions, seed_agent_prompts};
+use agents::seed_agents;
 #[cfg(test)]
 use agents::system_agent_specs;
-use agents::{remove_retired_system_agents, seed_agents};
 #[cfg(test)]
 use system_mcps::{
     active_system_mcp_resource_ids, builtin_kinds, provider_skills_for_builtin_mcp,
     provider_skills_for_system_mcp, system_mcp_record,
 };
-use system_mcps::{builtin_resource_id, remove_retired_system_mcps, seed_system_mcps};
+use system_mcps::{builtin_resource_id, seed_system_mcps};
 
 pub use chatos_plugin_management_sdk::LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID;
 const CHATOS_CONVERSATION_AGENT_KEY: &str = SystemAgentKey::ChatosConversationAgent.as_str();
 const LOCAL_AGENT_EXECUTION_AGENT_KEY: &str = SystemAgentKey::LocalAgentExecutionAgent.as_str();
 const LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_KEY: &str =
     SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str();
-const RETIRED_SYSTEM_AGENT_KEYS: &[&str] = &[
-    "task_runner_plan_phase",
-    "chatos_plan_agent",
-    "chatos_planning_agent",
-    "chatos_async_planner",
-    "chatos_chat_runtime",
-    "chatos_local_conversation_agent",
-    "project_requirement_execution_local_planner_agent",
-    "project_requirement_execution_planner_agent",
-    "task_runner_local_plan_phase",
-    "task_runner_local_run_phase",
-    "project_environment_agent",
-    "local_connector_client_agent",
-    "memory_engine_context_agent",
-];
 pub async fn seed_system_resources(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
-    remove_retired_system_agents(store).await?;
-    remove_retired_system_mcps(store).await?;
     seed_system_mcps(store, admin_user_id).await?;
     seed_agents(store).await?;
     seed_agent_prompts(store, admin_user_id).await?;

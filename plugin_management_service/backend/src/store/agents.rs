@@ -36,23 +36,6 @@ impl AppStore {
             .map(|_| ())
             .map_err(db_error)
     }
-    pub async fn delete_retired_agent_state(&self, agent_key: &str) -> Result<(), String> {
-        let mut tx = self.pool.begin().await.map_err(db_error)?;
-        for query in [
-            "DELETE FROM plugin_agent_provider_prompts WHERE agent_key=$1",
-            "DELETE FROM plugin_agent_prompt_releases WHERE agent_key=$1",
-            "DELETE FROM plugin_agent_bindings WHERE agent_key=$1",
-            "DELETE FROM plugin_agents WHERE agent_key=$1",
-        ] {
-            sqlx::query(query)
-                .bind(agent_key)
-                .execute(&mut *tx)
-                .await
-                .map_err(db_error)?;
-        }
-        tx.commit().await.map_err(db_error)
-    }
-
     pub async fn list_agent_prompts(
         &self,
         agent_key: &str,

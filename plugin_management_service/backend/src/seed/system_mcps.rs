@@ -7,24 +7,6 @@ use super::*;
 #[cfg(test)]
 use chatos_mcp::system_mcp_descriptor_by_resource_id;
 
-pub(super) async fn remove_retired_system_mcps(store: &AppStore) -> Result<(), String> {
-    let active_resource_ids = system_mcp_catalog()
-        .iter()
-        .map(|descriptor| descriptor.resource_id.to_string())
-        .collect::<Vec<_>>();
-    store
-        .remove_system_seed_mcps_except(active_resource_ids.as_slice())
-        .await?;
-    for resource_id in [
-        "system_mcp_sandbox_images",
-        "system_mcp_project_environment",
-        "system_mcp_project_runtime_environment",
-    ] {
-        store.delete_mcp(resource_id).await?;
-    }
-    Ok(())
-}
-
 pub(super) async fn seed_system_mcps(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
     for descriptor in system_mcp_catalog() {
         seed_system_mcp(store, admin_user_id, descriptor).await?;

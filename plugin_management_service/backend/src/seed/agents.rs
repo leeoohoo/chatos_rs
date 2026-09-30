@@ -3,13 +3,6 @@
 
 use super::*;
 
-pub(super) async fn remove_retired_system_agents(store: &AppStore) -> Result<(), String> {
-    for agent_key in RETIRED_SYSTEM_AGENT_KEYS {
-        store.delete_retired_agent_state(agent_key).await?;
-    }
-    Ok(())
-}
-
 pub(super) async fn seed_agents(store: &AppStore) -> Result<(), String> {
     for (agent_key, display_name, service_name, description, include_user_resources, tool_plane) in
         system_agent_specs()

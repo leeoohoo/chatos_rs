@@ -45,7 +45,6 @@ impl AppState {
             .map_err(|err| err.to_string())?;
         let store = AppStore::new(pool);
         store.initialize().await?;
-        store.remove_retired_direct_local_mcps().await?;
         store.remove_retired_builtin_skills().await?;
         store.remove_retired_bundled_plugin_marketplaces().await?;
         let user_service_http =

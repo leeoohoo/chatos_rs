@@ -107,16 +107,6 @@ impl AppStore {
         )
     }
 
-    pub async fn remove_retired_direct_local_mcps(&self) -> Result<u64, String> {
-        let ids = sqlx::query_scalar::<_, String>(
-            "SELECT id FROM plugin_mcps WHERE source_kind='local_connector_discovered'",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_error)?;
-        self.delete_mcp_resources(&ids).await
-    }
-
     async fn delete_mcp_resources(&self, ids: &[String]) -> Result<u64, String> {
         if ids.is_empty() {
             return Ok(0);
@@ -171,24 +161,6 @@ impl AppStore {
         self.delete_mcp_resources(&[id.to_string()])
             .await
             .map(|_| ())
-    }
-
-    pub async fn remove_system_seed_mcps_except(
-        &self,
-        active_resource_ids: &[String],
-    ) -> Result<u64, String> {
-        if active_resource_ids.is_empty() {
-            return Err("refusing to reconcile system MCP seeds with an empty catalog".to_string());
-        }
-        let ids = sqlx::query_scalar::<_, String>(
-            "SELECT id FROM plugin_mcps WHERE source_kind=$1 AND NOT(id=ANY($2))",
-        )
-        .bind(SOURCE_KIND_SYSTEM_SEED)
-        .bind(active_resource_ids)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_error)?;
-        self.delete_mcp_resources(&ids).await
     }
 
     pub async fn list_skills(

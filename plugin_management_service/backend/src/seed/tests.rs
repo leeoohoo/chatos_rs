@@ -70,28 +70,23 @@ fn every_system_mcp_has_provider_skills() {
 }
 
 #[test]
-fn planning_agents_are_retired_without_replacement() {
-    assert!(RETIRED_SYSTEM_AGENT_KEYS.contains(&"chatos_plan_agent"));
-    assert!(RETIRED_SYSTEM_AGENT_KEYS.contains(&"chatos_planning_agent"));
-    assert!(!system_agent_specs()
-        .iter()
-        .any(|(agent_key, _, _, _, _, _)| *agent_key == "chatos_planning_agent"));
-    assert!(RETIRED_SYSTEM_AGENT_KEYS.contains(&"task_runner_plan_phase"));
-}
-
-#[test]
-fn retired_system_agents_are_unique_and_disjoint_from_the_runtime_catalog() {
+fn system_agent_registry_excludes_removed_execution_roles() {
     let current = system_agent_specs()
         .into_iter()
         .map(|(agent_key, _, _, _, _, _)| agent_key)
         .collect::<std::collections::HashSet<_>>();
-    let retired = RETIRED_SYSTEM_AGENT_KEYS
-        .iter()
-        .copied()
-        .collect::<std::collections::HashSet<_>>();
-
-    assert_eq!(retired.len(), RETIRED_SYSTEM_AGENT_KEYS.len());
-    assert!(retired.is_disjoint(&current));
+    for removed in [
+        "chatos_plan_agent",
+        "chatos_planning_agent",
+        "task_runner_plan_phase",
+        "task_runner_local_plan_phase",
+        "task_runner_local_run_phase",
+    ] {
+        assert!(
+            !current.contains(removed),
+            "removed Agent must stay absent: {removed}"
+        );
+    }
 }
 
 #[test]
