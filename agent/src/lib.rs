@@ -9,11 +9,11 @@ mod core;
 mod implementations;
 
 pub use catalog::{
-    agent_descriptor, chatos_task_runner_tool_profile, is_chatos_callback_agent,
-    is_task_runner_execution_agent, is_task_runner_phase_agent,
-    parse_chatos_task_runner_tool_profile, parse_system_agent_key, system_agent_catalog,
-    uses_chatos_browser_callback, uses_chatos_notepad_callback, AgentDescriptor,
-    AgentExecutionLocation, ChatosTaskRunnerToolProfile, CHATOS_ASYNC_PLANNER_TOOL_PROFILE,
+    agent_descriptor, chatos_task_execution_tool_profile, is_chatos_callback_agent,
+    is_local_task_execution_agent, parse_chatos_task_execution_tool_profile,
+    parse_system_agent_key, system_agent_catalog, uses_chatos_browser_callback,
+    uses_chatos_notepad_callback, AgentDescriptor, AgentExecutionLocation,
+    ChatosTaskExecutionToolProfile, CHATOS_ASYNC_PLANNER_TOOL_PROFILE,
 };
 pub use chatos_plugin_management_sdk::SystemAgentKey;
 #[cfg(feature = "managed-config")]

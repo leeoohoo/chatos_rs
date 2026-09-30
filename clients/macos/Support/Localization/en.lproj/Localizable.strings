@@ -1,5 +1,5 @@
 /* Static SwiftUI interface copy. Chinese source strings are stable localization keys. */
-"AI 尚未通过 Task Runner MCP 为这条消息创建任务节点。" = "AI has not created any task nodes for this message through Task Runner MCP yet.";
+"AI 尚未通过本地任务工具为这条消息创建任务节点。" = "AI has not created any local task nodes for this message yet.";
 "AI 执行过程" = "AI Execution Process";
 "SSH 二次验证" = "SSH Verification";
 "SSH 由 ChatOS 客户端直接执行，凭据只保存在这台 Mac。" = "SSH runs directly in the ChatOS client. Credentials are stored only on this Mac.";
@@ -156,7 +156,7 @@
 "查看" = "View";
 "查看过程" = "View Process";
 "查看这一轮对话的推理、工具调用和中间结果" = "View reasoning, tool calls, and intermediate results from this turn";
-"查看这条用户消息创建的 Task Runner 任务图" = "View the Task Runner graph created by this user message";
+"查看这条用户消息创建的本地任务图" = "View the local task graph created by this user message";
 "标签（使用逗号分隔）" = "Tags (comma-separated)";
 "标题" = "Title";
 "根目录" = "Root";
@@ -216,14 +216,14 @@
 "精简图" = "Reduced Graph";
 "编辑" = "Edit";
 "缩小" = "Zoom Out";
-"补充本次重试需要遵循的说明；提交后会调用原 Rust 后端的 Task Runner 重试接口。" = "Add instructions for this retry. Submitting calls the existing Rust backend Task Runner retry API.";
+"补充本次重试需要遵循的说明；提交后会由本地 Local Agent Host 重试该任务。" = "Add instructions for this retry. The Local Agent Host will retry the task on this device.";
 "补充重试要求（可选）" = "Additional Retry Instructions (Optional)";
 "覆盖" = "Overwrite";
 "规划 Agent 创建任务后，流程图会在这里自动更新。" = "The flow updates automatically after the planning agent creates tasks.";
 "认证" = "Authentication";
 "认证方式" = "Authentication Method";
 "记事本" = "Notepad";
-"该任务节点尚未产生 Task Runner Run。" = "This task node has not produced a Task Runner run yet.";
+"该任务节点尚未产生本地执行 Run。" = "This task node has not produced a local execution run yet.";
 "该格式将在发送时上传，由 ChatOS 后端读取和处理。" = "This format will be uploaded when sent and processed by the ChatOS backend.";
 "该次运行尚未写入诊断事件。" = "This run has not recorded any diagnostic events yet.";
 "该消息的详细过程接口没有返回任务或工具节点。" = "The detailed process API returned no task or tool nodes for this message.";

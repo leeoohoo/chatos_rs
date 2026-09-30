@@ -6,11 +6,11 @@ use chatos_plugin_management_sdk::{AgentToolPlane, SystemAgentKey};
 pub const CHATOS_ASYNC_PLANNER_TOOL_PROFILE: &str = "chatos_async_planner";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChatosTaskRunnerToolProfile {
+pub enum ChatosTaskExecutionToolProfile {
     AsyncPlanner,
 }
 
-impl ChatosTaskRunnerToolProfile {
+impl ChatosTaskExecutionToolProfile {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::AsyncPlanner => CHATOS_ASYNC_PLANNER_TOOL_PROFILE,
@@ -60,11 +60,11 @@ impl AgentDescriptor {
 pub static CHATOS_CONVERSATION_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
     SystemAgentKey::ChatosConversationAgent,
     "Chat OS Conversation Agent",
-    "chatos",
-    "Runs normal Chat OS conversations while applying the selected contact as user-specific role context.",
+    "local-agent-host",
+    "Runs normal Chat OS conversations locally while applying the selected contact as user-specific role context.",
     false,
     AgentToolPlane::Managed,
-    AgentExecutionLocation::ServerOrchestrated,
+    AgentExecutionLocation::ClientEmbedded,
 );
 
 pub static LOCAL_AGENT_EXECUTION_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
@@ -160,10 +160,12 @@ pub fn parse_system_agent_key(value: &str) -> Option<SystemAgentKey> {
         .find(|key| key.as_str() == normalized)
 }
 
-pub fn parse_chatos_task_runner_tool_profile(value: &str) -> Option<ChatosTaskRunnerToolProfile> {
+pub fn parse_chatos_task_execution_tool_profile(
+    value: &str,
+) -> Option<ChatosTaskExecutionToolProfile> {
     let normalized = value.trim();
     if normalized.eq_ignore_ascii_case(CHATOS_ASYNC_PLANNER_TOOL_PROFILE) {
-        Some(ChatosTaskRunnerToolProfile::AsyncPlanner)
+        Some(ChatosTaskExecutionToolProfile::AsyncPlanner)
     } else {
         None
     }
@@ -173,23 +175,19 @@ pub const fn is_chatos_callback_agent(key: SystemAgentKey) -> bool {
     matches!(key, SystemAgentKey::ChatosConversationAgent)
 }
 
-pub const fn is_task_runner_phase_agent(key: SystemAgentKey) -> bool {
+pub const fn is_local_task_execution_agent(key: SystemAgentKey) -> bool {
     matches!(key, SystemAgentKey::LocalAgentExecutionAgent)
 }
 
-pub const fn is_task_runner_execution_agent(key: SystemAgentKey) -> bool {
-    is_task_runner_phase_agent(key)
-}
-
 pub const fn uses_chatos_notepad_callback(key: SystemAgentKey) -> bool {
-    is_chatos_callback_agent(key) || is_task_runner_phase_agent(key)
+    is_chatos_callback_agent(key) || is_local_task_execution_agent(key)
 }
 
 pub const fn uses_chatos_browser_callback(key: SystemAgentKey) -> bool {
     uses_chatos_notepad_callback(key)
 }
 
-pub const fn chatos_task_runner_tool_profile(key: SystemAgentKey) -> Option<&'static str> {
+pub const fn chatos_task_execution_tool_profile(key: SystemAgentKey) -> Option<&'static str> {
     if is_chatos_callback_agent(key) {
         Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE)
     } else {
@@ -287,7 +285,7 @@ mod tests {
         assert!(is_chatos_callback_agent(
             SystemAgentKey::ChatosConversationAgent
         ));
-        assert!(is_task_runner_execution_agent(
+        assert!(is_local_task_execution_agent(
             SystemAgentKey::LocalAgentExecutionAgent
         ));
         assert!(uses_chatos_notepad_callback(
@@ -306,17 +304,17 @@ mod tests {
         assert_eq!(parse_system_agent_key(" task_runner_plan_phase "), None);
         assert_eq!(parse_system_agent_key("unknown"), None);
         assert_eq!(
-            parse_chatos_task_runner_tool_profile(" chatos_async_planner "),
-            Some(ChatosTaskRunnerToolProfile::AsyncPlanner)
+            parse_chatos_task_execution_tool_profile(" chatos_async_planner "),
+            Some(ChatosTaskExecutionToolProfile::AsyncPlanner)
         );
         assert_eq!(
-            chatos_task_runner_tool_profile(SystemAgentKey::ChatosConversationAgent),
+            chatos_task_execution_tool_profile(SystemAgentKey::ChatosConversationAgent),
             Some(CHATOS_ASYNC_PLANNER_TOOL_PROFILE)
         );
     }
 
     #[test]
-    fn local_execution_and_approval_are_client_embedded_agents() {
+    fn conversation_execution_and_approval_are_client_embedded_agents() {
         let local_loop_agents = system_agent_catalog()
             .iter()
             .filter(|descriptor| {
@@ -328,6 +326,7 @@ mod tests {
         assert_eq!(
             local_loop_agents,
             vec![
+                SystemAgentKey::ChatosConversationAgent,
                 SystemAgentKey::LocalAgentExecutionAgent,
                 SystemAgentKey::LocalConnectorCommandApprovalAgent,
             ]

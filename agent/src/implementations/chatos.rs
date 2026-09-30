@@ -10,7 +10,7 @@ use crate::{agent_descriptor, AgentDescriptor, AgentIdentity, CHATOS_ASYNC_PLANN
 pub struct ChatosAgentProfile {
     key: SystemAgentKey,
     requires_concrete_project: bool,
-    task_runner_tool_profile: &'static str,
+    task_execution_tool_profile: &'static str,
 }
 
 impl ChatosAgentProfile {
@@ -18,7 +18,7 @@ impl ChatosAgentProfile {
         Self {
             key: SystemAgentKey::ChatosConversationAgent,
             requires_concrete_project: false,
-            task_runner_tool_profile: CHATOS_ASYNC_PLANNER_TOOL_PROFILE,
+            task_execution_tool_profile: CHATOS_ASYNC_PLANNER_TOOL_PROFILE,
         }
     }
 
@@ -30,8 +30,8 @@ impl ChatosAgentProfile {
         self.requires_concrete_project
     }
 
-    pub fn task_runner_tool_profile(self) -> &'static str {
-        self.task_runner_tool_profile
+    pub fn task_execution_tool_profile(self) -> &'static str {
+        self.task_execution_tool_profile
     }
 }
 
