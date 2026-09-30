@@ -126,6 +126,39 @@ forbid(
     "the retired Task Manager must not remain in the builtin runtime contract",
 )
 forbid(
+    "crates/chatos_plugin_management_sdk/src/dto.rs",
+    ["RequirementSurveyRead", "RequirementSurveyWrite"],
+    "requirement surveys must remain a Local Agent Host application protocol, not a system MCP",
+)
+forbid(
+    "crates/chatos_mcp_runtime/src/builtin_catalog.rs",
+    ["RequirementSurveyRead", "RequirementSurveyWrite"],
+    "the builtin MCP runtime must not restore the retired requirement-survey tools",
+)
+forbid(
+    "mcp/src/catalog.rs",
+    ["builtin_requirement_survey_read", "builtin_requirement_survey_write"],
+    "the system MCP catalog must not restore requirement-survey execution",
+)
+
+for retired_survey_path in (
+    "clients/macos/Sources/ChatOSConnector/AgentGroupChatStore/AgentRequirementSurveyRepository.swift",
+    "clients/macos/Sources/ChatOSConnector/AgentGroupChatStore/SQLiteAgentGroupChatStore+RequirementSurvey.swift",
+    "clients/windows/src/ChatOS.Connector/AgentTeams/AgentRequirementSurveySkillCatalog.cs",
+    "clients/windows/src/ChatOS.Connector/AgentTeams/AgentTeamToolExecutor.Surveys.cs",
+    "clients/windows/src/ChatOS.Connector/AgentTeams/SqliteAgentTeamStore.Surveys.cs",
+):
+    if (ROOT / retired_survey_path).exists():
+        ERRORS.append(
+            f"{retired_survey_path}: retired client requirement-survey implementation returned"
+        )
+
+forbid(
+    "clients/windows/src/ChatOS.Connector/Persistence/LocalStateDatabase.cs",
+    ["CREATE TABLE IF NOT EXISTS agent_requirement_surveys"],
+    "Windows client storage must not recreate the retired Agent Team survey table",
+)
+forbid(
     "plugin_management_service/backend/src/store.rs",
     ["RETIRED_TASK_MANAGER", "is_retired_task_manager_mcp"],
     "Plugin Marketplace must not carry old Task Manager data compatibility",
