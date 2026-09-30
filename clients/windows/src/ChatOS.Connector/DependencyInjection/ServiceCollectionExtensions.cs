@@ -44,6 +44,9 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<WindowsLocalAgentConversationHistoryService>();
             services.AddSingleton<IConversationHistoryService>(provider =>
                 provider.GetRequiredService<WindowsLocalAgentConversationHistoryService>());
+            services.AddSingleton<WindowsLocalAgentRealtimeClient>();
+            services.AddSingleton<IRealtimeClient>(provider =>
+                provider.GetRequiredService<WindowsLocalAgentRealtimeClient>());
             services.AddSingleton<WindowsLocalAgentBootstrapService>();
             services.AddSingleton<ILocalAgentHostLifecycle>(provider =>
                 provider.GetRequiredService<WindowsLocalAgentHostLifecycle>());
