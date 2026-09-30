@@ -38,7 +38,9 @@ export function QueueOperationsPanel({ environment }: QueueOperationsPanelProps)
     queryFn: () => api.queueOperations(environment),
     refetchInterval: 10000,
   });
-  const streams = query.data?.streams || [];
+  const streams = (query.data?.streams || []).filter(
+    (stream) => !['task-runner', 'mcp-management'].includes(stream.service),
+  );
   const unavailable = streams.filter((stream) => !stream.runtime.available).length;
   const deadLetters = streams.reduce(
     (total, stream) => total + queueRuntime(stream, 'dead_letter').messages,
@@ -68,11 +70,9 @@ export function QueueOperationsPanel({ environment }: QueueOperationsPanelProps)
       }),
     onSuccess: async (result) => {
       message.success(
-        replayTarget?.service === 'mcp-management'
-          ? 'MCP 终态死信已归档，工具不会重新执行'
-          : result.dead_letter_archived
-            ? '重放已入队，旧死信已归档'
-            : '重放已入队，旧死信待归档',
+        result.dead_letter_archived
+          ? '重放已入队，旧死信已归档'
+          : '重放已入队，旧死信待归档',
       );
       setReplayTarget(null);
       setReplayItemId('');
@@ -167,13 +167,11 @@ export function QueueOperationsPanel({ environment }: QueueOperationsPanelProps)
               width: 110,
               render: (_, stream) => {
                 const supported =
-                  (stream.service === 'task-runner' && stream.stream === 'run_post_process') ||
                   (
                     stream.service === 'memory-engine' &&
                     ['summary', 'rollup', 'subject_memory'].includes(stream.stream)
                   ) ||
-                  (stream.service === 'plugin-management' && stream.stream === 'catalog_sync') ||
-                  (stream.service === 'mcp-management' && stream.stream === 'async_tool');
+                  (stream.service === 'plugin-management' && stream.stream === 'catalog_sync');
                 return (
                   <Button
                     danger
@@ -189,7 +187,7 @@ export function QueueOperationsPanel({ environment }: QueueOperationsPanelProps)
                       setReplayReason('');
                     }}
                   >
-                    {stream.service === 'mcp-management' ? '人工归档' : '人工重放'}
+                    人工重放
                   </Button>
                 );
               },
@@ -200,7 +198,7 @@ export function QueueOperationsPanel({ environment }: QueueOperationsPanelProps)
       <Modal
         title={queueReplayTitle(replayTarget)}
         open={Boolean(replayTarget)}
-        okText={replayTarget?.service === 'mcp-management' ? '确认归档' : '确认重放'}
+        okText="确认重放"
         cancelText="取消"
         confirmLoading={replay.isPending}
         okButtonProps={{
@@ -275,7 +273,7 @@ export function QueueOperationsPanel({ environment }: QueueOperationsPanelProps)
           <Input.TextArea
             value={replayReason}
             onChange={(event) => setReplayReason(event.target.value)}
-            placeholder={`${replayTarget?.service === 'mcp-management' ? '归档' : '重放'}原因，至少 8 个字符`}
+            placeholder="重放原因，至少 8 个字符"
             rows={4}
             maxLength={500}
             showCount
@@ -287,8 +285,7 @@ export function QueueOperationsPanel({ environment }: QueueOperationsPanelProps)
 }
 
 function queueReplayItemPlaceholder(stream: QueueOperationsStream | null) {
-  if (!stream || stream.service === 'task-runner') return 'Run ID';
-  if (stream.service === 'mcp-management') return 'Invocation ID';
+  if (!stream) return '业务 ID';
   if (stream.service === 'plugin-management') return 'Marketplace ID';
   if (stream.stream === 'summary') return 'Thread ID';
   if (stream.stream === 'rollup') return 'Summary ID';
@@ -296,23 +293,19 @@ function queueReplayItemPlaceholder(stream: QueueOperationsStream | null) {
 }
 
 function queueReplayTitle(stream: QueueOperationsStream | null) {
-  if (stream?.service === 'mcp-management') return '人工归档 MCP 终态死信';
   if (stream?.service === 'memory-engine') return '人工重放 Memory Engine 死信';
   if (stream?.service === 'plugin-management') return '人工重放 Plugin Catalog 死信';
-  return '人工重放 Run 后处理死信';
+  return '人工重放死信';
 }
 
 function queueReplayDescription(stream: QueueOperationsStream | null) {
-  if (stream?.service === 'mcp-management') {
-    return '该失败结果已经返回原 AI 调用方。系统只归档与 Invocation 身份及耗尽重试次数完全匹配的旧 DLQ 消息，不会恢复 Outbox、重新投递或再次执行工具。';
-  }
   if (stream?.service === 'memory-engine') {
     return '系统只会重放租户、来源、业务 ID 和旧版本完全匹配的死信；新 Outbox 经确认发布后，才归档对应旧消息。';
   }
   if (stream?.service === 'plugin-management') {
     return '系统只会恢复 Marketplace ID 与旧版本完全匹配的 Catalog Outbox；新版本确认发布后，才归档对应旧 DLQ 消息。';
   }
-  return '系统将重置该 Run 的后处理 dead-letter 状态、重建 Outbox，并在确认发布后归档匹配的旧 DLQ 消息。';
+  return '系统会重建匹配的 Outbox，并在确认发布后归档对应旧 DLQ 消息。';
 }
 
 function queueRuntime(stream: QueueOperationsStream, role: 'main' | 'retry' | 'dead_letter') {

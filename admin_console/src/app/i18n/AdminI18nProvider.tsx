@@ -11,7 +11,7 @@ type AdminI18nContextValue = {
 };
 
 export const ADMIN_LOCALE_STORAGE_KEY = 'chatos_admin_locale';
-const LEGACY_LOCALE_STORAGE_KEYS = ['chat_ui_locale', 'plugin_management_service_locale'] as const;
+const LEGACY_LOCALE_STORAGE_KEYS = ['plugin_management_service_locale'] as const;
 
 const messages = {
   'zh-CN': {
@@ -39,15 +39,7 @@ const messages = {
     'nav.userAccounts': '用户账号',
     'nav.agentAccounts': 'Agent 账号',
     'nav.userSettings': '用户设置',
-    'nav.taskRunner': '任务执行',
-    'nav.tasks': '任务',
     'nav.runs': '运行记录',
-    'nav.prompts': 'Prompt',
-    'nav.executionProjects': '执行项目',
-    'nav.taskMcp': 'MCP 与工具',
-    'nav.tooling': '工具运行时',
-    'nav.executionUsers': '执行用户',
-    'nav.executionSettings': '执行设置',
     'nav.plugins': '插件与 MCP',
     'nav.mcpCatalog': 'MCP 目录',
     'nav.pluginCatalog': '插件目录',
@@ -101,15 +93,7 @@ const messages = {
     'nav.userAccounts': 'User Accounts',
     'nav.agentAccounts': 'Agent Accounts',
     'nav.userSettings': 'User Settings',
-    'nav.taskRunner': 'Task Runner',
-    'nav.tasks': 'Tasks',
     'nav.runs': 'Runs',
-    'nav.prompts': 'Prompts',
-    'nav.executionProjects': 'Execution Projects',
-    'nav.taskMcp': 'MCP & Tools',
-    'nav.tooling': 'Tool Runtime',
-    'nav.executionUsers': 'Execution Users',
-    'nav.executionSettings': 'Execution Settings',
     'nav.plugins': 'Plugins & MCP',
     'nav.mcpCatalog': 'MCP Catalog',
     'nav.pluginCatalog': 'Plugin Catalog',

@@ -280,8 +280,6 @@ export interface SystemConfigResponse {
   service: string;
   issuer: string;
   user_service_audience: string;
-  task_runner_audience: string;
   database_url: string;
   user_access_ttl_seconds: number;
-  task_runner_access_ttl_seconds: number;
 }

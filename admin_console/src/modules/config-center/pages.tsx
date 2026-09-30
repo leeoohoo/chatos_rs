@@ -31,8 +31,6 @@ import type {
 
 const CONFIG_AREA_META: Record<string, { label: string; order: number }> = {
   'chatos-backend': { label: 'Chat OS', order: 10 },
-  'task-runner': { label: 'Task Runner', order: 20 },
-  'mcp-management-service': { label: 'MCP 管理', order: 30 },
   'memory-engine': { label: 'Memory Engine', order: 40 },
   'user-service': { label: '用户服务', order: 70 },
   'plugin-management-service': { label: '插件管理', order: 80 },
@@ -42,6 +40,7 @@ const CONFIG_AREA_META: Record<string, { label: string; order: number }> = {
   'platform-shared': { label: '平台与共享', order: 120 },
   developer: { label: '开发参数', order: 900 },
 };
+const RETIRED_CONFIG_AREAS = new Set(['task-runner', 'mcp-management-service']);
 
 function configAreaKey(definition: ConfigDefinition) {
   const serviceName = definition.service_name?.trim();
@@ -50,8 +49,6 @@ function configAreaKey(definition: ConfigDefinition) {
   }
   const categoryRoot = definition.category.split('/')[0]?.trim().toLowerCase();
   if (categoryRoot === 'chat os') return 'chatos-backend';
-  if (categoryRoot === 'task runner') return 'task-runner';
-  if (categoryRoot === 'mcp management') return 'mcp-management-service';
   if (categoryRoot === 'memory engine') return 'memory-engine';
   if (categoryRoot === 'user service') return 'user-service';
   if (categoryRoot === 'plugin management') return 'plugin-management-service';
@@ -165,7 +162,9 @@ export function ConfigEditor({ environment }: { environment: string }) {
     onError: (error: Error) => message.error(error.message),
   });
 
-  const definitions = catalog.data || [];
+  const definitions = (catalog.data || []).filter(
+    (definition) => !RETIRED_CONFIG_AREAS.has(configAreaKey(definition)),
+  );
   const areas = useMemo(() => {
     const next = new Map<string, ConfigDefinition[]>();
     definitions.forEach((definition) => {
@@ -379,7 +378,6 @@ export function ConfigEditor({ environment }: { environment: string }) {
             <Select
               options={[
                 'chatos-backend',
-                'task-runner',
                 'user-service',
                 'plugin-management-service',
                 'local-connector-service',

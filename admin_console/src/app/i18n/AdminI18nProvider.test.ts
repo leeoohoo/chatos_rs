@@ -21,8 +21,8 @@ describe('admin locale storage', () => {
     expect(readStoredAdminLocale(memoryStorage())).toBe('zh-CN');
   });
 
-  it('migrates the Task Runner locale into the unified storage key', () => {
-    const storage = memoryStorage({ chat_ui_locale: 'en-US' });
+  it('migrates the plugin console locale into the unified storage key', () => {
+    const storage = memoryStorage({ plugin_management_service_locale: 'en-US' });
     expect(readStoredAdminLocale(storage)).toBe('en-US');
     expect(storage.values.get(ADMIN_LOCALE_STORAGE_KEY)).toBe('en-US');
   });

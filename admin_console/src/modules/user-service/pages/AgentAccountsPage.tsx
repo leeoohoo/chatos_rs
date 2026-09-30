@@ -258,7 +258,7 @@ export function AgentAccountsPage() {
             Agent 账号管理
           </Typography.Title>
           <Typography.Text type="secondary">
-            每个真实用户都可以创建和管理自己名下的 Task Runner Agent 账号。
+            每个真实用户都可以创建和管理自己名下的本地执行 Agent 账号。
           </Typography.Text>
         </Space>
         <Space>
