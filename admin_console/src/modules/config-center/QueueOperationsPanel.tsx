@@ -38,9 +38,7 @@ export function QueueOperationsPanel({ environment }: QueueOperationsPanelProps)
     queryFn: () => api.queueOperations(environment),
     refetchInterval: 10000,
   });
-  const streams = (query.data?.streams || []).filter(
-    (stream) => !['task-runner', 'mcp-management'].includes(stream.service),
-  );
+  const streams = query.data?.streams || [];
   const unavailable = streams.filter((stream) => !stream.runtime.available).length;
   const deadLetters = streams.reduce(
     (total, stream) => total + queueRuntime(stream, 'dead_letter').messages,

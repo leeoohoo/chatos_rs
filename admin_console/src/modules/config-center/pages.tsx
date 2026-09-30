@@ -39,8 +39,6 @@ const CONFIG_AREA_META: Record<string, { label: string; order: number }> = {
   'platform-shared': { label: '平台与共享', order: 120 },
   developer: { label: '开发参数', order: 900 },
 };
-const RETIRED_CONFIG_AREAS = new Set(['chatos-backend', 'task-runner', 'mcp-management-service']);
-
 function configAreaKey(definition: ConfigDefinition) {
   const serviceName = definition.service_name?.trim();
   if (serviceName) {
@@ -160,9 +158,7 @@ export function ConfigEditor({ environment }: { environment: string }) {
     onError: (error: Error) => message.error(error.message),
   });
 
-  const definitions = (catalog.data || []).filter(
-    (definition) => !RETIRED_CONFIG_AREAS.has(configAreaKey(definition)),
-  );
+  const definitions = catalog.data || [];
   const areas = useMemo(() => {
     const next = new Map<string, ConfigDefinition[]>();
     definitions.forEach((definition) => {
