@@ -45,6 +45,39 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         )
         XCTAssertEqual(history.conversation, created.conversation)
         XCTAssertTrue(history.messages.isEmpty)
+        let controlPlane = NativeLocalAgentControlPlaneClient(host: lifecycle)
+        let model = LocalAgentModelConfigSnapshot(
+            ownerUserID: "user-1",
+            modelConfigRef: "model-1",
+            modelConfigRevision: "model-revision-1",
+            credentialRef: "env:CHATOS_LOCAL_AGENT_MODEL_1",
+            baseURL: "https://example.invalid/v1",
+            model: "model-1",
+            provider: "openai",
+            supportsResponses: true
+        )
+        let publishedModel = try await controlPlane.publishModel(model)
+        XCTAssertEqual(publishedModel, model)
+        let loadedModel = try await controlPlane.model(
+            ownerUserID: "user-1",
+            modelConfigRef: "model-1",
+            modelConfigRevision: "model-revision-1"
+        )
+        XCTAssertEqual(loadedModel, model)
+        let capabilities = LocalAgentCapabilityPolicySnapshot(
+            ownerUserID: "user-1",
+            profileKey: "main_chat",
+            capabilityPolicyRevision: "capability-revision-1",
+            instructions: "Answer locally."
+        )
+        let publishedCapabilities = try await controlPlane.publishCapabilities(capabilities)
+        XCTAssertEqual(publishedCapabilities, capabilities)
+        let loadedCapabilities = try await controlPlane.capabilities(
+            ownerUserID: "user-1",
+            profileKey: "main_chat",
+            capabilityPolicyRevision: "capability-revision-1"
+        )
+        XCTAssertEqual(loadedCapabilities, capabilities)
         await XCTAssertThrowsErrorAsync {
             _ = try await conversations.create(
                 ownerUserID: "another-user",
