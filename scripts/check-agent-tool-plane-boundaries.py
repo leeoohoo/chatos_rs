@@ -66,6 +66,21 @@ for manifest in local_host_manifests:
 
 catalog = "agent/src/catalog.rs"
 catalog_text = read(catalog)
+conversation_descriptor = catalog_text.find("CHATOS_CONVERSATION_AGENT_DESCRIPTOR")
+if conversation_descriptor < 0:
+    ERRORS.append(f"{catalog}: conversation Agent descriptor is missing")
+else:
+    descriptor = catalog_text[conversation_descriptor : conversation_descriptor + 900]
+    for required in (
+        '"local-agent-host"',
+        "AgentToolPlane::Managed",
+        "AgentExecutionLocation::ClientEmbedded",
+    ):
+        if required not in descriptor:
+            ERRORS.append(
+                f"{catalog}: conversation Agent descriptor is missing {required!r}"
+            )
+
 local_descriptor = catalog_text.find("LOCAL_AGENT_EXECUTION_AGENT_DESCRIPTOR")
 if local_descriptor < 0:
     ERRORS.append(f"{catalog}: Local Agent execution descriptor is missing")
@@ -84,6 +99,22 @@ if approval_descriptor < 0 or "AgentToolPlane::LocalOnly" not in catalog_text[
     approval_descriptor : approval_descriptor + 900
 ]:
     ERRORS.append(f"{catalog}: Local Command Approval Agent is not fixed to LocalOnly")
+
+forbid(
+    "mcp/src/backend.rs",
+    ["ServiceHttp", "Chatos", "LocalConnector"],
+    "system MCP execution must expose only the Local Agent Host",
+)
+require(
+    "mcp/src/backend.rs",
+    "LocalAgentHost",
+    "the only system MCP implementation host",
+)
+forbid(
+    "mcp/src/catalog.rs",
+    ['owner_service: "chatos"', "SystemMcpHost::Chatos", "ServiceHttp"],
+    "system MCP catalog must not publish a server execution host",
+)
 
 require(
     "clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+Approval.swift",
