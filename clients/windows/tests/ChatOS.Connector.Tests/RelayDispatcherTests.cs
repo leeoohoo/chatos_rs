@@ -18,6 +18,35 @@ public sealed class RelayDispatcherTests
         Assert.Equal(200, response.Status);
         Assert.Equal("plugin_prepare_response", response.Type);
     }
+
+    [Fact]
+    public async Task AllowsSignedCompanionRequestWithoutWorkspaceId()
+    {
+        var handler = new CapturingHandler(
+            "companion_conversation_request",
+            "companion_conversation_response");
+        var dispatcher = new RelayDispatcher([handler], new StubVerifier([]));
+
+        var response = await dispatcher.DispatchAsync("""
+            {"type":"companion_conversation_request","request_id":"request-1","workspace_id":"","body":{}}
+            """);
+
+        Assert.Equal(200, response.Status);
+        Assert.Equal("companion_conversation_response", response.Type);
+    }
+
+    [Fact]
+    public async Task CompanionFailurePreservesCompanionResponseType()
+    {
+        var dispatcher = new RelayDispatcher([], new StubVerifier([]));
+
+        var response = await dispatcher.DispatchAsync("""
+            {"type":"companion_ask_user_submit_request","request_id":"request-1","workspace_id":"","body":{}}
+            """);
+
+        Assert.Equal(400, response.Status);
+        Assert.Equal("companion_ask_user_submit_response", response.Type);
+    }
     [Fact]
     public async Task VerifiesBeforeDispatchingAndReturnsHandlerResponseType()
     {

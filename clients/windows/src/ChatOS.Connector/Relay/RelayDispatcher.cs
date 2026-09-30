@@ -108,14 +108,22 @@ public sealed class RelayDispatcher
         }
 
         if (string.IsNullOrWhiteSpace(request.WorkspaceId) &&
+            !request.Type.StartsWith("companion_", StringComparison.Ordinal) &&
             request.Type is not ("plugin_prepare_request" or "plugin_execute_request" or "plugin_cancel_request"))
         {
             throw new RelayRequestException(400, "Relay workspace id is required.");
         }
     }
 
-    private static string ResponseTypeFor(string? requestType) => requestType switch
+    private static string ResponseTypeFor(string? requestType)
     {
+        if (requestType?.StartsWith("companion_", StringComparison.Ordinal) == true &&
+            requestType.EndsWith("_request", StringComparison.Ordinal))
+        {
+            return requestType[..^"_request".Length] + "_response";
+        }
+        return requestType switch
+        {
         "workspace_directory_list_request" => "workspace_directory_list_response",
         "workspace_directory_create_request" => "workspace_directory_create_response",
         "terminal_exec_request" => "terminal_response",
@@ -125,8 +133,9 @@ public sealed class RelayDispatcher
         "plugin_execute_request" => "plugin_execute_response",
         "plugin_cancel_request" => "plugin_cancel_response",
         "mcp" => "mcp",
-        _ => "workspace_filesystem_response",
-    };
+            _ => "workspace_filesystem_response",
+        };
+    }
 
     private static string? TryReadString(string payload, string property)
     {

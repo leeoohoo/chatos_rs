@@ -77,6 +77,7 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<IMessageTaskGraphService>(provider =>
                 provider.GetRequiredService<WindowsLocalAgentMessageTaskGraphService>());
             services.AddSingleton<WindowsLocalAgentBootstrapService>();
+            services.AddSingleton<IRelayRequestHandler, CompanionRelayHandler>();
             services.AddSingleton<ILocalAgentHostLifecycle>(provider =>
                 provider.GetRequiredService<WindowsLocalAgentHostLifecycle>());
             services.AddSingleton<ILocalAgentHostClient>(provider =>
