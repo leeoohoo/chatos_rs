@@ -90,8 +90,6 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published var teamTodos: [LocalAgentTodo] = []
     @Published var teamAssets: [LocalAgentTeamAsset] = []
     @Published var projectDashboard: LocalAgentProjectDashboard?
-    @Published var requirementSurveys: [LocalAgentRequirementSurvey] = []
-    @Published var submittingRequirementSurveyIDs: Set<String> = []
     @Published var teamAssetRevisions: [String: [LocalAgentTeamAssetRevision]] = [:]
     @Published var loadingTeamAssetRevisionIDs: Set<String> = []
     @Published var recentRuns: [LocalAgentGroupChatRun] = []
@@ -327,7 +325,6 @@ final class AgentGroupChatViewModel: ObservableObject {
             publishIfChanged([], at: \.teamTodos)
             publishIfChanged([], at: \.teamAssets)
             publishIfChanged(nil, at: \.projectDashboard)
-            publishIfChanged([], at: \.requirementSurveys)
             publishIfChanged([], at: \.recentRuns)
             publishIfChanged([:], at: \.recentRunDeliveries)
             publishIfChanged([:], at: \.todoRunPresentationsByTodoID)
@@ -375,11 +372,6 @@ final class AgentGroupChatViewModel: ObservableObject {
                 let projectDashboard = try await store.projectDashboard(
                     ownerUserID: ownerUserID,
                     teamRoomID: room.id
-                )
-                let requirementSurveys = try await store.listRequirementSurveys(
-                    ownerUserID: ownerUserID,
-                    projectID: projectID,
-                    status: nil
                 )
                 let unfinishedRuns = try await store.listUnfinishedRuns(
                     ownerUserID: ownerUserID,
@@ -436,7 +428,6 @@ final class AgentGroupChatViewModel: ObservableObject {
                 publishIfChanged(teamTodos, at: \.teamTodos)
                 publishIfChanged(teamAssets, at: \.teamAssets)
                 publishIfChanged(projectDashboard, at: \.projectDashboard)
-                publishIfChanged(requirementSurveys, at: \.requirementSurveys)
                 let activeAssetIDs = Set(teamAssets.map(\.id))
                 publishIfChanged(
                     teamAssetRevisions.filter { activeAssetIDs.contains($0.key) },

@@ -76,18 +76,18 @@ struct RootView: View {
                     )
                 }
             case .requirementSurveys:
-                if let ownerUserID = model.localProjectOwnerUserID {
+                if let ownerUserID = model.localProjectOwnerUserID,
+                   let requirementSurveyClient = model.requirementSurveyClient {
                     RequirementSurveyCenterView(
                         ownerUserID: ownerUserID,
                         projects: model.projects,
-                        service: model.agentGroupChatService,
-                        scheduler: model.agentGroupChatScheduler
+                        client: requirementSurveyClient
                     )
                     .id(ownerUserID)
                 } else {
                     ContentUnavailableView(
-                        model.localized("请先登录", english: "Sign in required"),
-                        systemImage: "person.crop.circle.badge.exclamationmark"
+                        model.localized("本地 Agent Host 不可用", english: "Local Agent Host unavailable"),
+                        systemImage: "externaldrive.badge.exclamationmark"
                     )
                 }
             case let .pluginApplication(pluginID, componentKey):

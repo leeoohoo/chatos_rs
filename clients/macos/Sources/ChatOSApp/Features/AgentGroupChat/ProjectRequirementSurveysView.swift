@@ -1,35 +1,31 @@
-import ChatOSCore
+import ChatOSConnector
 import SwiftUI
 
 struct ProjectRequirementSurveysView: View {
     @Environment(\.dismiss) private var dismiss
-    let surveys: [LocalAgentRequirementSurvey]
+    let surveys: [LocalAgentHostRequirementSurvey]
     let submittingSurveyIDs: Set<String>
-    let creatorNamesByID: [String: String]
-    var projectNamesByID: [String: String] = [:]
     var showsNavigationBackButton = false
     var heading = "需求调研"
-    var explanation = "项目经理可在新需求、重大变更或任何信息不足的节点发起调研。选择答案后，页面末尾可统一补充备注。"
+    var explanation = "本地任务需要补充信息时会暂停并创建调研单。"
     let onSubmit: (
-        LocalAgentRequirementSurvey,
-        [String: [String]],
-        String
+        LocalAgentHostRequirementSurvey,
+        [String: LocalAgentJSONValue]
     ) async -> Bool
+
     @State private var selectedSurveyID: String?
     @State private var page = 0
     @State private var pageSize = 20
 
-    private var pagedSurveys: [LocalAgentRequirementSurvey] {
+    private var pagedSurveys: [LocalAgentHostRequirementSurvey] {
         surveys.agentPage(index: page, size: pageSize)
     }
 
     var body: some View {
-        if let selectedSurvey = surveys.first(where: { $0.id == selectedSurveyID }) {
+        if let survey = surveys.first(where: { $0.id == selectedSurveyID }) {
             RequirementSurveyDetailView(
-                survey: selectedSurvey,
-                creatorName: creatorNamesByID[selectedSurvey.creatorAgentID] ?? "项目经理",
-                projectName: projectNamesByID[selectedSurvey.projectID],
-                isSubmitting: submittingSurveyIDs.contains(selectedSurvey.id),
+                survey: survey,
+                isSubmitting: submittingSurveyIDs.contains(survey.id),
                 onBack: { selectedSurveyID = nil },
                 onSubmit: onSubmit
             )
@@ -41,10 +37,7 @@ struct ProjectRequirementSurveysView: View {
     private var surveyList: some View {
         ZStack {
             LinearGradient(
-                colors: [
-                    Color(nsColor: .windowBackgroundColor),
-                    AppPalette.ai.opacity(0.035),
-                ],
+                colors: [Color(nsColor: .windowBackgroundColor), AppPalette.ai.opacity(0.035)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -53,33 +46,24 @@ struct ProjectRequirementSurveysView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 18) {
                     overviewHeader
-
                     if surveys.isEmpty {
                         ContentUnavailableView {
                             Label("暂无需求调研", systemImage: "list.clipboard")
                         } description: {
-                            Text("项目经理需要确认目标、范围或方案时，会在这里创建调研单。")
+                            Text("本项目的 Local Agent Task 还没有发起调研。")
                         }
                         .frame(maxWidth: .infinity, minHeight: 320)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
                     } else {
-                        let pending = pagedSurveys.filter { $0.status == .pending }
-                        let awaitingResolution = pagedSurveys.filter {
-                            $0.status == .submitted && $0.resolution == nil
-                        }
-                        let resolved = pagedSurveys.filter { $0.resolution != nil }
-                        if !pending.isEmpty {
-                            sectionTitle("待填写", count: pending.count)
-                            surveyGrid(pending)
-                        }
-                        if !awaitingResolution.isEmpty {
-                            sectionTitle("等待形成方案", count: awaitingResolution.count)
-                                .padding(.top, pending.isEmpty ? 0 : 8)
-                            surveyGrid(awaitingResolution)
+                        let open = pagedSurveys.filter { $0.status == .open }
+                        let resolved = pagedSurveys.filter { $0.status == .resolved }
+                        if !open.isEmpty {
+                            sectionTitle("待填写", count: open.count, color: AppPalette.ai)
+                            surveyGrid(open)
                         }
                         if !resolved.isEmpty {
-                            sectionTitle("已形成方案", count: resolved.count)
-                                .padding(.top, pending.isEmpty && awaitingResolution.isEmpty ? 0 : 8)
+                            sectionTitle("已恢复任务", count: resolved.count, color: .green)
+                                .padding(.top, open.isEmpty ? 0 : 8)
                             surveyGrid(resolved)
                         }
                         AgentListPaginationBar(
@@ -97,103 +81,55 @@ struct ProjectRequirementSurveysView: View {
     }
 
     private var overviewHeader: some View {
-        let pending = surveys.filter { $0.status == .pending }.count
-        let waiting = surveys.filter { $0.status == .submitted && $0.resolution == nil }.count
-        let resolved = surveys.filter { $0.resolution != nil }.count
-
+        let open = surveys.filter { $0.status == .open }.count
+        let resolved = surveys.filter { $0.status == .resolved }.count
         return VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 16) {
                 if showsNavigationBackButton {
-                    Button {
-                        dismiss()
-                    } label: {
+                    Button { dismiss() } label: {
                         Label("返回项目列表", systemImage: "chevron.left")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .help("返回需求调研项目列表")
                 }
-
                 ZStack {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [AppPalette.ai, Color.indigo],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(LinearGradient(
+                            colors: [AppPalette.ai, .indigo],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ))
                     Image(systemName: "text.badge.checkmark")
                         .font(.system(size: 23, weight: .semibold))
                         .foregroundStyle(.white)
                 }
                 .frame(width: 54, height: 54)
-                .shadow(color: AppPalette.ai.opacity(0.2), radius: 9, y: 4)
-
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(heading)
-                        .appFont(.title2.weight(.bold))
+                    Text(heading).appFont(.title2.weight(.bold))
                     Text(explanation)
                         .appFont(.body)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer(minLength: 16)
+                Spacer()
             }
-
             HStack(spacing: 10) {
-                overviewMetric(
-                    value: surveys.count,
-                    title: "全部调研",
-                    systemImage: "rectangle.stack.fill",
-                    color: .blue
-                )
-                overviewMetric(
-                    value: pending,
-                    title: "待你填写",
-                    systemImage: "square.and.pencil",
-                    color: AppPalette.ai
-                )
-                overviewMetric(
-                    value: waiting,
-                    title: "方案生成中",
-                    systemImage: "hourglass",
-                    color: .orange
-                )
-                overviewMetric(
-                    value: resolved,
-                    title: "已有方案",
-                    systemImage: "checkmark.seal.fill",
-                    color: .green
-                )
+                metric(surveys.count, "全部调研", color: .blue)
+                metric(open, "待你填写", color: AppPalette.ai)
+                metric(resolved, "已恢复任务", color: .green)
             }
         }
         .padding(22)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(AppPalette.ai.opacity(0.13), lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.035), radius: 12, y: 5)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+        .overlay { RoundedRectangle(cornerRadius: 18).stroke(AppPalette.ai.opacity(0.13)) }
     }
 
-    private func overviewMetric(
-        value: Int,
-        title: String,
-        systemImage: String,
-        color: Color
-    ) -> some View {
+    private func metric(_ value: Int, _ title: String, color: Color) -> some View {
         HStack(spacing: 9) {
-            Image(systemName: systemImage)
-                .foregroundStyle(color)
-                .frame(width: 22)
+            Circle().fill(color).frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 1) {
-                Text("\(value)")
-                    .appFont(.headline.weight(.bold))
-                    .monospacedDigit()
-                Text(title)
-                    .appFont(.caption2)
-                    .foregroundStyle(.secondary)
+                Text("\(value)").appFont(.headline.weight(.bold)).monospacedDigit()
+                Text(title).appFont(.caption2).foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal, 12)
@@ -202,62 +138,32 @@ struct ProjectRequirementSurveysView: View {
         .background(color.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
     }
 
-    private func sectionTitle(_ title: String, count: Int) -> some View {
-        let presentation: (icon: String, color: Color) = switch title {
-        case "待填写": ("square.and.pencil", AppPalette.ai)
-        case "等待形成方案": ("hourglass", .orange)
-        default: ("checkmark.seal.fill", .green)
-        }
-
-        return HStack(spacing: 8) {
-            Image(systemName: presentation.icon)
-                .foregroundStyle(presentation.color)
+    private func sectionTitle(_ title: String, count: Int, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: color == .green ? "checkmark.seal.fill" : "square.and.pencil")
+                .foregroundStyle(color)
             Text(title).appFont(.headline.weight(.semibold))
             Text("\(count)")
                 .appFont(.caption2)
-                .foregroundStyle(presentation.color)
+                .foregroundStyle(color)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 2)
-                .background(presentation.color.opacity(0.1), in: Capsule())
+                .background(color.opacity(0.1), in: Capsule())
             Spacer()
         }
     }
 
-    private func surveyLink(
-        survey: LocalAgentRequirementSurvey,
-        creatorName: String
-    ) -> some View {
-        Button {
-            selectedSurveyID = survey.id
-        } label: {
-            RequirementSurveyRow(
-                survey: survey,
-                creatorName: creatorName,
-                projectName: projectNamesByID[survey.projectID]
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func surveyGrid(
-        _ items: [LocalAgentRequirementSurvey]
-    ) -> some View {
+    private func surveyGrid(_ items: [LocalAgentHostRequirementSurvey]) -> some View {
         LazyVGrid(
-            columns: [
-                GridItem(
-                    .adaptive(minimum: 410, maximum: 680),
-                    spacing: 14,
-                    alignment: .top
-                ),
-            ],
+            columns: [GridItem(.adaptive(minimum: 410, maximum: 680), spacing: 14)],
             alignment: .leading,
             spacing: 14
         ) {
             ForEach(items) { survey in
-                surveyLink(
-                    survey: survey,
-                    creatorName: creatorNamesByID[survey.creatorAgentID] ?? "项目经理"
-                )
+                Button { selectedSurveyID = survey.id } label: {
+                    RequirementSurveyRow(survey: survey)
+                }
+                .buttonStyle(.plain)
             }
         }
     }

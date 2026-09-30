@@ -105,6 +105,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let messageTaskGraphService: NativeLocalAgentMessageTaskGraphService?
     let runtimeSettingsService: NativeLocalAgentConversationRuntimeSettingsService?
     let askUserPromptService: NativeLocalAgentAskUserPromptService?
+    let requirementSurveyClient: NativeLocalAgentRequirementSurveyClient?
     let platformToolWorker: NativeLocalAgentPlatformToolWorker?
     let workspaceService: NativeLocalAgentWorkspaceService?
     let localConnectorService: NativeLocalConnectorService
@@ -271,6 +272,9 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             NativeLocalAgentAskUserPromptService(host: $0)
         }
         self.askUserPromptService = localAskUserPromptService
+        self.requirementSurveyClient = localAgentHost.map {
+            NativeLocalAgentRequirementSurveyClient(host: $0)
+        }
         Task {
             await localConnectorService.setLocalAgentCompanionServices(
                 host: localAgentHost,

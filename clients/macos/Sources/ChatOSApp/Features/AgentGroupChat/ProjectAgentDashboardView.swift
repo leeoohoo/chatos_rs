@@ -8,7 +8,6 @@ struct ProjectAgentDashboardView: View {
     let room: ProjectAgentRoom?
     let dashboard: LocalAgentProjectDashboard?
     let todos: [LocalAgentTodo]
-    let surveys: [LocalAgentRequirementSurvey]
     let runs: [LocalAgentGroupChatRun]
     let deliveriesByRunID: [UUID: ProjectAgentDelivery]
     let profilesByID: [String: LocalAgentProfile]
@@ -21,10 +20,6 @@ struct ProjectAgentDashboardView: View {
 
     private var needsReviewRuns: [LocalAgentGroupChatRun] {
         runs.filter { $0.checkpoint.status == .needsReview }
-    }
-
-    private var pendingSurveys: [LocalAgentRequirementSurvey] {
-        surveys.filter { $0.status == .pending }
     }
 
     private var blockedTodos: [LocalAgentTodo] {
@@ -52,7 +47,7 @@ struct ProjectAgentDashboardView: View {
     }
 
     private var attentionCount: Int {
-        needsReviewRuns.count + pendingSurveys.count + pendingApprovalCount + humanIssues.count
+        needsReviewRuns.count + pendingApprovalCount + humanIssues.count
     }
 
     var body: some View {
@@ -133,15 +128,6 @@ struct ProjectAgentDashboardView: View {
                     icon: "exclamationmark.triangle.fill",
                     color: .orange,
                     action: { onInspectRun(run) }
-                )
-            }
-            if !pendingSurveys.isEmpty {
-                attentionRow(
-                    title: "填写需求调研",
-                    detail: "\(pendingSurveys.count) 张调研单等待你的选择",
-                    icon: "list.clipboard.fill",
-                    color: AppPalette.ai,
-                    action: { onOpen(.research) }
                 )
             }
             if pendingApprovalCount > 0 {

@@ -163,7 +163,6 @@ struct ProjectAgentGroupChatView: View {
                 room: viewModel.room,
                 dashboard: viewModel.projectDashboard,
                 todos: viewModel.teamTodos,
-                surveys: viewModel.requirementSurveys,
                 runs: viewModel.recentRuns,
                 deliveriesByRunID: viewModel.recentRunDeliveries,
                 profilesByID: viewModel.profilesByID,
@@ -198,18 +197,14 @@ struct ProjectAgentGroupChatView: View {
                 }
             )
         case .research:
-            ProjectRequirementSurveysView(
-                surveys: viewModel.requirementSurveys,
-                submittingSurveyIDs: viewModel.submittingRequirementSurveyIDs,
-                creatorNamesByID: viewModel.profilesByID.mapValues(\.draft.name),
-                onSubmit: { survey, selections, notes in
-                    await viewModel.submitRequirementSurvey(
-                        survey,
-                        selections: selections,
-                        notes: notes
-                    )
-                }
-            )
+            ContentUnavailableView {
+                Label("需求调研已迁移", systemImage: "list.clipboard.fill")
+            } description: {
+                Text("Task 调研现在由 Local Agent Host 保存并恢复原 Run，不再属于 Agent 群聊。")
+            } actions: {
+                Button("打开需求调研") { model.selection = .requirementSurveys }
+                    .buttonStyle(.borderedProminent)
+            }
         case .assets:
             TeamAssetsView(
                 assets: viewModel.teamAssets,
