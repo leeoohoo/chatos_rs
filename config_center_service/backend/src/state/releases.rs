@@ -338,39 +338,24 @@ impl AppState {
             }
         }
         validate_postgres_pool_budget(values, &mut errors);
-        for key in [MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY] {
-            let is_https = values
-                .get(key)
-                .and_then(Value::as_str)
-                .is_some_and(|value| value.trim().starts_with("https://"));
-            if !is_https {
-                errors.push(format!(
-                    "{key} must use https:// because User Service internal APIs require mTLS"
-                ));
-            }
-        }
-        for key in [SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY] {
-            let is_https = values
-                .get(key)
-                .and_then(Value::as_str)
-                .is_some_and(|value| value.trim().starts_with("https://"));
-            if !is_https {
-                errors.push(format!(
-                    "{key} must use https:// because Plugin Management internal APIs require mTLS"
-                ));
-            }
-        }
-        for key in [CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY] {
-            let is_https = values
-                .get(key)
-                .and_then(Value::as_str)
-                .is_some_and(|value| value.trim().starts_with("https://"));
-            if !is_https {
-                errors.push(format!(
-                    "{key} must use https:// because Memory Engine internal APIs require mTLS"
-                ));
-            }
-        }
+        validate_mtls_url(
+            values,
+            MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
+            "User Service",
+            &mut errors,
+        );
+        validate_mtls_url(
+            values,
+            SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY,
+            "Plugin Management",
+            &mut errors,
+        );
+        validate_mtls_url(
+            values,
+            CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
+            "Memory Engine",
+            &mut errors,
+        );
         let memory_engine_public_port = values
             .get(MEMORY_ENGINE_PORT_CONFIG_KEY)
             .and_then(Value::as_i64);
@@ -414,6 +399,23 @@ impl AppState {
             );
         }
         Ok(errors)
+    }
+}
+
+fn validate_mtls_url(
+    values: &BTreeMap<String, Value>,
+    key: &str,
+    service_name: &str,
+    errors: &mut Vec<String>,
+) {
+    let is_https = values
+        .get(key)
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.trim().starts_with("https://"));
+    if !is_https {
+        errors.push(format!(
+            "{key} must use https:// because {service_name} internal APIs require mTLS"
+        ));
     }
 }
 
