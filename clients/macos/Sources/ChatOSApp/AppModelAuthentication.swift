@@ -136,11 +136,13 @@ extension AppModel {
         let petActivityService = petActivityService
         let messageTaskGraphService = messageTaskGraphService
         let askUserPromptService = askUserPromptService
+        let turnProcessService = turnProcessService
         Task {
             await commandService?.reset()
             await petActivityService?.reset()
             await messageTaskGraphService?.reset()
             await askUserPromptService?.reset()
+            await turnProcessService?.reset()
             await localAgentHost.stop()
         }
     }
@@ -165,6 +167,7 @@ extension AppModel {
                 await self?.petActivityService?.configure(ownerUserID: ownerUserID)
                 await self?.messageTaskGraphService?.configure(ownerUserID: ownerUserID)
                 await self?.askUserPromptService?.configure(ownerUserID: ownerUserID)
+                await self?.turnProcessService?.configure(ownerUserID: ownerUserID)
                 self?.localAgentHostError = nil
             } catch is CancellationError {
             } catch {

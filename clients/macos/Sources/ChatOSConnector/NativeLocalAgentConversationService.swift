@@ -306,6 +306,11 @@ public actor NativeLocalAgentConversationService:
                 sequence: Int64(clamping: user?.ordinal ?? 0),
                 revision: Int64(clamping: page.conversation.version),
                 userMessage: userMessage,
+                processEvents: [TurnProcessEvent(
+                    id: "local-process:\(turn.runID):\(turn.updatedAtUnixMs)",
+                    title: processTitle(status),
+                    status: status
+                )],
                 finalAssistantMessage: replies.last?.message,
                 assistantReplies: replies,
                 isTaskGraphAvailable: true,
@@ -361,6 +366,16 @@ public actor NativeLocalAgentConversationService:
         case "succeeded": .completed
         case "cancelled": .cancelled
         default: .failed
+        }
+    }
+
+    private func processTitle(_ status: TurnStatus) -> String {
+        switch status {
+        case .queued: "本地执行等待中"
+        case .streaming: "本地执行进行中"
+        case .completed: "本地执行已完成"
+        case .failed: "本地执行失败"
+        case .cancelled: "本地执行已取消"
         }
     }
 }
