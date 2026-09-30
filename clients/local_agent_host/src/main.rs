@@ -23,6 +23,7 @@ struct Options {
     owner_user_id: String,
     mode: IpcMode,
     read_only_tools: Vec<String>,
+    approval_exempt_tools: Vec<String>,
     memory: Option<MemoryOptions>,
 }
 
@@ -92,6 +93,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 control_plane.clone(),
                 control_plane,
                 options.read_only_tools,
+                options.approval_exempt_tools,
                 source_id,
                 sync_worker,
             )
@@ -102,6 +104,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             control_plane.clone(),
             control_plane,
             options.read_only_tools,
+            options.approval_exempt_tools,
         ),
     }
     .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
@@ -141,6 +144,7 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
     let mut owner_user_id = None;
     let mut mode = None;
     let mut read_only_tools = Vec::new();
+    let mut approval_exempt_tools = Vec::new();
     let mut memory_base_url = None;
     let mut memory_source_id = None;
     let mut memory_timeout_ms = 30_000;
@@ -159,6 +163,11 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
             "--read-only-tool" => {
                 index += 1;
                 read_only_tools.push(required_value(&arguments, index, "--read-only-tool")?.into());
+            }
+            "--approval-exempt-tool" => {
+                index += 1;
+                approval_exempt_tools
+                    .push(required_value(&arguments, index, "--approval-exempt-tool")?.into());
             }
             "--memory-base-url" => {
                 index += 1;
@@ -215,6 +224,7 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
         owner_user_id: owner_user_id.ok_or_else(|| "--owner-user-id is required".to_string())?,
         mode: mode.ok_or_else(|| "one IPC mode is required".to_string())?,
         read_only_tools,
+        approval_exempt_tools,
         memory,
     })
 }
@@ -251,6 +261,7 @@ fn print_help() {
     eprintln!("  --database <path>   Client-owned SQLite database");
     eprintln!("  --owner-user-id <id>  Scope IPC and workers to the signed-in account");
     eprintln!("  --read-only-tool <name>  Mark a native tool as replay-safe; repeat as needed");
+    eprintln!("  --approval-exempt-tool <name>  Keep a side-effecting tool claimable without first-execution approval; repeat as needed");
     eprintln!("  --memory-base-url <url>  Enable retained Memory compose and record sync");
     eprintln!("  --memory-source-id <id>  Memory source paired with --memory-base-url");
     eprintln!("  --memory-timeout-ms <ms>  Memory request timeout (default: 30000)");
@@ -304,6 +315,8 @@ mod tests {
                 "read_file",
                 "--read-only-tool",
                 "list_files",
+                "--approval-exempt-tool",
+                "stage_edit_batch",
                 "--stdio",
             ]
             .into_iter()
@@ -316,6 +329,10 @@ mod tests {
             vec!["read_file".to_string(), "list_files".to_string()]
         );
         assert_eq!(options.owner_user_id, "user-1");
+        assert_eq!(
+            options.approval_exempt_tools,
+            vec!["stage_edit_batch".to_string()]
+        );
         assert!(matches!(options.mode, IpcMode::Stdio));
         assert!(options.memory.is_none());
         assert!(parse_options(vec!["--api-key".to_string(), "secret".to_string()]).is_err());

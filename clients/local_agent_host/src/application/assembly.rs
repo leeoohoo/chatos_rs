@@ -44,6 +44,7 @@ impl LocalAgentHostAssembly {
             capability_resolver,
             Some(tools),
             read_only_tools,
+            Vec::new(),
             None,
             None,
         )
@@ -57,6 +58,7 @@ impl LocalAgentHostAssembly {
         model_resolver: M,
         capability_resolver: C,
         read_only_tools: I,
+        approval_exempt_tools: Vec<String>,
     ) -> Result<Self, String>
     where
         M: LocalModelRuntimeResolver + 'static,
@@ -71,6 +73,7 @@ impl LocalAgentHostAssembly {
             capability_resolver,
             None,
             read_only_tools,
+            approval_exempt_tools,
             None,
             None,
         )
@@ -84,6 +87,7 @@ impl LocalAgentHostAssembly {
         model_resolver: M,
         capability_resolver: C,
         read_only_tools: I,
+        approval_exempt_tools: Vec<String>,
         memory_source_id: impl Into<String>,
         memory_sync_worker: LocalMemorySyncWorker,
     ) -> Result<Self, String>
@@ -100,6 +104,7 @@ impl LocalAgentHostAssembly {
             capability_resolver,
             None,
             read_only_tools,
+            approval_exempt_tools,
             Some(memory_source_id.into()),
             Some(memory_sync_worker),
         )
@@ -112,6 +117,7 @@ impl LocalAgentHostAssembly {
         capability_resolver: C,
         tools: Option<LocalToolRegistry>,
         read_only_tools: I,
+        approval_exempt_tools: Vec<String>,
         memory_source_id: Option<String>,
         memory_sync_worker: Option<LocalMemorySyncWorker>,
     ) -> Result<Self, String>
@@ -129,7 +135,11 @@ impl LocalAgentHostAssembly {
                 .map(Into::into)
                 .chain(NOTEPAD_READ_ONLY_TOOLS.map(str::to_string)),
         )
-        .with_approval_exempt([CREATE_TASK_TOOL, CREATE_TASKS_TOOL]);
+        .with_approval_exempt(
+            approval_exempt_tools
+                .into_iter()
+                .chain([CREATE_TASK_TOOL.to_string(), CREATE_TASKS_TOOL.to_string()]),
+        );
         let mut main_chat_planner = ControlPlaneLocalAiStepPlanner::main_chat(
             Arc::clone(&model_resolver),
             Arc::clone(&capability_resolver),
@@ -309,6 +319,7 @@ mod tests {
             ModelResolver,
             Capabilities,
             ["read_file"],
+            Vec::new(),
         )
         .expect("assembly");
 

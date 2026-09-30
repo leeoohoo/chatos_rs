@@ -6,17 +6,21 @@ public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
     public let databaseURL: URL
     public let startupTimeout: Duration
     public let readOnlyToolNames: [String]
+    public let approvalExemptToolNames: [String]
 
     public init(
         executableURL: URL,
         databaseURL: URL,
         startupTimeout: Duration = .seconds(10),
-        readOnlyToolNames: [String] = NativeLocalAgentPlatformToolCatalog.readOnlyToolNames
+        readOnlyToolNames: [String] = NativeLocalAgentPlatformToolCatalog.readOnlyToolNames,
+        approvalExemptToolNames: [String] =
+            NativeLocalAgentPlatformToolCatalog.approvalExemptToolNames
     ) {
         self.executableURL = executableURL
         self.databaseURL = databaseURL
         self.startupTimeout = startupTimeout
         self.readOnlyToolNames = readOnlyToolNames
+        self.approvalExemptToolNames = approvalExemptToolNames
     }
 }
 
@@ -245,6 +249,9 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
             "--owner-user-id", ownerUserID,
             "--stdio",
         ] + configuration.readOnlyToolNames.sorted().flatMap { ["--read-only-tool", $0] }
+            + configuration.approvalExemptToolNames.sorted().flatMap {
+                ["--approval-exempt-tool", $0]
+            }
         process.environment = safeEnvironment(credentialEnvironment: credentialEnvironment)
         process.standardInput = inputPipe
         process.standardOutput = outputPipe

@@ -86,6 +86,11 @@ public struct LocalAgentToolCommitResult: Decodable, Sendable, Equatable {
     public let run: LocalAgentRunRecord
 }
 
+public struct LocalAgentToolApprovalResult: Decodable, Sendable, Equatable {
+    public let invocation: LocalAgentToolInvocationRecord
+    public let run: LocalAgentRunRecord
+}
+
 public struct NativeLocalAgentToolClient: Sendable {
     public static let reservedRustToolNames = [
         "create_task",
@@ -140,6 +145,45 @@ public struct NativeLocalAgentToolClient: Sendable {
         }
         return result.result
     }
+
+    public func pendingApprovals(
+        ownerUserID: String,
+        limit: UInt32 = 20
+    ) async throws -> [LocalAgentToolInvocationRecord] {
+        let result: PendingApprovalsResult = try await host.request(
+            ListPendingApprovalsCommand(
+                type: "list_pending_tool_approvals",
+                ownerUserID: ownerUserID,
+                limit: limit
+            )
+        )
+        guard result.type == "pending_tool_approvals" else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+        return result.invocations
+    }
+
+    public func decideApproval(
+        ownerUserID: String,
+        invocation: LocalAgentToolInvocationRecord,
+        approve: Bool,
+        decidedBy: String,
+        reason: String
+    ) async throws -> LocalAgentToolApprovalResult {
+        let result: ToolApprovalResult = try await host.request(DecideApprovalCommand(
+            type: "decide_tool_approval",
+            ownerUserID: ownerUserID,
+            invocationID: invocation.invocationID,
+            expectedVersion: invocation.version,
+            decision: approve ? "approve" : "reject",
+            decidedBy: decidedBy,
+            reason: reason
+        ))
+        guard result.type == "tool_approval" else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+        return result.result
+    }
 }
 
 private struct ClaimCommand: Encodable, Sendable {
@@ -177,6 +221,35 @@ private struct CommitCommand: Encodable, Sendable {
     }
 }
 
+private struct ListPendingApprovalsCommand: Encodable, Sendable {
+    let type: String
+    let ownerUserID: String
+    let limit: UInt32
+
+    private enum CodingKeys: String, CodingKey {
+        case type, limit
+        case ownerUserID = "owner_user_id"
+    }
+}
+
+private struct DecideApprovalCommand: Encodable, Sendable {
+    let type: String
+    let ownerUserID: String
+    let invocationID: String
+    let expectedVersion: UInt64
+    let decision: String
+    let decidedBy: String
+    let reason: String
+
+    private enum CodingKeys: String, CodingKey {
+        case type, decision, reason
+        case ownerUserID = "owner_user_id"
+        case invocationID = "invocation_id"
+        case expectedVersion = "expected_version"
+        case decidedBy = "decided_by"
+    }
+}
+
 private struct ClaimResult: Decodable, Sendable {
     let type: String
     let claim: LocalAgentToolClaim?
@@ -185,4 +258,14 @@ private struct ClaimResult: Decodable, Sendable {
 private struct CommitResult: Decodable, Sendable {
     let type: String
     let result: LocalAgentToolCommitResult
+}
+
+private struct PendingApprovalsResult: Decodable, Sendable {
+    let type: String
+    let invocations: [LocalAgentToolInvocationRecord]
+}
+
+private struct ToolApprovalResult: Decodable, Sendable {
+    let type: String
+    let result: LocalAgentToolApprovalResult
 }

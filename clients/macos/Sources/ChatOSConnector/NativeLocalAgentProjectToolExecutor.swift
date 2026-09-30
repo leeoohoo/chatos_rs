@@ -8,7 +8,13 @@ protocol NativeLocalAgentProjectToolExecuting: Sendable {
     ) async throws -> LocalAgentJSONValue
 }
 
-struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting, Sendable {
+struct NativeLocalAgentProjectContext: Sendable {
+    let conversationID: String
+    let projectID: String
+    let resolvedPath: NativeResolvedProjectPath
+}
+
+struct NativeLocalAgentProjectContextResolver: Sendable {
     private let runtime: NativeLocalAgentRuntimeClient
     private let conversations: NativeLocalAgentConversationClient
     private let projects: NativeLocalProjectsService
@@ -25,16 +31,11 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
         self.connector = connector
     }
 
-    func execute(
+    func resolve(
         ownerUserID: String,
-        invocation: LocalAgentToolInvocationRecord
-    ) async throws -> LocalAgentJSONValue {
-        guard NativeLocalAgentPlatformToolCatalog.taskRunnerToolNames.contains(
-            invocation.toolName
-        ), case let .object(arguments) = invocation.arguments else {
-            throw NativeLocalAgentPlatformToolError.invalidArguments
-        }
-        let run = try await runtime.run(ownerUserID: ownerUserID, runID: invocation.runID)
+        runID: String
+    ) async throws -> NativeLocalAgentProjectContext {
+        let run = try await runtime.run(ownerUserID: ownerUserID, runID: runID)
         guard run.ownerUserID == ownerUserID,
               case let .object(input) = run.input,
               let conversationID = Self.conversationID(input) else {
@@ -49,36 +50,19 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
               resource.kind == .project else {
             throw NativeLocalAgentPlatformToolError.projectUnavailable
         }
-
-        do {
-            let context = try await projects.pluginContext(
-                ownerUserID: ownerUserID,
-                projectID: resource.resourceID
-            )
-            guard let projectRoot = context.projectRoot else {
-                throw NativeLocalAgentPlatformToolError.projectUnavailable
-            }
-            let resolved = try await connector.resolveProjectPath(projectRoot)
-            let tool = NativeMCPCodeReadTools(
-                workspace: resolved.workspace,
-                projectRoot: resolved.absoluteURL,
-                requestCWD: nil,
-                defaultToolRoot: nil
-            )
-            let nativeArguments = arguments.mapValues(NativeJSONValue.init(local:))
-            return try await Task.detached {
-                LocalAgentJSONValue(native: try tool.call(
-                    name: invocation.toolName,
-                    arguments: nativeArguments
-                ))
-            }.value
-        } catch let error as NativeLocalAgentPlatformToolError {
-            throw error
-        } catch {
-            // Project registry, connector, and filesystem errors may contain real local
-            // paths. Collapse them before the result crosses IPC and becomes model-visible.
+        let context = try await projects.pluginContext(
+            ownerUserID: ownerUserID,
+            projectID: resource.resourceID
+        )
+        guard let projectRoot = context.projectRoot else {
             throw NativeLocalAgentPlatformToolError.projectUnavailable
         }
+        let resolvedPath = try await connector.resolveProjectPath(projectRoot)
+        return .init(
+            conversationID: conversationID,
+            projectID: resource.resourceID,
+            resolvedPath: resolvedPath
+        )
     }
 
     private static func conversationID(
@@ -88,6 +72,82 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
             if case let .string(value)? = input[key], !value.isEmpty { return value }
         }
         return nil
+    }
+}
+
+struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting, Sendable {
+    private let contextResolver: NativeLocalAgentProjectContextResolver
+    private let writeStore: NativeMCPCodeWriteStore
+
+    init(
+        host: any LocalAgentHostClientServicing,
+        projects: NativeLocalProjectsService,
+        connector: NativeLocalConnectorService,
+        writeStore: NativeMCPCodeWriteStore = .init()
+    ) {
+        contextResolver = .init(host: host, projects: projects, connector: connector)
+        self.writeStore = writeStore
+    }
+
+    func execute(
+        ownerUserID: String,
+        invocation: LocalAgentToolInvocationRecord
+    ) async throws -> LocalAgentJSONValue {
+        guard NativeLocalAgentPlatformToolCatalog.taskRunnerToolNames.contains(
+            invocation.toolName
+        ), case let .object(arguments) = invocation.arguments else {
+            throw NativeLocalAgentPlatformToolError.invalidArguments
+        }
+        let context: NativeLocalAgentProjectContext
+        do {
+            context = try await contextResolver.resolve(
+                ownerUserID: ownerUserID,
+                runID: invocation.runID
+            )
+        } catch let error as NativeLocalAgentPlatformToolError {
+            throw error
+        } catch {
+            throw NativeLocalAgentPlatformToolError.projectUnavailable
+        }
+        do {
+            let tool = NativeMCPCodeReadTools(
+                workspace: context.resolvedPath.workspace,
+                projectRoot: context.resolvedPath.absoluteURL,
+                requestCWD: nil,
+                defaultToolRoot: nil
+            )
+            let nativeArguments = arguments.mapValues(NativeJSONValue.init(local:))
+            let result: NativeJSONValue
+            if NativeMCPCodeWriteStore.toolNames.contains(invocation.toolName) {
+                if invocation.toolName == "commit_edit_session" {
+                    guard invocation.requiresApproval,
+                          invocation.approvalStatus == "approved" else {
+                        throw NativeLocalAgentPlatformToolError.approvalRequired
+                    }
+                }
+                result = try await writeStore.call(
+                    name: invocation.toolName,
+                    arguments: nativeArguments,
+                    scope: .init(
+                        workspaceID: context.resolvedPath.workspace.id,
+                        sessionID: context.conversationID,
+                        runID: invocation.runID
+                    ),
+                    projectRoot: context.resolvedPath.absoluteURL
+                )
+            } else {
+                result = try await Task.detached {
+                    try tool.call(name: invocation.toolName, arguments: nativeArguments)
+                }.value
+            }
+            return .init(native: result)
+        } catch let error as NativeLocalAgentPlatformToolError {
+            throw error
+        } catch {
+            // Tool and filesystem errors may contain real local paths or staged content.
+            // Collapse them before the result crosses IPC and becomes model-visible.
+            throw NativeLocalAgentPlatformToolError.projectToolFailed
+        }
     }
 }
 

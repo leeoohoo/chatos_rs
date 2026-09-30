@@ -10,6 +10,9 @@ public enum NativeLocalAgentPlatformToolCatalog {
         "search_files",
     ]
     public static let readOnlyToolNames = [attachmentReadToolName] + projectReadOnlyToolNames
+    public static let approvalExemptToolNames = [
+        "open_edit_session", "stage_edit_batch", "abort_edit_session",
+    ]
 
     public static let capabilityTools: [LocalAgentJSONValue] = [
         .object([
@@ -107,6 +110,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
                   projectReadOnlyToolNames.contains(name) else { return nil }
             return capabilityTool(value)
         }
+        + NativeMCPCodeWriteStore.toolDefinitions.map(capabilityTool)
 
     static var taskRunnerToolNames: Set<String> {
         Set(taskRunnerCapabilityTools.compactMap { value in
@@ -255,6 +259,7 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
 public actor NativeLocalAgentPlatformToolWorker {
     private let client: NativeLocalAgentToolClient
     private let executor: any NativeLocalAgentPlatformToolExecuting
+    private let approvalHandler: (any NativeLocalAgentToolApprovalHandling)?
     private let workerID: String
     private var ownerUserID: String?
     private var generation = UUID()
@@ -269,14 +274,21 @@ public actor NativeLocalAgentPlatformToolWorker {
         workerID: String = "macos-platform-tool-worker"
     ) {
         client = .init(host: host)
+        let writeStore = NativeMCPCodeWriteStore()
         executor = NativeLocalAgentPlatformToolExecutor(
             host: host,
             attachmentRootURL: attachmentRootURL,
             projectTools: NativeLocalAgentProjectToolExecutor(
                 host: host,
                 projects: projects,
-                connector: connector
+                connector: connector,
+                writeStore: writeStore
             )
+        )
+        approvalHandler = NativeLocalAgentToolApprovalHandler(
+            host: host,
+            projects: projects,
+            connector: connector
         )
         self.workerID = workerID
     }
@@ -284,10 +296,12 @@ public actor NativeLocalAgentPlatformToolWorker {
     init(
         client: NativeLocalAgentToolClient,
         executor: any NativeLocalAgentPlatformToolExecuting,
+        approvalHandler: (any NativeLocalAgentToolApprovalHandling)? = nil,
         workerID: String = "macos-platform-tool-worker"
     ) {
         self.client = client
         self.executor = executor
+        self.approvalHandler = approvalHandler
         self.workerID = workerID
     }
 
@@ -348,6 +362,12 @@ public actor NativeLocalAgentPlatformToolWorker {
               generation == expectedGeneration,
               self.ownerUserID == ownerUserID {
             do {
+                if try await approvalHandler?.resolveNextPending(
+                    ownerUserID: ownerUserID
+                ) == true {
+                    idleDelay = .milliseconds(250)
+                    continue
+                }
                 if let claim = try await client.claimNext(
                     ownerUserID: ownerUserID,
                     workerID: workerID
@@ -433,6 +453,8 @@ enum NativeLocalAgentPlatformToolError: LocalizedError, Equatable {
     case invalidRunContext
     case attachmentNotAuthorized
     case projectUnavailable
+    case projectToolFailed
+    case approvalRequired
 
     var errorDescription: String? {
         switch self {
@@ -442,6 +464,8 @@ enum NativeLocalAgentPlatformToolError: LocalizedError, Equatable {
         case .invalidRunContext: "The local platform tool Run context is invalid."
         case .attachmentNotAuthorized: "The attachment is not authorized for this conversation."
         case .projectUnavailable: "The local project is unavailable for this conversation."
+        case .projectToolFailed: "The local project tool arguments or state are invalid."
+        case .approvalRequired: "The local project change requires approval before execution."
         }
     }
 }

@@ -26,8 +26,13 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             NativeLocalAgentPlatformToolCatalog.taskRunnerToolNames,
             Set([
                 "read_file_raw", "read_file_range", "list_dir", "search_text", "read_file",
-                "search_files",
+                "search_files", "open_edit_session", "stage_edit_batch",
+                "commit_edit_session", "abort_edit_session",
             ])
+        )
+        XCTAssertEqual(
+            NativeLocalAgentPlatformToolCatalog.approvalExemptToolNames,
+            ["open_edit_session", "stage_edit_batch", "abort_edit_session"]
         )
     }
 
@@ -157,6 +162,29 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         ]))
     }
 
+    func testTypedClientListsAndDecidesDurableToolApproval() async throws {
+        let host = PlatformToolHostStub(mode: .onePendingApproval)
+        let client = NativeLocalAgentToolClient(host: host)
+
+        let pending = try await client.pendingApprovals(ownerUserID: "user-1", limit: 1)
+        let invocation = try XCTUnwrap(pending.first)
+        XCTAssertEqual(invocation.toolName, "commit_edit_session")
+        XCTAssertEqual(invocation.approvalStatus, "pending")
+
+        let result = try await client.decideApproval(
+            ownerUserID: "user-1",
+            invocation: invocation,
+            approve: true,
+            decidedBy: "macos-local-approval",
+            reason: "Approved in the local client."
+        )
+        XCTAssertEqual(result.invocation.approvalStatus, "approved")
+        let command = try await host.lastCommand()
+        XCTAssertEqual(command["type"], .string("decide_tool_approval"))
+        XCTAssertEqual(command["expected_version"], .number(2))
+        XCTAssertEqual(command["decision"], .string("approve"))
+    }
+
     func testWorkerCommitsSideEffectingExecutionErrorAsNeedsReview() async throws {
         let host = PlatformToolHostStub(mode: .oneSideEffectingClaim)
         let worker = NativeLocalAgentPlatformToolWorker(
@@ -221,7 +249,7 @@ private struct FailingPlatformToolExecutor: NativeLocalAgentPlatformToolExecutin
 }
 
 private actor PlatformToolHostStub: LocalAgentHostClientServicing {
-    enum Mode { case idle, oneSideEffectingClaim }
+    enum Mode { case idle, oneSideEffectingClaim, onePendingApproval }
 
     private let mode: Mode
     private var didClaim = false
@@ -257,6 +285,22 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
                 "result": [
                     "invocation": invocation(status: "needs_review", version: 3),
                     "run": run(),
+                ],
+            ])
+        case "list_pending_tool_approvals":
+            guard case .onePendingApproval = mode else {
+                return try json(["type": "pending_tool_approvals", "invocations": []])
+            }
+            return try json([
+                "type": "pending_tool_approvals",
+                "invocations": [approvalInvocation(status: "pending", version: 2)],
+            ])
+        case "decide_tool_approval":
+            return try json([
+                "type": "tool_approval",
+                "result": [
+                    "invocation": approvalInvocation(status: "pending", version: 3, approved: true),
+                    "run": run(status: "running"),
                 ],
             ])
         default:
@@ -300,7 +344,32 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
         ]
     }
 
-    private func run() -> [String: Any] {
+    private func approvalInvocation(
+        status: String,
+        version: Int,
+        approved: Bool = false
+    ) -> [String: Any] {
+        [
+            "invocation_id": "approval-invocation-1",
+            "run_id": "run-1",
+            "batch_id": "batch-1",
+            "call_id": "call-1",
+            "tool_name": "commit_edit_session",
+            "arguments": ["session_id": "session-1"],
+            "side_effecting": true,
+            "requires_approval": true,
+            "approval_status": approved ? "approved" : "pending",
+            "approval_decided_by": approved ? "macos-local-approval" : NSNull(),
+            "approval_reason": approved ? "Approved in the local client." : NSNull(),
+            "approval_decided_at_unix_ms": approved ? 3 : NSNull(),
+            "status": status,
+            "version": version,
+            "created_at_unix_ms": 1,
+            "updated_at_unix_ms": 2,
+        ]
+    }
+
+    private func run(status: String = "needs_review") -> [String: Any] {
         [
             "run_id": "run-1",
             "owner_user_id": "user-1",
@@ -311,7 +380,7 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
             "model_config_revision": "revision-1",
             "capability_policy_revision": "policy-1",
             "input": [:],
-            "status": "needs_review",
+            "status": status,
             "iteration": 1,
             "model_attempt": 1,
             "max_iterations": 8,
