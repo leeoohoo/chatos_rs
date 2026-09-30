@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn internal_routes_have_operation_specific_scopes() {
         assert_eq!(
-            internal_request_scope(&Method::GET, "/internal/config/v1/snapshots/task-runner"),
+            internal_request_scope(&Method::GET, "/internal/config/v1/snapshots/memory-engine"),
             Some(CONFIG_SNAPSHOT_READ_SCOPE)
         );
         assert_eq!(
@@ -324,7 +324,7 @@ mod tests {
             Some(CONFIG_INSTANCE_HEARTBEAT_SCOPE)
         );
         assert_eq!(
-            internal_request_scope(&Method::POST, "/internal/config/v1/snapshots/task-runner"),
+            internal_request_scope(&Method::POST, "/internal/config/v1/snapshots/memory-engine"),
             None
         );
     }
@@ -333,17 +333,17 @@ mod tests {
     fn caller_keys_are_isolated_and_legacy_static_headers_are_rejected() {
         let secrets = BTreeMap::from([
             (
-                "task-runner".to_string(),
-                "task-runner-config-center-test-secret".to_string(),
+                "memory-engine".to_string(),
+                "memory-engine-config-center-test-secret".to_string(),
             ),
             (
-                "chatos-backend".to_string(),
-                "chatos-config-center-test-secret".to_string(),
+                "user-service".to_string(),
+                "user-service-config-center-test-secret".to_string(),
             ),
         ]);
         let token = issue_internal_service_token(
-            secrets["task-runner"].as_str(),
-            "task-runner",
+            secrets["memory-engine"].as_str(),
+            "memory-engine",
             CONFIG_CENTER_AUDIENCE,
             CONFIG_SNAPSHOT_READ_SCOPE,
             60,
@@ -352,19 +352,19 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             CONFIG_CENTER_CALLER_HEADER,
-            HeaderValue::from_static("task-runner"),
+            HeaderValue::from_static("memory-engine"),
         );
         headers.insert(
             CONFIG_CENTER_TOKEN_HEADER,
             HeaderValue::from_str(token.as_str()).expect("token header"),
         );
         let claims = authenticate_internal_request(&headers, &secrets, CONFIG_SNAPSHOT_READ_SCOPE)
-            .expect("authenticate task runner");
-        assert_eq!(claims.caller, "task-runner");
+            .expect("authenticate memory engine");
+        assert_eq!(claims.caller, "memory-engine");
 
         headers.insert(
             CONFIG_CENTER_CALLER_HEADER,
-            HeaderValue::from_static("chatos-backend"),
+            HeaderValue::from_static("user-service"),
         );
         assert!(
             authenticate_internal_request(&headers, &secrets, CONFIG_SNAPSHOT_READ_SCOPE).is_err()
@@ -373,7 +373,7 @@ mod tests {
         let mut legacy_headers = HeaderMap::new();
         legacy_headers.insert(
             "x-config-center-internal-secret",
-            HeaderValue::from_static("task-runner-config-center-test-secret"),
+            HeaderValue::from_static("memory-engine-config-center-test-secret"),
         );
         assert!(authenticate_internal_request(
             &legacy_headers,
@@ -386,12 +386,12 @@ mod tests {
     #[test]
     fn operation_scope_cannot_be_reused() {
         let secrets = BTreeMap::from([(
-            "task-runner".to_string(),
-            "task-runner-config-center-test-secret".to_string(),
+            "memory-engine".to_string(),
+            "memory-engine-config-center-test-secret".to_string(),
         )]);
         let token = issue_internal_service_token(
-            secrets["task-runner"].as_str(),
-            "task-runner",
+            secrets["memory-engine"].as_str(),
+            "memory-engine",
             CONFIG_CENTER_AUDIENCE,
             CONFIG_SNAPSHOT_READ_SCOPE,
             60,
@@ -400,7 +400,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             CONFIG_CENTER_CALLER_HEADER,
-            HeaderValue::from_static("task-runner"),
+            HeaderValue::from_static("memory-engine"),
         );
         headers.insert(
             CONFIG_CENTER_TOKEN_HEADER,
@@ -415,13 +415,13 @@ mod tests {
     #[test]
     fn authenticated_caller_must_match_snapshot_path_and_heartbeat_body() {
         assert!(
-            require_matching_service_identity("task-runner", "task-runner", "snapshot").is_ok()
+            require_matching_service_identity("memory-engine", "memory-engine", "snapshot").is_ok()
         );
         assert!(
-            require_matching_service_identity("task-runner", "chatos-backend", "snapshot").is_err()
+            require_matching_service_identity("memory-engine", "user-service", "snapshot").is_err()
         );
         assert!(
-            require_matching_service_identity("task-runner", "chatos-backend", "heartbeat")
+            require_matching_service_identity("memory-engine", "user-service", "heartbeat")
                 .is_err()
         );
     }
@@ -429,9 +429,9 @@ mod tests {
     #[test]
     fn internal_audit_uses_verified_trace_scope_and_resource_identity() {
         let claims = InternalServiceTokenClaims {
-            iss: "task-runner".to_string(),
-            sub: "task-runner".to_string(),
-            caller: "task-runner".to_string(),
+            iss: "memory-engine".to_string(),
+            sub: "memory-engine".to_string(),
+            caller: "memory-engine".to_string(),
             aud: CONFIG_CENTER_AUDIENCE.to_string(),
             scope: CONFIG_SNAPSHOT_READ_SCOPE.to_string(),
             trace_id: Uuid::new_v4().to_string(),
@@ -443,8 +443,8 @@ mod tests {
             &claims,
             ConfigCenterInternalResourceAudit {
                 resource_type: "config_snapshot",
-                resource_id: "local/task-runner",
-                resource_name: Some("task-runner"),
+                resource_id: "local/memory-engine",
+                resource_name: Some("memory-engine"),
                 action: "read",
                 outcome: "accepted",
             },
@@ -453,7 +453,7 @@ mod tests {
         assert!(event.validate().is_ok());
         assert_eq!(event.trace_id, claims.trace_id);
         assert_eq!(event.scope, CONFIG_SNAPSHOT_READ_SCOPE);
-        assert_eq!(event.resource_id, "local/task-runner");
+        assert_eq!(event.resource_id, "local/memory-engine");
     }
 
     #[test]

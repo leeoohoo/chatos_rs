@@ -3,10 +3,7 @@
 
 use super::*;
 use crate::catalog::{
-    CHATOS_BACKEND_PORT_CONFIG_KEY, CHATOS_CORS_ORIGINS_CONFIG_KEY, CHATOS_DATABASE_URL_CONFIG_KEY,
-    CHATOS_HOST_CONFIG_KEY, CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY, CHATOS_LOG_MAX_FILES_CONFIG_KEY,
-    CHATOS_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY, CHATOS_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY,
-    CHATOS_NODE_ENV_CONFIG_KEY, LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS_CONFIG_KEY,
+    LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS_CONFIG_KEY,
     LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID_CONFIG_KEY,
     LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH_CONFIG_KEY,
     LOCAL_CONNECTOR_DATABASE_URL_CONFIG_KEY,
@@ -66,63 +63,6 @@ use crate::catalog::{
     PLUGIN_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
 };
 
-pub(super) fn migrate_agent_iteration_values(
-    values: &mut BTreeMap<String, Value>,
-    insert_default: bool,
-) -> bool {
-    migrate_agent_iteration_values_with_fallback(
-        values,
-        json!(chatos_agent::DEFAULT_AGENT_MAX_ITERATIONS),
-        insert_default,
-    )
-}
-
-pub(super) fn migrate_agent_iteration_values_with_fallback(
-    values: &mut BTreeMap<String, Value>,
-    fallback: Value,
-    insert_default: bool,
-) -> bool {
-    let current = values
-        .get(chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY)
-        .cloned();
-    let legacy = LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS
-        .iter()
-        .find_map(|key| values.get(*key).cloned());
-    let selected = current.or(legacy).or(insert_default.then_some(fallback));
-    let mut changed = false;
-    for key in LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS {
-        changed |= values.remove(*key).is_some();
-    }
-    if let Some(selected) = selected {
-        if values.get(chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY) != Some(&selected) {
-            values.insert(
-                chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY.to_string(),
-                selected,
-            );
-            changed = true;
-        }
-    }
-    changed
-}
-
-pub(super) fn migrate_agent_iteration_changed_keys(keys: &mut Vec<String>) -> bool {
-    let had_legacy = keys
-        .iter()
-        .any(|key| LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS.contains(&key.as_str()));
-    if !had_legacy {
-        return false;
-    }
-    keys.retain(|key| !LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS.contains(&key.as_str()));
-    if !keys
-        .iter()
-        .any(|key| key == chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY)
-    {
-        keys.push(chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY.to_string());
-    }
-    keys.sort();
-    true
-}
-
 pub(super) fn local_connector_service_runtime_default_values(
     definitions: &[ConfigDefinitionRecord],
 ) -> BTreeMap<String, Value> {
@@ -167,60 +107,6 @@ pub(super) fn local_connector_service_runtime_default_values(
         })
         .map(|definition| (definition.key.clone(), definition.default_value.clone()))
         .collect()
-}
-
-pub(super) fn normalize_root_vhost_rabbitmq_url_value(value: &Value) -> Option<Value> {
-    let url = value.as_str()?;
-    let (scheme, remainder) = url.split_once("://")?;
-    if !matches!(scheme, "amqp" | "amqps") || !remainder.ends_with('/') {
-        return None;
-    }
-    let authority = remainder.strip_suffix('/')?;
-    if authority.contains('/') {
-        return None;
-    }
-    Some(json!(format!("{scheme}://{authority}/%2f")))
-}
-
-pub(super) fn ensure_root_vhost_rabbitmq_url(
-    values: &mut BTreeMap<String, Value>,
-    key: &str,
-    fallback: &Value,
-) -> bool {
-    if let Some(current) = values.get(key).cloned() {
-        if let Some(normalized) = normalize_root_vhost_rabbitmq_url_value(&current) {
-            if normalized != current {
-                values.insert(key.to_string(), normalized);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    let fallback =
-        normalize_root_vhost_rabbitmq_url_value(fallback).unwrap_or_else(|| fallback.clone());
-    values.insert(key.to_string(), fallback);
-    true
-}
-
-#[test]
-fn normalizes_root_vhost_rabbitmq_urls_without_overwriting_authority() {
-    assert_eq!(
-        normalize_root_vhost_rabbitmq_url_value(&json!(
-            "amqp://chatos:change_me_rabbitmq_password@rabbitmq:5672/"
-        )),
-        Some(json!(
-            "amqp://chatos:change_me_rabbitmq_password@rabbitmq:5672/%2f"
-        ))
-    );
-    assert_eq!(
-        normalize_root_vhost_rabbitmq_url_value(&json!(crate::catalog::DEFAULT_LOCAL_RABBITMQ_URL)),
-        None
-    );
-    assert_eq!(
-        normalize_root_vhost_rabbitmq_url_value(&json!("amqp://rabbitmq:5672/team-a")),
-        None
-    );
 }
 
 pub(super) fn ensure_local_connector_runtime_values(
@@ -324,17 +210,11 @@ pub(super) fn memory_engine_runtime_default_values(
 pub(super) const INTERNAL_REQUEST_SECURITY_CONFIG_KEYS: &[&str] = &[
     CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
     CONFIGURATION_CENTER_PLUGIN_MANAGEMENT_BASE_URL_CONFIG_KEY,
-    LOCAL_CONNECTOR_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
     LOCAL_CONNECTOR_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
     LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
     PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
     PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
     PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
-    CHATOS_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
-    CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
-    CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
-    MEMORY_ENGINE_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
     MEMORY_ENGINE_USER_SERVICE_INTERNAL_API_SECRET_CONFIG_KEY,
     MEMORY_ENGINE_CONFIGURATION_CENTER_INTERNAL_API_SECRET_CONFIG_KEY,
     MEMORY_ENGINE_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,

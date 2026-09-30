@@ -24,8 +24,8 @@ mod local_connector;
 mod memory_engine;
 #[path = "builtin/plugin_management.rs"]
 mod plugin_management;
-#[path = "builtin/shared_chatos.rs"]
-mod shared_chatos;
+#[path = "builtin/shared_agent.rs"]
+mod shared_agent;
 #[path = "builtin/user_service.rs"]
 mod user_service;
 
@@ -33,7 +33,7 @@ pub fn builtin_definitions() -> Vec<ConfigDefinitionRecord> {
     let now = Utc::now().to_rfc3339();
     let mut definitions = Vec::new();
     definitions.extend(configuration_center::definitions(&now));
-    definitions.extend(shared_chatos::definitions(&now));
+    definitions.extend(shared_agent::definitions(&now));
     definitions.extend(local_connector::definitions(&now));
     definitions.extend(plugin_management::definitions(&now));
     definitions.extend(memory_engine::definitions(&now));
@@ -89,7 +89,6 @@ fn postgres_definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             1,
             8_100,
         ),
-        ("chatos", "chatos-backend", "CHATOS", "ChatOS", 1, 8_200),
         (
             "user_service",
             "user-service",
@@ -466,7 +465,7 @@ fn definition(
         service_name: service_name.map(ToOwned::to_owned),
         value_type: value_type.to_string(),
         default_value,
-        nullable: key == "chatos.ai.max_output_tokens",
+        nullable: false,
         min,
         max,
         enum_options: enum_options

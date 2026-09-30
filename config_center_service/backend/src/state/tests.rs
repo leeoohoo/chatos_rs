@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::releases::{overlay_pressure_state, validate_chatos_mtls_invariants};
+use super::releases::overlay_pressure_state;
 use super::support::*;
 
 use super::*;
 use crate::catalog::{
-    CHATOS_BACKEND_PORT_CONFIG_KEY, CHATOS_CORS_ORIGINS_CONFIG_KEY, CHATOS_HOST_CONFIG_KEY,
-    CHATOS_LOG_MAX_FILES_CONFIG_KEY, CHATOS_NODE_ENV_CONFIG_KEY, DEFAULT_LOCAL_RABBITMQ_URL,
-    LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS_CONFIG_KEY,
+    DEFAULT_LOCAL_RABBITMQ_URL, LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS_CONFIG_KEY,
     LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS_CONFIG_KEY,
     LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID_CONFIG_KEY,
     LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH_CONFIG_KEY,
@@ -113,88 +111,6 @@ use crate::catalog::{
 };
 
 #[test]
-fn legacy_agent_iteration_values_collapse_to_one_key() {
-    let mut values = BTreeMap::from([("chatos.ai.max_iterations".to_string(), json!(700))]);
-
-    assert!(migrate_agent_iteration_values(&mut values, true));
-    assert_eq!(
-        values.get(chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY),
-        Some(&json!(700))
-    );
-    assert!(!values.contains_key("chatos.ai.max_iterations"));
-}
-
-#[test]
-fn explicit_shared_agent_value_wins_over_legacy_values() {
-    let mut values = BTreeMap::from([
-        (
-            chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY.to_string(),
-            json!(900),
-        ),
-        ("chatos.ai.max_iterations".to_string(), json!(700)),
-    ]);
-
-    assert!(migrate_agent_iteration_values(&mut values, true));
-    assert_eq!(
-        values.get(chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY),
-        Some(&json!(900))
-    );
-}
-
-#[test]
-fn empty_draft_does_not_gain_an_unrequested_change() {
-    let mut values = BTreeMap::new();
-    assert!(!migrate_agent_iteration_values(&mut values, false));
-    assert!(values.is_empty());
-}
-
-#[test]
-fn audit_keys_replace_legacy_agent_keys_once() {
-    let mut keys = vec![
-        "chatos.ai.max_iterations".to_string(),
-        "shared.logging.level".to_string(),
-    ];
-
-    assert!(migrate_agent_iteration_changed_keys(&mut keys));
-    assert_eq!(
-        keys.iter()
-            .filter(|key| *key == chatos_agent::AGENT_MAX_ITERATIONS_CONFIG_KEY)
-            .count(),
-        1
-    );
-    assert!(!keys
-        .iter()
-        .any(|key| LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS.contains(&key.as_str())));
-}
-
-#[test]
-fn memory_engine_https_draft_migration_only_changes_explicit_http_values() {
-    let fallback = json!("https://memory-engine-backend:7083/api/memory-engine/v1");
-    let mut values = BTreeMap::new();
-
-    assert!(!migrate_https_url_draft(
-        &mut values,
-        CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-        &fallback,
-    ));
-    assert!(!values.contains_key(CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY));
-
-    values.insert(
-        CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY.to_string(),
-        json!("http://memory-engine-backend:7081/api/memory-engine/v1"),
-    );
-    assert!(migrate_https_url_draft(
-        &mut values,
-        CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-        &fallback,
-    ));
-    assert_eq!(
-        values.get(CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY),
-        Some(&fallback)
-    );
-}
-
-#[test]
 fn plugin_management_internal_urls_are_forced_to_https_without_inserting_draft_keys() {
     let definitions = builtin_definitions();
     let cases = [(
@@ -218,33 +134,6 @@ fn plugin_management_internal_urls_are_forced_to_https_without_inserting_draft_k
         assert!(!migrate_https_url_draft(&mut draft, key, fallback));
         assert!(!draft.contains_key(key));
     }
-}
-
-#[test]
-fn chatos_mtls_publish_validation_rejects_port_collisions() {
-    let mut values = BTreeMap::from([
-        (CHATOS_BACKEND_PORT_CONFIG_KEY.to_string(), json!(3997)),
-        (
-            CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string(),
-            json!(3997),
-        ),
-    ]);
-    let mut errors = Vec::new();
-
-    validate_chatos_mtls_invariants(&values, &mut errors);
-
-    assert_eq!(errors.len(), 1);
-    assert!(errors
-        .iter()
-        .any(|error| error.contains("internal_mtls_port must differ")));
-
-    values.insert(
-        CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string(),
-        json!(3999),
-    );
-    errors.clear();
-    validate_chatos_mtls_invariants(&values, &mut errors);
-    assert!(errors.is_empty());
 }
 
 #[test]
@@ -625,7 +514,7 @@ fn platform_pressure_backfill_adds_the_shared_authoritative_state() {
     assert_eq!(changed_keys.len(), PLATFORM_PRESSURE_CONFIG_KEYS.len());
     assert!(changed_keys.contains(&PLATFORM_PRESSURE_LEVEL_CONFIG_KEY.to_string()));
 
-    let snapshot = build_snapshot("local", "task-runner", 1, &definitions, &values)
+    let snapshot = build_snapshot("local", "official-website", 1, &definitions, &values)
         .expect("shared pressure snapshot");
     assert_eq!(
         snapshot.values.get(PLATFORM_PRESSURE_LEVEL_CONFIG_KEY),
@@ -939,12 +828,14 @@ fn plugin_management_runtime_backfill_adds_all_service_defaults() {
 fn plugin_management_runtime_backfill_projects_shared_values_to_other_services() {
     let definitions = builtin_definitions();
     let defaults = plugin_management_service_runtime_default_values(&definitions);
-    let snapshot_defaults = plugin_management_snapshot_default_values(&defaults, "chatos-backend");
+    let snapshot_defaults =
+        plugin_management_snapshot_default_values(&defaults, "official-website");
     let mut values = BTreeMap::new();
 
     let changed_keys = ensure_plugin_management_runtime_values(&mut values, &snapshot_defaults);
     let env = compatibility_env(&definitions, &values, |definition| {
-        definition.scope == "shared" || definition.service_name.as_deref() == Some("chatos-backend")
+        definition.scope == "shared"
+            || definition.service_name.as_deref() == Some("official-website")
     });
 
     assert_eq!(changed_keys.len(), 3);
@@ -1594,242 +1485,6 @@ fn user_service_smtp_snapshot_exposes_environment_aliases_when_values_are_presen
     assert_eq!(
         snapshot.env.get("USER_SERVICE_EMAIL_FROM_NAME"),
         Some(&"Chat OS Mailer".to_string())
-    );
-}
-
-#[test]
-fn chatos_runtime_backfill_adds_all_service_defaults() {
-    let definitions = builtin_definitions();
-    let defaults = chatos_service_default_values(&definitions);
-    let mut values = BTreeMap::new();
-
-    let changed_keys = ensure_chatos_runtime_values(&mut values, &defaults);
-
-    assert!(!changed_keys.is_empty());
-    for key in defaults.keys() {
-        assert!(values.contains_key(key), "missing ChatOS config key {key}");
-    }
-    assert!(changed_keys.contains(&CHATOS_NODE_ENV_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&CHATOS_HOST_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&CHATOS_BACKEND_PORT_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&CHATOS_OPENAI_BASE_URL_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&CHATOS_AUTH_JWT_SECRET_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&CHATOS_LOG_MAX_FILES_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&CHATOS_CORS_ORIGINS_CONFIG_KEY.to_string()));
-}
-
-#[test]
-fn chatos_runtime_backfill_keeps_explicit_values() {
-    let definitions = builtin_definitions();
-    let defaults = chatos_service_default_values(&definitions);
-    let mut values = BTreeMap::from([(
-        CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
-        json!("http://chatos-user.internal"),
-    )]);
-
-    let changed_keys = ensure_chatos_runtime_values(&mut values, &defaults);
-
-    assert_eq!(
-        values.get(CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY),
-        Some(&json!("http://chatos-user.internal"))
-    );
-    assert!(!changed_keys.contains(&CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string()));
-}
-
-#[test]
-fn chatos_runtime_backfill_replaces_legacy_loopback_user_service_internal_url() {
-    let definitions = builtin_definitions();
-    let defaults = chatos_service_default_values(&definitions);
-    let mut values = BTreeMap::from([(
-        CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string(),
-        json!("https://127.0.0.1:39192"),
-    )]);
-
-    let changed_keys = ensure_chatos_runtime_values(&mut values, &defaults);
-
-    assert_eq!(
-        values.get(CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY),
-        Some(&json!("https://user-service-backend:39192"))
-    );
-    assert!(changed_keys.contains(&CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string()));
-}
-
-#[test]
-fn chatos_runtime_backfill_keeps_explicit_user_service_internal_url() {
-    let definitions = builtin_definitions();
-    let defaults = chatos_service_default_values(&definitions);
-    let mut values = BTreeMap::from([(
-        CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string(),
-        json!("https://users.internal.example:8443"),
-    )]);
-
-    let changed_keys = ensure_chatos_runtime_values(&mut values, &defaults);
-
-    assert_eq!(
-        values.get(CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY),
-        Some(&json!("https://users.internal.example:8443"))
-    );
-    assert!(!changed_keys.contains(&CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY.to_string()));
-}
-
-#[test]
-fn chatos_snapshot_exposes_runtime_environment_aliases() {
-    let definitions = builtin_definitions();
-    let values = BTreeMap::from([
-        (CHATOS_NODE_ENV_CONFIG_KEY.to_string(), json!("development")),
-        (CHATOS_HOST_CONFIG_KEY.to_string(), json!("0.0.0.0")),
-        (CHATOS_BACKEND_PORT_CONFIG_KEY.to_string(), json!(3997)),
-        (
-            CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
-            json!("http://127.0.0.1:39190"),
-        ),
-        (
-            CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(5_000),
-        ),
-        (
-            CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY.to_string(),
-            json!("http://127.0.0.1:39230"),
-        ),
-        (
-            CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(30_000),
-        ),
-        (
-            CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY.to_string(),
-            json!("http://127.0.0.1:7081/api/memory-engine/v1"),
-        ),
-        (
-            CHATOS_MEMORY_ENGINE_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(5_000),
-        ),
-        (
-            CHATOS_OPENAI_API_KEY_CONFIG_KEY.to_string(),
-            json!("sk-test"),
-        ),
-        (
-            CHATOS_OPENAI_BASE_URL_CONFIG_KEY.to_string(),
-            json!("https://api.openai.com/v1"),
-        ),
-        (CHATOS_SUMMARY_ENABLED_CONFIG_KEY.to_string(), json!(true)),
-        (
-            CHATOS_SUMMARY_MESSAGE_LIMIT_CONFIG_KEY.to_string(),
-            json!(40),
-        ),
-        (
-            CHATOS_SUMMARY_MAX_CONTEXT_TOKENS_CONFIG_KEY.to_string(),
-            json!(6_000),
-        ),
-        (CHATOS_SUMMARY_KEEP_LAST_N_CONFIG_KEY.to_string(), json!(6)),
-        (
-            CHATOS_SUMMARY_TARGET_TOKENS_CONFIG_KEY.to_string(),
-            json!(700),
-        ),
-        (
-            CHATOS_SUMMARY_MERGE_TARGET_TOKENS_CONFIG_KEY.to_string(),
-            json!(700),
-        ),
-        (
-            CHATOS_SUMMARY_TEMPERATURE_CONFIG_KEY.to_string(),
-            json!("0.2"),
-        ),
-        (
-            CHATOS_SUMMARY_COOLDOWN_SECONDS_CONFIG_KEY.to_string(),
-            json!(60),
-        ),
-        (
-            CHATOS_DYNAMIC_SUMMARY_ENABLED_CONFIG_KEY.to_string(),
-            json!(true),
-        ),
-        (
-            CHATOS_SUMMARY_BISECT_ENABLED_CONFIG_KEY.to_string(),
-            json!(true),
-        ),
-        (
-            CHATOS_SUMMARY_BISECT_MAX_DEPTH_CONFIG_KEY.to_string(),
-            json!(6),
-        ),
-        (
-            CHATOS_SUMMARY_BISECT_MIN_MESSAGES_CONFIG_KEY.to_string(),
-            json!(4),
-        ),
-        (
-            CHATOS_SUMMARY_RETRY_ON_CONTEXT_OVERFLOW_CONFIG_KEY.to_string(),
-            json!(true),
-        ),
-        (
-            CHATOS_AUTH_JWT_SECRET_CONFIG_KEY.to_string(),
-            json!("dev-only-change-me-please"),
-        ),
-        (
-            CHATOS_AUTH_ACCESS_TOKEN_TTL_SECONDS_CONFIG_KEY.to_string(),
-            json!(43_200),
-        ),
-        (CHATOS_LOG_MAX_FILES_CONFIG_KEY.to_string(), json!("14d")),
-        (
-            CHATOS_CORS_ORIGINS_CONFIG_KEY.to_string(),
-            json!("https://app.example.com,https://admin.example.com"),
-        ),
-        (
-            CHATOS_MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(5_000),
-        ),
-        (
-            CHATOS_MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS_CONFIG_KEY.to_string(),
-            json!(10_000),
-        ),
-        (
-            CHATOS_MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(120_000),
-        ),
-    ]);
-    let snapshot = build_snapshot("local", "chatos-backend", 1, &definitions, &values)
-        .expect("ChatOS runtime snapshot");
-
-    assert_eq!(
-        snapshot.env.get("NODE_ENV"),
-        Some(&"development".to_string())
-    );
-    assert_eq!(snapshot.env.get("HOST"), Some(&"0.0.0.0".to_string()));
-    assert_eq!(snapshot.env.get("BACKEND_PORT"), Some(&"3997".to_string()));
-    assert_eq!(
-        snapshot.env.get("CHATOS_USER_SERVICE_BASE_URL"),
-        Some(&"http://127.0.0.1:39190".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL"),
-        Some(&"http://127.0.0.1:39230".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("CHATOS_MEMORY_ENGINE_REQUEST_TIMEOUT_MS"),
-        Some(&"5000".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("OPENAI_API_KEY"),
-        Some(&"sk-test".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("SUMMARY_ENABLED"),
-        Some(&"true".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("AUTH_ACCESS_TOKEN_TTL_SECONDS"),
-        Some(&"43200".to_string())
-    );
-    assert_eq!(snapshot.env.get("LOG_MAX_FILES"), Some(&"14d".to_string()));
-    assert_eq!(
-        snapshot.env.get("CORS_ORIGINS"),
-        Some(&"https://app.example.com,https://admin.example.com".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS"),
-        Some(&"120000".to_string())
     );
 }
 

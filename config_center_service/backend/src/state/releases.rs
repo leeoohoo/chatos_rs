@@ -360,10 +360,7 @@ impl AppState {
                 ));
             }
         }
-        for key in [
-            CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-            CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-        ] {
+        for key in [CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL_CONFIG_KEY] {
             let is_https = values
                 .get(key)
                 .and_then(Value::as_str)
@@ -374,7 +371,6 @@ impl AppState {
                 ));
             }
         }
-        validate_chatos_mtls_invariants(values, &mut errors);
         let memory_engine_public_port = values
             .get(MEMORY_ENGINE_PORT_CONFIG_KEY)
             .and_then(Value::as_i64);
@@ -425,7 +421,6 @@ fn validate_postgres_pool_budget(values: &BTreeMap<String, Value>, errors: &mut 
     let mut pool_budget = 0_i64;
     for namespace in [
         "configuration_center",
-        "chatos",
         "user_service",
         "plugin_management",
         "local_connector",
@@ -511,23 +506,6 @@ pub(super) fn preserve_user_service_secret_rotation(
     }
 }
 
-pub(super) fn validate_chatos_mtls_invariants(
-    values: &BTreeMap<String, Value>,
-    errors: &mut Vec<String>,
-) {
-    let public_port = values
-        .get(CHATOS_BACKEND_PORT_CONFIG_KEY)
-        .and_then(Value::as_i64);
-    let internal_mtls_port = values
-        .get(CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY)
-        .and_then(Value::as_i64);
-    if public_port.is_some() && public_port == internal_mtls_port {
-        errors.push(
-            "chatos.runtime.internal_mtls_port must differ from chatos.runtime.port".to_string(),
-        );
-    }
-}
-
 pub(super) fn overlay_pressure_state(
     snapshot: &mut ConfigSnapshot,
     pressure: &PlatformPressureStateRecord,
@@ -560,7 +538,6 @@ mod postgres_budget_tests {
         ]);
         for (namespace, replicas) in [
             ("configuration_center", 1),
-            ("chatos", 1),
             ("user_service", 1),
             ("plugin_management", 1),
             ("local_connector", 1),
@@ -594,11 +571,11 @@ mod postgres_budget_tests {
         let mut values = values_with_pool_defaults();
         values.insert(
             "memory_engine.postgres.pool.max_connections".to_string(),
-            json!(60),
+            json!(61),
         );
         values.insert(
             "memory_engine.postgres.pool.min_connections".to_string(),
-            json!(61),
+            json!(62),
         );
         let mut errors = Vec::new();
         validate_postgres_pool_budget(&values, &mut errors);

@@ -1,9 +1,6 @@
 pub const USER_PREFERENCE_CONFIG_KEYS: &[&str] =
     &["shared.ui.locale", "shared.ai.internal_context_locale"];
-pub const LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS: &[&str] = &["chatos.ai.max_iterations"];
 pub const RETIRED_CONFIG_KEYS: &[&str] = &[
-    "chatos.runtime.legacy_auth_database_url",
-    "chatos.ui.local_project_creation_enabled",
     "local_connector.relay.sandbox_image_request_timeout_ms",
     "local_connector.coordination.relay_delivery_ack_timeout_ms",
     "local_connector.coordination.terminal_subscriber_refresh_seconds",

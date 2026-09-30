@@ -10,7 +10,7 @@ fn catalog_exposes_managed_postgres_pool_profiles() {
         .iter()
         .filter(|definition| definition.key.ends_with("postgres.pool.max_connections"))
         .collect::<Vec<_>>();
-    assert_eq!(max_connections.len(), 6);
+    assert_eq!(max_connections.len(), 5);
 }
 
 #[test]
@@ -24,8 +24,11 @@ fn catalog_does_not_reintroduce_retired_configuration() {
     assert!(definitions
         .iter()
         .all(|definition| !retired.contains(definition.key.as_str())));
+    assert!(definitions.iter().all(|definition| {
+        !definition.key.starts_with("chatos.")
+            && definition.service_name.as_deref() != Some("chatos-backend")
+    }));
     for retired_mongo_key in [
-        "chatos.runtime.legacy_auth_database_url",
         "memory_engine.runtime.mongodb_uri",
         "project_service.runtime.database_url",
     ] {
@@ -296,14 +299,6 @@ fn catalog_exposes_plugin_management_runtime_routes_via_env_projection() {
         assert_eq!(definition.reload_mode, "restart_required");
         assert_eq!(definition.env_aliases, vec![env_alias.to_string()]);
     }
-
-    let secret_definition = definitions
-        .iter()
-        .find(|definition| {
-            definition.key == PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY
-        })
-        .expect("plugin management caller-specific secret definition");
-    assert_eq!(secret_definition.sensitivity, "secret");
 }
 
 #[test]
@@ -383,25 +378,6 @@ fn catalog_exposes_local_connector_remote_control_trust_as_managed_config_only()
         require_signed.env_aliases,
         vec!["LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS".to_string()]
     );
-
-    for (key, env_alias, expected_default) in [(
-        LOCAL_CONNECTOR_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
-        "CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
-        json!("change_me_chatos_local_connector_secret"),
-    )] {
-        let definition = definitions
-            .iter()
-            .find(|definition| definition.key == key)
-            .unwrap_or_else(|| panic!("missing definition for {key}"));
-        assert_eq!(definition.scope, "service");
-        assert_eq!(
-            definition.service_name.as_deref(),
-            Some("local-connector-service")
-        );
-        assert_eq!(definition.env_aliases, vec![env_alias.to_string()]);
-        assert_eq!(definition.default_value, expected_default);
-        assert_eq!(definition.sensitivity, "secret");
-    }
 
     for key in [
         LOCAL_CONNECTOR_RELAY_SIGNING_KEY_PATH_CONFIG_KEY,

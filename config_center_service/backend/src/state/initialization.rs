@@ -19,9 +19,6 @@ impl AppState {
         store
             .delete_definitions(USER_PREFERENCE_CONFIG_KEYS)
             .await?;
-        store
-            .delete_definitions(LEGACY_AGENT_MAX_ITERATIONS_CONFIG_KEYS)
-            .await?;
         store.delete_definitions(RETIRED_CONFIG_KEYS).await?;
         for definition in builtin_definitions() {
             store.upsert_definition(&definition).await?;
@@ -40,7 +37,6 @@ impl AppState {
             .await?;
         state.purge_user_preferences_from_config_center().await?;
         state.purge_retired_config_keys().await?;
-        state.migrate_agent_max_iterations_config().await?;
         state.migrate_local_connector_runtime_config().await?;
         state.migrate_memory_engine_runtime_config().await?;
         state.migrate_platform_pressure_config().await?;
@@ -48,7 +44,6 @@ impl AppState {
         state.migrate_plugin_management_runtime_config().await?;
         state.migrate_user_service_runtime_config().await?;
         state.migrate_user_service_smtp_config().await?;
-        state.migrate_chatos_ui_config().await?;
         state.migrate_postgres_pool_config().await?;
         state.activate_managed_postgres_pool().await?;
         Ok(state)

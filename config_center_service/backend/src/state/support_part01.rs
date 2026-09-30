@@ -15,7 +15,6 @@ pub(super) fn plugin_management_service_runtime_default_values(
         })
         .filter(|definition| {
             [
-                PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
                 PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY,
                 PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL_CONFIG_KEY,
                 PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
@@ -114,66 +113,6 @@ pub(super) fn user_service_runtime_default_values(
                 && definition.service_name.as_deref() == Some("user-service")
         })
         .filter(|definition| USER_SERVICE_RUNTIME_CONFIG_KEYS.contains(&definition.key.as_str()))
-        .map(|definition| (definition.key.clone(), definition.default_value.clone()))
-        .collect()
-}
-
-pub(super) fn chatos_service_default_values(
-    definitions: &[ConfigDefinitionRecord],
-) -> BTreeMap<String, Value> {
-    definitions
-        .iter()
-        .filter(|definition| {
-            definition.scope == "service"
-                && definition.service_name.as_deref() == Some("chatos-backend")
-        })
-        .filter(|definition| {
-            [
-                CHATOS_NODE_ENV_CONFIG_KEY,
-                CHATOS_HOST_CONFIG_KEY,
-                CHATOS_BACKEND_PORT_CONFIG_KEY,
-                CHATOS_INTERNAL_MTLS_PORT_CONFIG_KEY,
-                CHATOS_DATABASE_URL_CONFIG_KEY,
-                CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY,
-                CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-                CHATOS_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-                CHATOS_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY,
-                CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
-                CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
-                CHATOS_LOCAL_CONNECTOR_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-                CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-                CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET_CONFIG_KEY,
-                CHATOS_MEMORY_ENGINE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
-                CHATOS_OPENAI_API_KEY_CONFIG_KEY,
-                CHATOS_OPENAI_BASE_URL_CONFIG_KEY,
-                CHATOS_SUMMARY_ENABLED_CONFIG_KEY,
-                CHATOS_SUMMARY_MESSAGE_LIMIT_CONFIG_KEY,
-                CHATOS_SUMMARY_MAX_CONTEXT_TOKENS_CONFIG_KEY,
-                CHATOS_SUMMARY_KEEP_LAST_N_CONFIG_KEY,
-                CHATOS_SUMMARY_TARGET_TOKENS_CONFIG_KEY,
-                CHATOS_SUMMARY_MERGE_TARGET_TOKENS_CONFIG_KEY,
-                CHATOS_SUMMARY_TEMPERATURE_CONFIG_KEY,
-                CHATOS_SUMMARY_COOLDOWN_SECONDS_CONFIG_KEY,
-                CHATOS_DYNAMIC_SUMMARY_ENABLED_CONFIG_KEY,
-                CHATOS_SUMMARY_BISECT_ENABLED_CONFIG_KEY,
-                CHATOS_SUMMARY_BISECT_MAX_DEPTH_CONFIG_KEY,
-                CHATOS_SUMMARY_BISECT_MIN_MESSAGES_CONFIG_KEY,
-                CHATOS_SUMMARY_RETRY_ON_CONTEXT_OVERFLOW_CONFIG_KEY,
-                CHATOS_AUTH_JWT_SECRET_CONFIG_KEY,
-                CHATOS_AUTH_COMPAT_SECRET_CONFIG_KEY,
-                CHATOS_AUTH_ACCESS_TOKEN_TTL_SECONDS_CONFIG_KEY,
-                CHATOS_LOG_MAX_FILES_CONFIG_KEY,
-                CHATOS_CORS_ORIGINS_CONFIG_KEY,
-                CHATOS_PLUGIN_UI_PARENT_ORIGIN_CONFIG_KEY,
-                CHATOS_PLUGIN_UI_RESOURCE_ORIGIN_CONFIG_KEY,
-                CHATOS_MEMORY_ENGINE_ACTIVE_SUMMARY_TRIGGER_TIMEOUT_MS_CONFIG_KEY,
-                CHATOS_MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_INTERVAL_MS_CONFIG_KEY,
-                CHATOS_MEMORY_ENGINE_ACTIVE_SUMMARY_POLL_TIMEOUT_MS_CONFIG_KEY,
-                CHATOS_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY,
-                CHATOS_MCP_RESULT_QUEUE_PREFIX_CONFIG_KEY,
-            ]
-            .contains(&definition.key.as_str())
-        })
         .map(|definition| (definition.key.clone(), definition.default_value.clone()))
         .collect()
 }
@@ -331,62 +270,6 @@ pub(super) fn ensure_user_service_startup_values(
     Ok(changed_keys)
 }
 
-pub(super) fn ensure_chatos_runtime_values(
-    values: &mut BTreeMap<String, Value>,
-    defaults: &BTreeMap<String, Value>,
-) -> Vec<String> {
-    let mut changed_keys = Vec::new();
-    for (key, fallback) in defaults {
-        if key == CHATOS_MCP_RESULT_RABBITMQ_URL_CONFIG_KEY {
-            if ensure_root_vhost_rabbitmq_url(values, key, fallback) {
-                changed_keys.push(key.clone());
-            }
-        } else if key == CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY {
-            if ensure_service_url_value(
-                values,
-                key,
-                fallback,
-                &["https://127.0.0.1:39192", "https://localhost:39192"],
-            ) {
-                changed_keys.push(key.clone());
-            }
-        } else if [
-            CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-            CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL_CONFIG_KEY,
-        ]
-        .contains(&key.as_str())
-        {
-            if ensure_https_url_value(values, key, fallback) {
-                changed_keys.push(key.clone());
-            }
-        } else if !values.contains_key(key) {
-            values.insert(key.clone(), fallback.clone());
-            changed_keys.push(key.clone());
-        }
-    }
-    changed_keys
-}
-
-pub(super) fn ensure_service_url_value(
-    values: &mut BTreeMap<String, Value>,
-    key: &str,
-    fallback: &Value,
-    legacy_values: &[&str],
-) -> bool {
-    let current = values.get(key).and_then(Value::as_str).map(str::trim);
-    let is_valid = current.is_some_and(|value| {
-        value.starts_with("https://")
-            && !legacy_values
-                .iter()
-                .any(|legacy| value.eq_ignore_ascii_case(legacy))
-    });
-    if is_valid {
-        return false;
-    }
-    values.insert(key.to_string(), fallback.clone());
-    true
-}
-
 pub(super) fn ensure_https_url_value(
     values: &mut BTreeMap<String, Value>,
     key: &str,
@@ -409,15 +292,6 @@ pub(super) fn migrate_https_url_draft(
     fallback: &Value,
 ) -> bool {
     values.contains_key(key) && ensure_https_url_value(values, key, fallback)
-}
-
-pub(super) fn migrate_service_url_draft(
-    values: &mut BTreeMap<String, Value>,
-    key: &str,
-    fallback: &Value,
-    legacy_values: &[&str],
-) -> bool {
-    values.contains_key(key) && ensure_service_url_value(values, key, fallback, legacy_values)
 }
 
 pub(super) fn ensure_changed_key(keys: &mut Vec<String>, key: &str) {
@@ -583,8 +457,6 @@ pub(super) fn changed_keys(
 
 pub(super) fn known_services(definitions: &[ConfigDefinitionRecord]) -> BTreeSet<String> {
     let mut services = [
-        "chatos-backend",
-        "task-runner",
         "user-service",
         "plugin-management-service",
         "local-connector-service",

@@ -3,19 +3,6 @@ use super::*;
 pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
     vec![
         secret_definition(
-            PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET_CONFIG_KEY,
-            "Chatos Internal Secret",
-            "Plugin Management 校验来自 Chatos Backend 的内部签名请求时使用的专用密钥",
-            "Plugin Management / Downstream Security",
-            "service",
-            Some("plugin-management-service"),
-            json!("change_me_plugin_management_chatos_secret"),
-            "restart_required",
-            &["PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET"],
-            361,
-            now,
-        ),
-        secret_definition(
             PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET_CONFIG_KEY,
             "Local Connector Internal Secret",
             "Plugin Management 调用 Local Connector 内部接口时使用的共享密钥",

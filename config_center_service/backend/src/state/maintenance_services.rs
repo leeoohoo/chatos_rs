@@ -110,11 +110,8 @@ impl AppState {
         for mut snapshot in self.store.list_all_snapshots().await? {
             if ![
                 "local-connector-service",
-                "mcp-management-service",
                 "plugin-management-service",
                 "memory-engine",
-                "task-runner",
-                "chatos-backend",
                 "user-service",
             ]
             .contains(&snapshot.service_name.as_str())
@@ -434,104 +431,6 @@ impl AppState {
                 SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY,
             shared_request_timeout_key = SHARED_PLUGIN_MANAGEMENT_REQUEST_TIMEOUT_MS_CONFIG_KEY,
             "Plugin Management runtime configuration is present in releases and snapshots"
-        );
-        Ok(())
-    }
-
-    pub(in crate::state) async fn migrate_chatos_ui_config(&self) -> Result<(), String> {
-        let definitions = self.store.list_definitions().await?;
-        let defaults = chatos_service_default_values(&definitions);
-        if defaults.is_empty() {
-            return Err("ChatOS runtime configuration definitions are incomplete".to_string());
-        }
-        let mut values_by_release = BTreeMap::new();
-
-        for mut release in self.store.list_all_releases().await? {
-            let changed_keys = ensure_chatos_runtime_values(&mut release.values, &defaults);
-            values_by_release.insert(
-                (release.environment.clone(), release.revision),
-                defaults
-                    .iter()
-                    .map(|(key, fallback)| {
-                        (
-                            key.clone(),
-                            release
-                                .values
-                                .get(key)
-                                .cloned()
-                                .unwrap_or_else(|| fallback.clone()),
-                        )
-                    })
-                    .collect::<BTreeMap<_, _>>(),
-            );
-            if !changed_keys.is_empty() {
-                for key in changed_keys {
-                    ensure_changed_key(&mut release.changed_keys, key.as_str());
-                }
-                self.store.save_release(&release).await?;
-            }
-        }
-
-        for mut snapshot in self.store.list_all_snapshots().await? {
-            if snapshot.service_name != "chatos-backend" {
-                continue;
-            }
-            let snapshot_defaults = values_by_release
-                .get(&(snapshot.environment.clone(), snapshot.revision))
-                .cloned()
-                .unwrap_or_else(|| defaults.clone());
-            let changed =
-                !ensure_chatos_runtime_values(&mut snapshot.values, &snapshot_defaults).is_empty();
-            let previous_env = snapshot.env.clone();
-            snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
-                definition.scope == "shared"
-                    || definition.service_name.as_deref() == Some(snapshot.service_name.as_str())
-            });
-            if changed || snapshot.env != previous_env {
-                snapshot.checksum = checksum(&json!({
-                    "values": snapshot.values,
-                    "env": snapshot.env,
-                }))?;
-                self.store.save_snapshot(&snapshot).await?;
-            }
-        }
-
-        for mut draft in self.store.list_drafts().await? {
-            let replacement = defaults
-                .get(CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY)
-                .ok_or_else(|| "ChatOS Memory Engine HTTPS default is missing".to_string())?;
-            if migrate_https_url_draft(
-                &mut draft.changes,
-                CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-                replacement,
-            ) | migrate_service_url_draft(
-                &mut draft.changes,
-                CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-                defaults
-                    .get(CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY)
-                    .ok_or_else(|| {
-                        "ChatOS User Service internal HTTPS default is missing".to_string()
-                    })?,
-                &["https://127.0.0.1:39192", "https://localhost:39192"],
-            ) {
-                draft.validation_status = "pending".to_string();
-                draft.validation_errors.clear();
-                draft.updated_at = Utc::now().to_rfc3339();
-                self.store.save_draft(&draft).await?;
-            }
-        }
-
-        self.republish_active_releases_to_consul(
-            &definitions,
-            "refresh ChatOS runtime configuration",
-        )
-        .await?;
-
-        tracing::info!(
-            user_service_base_url_key = CHATOS_USER_SERVICE_BASE_URL_CONFIG_KEY,
-            user_service_internal_base_url_key = CHATOS_USER_SERVICE_INTERNAL_BASE_URL_CONFIG_KEY,
-            memory_engine_base_url_key = CHATOS_MEMORY_ENGINE_BASE_URL_CONFIG_KEY,
-            "ChatOS runtime configuration is present in releases and snapshots"
         );
         Ok(())
     }
