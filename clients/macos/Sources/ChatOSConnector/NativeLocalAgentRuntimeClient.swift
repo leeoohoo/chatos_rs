@@ -111,6 +111,22 @@ public struct NativeLocalAgentRuntimeClient: Sendable {
         return .init(events: result.events, nextCursor: result.nextCursor)
     }
 
+    public func listEvents(
+        ownerUserID: String,
+        afterCursor: Int64,
+        limit: UInt32 = 100
+    ) async throws -> LocalAgentEventPage {
+        let result: EventsResult = try await host.request(ListEventsCommand(
+            type: "list_events",
+            ownerUserID: ownerUserID,
+            afterCursor: afterCursor,
+            limit: limit,
+            runID: nil
+        ))
+        guard result.type == "events" else { throw NativeLocalAgentHostError.invalidResponse }
+        return .init(events: result.events, nextCursor: result.nextCursor)
+    }
+
     public func resumeWaitingRun(
         ownerUserID: String,
         runID: String,
@@ -168,6 +184,21 @@ private struct WaitEventsCommand: Encodable, Sendable {
         case ownerUserID = "owner_user_id"
         case afterCursor = "after_cursor"
         case timeoutMilliseconds = "timeout_ms"
+    }
+}
+
+private struct ListEventsCommand: Encodable, Sendable {
+    let type: String
+    let ownerUserID: String
+    let afterCursor: Int64
+    let limit: UInt32
+    let runID: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case type, limit
+        case ownerUserID = "owner_user_id"
+        case afterCursor = "after_cursor"
+        case runID = "run_id"
     }
 }
 

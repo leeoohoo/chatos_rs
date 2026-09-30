@@ -67,7 +67,7 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
                         continuation.yield(.reconcile)
                     }
                     do {
-                        let page = try await self.client.waitEvents(
+                        let page = try await self.client.listEvents(
                             ownerUserID: owner,
                             afterCursor: cursor
                         )
@@ -75,6 +75,8 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
                         cursor = page.nextCursor
                         if !page.events.isEmpty {
                             continuation.yield(.reconcile)
+                        } else {
+                            try await Task.sleep(for: .milliseconds(400))
                         }
                     } catch is CancellationError {
                         return

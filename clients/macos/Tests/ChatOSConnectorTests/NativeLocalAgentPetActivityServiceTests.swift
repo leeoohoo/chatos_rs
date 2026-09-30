@@ -24,7 +24,7 @@ final class NativeLocalAgentPetActivityServiceTests: XCTestCase {
         XCTAssertEqual(task.detail, "build failed")
     }
 
-    func testLocalEventStreamUsesHostWaitEvents() async throws {
+    func testLocalEventStreamUsesNonBlockingHostEventPages() async throws {
         let host = PetActivityHostStub()
         let service = NativeLocalAgentPetActivityService(host: host)
         await service.configure(ownerUserID: "user-1")
@@ -36,7 +36,7 @@ final class NativeLocalAgentPetActivityServiceTests: XCTestCase {
         XCTAssertEqual(initial, .reconcile)
         XCTAssertEqual(changed, .reconcile)
         let command = try await host.lastCommand()
-        XCTAssertEqual(command["type"], .string("wait_events"))
+        XCTAssertEqual(command["type"], .string("list_events"))
         XCTAssertEqual(command["owner_user_id"], .string("user-1"))
     }
 }
@@ -51,7 +51,7 @@ private actor PetActivityHostStub: LocalAgentHostClientServicing {
         commands.append(command)
         let object = try JSONSerialization.jsonObject(with: command) as? [String: Any]
         let type = object?["type"] as? String
-        if type == "wait_events" {
+        if type == "list_events" {
             return try JSONSerialization.data(withJSONObject: [
                 "type": "events",
                 "events": [[
