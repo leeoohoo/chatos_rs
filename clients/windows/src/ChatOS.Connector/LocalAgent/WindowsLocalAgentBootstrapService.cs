@@ -19,6 +19,7 @@ public sealed class WindowsLocalAgentBootstrapService
     private readonly ILocalAgentHostClient _host;
     private readonly WindowsLocalAgentControlPlaneClient _controlPlane;
     private readonly WindowsLocalAgentModelCredentialStore _credentials;
+    private readonly WindowsLocalAgentConversationRuntimeSettingsService _runtimeSettings;
     private readonly ChatOSApiClient _api;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -26,11 +27,13 @@ public sealed class WindowsLocalAgentBootstrapService
         ILocalAgentHostClient host,
         WindowsLocalAgentControlPlaneClient controlPlane,
         WindowsLocalAgentModelCredentialStore credentials,
+        WindowsLocalAgentConversationRuntimeSettingsService runtimeSettings,
         ChatOSApiClient api)
     {
         _host = host;
         _controlPlane = controlPlane;
         _credentials = credentials;
+        _runtimeSettings = runtimeSettings;
         _api = api;
     }
 
@@ -44,6 +47,13 @@ public sealed class WindowsLocalAgentBootstrapService
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            _runtimeSettings.Reset();
+            Current = null;
+            if (_host.ActiveOwnerUserId is { } activeOwner &&
+                !string.Equals(activeOwner, ownerUserId, StringComparison.Ordinal))
+            {
+                await _host.StopAsync(cancellationToken).ConfigureAwait(false);
+            }
             var configured = await _api.GetAsync<IReadOnlyList<WindowsModelConfigDto>>(
                 "ai-model-configs",
                 cancellationToken).ConfigureAwait(false);
@@ -140,6 +150,7 @@ public sealed class WindowsLocalAgentBootstrapService
                 snapshots,
                 options,
                 mainCapabilities);
+            _runtimeSettings.Configure(ownerUserId, result);
             Current = result;
             return result;
         }
@@ -149,7 +160,11 @@ public sealed class WindowsLocalAgentBootstrapService
         }
     }
 
-    public void Reset() => Current = null;
+    public void Reset()
+    {
+        _runtimeSettings.Reset();
+        Current = null;
+    }
 
     private static bool TryValidateModel(
         WindowsModelConfigDto model,
