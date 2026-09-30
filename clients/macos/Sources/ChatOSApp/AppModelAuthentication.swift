@@ -41,7 +41,10 @@ extension AppModel {
             loadLanguagePreferences()
             localConnectorControl.activate(
                 pairIfNeeded: true,
-                expectedOwnerUserID: session.user.id
+                expectedOwnerUserID: session.user.id,
+                onReady: { [weak self] _ in
+                    self?.refreshLocalAgentControlPlane(ownerUserID: session.user.id)
+                }
             )
             refreshWorkspace()
             refreshRemoteConnections()
@@ -56,6 +59,8 @@ extension AppModel {
             agentArtifactSyncTask = nil
             agentArtifactSyncOwnerUserID = nil
             authenticatedUserID = nil
+            localAgentBootstrapTask?.cancel()
+            localAgentBootstrapTask = nil
             stopLocalAgentHost()
             languagePreferencesSaveTask?.cancel()
             isLanguagePreferencesLoading = false
@@ -91,6 +96,8 @@ extension AppModel {
         agentArtifactSyncOwnerUserID = nil
         localConnectorRecoveryTask?.cancel()
         localConnectorRecoveryTask = nil
+        localAgentBootstrapTask?.cancel()
+        localAgentBootstrapTask = nil
         stopLocalAgentHost()
         deactivateAllConversations()
         stopVisualSessionMonitoring()
@@ -126,6 +133,28 @@ extension AppModel {
         localAgentHostError = nil
         guard let localAgentHost else { return }
         Task { await localAgentHost.stop() }
+    }
+
+    private func refreshLocalAgentControlPlane(ownerUserID: String) {
+        localAgentBootstrapTask?.cancel()
+        guard let host = localAgentHost as? NativeLocalAgentHostLifecycle else { return }
+        localAgentBootstrapTask = Task { [weak self] in
+            do {
+                _ = try await self?.localConnectorService.bootstrapLocalAgentHost(
+                    host,
+                    ownerUserID: ownerUserID
+                )
+                guard !Task.isCancelled, self?.authenticatedUserID == ownerUserID else {
+                    await host.stop()
+                    return
+                }
+                self?.localAgentHostError = nil
+            } catch is CancellationError {
+            } catch {
+                guard self?.authenticatedUserID == ownerUserID else { return }
+                self?.localAgentHostError = error.localizedDescription
+            }
+        }
     }
 
     private func deactivateAllConversations() {

@@ -146,6 +146,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var agentArtifactSyncOwnerUserID: String?
     var localConnectorRecoveryTask: Task<Void, Never>?
     var localAgentHostLifecycleTask: Task<Void, Never>?
+    var localAgentBootstrapTask: Task<Void, Never>?
     var localConnectorRecoveryGeneration: UInt64 = 0
     var lastLocalConnectorRecoveryDate: Date?
     var mainWindowPresentationHandler: (() -> Void)?

@@ -44,18 +44,24 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         self.service = service
     }
 
-    func activate(pairIfNeeded: Bool, expectedOwnerUserID: String? = nil) {
+    func activate(
+        pairIfNeeded: Bool,
+        expectedOwnerUserID: String? = nil,
+        onReady: (@MainActor (LocalConnectorStatus) -> Void)? = nil
+    ) {
         startApprovalMonitoring()
         isStarting = true
         refreshStatus(
             pairIfNeeded: pairIfNeeded,
-            expectedOwnerUserID: expectedOwnerUserID
+            expectedOwnerUserID: expectedOwnerUserID,
+            onReady: onReady
         )
     }
 
     func refreshStatus(
         pairIfNeeded: Bool = false,
-        expectedOwnerUserID: String? = nil
+        expectedOwnerUserID: String? = nil,
+        onReady: (@MainActor (LocalConnectorStatus) -> Void)? = nil
     ) {
         refreshGeneration += 1
         let generation = refreshGeneration
@@ -82,6 +88,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
                     throw CancellationError()
                 }
                 status = nextStatus
+                onReady?(nextStatus)
             } catch {
                 guard generation == refreshGeneration else { return }
                 errorMessage = error.localizedDescription
