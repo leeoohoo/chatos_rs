@@ -75,6 +75,14 @@ pub(crate) async fn fail_open_invocations_for_cancelled_run(
 
 #[async_trait]
 impl LocalAgentToolStore for SqliteClientStorage {
+    async fn get_tool_invocation(
+        &self,
+        invocation_id: &str,
+    ) -> Result<Option<LocalAgentToolInvocationRecord>, ClientStorageError> {
+        let mut connection = self.pool.acquire().await.db()?;
+        fetch_invocation(&mut connection, invocation_id).await
+    }
+
     async fn recover_expired_tool_claims(
         &self,
         owner_user_id: &str,

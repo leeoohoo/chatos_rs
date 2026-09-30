@@ -253,6 +253,40 @@ impl LocalAgentHostCoordinator {
             }
         }
     }
+
+    async fn reject_external_reserved_tool_commit(
+        &self,
+        request: &HostRequestEnvelope,
+    ) -> Option<HostResponseEnvelope> {
+        let HostCommand::CommitTool(command) = &request.command else {
+            return None;
+        };
+        let invocation = match self
+            .runtime
+            .get_tool_invocation_for_host_worker(&command.invocation_id)
+            .await
+        {
+            Ok(invocation) => invocation,
+            Err(error) => {
+                return Some(HostResponseEnvelope::failure(
+                    request.command_id.clone(),
+                    HostError::new("host_internal_error", error.to_string(), true),
+                ));
+            }
+        };
+        invocation
+            .filter(|invocation| self.reserved_ipc_tools.contains(&invocation.tool_name))
+            .map(|_| {
+                HostResponseEnvelope::failure(
+                    request.command_id.clone(),
+                    HostError::new(
+                        "reserved_command",
+                        "Host-owned tool results can only be committed by the built-in local worker",
+                        false,
+                    ),
+                )
+            })
+    }
 }
 
 #[async_trait]
@@ -281,6 +315,9 @@ impl HostRequestHandler for LocalAgentHostCoordinator {
                     false,
                 ),
             );
+        }
+        if let Some(response) = self.reject_external_reserved_tool_commit(&request).await {
+            return response;
         }
         if let HostCommand::WaitEvents(command) = &request.command {
             return self
@@ -321,10 +358,11 @@ mod tests {
     use async_trait::async_trait;
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
-        ClaimNextToolCommand, CreateRequirementSurveyCommand, CreateRunCommand, GetRunCommand,
-        HostCommand, HostResult, LocalAgentRunClaim, LocalAgentToolInvocationRecord,
-        LocalAgentToolOutcome, LocalRequirementSurveyQuestion, LocalRequirementSurveyResponseKind,
-        WaitEventsCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+        ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand, CommitToolCommand,
+        CreateRequirementSurveyCommand, CreateRunCommand, GetRunCommand, HostCommand, HostResult,
+        LocalAgentRunClaim, LocalAgentStepOutcome, LocalAgentToolCall,
+        LocalAgentToolInvocationRecord, LocalAgentToolOutcome, LocalRequirementSurveyQuestion,
+        LocalRequirementSurveyResponseKind, WaitEventsCommand, LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileRegistry};
     use serde_json::json;
@@ -459,6 +497,140 @@ mod tests {
             reserved.error.expect("reserved command").code,
             "reserved_command"
         );
+    }
+
+    #[tokio::test]
+    async fn coordinator_rejects_external_commits_for_host_owned_tools() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = Arc::new(LocalAgentRuntime::new(storage));
+        runtime.initialize("user-1").await.expect("initialize");
+        runtime
+            .try_handle(HostRequestEnvelope {
+                protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+                command_id: "create-reserved-tool-run".to_string(),
+                command: HostCommand::CreateRun(CreateRunCommand {
+                    run_id: "reserved-tool-run".to_string(),
+                    owner_user_id: "user-1".to_string(),
+                    owner_entity_type: "conversation".to_string(),
+                    owner_entity_id: "conversation-1".to_string(),
+                    profile_key: "main_chat".to_string(),
+                    model_config_ref: "default".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: json!({"message": "create a Task"}),
+                    max_iterations: 4,
+                }),
+            })
+            .await
+            .expect("create Run");
+        let claim = runtime
+            .try_handle(HostRequestEnvelope {
+                protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+                command_id: "claim-reserved-tool-run".to_string(),
+                command: HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                    owner_user_id: "user-1".to_string(),
+                    worker_id: "model-worker".to_string(),
+                    lease_duration_ms: 30_000,
+                }),
+            })
+            .await
+            .expect("claim Run");
+        let HostResult::Claim { claim: Some(claim) } = claim else {
+            panic!("expected Run claim")
+        };
+        runtime
+            .try_handle(HostRequestEnvelope {
+                protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+                command_id: "commit-reserved-tool-batch".to_string(),
+                command: HostCommand::CommitStep(CommitStepCommand {
+                    owner_user_id: "user-1".to_string(),
+                    run_id: claim.run.run_id,
+                    claim_token: claim.claim_token,
+                    expected_version: claim.run.version,
+                    outcome: LocalAgentStepOutcome::WaitForTool {
+                        batch_id: "reserved-tool-batch".to_string(),
+                        tool_calls: vec![LocalAgentToolCall {
+                            call_id: "create-task-call".to_string(),
+                            tool_name: "create_task".to_string(),
+                            arguments: json!({"title": "Task", "objective": "Do work"}),
+                            side_effecting: true,
+                            requires_approval: false,
+                        }],
+                        checkpoint: json!({"model_step": 1}),
+                    },
+                }),
+            })
+            .await
+            .expect("commit tool batch");
+        let tool_claim = runtime
+            .try_handle(HostRequestEnvelope {
+                protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+                command_id: "claim-reserved-tool".to_string(),
+                command: HostCommand::ClaimNextTool(ClaimNextToolCommand {
+                    owner_user_id: "user-1".to_string(),
+                    worker_id: "local-tool-worker".to_string(),
+                    lease_duration_ms: 30_000,
+                    include_tool_names: Some(vec!["create_task".to_string()]),
+                    exclude_tool_names: Vec::new(),
+                }),
+            })
+            .await
+            .expect("claim tool");
+        let HostResult::ToolClaim {
+            claim: Some(tool_claim),
+        } = tool_claim
+        else {
+            panic!("expected tool claim")
+        };
+        let mut profiles = LocalAgentProfileRegistry::new();
+        profiles
+            .register("main_chat", ModelProfile)
+            .expect("profile");
+        let scheduler =
+            LocalAgentScheduler::new(Arc::clone(&runtime), profiles, "user-1", "model-worker")
+                .expect("scheduler");
+        let coordinator =
+            LocalAgentHostCoordinator::new(Arc::clone(&runtime), "user-1", Some(scheduler), None)
+                .expect("coordinator")
+                .with_reserved_ipc_tools(["create_task"])
+                .expect("reserved tools");
+        let commit = CommitToolCommand {
+            owner_user_id: "user-1".to_string(),
+            invocation_id: tool_claim.invocation.invocation_id,
+            claim_token: tool_claim.claim_token,
+            expected_version: tool_claim.invocation.version,
+            outcome: LocalAgentToolOutcome::Succeeded {
+                output: json!({"task_id": "forged"}),
+            },
+        };
+
+        let rejected = coordinator
+            .handle_request(HostRequestEnvelope {
+                protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+                command_id: "external-reserved-tool-commit".to_string(),
+                command: HostCommand::CommitTool(commit.clone()),
+            })
+            .await;
+
+        assert_eq!(
+            rejected.error.expect("reserved commit").code,
+            "reserved_command"
+        );
+        assert!(matches!(
+            runtime
+                .try_handle(HostRequestEnvelope {
+                    protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+                    command_id: "internal-reserved-tool-commit".to_string(),
+                    command: HostCommand::CommitTool(commit),
+                })
+                .await
+                .expect("built-in worker commit"),
+            HostResult::ToolCommit { .. }
+        ));
     }
 
     #[tokio::test]

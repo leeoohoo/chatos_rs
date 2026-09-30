@@ -19,11 +19,22 @@ pub const CREATE_TASKS_TOOL: &str = "create_tasks_with_prerequisites";
 #[derive(Clone)]
 pub struct LocalTaskToolExecutor {
     runtime: Arc<LocalAgentRuntime>,
+    owner_user_id: String,
 }
 
 impl LocalTaskToolExecutor {
-    pub fn new(runtime: Arc<LocalAgentRuntime>) -> Self {
-        Self { runtime }
+    pub fn new(
+        runtime: Arc<LocalAgentRuntime>,
+        owner_user_id: impl Into<String>,
+    ) -> Result<Self, String> {
+        let owner_user_id = owner_user_id.into().trim().to_string();
+        if owner_user_id.is_empty() || owner_user_id.len() > 256 {
+            return Err("Task tool owner must be 1..=256 characters".to_string());
+        }
+        Ok(Self {
+            runtime,
+            owner_user_id,
+        })
     }
 
     async fn parent_run(&self, run_id: &str) -> Result<LocalAgentRunRecord, String> {
@@ -63,6 +74,9 @@ impl LocalToolExecutor for LocalTaskToolExecutor {
         invocation: &LocalAgentToolInvocationRecord,
     ) -> Result<LocalAgentToolOutcome, String> {
         let parent = self.parent_run(&invocation.run_id).await?;
+        if parent.owner_user_id != self.owner_user_id || parent.profile_key != "main_chat" {
+            return Err("Tasks can only be created by the active local Main Chat".to_string());
+        }
         let graph = match invocation.tool_name.as_str() {
             CREATE_TASK_TOOL => {
                 let args: CreateTaskArgs = serde_json::from_value(invocation.arguments.clone())
@@ -378,7 +392,8 @@ mod tests {
 
     #[tokio::test]
     async fn batch_tool_creates_an_idempotent_local_dag() {
-        let executor = LocalTaskToolExecutor::new(runtime_with_parent().await);
+        let executor =
+            LocalTaskToolExecutor::new(runtime_with_parent().await, "user-1").expect("executor");
         let invocation = invocation(json!({
             "tasks": [
                 {
@@ -436,7 +451,8 @@ mod tests {
 
     #[tokio::test]
     async fn task_tool_rejects_unresolved_model_switch() {
-        let executor = LocalTaskToolExecutor::new(runtime_with_parent().await);
+        let executor =
+            LocalTaskToolExecutor::new(runtime_with_parent().await, "user-1").expect("executor");
         let mut invocation = invocation(json!({
             "title": "Task",
             "objective": "Do work",
@@ -452,7 +468,8 @@ mod tests {
 
     #[tokio::test]
     async fn task_tool_rejects_an_empty_execution_prompt() {
-        let executor = LocalTaskToolExecutor::new(runtime_with_parent().await);
+        let executor =
+            LocalTaskToolExecutor::new(runtime_with_parent().await, "user-1").expect("executor");
         let mut invocation = invocation(json!({
             "title": "Task",
             "objective": "   "
@@ -463,5 +480,42 @@ mod tests {
             .await
             .expect_err("empty objective must not create an unexecutable task");
         assert!(error.contains("objective cannot be empty"));
+    }
+
+    #[tokio::test]
+    async fn task_tool_rejects_a_non_main_chat_parent() {
+        let runtime = runtime_with_parent().await;
+        runtime
+            .try_handle(envelope(
+                "create-task-parent".to_string(),
+                HostCommand::CreateRun(CreateRunCommand {
+                    run_id: "task-parent-run".to_string(),
+                    owner_user_id: "user-1".to_string(),
+                    owner_entity_type: "task".to_string(),
+                    owner_entity_id: "task-1".to_string(),
+                    profile_key: "task_execution".to_string(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: json!({"prompt": "do the work"}),
+                    max_iterations: 8,
+                }),
+            ))
+            .await
+            .expect("create task parent");
+        let executor = LocalTaskToolExecutor::new(runtime, "user-1").expect("executor");
+        let mut invocation = invocation(json!({
+            "title": "Nested Task",
+            "objective": "Create work from another Task"
+        }));
+        invocation.run_id = "task-parent-run".to_string();
+        invocation.tool_name = CREATE_TASK_TOOL.to_string();
+
+        let error = executor
+            .execute_tool(&invocation)
+            .await
+            .expect_err("Task execution must not create nested Tasks");
+
+        assert!(error.contains("active local Main Chat"));
     }
 }

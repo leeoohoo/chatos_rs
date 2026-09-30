@@ -184,8 +184,10 @@ impl LocalAgentHostAssembly {
         )?;
         let external_tool_worker = tools.is_none();
         let mut tools = tools.unwrap_or_default();
-        let task_tools: Arc<dyn LocalToolExecutor> =
-            Arc::new(LocalTaskToolExecutor::new(Arc::clone(&runtime)));
+        let task_tools: Arc<dyn LocalToolExecutor> = Arc::new(LocalTaskToolExecutor::new(
+            Arc::clone(&runtime),
+            owner_user_id.clone(),
+        )?);
         tools.register_shared(CREATE_TASK_TOOL, Arc::clone(&task_tools))?;
         tools.register_shared(CREATE_TASKS_TOOL, task_tools)?;
         LocalNotepadToolExecutor::new(Arc::clone(&runtime), owner_user_id.clone())?

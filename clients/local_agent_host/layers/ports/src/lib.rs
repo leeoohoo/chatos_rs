@@ -302,6 +302,11 @@ pub trait LocalAgentTaskStore: Send + Sync {
 
 #[async_trait]
 pub trait LocalAgentToolStore: Send + Sync {
+    async fn get_tool_invocation(
+        &self,
+        invocation_id: &str,
+    ) -> Result<Option<LocalAgentToolInvocationRecord>, ClientStorageError>;
+
     async fn recover_expired_tool_claims(
         &self,
         owner_user_id: &str,

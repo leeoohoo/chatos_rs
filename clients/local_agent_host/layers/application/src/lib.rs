@@ -28,6 +28,7 @@ mod control_plane_runtime;
 mod conversation_query_tests;
 mod conversation_runtime;
 mod conversation_settings_runtime;
+mod host_worker;
 mod notepad_runtime;
 #[cfg(test)]
 mod plugin_query_tests;
@@ -129,16 +130,6 @@ impl LocalAgentRuntime {
         validate_identifier("owner_user_id", owner_user_id)
             .map_err(LocalAgentRuntimeError::InvalidRequest)?;
         Ok(self.store.next_retry_at(owner_user_id).await?)
-    }
-
-    /// Trusted in-process worker lookup. Native callers must use the
-    /// owner-scoped `get_run` IPC command instead.
-    #[doc(hidden)]
-    pub async fn get_run_for_host_worker(
-        &self,
-        run_id: &str,
-    ) -> Result<Option<LocalAgentRunRecord>, LocalAgentRuntimeError> {
-        Ok(self.store.get_run(run_id).await?)
     }
 
     pub async fn try_handle(
