@@ -128,36 +128,6 @@ public enum BundledAgentSkillCatalog {
             requiresFrontmatter: true
         ),
         .init(
-            name: "requirement-survey",
-            role: .router,
-            relativeDirectory: "requirement-survey",
-            requiresFrontmatter: true
-        ),
-        .init(
-            name: "requirement-survey-create",
-            role: .specialist,
-            relativeDirectory: "requirement-survey-create",
-            requiresFrontmatter: true
-        ),
-        .init(
-            name: "requirement-survey-read-results",
-            role: .specialist,
-            relativeDirectory: "requirement-survey-read-results",
-            requiresFrontmatter: true
-        ),
-        .init(
-            name: "requirement-survey-resolve",
-            role: .specialist,
-            relativeDirectory: "requirement-survey-resolve",
-            requiresFrontmatter: true
-        ),
-        .init(
-            name: "requirement-survey-review-execution",
-            role: .specialist,
-            relativeDirectory: "requirement-survey-review-execution",
-            requiresFrontmatter: true
-        ),
-        .init(
             name: "chatos-terminal",
             role: .router,
             relativeDirectory: "chatos-terminal",

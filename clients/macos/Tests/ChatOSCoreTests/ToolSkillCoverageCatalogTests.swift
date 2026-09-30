@@ -14,7 +14,6 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         XCTAssertTrue(names.contains("chatos-remote-connection"))
         XCTAssertTrue(names.contains("chatos-capability-discovery"))
         XCTAssertTrue(names.contains("chatos-compact-communication"))
-        XCTAssertTrue(names.contains("requirement-survey"))
 
         for binding in ToolSkillCoverageCatalog.product.bindings {
             XCTAssertTrue(names.contains(binding.routerSkillName), binding.id)

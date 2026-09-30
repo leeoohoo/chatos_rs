@@ -190,7 +190,6 @@ public enum AgentDeliveryTrigger
     Heartbeat,
     Todo,
     TodoStatus,
-    RequirementSurvey,
     StaffingProposal,
 }
 

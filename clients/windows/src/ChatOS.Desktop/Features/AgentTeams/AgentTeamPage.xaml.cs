@@ -386,13 +386,6 @@ public sealed partial class AgentTeamPage : UserControl
         var profession = new TextBox { Header = "职业 Key", Text = profile?.Draft.ProfessionKey ?? "general" };
         var plugins = new TextBox { Header = "默认插件 ID（逗号分隔）", Text = string.Join(", ", profile?.Draft.Plugins ?? []) };
         var skills = new TextBox { Header = "默认 Skill / 权限 ID（逗号分隔）", Text = string.Join(", ", profile?.Draft.Skills ?? []) };
-        var requirementSurveys = new CheckBox
-        {
-            Content = "允许在所属团队发起并解决需求调研",
-            IsChecked = profile?.Draft.ProfessionKey == "project_manager" ||
-                profile?.Draft.Skills.Contains("requirement.survey.manage",
-                    StringComparer.Ordinal) == true,
-        };
         var staffManagement = new CheckBox
         {
             Content = "允许发起团队成员新增、入队和移出提案",
@@ -417,16 +410,13 @@ public sealed partial class AgentTeamPage : UserControl
             new ScrollViewer
             {
                 Content = Form(name, description, prompt, model, thinking, profession, plugins,
-                    skills, requirementSurveys, staffManagement, heartbeat, heartbeatInterval,
+                    skills, staffManagement, heartbeat, heartbeatInterval,
                     heartbeatPrompt),
                 MaxHeight = 650,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             }, "保存") != ContentDialogResult.Primary ||
             model.SelectedItem is not ConversationModelOption selectedModel) return;
-        var skillIds = SplitIdentifiers(skills.Text)
-            .Where(value => value != "requirement.survey.manage").ToList();
-        if (requirementSurveys.IsChecked == true)
-            skillIds.Add("requirement.survey.manage");
+        var skillIds = SplitIdentifiers(skills.Text);
         var normalizedSkillIds = AgentProfilePermissions.NormalizeStaffPermissions(
             skillIds, staffManagement.IsChecked == true);
         var draft = new AgentProfileDraft(name.Text.Trim(), description.Text.Trim(), prompt.Text.Trim(),

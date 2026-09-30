@@ -5,8 +5,6 @@
 - Project inspection and search: `CodeMaintainerRead`.
 - Project file creation, modification, or deletion: `CodeMaintainerWrite`; read access is added by policy.
 - Commands, Git, dependency installation, tests, type checks, builds, or runtime verification: `TerminalController`; read access is added by policy.
-- Existing surveys, Human answers, resolutions, execution plans, or project task state: `RequirementSurveyRead`.
-- Survey creation or writing a submitted survey's resolution and plan: `RequirementSurveyWrite`; read access is added by policy.
 
 Combine capabilities only when the task truly needs each one. Set execution intent for commands or file changes; pure reading and analysis do not require it. Choose model configuration only from the current tool schema.
 

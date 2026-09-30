@@ -646,6 +646,7 @@ public sealed partial class LocalStateDatabase
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
+            DELETE FROM agent_deliveries WHERE trigger_kind = 'RequirementSurvey';
             DROP TABLE IF EXISTS agent_requirement_surveys;
             INSERT OR IGNORE INTO schema_migrations(version, applied_at)
             VALUES (14, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
