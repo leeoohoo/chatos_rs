@@ -130,6 +130,30 @@ forbid(
     ["RETIRED_TASK_MANAGER", "is_retired_task_manager_mcp"],
     "Plugin Marketplace must not carry old Task Manager data compatibility",
 )
+forbid(
+    "plugin_management_service/backend/src/seed.rs",
+    [
+        "RETIRED_SYSTEM_AGENT_KEYS",
+        "remove_retired_system_agents",
+        "remove_retired_system_mcps",
+    ],
+    "Plugin Marketplace seed must not migrate retired execution-plane data",
+)
+forbid(
+    "plugin_management_service/backend/src/state.rs",
+    ["remove_retired_direct_local_mcps"],
+    "Plugin Marketplace startup must not migrate retired Local Connector MCP data",
+)
+forbid(
+    "admin_console/src/modules/config-center/pages.tsx",
+    ["chatos-backend", "task-runner", "mcp-management-service"],
+    "Configuration Center UI must not hide retired service data",
+)
+forbid(
+    "admin_console/src/modules/config-center/QueueOperationsPanel.tsx",
+    ["task-runner", "mcp-management"],
+    "queue operations UI must not filter retired execution services",
+)
 
 require(
     "clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+Approval.swift",
