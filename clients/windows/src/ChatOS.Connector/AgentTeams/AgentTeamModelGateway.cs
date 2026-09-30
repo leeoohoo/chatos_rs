@@ -34,8 +34,8 @@ internal sealed class AgentTeamModelGateway(
         int requestTimeoutSeconds = 180,
         int maximumOutputTokens = 16_384)
     {
-        var config = await apiClient.GetAsync<AgentModelConfigurationDto>(
-            $"ai-model-configs/{Uri.EscapeDataString(profile.Draft.ModelConfigId)}?include_secret=true",
+        var config = await apiClient.GetUserServiceAsync<AgentModelConfigurationDto>(
+            $"model-configs/{Uri.EscapeDataString(profile.Draft.ModelConfigId)}?include_secret=true",
             cancellationToken).ConfigureAwait(false);
         var endpoint = ResponsesEndpoint(config);
         if (config.Enabled == false || string.IsNullOrWhiteSpace(config.ApiKey) ||

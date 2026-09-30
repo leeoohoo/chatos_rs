@@ -42,7 +42,11 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
     }
 
     public func fetchModels() async throws -> [MediaGenerationModel] {
-        let models: [MediaGenerationModel] = try await client.request("/ai-model-configs", expectedAuthenticationSessionID: authenticationSessionID)
+        let models: [MediaGenerationModel] = try await client.request(
+            "/model-configs",
+            service: .userService,
+            expectedAuthenticationSessionID: authenticationSessionID
+        )
         return models
             .filter { $0.enabled && $0.hasAPIKey }
             .sorted { left, right in
@@ -270,7 +274,9 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
     private func loadRuntimeModel(id: String) async throws -> RuntimeModelConfig {
         let encodedID = id.urlPathEncoded
         let runtime: RuntimeModelConfig = try await client.request(
-            "/ai-model-configs/\(encodedID)?include_secret=true", expectedAuthenticationSessionID: authenticationSessionID
+            "/model-configs/\(encodedID)?include_secret=true",
+            service: .userService,
+            expectedAuthenticationSessionID: authenticationSessionID
         )
         guard runtime.enabled,
               let apiKey = runtime.apiKey?.trimmingCharacters(in: .whitespacesAndNewlines),

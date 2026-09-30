@@ -98,8 +98,8 @@ public sealed class WindowsLocalAgentBootstrapService
             {
                 await _host.StopAsync(cancellationToken).ConfigureAwait(false);
             }
-            var configured = await _api.GetAsync<IReadOnlyList<WindowsModelConfigDto>>(
-                "ai-model-configs",
+            var configured = await _api.GetUserServiceAsync<IReadOnlyList<WindowsModelConfigDto>>(
+                "model-configs",
                 cancellationToken).ConfigureAwait(false);
             var environment = new Dictionary<string, string>(StringComparer.Ordinal);
             var snapshots = new List<WindowsLocalAgentModelSnapshot>();
@@ -109,8 +109,8 @@ public sealed class WindowsLocalAgentBootstrapService
                 foreach (var summary in configured.Where(value =>
                     value.Enabled != false && value.TaskEnabled != false && value.HasApiKey != false))
                 {
-                    var model = await _api.GetAsync<WindowsModelConfigDto>(
-                        $"ai-model-configs/{Uri.EscapeDataString(summary.Id)}?include_secret=true",
+                    var model = await _api.GetUserServiceAsync<WindowsModelConfigDto>(
+                        $"model-configs/{Uri.EscapeDataString(summary.Id)}?include_secret=true",
                         cancellationToken).ConfigureAwait(false);
                     if (!TryValidateModel(model, out var baseUri, out var credential)) continue;
 

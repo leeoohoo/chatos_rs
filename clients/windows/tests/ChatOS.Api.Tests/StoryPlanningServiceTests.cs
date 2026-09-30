@@ -192,7 +192,7 @@ public sealed class StoryPlanningServiceTests
     private static ChatOSApiClient RuntimeApi(MemoryTokenStore store) =>
         ApiTestClient.Create(store, request =>
         {
-            Assert.Contains("ai-model-configs/model-config", request.RequestUri!.AbsoluteUri);
+            Assert.Contains("/api/user/model-configs/model-config", request.RequestUri!.AbsoluteUri);
             return StubHttpMessageHandler.Json("""
                 {"model":"text-v1","api_key":"provider-secret","base_url":"https://provider.example.test/v1/chat/completions","enabled":true}
                 """);

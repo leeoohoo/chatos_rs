@@ -65,8 +65,8 @@ public sealed class StoryPlanningService(
         var sessionToken = await tokenStore.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(sessionToken))
             throw new ChatOSApiException("Sign in before planning a story.");
-        var runtime = await client.GetAsync<RuntimeModelDto>(
-            $"ai-model-configs/{Uri.EscapeDataString(modelConfigId)}?include_secret=true",
+        var runtime = await client.GetUserServiceAsync<RuntimeModelDto>(
+            $"model-configs/{Uri.EscapeDataString(modelConfigId)}?include_secret=true",
             cancellationToken).ConfigureAwait(false);
         var endpoint = ResponsesEndpoint(runtime);
         using var providerRequest = new HttpRequestMessage(HttpMethod.Post, endpoint)

@@ -101,7 +101,8 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
     ) async throws -> Config {
         do {
             return try await client.request(
-                "/ai-model-configs/\(id.urlPathEncoded)?include_secret=true",
+                "/model-configs/\(id.urlPathEncoded)?include_secret=true",
+                service: .userService,
                 expectedAuthenticationSessionID: expectedAuthenticationSessionID
             )
         } catch ChatOSAPIError.server(let statusCode, _) where statusCode == 404 {

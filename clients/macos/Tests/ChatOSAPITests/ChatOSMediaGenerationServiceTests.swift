@@ -15,7 +15,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         }
         let requests = await transport.allRequests()
         XCTAssertTrue(requests.allSatisfy { $0.method == "GET" })
-        XCTAssertEqual(requests.map(\.url.path), ["/api/chatos/ai-model-configs/h3", "/v1/videos/video-h3", "/result.mp4"])
+        XCTAssertEqual(requests.map(\.url.path), ["/api/user/model-configs/h3", "/v1/videos/video-h3", "/result.mp4"])
         XCTAssertEqual(result.id, "video-h3")
         let updates = await progress.values()
         XCTAssertEqual(updates.first?.jobID, "video-h3")
@@ -56,7 +56,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         XCTAssertEqual(models.first?.taskEnabled, false)
         XCTAssertEqual(models.filter(\.isLikelyVideoModel).map(\.id), ["video-model"])
         let request = await transport.firstRequest()
-        XCTAssertEqual(request?.url.path, "/api/chatos/ai-model-configs")
+        XCTAssertEqual(request?.url.path, "/api/user/model-configs")
         XCTAssertNil(request?.url.query)
     }
 
@@ -85,7 +85,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
         XCTAssertEqual(result.resourceID, "character-1")
         let requests = await transport.allRequests()
         XCTAssertEqual(requests.count, 2)
-        XCTAssertEqual(requests[0].url.path, "/api/chatos/ai-model-configs/image-model")
+        XCTAssertEqual(requests[0].url.path, "/api/user/model-configs/image-model")
         XCTAssertEqual(requests[0].url.query, "include_secret=true")
 
         let request = requests[1]
@@ -178,7 +178,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
 
         let requests = await transport.allRequests()
         XCTAssertEqual(requests.map(\.url.path), [
-            "/api/chatos/ai-model-configs/video-model",
+            "/api/user/model-configs/video-model",
             "/v1/videos",
             "/v1/videos/video-1",
             "/video-1.mp4",
@@ -326,7 +326,7 @@ final class ChatOSMediaGenerationServiceTests: XCTestCase {
             XCTAssertEqual(result.videoData, Data("mp4-data".utf8))
             let requests = await transport.allRequests()
             XCTAssertEqual(requests.map(\.url.path), [
-                "/api/chatos/ai-model-configs/h3", "/v1/videos",
+                "/api/user/model-configs/h3", "/v1/videos",
                 "/v1/videos/video-h3", "/result.mp4",
             ])
             XCTAssertEqual(requests.map(\.method), ["GET", "POST", "GET", "GET"])
@@ -589,7 +589,7 @@ private actor NewAPIVideoTransport: HTTPTransport {
         requests.append(request)
         let root = base.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/videos"
         let payload: [String: Any]
-        if request.url.path == "/api/chatos/ai-model-configs/h3" {
+        if request.url.path == "/api/user/model-configs/h3" {
             var config: [String: Any] = ["model": model, "base_url": base, "api_key": "new-api-token", "enabled": true]
             if !provider.isEmpty { config["provider"] = provider }
             payload = config
@@ -652,13 +652,13 @@ private actor MediaGenerationTransport: HTTPTransport {
         requests.append(request)
         let body: Data
         let headers: [String: String]
-        if request.url.path.hasSuffix("/ai-model-configs") {
+        if request.url.path.hasSuffix("/model-configs") {
             body = Data(#"[{"id":"task-model","name":"Chat","provider":"gpt","model":"gpt-5.6-sol","enabled":true,"task_enabled":true,"has_api_key":true},{"id":"image-model","name":"Image","provider":"gpt","model":"gpt-image-1","enabled":true,"task_enabled":false,"has_api_key":true},{"id":"video-model","name":"Sora Video","provider":"gpt","model":"sora-2","enabled":true,"task_enabled":false,"has_api_key":true},{"id":"disabled","name":"Disabled","provider":"gpt","model":"gpt-image-disabled","enabled":false,"task_enabled":false,"has_api_key":true},{"id":"no-key","name":"No Key","provider":"gpt","model":"gpt-image-no-key","enabled":true,"task_enabled":false,"has_api_key":false}]"#.utf8)
             headers = [:]
-        } else if request.url.path.hasSuffix("/ai-model-configs/image-model") {
+        } else if request.url.path.hasSuffix("/model-configs/image-model") {
             body = Data(#"{"id":"image-model","name":"Image","provider":"gpt","model":"gpt-image-1","api_key":"secret","base_url":"https://provider.example/v1","enabled":true}"#.utf8)
             headers = [:]
-        } else if request.url.path.hasSuffix("/ai-model-configs/video-model") {
+        } else if request.url.path.hasSuffix("/model-configs/video-model") {
             body = Data(#"{"id":"video-model","name":"MiniMax H3","provider":"gpt","model":"MiniMax-H3","api_key":"video-secret","base_url":"https://provider.example/v1","enabled":true}"#.utf8)
             headers = [:]
         } else if request.url.absoluteString == "https://cdn.example/video-1.mp4" {

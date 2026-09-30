@@ -297,7 +297,7 @@ public sealed class MediaGenerationServiceTests
         string model = "image-v1") =>
         ApiTestClient.Create(store, request =>
         {
-            Assert.Contains("ai-model-configs/model-config", request.RequestUri!.AbsoluteUri);
+            Assert.Contains("/api/user/model-configs/model-config", request.RequestUri!.AbsoluteUri);
             Assert.Contains("include_secret=true", request.RequestUri.Query);
             return StubHttpMessageHandler.Json($$"""
                 {"model":"{{model}}","api_key":"provider-secret","base_url":"{{baseUrl}}","enabled":true}

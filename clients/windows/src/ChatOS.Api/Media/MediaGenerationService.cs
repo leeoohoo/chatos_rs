@@ -43,8 +43,8 @@ public sealed partial class MediaGenerationService : IMediaGenerationService
     public async Task<IReadOnlyList<MediaGenerationModel>> FetchModelsAsync(
         CancellationToken cancellationToken = default)
     {
-        var models = await _client.GetAsync<IReadOnlyList<MediaModelDto>>(
-            "ai-model-configs",
+        var models = await _client.GetUserServiceAsync<IReadOnlyList<MediaModelDto>>(
+            "model-configs",
             cancellationToken).ConfigureAwait(false);
         return models
             .Where(model => model.Enabled != false && model.HasApiKey != false)
@@ -64,8 +64,8 @@ public sealed partial class MediaGenerationService : IMediaGenerationService
         if (string.IsNullOrWhiteSpace(sessionToken))
             throw new ChatOSApiException("Sign in before generating media.");
 
-        var runtime = await _client.GetAsync<RuntimeModelDto>(
-            $"ai-model-configs/{Uri.EscapeDataString(request.ModelConfigId)}?include_secret=true",
+        var runtime = await _client.GetUserServiceAsync<RuntimeModelDto>(
+            $"model-configs/{Uri.EscapeDataString(request.ModelConfigId)}?include_secret=true",
             cancellationToken).ConfigureAwait(false);
         var endpoint = ProviderEndpoint(runtime, request.ReferenceImages.Count > 0);
         using var providerRequest = BuildProviderRequest(endpoint, runtime, request);

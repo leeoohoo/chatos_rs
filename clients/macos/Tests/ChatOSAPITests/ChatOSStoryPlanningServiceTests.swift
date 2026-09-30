@@ -180,7 +180,7 @@ private actor StoryPlanningTransport: HTTPTransport {
     func send(_ request: HTTPRequest) async throws -> HTTPResponse {
         calls.append(request)
         let body: [String: Any]
-        if request.url.path.contains("ai-model-configs") {
+        if request.url.path.contains("model-configs") {
             if scenario == "missing-model" {
                 return .init(
                     statusCode: 404,

@@ -42,8 +42,8 @@ public sealed partial class MediaGenerationService
         var sessionToken = await _tokenStore.GetAccessTokenAsync(cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(sessionToken))
             throw new ChatOSApiException("Sign in before generating media.");
-        var runtime = await _client.GetAsync<RuntimeModelDto>(
-            $"ai-model-configs/{Uri.EscapeDataString(request.ModelConfigId)}?include_secret=true",
+        var runtime = await _client.GetUserServiceAsync<RuntimeModelDto>(
+            $"model-configs/{Uri.EscapeDataString(request.ModelConfigId)}?include_secret=true",
             cancellationToken).ConfigureAwait(false);
         var baseUrl = NormalizeProviderBaseUrl(runtime);
 
