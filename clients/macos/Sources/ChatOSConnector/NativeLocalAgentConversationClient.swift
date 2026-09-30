@@ -151,7 +151,7 @@ public struct LocalAgentConversationHistoryPage: Decodable, Sendable, Equatable 
 }
 
 public struct NativeLocalAgentConversationClient: Sendable {
-    private let host: any LocalAgentHostClientServicing
+    let host: any LocalAgentHostClientServicing
 
     public init(host: any LocalAgentHostClientServicing) {
         self.host = host
