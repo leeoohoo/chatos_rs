@@ -2,7 +2,7 @@ import { apiOrigin } from '../config/runtime'
 import { sessionStore } from '../stores/session-store'
 import { deviceIdentityStore } from '../security/device-identity'
 
-type ServiceSurface = 'user' | 'chatos' | 'local'
+type ServiceSurface = 'user' | 'local'
 type HttpMethod = 'GET' | 'POST' | 'DELETE'
 
 export class ApiError extends Error {
@@ -16,7 +16,7 @@ export class ApiError extends Error {
 }
 
 function servicePath(surface: ServiceSurface, path: string): string {
-  const prefix = surface === 'user' ? '/api/user' : surface === 'chatos' ? '/api/chatos' : '/api/local'
+  const prefix = surface === 'user' ? '/api/user' : '/api/local'
   return `${prefix}${path.startsWith('/') ? path : `/${path}`}`
 }
 

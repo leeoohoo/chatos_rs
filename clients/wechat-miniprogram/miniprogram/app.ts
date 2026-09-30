@@ -1,5 +1,4 @@
 import { authService } from './services/auth-service'
-import { realtimeClient } from './services/realtime-client'
 import { sessionStore } from './stores/session-store'
 
 App<IAppOption>({
@@ -11,10 +10,6 @@ App<IAppOption>({
   onLaunch(options) {
     this.globalData.launchScene = options.query?.scene
     this.authReady = this.restoreSession()
-  },
-
-  onHide() {
-    realtimeClient.close()
   },
 
   async restoreSession() {

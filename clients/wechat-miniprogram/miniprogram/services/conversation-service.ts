@@ -6,7 +6,6 @@ import type {
   ConversationRuntimeContext,
   GuidanceResponse,
   SendMessageResponse,
-  WsTicketResponse,
 } from '../models/api'
 import { apiRequest } from './api-client'
 
@@ -38,67 +37,68 @@ export const conversationService = {
     })
   },
 
-  get(id: string): Promise<Conversation> {
-    return apiRequest({ surface: 'chatos', path: `/companion/conversations/${encodeURIComponent(id)}` })
+  get(deviceId: string, id: string): Promise<Conversation> {
+    return apiRequest({ surface: 'local', path: `${base(deviceId)}/conversations/${encodeURIComponent(id)}` })
   },
 
-  history(id: string, before?: string): Promise<CompactHistoryPage> {
+  history(deviceId: string, id: string, before?: string): Promise<CompactHistoryPage> {
     const query = before ? `?limit=20&before=${encodeURIComponent(before)}` : '?limit=10'
     return apiRequest({
-      surface: 'chatos',
-      path: `/companion/conversations/${encodeURIComponent(id)}/compact-history${query}`,
+      surface: 'local',
+      path: `${base(deviceId)}/conversations/${encodeURIComponent(id)}/history${query}`,
     })
   },
 
-  runtimeContext(id: string): Promise<ConversationRuntimeContext | null> {
+  runtimeContext(deviceId: string, id: string): Promise<ConversationRuntimeContext | null> {
     return apiRequest({
-      surface: 'chatos',
-      path: `/companion/conversations/${encodeURIComponent(id)}/state`,
+      surface: 'local',
+      path: `${base(deviceId)}/conversations/${encodeURIComponent(id)}/state`,
     })
   },
 
-  tasks(messageId: string, taskId?: string): Promise<CompanionTaskListResponse> {
+  tasks(
+    deviceId: string,
+    conversationId: string,
+    messageId: string,
+    taskId?: string,
+  ): Promise<CompanionTaskListResponse> {
     const query = taskId ? `?task_id=${encodeURIComponent(taskId)}` : ''
-    // APISIX normalizes encoded colons before the backend verifies the device proof.
-    // Keep colons literal so the signed target matches the path seen by ChatOS.
-    const encodedMessageId = encodeURIComponent(messageId).replace(/%3A/gi, ':')
     return apiRequest({
-      surface: 'chatos',
-      path: `/companion/messages/${encodedMessageId}/tasks${query}`,
+      surface: 'local',
+      path: `${base(deviceId)}/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/tasks${query}`,
       clearSessionOnUnauthorized: false,
     })
   },
 
-  send(id: string, content: string): Promise<SendMessageResponse> {
+  send(deviceId: string, id: string, content: string): Promise<SendMessageResponse> {
     const turnId = uuid()
     return apiRequest({
-      surface: 'chatos',
-      path: '/agent/chat/send',
+      surface: 'local',
+      path: `${base(deviceId)}/conversations/${encodeURIComponent(id)}/messages`,
       method: 'POST',
-      headers: { 'Idempotency-Key': turnId },
-      data: { conversation_id: id, content, turn_id: turnId },
+      data: { content, turn_id: turnId },
     })
   },
 
-  guidance(id: string, turnId: string, content: string): Promise<GuidanceResponse> {
+  guidance(deviceId: string, id: string, turnId: string, content: string): Promise<GuidanceResponse> {
     return apiRequest({
-      surface: 'chatos',
-      path: '/agent/chat/guidance',
+      surface: 'local',
+      path: `${base(deviceId)}/conversations/${encodeURIComponent(id)}/guidance`,
       method: 'POST',
-      data: { conversation_id: id, turn_id: turnId, content },
+      data: { turn_id: turnId, content },
     })
   },
 
-  stop(id: string, turnId?: string): Promise<{ success: boolean }> {
+  stop(deviceId: string, id: string, turnId?: string): Promise<{ success: boolean }> {
     return apiRequest({
-      surface: 'chatos',
-      path: '/agent/chat/stop',
+      surface: 'local',
+      path: `${base(deviceId)}/conversations/${encodeURIComponent(id)}/stop`,
       method: 'POST',
-      data: { conversation_id: id, turn_id: turnId },
+      data: { turn_id: turnId },
     })
   },
+}
 
-  websocketTicket(): Promise<WsTicketResponse> {
-    return apiRequest({ surface: 'chatos', path: '/auth/ws-ticket', method: 'POST' })
-  },
+function base(deviceId: string): string {
+  return `/companion/devices/${encodeURIComponent(deviceId)}`
 }

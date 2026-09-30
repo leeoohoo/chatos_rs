@@ -261,14 +261,24 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         self.petActivityService = localAgentHost.map {
             NativeLocalAgentPetActivityService(host: $0)
         }
-        self.messageTaskGraphService = localAgentHost.map {
+        let localMessageTaskGraphService = localAgentHost.map {
             NativeLocalAgentMessageTaskGraphService(host: $0)
         }
+        self.messageTaskGraphService = localMessageTaskGraphService
         self.turnProcessService = localAgentHost.map {
             NativeLocalAgentTurnProcessService(host: $0)
         }
-        self.askUserPromptService = localAgentHost.map {
+        let localAskUserPromptService = localAgentHost.map {
             NativeLocalAgentAskUserPromptService(host: $0)
+        }
+        self.askUserPromptService = localAskUserPromptService
+        Task {
+            await localConnectorService.setLocalAgentCompanionServices(
+                host: localAgentHost,
+                conversation: localAgentConversationService,
+                messageTasks: localMessageTaskGraphService,
+                askUser: localAskUserPromptService
+            )
         }
         self.platformToolWorker = localAgentPlatformToolWorker
         let workspaceService = localAgentHost.map {

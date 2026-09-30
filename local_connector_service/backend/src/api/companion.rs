@@ -312,15 +312,17 @@ pub(super) async fn get_companion_conversation_state(
 pub(super) async fn list_companion_message_tasks(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
-    Path((device_id, message_id)): Path<(String, String)>,
+    Path((device_id, conversation_id, message_id)): Path<(String, String, String)>,
     Query(query): Query<CompanionMessageTasksQuery>,
 ) -> Result<Response, ApiError> {
+    let conversation_id = required_path_value(conversation_id, "conversation_id")?;
     let message_id = required_path_value(message_id, "message_id")?;
     let task_id = query
         .task_id
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let relay_path = format!("/companion/messages/{message_id}/tasks");
+    let relay_path =
+        format!("/companion/conversations/{conversation_id}/messages/{message_id}/tasks");
     companion_relay(
         &state,
         &user,
@@ -328,7 +330,11 @@ pub(super) async fn list_companion_message_tasks(
         "companion_message_tasks_request",
         relay_path.as_str(),
         "GET",
-        json!({ "message_id": message_id, "task_id": task_id }),
+        json!({
+            "conversation_id": conversation_id,
+            "message_id": message_id,
+            "task_id": task_id,
+        }),
     )
     .await
 }

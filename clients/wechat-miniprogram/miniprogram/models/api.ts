@@ -203,22 +203,6 @@ export type ClientSession = {
   revoked_at?: string
 }
 
-export type WsTicketResponse = {
-  ticket: string
-  expires_in: number
-  expires_at: string
-}
-
-export type RealtimeEnvelope = {
-  topic?: string
-  event?: string
-  type?: string
-  conversation_id?: string
-  turn_id?: string
-  payload?: unknown
-  [key: string]: unknown
-}
-
 export type CompanionAgentSummary = {
   id: string
   name: string

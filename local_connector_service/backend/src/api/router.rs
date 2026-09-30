@@ -111,7 +111,7 @@ fn protected_api(state: &AppState) -> Router<AppState> {
             post(super::companion::cancel_companion_ask_user_prompt),
         )
         .route(
-            "/api/local-connectors/companion/devices/{device_id}/messages/{message_id}/tasks",
+            "/api/local-connectors/companion/devices/{device_id}/conversations/{conversation_id}/messages/{message_id}/tasks",
             get(super::companion::list_companion_message_tasks),
         )
         .route(

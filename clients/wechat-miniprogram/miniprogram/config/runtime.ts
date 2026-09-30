@@ -29,7 +29,3 @@ export function apiOrigin(): string {
     (development ? DEVELOPMENT_API_ORIGIN : DEFAULT_API_ORIGIN)
   )
 }
-
-export function websocketOrigin(): string {
-  return apiOrigin().replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')
-}

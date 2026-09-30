@@ -46,6 +46,10 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let pluginRuntimeRootURL: URL
     let approvalMemoryProviderFactory: NativeApprovalMemoryProviderFactory?
     weak var companionRuntime: (any LocalConnectorCompanionRuntimeProviding)?
+    var companionConversationClient: NativeLocalAgentConversationClient?
+    var companionConversationService: NativeLocalAgentConversationService?
+    var companionMessageTaskService: NativeLocalAgentMessageTaskGraphService?
+    var companionAskUserService: NativeLocalAgentAskUserPromptService?
     var agentGroupChatService: NativeAgentGroupChatService?
     var agentGroupChatScheduler: LocalAgentGroupChatScheduler?
     let secretStore: NativeConnectorSecretStore
@@ -129,6 +133,18 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         _ runtime: (any LocalConnectorCompanionRuntimeProviding)?
     ) {
         companionRuntime = runtime
+    }
+
+    public func setLocalAgentCompanionServices(
+        host: (any LocalAgentHostClientServicing)?,
+        conversation: NativeLocalAgentConversationService?,
+        messageTasks: NativeLocalAgentMessageTaskGraphService?,
+        askUser: NativeLocalAgentAskUserPromptService?
+    ) {
+        companionConversationClient = host.map(NativeLocalAgentConversationClient.init(host:))
+        companionConversationService = conversation
+        companionMessageTaskService = messageTasks
+        companionAskUserService = askUser
     }
 
     public func setAgentGroupChatService(_ service: NativeAgentGroupChatService) {

@@ -11,7 +11,6 @@ import { approvalService } from '../../services/approval-service'
 import { askUserService } from '../../services/ask-user-service'
 import { companionListCache } from '../../services/companion-list-cache'
 import { conversationService } from '../../services/conversation-service'
-import { realtimeClient } from '../../services/realtime-client'
 import { sessionStore } from '../../stores/session-store'
 import { deviceSelectionStore } from '../../stores/device-selection-store'
 import { promptView, type AskUserPromptView } from '../../utils/ask-user'
@@ -61,7 +60,7 @@ type ApprovalView = CompanionApproval & {
 type InputEvent = WechatMiniprogram.CustomEvent<{ value: string }>
 type DatasetEvent = WechatMiniprogram.TouchEvent
 
-const INTERVENTION_POLL_INTERVAL_MS = 10_000
+const LOCAL_RECONCILE_INTERVAL_MS = 3_000
 
 function messageView(message: ConversationMessage, previous?: MessageView): MessageView {
   const text = messageText(message.content)
@@ -84,7 +83,7 @@ function messageView(message: ConversationMessage, previous?: MessageView): Mess
     isAssistant: message.role === 'assistant',
     canInspectTask:
       message.role === 'assistant' &&
-      message.message_mode === 'task_runner_callback' &&
+      message.message_mode === 'local_task_callback' &&
       Boolean(message.task_id),
   }
 }
@@ -254,13 +253,13 @@ Page({
   promptValues: {} as Record<string, Record<string, string>>,
   promptSelections: {} as Record<string, string[]>,
   submittingPromptIds: [] as string[],
-  unsubscribeRealtime: undefined as (() => void) | undefined,
   reconcileTimer: undefined as ReturnType<typeof setTimeout> | undefined,
   postSendTimers: [] as Array<ReturnType<typeof setTimeout>>,
   keyboardListener: undefined as ((result: { height: number }) => void) | undefined,
   interventionTimer: undefined as ReturnType<typeof setInterval> | undefined,
   refreshingPrompts: false,
   refreshingApprovals: false,
+  reconciling: false,
   resolvingApprovalIds: [] as string[],
   pageDisposed: false,
 
@@ -278,22 +277,18 @@ Page({
       this.setData({ loading: false, error: '会话参数无效' })
       return
     }
+    if (!this.deviceId) {
+      this.setData({ loading: false, error: '请先选择一台已配对电脑' })
+      return
+    }
     this.keyboardListener = ({ height }) => this.setData({ keyboardHeight: height })
     wx.onKeyboardHeightChange(this.keyboardListener)
-    this.unsubscribeRealtime = realtimeClient.subscribeConversation(
-      this.conversationId,
-      () => this.scheduleReconcile(),
-    )
-    void realtimeClient.connect().catch(() => {
-      // REST remains authoritative when realtime is temporarily unavailable.
-    })
     if (this.conversationId) this.startInterventionPolling()
     void this.loadInitial()
   },
 
   onShow() {
     if (this.conversationId && !this.data.loading) {
-      void realtimeClient.connect().catch(() => {})
       void this.reconcile()
     }
     if (this.conversationId) this.startInterventionPolling()
@@ -305,7 +300,6 @@ Page({
 
   onUnload() {
     this.pageDisposed = true
-    this.unsubscribeRealtime?.()
     if (this.reconcileTimer) clearTimeout(this.reconcileTimer)
     this.postSendTimers.forEach((timer) => clearTimeout(timer))
     if (this.keyboardListener) wx.offKeyboardHeightChange(this.keyboardListener)
@@ -316,8 +310,8 @@ Page({
     this.setData({ loading: true, error: '' })
     try {
       const [conversation, history] = await Promise.all([
-        conversationService.get(this.conversationId),
-        conversationService.history(this.conversationId),
+        conversationService.get(this.deviceId, this.conversationId),
+        conversationService.history(this.deviceId, this.conversationId),
       ])
       if (this.pageDisposed) return
       this.nextBefore = history.next_before
@@ -342,7 +336,7 @@ Page({
     if (!this.data.hasMore || this.data.loadingOlder || !this.nextBefore) return
     this.setData({ loadingOlder: true })
     try {
-      const history = await conversationService.history(this.conversationId, this.nextBefore)
+      const history = await conversationService.history(this.deviceId, this.conversationId, this.nextBefore)
       this.nextBefore = history.next_before
       this.loadedOlder = true
       this.setData({
@@ -359,9 +353,10 @@ Page({
   },
 
   async reconcile() {
-    if (!this.conversationId) return
+    if (!this.conversationId || !this.deviceId || this.reconciling) return
+    this.reconciling = true
     try {
-      const history = await conversationService.history(this.conversationId)
+      const history = await conversationService.history(this.deviceId, this.conversationId)
       const serverMessages = messageViews(history.items, this.data.messages)
       if (!this.loadedOlder) this.nextBefore = history.next_before
       const messages = mergeReconciledMessages(this.data.messages, serverMessages)
@@ -380,11 +375,13 @@ Page({
       if (error instanceof ApiError && error.statusCode === 401) {
         wx.reLaunch({ url: '/pages/bind/index' })
       }
+    } finally {
+      this.reconciling = false
     }
   },
 
   async refreshRuntime() {
-    const context = await conversationService.runtimeContext(this.conversationId)
+    const context = await conversationService.runtimeContext(this.deviceId, this.conversationId)
     const turnId = context?.turn_id ?? context?.conversation_turn_id ?? ''
     const activeTurnId = context?.active_in_runtime === true ? turnId : ''
     if (activeTurnId !== this.data.activeTurnId) this.setData({ activeTurnId })
@@ -395,7 +392,7 @@ Page({
     if (this.refreshingPrompts) return
     this.refreshingPrompts = true
     try {
-      this.promptRecords = (await askUserService.list(this.conversationId)).filter(
+      this.promptRecords = (await askUserService.list(this.deviceId, this.conversationId)).filter(
         (prompt) => prompt.status === 'pending',
       )
       this.rebuildPromptViews()
@@ -434,16 +431,14 @@ Page({
   startInterventionPolling() {
     this.stopInterventionPolling()
     if (!this.conversationId || this.pageDisposed || !this.isCurrentPage()) return
-    void this.refreshPrompts(true)
-    if (this.deviceId) void this.refreshApprovals()
+    if (!this.data.loading) void this.reconcile()
     this.interventionTimer = setInterval(() => {
       if (this.pageDisposed || !this.isCurrentPage()) {
         this.stopInterventionPolling()
         return
       }
-      void this.refreshPrompts(true)
-      if (this.deviceId) void this.refreshApprovals()
-    }, INTERVENTION_POLL_INTERVAL_MS)
+      void this.reconcile()
+    }, LOCAL_RECONCILE_INTERVAL_MS)
   },
 
   stopInterventionPolling() {
@@ -470,7 +465,12 @@ Page({
       taskPanelError: '',
     })
     try {
-      const response = await conversationService.tasks(messageId, taskId || undefined)
+      const response = await conversationService.tasks(
+        this.deviceId,
+        this.conversationId,
+        messageId,
+        taskId || undefined,
+      )
       if (!response.items.length) {
         this.setData({ taskPanelError: '这条消息没有任务详情' })
         return
@@ -573,6 +573,7 @@ Page({
       if (activeTurnId) {
         try {
           const response = await conversationService.guidance(
+            this.deviceId,
             this.conversationId,
             activeTurnId,
             content,
@@ -580,12 +581,12 @@ Page({
           this.adoptOptimisticMessageId(optimistic.id, response.message_id)
         } catch (error) {
           if (!(error instanceof ApiError) || error.statusCode !== 409) throw error
-          const response = await conversationService.send(this.conversationId, content)
+          const response = await conversationService.send(this.deviceId, this.conversationId, content)
           this.adoptOptimisticMessageId(optimistic.id, response.user_message_id)
           this.setData({ activeTurnId: response.turn_id ?? '' })
         }
       } else {
-        const response = await conversationService.send(this.conversationId, content)
+        const response = await conversationService.send(this.deviceId, this.conversationId, content)
         this.adoptOptimisticMessageId(optimistic.id, response.user_message_id)
         this.setData({ activeTurnId: response.turn_id ?? '' })
       }
@@ -607,7 +608,7 @@ Page({
     if (!this.data.activeTurnId || this.data.stopping) return
     this.setData({ stopping: true, actionError: '' })
     try {
-      await conversationService.stop(this.conversationId, this.data.activeTurnId)
+      await conversationService.stop(this.deviceId, this.conversationId, this.data.activeTurnId)
       this.setData({ activeTurnId: '' })
       this.schedulePostSendReconciliation()
     } catch (error) {
@@ -655,7 +656,13 @@ Page({
       const selection = prompt.choice
         ? prompt.choice.multiple ? prompt.selection : prompt.selection[0]
         : undefined
-      await askUserService.submit(promptId, this.conversationId, prompt.values, selection)
+      await askUserService.submit(
+        promptId,
+        this.deviceId,
+        this.conversationId,
+        prompt.values,
+        selection,
+      )
       delete this.promptValues[promptId]
       delete this.promptSelections[promptId]
       await this.refreshPrompts()
@@ -685,7 +692,7 @@ Page({
     this.submittingPromptIds.push(promptId)
     this.rebuildPromptViews()
     try {
-      await askUserService.cancel(promptId, this.conversationId)
+      await askUserService.cancel(promptId, this.deviceId, this.conversationId)
       await this.refreshPrompts()
     } catch (error) {
       this.setData({ actionError: error instanceof Error ? error.message : '取消请求失败' })
