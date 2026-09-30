@@ -28,6 +28,7 @@ pub const TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY: &str =
 pub const TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY: &str = "task_runner.ai.prompt_cache.enabled";
 pub const TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY: &str =
     "task_runner.ai.prompt_cache.retention_enabled";
+pub const DEFAULT_TASK_RUNNER_MAX_ITERATIONS: usize = 600;
 pub const DEFAULT_TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS: usize = 8;
 pub const DEFAULT_TASK_RUNNER_REVIEW_MISSING_READ_FAILURES: usize = 2;
 pub const DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL: usize = 8;
@@ -311,7 +312,7 @@ mod tests {
     fn strict_task_runner_runtime_settings_use_managed_values() {
         let snapshot = ConfigSnapshot {
             environment: "test".to_string(),
-            service_name: "task-runner".to_string(),
+            service_name: "local-connector-service".to_string(),
             revision: 7,
             checksum: "checksum-7".to_string(),
             values: BTreeMap::from([
@@ -360,7 +361,7 @@ mod tests {
     fn strict_task_runner_runtime_settings_reject_missing_managed_values() {
         let snapshot = ConfigSnapshot {
             environment: "test".to_string(),
-            service_name: "task-runner".to_string(),
+            service_name: "local-connector-service".to_string(),
             revision: 1,
             checksum: "checksum".to_string(),
             values: BTreeMap::new(),
@@ -379,7 +380,7 @@ mod tests {
     fn strict_task_runner_runtime_settings_reject_out_of_range_values() {
         let snapshot = ConfigSnapshot {
             environment: "test".to_string(),
-            service_name: "task-runner".to_string(),
+            service_name: "local-connector-service".to_string(),
             revision: 1,
             checksum: "checksum".to_string(),
             values: BTreeMap::from([(TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY.to_string(), json!(1))]),

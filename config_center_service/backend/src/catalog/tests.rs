@@ -91,6 +91,47 @@ fn catalog_exposes_native_agent_runtime_policy() {
 }
 
 #[test]
+fn catalog_exposes_local_task_execution_policy_without_a_retired_service_domain() {
+    let definitions = builtin_definitions();
+    for (key, expected_default) in [
+        (
+            TASK_RUNNER_MAX_ITERATIONS_CONFIG_KEY,
+            json!(DEFAULT_TASK_RUNNER_MAX_ITERATIONS),
+        ),
+        (
+            TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS_CONFIG_KEY,
+            json!(DEFAULT_TASK_RUNNER_REVIEW_READ_ONLY_ITERATIONS),
+        ),
+        (
+            TASK_RUNNER_REVIEW_MISSING_READ_FAILURES_CONFIG_KEY,
+            json!(DEFAULT_TASK_RUNNER_REVIEW_MISSING_READ_FAILURES),
+        ),
+        (
+            TASK_RUNNER_REVIEW_REPEAT_INTERVAL_CONFIG_KEY,
+            json!(DEFAULT_TASK_RUNNER_REVIEW_REPEAT_INTERVAL),
+        ),
+        (
+            TASK_RUNNER_PROMPT_CACHE_ENABLED_CONFIG_KEY,
+            json!(DEFAULT_TASK_RUNNER_PROMPT_CACHE_ENABLED),
+        ),
+        (
+            TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED_CONFIG_KEY,
+            json!(DEFAULT_TASK_RUNNER_PROMPT_CACHE_RETENTION_ENABLED),
+        ),
+    ] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.key == key)
+            .unwrap_or_else(|| panic!("missing Local Agent task execution definition {key}"));
+        assert_eq!(definition.scope, "shared");
+        assert_eq!(definition.service_name, None);
+        assert_eq!(definition.default_value, expected_default);
+        assert_eq!(definition.reload_mode, "next_run");
+        assert!(definition.env_aliases.is_empty());
+    }
+}
+
+#[test]
 fn catalog_exposes_authoritative_pressure_controls() {
     let definitions = builtin_definitions();
     let platform = definitions
