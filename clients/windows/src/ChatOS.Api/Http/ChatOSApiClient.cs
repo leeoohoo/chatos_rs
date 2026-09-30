@@ -7,6 +7,12 @@ namespace ChatOS.Api.Http;
 
 public sealed class ChatOSApiClient
 {
+    private enum ApiService
+    {
+        ChatOS,
+        UserService,
+    }
+
     private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(60);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -25,11 +31,32 @@ public sealed class ChatOSApiClient
     public Task<T> GetAsync<T>(string path, CancellationToken cancellationToken = default) =>
         SendAsync<T>(HttpMethod.Get, path, null, cancellationToken);
 
+    public Task<T> GetUserServiceAsync<T>(
+        string path,
+        CancellationToken cancellationToken = default) =>
+        SendCoreAsync<T>(
+            HttpMethod.Get,
+            path,
+            null,
+            cancellationToken,
+            service: ApiService.UserService);
+
     public Task<T> PostAsync<T>(
         string path,
         object? body = null,
         CancellationToken cancellationToken = default) =>
         SendAsync<T>(HttpMethod.Post, path, body, cancellationToken);
+
+    public Task<T> PostUserServiceAsync<T>(
+        string path,
+        object? body = null,
+        CancellationToken cancellationToken = default) =>
+        SendCoreAsync<T>(
+            HttpMethod.Post,
+            path,
+            body,
+            cancellationToken,
+            service: ApiService.UserService);
 
     public Task<T> PostAsync<T>(
         string path,
@@ -49,17 +76,26 @@ public sealed class ChatOSApiClient
         CancellationToken cancellationToken = default) =>
         SendAsync<T>(HttpMethod.Delete, path, null, cancellationToken);
 
-    public async Task<T> SendAsync<T>(
+    public Task<T> SendAsync<T>(
         HttpMethod method,
         string path,
         object? body,
         CancellationToken cancellationToken = default,
-        TimeSpan? timeout = null)
+        TimeSpan? timeout = null) =>
+        SendCoreAsync<T>(method, path, body, cancellationToken, timeout);
+
+    private async Task<T> SendCoreAsync<T>(
+        HttpMethod method,
+        string path,
+        object? body,
+        CancellationToken cancellationToken = default,
+        TimeSpan? timeout = null,
+        ApiService service = ApiService.ChatOS)
     {
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutSource.CancelAfter(timeout ?? DefaultRequestTimeout);
         var requestCancellationToken = timeoutSource.Token;
-        using var request = new HttpRequestMessage(method, NormalizePath(path));
+        using var request = new HttpRequestMessage(method, ResolveRequestUri(path, service));
         try
         {
             var token = await _tokenStore.GetAccessTokenAsync(requestCancellationToken).ConfigureAwait(false);
@@ -125,6 +161,34 @@ public sealed class ChatOSApiClient
     }
 
     private static string NormalizePath(string path) => path.TrimStart('/');
+
+    private Uri ResolveRequestUri(string path, ApiService service)
+    {
+        var normalizedPath = NormalizePath(path);
+        if (service == ApiService.ChatOS)
+        {
+            return new Uri(normalizedPath, UriKind.Relative);
+        }
+
+        var baseAddress = _httpClient.BaseAddress
+            ?? throw new InvalidOperationException("ChatOS API base address is required.");
+        const string chatOSPath = "/api/chatos";
+        var basePath = baseAddress.AbsolutePath.TrimEnd('/');
+        if (!basePath.EndsWith(chatOSPath, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "ChatOS API base address must end with /api/chatos to resolve service routes.");
+        }
+
+        var prefix = basePath[..^chatOSPath.Length];
+        var builder = new UriBuilder(baseAddress)
+        {
+            Path = $"{prefix}/api/user/",
+            Query = string.Empty,
+            Fragment = string.Empty,
+        };
+        return new Uri(builder.Uri, normalizedPath);
+    }
 
     private static string ResolveErrorMessage(string payload, HttpStatusCode statusCode)
     {

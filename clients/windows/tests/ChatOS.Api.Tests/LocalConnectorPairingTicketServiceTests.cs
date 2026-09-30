@@ -13,7 +13,7 @@ public sealed class LocalConnectorPairingTicketServiceTests
         var client = ApiTestClient.Create(store, request =>
         {
             Assert.Equal(HttpMethod.Post, request.Method);
-            Assert.Equal("/api/chatos/auth/local-connector-ticket", request.RequestUri?.AbsolutePath);
+            Assert.Equal("/api/user/auth/local-connector-ticket", request.RequestUri?.AbsolutePath);
             Assert.Equal("Bearer", request.Headers.Authorization?.Scheme);
             Assert.Equal("api-token", request.Headers.Authorization?.Parameter);
             return StubHttpMessageHandler.Json("{\"ticket\":\"pairing-ticket\"}");

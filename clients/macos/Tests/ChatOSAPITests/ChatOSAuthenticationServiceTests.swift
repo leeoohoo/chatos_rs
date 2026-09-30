@@ -27,7 +27,7 @@ final class ChatOSAuthenticationServiceTests: XCTestCase {
 
         let requests = await transport.requests()
         let request = try XCTUnwrap(requests.first)
-        XCTAssertEqual(request.url.path, "/api/chatos/auth/login")
+        XCTAssertEqual(request.url.path, "/api/user/auth/login")
         let body = try XCTUnwrap(request.body)
         let payload = try XCTUnwrap(
             JSONSerialization.jsonObject(with: body) as? [String: String]
@@ -54,6 +54,7 @@ final class ChatOSAuthenticationServiceTests: XCTestCase {
         XCTAssertEqual(storedToken, "token-refreshed")
         let requests = await transport.requests()
         let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(request.url.path, "/api/user/auth/me")
         XCTAssertEqual(request.headers["Authorization"], "Bearer token-old")
     }
 
@@ -76,7 +77,7 @@ final class ChatOSAuthenticationServiceTests: XCTestCase {
         XCTAssertEqual(delivery.resendAfterSeconds, 60)
         let requests = await transport.requests()
         let request = try XCTUnwrap(requests.first)
-        XCTAssertEqual(request.url.path, "/api/chatos/auth/register/send-code")
+        XCTAssertEqual(request.url.path, "/api/user/auth/register/send-code")
         let payload = try XCTUnwrap(
             JSONSerialization.jsonObject(with: try XCTUnwrap(request.body)) as? [String: String]
         )
@@ -107,7 +108,7 @@ final class ChatOSAuthenticationServiceTests: XCTestCase {
         XCTAssertEqual(storedToken, "registered-token")
         let requests = await transport.requests()
         let request = try XCTUnwrap(requests.first)
-        XCTAssertEqual(request.url.path, "/api/chatos/auth/register")
+        XCTAssertEqual(request.url.path, "/api/user/auth/register")
         let payload = try XCTUnwrap(
             JSONSerialization.jsonObject(with: try XCTUnwrap(request.body)) as? [String: String]
         )
@@ -139,6 +140,30 @@ final class ChatOSAuthenticationServiceTests: XCTestCase {
 
         let storedToken = try await store.loadAccessToken()
         XCTAssertNil(storedToken)
+    }
+
+    func testPairingTicketUsesUserServiceRoute() async throws {
+        let transport = QueueTransport(responses: [
+            HTTPResponse(
+                statusCode: 200,
+                headers: [:],
+                body: Data(#"{"ticket":"pairing-ticket"}"#.utf8)
+            ),
+        ])
+        let client = ChatOSAPIClient(
+            configuration: .init(baseURL: URL(string: "https://example.com/api/chatos")!),
+            accessToken: "token",
+            transport: transport
+        )
+        let provider = ChatOSLocalConnectorPairingTicketProvider(client: client)
+
+        let ticket = try await provider.issueLocalConnectorPairingTicket()
+
+        XCTAssertEqual(ticket, "pairing-ticket")
+        let requests = await transport.requests()
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(request.url.path, "/api/user/auth/local-connector-ticket")
+        XCTAssertEqual(request.headers["Authorization"], "Bearer token")
     }
 
     private func makeService(

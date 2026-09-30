@@ -13,7 +13,7 @@ public sealed class AuthenticationServiceTests
         var client = ApiTestClient.Create(store, request =>
         {
             Assert.Equal(HttpMethod.Post, request.Method);
-            Assert.Equal("/api/chatos/auth/login", request.RequestUri?.AbsolutePath);
+            Assert.Equal("/api/user/auth/login", request.RequestUri?.AbsolutePath);
             return StubHttpMessageHandler.Json("""
                 {"access_token":"token-123","user":{"id":"u1","username":"lilei","display_name":"李雷","role":"user"}}
                 """);
@@ -66,7 +66,7 @@ public sealed class AuthenticationServiceTests
         var client = ApiTestClient.Create(store, request =>
         {
             Assert.Equal(HttpMethod.Post, request.Method);
-            Assert.Equal("/api/chatos/auth/register/send-code", request.RequestUri?.AbsolutePath);
+            Assert.Equal("/api/user/auth/register/send-code", request.RequestUri?.AbsolutePath);
             using var body = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
             Assert.Equal("person@example.com", body.RootElement.GetProperty("email").GetString());
             Assert.Equal("invite-123", body.RootElement.GetProperty("invite_code").GetString());
@@ -90,7 +90,7 @@ public sealed class AuthenticationServiceTests
         var client = ApiTestClient.Create(store, request =>
         {
             Assert.Equal(HttpMethod.Post, request.Method);
-            Assert.Equal("/api/chatos/auth/register", request.RequestUri?.AbsolutePath);
+            Assert.Equal("/api/user/auth/register", request.RequestUri?.AbsolutePath);
             using var body = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
             var root = body.RootElement;
             Assert.Equal("new@example.com", root.GetProperty("email").GetString());

@@ -15,7 +15,7 @@ public sealed class LocalConnectorPairingTicketService : ILocalConnectorPairingT
 
     public async Task<string> IssueAsync(CancellationToken cancellationToken = default)
     {
-        var response = await _client.PostAsync<PairingTicketResponse>(
+        var response = await _client.PostUserServiceAsync<PairingTicketResponse>(
             "auth/local-connector-ticket",
             cancellationToken: cancellationToken).ConfigureAwait(false);
         return string.IsNullOrWhiteSpace(response.Ticket)

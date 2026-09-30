@@ -21,7 +21,10 @@ public actor ChatOSAuthenticationService: AuthenticationServicing {
 
         do {
             try await client.setAccessToken(token)
-            let response: MeResponseDTO = try await client.request("/auth/me")
+            let response: MeResponseDTO = try await client.request(
+                "/auth/me",
+                service: .userService
+            )
             return AuthSession(user: response.user.domainModel)
         } catch ChatOSAPIError.unauthorized {
             try? await client.setAccessToken(nil)
@@ -39,7 +42,8 @@ public actor ChatOSAuthenticationService: AuthenticationServicing {
         let response: LoginResponseDTO = try await client.request(
             "/auth/login",
             method: "POST",
-            body: body
+            body: body,
+            service: .userService
         )
         try await client.setAccessToken(response.accessToken)
         return AuthSession(user: response.user.domainModel)
@@ -61,7 +65,8 @@ public actor ChatOSAuthenticationService: AuthenticationServicing {
         let response: SendRegistrationCodeResponseDTO = try await client.request(
             "/auth/register/send-code",
             method: "POST",
-            body: body
+            body: body,
+            service: .userService
         )
         return RegistrationCodeDelivery(
             expiresInSeconds: response.expiresInSeconds,
@@ -90,7 +95,8 @@ public actor ChatOSAuthenticationService: AuthenticationServicing {
         let response: LoginResponseDTO = try await client.request(
             "/auth/register",
             method: "POST",
-            body: body
+            body: body,
+            service: .userService
         )
         try await client.setAccessToken(response.accessToken)
         return AuthSession(user: response.user.domainModel)

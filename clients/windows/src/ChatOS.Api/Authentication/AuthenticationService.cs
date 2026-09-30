@@ -29,7 +29,7 @@ public sealed class AuthenticationService : IAuthenticationService
 
         try
         {
-            var response = await _client.GetAsync<MeResponseDto>(
+            var response = await _client.GetUserServiceAsync<MeResponseDto>(
                 "auth/me",
                 cancellationToken).ConfigureAwait(false);
             return new AuthSession(response.User.ToDomain());
@@ -51,7 +51,7 @@ public sealed class AuthenticationService : IAuthenticationService
             throw new ArgumentException("Username and password are required.");
         }
 
-        var response = await _client.PostAsync<LoginResponseDto>(
+        var response = await _client.PostUserServiceAsync<LoginResponseDto>(
             "auth/login",
             new LoginRequestDto(username, password),
             cancellationToken).ConfigureAwait(false);
@@ -75,7 +75,7 @@ public sealed class AuthenticationService : IAuthenticationService
         if (email.Length == 0 || inviteCode.Length == 0)
             throw new ArgumentException("Email and invitation code are required.");
 
-        var response = await _client.PostAsync<SendRegistrationCodeResponseDto>(
+        var response = await _client.PostUserServiceAsync<SendRegistrationCodeResponseDto>(
             "auth/register/send-code",
             new SendRegistrationCodeRequestDto(email, inviteCode),
             cancellationToken).ConfigureAwait(false);
@@ -98,7 +98,7 @@ public sealed class AuthenticationService : IAuthenticationService
             inviteCode.Length == 0 || verificationCode.Length == 0)
             throw new ArgumentException("Complete registration information is required.");
 
-        var response = await _client.PostAsync<LoginResponseDto>(
+        var response = await _client.PostUserServiceAsync<LoginResponseDto>(
             "auth/register",
             new RegisterRequestDto(email, password, inviteCode, verificationCode),
             cancellationToken).ConfigureAwait(false);

@@ -10,7 +10,8 @@ public actor ChatOSLocalConnectorPairingTicketProvider: LocalConnectorPairingTic
     public func issueLocalConnectorPairingTicket() async throws -> String {
         let response: PairingTicketResponse = try await client.request(
             "/auth/local-connector-ticket",
-            method: "POST"
+            method: "POST",
+            service: .userService
         )
         return response.ticket
     }
