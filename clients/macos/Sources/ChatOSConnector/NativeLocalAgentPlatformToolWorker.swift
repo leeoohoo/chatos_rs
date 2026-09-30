@@ -12,20 +12,15 @@ public enum NativeLocalAgentPlatformToolCatalog {
     private static let terminalReadOnlyToolNames = [
         "process_poll", "process_log", "process_wait",
     ]
-    private static let requirementSurveyReadOnlyToolNames =
-        NativeMCPRequirementSurveyTools.readToolNames.sorted()
     private static let pluginReadOnlyToolNames =
         NativeAgentCapabilityBrokerToolCatalog.readOnlyToolNames.sorted()
     static let taskExecutionTerminalToolNames: Set<String> = [
         "execute_command", "process_poll", "process_log", "process_wait", "process_write",
         "process_kill",
     ]
-    static let taskExecutionRequirementSurveyToolNames =
-        NativeMCPRequirementSurveyTools.readToolNames
-            .union(NativeMCPRequirementSurveyTools.writeToolNames)
     public static let readOnlyToolNames = [attachmentReadToolName]
         + projectReadOnlyToolNames + terminalReadOnlyToolNames
-        + requirementSurveyReadOnlyToolNames + pluginReadOnlyToolNames
+        + pluginReadOnlyToolNames
     public static let approvalExemptToolNames = [
         "open_edit_session", "stage_edit_batch", "abort_edit_session",
         NativeAgentCapabilityBrokerToolCatalog.invokeToolName,
@@ -134,8 +129,6 @@ public enum NativeLocalAgentPlatformToolCatalog {
                   taskExecutionTerminalToolNames.contains(name) else { return nil }
             return capabilityTool(value)
         }
-        + NativeMCPRequirementSurveyTools.readToolDefinitions.map(capabilityTool)
-        + NativeMCPRequirementSurveyTools.writeToolDefinitions.map(capabilityTool)
         + NativeAgentCapabilityBrokerToolCatalog.localAgentCapabilityTools
 
     static var taskExecutionToolNames: Set<String> {
@@ -306,7 +299,6 @@ public actor NativeLocalAgentPlatformToolWorker {
         attachmentRootURL: URL,
         projects: NativeLocalProjectsService,
         connector: NativeLocalConnectorService,
-        agentGroupChats: NativeAgentGroupChatService,
         workerID: String = "macos-platform-tool-worker"
     ) {
         client = .init(host: host)
@@ -320,8 +312,7 @@ public actor NativeLocalAgentPlatformToolWorker {
                 projects: projects,
                 connector: connector,
                 writeStore: writeStore,
-                terminalStore: terminalStore,
-                agentGroupChats: agentGroupChats
+                terminalStore: terminalStore
             )
         )
         approvalHandler = NativeLocalAgentToolApprovalHandler(

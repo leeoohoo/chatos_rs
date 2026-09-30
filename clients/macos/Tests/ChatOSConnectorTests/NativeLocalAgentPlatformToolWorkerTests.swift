@@ -20,9 +20,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             [
                 "local_attachment_read", "read_file_raw", "read_file_range", "list_dir",
                 "search_text", "read_file", "search_files", "process_poll", "process_log",
-                "process_wait", "requirement_survey_get", "requirement_survey_list",
-                "requirement_survey_project_tasks", "skill_activate", "skill_list_resources",
-                "skill_read_resource", "capability_describe", "capability_search",
+                "process_wait", "capability_describe", "capability_search",
                 "capability_skill_activate", "capability_skill_read_resource",
             ]
         )
@@ -34,10 +32,6 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                 "commit_edit_session", "abort_edit_session",
                 "execute_command", "process_poll", "process_log", "process_wait",
                 "process_write", "process_kill",
-                "skill_activate", "skill_list_resources", "skill_read_resource",
-                "requirement_survey_list", "requirement_survey_get",
-                "requirement_survey_project_tasks", "requirement_survey_create",
-                "requirement_survey_resolve",
                 "capability_search", "capability_describe", "capability_skill_activate",
                 "capability_skill_read_resource", "capability_invoke",
             ])

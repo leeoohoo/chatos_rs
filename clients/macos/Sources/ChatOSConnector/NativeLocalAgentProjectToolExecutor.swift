@@ -82,7 +82,6 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
     private let contextResolver: NativeLocalAgentProjectContextResolver
     private let writeStore: NativeMCPCodeWriteStore
     private let terminalStore: NativeLocalAgentTerminalStore
-    private let agentGroupChats: NativeAgentGroupChatService
     private let pluginTools: NativeLocalAgentPluginToolExecutor
 
     init(
@@ -90,13 +89,11 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
         projects: NativeLocalProjectsService,
         connector: NativeLocalConnectorService,
         writeStore: NativeMCPCodeWriteStore = .init(),
-        terminalStore: NativeLocalAgentTerminalStore = .init(),
-        agentGroupChats: NativeAgentGroupChatService
+        terminalStore: NativeLocalAgentTerminalStore = .init()
     ) {
         contextResolver = .init(host: host, projects: projects, connector: connector)
         self.writeStore = writeStore
         self.terminalStore = terminalStore
-        self.agentGroupChats = agentGroupChats
         pluginTools = .init(connector: connector)
     }
 
@@ -146,23 +143,6 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                     ),
                     projectRoot: context.resolvedPath.absoluteURL
                 )
-            } else if NativeLocalAgentPlatformToolCatalog.taskExecutionRequirementSurveyToolNames
-                .contains(invocation.toolName) {
-                if NativeMCPRequirementSurveyTools.writeToolNames.contains(invocation.toolName) {
-                    guard invocation.requiresApproval,
-                          invocation.approvalStatus == "approved" else {
-                        throw NativeLocalAgentPlatformToolError.approvalRequired
-                    }
-                }
-                let store = try await agentGroupChats.store()
-                result = try await NativeMCPRequirementSurveyTools(
-                    store: store,
-                    ownerUserID: ownerUserID,
-                    projectID: context.projectID,
-                    creatorAgentID: "local-task-execution",
-                    sourceDeliveryID: invocation.runID,
-                    now: { Int64(Date().timeIntervalSince1970 * 1_000) }
-                ).call(name: invocation.toolName, arguments: nativeArguments)
             } else if NativeLocalAgentPlatformToolCatalog.taskExecutionTerminalToolNames.contains(
                 invocation.toolName
             ) {

@@ -240,8 +240,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 host: localAgentHost,
                 attachmentRootURL: attachmentRootURL,
                 projects: localProjectsService,
-                connector: localConnectorService,
-                agentGroupChats: agentGroupChatService
+                connector: localConnectorService
             )
             localAgentRuntimeSettingsService = settings
             localAgentPlatformToolWorker = worker
