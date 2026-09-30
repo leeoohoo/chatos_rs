@@ -9,8 +9,6 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
                 ["room_goal": "目标"]
             case .managerCycle:
                 ["heartbeat_directive": "巡检"]
-            case .requirementSurveySkill:
-                ["skill_catalog": "- SKreq-router = requirement-survey [router]"]
             case .heartbeatDirective:
                 ["heartbeat_prompt": "处理未读"]
             case .professionSkill:
@@ -36,7 +34,6 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
                     "capability_discovery_skill": "capability skill",
                     "staffing_instructions": "staffing",
                     "project_instructions": "project",
-                    "requirement_survey_skill": "requirement survey skill",
                     "manager_instructions": "manager",
                     "executor_instructions": "executor",
                     "todo_status_instructions": "todo status",
@@ -52,7 +49,6 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
                     "capability_discovery_skill": "capability skill",
                     "staffing_instructions": "staffing",
                     "project_instructions": "project",
-                    "requirement_survey_skill": "requirement survey skill",
                     "manager_instructions": "manager",
                     "todo_status_instructions": "todo status",
                     "compact_communication_skill": "compact communication skill",
@@ -63,7 +59,6 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
                     "agent_name": "agent",
                     "role_prompt": "role prompt",
                     "capability_discovery_skill": "capability skill",
-                    "requirement_survey_skill": "requirement survey skill",
                     "executor_instructions": "executor",
                     "compact_communication_skill": "compact communication skill",
                     "profession_skill": "profession skill",
@@ -144,7 +139,6 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
                 "capability_discovery_skill": "capability",
                 "staffing_instructions": "",
                 "project_instructions": "",
-                "requirement_survey_skill": "",
                 "manager_instructions": "manager",
                 "todo_status_instructions": "",
                 "compact_communication_skill": "communication",
@@ -162,7 +156,6 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
                 "agent_name": "丹青",
                 "role_prompt": "完成任务",
                 "capability_discovery_skill": "capability",
-                "requirement_survey_skill": "",
                 "executor_instructions": "executor",
                 "compact_communication_skill": "communication",
                 "profession_skill": "profession",
@@ -174,59 +167,4 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
         XCTAssertFalse(executor.contains("chat_read_all_unread"))
     }
 
-    func testRequirementSurveySkillIsProgressiveAndToolDirected() {
-        let entry = LocalAgentPromptCatalog.render(
-            .requirementSurveySkill,
-            values: [
-                "skill_catalog": LocalAgentProgressiveSkillCatalog.requirementSurveyCatalog(
-                    canWrite: true
-                ).map { "- \($0.skillRef) = \($0.name) [\($0.role)]" }
-                    .joined(separator: "\n"),
-            ]
-        )
-
-        XCTAssertTrue(entry.contains("Plugin Skill"))
-        XCTAssertTrue(entry.contains("skill_activate"))
-        XCTAssertTrue(entry.contains("skill_read_resource"))
-        XCTAssertTrue(entry.contains("SKreq-router"))
-        XCTAssertFalse(entry.contains("requirement_survey_create"))
-        XCTAssertFalse(entry.contains("team_ref"))
-    }
-
-    func testRequirementSurveyUsesPluginStyleRouterLeavesAndResources() throws {
-        let catalog = LocalAgentProgressiveSkillCatalog.requirementSurveyCatalog(canWrite: true)
-        XCTAssertEqual(catalog.count, 5)
-        XCTAssertEqual(catalog.first?.role, "router")
-        let readOnly = LocalAgentProgressiveSkillCatalog.requirementSurveyCatalog(canWrite: false)
-        XCTAssertEqual(
-            readOnly.map(\.skillRef),
-            [
-                LocalAgentProgressiveSkillCatalog.requirementSurveyRouterRef,
-                LocalAgentProgressiveSkillCatalog.requirementSurveyReadResultsRef,
-                LocalAgentProgressiveSkillCatalog.requirementSurveyReviewExecutionRef,
-            ]
-        )
-
-        let router = try LocalAgentProgressiveSkillCatalog.activateRequirementSurveySkill(
-            skillRef: LocalAgentProgressiveSkillCatalog.requirementSurveyRouterRef
-        )
-        XCTAssertTrue(router.instructions.contains("chatos.role: router"))
-        XCTAssertTrue(router.instructions.contains("requirement-survey-create"))
-
-        let create = try LocalAgentProgressiveSkillCatalog.activateRequirementSurveySkill(
-            skillRef: LocalAgentProgressiveSkillCatalog.requirementSurveyCreateRef
-        )
-        XCTAssertEqual(create.skill.role, "leaf")
-        XCTAssertTrue(create.instructions.contains("requirement_survey_create"))
-        XCTAssertEqual(create.resources.map(\.relativePath), ["references/example.md"])
-
-        let example = try LocalAgentProgressiveSkillCatalog.readRequirementSurveyResource(
-            skillRef: LocalAgentProgressiveSkillCatalog.requirementSurveyCreateRef,
-            relativePath: "references/example.md",
-            offset: 0,
-            maximumCharacters: 64_000
-        )
-        XCTAssertTrue(example.content.contains("request_key"))
-        XCTAssertFalse(example.truncated)
-    }
 }

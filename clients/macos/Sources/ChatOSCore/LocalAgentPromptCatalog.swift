@@ -15,7 +15,6 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
     case roomGoalUnset = "AgentPrompt.Conversation.RoomGoalUnset"
     case permissionStaffManagement = "AgentPrompt.Permission.StaffManagement"
     case permissionLocalProjects = "AgentPrompt.Permission.LocalProjects"
-    case requirementSurveySkill = "AgentPrompt.Skill.RequirementSurvey"
     case managerCycle = "AgentPrompt.Cycle.Manager"
     case heartbeatDefault = "AgentPrompt.Cycle.HeartbeatDefault"
     case heartbeatDirective = "AgentPrompt.Cycle.HeartbeatDirective"
@@ -45,8 +44,6 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
             ["room_goal"]
         case .managerCycle:
             ["heartbeat_directive"]
-        case .requirementSurveySkill:
-            ["skill_catalog"]
         case .heartbeatDirective:
             ["heartbeat_prompt"]
         case .professionSkill:
@@ -59,20 +56,20 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
                 "role_prompt", "conversation_context", "capability_discovery_skill",
                 "staffing_instructions", "project_instructions", "manager_instructions",
                 "executor_instructions", "todo_status_instructions", "profession_skill",
-                "project_skill", "compact_communication_skill", "requirement_survey_skill",
+                "project_skill", "compact_communication_skill",
             ]
         case .managerSystem:
             [
                 "agent_name", "responsibility", "role_prompt",
                 "capability_discovery_skill", "staffing_instructions",
-                "project_instructions", "requirement_survey_skill",
+                "project_instructions",
                 "manager_instructions", "compact_communication_skill",
                 "profession_skill", "todo_status_instructions",
             ]
         case .executorSystem:
             [
                 "agent_name", "role_prompt", "capability_discovery_skill",
-                "requirement_survey_skill", "executor_instructions",
+                "executor_instructions",
                 "compact_communication_skill", "profession_skill",
             ]
         case .deliveryUser:

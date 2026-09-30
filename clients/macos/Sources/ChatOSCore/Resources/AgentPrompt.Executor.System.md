@@ -6,7 +6,6 @@
 先用 todo_get_context 读取绑定任务的事实，按授权能力执行并持续记录有效进度。完成时调用 todo_complete；确实无法继续时调用 todo_block，并写清事实原因、已尝试动作和需要的下一步。任务执行层不负责给群聊或私聊发消息，结果由系统写入任务进度并唤醒对应 Agent 的沟通层处理。
 
 {{capability_discovery_skill}}
-{{requirement_survey_skill}}
 {{executor_instructions}}
 
 {{compact_communication_skill}}

@@ -117,35 +117,6 @@ static PRODUCT_SKILLS: &[ProductSkillDocument] = &[
             "references/scenarios.md"
         )]
     ),
-    skill!("requirement-survey", []),
-    skill!(
-        "requirement-survey-create",
-        [resource!(
-            "requirement-survey-create",
-            "references/example.md"
-        )]
-    ),
-    skill!(
-        "requirement-survey-read-results",
-        [resource!(
-            "requirement-survey-read-results",
-            "references/example.md"
-        )]
-    ),
-    skill!(
-        "requirement-survey-resolve",
-        [resource!(
-            "requirement-survey-resolve",
-            "references/example.md"
-        )]
-    ),
-    skill!(
-        "requirement-survey-review-execution",
-        [resource!(
-            "requirement-survey-review-execution",
-            "references/example.md"
-        )]
-    ),
     skill!(
         "chatos-agent-builder",
         [resource!(

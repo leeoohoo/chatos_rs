@@ -52,11 +52,6 @@ actor LocalAgentRunReferenceVault {
         let revision: Int
     }
 
-    struct RequirementSurveyAuthority: Codable, Sendable {
-        let surveyID: String
-        let projectID: String
-    }
-
     private struct StringAuthority: Codable, Sendable {
         let value: String
     }
@@ -92,7 +87,6 @@ actor LocalAgentRunReferenceVault {
     private var plugins: [String: LocalAgentTodoPluginOption] = [:]
     private var attachments: [String: AttachmentAuthority] = [:]
     private var teamAssets: [String: TeamAssetAuthority] = [:]
-    private var requirementSurveys: [String: RequirementSurveyAuthority] = [:]
     private var documents: [String: DocumentAuthority] = [:]
     private var createdDocumentBytes = 0
     private var sendReceipts: [String: SendReceipt] = [:]
@@ -362,32 +356,6 @@ actor LocalAgentRunReferenceVault {
             prefix: "team_asset_",
             kind: "team_asset",
             as: TeamAssetAuthority.self
-        )
-    }
-
-    func requirementSurveyReference(surveyID: String, projectID: String) -> String {
-        if let existing = requirementSurveys.first(where: {
-            $0.value.surveyID == surveyID && $0.value.projectID == projectID
-        })?.key { return existing }
-        let authority = RequirementSurveyAuthority(
-            surveyID: surveyID,
-            projectID: projectID
-        )
-        let reference = sealedReference(
-            prefix: "requirement_survey_",
-            kind: "requirement_survey",
-            authority: authority
-        )
-        requirementSurveys[reference] = authority
-        return reference
-    }
-
-    func requirementSurveyAuthority(reference: String) -> RequirementSurveyAuthority? {
-        requirementSurveys[reference] ?? openedReference(
-            reference,
-            prefix: "requirement_survey_",
-            kind: "requirement_survey",
-            as: RequirementSurveyAuthority.self
         )
     }
 

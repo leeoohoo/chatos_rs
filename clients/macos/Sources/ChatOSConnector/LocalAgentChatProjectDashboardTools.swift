@@ -77,7 +77,6 @@ extension LocalAgentChatToolProvider {
         let inProgressTodos: Int
         let blockedTodos: Int
         let completedTodos: Int
-        let pendingSurveys: Int
         let pendingApprovals: Int
 
         enum CodingKeys: String, CodingKey {
@@ -86,7 +85,6 @@ extension LocalAgentChatToolProvider {
             case inProgressTodos = "in_progress_todos"
             case blockedTodos = "blocked_todos"
             case completedTodos = "completed_todos"
-            case pendingSurveys = "pending_surveys"
             case pendingApprovals = "pending_approvals"
         }
     }
@@ -154,11 +152,6 @@ extension LocalAgentChatToolProvider {
             ))
         }
 
-        let surveys = try await store.listRequirementSurveys(
-            ownerUserID: context.ownerUserID,
-            projectID: team.projectID,
-            status: .pending
-        )
         let approvals = try await pendingApprovalCount(teamRoomID: team.id)
         let dashboard = try await store.projectDashboard(
             ownerUserID: context.ownerUserID,
@@ -178,7 +171,6 @@ extension LocalAgentChatToolProvider {
                 inProgressTodos: todos.filter { $0.status == .inProgress }.count,
                 blockedTodos: todos.filter { $0.status == .blocked }.count,
                 completedTodos: todos.filter { $0.status == .completed }.count,
-                pendingSurveys: surveys.count,
                 pendingApprovals: approvals
             ),
             todos: todoResponses

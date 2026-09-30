@@ -17,7 +17,6 @@ extension LocalAgentGroupChatScheduler {
         let projectInstructions = LocalAgentPermission.canAccessLocalProjects(
             profile.draft.defaultSkillIDs
         ) ? LocalAgentPromptCatalog.render(.permissionLocalProjects) : ""
-        let requirementSurveySkill = ""
         let heartbeatDirective: String
         if delivery.triggerKind == .heartbeat {
             heartbeatDirective = LocalAgentPromptCatalog.render(
@@ -65,7 +64,6 @@ extension LocalAgentGroupChatScheduler {
                     ).instructions,
                     "staffing_instructions": staffingInstructions,
                     "project_instructions": projectInstructions,
-                    "requirement_survey_skill": requirementSurveySkill,
                     "manager_instructions": heartbeatInstructions,
                     "todo_status_instructions": todoStatusInstructions,
                     "compact_communication_skill": communicationSkill.promptBlock,
@@ -85,7 +83,6 @@ extension LocalAgentGroupChatScheduler {
                 "capability_discovery_skill": try BundledAgentSkillLoader.load(
                     named: "chatos-capability-discovery"
                 ).instructions,
-                "requirement_survey_skill": requirementSurveySkill,
                 "executor_instructions": todoInstructions,
                 "compact_communication_skill": communicationSkill.promptBlock,
                 "profession_skill": professionSkill,

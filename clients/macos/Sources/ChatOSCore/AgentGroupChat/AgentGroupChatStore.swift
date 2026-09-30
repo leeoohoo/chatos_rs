@@ -290,40 +290,6 @@ public protocol AgentGroupChatStore: Sendable {
         assetID: String,
         limit: Int
     ) async throws -> [LocalAgentTeamAssetRevision]
-    func createRequirementSurvey(
-        ownerUserID: String,
-        projectID: String,
-        creatorAgentID: String,
-        sourceDeliveryID: String,
-        requestKey: String,
-        draft: LocalAgentRequirementSurveyDraft,
-        nowUnixMs: Int64
-    ) async throws -> LocalAgentRequirementSurvey
-    func listRequirementSurveys(
-        ownerUserID: String,
-        projectID: String,
-        status: LocalAgentRequirementSurveyStatus?
-    ) async throws -> [LocalAgentRequirementSurvey]
-    func requirementSurvey(
-        ownerUserID: String,
-        projectID: String,
-        surveyID: String
-    ) async throws -> LocalAgentRequirementSurvey?
-    func submitRequirementSurvey(
-        ownerUserID: String,
-        projectID: String,
-        surveyID: String,
-        submission: LocalAgentRequirementSurveySubmission,
-        nowUnixMs: Int64
-    ) async throws -> LocalAgentRequirementSurvey
-    func resolveRequirementSurvey(
-        ownerUserID: String,
-        projectID: String,
-        surveyID: String,
-        resolverAgentID: String,
-        resolution: LocalAgentRequirementSurveyResolution,
-        nowUnixMs: Int64
-    ) async throws -> LocalAgentRequirementSurvey
     func listTodoTeamAssetSnapshots(
         ownerUserID: String,
         todoID: String

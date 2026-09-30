@@ -405,12 +405,6 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             arguments: "{}"
         ))
         XCTAssertTrue(createdSurvey.isError)
-        let projectSurveys = try await store.listRequirementSurveys(
-            ownerUserID: "alice",
-            projectID: room.projectID,
-            status: .pending
-        )
-        XCTAssertEqual(projectSurveys.count, 0)
         let createdAsset = try await provider.execute(.init(
             id: "create-empty-directory-asset",
             name: LocalAgentChatToolProvider.teamAssetCreateToolName,

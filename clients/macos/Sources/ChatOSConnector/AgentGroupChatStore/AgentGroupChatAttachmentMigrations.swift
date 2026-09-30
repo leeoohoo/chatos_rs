@@ -34,46 +34,6 @@ extension AgentGroupChatMigrations {
             }
             return sqlite3_step(statement) == SQLITE_ROW
         }
-        func createProjectRequirementSurveyTable(ifNotExists: Bool) throws {
-            let guardClause = ifNotExists ? "IF NOT EXISTS " : ""
-            try execute(
-                """
-                CREATE TABLE \(guardClause)local_agent_requirement_surveys (
-                    owner_user_id TEXT NOT NULL,
-                    id TEXT NOT NULL,
-                    project_id TEXT NOT NULL,
-                    creator_agent_id TEXT NOT NULL,
-                    source_delivery_id TEXT NOT NULL,
-                    request_key TEXT NOT NULL,
-                    draft_json TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK(status IN ('pending', 'submitted')),
-                    submission_json TEXT,
-                    resolution_json TEXT,
-                    created_at_unix_ms INTEGER NOT NULL,
-                    submitted_at_unix_ms INTEGER,
-                    resolved_at_unix_ms INTEGER,
-                    PRIMARY KEY(owner_user_id, id),
-                    UNIQUE(
-                        owner_user_id, project_id, creator_agent_id,
-                        source_delivery_id, request_key
-                    ),
-                    FOREIGN KEY(owner_user_id, creator_agent_id)
-                        REFERENCES local_agent_profiles(owner_user_id, id),
-                    FOREIGN KEY(owner_user_id, source_delivery_id)
-                        REFERENCES project_agent_deliveries(owner_user_id, id)
-                )
-                """
-            )
-            try execute(
-                """
-                CREATE INDEX \(guardClause)local_agent_requirement_surveys_project
-                ON local_agent_requirement_surveys(
-                    owner_user_id, project_id, status, created_at_unix_ms, id
-                )
-                """
-            )
-        }
-
         if !hasColumn("sha256", table: "project_agent_message_attachments") {
             try execute("ALTER TABLE project_agent_message_attachments ADD COLUMN sha256 TEXT")
         }
@@ -258,19 +218,8 @@ extension AgentGroupChatMigrations {
             )
         }
         if !hasMigration(28) {
-            try createProjectRequirementSurveyTable(ifNotExists: true)
             try execute(
                 "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (28)"
-            )
-        }
-        if !hasColumn("resolution_json", table: "local_agent_requirement_surveys") {
-            try execute(
-                "ALTER TABLE local_agent_requirement_surveys ADD COLUMN resolution_json TEXT"
-            )
-        }
-        if !hasColumn("resolved_at_unix_ms", table: "local_agent_requirement_surveys") {
-            try execute(
-                "ALTER TABLE local_agent_requirement_surveys ADD COLUMN resolved_at_unix_ms INTEGER"
             )
         }
         if !hasMigration(29) {
@@ -279,56 +228,23 @@ extension AgentGroupChatMigrations {
             )
         }
         if !hasMigration(30) {
-            // Requirement surveys are project-owned. There is intentionally no legacy row
-            // conversion: this feature has no production data, so the obsolete team-owned
-            // table is replaced outright instead of preserving the wrong ownership model.
-            try execute("DROP INDEX IF EXISTS local_agent_requirement_surveys_team")
-            try execute("DROP TABLE IF EXISTS local_agent_requirement_surveys")
-            try createProjectRequirementSurveyTable(ifNotExists: false)
             try execute(
                 "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (30)"
             )
         }
         if !hasMigration(31) {
-            // Requirement Survey capability is task-scoped. Local task execution runs do not have local
-            // Agent profile or delivery rows, so provenance remains text without those FKs.
-            // There was no released survey data; replace the preview table directly.
+            try execute(
+                "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (31)"
+            )
+        }
+        if !hasMigration(32) {
+            // Requirement surveys are owned by Local Agent Host. Preview rows were never
+            // released and are intentionally discarded instead of migrated.
+            try execute("DROP INDEX IF EXISTS local_agent_requirement_surveys_team")
             try execute("DROP INDEX IF EXISTS local_agent_requirement_surveys_project")
             try execute("DROP TABLE IF EXISTS local_agent_requirement_surveys")
             try execute(
-                """
-                CREATE TABLE local_agent_requirement_surveys (
-                    owner_user_id TEXT NOT NULL,
-                    id TEXT NOT NULL,
-                    project_id TEXT NOT NULL,
-                    creator_agent_id TEXT NOT NULL CHECK(length(creator_agent_id) > 0),
-                    source_delivery_id TEXT NOT NULL CHECK(length(source_delivery_id) > 0),
-                    request_key TEXT NOT NULL,
-                    draft_json TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK(status IN ('pending', 'submitted')),
-                    submission_json TEXT,
-                    resolution_json TEXT,
-                    created_at_unix_ms INTEGER NOT NULL,
-                    submitted_at_unix_ms INTEGER,
-                    resolved_at_unix_ms INTEGER,
-                    PRIMARY KEY(owner_user_id, id),
-                    UNIQUE(
-                        owner_user_id, project_id, creator_agent_id,
-                        source_delivery_id, request_key
-                    )
-                )
-                """
-            )
-            try execute(
-                """
-                CREATE INDEX local_agent_requirement_surveys_project
-                ON local_agent_requirement_surveys(
-                    owner_user_id, project_id, status, created_at_unix_ms, id
-                )
-                """
-            )
-            try execute(
-                "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (31)"
+                "INSERT INTO local_agent_group_chat_schema_migrations(version) VALUES (32)"
             )
         }
     }
