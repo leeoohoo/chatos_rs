@@ -78,15 +78,18 @@ struct NativeLocalAgentProjectContextResolver: Sendable {
 struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting, Sendable {
     private let contextResolver: NativeLocalAgentProjectContextResolver
     private let writeStore: NativeMCPCodeWriteStore
+    private let terminalStore: NativeLocalAgentTerminalStore
 
     init(
         host: any LocalAgentHostClientServicing,
         projects: NativeLocalProjectsService,
         connector: NativeLocalConnectorService,
-        writeStore: NativeMCPCodeWriteStore = .init()
+        writeStore: NativeMCPCodeWriteStore = .init(),
+        terminalStore: NativeLocalAgentTerminalStore = .init()
     ) {
         contextResolver = .init(host: host, projects: projects, connector: connector)
         self.writeStore = writeStore
+        self.terminalStore = terminalStore
     }
 
     func execute(
@@ -135,6 +138,14 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                     ),
                     projectRoot: context.resolvedPath.absoluteURL
                 )
+            } else if NativeLocalAgentPlatformToolCatalog.taskRunnerTerminalToolNames.contains(
+                invocation.toolName
+            ) {
+                result = try await executeTerminal(
+                    invocation: invocation,
+                    arguments: nativeArguments,
+                    context: context
+                )
             } else {
                 result = try await Task.detached {
                     try tool.call(name: invocation.toolName, arguments: nativeArguments)
@@ -148,6 +159,84 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
             // Collapse them before the result crosses IPC and becomes model-visible.
             throw NativeLocalAgentPlatformToolError.projectToolFailed
         }
+    }
+
+    func reset() async {
+        await terminalStore.cancelAll()
+    }
+
+    private func executeTerminal(
+        invocation: LocalAgentToolInvocationRecord,
+        arguments: [String: NativeJSONValue],
+        context: NativeLocalAgentProjectContext
+    ) async throws -> NativeJSONValue {
+        let name = invocation.toolName
+        if ["execute_command", "process_write", "process_kill"].contains(name) {
+            guard invocation.requiresApproval,
+                  invocation.approvalStatus == "approved" else {
+                throw NativeLocalAgentPlatformToolError.approvalRequired
+            }
+        }
+        let root = context.resolvedPath.absoluteURL
+        guard name == "execute_command" else {
+            return try await terminalStore.call(
+                name: name,
+                arguments: arguments,
+                projectRoot: root,
+                ownerRunID: invocation.runID
+            )
+        }
+        let command = Self.string(arguments["common"])
+            ?? Self.string(arguments["command"])
+            ?? ""
+        guard !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw NativeLocalAgentPlatformToolError.invalidField("command")
+        }
+        let cwd = try Self.resolveDirectory(
+            Self.string(arguments["path"]) ?? ".",
+            projectRoot: root
+        )
+        let timeout = Self.number(arguments["timeout_ms"]).map(Int.init)
+            ?? Self.number(arguments["timeout"]).map { Int($0 * 1_000) }
+        return try await terminalStore.execute(
+            command: command,
+            cwd: cwd,
+            projectRoot: root,
+            background: Self.bool(arguments["background"]) ?? false,
+            timeoutMilliseconds: timeout,
+            ownerRunID: invocation.runID
+        )
+    }
+
+    private static func resolveDirectory(_ path: String, projectRoot: URL) throws -> URL {
+        let root = projectRoot.standardizedFileURL.resolvingSymlinksInPath()
+        let candidate = path.hasPrefix("/")
+            ? URL(fileURLWithPath: path)
+            : root.appendingPathComponent(path)
+        let resolved = candidate.standardizedFileURL.resolvingSymlinksInPath()
+        let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        var isDirectory: ObjCBool = false
+        guard (resolved.path == root.path || resolved.path.hasPrefix(prefix)),
+              FileManager.default.fileExists(atPath: resolved.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            throw NativeLocalAgentPlatformToolError.invalidField("path")
+        }
+        return resolved
+    }
+
+    private static func string(_ value: NativeJSONValue?) -> String? {
+        guard case let .string(value)? = value else { return nil }
+        return value
+    }
+
+    private static func number(_ value: NativeJSONValue?) -> Double? {
+        guard case let .number(value)? = value else { return nil }
+        return value
+    }
+
+    private static func bool(_ value: NativeJSONValue?) -> Bool? {
+        guard case let .bool(value)? = value else { return nil }
+        return value
     }
 }
 

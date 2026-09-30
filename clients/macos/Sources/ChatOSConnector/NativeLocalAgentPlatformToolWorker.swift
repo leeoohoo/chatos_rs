@@ -9,7 +9,15 @@ public enum NativeLocalAgentPlatformToolCatalog {
         "read_file_raw", "read_file_range", "list_dir", "search_text", "read_file",
         "search_files",
     ]
-    public static let readOnlyToolNames = [attachmentReadToolName] + projectReadOnlyToolNames
+    private static let terminalReadOnlyToolNames = [
+        "process_poll", "process_log", "process_wait",
+    ]
+    static let taskRunnerTerminalToolNames: Set<String> = [
+        "execute_command", "process_poll", "process_log", "process_wait", "process_write",
+        "process_kill",
+    ]
+    public static let readOnlyToolNames = [attachmentReadToolName]
+        + projectReadOnlyToolNames + terminalReadOnlyToolNames
     public static let approvalExemptToolNames = [
         "open_edit_session", "stage_edit_batch", "abort_edit_session",
     ]
@@ -111,6 +119,12 @@ public enum NativeLocalAgentPlatformToolCatalog {
             return capabilityTool(value)
         }
         + NativeMCPCodeWriteStore.toolDefinitions.map(capabilityTool)
+        + NativeMCPTerminalStore.toolDefinitions.compactMap { value in
+            guard case let .object(tool) = value,
+                  case let .string(name)? = tool["name"],
+                  taskRunnerTerminalToolNames.contains(name) else { return nil }
+            return capabilityTool(value)
+        }
 
     static var taskRunnerToolNames: Set<String> {
         Set(taskRunnerCapabilityTools.compactMap { value in
@@ -143,6 +157,11 @@ protocol NativeLocalAgentPlatformToolExecuting: Sendable {
         ownerUserID: String,
         invocation: LocalAgentToolInvocationRecord
     ) async throws -> LocalAgentJSONValue
+    func reset() async
+}
+
+extension NativeLocalAgentPlatformToolExecuting {
+    func reset() async {}
 }
 
 struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuting, Sendable {
@@ -275,6 +294,7 @@ public actor NativeLocalAgentPlatformToolWorker {
     ) {
         client = .init(host: host)
         let writeStore = NativeMCPCodeWriteStore()
+        let terminalStore = NativeLocalAgentTerminalStore()
         executor = NativeLocalAgentPlatformToolExecutor(
             host: host,
             attachmentRootURL: attachmentRootURL,
@@ -282,7 +302,8 @@ public actor NativeLocalAgentPlatformToolWorker {
                 host: host,
                 projects: projects,
                 connector: connector,
-                writeStore: writeStore
+                writeStore: writeStore,
+                terminalStore: terminalStore
             )
         )
         approvalHandler = NativeLocalAgentToolApprovalHandler(
@@ -305,14 +326,16 @@ public actor NativeLocalAgentPlatformToolWorker {
         self.workerID = workerID
     }
 
-    public func configure(ownerUserID: String) {
+    public func configure(ownerUserID: String) async {
         resetLocked()
+        await executor.reset()
         self.ownerUserID = ownerUserID
         schedulePolling(ownerUserID: ownerUserID, maximumIdleDuration: .zero)
     }
 
-    public func reset() {
+    public func reset() async {
         resetLocked()
+        await executor.reset()
         ownerUserID = nil
     }
 

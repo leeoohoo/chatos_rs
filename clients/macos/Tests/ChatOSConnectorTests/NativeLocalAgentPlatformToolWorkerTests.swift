@@ -19,7 +19,8 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             NativeLocalAgentPlatformToolCatalog.readOnlyToolNames,
             [
                 "local_attachment_read", "read_file_raw", "read_file_range", "list_dir",
-                "search_text", "read_file", "search_files",
+                "search_text", "read_file", "search_files", "process_poll", "process_log",
+                "process_wait",
             ]
         )
         XCTAssertEqual(
@@ -28,6 +29,8 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                 "read_file_raw", "read_file_range", "list_dir", "search_text", "read_file",
                 "search_files", "open_edit_session", "stage_edit_batch",
                 "commit_edit_session", "abort_edit_session",
+                "execute_command", "process_poll", "process_log", "process_wait",
+                "process_write", "process_kill",
             ])
         )
         XCTAssertEqual(

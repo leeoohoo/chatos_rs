@@ -110,7 +110,7 @@ extension NativeLocalConnectorService {
         let capability = LocalAgentCapabilityPolicySnapshot(
             ownerUserID: ownerUserID,
             profileKey: "main_chat",
-            capabilityPolicyRevision: "native-main-chat-v5",
+            capabilityPolicyRevision: "native-main-chat-v6",
             instructions: "Use local_attachment_read for attachment content. Treat authorized_local_ref values as opaque and never infer or request filesystem paths. Use create_task or create_tasks_with_prerequisites only for user-requested durable work; task state remains local.",
             tools: NativeLocalAgentPlatformToolCatalog.capabilityTools
         )
@@ -119,7 +119,7 @@ extension NativeLocalConnectorService {
             ownerUserID: ownerUserID,
             profileKey: "task_runner",
             capabilityPolicyRevision: capability.capabilityPolicyRevision,
-            instructions: "Complete the durable local task objective and return a concrete result. Use the local project tools to inspect the bound project. For changes, open an edit session, stage a bounded batch with the read SHA-256 (or null only for a proven-new file), and commit it; the client requests approval before the commit reaches disk. Do not create nested tasks.",
+            instructions: "Complete the durable local task objective and return a concrete result. Use the local project tools to inspect the bound project. For changes, open an edit session, stage a bounded batch with the read SHA-256 (or null only for a proven-new file), and commit it; the client requests approval before the commit reaches disk. Use execute_command only when project inspection or verification requires it; commands run locally inside the bound project and require approval. For background commands, wait for completion or terminate them before finishing. Do not create nested tasks.",
             tools: NativeLocalAgentPlatformToolCatalog.taskRunnerCapabilityTools
         ))
         return .init(

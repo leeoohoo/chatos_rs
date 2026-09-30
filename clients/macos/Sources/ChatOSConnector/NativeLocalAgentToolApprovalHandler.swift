@@ -27,24 +27,25 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
         let pending = try await client.pendingApprovals(ownerUserID: ownerUserID)
         guard let invocation = pending.first(where: {
             NativeMCPCodeWriteStore.toolNames.contains($0.toolName)
+                || NativeLocalAgentPlatformToolCatalog.taskRunnerTerminalToolNames.contains(
+                    $0.toolName
+                )
         }) else { return false }
         let context = try await contextResolver.resolve(
             ownerUserID: ownerUserID,
             runID: invocation.runID
         )
+        let presentation = Self.presentation(invocation)
         let decision = await connector.approvalDecision(
             requestID: invocation.invocationID,
-            command: invocation.toolName,
-            arguments: Self.safeArgumentSummary(invocation),
+            command: presentation.command,
+            arguments: presentation.arguments,
             cwd: context.resolvedPath.absoluteURL,
             projectRoot: context.resolvedPath.absoluteURL,
             source: "Local Agent Task",
-            risk: .init(
-                level: "medium",
-                reason: "本地任务请求提交已暂存的项目文件修改。"
-            ),
-            requestedPermissionsDescription: "修改当前本地项目中的已暂存文件",
-            approvalScopeKey: "local-agent-project-write:\(context.conversationID)",
+            risk: presentation.risk,
+            requestedPermissionsDescription: presentation.permission,
+            approvalScopeKey: presentation.scope + ":\(context.conversationID)",
             workspaceID: context.resolvedPath.workspace.id
         )
         let approved: Bool
@@ -67,12 +68,61 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
         return true
     }
 
-    private static func safeArgumentSummary(
+    private static func presentation(
         _ invocation: LocalAgentToolInvocationRecord
-    ) -> [String] {
-        guard invocation.toolName == "commit_edit_session" else {
-            return ["project-bound operation"]
+    ) -> (
+        command: String,
+        arguments: [String],
+        risk: NativeApprovalRisk,
+        permission: String,
+        scope: String
+    ) {
+        if invocation.toolName == "execute_command",
+           case let .object(arguments) = invocation.arguments {
+            let command = string(arguments["common"])
+                ?? string(arguments["command"])
+                ?? ""
+            let shellArguments = ["-lc", command]
+            return (
+                "/bin/zsh",
+                shellArguments,
+                NativeApprovalRiskEvaluator.evaluate(
+                    command: "/bin/zsh",
+                    arguments: shellArguments
+                ),
+                "在当前本地项目中执行命令",
+                "local-agent-terminal"
+            )
         }
-        return ["commit staged project edits"]
+        if invocation.toolName == "process_write" {
+            return (
+                "process_write",
+                ["interactive input hidden"],
+                .init(level: "medium", reason: "本地任务请求向运行中的命令写入输入。"),
+                "向当前任务启动的本地命令写入输入",
+                "local-agent-terminal"
+            )
+        }
+        if invocation.toolName == "process_kill" {
+            return (
+                "process_kill",
+                ["task-owned process"],
+                .init(level: "medium", reason: "本地任务请求终止运行中的命令。"),
+                "终止当前任务启动的本地命令",
+                "local-agent-terminal"
+            )
+        }
+        return (
+            "commit_edit_session",
+            ["commit staged project edits"],
+            .init(level: "medium", reason: "本地任务请求提交已暂存的项目文件修改。"),
+            "修改当前本地项目中的已暂存文件",
+            "local-agent-project-write"
+        )
+    }
+
+    private static func string(_ value: LocalAgentJSONValue?) -> String? {
+        guard case let .string(value)? = value else { return nil }
+        return value
     }
 }

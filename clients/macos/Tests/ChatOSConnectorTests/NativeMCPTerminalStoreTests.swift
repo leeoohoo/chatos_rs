@@ -136,6 +136,41 @@ struct NativeMCPTerminalStoreTests {
         #expect(cancelled == 1)
         #expect(!FileManager.default.fileExists(atPath: marker.path))
     }
+
+    @Test
+    func processHandlesAreIsolatedByOwningLocalAgentRun() async throws {
+        let fixture = try TerminalFixture()
+        defer { fixture.dispose() }
+        let store = NativeLocalAgentTerminalStore()
+        let started = try await store.execute(
+            command: "sleep 5",
+            cwd: fixture.root,
+            projectRoot: fixture.root,
+            background: true,
+            ownerRunID: "run-a"
+        )
+        let id = try started.string("terminal_id")
+        let arguments: [String: NativeJSONValue] = ["terminal_id": .string(id)]
+
+        do {
+            _ = try await store.call(
+                name: "process_poll",
+                arguments: arguments,
+                projectRoot: fixture.root,
+                ownerRunID: "run-b"
+            )
+            Issue.record("Another Local Agent Run accessed a process handle it does not own")
+        } catch {
+            // Expected: scoped calls reveal neither process state nor output across Runs.
+        }
+        _ = try await store.call(
+            name: "process_poll",
+            arguments: arguments,
+            projectRoot: fixture.root,
+            ownerRunID: "run-a"
+        )
+        _ = await store.cancel(ownerRunID: "run-a")
+    }
 }
 
 private struct TerminalFixture {
