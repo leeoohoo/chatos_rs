@@ -57,6 +57,25 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         XCTAssertEqual(command["type"], .string("retry_task"))
         XCTAssertEqual(command["retry_instruction"], .string("Use the local fallback"))
     }
+
+    func testTaskClientRestartsWithCurrentVersionAndReason() async throws {
+        let host = LocalTaskHostStub()
+        let client = NativeLocalAgentTaskClient(host: host)
+
+        _ = try await client.restart(
+            ownerUserID: "user-1",
+            taskID: "task-2",
+            expectedVersion: 2,
+            reason: "restart from the beginning"
+        )
+
+        let command = try await host.lastCommand()
+        XCTAssertEqual(command["type"], .string("restart_task"))
+        XCTAssertEqual(command["owner_user_id"], .string("user-1"))
+        XCTAssertEqual(command["task_id"], .string("task-2"))
+        XCTAssertEqual(command["expected_version"], .number(2))
+        XCTAssertEqual(command["reason"], .string("restart from the beginning"))
+    }
 }
 
 private actor LocalTaskHostStub: LocalAgentHostClientServicing {
@@ -83,7 +102,7 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
                     "next_before_graph_id": NSNull(),
                 ],
             ])
-        case "get_task_graph", "cancel_task":
+        case "get_task_graph", "cancel_task", "restart_task":
             return try json(["type": "task_graph", "graph": graph()])
         case "retry_task":
             return try json(["type": "task_graph", "graph": graph()])

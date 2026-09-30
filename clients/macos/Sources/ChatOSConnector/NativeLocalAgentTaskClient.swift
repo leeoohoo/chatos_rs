@@ -197,6 +197,21 @@ public struct NativeLocalAgentTaskClient: Sendable {
         ))
     }
 
+    public func restart(
+        ownerUserID: String,
+        taskID: String,
+        expectedVersion: UInt64,
+        reason: String
+    ) async throws -> LocalAgentTaskGraph {
+        try await mutate(RestartTaskCommand(
+            type: "restart_task",
+            ownerUserID: ownerUserID,
+            taskID: taskID,
+            expectedVersion: expectedVersion,
+            reason: reason
+        ))
+    }
+
     private func mutate<Command: Encodable & Sendable>(
         _ command: Command
     ) async throws -> LocalAgentTaskGraph {
@@ -296,6 +311,20 @@ private struct RetryTaskCommand: Encodable, Sendable {
         case taskID = "task_id"
         case expectedVersion = "expected_version"
         case retryInstruction = "retry_instruction"
+    }
+}
+
+private struct RestartTaskCommand: Encodable, Sendable {
+    let type: String
+    let ownerUserID: String
+    let taskID: String
+    let expectedVersion: UInt64
+    let reason: String
+    private enum CodingKeys: String, CodingKey {
+        case type, reason
+        case ownerUserID = "owner_user_id"
+        case taskID = "task_id"
+        case expectedVersion = "expected_version"
     }
 }
 

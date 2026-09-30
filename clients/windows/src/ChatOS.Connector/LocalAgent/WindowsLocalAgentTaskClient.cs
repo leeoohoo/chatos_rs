@@ -25,6 +25,9 @@ internal sealed record GetLocalTaskRunsCommand(string Type, string OwnerUserId, 
 internal sealed record RetryLocalTaskCommand(
     string Type, string OwnerUserId, string TaskId, ulong ExpectedVersion,
     string? RetryInstruction);
+internal sealed record RestartLocalTaskCommand(
+    string Type, string OwnerUserId, string TaskId, ulong ExpectedVersion,
+    string Reason);
 internal sealed record LocalTaskGraphsResult(string Type, WindowsLocalTaskGraphPage Page);
 internal sealed record LocalTaskGraphTypedResult(string Type, WindowsLocalTaskGraph Graph);
 internal sealed record LocalTaskRunsResult(
@@ -89,6 +92,17 @@ public sealed class WindowsLocalAgentTaskClient(ILocalAgentHostClient host)
             .ConfigureAwait(false);
         return result.Type == "task_graph" ? result.Graph
             : throw new InvalidDataException("Invalid Task retry result.");
+    }
+
+    internal async Task<WindowsLocalTaskGraph> RestartAsync(
+        string owner, WindowsLocalTask task, string reason,
+        CancellationToken cancellationToken)
+    {
+        var result = await host.SendAsync<RestartLocalTaskCommand, LocalTaskGraphTypedResult>(new(
+            "restart_task", owner, task.TaskId, task.Version, reason), cancellationToken)
+            .ConfigureAwait(false);
+        return result.Type == "task_graph" ? result.Graph
+            : throw new InvalidDataException("Invalid Task restart result.");
     }
 
     internal async Task CancelAsync(
