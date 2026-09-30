@@ -12,6 +12,7 @@ public actor NativeLocalAgentConversationService:
     }
 
     private let client: NativeLocalAgentConversationClient
+    private let runtime: NativeLocalAgentRuntimeClient
     private let attachmentVault: NativeLocalAgentAttachmentVault
     private let runtimeSettings: NativeLocalAgentConversationRuntimeSettingsService
     private let platformToolWorker: NativeLocalAgentPlatformToolWorker?
@@ -24,6 +25,7 @@ public actor NativeLocalAgentConversationService:
         platformToolWorker: NativeLocalAgentPlatformToolWorker? = nil
     ) {
         self.client = NativeLocalAgentConversationClient(host: host)
+        self.runtime = NativeLocalAgentRuntimeClient(host: host)
         self.attachmentVault = NativeLocalAgentAttachmentVault(rootURL: attachmentRootURL)
         self.runtimeSettings = runtimeSettings
         self.platformToolWorker = platformToolWorker
@@ -205,17 +207,19 @@ public actor NativeLocalAgentConversationService:
             }
         }
         let client = client
+        let runtime = runtime
         return AsyncThrowingStream { continuation in
             let pollingTask = Task {
                 var observedVersion: UInt64?
+                var cursor: Int64 = 0
                 while !Task.isCancelled {
                     do {
-                        let detail = try await client.get(
-                            ownerUserID: context.ownerUserID,
-                            conversationID: sessionID
-                        )
-                        let version = detail.conversation.version
-                        if observedVersion != version {
+                        if observedVersion == nil {
+                            let detail = try await client.get(
+                                ownerUserID: context.ownerUserID,
+                                conversationID: sessionID
+                            )
+                            let version = detail.conversation.version
                             observedVersion = version
                             continuation.yield(.init(
                                 eventID: "local-\(sessionID)-\(version)",
@@ -229,19 +233,49 @@ public actor NativeLocalAgentConversationService:
                                 )
                             ))
                         }
+
+                        let page = try await runtime.listEvents(
+                            ownerUserID: context.ownerUserID,
+                            afterCursor: cursor
+                        )
+                        cursor = page.nextCursor
+                        if page.events.isEmpty {
+                            try await Task.sleep(for: .milliseconds(400))
+                            continue
+                        }
+
+                        let detail = try await client.get(
+                            ownerUserID: context.ownerUserID,
+                            conversationID: sessionID
+                        )
+                        let version = detail.conversation.version
+                        guard observedVersion != version else { continue }
+                        observedVersion = version
+                        continuation.yield(.init(
+                            eventID: "local-\(sessionID)-\(version)",
+                            eventSequence: Int64(clamping: version),
+                            sessionID: sessionID,
+                            turnID: nil,
+                            kind: .reconcile,
+                            eventName: "local_conversation_changed",
+                            timestamp: Self.timestamp(
+                                unixMilliseconds: detail.conversation.updatedAtUnixMs
+                            )
+                        ))
                     } catch let error as NativeLocalAgentHostError {
                         guard Self.isNotFound(error) else {
                             continuation.finish(throwing: error)
                             return
                         }
+                        do {
+                            try await Task.sleep(for: .milliseconds(400))
+                        } catch {
+                            return
+                        }
+                    } catch is CancellationError {
+                        return
                     } catch {
                         continuation.finish(throwing: error)
-                        return
-                    }
-
-                    do {
-                        try await Task.sleep(for: .milliseconds(400))
-                    } catch {
                         return
                     }
                 }
