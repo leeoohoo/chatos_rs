@@ -94,7 +94,9 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
     private static func activity(_ run: LocalAgentRunRecord) -> PetActivity {
         let source: PetActivitySource = run.profileKey == "main_chat" ? .chat : .taskRunner
         let conversationID = string("conversation_id", in: run.input)
+            ?? string("source_conversation_id", in: run.input)
         let turnID = string("turn_id", in: run.input)
+            ?? string("source_turn_id", in: run.input)
             ?? (run.ownerEntityType == "conversation_turn" ? run.ownerEntityID : nil)
         let taskID = run.ownerEntityType == "task" ? run.ownerEntityID : nil
         let updatedAt = date(run.updatedAtUnixMs)
@@ -108,6 +110,7 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
             route: .init(
                 conversationID: conversationID,
                 turnID: turnID,
+                promptID: run.status == "waiting_user" ? "local-ask:\(run.runID)" : nil,
                 taskID: taskID,
                 runID: run.runID
             ),

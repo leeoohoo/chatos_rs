@@ -291,6 +291,9 @@ extension AppModel {
     }
 
     func loadPetAskUserPrompt(_ activity: PetActivity) async throws -> AskUserPrompt {
+        guard let askUserPromptService else {
+            throw PetActivityActionError.promptUnavailable
+        }
         guard let sessionID = activity.route.conversationID?
             .trimmingCharacters(in: .whitespacesAndNewlines),
               !sessionID.isEmpty,
@@ -310,6 +313,9 @@ extension AppModel {
         _ prompt: AskUserPrompt,
         submission: AskUserSubmission
     ) async throws {
+        guard let askUserPromptService else {
+            throw PetActivityActionError.promptUnavailable
+        }
         _ = try await askUserPromptService.submit(
             promptID: prompt.id,
             sessionID: prompt.sessionID,
@@ -318,6 +324,9 @@ extension AppModel {
     }
 
     func cancelPetAskUserPrompt(_ prompt: AskUserPrompt) async throws {
+        guard let askUserPromptService else {
+            throw PetActivityActionError.promptUnavailable
+        }
         _ = try await askUserPromptService.cancel(
             promptID: prompt.id,
             sessionID: prompt.sessionID

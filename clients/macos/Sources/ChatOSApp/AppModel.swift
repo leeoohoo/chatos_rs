@@ -103,7 +103,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let turnProcessService: ChatOSTurnProcessService
     let messageTaskGraphService: NativeLocalAgentMessageTaskGraphService?
     let runtimeSettingsService: ChatOSConversationRuntimeSettingsService
-    let askUserPromptService: ChatOSAskUserPromptService
+    let askUserPromptService: NativeLocalAgentAskUserPromptService?
     let workspaceService: ChatOSWorkspaceService
     let localConnectorService: NativeLocalConnectorService
     let localAgentHost: (any LocalAgentHostClientServicing)?
@@ -227,6 +227,9 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         }
         self.messageTaskGraphService = localAgentHost.map {
             NativeLocalAgentMessageTaskGraphService(host: $0)
+        }
+        self.askUserPromptService = localAgentHost.map {
+            NativeLocalAgentAskUserPromptService(host: $0)
         }
         self.workspaceService = ChatOSWorkspaceService(client: apiClient)
         self.projectConversationService = ChatOSProjectConversationService(client: apiClient)
@@ -357,7 +360,6 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         self.commandService = localAgentConversationService
         self.turnProcessService = ChatOSTurnProcessService(client: apiClient)
         self.runtimeSettingsService = ChatOSConversationRuntimeSettingsService(client: apiClient)
-        self.askUserPromptService = ChatOSAskUserPromptService(client: apiClient)
         idleSleepController.setEnabled(preventsIdleSystemSleep)
         authentication.$phase
             .removeDuplicates()

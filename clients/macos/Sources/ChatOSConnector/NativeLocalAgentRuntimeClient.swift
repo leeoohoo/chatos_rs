@@ -100,6 +100,26 @@ public struct NativeLocalAgentRuntimeClient: Sendable {
         guard result.type == "events" else { throw NativeLocalAgentHostError.invalidResponse }
         return .init(events: result.events, nextCursor: result.nextCursor)
     }
+
+    public func resumeWaitingRun(
+        ownerUserID: String,
+        runID: String,
+        expectedVersion: UInt64,
+        input: LocalAgentJSONValue,
+        reason: String
+    ) async throws -> LocalAgentRunRecord {
+        let result: RunResult = try await host.request(ResumeRunCommand(
+            type: "resume_run",
+            ownerUserID: ownerUserID,
+            runID: runID,
+            expectedVersion: expectedVersion,
+            expectedStatus: "waiting_user",
+            reason: reason,
+            input: input
+        ))
+        guard result.type == "run" else { throw NativeLocalAgentHostError.invalidResponse }
+        return result.run
+    }
 }
 
 private struct ListRunsCommand: Encodable, Sendable {
@@ -129,9 +149,32 @@ private struct WaitEventsCommand: Encodable, Sendable {
     }
 }
 
+private struct ResumeRunCommand: Encodable, Sendable {
+    let type: String
+    let ownerUserID: String
+    let runID: String
+    let expectedVersion: UInt64
+    let expectedStatus: String
+    let reason: String
+    let input: LocalAgentJSONValue
+
+    private enum CodingKeys: String, CodingKey {
+        case type, reason, input
+        case ownerUserID = "owner_user_id"
+        case runID = "run_id"
+        case expectedVersion = "expected_version"
+        case expectedStatus = "expected_status"
+    }
+}
+
 private struct RunsResult: Decodable, Sendable {
     let type: String
     let page: LocalAgentRunPage
+}
+
+private struct RunResult: Decodable, Sendable {
+    let type: String
+    let run: LocalAgentRunRecord
 }
 
 private struct EventsResult: Decodable, Sendable {

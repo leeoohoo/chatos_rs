@@ -170,7 +170,7 @@ public struct NativeLocalAgentTaskClient: Sendable {
     public func cancel(
         ownerUserID: String,
         taskID: String,
-        expectedVersion: UInt64,
+        expectedVersion: UInt64?,
         reason: String
     ) async throws -> LocalAgentTaskGraph {
         try await mutate(CancelTaskCommand(
@@ -274,7 +274,7 @@ private struct CancelTaskCommand: Encodable, Sendable {
     let type: String
     let ownerUserID: String
     let taskID: String
-    let expectedVersion: UInt64
+    let expectedVersion: UInt64?
     let reason: String
     private enum CodingKeys: String, CodingKey {
         case type, reason

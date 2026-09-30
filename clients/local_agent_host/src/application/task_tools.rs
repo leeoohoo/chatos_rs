@@ -131,6 +131,7 @@ fn create_single_graph(
     ensure_no_external_prerequisites(&args.prerequisite_task_ids)?;
     ensure_parent_model(parent, args.default_model_config_id.as_deref())?;
     let graph_id = format!("local-task-graph-{}", invocation.invocation_id);
+    let source_context = source_conversation_context(parent);
     Ok(CreateTaskGraphCommand {
         graph_id,
         owner_user_id: parent.owner_user_id.clone(),
@@ -147,7 +148,9 @@ fn create_single_graph(
                 "objective": args.objective,
                 "description": args.description,
                 "input_payload": args.input_payload,
-                "tool_options": args.extra
+                "tool_options": args.extra,
+                "source_conversation_id": source_context.conversation_id.clone(),
+                "source_turn_id": source_context.turn_id.clone()
             }),
             max_iterations: parent.max_iterations,
         }],
@@ -174,6 +177,7 @@ fn create_batch_graph(
             return Err(format!("client_ref is duplicated: {client_ref}"));
         }
     }
+    let source_context = source_conversation_context(parent);
     let mut tasks = Vec::with_capacity(args.tasks.len());
     let mut dependencies = Vec::new();
     for item in args.tasks {
@@ -205,7 +209,9 @@ fn create_batch_graph(
                 "description": item.description,
                 "input_payload": item.input_payload,
                 "client_ref": item.client_ref,
-                "tool_options": item.extra
+                "tool_options": item.extra,
+                "source_conversation_id": source_context.conversation_id.clone(),
+                "source_turn_id": source_context.turn_id.clone()
             }),
             max_iterations: parent.max_iterations,
         });
@@ -218,6 +224,29 @@ fn create_batch_graph(
         tasks,
         dependencies,
     })
+}
+
+#[derive(Debug, Clone)]
+struct SourceConversationContext {
+    conversation_id: Option<String>,
+    turn_id: Option<String>,
+}
+
+fn source_conversation_context(parent: &LocalAgentRunRecord) -> SourceConversationContext {
+    SourceConversationContext {
+        conversation_id: input_string(&parent.input, "conversation_id")
+            .or_else(|| input_string(&parent.input, "source_conversation_id")),
+        turn_id: input_string(&parent.input, "turn_id")
+            .or_else(|| input_string(&parent.input, "source_turn_id")),
+    }
+}
+
+fn input_string(input: &Value, key: &str) -> Option<String> {
+    input
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
 }
 
 fn ensure_parent_model(
@@ -280,7 +309,11 @@ mod tests {
                     model_config_ref: "model-1".to_string(),
                     model_config_revision: "revision-1".to_string(),
                     capability_policy_revision: "policy-1".to_string(),
-                    input: json!({"message": "plan this"}),
+                    input: json!({
+                        "conversation_id": "conversation-1",
+                        "turn_id": "turn-1",
+                        "message": "plan this"
+                    }),
                     max_iterations: 8,
                 }),
             ))
@@ -357,6 +390,11 @@ mod tests {
             graph.tasks[1].input["tool_options"]["enabled_builtin_kinds"],
             json!(["filesystem"])
         );
+        assert_eq!(
+            graph.tasks[1].input["source_conversation_id"],
+            "conversation-1"
+        );
+        assert_eq!(graph.tasks[1].input["source_turn_id"], "turn-1");
     }
 
     #[tokio::test]
