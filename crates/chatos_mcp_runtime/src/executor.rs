@@ -267,12 +267,7 @@ impl McpExecutor {
     pub fn codex_gateway_request_tools(&self) -> Vec<Value> {
         let mut out = Vec::new();
         for server in &self.http_servers {
-            if server.header_provider.is_some()
-                || server
-                    .headers
-                    .as_ref()
-                    .is_some_and(crate::rpc::headers_require_per_request_signing)
-            {
+            if server.header_provider.is_some() {
                 warn!(
                     server_name = server.name,
                     "skipping MCP server that requires per-request authentication in Codex gateway passthrough"
@@ -290,14 +285,8 @@ impl McpExecutor {
                 "require_approval": "never"
             });
             if let Some(headers) = server.headers.as_ref() {
-                match crate::rpc::prepare_http_headers(headers) {
-                    Ok(headers) if !headers.is_empty() => item["headers"] = json!(headers),
-                    Ok(_) => {}
-                    Err(err) => warn!(
-                        server_name = server.name,
-                        error = err,
-                        "skipping invalid MCP HTTP headers for Codex gateway"
-                    ),
+                if !headers.is_empty() {
+                    item["headers"] = json!(headers);
                 }
             }
             if let Some(allowed_tools) = gateway_allowed_tools {
@@ -390,8 +379,8 @@ mod tests {
 
     use crate::{
         BuiltinMcpKind, BuiltinMcpPromptLocale, BuiltinMcpServerOptions, BuiltinToolProvider,
-        BuiltinToolRegistry, McpAsyncResultTransport, McpBuiltinServer, McpExecutor, McpHttpServer,
-        McpStdioServer, ToolCallContext, ToolInfo, ToolResultCallback, ToolStreamChunkCallback,
+        BuiltinToolRegistry, McpBuiltinServer, McpExecutor, McpHttpServer, McpStdioServer,
+        ToolCallContext, ToolInfo, ToolResultCallback, ToolStreamChunkCallback,
     };
 
     #[tokio::test]
@@ -476,34 +465,6 @@ mod tests {
         assert!(!tools[0].to_string().contains("/opt/chatos"));
     }
 
-    #[test]
-    fn codex_gateway_request_tools_skips_internal_per_request_signing() {
-        let server = McpHttpServer::new("local", "http://127.0.0.1:39230/mcp").with_headers(
-            HashMap::from([
-                (
-                    "X-Local-Connector-Internal-Secret".to_string(),
-                    "a-long-local-connector-secret".to_string(),
-                ),
-                (
-                    "X-Local-Connector-Caller".to_string(),
-                    "chatos-backend".to_string(),
-                ),
-                (
-                    "X-Local-Connector-Internal-Scope".to_string(),
-                    "relay.mcp".to_string(),
-                ),
-            ]),
-        );
-        let executor = McpExecutor::new(
-            vec![server],
-            Vec::new(),
-            Vec::new(),
-            BuiltinToolRegistry::new(),
-        );
-
-        assert!(executor.codex_gateway_request_tools().is_empty());
-    }
-
     #[derive(Debug)]
     struct DynamicHeaderProvider;
 
@@ -579,7 +540,6 @@ mod tests {
                 server_headers: None,
                 server_header_provider: None,
                 server_http_client: None,
-                server_async_result_transport: McpAsyncResultTransport::Disabled,
                 server_timeout: None,
                 server_config: None,
                 tool_info: json!({}),

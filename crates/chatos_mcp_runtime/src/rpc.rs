@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::types::{McpAsyncResultTransport, McpStdioServer};
+use crate::types::McpStdioServer;
 
 const DEFAULT_MCP_RPC_TIMEOUT: Duration = Duration::from_secs(15);
 const MCP_TOOLS_LIST_SUCCESS_CACHE_TTL: Duration = Duration::from_secs(60);
@@ -20,10 +20,7 @@ const MCP_HTTP_ERROR_BODY_PREVIEW_BYTES: usize = 16 * 1024;
 static MCP_HTTP_CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
 static MCP_TOOLS_LIST_CACHE: OnceLock<Mutex<HashMap<String, ToolsListCacheEntry>>> =
     OnceLock::new();
-mod internal_headers;
 mod stdio;
-
-pub use internal_headers::{headers_require_per_request_signing, prepare_http_headers};
 
 #[cfg(test)]
 use stdio::{ensure_stdio_response_line_within_limit, stdio_session_cache_key};
@@ -130,7 +127,7 @@ pub async fn jsonrpc_http_notification(
     let request_timeout = timeout.unwrap_or(DEFAULT_MCP_RPC_TIMEOUT);
     let mut request = client.post(url).timeout(request_timeout).json(&payload);
     if let Some(headers) = headers {
-        for (key, value) in prepare_http_headers(headers)? {
+        for (key, value) in headers {
             request = request.header(key.as_str(), value.as_str());
         }
     }
@@ -157,17 +154,8 @@ pub async fn jsonrpc_http_tool_call_cancellable(
     headers: Option<&HashMap<String, String>>,
     params: Value,
     timeout: Option<Duration>,
-    async_result_transport: McpAsyncResultTransport,
 ) -> Result<Value, String> {
-    jsonrpc_http_tool_call_cancellable_with_client(
-        url,
-        headers,
-        params,
-        timeout,
-        async_result_transport,
-        None,
-    )
-    .await
+    jsonrpc_http_tool_call_cancellable_with_client(url, headers, params, timeout, None).await
 }
 
 pub async fn jsonrpc_http_tool_call_cancellable_with_client(
@@ -175,15 +163,9 @@ pub async fn jsonrpc_http_tool_call_cancellable_with_client(
     headers: Option<&HashMap<String, String>>,
     params: Value,
     timeout: Option<Duration>,
-    async_result_transport: McpAsyncResultTransport,
     client: Option<&reqwest::Client>,
 ) -> Result<Value, String> {
     let id = Uuid::new_v4().to_string();
-    if async_result_transport == McpAsyncResultTransport::RabbitMq {
-        return Err(
-            "RabbitMQ MCP tools must use the unified tool call command channel".to_string(),
-        );
-    }
     let mut cancellation_guard =
         HttpCancellationGuard::new(url, headers, id.as_str(), timeout, client.cloned());
     let request_timeout = timeout.unwrap_or(DEFAULT_MCP_RPC_TIMEOUT);
@@ -222,7 +204,7 @@ async fn jsonrpc_http_call_with_id(
     let request_timeout = timeout.unwrap_or(DEFAULT_MCP_RPC_TIMEOUT);
     let mut request = client.post(url).timeout(request_timeout).json(&payload);
     if let Some(headers) = headers {
-        for (key, value) in prepare_http_headers(headers)? {
+        for (key, value) in headers {
             request = request.header(key.as_str(), value.as_str());
         }
     }
@@ -362,7 +344,7 @@ async fn send_http_cancel_notification(
     };
     let mut request = client.post(url).timeout(timeout).json(&payload);
     if let Some(headers) = headers {
-        for (key, value) in prepare_http_headers(headers)? {
+        for (key, value) in headers {
             request = request.header(key.as_str(), value.as_str());
         }
     }

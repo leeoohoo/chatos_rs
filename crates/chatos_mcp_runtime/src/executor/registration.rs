@@ -13,7 +13,7 @@ use crate::rpc::{
     extract_tools, jsonrpc_http_call_with_client, list_tools_http_with_client, list_tools_stdio,
 };
 use crate::schema::{build_function_tool_schema, parse_tool_definition};
-use crate::types::{McpAsyncResultTransport, McpStdioServer, ParsedToolDefinition, ToolInfo};
+use crate::types::{McpStdioServer, ParsedToolDefinition, ToolInfo};
 
 use super::McpExecutor;
 
@@ -28,7 +28,6 @@ impl McpExecutor {
         server_headers: Option<HashMap<String, String>>,
         server_header_provider: Option<std::sync::Arc<dyn crate::McpHttpHeaderProvider>>,
         server_http_client: Option<reqwest::Client>,
-        server_async_result_transport: McpAsyncResultTransport,
         server_timeout: Option<Duration>,
         server_config: Option<McpStdioServer>,
         preserve_tool_name: bool,
@@ -59,7 +58,6 @@ impl McpExecutor {
                 server_headers,
                 server_header_provider,
                 server_http_client,
-                server_async_result_transport,
                 server_timeout,
                 server_config,
                 tool_info: tool,
@@ -185,7 +183,6 @@ impl McpExecutor {
                                 server.headers.clone(),
                                 server.header_provider.clone(),
                                 server.http_client.clone(),
-                                server.async_result_transport,
                                 server.tool_timeout_duration(def.name.as_str()),
                                 None,
                                 server.preserve_tool_names,
@@ -255,7 +252,6 @@ impl McpExecutor {
                                 None,
                                 None,
                                 None,
-                                McpAsyncResultTransport::Disabled,
                                 None,
                                 Some(server.clone()),
                                 false,
@@ -309,7 +305,6 @@ impl McpExecutor {
                         None,
                         None,
                         None,
-                        McpAsyncResultTransport::Disabled,
                         None,
                         None,
                         false,
@@ -370,7 +365,6 @@ mod tests {
             None,
             None,
             None,
-            crate::McpAsyncResultTransport::Disabled,
             None,
             None,
             false,
@@ -409,14 +403,13 @@ mod tests {
         );
 
         executor.register_available_tool(
-            "mcp_management",
-            "mcp_management",
+            "managed_gateway",
+            "managed_gateway",
             "http",
             Some("http://127.0.0.1:39280/mcp".to_string()),
             None,
             None,
             None,
-            crate::McpAsyncResultTransport::Disabled,
             None,
             None,
             true,
@@ -438,7 +431,7 @@ mod tests {
             .tool_metadata()
             .get("code_maintainer_read_read_file")
             .expect("tool metadata");
-        assert_eq!(metadata.server_name, "mcp_management");
+        assert_eq!(metadata.server_name, "managed_gateway");
         assert_eq!(metadata.original_name, "code_maintainer_read_read_file");
     }
 }

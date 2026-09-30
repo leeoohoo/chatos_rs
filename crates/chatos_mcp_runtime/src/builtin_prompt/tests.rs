@@ -10,7 +10,7 @@ use super::{
     compose_builtin_mcp_system_prompt, compose_effective_builtin_mcp_system_prompt,
     inspect_builtin_mcp_system_prompt, BuiltinMcpPromptLocale,
 };
-use crate::{BuiltinMcpKind, McpAsyncResultTransport, McpBuiltinServer, ToolInfo};
+use crate::{BuiltinMcpKind, McpBuiltinServer, ToolInfo};
 
 fn build_builtin_server(kind: BuiltinMcpKind) -> McpBuiltinServer {
     kind.default_server(".")
@@ -120,7 +120,6 @@ fn effective_prompt_keeps_available_sections_and_appends_runtime_limitations() {
             server_headers: None,
             server_header_provider: None,
             server_http_client: None,
-            server_async_result_transport: McpAsyncResultTransport::Disabled,
             server_timeout: None,
             server_config: None,
             tool_info: json!({}),

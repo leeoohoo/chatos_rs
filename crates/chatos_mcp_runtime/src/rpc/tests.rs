@@ -63,7 +63,6 @@ async fn dropping_http_tool_call_sends_cancel_with_the_same_request_id_and_heade
             Some(&headers),
             json!({"name": "demo", "arguments": {}}),
             Some(Duration::from_secs(30)),
-            McpAsyncResultTransport::Disabled,
         )
         .await
     });
@@ -90,25 +89,6 @@ async fn dropping_http_tool_call_sends_cancel_with_the_same_request_id_and_heade
         Some("Bearer runtime-token")
     );
     server.abort();
-}
-
-#[tokio::test]
-async fn rabbitmq_tool_call_cannot_use_the_http_execution_path() {
-    let headers = HashMap::from([(
-        "authorization".to_string(),
-        "Bearer runtime-token".to_string(),
-    )]);
-
-    let error = jsonrpc_http_tool_call_cancellable(
-        "http://127.0.0.1:1/mcp",
-        Some(&headers),
-        json!({"name": "demo", "arguments": {}}),
-        Some(Duration::from_secs(1)),
-        McpAsyncResultTransport::RabbitMq,
-    )
-    .await
-    .expect_err("RabbitMQ MCP tools must not execute over HTTP");
-    assert!(error.contains("unified tool call command channel"));
 }
 
 #[test]
