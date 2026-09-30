@@ -131,7 +131,6 @@ service_bins = {
     "memory_engine",
     "plugin_management_service_backend",
     "local_connector_service_backend",
-    "chat_app_server_rs",
 }
 
 current = os.getpid()
@@ -180,7 +179,6 @@ service_bins = {
     "memory_engine",
     "plugin_management_service_backend",
     "local_connector_service_backend",
-    "chat_app_server_rs",
 }
 frontend_markers = (
     "/admin_console/",

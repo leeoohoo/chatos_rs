@@ -15,7 +15,6 @@ if ! command -v openssl >/dev/null 2>&1; then
 fi
 
 CALLERS=(
-  chatos-backend
   local-connector-service
   memory-engine
   official-website

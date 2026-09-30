@@ -20,7 +20,6 @@ LOCAL_BUILD_SERVICES=(
   memory-engine-backend
   plugin-management-backend
   local-connector-service-backend
-  chatos-backend
   official-website-backend
   admin-console-frontend
   official-website-frontend
@@ -171,83 +170,8 @@ is_production_environment() {
   esac
 }
 
-validate_https_origin() {
-  local key="$1"
-  local origin="$2"
-  local authority lowercase_authority host port
-  local hostname_pattern='^([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9])(:([0-9]{1,5}))?$'
-  local ipv6_pattern='^(\[[0-9A-Fa-f:.]+\])(:([0-9]{1,5}))?$'
-
-  if [[ "$origin" != https://* ]]; then
-    echo "[ERROR] $key must use an exact https:// origin" >&2
-    return 1
-  fi
-  authority="${origin#https://}"
-  if [[ -z "$authority" || "$authority" == *[/?#@]* || "$authority" =~ [[:space:]] ]]; then
-    echo "[ERROR] $key must not contain credentials, path, query, fragment, or whitespace" >&2
-    return 1
-  fi
-  lowercase_authority="$(printf '%s' "$authority" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$authority" != "$lowercase_authority" ]]; then
-    echo "[ERROR] $key must use a lowercase canonical authority" >&2
-    return 1
-  fi
-  if [[ "$authority" =~ $ipv6_pattern ]]; then
-    host="${BASH_REMATCH[1]}"
-    port="${BASH_REMATCH[3]:-}"
-  elif [[ "$authority" =~ $hostname_pattern ]]; then
-    host="${BASH_REMATCH[1]}"
-    port="${BASH_REMATCH[3]:-}"
-    if [[ "$host" == *..* || "$host" == *.-* || "$host" == *-. ]]; then
-      echo "[ERROR] $key contains an invalid hostname" >&2
-      return 1
-    fi
-  else
-    echo "[ERROR] $key must be a canonical HTTPS origin with an optional explicit port" >&2
-    return 1
-  fi
-  if [[ -n "$port" ]] && (( 10#$port < 1 || 10#$port > 65535 )); then
-    echo "[ERROR] $key contains an invalid port" >&2
-    return 1
-  fi
-  if [[ "$port" == "443" ]]; then
-    echo "[ERROR] $key must omit the default HTTPS port" >&2
-    return 1
-  fi
-}
-
-validate_plugin_ui_origins() {
-  local require_pair="${1:-auto}"
-  local parent_origin resource_origin failures=0
-  parent_origin="$(env_value CHATOS_PLUGIN_UI_PARENT_ORIGIN "")"
-  resource_origin="$(env_value CHATOS_PLUGIN_UI_RESOURCE_ORIGIN "")"
-
-  if [[ -z "$parent_origin" && -z "$resource_origin" ]]; then
-    if [[ "$require_pair" == "true" ]] || is_production_environment; then
-      echo "[ERROR] production requires CHATOS_PLUGIN_UI_PARENT_ORIGIN and CHATOS_PLUGIN_UI_RESOURCE_ORIGIN" >&2
-      return 1
-    fi
-    return 0
-  fi
-  if [[ -z "$parent_origin" || -z "$resource_origin" ]]; then
-    echo "[ERROR] CHATOS_PLUGIN_UI_PARENT_ORIGIN and CHATOS_PLUGIN_UI_RESOURCE_ORIGIN must be configured together" >&2
-    return 1
-  fi
-  validate_https_origin CHATOS_PLUGIN_UI_PARENT_ORIGIN "$parent_origin" || failures=1
-  validate_https_origin CHATOS_PLUGIN_UI_RESOURCE_ORIGIN "$resource_origin" || failures=1
-  if [[ "$parent_origin" == "$resource_origin" ]]; then
-    echo "[ERROR] Plugin UI parent and resource origins must be different" >&2
-    failures=1
-  fi
-  (( failures == 0 ))
-}
-
 validate_production_secrets() {
   local failures=0
-  # Plugin UI origins and service-to-service credentials are managed by the
-  # Configuration Center. Validate them here only when explicitly supplied as
-  # a legacy deployment override.
-  validate_plugin_ui_origins false || failures=1
   if ! is_production_environment; then
     if (( failures > 0 )); then
       exit 2
@@ -264,7 +188,7 @@ validate_production_secrets() {
   postgres_server_max_connections="$(env_value POSTGRES_SERVER_MAX_CONNECTIONS "")"
   if [[ ! "$postgres_server_max_connections" =~ ^[0-9]+$ ]] \
     || (( postgres_server_max_connections < 150 )); then
-    echo "[ERROR] production POSTGRES_SERVER_MAX_CONNECTIONS must be an integer >= 150 for the current 7-process pool budget" >&2
+    echo "[ERROR] production POSTGRES_SERVER_MAX_CONNECTIONS must be an integer >= 150 for the current cloud-service pool budget" >&2
     failures=1
   fi
   local key value default_value
@@ -281,7 +205,6 @@ POSTGRES_MIGRATION_PASSWORD|change_me_postgres_migration_password
 HARNESS_ADMIN_PASSWORD|admin123456
 RABBITMQ_DEFAULT_PASS|change_me_rabbitmq_password
 VALKEY_PASSWORD|change_me_valkey_password
-CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET|change_me_config_center_chatos_backend_signing_secret
 CONFIG_CENTER_LOCAL_CONNECTOR_SERVICE_CALLER_SIGNING_SECRET|change_me_config_center_local_connector_signing_secret
 CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET|change_me_config_center_memory_engine_signing_secret
 CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET|change_me_config_center_official_website_signing_secret
@@ -297,9 +220,8 @@ EOF
 
 source "$SCRIPT_DIR/deploy-mtls.sh"
 print_urls() {
-  local main_backend_port local_connector_service_port gateway_port
+  local local_connector_service_port gateway_port
   local harness_port harness_ssh_host harness_ssh_port consul_port
-  main_backend_port="$(env_value MAIN_BACKEND_PORT 3997)"
   consul_port="$(env_value CONSUL_HTTP_PORT 8500)"
   harness_port="$(env_value HARNESS_PORT 3000)"
   harness_ssh_host="$(env_value HARNESS_SSH_PUBLIC_HOST "$(env_value HARNESS_SSH_HOST localhost)")"
@@ -313,7 +235,6 @@ print_urls() {
 Gateway:                  http://localhost:${gateway_port}
 Official website:         https://jgoool.com
 Unified admin console:    https://admin.jgoool.com
-Main backend:             http://localhost:${main_backend_port}
 Consul:                   http://localhost:${consul_port}
 Harness:                  http://localhost:${harness_port}
 Harness SSH:              ssh://git@${harness_ssh_host}:${harness_ssh_port}
@@ -479,8 +400,7 @@ prepare_postgres() {
         user-service-backend \
         memory-engine-backend \
         plugin-management-backend \
-        local-connector-service-backend \
-        chatos-backend
+        local-connector-service-backend
       ;;
     prebuilt|pull|image|images)
       pull_prebuilt_images
@@ -498,8 +418,7 @@ prepare_postgres() {
     user-service-migrate \
     plugin-management-migrate \
     local-connector-migrate \
-    memory-engine-migrate \
-    chatos-migrate
+    memory-engine-migrate
   do
     compose run --rm --no-deps "$migration_service"
   done
@@ -509,14 +428,6 @@ prepare_postgres() {
 if [[ "$ACTION" == "build-services" ]]; then
   print_build_services
   exit 0
-fi
-
-if [[ "$ACTION" == "validate-plugin-ui-origin" ]]; then
-  if validate_plugin_ui_origins true; then
-    echo "[OK] Plugin UI parent/resource origin configuration is valid."
-    exit 0
-  fi
-  exit 2
 fi
 
 if [[ "$ACTION" == "validate-runtime-material" ]]; then
@@ -614,7 +525,7 @@ case "$ACTION" in
     print_build_services
     ;;
   *)
-    echo "Usage: $0 [up|fast|restart|restart-fast|dev|restart-dev|rebuild|build|postgres-prepare|verify-user-import|down|reset|logs|ps|pull|clean-images|clean-build-cache|services|build-services|validate-plugin-ui-origin|validate-runtime-material] [service...]" >&2
+    echo "Usage: $0 [up|fast|restart|restart-fast|dev|restart-dev|rebuild|build|postgres-prepare|verify-user-import|down|reset|logs|ps|pull|clean-images|clean-build-cache|services|build-services|validate-runtime-material] [service...]" >&2
     echo "  up/restart pull prebuilt images by default." >&2
     echo "  fast/restart-fast reuse existing images and skip pull/build." >&2
     echo "  dev/restart-dev build local images; rebuild builds only the given build-service names." >&2
@@ -622,7 +533,6 @@ case "$ACTION" in
     echo "  clean-build-cache enforces the configured BuildKit cache size limit." >&2
     echo "  service names can be listed with: $0 services" >&2
     echo "  buildable service names can be listed with: $0 build-services" >&2
-    echo "  Plugin UI origins can be checked without Docker using: $0 validate-plugin-ui-origin" >&2
     echo "  Runtime secrets and mTLS material can be checked without Docker using: $0 validate-runtime-material" >&2
     echo "  Production cutover: postgres-prepare, migrate users, verify-user-import, then up." >&2
     exit 2

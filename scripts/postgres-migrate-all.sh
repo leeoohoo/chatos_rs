@@ -11,7 +11,6 @@ manifests=(
   "plugin_management_service/backend/Cargo.toml"
   "local_connector_service/backend/Cargo.toml"
   "memory_engine/backend/Cargo.toml"
-  "chatos/backend/Cargo.toml"
 )
 
 for manifest in "${manifests[@]}"; do

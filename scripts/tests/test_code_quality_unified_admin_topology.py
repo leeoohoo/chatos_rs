@@ -102,7 +102,7 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
         self.assertIn("attempt <= 12", deploy)
         self.assertIn("deployment probe $label returned HTTP", deploy)
         self.assertIn("deployment probe $label remained unavailable", deploy)
-        self.assertIn("wait_for_http_probe local-chatos-health success", deploy)
+        self.assertIn("wait_for_http_probe local-user-service-health success", deploy)
         self.assertIn("wait_for_http_probe local-connector-route route", deploy)
         self.assertIn('wait_for_http_probe "public-$url" success', deploy)
 

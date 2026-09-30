@@ -55,9 +55,6 @@ start_backend() {
     if memory_engine_identity="$(memory_engine_client_identity_path "$service_name")"; then
       export MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH="$memory_engine_identity"
     fi
-    if local_connector_identity="$(local_connector_identity_path "$service_name")"; then
-      export LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH="$local_connector_identity"
-    fi
     if user_service_identity="$(user_service_client_identity_path "$service_name")"; then
       export USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH="$user_service_identity"
     fi
@@ -68,11 +65,6 @@ start_backend() {
       export MEMORY_ENGINE_MTLS_SERVER_CERT_PATH="$MEMORY_ENGINE_MTLS_DIR/server.crt"
       export MEMORY_ENGINE_MTLS_SERVER_KEY_PATH="$MEMORY_ENGINE_MTLS_DIR/server.key"
       export MEMORY_ENGINE_MTLS_CLIENT_CA_CERT_PATH="$MEMORY_ENGINE_MTLS_DIR/ca.crt"
-    fi
-    if [[ "$name" == "chatos-backend" ]]; then
-      export CHATOS_MTLS_SERVER_CERT_PATH="$CHATOS_MTLS_DIR/server.crt"
-      export CHATOS_MTLS_SERVER_KEY_PATH="$CHATOS_MTLS_DIR/server.key"
-      export CHATOS_MTLS_CLIENT_CA_CERT_PATH="$CHATOS_MTLS_DIR/ca.crt"
     fi
     if [[ "$name" == "local-connector-service-backend" ]]; then
       export LOCAL_CONNECTOR_MTLS_SERVER_CERT_PATH="$LOCAL_CONNECTOR_MTLS_DIR/server.crt"
@@ -103,10 +95,6 @@ start_backend() {
 
 ensure_config_center_mtls_material() {
   "$ROOT_DIR/scripts/generate-config-center-mtls.sh" "$CONFIG_CENTER_MTLS_DIR"
-}
-
-ensure_chatos_mtls_material() {
-  "$ROOT_DIR/scripts/generate-chatos-mtls.sh" "$CHATOS_MTLS_DIR"
 }
 
 ensure_local_connector_mtls_material() {
@@ -546,7 +534,6 @@ start_all() {
   export_local_env
   ensure_dirs
   ensure_config_center_mtls_material
-  ensure_chatos_mtls_material
   ensure_local_connector_mtls_material
   ensure_user_service_mtls_material
   ensure_memory_engine_mtls_material

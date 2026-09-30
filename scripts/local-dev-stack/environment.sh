@@ -41,11 +41,6 @@ export_local_env() {
   export CONFIG_CENTER_MTLS_SERVER_KEY_PATH="${CONFIG_CENTER_MTLS_SERVER_KEY_PATH:-$CONFIG_CENTER_MTLS_DIR/server.key}"
   export CONFIG_CENTER_MTLS_CLIENT_CA_CERT_PATH="${CONFIG_CENTER_MTLS_CLIENT_CA_CERT_PATH:-$CONFIG_CENTER_MTLS_DIR/ca.crt}"
   export CONFIG_CENTER_MTLS_CA_CERT_PATH="${CONFIG_CENTER_MTLS_CA_CERT_PATH:-$CONFIG_CENTER_MTLS_DIR/ca.crt}"
-  export CHATOS_MTLS_DIR="${CHATOS_MTLS_DIR:-$STATE_DIR/chatos-mtls}"
-  export CHATOS_MTLS_SERVER_CERT_PATH="${CHATOS_MTLS_SERVER_CERT_PATH:-$CHATOS_MTLS_DIR/server.crt}"
-  export CHATOS_MTLS_SERVER_KEY_PATH="${CHATOS_MTLS_SERVER_KEY_PATH:-$CHATOS_MTLS_DIR/server.key}"
-  export CHATOS_MTLS_CLIENT_CA_CERT_PATH="${CHATOS_MTLS_CLIENT_CA_CERT_PATH:-$CHATOS_MTLS_DIR/ca.crt}"
-  export CHATOS_MTLS_CA_CERT_PATH="${CHATOS_MTLS_CA_CERT_PATH:-$CHATOS_MTLS_DIR/ca.crt}"
   export LOCAL_CONNECTOR_MTLS_DIR="${LOCAL_CONNECTOR_MTLS_DIR:-$STATE_DIR/local-connector-mtls}"
   export LOCAL_CONNECTOR_MTLS_SERVER_CERT_PATH="${LOCAL_CONNECTOR_MTLS_SERVER_CERT_PATH:-$LOCAL_CONNECTOR_MTLS_DIR/server.crt}"
   export LOCAL_CONNECTOR_MTLS_SERVER_KEY_PATH="${LOCAL_CONNECTOR_MTLS_SERVER_KEY_PATH:-$LOCAL_CONNECTOR_MTLS_DIR/server.key}"
@@ -61,10 +56,8 @@ export_local_env() {
   export USER_SERVICE_MTLS_SERVER_KEY_PATH="${USER_SERVICE_MTLS_SERVER_KEY_PATH:-$USER_SERVICE_MTLS_DIR/server.key}"
   export USER_SERVICE_MTLS_CLIENT_CA_CERT_PATH="${USER_SERVICE_MTLS_CLIENT_CA_CERT_PATH:-$USER_SERVICE_MTLS_DIR/ca.crt}"
   export USER_SERVICE_MTLS_CA_CERT_PATH="${USER_SERVICE_MTLS_CA_CERT_PATH:-$USER_SERVICE_MTLS_DIR/ca.crt}"
-  export USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH="${USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH:-$USER_SERVICE_MTLS_DIR/chatos-backend.identity.pem}"
   export MEMORY_ENGINE_MTLS_DIR="${MEMORY_ENGINE_MTLS_DIR:-$STATE_DIR/memory-engine-mtls}"
   export MEMORY_ENGINE_MTLS_CA_CERT_PATH="${MEMORY_ENGINE_MTLS_CA_CERT_PATH:-$MEMORY_ENGINE_MTLS_DIR/ca.crt}"
-  export CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET="${CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET:-change_me_config_center_chatos_backend_signing_secret}"
   export CONFIG_CENTER_LOCAL_CONNECTOR_SERVICE_CALLER_SIGNING_SECRET="${CONFIG_CENTER_LOCAL_CONNECTOR_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_local_connector_signing_secret}"
   export CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET="${CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET:-change_me_config_center_memory_engine_signing_secret}"
   export CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET="${CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET:-change_me_config_center_official_website_signing_secret}"
@@ -130,9 +123,6 @@ export_local_env() {
   export LOCAL_CONNECTOR_SERVICE_PORT="${LOCAL_CONNECTOR_SERVICE_PORT:-39230}"
   export LOCAL_CONNECTOR_INTERNAL_MTLS_PORT="${LOCAL_CONNECTOR_INTERNAL_MTLS_PORT:-39231}"
   export HOST="${HOST:-0.0.0.0}"
-  export BACKEND_PORT="${BACKEND_PORT:-3997}"
-  export CHATOS_INTERNAL_MTLS_PORT="${CHATOS_INTERNAL_MTLS_PORT:-3999}"
-  export CHATOS_DATABASE_URL="postgresql://chatos_app:${CHATOS_APP_PASSWORD:-$postgres_app_password}@${postgres_host}:${postgres_port}/chatos"
   export CONFIG_CENTER_DATABASE_URL="postgresql://config_center_app:${CONFIG_CENTER_APP_PASSWORD:-$postgres_app_password}@${postgres_host}:${postgres_port}/configuration_center"
   export USER_SERVICE_DATABASE_URL="postgresql://user_service_app:${USER_SERVICE_APP_PASSWORD:-$postgres_app_password}@${postgres_host}:${postgres_port}/user_service"
   export PLUGIN_MANAGEMENT_SERVICE_DATABASE_URL="postgresql://plugin_management_app:${PLUGIN_MANAGEMENT_APP_PASSWORD:-$postgres_app_password}@${postgres_host}:${postgres_port}/plugin_management_service"
@@ -145,7 +135,6 @@ export_local_env() {
   export CONFIG_CENTER_POSTGRES_POOL_MAX_LIFETIME_MS="${CONFIG_CENTER_POSTGRES_POOL_MAX_LIFETIME_MS:-1800000}"
   export CONFIG_CENTER_POSTGRES_STATEMENT_TIMEOUT_MS="${CONFIG_CENTER_POSTGRES_STATEMENT_TIMEOUT_MS:-30000}"
   export CONFIG_CENTER_POSTGRES_LOCK_TIMEOUT_MS="${CONFIG_CENTER_POSTGRES_LOCK_TIMEOUT_MS:-5000}"
-  export CHATOS_MIGRATION_DATABASE_URL="postgresql://chatos_migrator:${CHATOS_MIGRATOR_PASSWORD:-$postgres_migration_password}@${postgres_host}:${postgres_port}/chatos"
   export CONFIG_CENTER_MIGRATION_DATABASE_URL="postgresql://config_center_migrator:${CONFIG_CENTER_MIGRATOR_PASSWORD:-$postgres_migration_password}@${postgres_host}:${postgres_port}/configuration_center"
   export USER_SERVICE_MIGRATION_DATABASE_URL="postgresql://user_service_migrator:${USER_SERVICE_MIGRATOR_PASSWORD:-$postgres_migration_password}@${postgres_host}:${postgres_port}/user_service"
   export PLUGIN_MANAGEMENT_MIGRATION_DATABASE_URL="postgresql://plugin_management_migrator:${PLUGIN_MANAGEMENT_MIGRATOR_PASSWORD:-$postgres_migration_password}@${postgres_host}:${postgres_port}/plugin_management_service"
@@ -158,8 +147,6 @@ export_local_env() {
   export MEMORY_ENGINE_BASE_URL="http://127.0.0.1:${MEMORY_ENGINE_PORT}/api/memory-engine/v1"
   export MEMORY_ENGINE_INTERNAL_BASE_URL="https://127.0.0.1:${MEMORY_ENGINE_INTERNAL_MTLS_PORT}/api/memory-engine/v1"
   export CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL="$MEMORY_ENGINE_INTERNAL_BASE_URL"
-  export CHATOS_MEMORY_ENGINE_BASE_URL="$MEMORY_ENGINE_INTERNAL_BASE_URL"
-  export CHATOS_RUN_WORKSPACE_ROOT="${CHATOS_RUN_WORKSPACE_ROOT:-$STATE_DIR/run-workspaces}"
   export PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
   export PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_USERNAME="$CHATOS_ADMIN_USERNAME"
   export PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_PASSWORD="$CHATOS_ADMIN_PASSWORD"
@@ -167,9 +154,6 @@ export_local_env() {
   export LOCAL_CONNECTOR_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
   export LOCAL_CONNECTOR_PUBLIC_BASE_URL="http://127.0.0.1:${LOCAL_CONNECTOR_SERVICE_PORT}"
   export LOCAL_CONNECTOR_INTERNAL_API_SECRET="${LOCAL_CONNECTOR_INTERNAL_API_SECRET:-}"
-  export CHATOS_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
-  export CHATOS_USER_SERVICE_INTERNAL_BASE_URL="https://127.0.0.1:${USER_SERVICE_INTERNAL_MTLS_PORT}"
-  export CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL="https://127.0.0.1:${LOCAL_CONNECTOR_INTERNAL_MTLS_PORT}"
   export USER_SERVICE_HARNESS_PROVISIONING_ENABLED="${CHATOS_LOCAL_DEV_HARNESS_PROVISIONING_ENABLED:-true}"
   export USER_SERVICE_HARNESS_BASE_URL="${CHATOS_LOCAL_DEV_HARNESS_BASE_URL:-http://127.0.0.1:3000}"
   # Debug builds expose a password-authenticated Companion simulator route.
@@ -180,7 +164,6 @@ export_local_env() {
 
 config_center_caller_signing_secret() {
   case "$1" in
-    chatos-backend) printf '%s' "$CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET" ;;
     local-connector-service) printf '%s' "$CONFIG_CENTER_LOCAL_CONNECTOR_SERVICE_CALLER_SIGNING_SECRET" ;;
     memory-engine) printf '%s' "$CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET" ;;
     official-website) printf '%s' "$CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET" ;;
@@ -193,7 +176,7 @@ config_center_caller_signing_secret() {
 config_center_client_identity_path() {
   local caller="$1"
   case "$caller" in
-    chatos-backend|local-connector-service|memory-engine|official-website|plugin-management-service|user-service)
+    local-connector-service|memory-engine|official-website|plugin-management-service|user-service)
       printf '%s/%s.identity.pem' "$CONFIG_CENTER_MTLS_DIR" "$caller"
       ;;
     *) return 1 ;;
@@ -203,18 +186,8 @@ config_center_client_identity_path() {
 memory_engine_client_identity_path() {
   local caller="$1"
   case "$caller" in
-    configuration-center|user-service|chatos-backend)
+    configuration-center|user-service)
       printf '%s/%s.identity.pem' "$MEMORY_ENGINE_MTLS_DIR" "$caller"
-      ;;
-    *) return 1 ;;
-  esac
-}
-
-local_connector_identity_path() {
-  local caller="$1"
-  case "$caller" in
-    chatos-backend)
-      printf '%s/%s.identity.pem' "$LOCAL_CONNECTOR_MTLS_DIR" "$caller"
       ;;
     *) return 1 ;;
   esac
@@ -223,7 +196,7 @@ local_connector_identity_path() {
 user_service_client_identity_path() {
   local caller="$1"
   case "$caller" in
-    chatos-backend|memory-engine)
+    memory-engine)
       printf '%s/%s.identity.pem' "$USER_SERVICE_MTLS_DIR" "$caller"
       ;;
     *) return 1 ;;
@@ -233,7 +206,7 @@ user_service_client_identity_path() {
 plugin_management_client_identity_path() {
   local caller="$1"
   case "$caller" in
-    chatos-backend|local-connector-service|memory-engine)
+    local-connector-service|memory-engine)
       printf '%s/%s.identity.pem' "$PLUGIN_MANAGEMENT_MTLS_DIR" "$caller"
       ;;
     *) return 1 ;;
@@ -244,7 +217,6 @@ ensure_dirs() {
   mkdir -p \
     "$LOG_DIR" \
     "$PID_DIR" \
-    "$STATE_DIR/chatos" \
     "$STATE_DIR/local-connector"
 }
 
@@ -258,7 +230,6 @@ prepare_local_dev_apisix_config() {
   fi
   mkdir -p "$(dirname "$target_config")"
   sed \
-    -e "s/\"chatos-backend:3997\"/\"${host_address}:3997\"/g" \
     -e "s/\"user-service-backend:39190\"/\"${host_address}:39190\"/g" \
     -e "s/\"plugin-management-backend:39260\"/\"${host_address}:39260\"/g" \
     -e "s/\"local-connector-service-backend:39230\"/\"${host_address}:39230\"/g" \
@@ -352,7 +323,6 @@ managed = {
     "memory-engine",
     "plugin-management-service",
     "local-connector-service",
-    "chatos-backend",
     "harness",
 }
 

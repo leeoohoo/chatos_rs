@@ -37,7 +37,6 @@ DOCKER_APP_SERVICES=(
   memory-engine-worker
   plugin-management-backend
   local-connector-service-backend
-  chatos-backend
   official-website-backend
   admin-console-frontend
   official-website-frontend
@@ -50,7 +49,6 @@ BACKEND_SERVICES=(
   "memory-engine-worker|memory-engine|memory_engine/backend/Cargo.toml|-|-|memory_engine|MEMORY_ENGINE_API_ENABLED=false MEMORY_ENGINE_WORKER_ENABLED=true"
   "plugin-management-backend|plugin-management-service|plugin_management_service/backend/Cargo.toml|/api/health|39260|plugin_management_service_backend|-"
   "local-connector-service-backend|local-connector-service|local_connector_service/backend/Cargo.toml|/api/health|39230|local_connector_service_backend|-"
-  "chatos-backend|chatos-backend|chatos/backend/Cargo.toml|/health|3997|chat_app_server_rs|-"
   "official-website-backend|official-website|official_website_service/backend/Cargo.toml|/health|39250|official_website_service_backend|-"
 )
 

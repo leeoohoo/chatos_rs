@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEPLOY_SERVER="${CHATOS_DEPLOY_SERVER:-root@8.155.171.124}"
-DEPLOY_BRANCH="${CHATOS_DEPLOY_BRANCH:-3.0.7}"
+DEPLOY_BRANCH="${CHATOS_DEPLOY_BRANCH:-3.0.8}"
 REMOTE_SOURCE_REPO="${CHATOS_DEPLOY_SOURCE_REPO:-/opt/chatos_rs}"
 REMOTE_DEPLOY_ROOT="${CHATOS_DEPLOY_ROOT:-/opt/chatos-deploy}"
 DEPLOY_SERVICES_CSV="${CHATOS_DEPLOY_SERVICES:-}"
@@ -218,7 +218,6 @@ ensure_admin_certificate() {
     www.jgoool.com
     app.jgoool.com
     gateway.jgoool.com
-    plugin-ui.jgoool.com
     admin.jgoool.com
     config.jgoool.com
     user.jgoool.com
@@ -624,8 +623,8 @@ while true; do
   sleep 5
 done
 
-wait_for_http_probe local-chatos-health success \
-  http://127.0.0.1:9080/api/chatos/health
+wait_for_http_probe local-user-service-health success \
+  http://127.0.0.1:9080/api/user/health
 
 wait_for_http_probe local-admin-user-service-health success \
   --header "Host: admin.jgoool.com" \
@@ -651,7 +650,7 @@ wait_for_http_probe local-connector-route route \
   http://127.0.0.1:9080/health
 
 for url in \
-  https://gateway.jgoool.com/api/chatos/health \
+  https://gateway.jgoool.com/api/user/health \
   https://jgoool.com \
   https://admin.jgoool.com \
   https://user.jgoool.com \
