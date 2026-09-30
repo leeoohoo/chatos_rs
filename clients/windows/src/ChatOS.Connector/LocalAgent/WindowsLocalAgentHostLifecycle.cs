@@ -1,12 +1,15 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using ChatOS.Core.Abstractions;
 
 namespace ChatOS.Connector.LocalAgent;
 
-public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostLifecycle, IAsyncDisposable
+public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsyncDisposable
 {
     private const int ProtocolVersion = 25;
+    private static readonly JsonSerializerOptions SerializerOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+    };
     private readonly LocalAgentHostOptions _options;
     private readonly ILocalAgentHostProcessLauncher _launcher;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -71,24 +74,61 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostLifecycle, I
         finally { _gate.Release(); }
     }
 
+    public async Task<TResponse> SendAsync<TCommand, TResponse>(
+        TCommand command,
+        CancellationToken cancellationToken = default)
+        where TCommand : notnull
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_process is not { HasExited: false } process || ActiveOwnerUserId is null)
+            {
+                throw new InvalidOperationException("Local Agent Host is not running.");
+            }
+            var commandElement = JsonSerializer.SerializeToElement(command, SerializerOptions);
+            if (commandElement.ValueKind != JsonValueKind.Object ||
+                !commandElement.TryGetProperty("type", out var type) ||
+                type.ValueKind != JsonValueKind.String)
+            {
+                throw new InvalidDataException(
+                    "Local Agent Host command must be a JSON object with a type.");
+            }
+            if (commandElement.TryGetProperty("owner_user_id", out var owner) &&
+                !string.Equals(owner.GetString(), ActiveOwnerUserId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Local Agent Host command owner does not match the active account.");
+            }
+            return await RoundTripAsync<TResponse>(
+                process,
+                commandElement,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     private static async Task VerifyHealthAsync(
         ILocalAgentHostProcess process,
         CancellationToken cancellationToken)
     {
         var commandId = $"native-health-{Guid.NewGuid():N}";
-        var request = JsonSerializer.SerializeToUtf8Bytes(new
-        {
-            protocol_version = ProtocolVersion,
-            command_id = commandId,
-            command = new { type = "health" },
-        });
+        var request = JsonSerializer.SerializeToUtf8Bytes(
+            new HostRequest<JsonElement>(
+                ProtocolVersion,
+                commandId,
+                JsonSerializer.SerializeToElement(new { type = "health" }, SerializerOptions)),
+            SerializerOptions);
         await LocalAgentHostFrameCodec
             .WriteAsync(process.StandardInput, request, cancellationToken)
             .ConfigureAwait(false);
         var payload = await LocalAgentHostFrameCodec
             .ReadAsync(process.StandardOutput, cancellationToken)
             .ConfigureAwait(false);
-        var response = JsonSerializer.Deserialize<HostResponse>(payload)
+        var response = JsonSerializer.Deserialize<HostResponse>(payload, SerializerOptions)
             ?? throw new InvalidDataException("Local Agent Host returned an empty response.");
         if (response.ProtocolVersion != ProtocolVersion || response.CommandId != commandId)
         {
@@ -100,11 +140,52 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostLifecycle, I
                 response.Error?.Message ?? "Local Agent Host health check failed.");
         }
         if (response.Result is not { } result ||
-            !result.TryGetProperty("type", out var type) || type.GetString() != "health" ||
-            !result.TryGetProperty("storage_ready", out var ready) || !ready.GetBoolean())
+            result.Deserialize<HealthResult>(SerializerOptions) is not
+                { Type: "health", StorageReady: true })
         {
             throw new InvalidDataException("Local Agent Host health payload is invalid.");
         }
+    }
+
+    private static async Task<TResponse> RoundTripAsync<TResponse>(
+        ILocalAgentHostProcess process,
+        JsonElement command,
+        CancellationToken cancellationToken)
+    {
+        var commandId = $"native-command-{Guid.NewGuid():N}";
+        var request = JsonSerializer.SerializeToUtf8Bytes(
+            new HostRequest<JsonElement>(ProtocolVersion, commandId, command),
+            SerializerOptions);
+        await LocalAgentHostFrameCodec
+            .WriteAsync(process.StandardInput, request, cancellationToken)
+            .ConfigureAwait(false);
+        var payload = await LocalAgentHostFrameCodec
+            .ReadAsync(process.StandardOutput, cancellationToken)
+            .ConfigureAwait(false);
+        var response = JsonSerializer.Deserialize<HostResponse>(
+            payload,
+            SerializerOptions) ?? throw new InvalidDataException(
+                "Local Agent Host returned an empty response.");
+        if (response.ProtocolVersion != ProtocolVersion || response.CommandId != commandId)
+        {
+            throw new InvalidDataException("Local Agent Host response identity is invalid.");
+        }
+        if (!response.Ok)
+        {
+            throw new LocalAgentHostRequestException(
+                response.Error?.Code ?? "host_error",
+                response.Error?.Message ?? "Local Agent Host request failed.",
+                response.Error?.Retryable ?? false);
+        }
+        if (response.Result is not { } result)
+        {
+            throw new InvalidDataException(
+                "Local Agent Host response did not contain a result.");
+        }
+        var decoded = result.Deserialize<TResponse>(SerializerOptions);
+        return decoded is null
+            ? throw new InvalidDataException("Local Agent Host result could not be decoded.")
+            : decoded;
     }
 
     private async Task StopLockedAsync()
@@ -134,13 +215,32 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostLifecycle, I
         _gate.Dispose();
     }
 
+    private sealed record HostRequest<TCommand>(
+        int ProtocolVersion,
+        string CommandId,
+        TCommand Command);
+
     private sealed record HostResponse(
-        [property: JsonPropertyName("protocol_version")] int ProtocolVersion,
-        [property: JsonPropertyName("command_id")] string CommandId,
-        [property: JsonPropertyName("ok")] bool Ok,
-        [property: JsonPropertyName("result")] JsonElement? Result,
-        [property: JsonPropertyName("error")] HostError? Error);
+        int ProtocolVersion,
+        string CommandId,
+        bool Ok,
+        JsonElement? Result,
+        HostError? Error);
+
+    private sealed record HealthResult(string Type, bool StorageReady);
 
     private sealed record HostError(
-        [property: JsonPropertyName("message")] string Message);
+        string Code,
+        string Message,
+        bool Retryable);
+}
+
+public sealed class LocalAgentHostRequestException(
+    string code,
+    string message,
+    bool retryable) : Exception(message)
+{
+    public string Code { get; } = code;
+
+    public bool Retryable { get; } = retryable;
 }

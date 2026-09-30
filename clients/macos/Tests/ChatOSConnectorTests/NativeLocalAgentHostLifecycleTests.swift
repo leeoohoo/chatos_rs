@@ -29,6 +29,27 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         try await lifecycle.start(ownerUserID: "user-1")
         var owner = await lifecycle.activeOwnerUserID
         XCTAssertEqual(owner, "user-1")
+        let result: TestConversationResult = try await lifecycle.request(
+            TestCreateConversationCommand(
+                type: "create_conversation",
+                conversationID: "conversation-1",
+                ownerUserID: "user-1",
+                title: "Local conversation"
+            )
+        )
+        XCTAssertEqual(result.type, "conversation")
+        XCTAssertEqual(result.conversation.conversation.conversationId, "conversation-1")
+        XCTAssertEqual(result.conversation.conversation.version, 1)
+        await XCTAssertThrowsErrorAsync {
+            let _: TestConversationResult = try await lifecycle.request(
+                TestCreateConversationCommand(
+                    type: "create_conversation",
+                    conversationID: "conversation-2",
+                    ownerUserID: "another-user",
+                    title: "Wrong owner"
+                )
+            )
+        }
         try await lifecycle.start(ownerUserID: "user-2")
         owner = await lifecycle.activeOwnerUserID
         XCTAssertEqual(owner, "user-2")
@@ -63,5 +84,38 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         try truncated.fileHandleForWriting.write(contentsOf: Data([0, 0, 0, 4, 1, 2]))
         try truncated.fileHandleForWriting.close()
         XCTAssertThrowsError(try LocalAgentHostFrameCodec.read(from: truncated.fileHandleForReading))
+    }
+}
+
+private struct TestCreateConversationCommand: Encodable, Sendable {
+    let type: String
+    let conversationID: String
+    let ownerUserID: String
+    let title: String
+}
+
+private struct TestConversationResult: Decodable, Sendable {
+    let type: String
+    let conversation: TestConversationDetail
+}
+
+private struct TestConversationDetail: Decodable, Sendable {
+    let conversation: TestConversationRecord
+}
+
+private struct TestConversationRecord: Decodable, Sendable {
+    let conversationId: String
+    let version: UInt64
+}
+
+private func XCTAssertThrowsErrorAsync(
+    _ expression: () async throws -> Void,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async {
+    do {
+        try await expression()
+        XCTFail("Expected expression to throw", file: file, line: line)
+    } catch {
     }
 }

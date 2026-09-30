@@ -17,7 +17,7 @@ public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
     }
 }
 
-public actor NativeLocalAgentHostLifecycle: LocalAgentHostLifecycleServicing {
+public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
     private let configuration: NativeLocalAgentHostConfiguration
     private var managedProcess: ManagedLocalAgentHostProcess?
     public private(set) var activeOwnerUserID: String?
@@ -52,6 +52,49 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostLifecycleServicing {
         stopLocked()
     }
 
+    public func request(command: Data) async throws -> Data {
+        guard let managedProcess, managedProcess.process.isRunning else {
+            throw NativeLocalAgentHostError.notRunning
+        }
+        let commandValue = try JSONSerialization.jsonObject(with: command)
+        guard let commandObject = commandValue as? [String: Any],
+              commandObject["type"] is String else {
+            throw NativeLocalAgentHostError.invalidCommand
+        }
+        if let commandOwner = commandObject["owner_user_id"] as? String,
+           commandOwner != activeOwnerUserID {
+            throw NativeLocalAgentHostError.ownerMismatch
+        }
+        let commandID = "native-command-\(UUID().uuidString.lowercased())"
+        let envelope: [String: Any] = [
+            "protocol_version": 25,
+            "command_id": commandID,
+            "command": commandObject,
+        ]
+        let request = try JSONSerialization.data(withJSONObject: envelope)
+        let responseData = try managedProcess.roundTrip(request)
+        guard let response = try JSONSerialization.jsonObject(with: responseData)
+            as? [String: Any],
+              response["protocol_version"] as? Int == 25,
+              response["command_id"] as? String == commandID,
+              let ok = response["ok"] as? Bool else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+        guard ok else {
+            let error = response["error"] as? [String: Any]
+            throw NativeLocalAgentHostError.hostError(
+                code: error?["code"] as? String ?? "host_error",
+                message: error?["message"] as? String ?? "Local Agent Host request failed.",
+                retryable: error?["retryable"] as? Bool ?? false
+            )
+        }
+        guard let result = response["result"],
+              JSONSerialization.isValidJSONObject(result) else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+        return try JSONSerialization.data(withJSONObject: result)
+    }
+
     private func stopLocked() {
         activeOwnerUserID = nil
         managedProcess?.terminate()
@@ -72,16 +115,27 @@ enum NativeLocalAgentHostError: LocalizedError, Equatable {
     case invalidConfiguration(String)
     case invalidOwner
     case launchFailed(String)
+    case notRunning
+    case invalidCommand
+    case ownerMismatch
     case invalidFrame
     case invalidResponse
-    case hostError(String)
+    case hostError(code: String, message: String, retryable: Bool)
 
     var errorDescription: String? {
         switch self {
-        case let .invalidConfiguration(message), let .launchFailed(message), let .hostError(message):
+        case let .invalidConfiguration(message), let .launchFailed(message):
+            message
+        case let .hostError(_, message, _):
             message
         case .invalidOwner:
             "Local Agent owner must be 1...256 non-control characters."
+        case .notRunning:
+            "Local Agent Host is not running."
+        case .invalidCommand:
+            "Local Agent Host command must be a JSON object with a type."
+        case .ownerMismatch:
+            "Local Agent Host command owner does not match the active account."
         case .invalidFrame:
             "Local Agent Host returned an invalid frame."
         case .invalidResponse:
@@ -193,13 +247,10 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
             commandId: commandID,
             command: .init(type: "health")
         )
-        try LocalAgentHostFrameCodec.write(
-            try JSONEncoder.localAgent.encode(request),
-            to: input
-        )
+        let payload = try roundTrip(try JSONEncoder.localAgent.encode(request))
         let response = try JSONDecoder.localAgent.decode(
             HealthResponse.self,
-            from: LocalAgentHostFrameCodec.read(from: output)
+            from: payload
         )
         guard response.protocolVersion == 25,
               response.commandId == commandID else {
@@ -207,13 +258,20 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         }
         guard response.ok else {
             throw NativeLocalAgentHostError.hostError(
-                response.error?.message ?? "Local Agent Host health check failed."
+                code: response.error?.code ?? "health_failed",
+                message: response.error?.message ?? "Local Agent Host health check failed.",
+                retryable: response.error?.retryable ?? false
             )
         }
         guard response.result?.type == "health",
               response.result?.storageReady == true else {
             throw NativeLocalAgentHostError.invalidResponse
         }
+    }
+
+    func roundTrip(_ payload: Data) throws -> Data {
+        try LocalAgentHostFrameCodec.write(payload, to: input)
+        return try LocalAgentHostFrameCodec.read(from: output)
     }
 
     private static func safeEnvironment() -> [String: String] {
@@ -287,10 +345,23 @@ private struct HealthResult: Decodable {
 }
 
 private struct HealthError: Decodable {
+    let code: String
     let message: String
+    let retryable: Bool
 }
 
-private extension JSONEncoder {
+public extension LocalAgentHostClientServicing {
+    func request<Command: Encodable & Sendable, Result: Decodable & Sendable>(
+        _ command: Command,
+        as resultType: Result.Type = Result.self
+    ) async throws -> Result {
+        let data = try JSONEncoder.localAgent.encode(command)
+        let response = try await request(command: data)
+        return try JSONDecoder.localAgent.decode(resultType, from: response)
+    }
+}
+
+extension JSONEncoder {
     static var localAgent: JSONEncoder {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -298,7 +369,7 @@ private extension JSONEncoder {
     }
 }
 
-private extension JSONDecoder {
+extension JSONDecoder {
     static var localAgent: JSONDecoder {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase

@@ -107,7 +107,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let petActivityInboxService: ChatOSPetActivityInboxService
     let workspaceService: ChatOSWorkspaceService
     let localConnectorService: NativeLocalConnectorService
-    let localAgentHost: (any LocalAgentHostLifecycleServicing)?
+    let localAgentHost: (any LocalAgentHostClientServicing)?
     let projectConversationService: ChatOSProjectConversationService
     let localProjectsService: NativeLocalProjectsService
     let remoteConnectionService: NativeRemoteConnectionService

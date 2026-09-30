@@ -10,3 +10,11 @@ public interface ILocalAgentHostLifecycle
 
     Task StopAsync(CancellationToken cancellationToken = default);
 }
+
+public interface ILocalAgentHostClient : ILocalAgentHostLifecycle
+{
+    Task<TResponse> SendAsync<TCommand, TResponse>(
+        TCommand command,
+        CancellationToken cancellationToken = default)
+        where TCommand : notnull;
+}
