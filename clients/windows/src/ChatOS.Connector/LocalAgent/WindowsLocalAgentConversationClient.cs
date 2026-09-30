@@ -63,6 +63,11 @@ internal sealed record WindowsLocalConversationHistoryPage(
     IReadOnlyList<WindowsLocalConversationAttachmentRecord> Attachments,
     ulong? NextBeforeOrdinal);
 
+internal sealed record WindowsLocalConversationPage(
+    IReadOnlyList<WindowsLocalConversationRecord> Conversations,
+    long? NextBeforeUpdatedAtUnixMs,
+    string? NextBeforeConversationId);
+
 internal sealed record CreateLocalConversationCommand(
     string Type,
     string ConversationId,
@@ -79,6 +84,13 @@ internal sealed record GetLocalConversationHistoryCommand(
     string OwnerUserId,
     string ConversationId,
     ulong? BeforeOrdinal,
+    uint Limit);
+
+internal sealed record ListLocalConversationsCommand(
+    string Type,
+    string OwnerUserId,
+    long? BeforeUpdatedAtUnixMs,
+    string? BeforeConversationId,
     uint Limit);
 
 internal sealed record StartLocalConversationTurnCommand(
@@ -138,6 +150,10 @@ internal sealed record LocalConversationHistoryResult(
     string Type,
     WindowsLocalConversationHistoryPage Page);
 
+internal sealed record LocalConversationsResult(
+    string Type,
+    WindowsLocalConversationPage Page);
+
 public sealed class WindowsLocalAgentConversationClient(ILocalAgentHostClient host)
 {
     internal Task<WindowsLocalConversationDetail> CreateAsync(
@@ -160,6 +176,27 @@ public sealed class WindowsLocalAgentConversationClient(ILocalAgentHostClient ho
                 ownerUserId,
                 conversationId),
             cancellationToken);
+
+    internal async Task<WindowsLocalConversationPage> ListAsync(
+        string ownerUserId,
+        long? beforeUpdatedAtUnixMs,
+        string? beforeConversationId,
+        uint limit,
+        CancellationToken cancellationToken)
+    {
+        var response = await host.SendAsync<
+            ListLocalConversationsCommand,
+            LocalConversationsResult>(new(
+                "list_conversations",
+                ownerUserId,
+                beforeUpdatedAtUnixMs,
+                beforeConversationId,
+                limit), cancellationToken).ConfigureAwait(false);
+        return response.Type == "conversations"
+            ? response.Page
+            : throw new InvalidDataException(
+                "Local Agent Host returned an invalid conversation list result.");
+    }
 
     internal async Task<WindowsLocalConversationHistoryPage> HistoryAsync(
         string ownerUserId,

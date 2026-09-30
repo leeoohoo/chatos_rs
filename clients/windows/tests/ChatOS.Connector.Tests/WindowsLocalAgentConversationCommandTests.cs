@@ -88,6 +88,25 @@ public sealed class WindowsLocalAgentConversationCommandTests
         Assert.Equal((ulong)7, authorized.ByteSize);
     }
 
+    [Fact]
+    public async Task ListsConversationsWithTheOwnerScopedCursor()
+    {
+        var host = new ConversationHost();
+        var page = await new WindowsLocalAgentConversationClient(host).ListAsync(
+            "user-1",
+            2_000,
+            "conversation-2",
+            25,
+            CancellationToken.None);
+
+        var command = Assert.IsType<ListLocalConversationsCommand>(host.LastList);
+        Assert.Equal("user-1", command.OwnerUserId);
+        Assert.Equal(2_000, command.BeforeUpdatedAtUnixMs);
+        Assert.Equal("conversation-2", command.BeforeConversationId);
+        Assert.Equal((uint)25, command.Limit);
+        Assert.Equal("conversation-1", Assert.Single(page.Conversations).ConversationId);
+    }
+
     private static WindowsLocalAgentConversationCommandService CreateCommandService(
         ConversationHost host,
         WindowsLocalAgentConversationRuntimeSettingsService runtime)
@@ -134,6 +153,7 @@ public sealed class WindowsLocalAgentConversationCommandTests
     private sealed class ConversationHost : ILocalAgentHostClient
     {
         public StartLocalConversationTurnCommand? LastStart { get; private set; }
+        public ListLocalConversationsCommand? LastList { get; private set; }
 
         public string? ActiveOwnerUserId => "user-1";
 
@@ -176,6 +196,7 @@ public sealed class WindowsLocalAgentConversationCommandTests
                 CreateLocalConversationCommand create => new LocalConversationResult(
                     "conversation",
                     Detail(create.ConversationId)),
+                ListLocalConversationsCommand list => Listed(list),
                 StartLocalConversationTurnCommand start => Started(start),
                 _ => throw new InvalidOperationException(
                     $"Unexpected command: {typeof(TCommand).Name}"),
@@ -211,6 +232,17 @@ public sealed class WindowsLocalAgentConversationCommandTests
                         start.MessageMetadata,
                         1_000),
                     []));
+        }
+
+        private LocalConversationsResult Listed(ListLocalConversationsCommand command)
+        {
+            LastList = command;
+            return new(
+                "conversations",
+                new WindowsLocalConversationPage(
+                    [Detail("conversation-1").Conversation],
+                    null,
+                    null));
         }
 
         private static WindowsLocalConversationDetail Detail(string conversationId) => new(
