@@ -4,10 +4,27 @@ namespace ChatOS.Connector.LocalAgent;
 
 internal static class WindowsLocalAgentCapabilityCatalog
 {
-    public const string Revision = "native-windows-main-chat-v1";
+    public const string Revision = "native-windows-main-chat-v2";
 
     public static IReadOnlyList<JsonElement> MainChatTools { get; } =
     [
+        Parse("""
+        {
+          "type": "function",
+          "name": "local_attachment_read",
+          "description": "Read a bounded segment of an authorized local attachment without exposing its filesystem path.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "authorized_local_ref": { "type": "string", "minLength": 1, "maxLength": 160 },
+              "offset": { "type": "integer", "minimum": 0, "default": 0 },
+              "limit": { "type": "integer", "minimum": 1, "maximum": 65536, "default": 16384 }
+            },
+            "required": ["authorized_local_ref"],
+            "additionalProperties": false
+          }
+        }
+        """),
         Parse("""
         {
           "type": "function",

@@ -12,15 +12,21 @@ public sealed class WindowsLocalAgentConversationCommandService : IConversationC
 
     private readonly WindowsLocalAgentConversationClient _client;
     private readonly WindowsLocalAgentConversationRuntimeSettingsService _runtimeSettings;
+    private readonly WindowsLocalAgentAttachmentVault _attachments;
+    private readonly WindowsLocalAgentPlatformToolWorker _toolWorker;
     private readonly object _contextGate = new();
     private Context? _context;
 
     public WindowsLocalAgentConversationCommandService(
         WindowsLocalAgentConversationClient client,
-        WindowsLocalAgentConversationRuntimeSettingsService runtimeSettings)
+        WindowsLocalAgentConversationRuntimeSettingsService runtimeSettings,
+        WindowsLocalAgentAttachmentVault attachments,
+        WindowsLocalAgentPlatformToolWorker toolWorker)
     {
         _client = client;
         _runtimeSettings = runtimeSettings;
+        _attachments = attachments;
+        _toolWorker = toolWorker;
     }
 
     public void Configure(string ownerUserId, WindowsLocalAgentBootstrapSnapshot bootstrap)
@@ -49,7 +55,6 @@ public sealed class WindowsLocalAgentConversationCommandService : IConversationC
         ConversationSendCommand command,
         CancellationToken cancellationToken = default)
     {
-        RequireNoAttachments(command);
         var context = RequireContext();
         var selection = await _runtimeSettings.ResolveSelectionAsync(
             command.ConversationId,
@@ -59,6 +64,8 @@ public sealed class WindowsLocalAgentConversationCommandService : IConversationC
             command.ConversationId,
             cancellationToken).ConfigureAwait(false);
         var messageId = $"message_{Guid.NewGuid():N}";
+        var attachments = _attachments.Authorize(
+            command.Attachments, context.OwnerUserId, command.ConversationId);
         var result = await _client.StartTurnAsync(new(
             "start_conversation_turn",
             context.OwnerUserId,
@@ -74,11 +81,12 @@ public sealed class WindowsLocalAgentConversationCommandService : IConversationC
                 ["reasoning_enabled"] = command.ReasoningEnabled ??
                     selection.Settings.ReasoningEnabled,
             }),
-            [],
+            attachments,
             selection.ModelSnapshot.ModelConfigRef,
             selection.ModelSnapshot.ModelConfigRevision,
             context.CapabilityPolicyRevision,
             32), cancellationToken).ConfigureAwait(false);
+        _toolWorker.Wake();
         return new(
             true,
             result.Turn.TurnId,
@@ -89,7 +97,6 @@ public sealed class WindowsLocalAgentConversationCommandService : IConversationC
         ConversationSendCommand command,
         CancellationToken cancellationToken = default)
     {
-        RequireNoAttachments(command);
         var context = RequireContext();
         var detail = await _client.GetAsync(
             context.OwnerUserId,
@@ -101,6 +108,8 @@ public sealed class WindowsLocalAgentConversationCommandService : IConversationC
             throw new GuidanceTargetInactiveException();
         }
         var messageId = $"message_{Guid.NewGuid():N}";
+        var attachments = _attachments.Authorize(
+            command.Attachments, context.OwnerUserId, command.ConversationId);
         var result = await _client.GuideTurnAsync(new(
             "guide_conversation_turn",
             context.OwnerUserId,
@@ -114,7 +123,8 @@ public sealed class WindowsLocalAgentConversationCommandService : IConversationC
             {
                 ["source"] = "native_guidance",
             }),
-            []), cancellationToken).ConfigureAwait(false);
+            attachments), cancellationToken).ConfigureAwait(false);
+        _toolWorker.Wake();
         return new(
             true,
             result.Turn.TurnId,
@@ -182,12 +192,4 @@ public sealed class WindowsLocalAgentConversationCommandService : IConversationC
         }
     }
 
-    private static void RequireNoAttachments(ConversationSendCommand command)
-    {
-        if (command.Attachments.Count != 0)
-        {
-            throw new InvalidOperationException(
-                "Windows Local Agent attachment authorization is not configured yet.");
-        }
-    }
 }

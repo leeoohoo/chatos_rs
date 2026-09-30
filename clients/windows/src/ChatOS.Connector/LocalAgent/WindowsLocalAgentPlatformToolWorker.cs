@@ -1,0 +1,142 @@
+using System.Text.Json;
+using ChatOS.Core.Abstractions;
+
+namespace ChatOS.Connector.LocalAgent;
+
+internal sealed record WindowsLocalToolInvocation(
+    string InvocationId, string RunId, string ToolName, JsonElement Arguments,
+    bool SideEffecting, ulong Version);
+internal sealed record WindowsLocalToolClaim(
+    string WorkerId, string ClaimToken, WindowsLocalToolInvocation Invocation);
+internal sealed record ClaimLocalToolCommand(
+    string Type, string OwnerUserId, string WorkerId, ulong LeaseDurationMs,
+    IReadOnlyList<string>? IncludeToolNames, IReadOnlyList<string> ExcludeToolNames);
+internal sealed record ClaimLocalToolResult(string Type, WindowsLocalToolClaim? Claim);
+internal sealed record CommitLocalToolCommand(
+    string Type, string OwnerUserId, string InvocationId, string ClaimToken,
+    ulong ExpectedVersion, JsonElement Outcome);
+internal sealed record CommitLocalToolResult(string Type, JsonElement Result);
+internal sealed record GetLocalRunCommand(string Type, string OwnerUserId, string RunId);
+internal sealed record WindowsLocalRun(string OwnerUserId, JsonElement Input);
+internal sealed record GetLocalRunResult(string Type, WindowsLocalRun Run);
+
+public sealed class WindowsLocalAgentPlatformToolWorker
+{
+    private const string AttachmentTool = "local_attachment_read";
+    private readonly ILocalAgentHostClient _host;
+    private readonly WindowsLocalAgentConversationClient _conversations;
+    private readonly WindowsLocalAgentAttachmentVault _vault;
+    private readonly object _gate = new();
+    private string? _owner;
+    private CancellationTokenSource? _polling;
+
+    public WindowsLocalAgentPlatformToolWorker(
+        ILocalAgentHostClient host,
+        WindowsLocalAgentConversationClient conversations,
+        WindowsLocalAgentAttachmentVault vault)
+    {
+        _host = host; _conversations = conversations; _vault = vault;
+    }
+
+    public void Configure(string ownerUserId)
+    {
+        Reset();
+        lock (_gate) _owner = ownerUserId;
+        Start(TimeSpan.Zero);
+    }
+
+    public void Reset()
+    {
+        lock (_gate) { _owner = null; _polling?.Cancel(); _polling = null; }
+    }
+
+    public void Wake() => Start(TimeSpan.FromMinutes(5));
+
+    private void Start(TimeSpan window)
+    {
+        lock (_gate)
+        {
+            if (_owner is null || _polling is not null) return;
+            _polling = new CancellationTokenSource();
+            _ = PollAsync(_owner, window, _polling);
+        }
+    }
+
+    private async Task PollAsync(string owner, TimeSpan window, CancellationTokenSource source)
+    {
+        var deadline = DateTimeOffset.UtcNow + window;
+        var delay = 250;
+        try
+        {
+            while (!source.IsCancellationRequested)
+            {
+                var result = await _host.SendAsync<ClaimLocalToolCommand, ClaimLocalToolResult>(new(
+                    "claim_next_tool", owner, "windows-platform-tool-worker", 30_000,
+                    [AttachmentTool], ["create_task", "create_tasks_with_prerequisites"]), source.Token)
+                    .ConfigureAwait(false);
+                if (result.Type != "tool_claim") throw new InvalidDataException("Invalid tool claim result.");
+                if (result.Claim is { } claim)
+                {
+                    var outcome = await ExecuteAsync(owner, claim, source.Token).ConfigureAwait(false);
+                    _ = await _host.SendAsync<CommitLocalToolCommand, CommitLocalToolResult>(new(
+                        "commit_tool", owner, claim.Invocation.InvocationId, claim.ClaimToken,
+                        claim.Invocation.Version, outcome), source.Token).ConfigureAwait(false);
+                    delay = 250;
+                    continue;
+                }
+                if (window == TimeSpan.Zero || DateTimeOffset.UtcNow >= deadline) return;
+                await Task.Delay(delay, source.Token).ConfigureAwait(false);
+                delay = Math.Min(delay * 2, 2_000);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch { if (window == TimeSpan.Zero) return; }
+        finally
+        {
+            lock (_gate)
+            {
+                if (ReferenceEquals(_polling, source)) _polling = null;
+            }
+            source.Dispose();
+        }
+    }
+
+    private async Task<JsonElement> ExecuteAsync(
+        string owner, WindowsLocalToolClaim claim, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (claim.Invocation.ToolName != AttachmentTool ||
+                claim.Invocation.Arguments.ValueKind != JsonValueKind.Object)
+                throw new InvalidOperationException("Unsupported local platform tool.");
+            var args = claim.Invocation.Arguments;
+            var reference = args.GetProperty("authorized_local_ref").GetString()
+                ?? throw new InvalidOperationException("Invalid attachment reference.");
+            var offset = args.TryGetProperty("offset", out var offsetValue) ? offsetValue.GetUInt64() : 0;
+            var limit = args.TryGetProperty("limit", out var limitValue) ? limitValue.GetInt32() : 16_384;
+            var runResult = await _host.SendAsync<GetLocalRunCommand, GetLocalRunResult>(
+                new("get_run", owner, claim.Invocation.RunId), cancellationToken).ConfigureAwait(false);
+            if (runResult.Type != "run" || runResult.Run.OwnerUserId != owner ||
+                !runResult.Run.Input.TryGetProperty("conversation_id", out var conversationValue))
+                throw new InvalidOperationException("Invalid Local Agent Run context.");
+            var conversationId = conversationValue.GetString()
+                ?? throw new InvalidOperationException("Invalid Local Agent conversation context.");
+            var conversation = await _conversations.GetAsync(owner, conversationId, cancellationToken)
+                .ConfigureAwait(false);
+            var attachment = conversation.Attachments.FirstOrDefault(value =>
+                value.AuthorizedLocalRef == reference) ?? throw new InvalidOperationException(
+                    "The attachment is not authorized for this conversation.");
+            var output = _vault.Resolve(attachment, owner, conversationId, offset, limit);
+            return JsonSerializer.SerializeToElement(new { type = "succeeded", output });
+        }
+        catch
+        {
+            return JsonSerializer.SerializeToElement(new {
+                type = claim.Invocation.SideEffecting ? "needs_review" : "failed",
+                error = "Local platform tool failed.",
+                reason = "Local platform tool failed.",
+                detail = new { tool_name = claim.Invocation.ToolName, phase = "native_platform_execution" },
+            });
+        }
+    }
+}

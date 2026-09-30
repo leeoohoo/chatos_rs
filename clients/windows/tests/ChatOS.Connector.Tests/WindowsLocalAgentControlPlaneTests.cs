@@ -38,14 +38,16 @@ public sealed class WindowsLocalAgentControlPlaneTests
     }
 
     [Fact]
-    public void MainChatCatalogPublishesOnlyRustReservedTaskTools()
+    public void MainChatCatalogPublishesAttachmentAndRustReservedTaskTools()
     {
         var names = WindowsLocalAgentCapabilityCatalog.MainChatTools
             .Select(tool => tool.GetProperty("name").GetString())
             .ToArray();
 
         Assert.Equal(
-            new string?[] { "create_task", "create_tasks_with_prerequisites" },
+            new string?[] {
+                "local_attachment_read", "create_task", "create_tasks_with_prerequisites",
+            },
             names);
         Assert.All(WindowsLocalAgentCapabilityCatalog.MainChatTools, tool =>
             Assert.Equal("function", tool.GetProperty("type").GetString()));

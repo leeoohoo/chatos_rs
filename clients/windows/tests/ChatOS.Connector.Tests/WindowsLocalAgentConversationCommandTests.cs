@@ -8,6 +8,30 @@ namespace ChatOS.Connector.Tests;
 public sealed class WindowsLocalAgentConversationCommandTests
 {
     [Fact]
+    public void AttachmentVaultChecksScopeAndIntegrity()
+    {
+        var vault = new WindowsLocalAgentAttachmentVault(Path.Combine(
+            Path.GetTempPath(), $"chatos-vault-{Guid.NewGuid():N}"));
+        var draft = ConversationAttachmentDraft.Create(
+            "note.txt", "text/plain", ConversationAttachmentKind.File,
+            ConversationAttachmentOrigin.PastedText, "content"u8.ToArray());
+        var spec = Assert.Single(vault.Authorize([draft], "user-1", "conversation-1"));
+        var record = new WindowsLocalConversationAttachmentRecord(
+            spec.AttachmentId, "conversation-1", "turn-1", "message-1", 1,
+            spec.DisplayName, spec.MediaType, spec.ByteSize, spec.Sha256,
+            spec.AuthorizedLocalRef, spec.Metadata, 1_000);
+
+        var content = vault.Resolve(record, "user-1", "conversation-1", 0, 64);
+
+        Assert.Equal("content", content.GetProperty("content").GetString());
+        Assert.ThrowsAny<Exception>(() =>
+            vault.Resolve(record, "user-2", "conversation-1", 0, 64));
+        Assert.Throws<InvalidOperationException>(() =>
+            vault.Resolve(record with { Sha256 = new string('0', 64) },
+                "user-1", "conversation-1", 0, 64));
+    }
+
+    [Fact]
     public async Task StartsTurnWithLocalModelAndCapabilityRevisions()
     {
         var host = new ConversationHost();
@@ -16,9 +40,7 @@ public sealed class WindowsLocalAgentConversationCommandTests
             new WindowsLocalAgentConversationRuntimeSettingsClient(host));
         var bootstrap = Bootstrap(model);
         runtime.Configure("user-1", bootstrap);
-        var service = new WindowsLocalAgentConversationCommandService(
-            new WindowsLocalAgentConversationClient(host),
-            runtime);
+        var service = CreateCommandService(host, runtime);
         service.Configure("user-1", bootstrap);
 
         var result = await service.SendNewTurnAsync(new ConversationSendCommand(
@@ -39,7 +61,7 @@ public sealed class WindowsLocalAgentConversationCommandTests
     }
 
     [Fact]
-    public async Task RejectsAttachmentsBeforeAnyRemoteFallback()
+    public async Task AuthorizesAttachmentsIntoTheLocalVault()
     {
         var host = new ConversationHost();
         var model = Model();
@@ -47,9 +69,7 @@ public sealed class WindowsLocalAgentConversationCommandTests
             new WindowsLocalAgentConversationRuntimeSettingsClient(host));
         var bootstrap = Bootstrap(model);
         runtime.Configure("user-1", bootstrap);
-        var service = new WindowsLocalAgentConversationCommandService(
-            new WindowsLocalAgentConversationClient(host),
-            runtime);
+        var service = CreateCommandService(host, runtime);
         service.Configure("user-1", bootstrap);
         var attachment = ConversationAttachmentDraft.Create(
             "note.txt",
@@ -58,15 +78,25 @@ public sealed class WindowsLocalAgentConversationCommandTests
             ConversationAttachmentOrigin.PastedText,
             "content"u8.ToArray());
 
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.SendNewTurnAsync(new ConversationSendCommand(
-                "conversation-1",
-                "turn-1",
-                "hello",
-                [attachment])));
+        _ = await service.SendNewTurnAsync(new ConversationSendCommand(
+            "conversation-1", "turn-1", "hello", [attachment]));
 
-        Assert.Contains("attachment authorization", error.Message);
-        Assert.Null(host.LastStart);
+        var start = Assert.IsType<StartLocalConversationTurnCommand>(host.LastStart);
+        var authorized = Assert.Single(start.Attachments);
+        Assert.StartsWith("local-attachment:", authorized.AuthorizedLocalRef);
+        Assert.Equal("note.txt", authorized.DisplayName);
+        Assert.Equal((ulong)7, authorized.ByteSize);
+    }
+
+    private static WindowsLocalAgentConversationCommandService CreateCommandService(
+        ConversationHost host,
+        WindowsLocalAgentConversationRuntimeSettingsService runtime)
+    {
+        var client = new WindowsLocalAgentConversationClient(host);
+        var vault = new WindowsLocalAgentAttachmentVault(Path.Combine(
+            Path.GetTempPath(), $"chatos-vault-{Guid.NewGuid():N}"));
+        var worker = new WindowsLocalAgentPlatformToolWorker(host, client, vault);
+        return new WindowsLocalAgentConversationCommandService(client, runtime, vault, worker);
     }
 
     private static WindowsLocalAgentBootstrapSnapshot Bootstrap(

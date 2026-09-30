@@ -91,7 +91,7 @@ internal sealed record StartLocalConversationTurnCommand(
     string RunId,
     string Message,
     JsonElement MessageMetadata,
-    IReadOnlyList<JsonElement> Attachments,
+    IReadOnlyList<WindowsLocalConversationAttachmentSpec> Attachments,
     string ModelConfigRef,
     string ModelConfigRevision,
     string CapabilityPolicyRevision,
@@ -107,7 +107,7 @@ internal sealed record GuideLocalConversationTurnCommand(
     string MessageId,
     string Message,
     JsonElement MessageMetadata,
-    IReadOnlyList<JsonElement> Attachments);
+    IReadOnlyList<WindowsLocalConversationAttachmentSpec> Attachments);
 
 internal sealed record CancelLocalConversationTurnCommand(
     string Type,

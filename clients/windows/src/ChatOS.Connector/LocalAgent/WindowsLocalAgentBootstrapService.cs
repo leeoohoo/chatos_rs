@@ -22,6 +22,7 @@ public sealed class WindowsLocalAgentBootstrapService
     private readonly WindowsLocalAgentConversationRuntimeSettingsService _runtimeSettings;
     private readonly WindowsLocalAgentConversationCommandService _conversationCommands;
     private readonly WindowsLocalAgentConversationHistoryService _conversationHistory;
+    private readonly WindowsLocalAgentPlatformToolWorker _toolWorker;
     private readonly ChatOSApiClient _api;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -32,6 +33,7 @@ public sealed class WindowsLocalAgentBootstrapService
         WindowsLocalAgentConversationRuntimeSettingsService runtimeSettings,
         WindowsLocalAgentConversationCommandService conversationCommands,
         WindowsLocalAgentConversationHistoryService conversationHistory,
+        WindowsLocalAgentPlatformToolWorker toolWorker,
         ChatOSApiClient api)
     {
         _host = host;
@@ -40,6 +42,7 @@ public sealed class WindowsLocalAgentBootstrapService
         _runtimeSettings = runtimeSettings;
         _conversationCommands = conversationCommands;
         _conversationHistory = conversationHistory;
+        _toolWorker = toolWorker;
         _api = api;
     }
 
@@ -56,6 +59,7 @@ public sealed class WindowsLocalAgentBootstrapService
             _runtimeSettings.Reset();
             _conversationCommands.Reset();
             _conversationHistory.Reset();
+            _toolWorker.Reset();
             Current = null;
             if (_host.ActiveOwnerUserId is { } activeOwner &&
                 !string.Equals(activeOwner, ownerUserId, StringComparison.Ordinal))
@@ -137,7 +141,7 @@ public sealed class WindowsLocalAgentBootstrapService
                 ownerUserId,
                 "main_chat",
                 WindowsLocalAgentCapabilityCatalog.Revision,
-                "Use create_task or create_tasks_with_prerequisites only for user-requested durable work. Conversation, task, and execution state remain local.",
+                "Use local_attachment_read for attachment content and treat authorized_local_ref values as opaque. Use create_task or create_tasks_with_prerequisites only for user-requested durable work. Conversation, task, and execution state remain local.",
                 [],
                 WindowsLocalAgentCapabilityCatalog.MainChatTools);
             _ = await _controlPlane.PublishCapabilitiesAsync(
@@ -161,6 +165,7 @@ public sealed class WindowsLocalAgentBootstrapService
             _runtimeSettings.Configure(ownerUserId, result);
             _conversationCommands.Configure(ownerUserId, result);
             _conversationHistory.Configure(ownerUserId);
+            _toolWorker.Configure(ownerUserId);
             Current = result;
             return result;
         }
@@ -175,6 +180,7 @@ public sealed class WindowsLocalAgentBootstrapService
         _runtimeSettings.Reset();
         _conversationCommands.Reset();
         _conversationHistory.Reset();
+        _toolWorker.Reset();
         Current = null;
     }
 

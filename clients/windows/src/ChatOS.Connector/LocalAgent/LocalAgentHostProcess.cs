@@ -52,6 +52,8 @@ internal sealed class LocalAgentHostProcessLauncher : ILocalAgentHostProcessLaun
         start.ArgumentList.Add(Path.GetFullPath(options.DatabasePath));
         start.ArgumentList.Add("--owner-user-id");
         start.ArgumentList.Add(ownerUserId);
+        start.ArgumentList.Add("--read-only-tool");
+        start.ArgumentList.Add("local_attachment_read");
         start.ArgumentList.Add("--stdio");
         start.Environment.Clear();
         foreach (var name in AllowedEnvironmentVariables)
