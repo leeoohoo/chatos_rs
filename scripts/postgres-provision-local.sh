@@ -23,8 +23,6 @@ database_specs=(
   "user_service:user_service_app:user_service_migrator"
   "plugin_management_service:plugin_management_app:plugin_management_migrator"
   "local_connector_service:local_connector_app:local_connector_migrator"
-  "task_runner_service:task_runner_app:task_runner_migrator"
-  "mcp_management_service:mcp_management_app:mcp_management_migrator"
   "memory_engine:memory_engine_app:memory_engine_migrator"
 )
 
@@ -81,4 +79,4 @@ SELECT format(
 SQL
 done
 
-echo "Provisioned 8 PostgreSQL databases and isolated application roles."
+echo "Provisioned 6 PostgreSQL databases and isolated application roles."

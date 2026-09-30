@@ -20,8 +20,6 @@ LOCAL_BUILD_SERVICES=(
   memory-engine-backend
   plugin-management-backend
   local-connector-service-backend
-  mcp-management-service-backend
-  task-runner-backend
   chatos-backend
   official-website-backend
   admin-console-frontend
@@ -266,7 +264,7 @@ validate_production_secrets() {
   postgres_server_max_connections="$(env_value POSTGRES_SERVER_MAX_CONNECTIONS "")"
   if [[ ! "$postgres_server_max_connections" =~ ^[0-9]+$ ]] \
     || (( postgres_server_max_connections < 150 )); then
-    echo "[ERROR] production POSTGRES_SERVER_MAX_CONNECTIONS must be an integer >= 150 for the current 11-process pool budget" >&2
+    echo "[ERROR] production POSTGRES_SERVER_MAX_CONNECTIONS must be an integer >= 150 for the current 7-process pool budget" >&2
     failures=1
   fi
   local key value default_value
@@ -285,11 +283,9 @@ RABBITMQ_DEFAULT_PASS|change_me_rabbitmq_password
 VALKEY_PASSWORD|change_me_valkey_password
 CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET|change_me_config_center_chatos_backend_signing_secret
 CONFIG_CENTER_LOCAL_CONNECTOR_SERVICE_CALLER_SIGNING_SECRET|change_me_config_center_local_connector_signing_secret
-CONFIG_CENTER_MCP_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET|change_me_config_center_mcp_management_signing_secret
 CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET|change_me_config_center_memory_engine_signing_secret
 CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET|change_me_config_center_official_website_signing_secret
 CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET|change_me_config_center_plugin_management_signing_secret
-CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET|change_me_config_center_task_runner_signing_secret
 CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET|change_me_config_center_user_service_signing_secret
 EOF
 
@@ -301,7 +297,7 @@ EOF
 
 source "$SCRIPT_DIR/deploy-mtls.sh"
 print_urls() {
-  local main_backend_port local_connector_service_port mcp_management_port gateway_port
+  local main_backend_port local_connector_service_port gateway_port
   local harness_port harness_ssh_host harness_ssh_port consul_port
   main_backend_port="$(env_value MAIN_BACKEND_PORT 3997)"
   consul_port="$(env_value CONSUL_HTTP_PORT 8500)"
@@ -309,7 +305,6 @@ print_urls() {
   harness_ssh_host="$(env_value HARNESS_SSH_PUBLIC_HOST "$(env_value HARNESS_SSH_HOST localhost)")"
   harness_ssh_port="$(env_value HARNESS_SSH_PORT 3022)"
   local_connector_service_port="$(env_value LOCAL_CONNECTOR_SERVICE_PORT 39230)"
-  mcp_management_port="$(env_value MCP_MANAGEMENT_PORT 39280)"
   gateway_port="$(env_value APISIX_GATEWAY_PORT 9080)"
   cat <<EOF
 
@@ -323,7 +318,6 @@ Consul:                   http://localhost:${consul_port}
 Harness:                  http://localhost:${harness_port}
 Harness SSH:              ssh://git@${harness_ssh_host}:${harness_ssh_port}
 Local Connector Service:  http://localhost:${local_connector_service_port}
-MCP Management Service:   http://localhost:${mcp_management_port}
 
 Logs:    $0 logs
 Status:  $0 ps
@@ -486,8 +480,6 @@ prepare_postgres() {
         memory-engine-backend \
         plugin-management-backend \
         local-connector-service-backend \
-        mcp-management-service-backend \
-        task-runner-backend \
         chatos-backend
       ;;
     prebuilt|pull|image|images)
@@ -506,8 +498,6 @@ prepare_postgres() {
     user-service-migrate \
     plugin-management-migrate \
     local-connector-migrate \
-    task-runner-migrate \
-    mcp-management-migrate \
     memory-engine-migrate \
     chatos-migrate
   do

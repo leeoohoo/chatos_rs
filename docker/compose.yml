@@ -28,10 +28,6 @@ x-config-center-mtls-server-secrets: &config-center-mtls-server-secrets
     target: config_center_mtls_server_cert
   - source: config_center_mtls_server_key
     target: config_center_mtls_server_key
-  - source: mcp_management_mtls_ca
-    target: mcp_management_mtls_ca
-  - source: mcp_management_mtls_configuration_center_identity
-    target: mcp_management_mtls_client_identity
   - source: memory_engine_mtls_ca
     target: memory_engine_mtls_ca
   - source: memory_engine_mtls_configuration_center_identity
@@ -42,14 +38,6 @@ x-config-center-mtls-chatos-secrets: &config-center-mtls-chatos-secrets
     target: config_center_mtls_ca
   - source: config_center_mtls_chatos_identity
     target: config_center_mtls_client_identity
-  - source: mcp_management_mtls_ca
-    target: mcp_management_mtls_ca
-  - source: mcp_management_mtls_chatos_identity
-    target: mcp_management_mtls_client_identity
-  - source: task_runner_mtls_ca
-    target: task_runner_mtls_ca
-  - source: task_runner_mtls_chatos_identity
-    target: task_runner_mtls_client_identity
   - source: user_service_mtls_ca
     target: user_service_mtls_ca
   - source: user_service_mtls_chatos_identity
@@ -88,34 +76,6 @@ x-config-center-mtls-local-connector-secrets: &config-center-mtls-local-connecto
     target: local_connector_mtls_server_cert
   - source: local_connector_mtls_server_key
     target: local_connector_mtls_server_key
-
-x-config-center-mtls-mcp-management-secrets: &config-center-mtls-mcp-management-secrets
-  - source: config_center_mtls_ca
-    target: config_center_mtls_ca
-  - source: config_center_mtls_mcp_management_identity
-    target: config_center_mtls_client_identity
-  - source: mcp_management_mtls_ca
-    target: mcp_management_mtls_ca
-  - source: mcp_management_mtls_server_cert
-    target: mcp_management_mtls_server_cert
-  - source: mcp_management_mtls_server_key
-    target: mcp_management_mtls_server_key
-  - source: task_runner_mtls_ca
-    target: task_runner_mtls_ca
-  - source: task_runner_mtls_mcp_management_identity
-    target: task_runner_mtls_client_identity
-  - source: plugin_management_mtls_ca
-    target: plugin_management_mtls_ca
-  - source: plugin_management_mtls_mcp_management_identity
-    target: plugin_management_mtls_client_identity
-  - source: local_connector_mtls_ca
-    target: local_connector_mtls_ca
-  - source: local_connector_mtls_mcp_management_identity
-    target: local_connector_mtls_client_identity
-  - source: chatos_mtls_ca
-    target: chatos_mtls_ca
-  - source: chatos_mtls_mcp_management_identity
-    target: chatos_mtls_client_identity
 
 x-config-center-mtls-memory-engine-secrets: &config-center-mtls-memory-engine-secrets
   - source: config_center_mtls_ca
@@ -169,73 +129,11 @@ x-config-center-mtls-plugin-management-secrets: &config-center-mtls-plugin-manag
   - source: plugin_management_mtls_server_key
     target: plugin_management_mtls_server_key
 
-x-config-center-mtls-task-runner-secrets: &config-center-mtls-task-runner-secrets
-  - source: config_center_mtls_ca
-    target: config_center_mtls_ca
-  - source: config_center_mtls_task_runner_identity
-    target: config_center_mtls_client_identity
-  - source: mcp_management_mtls_ca
-    target: mcp_management_mtls_ca
-  - source: mcp_management_mtls_task_runner_identity
-    target: mcp_management_mtls_client_identity
-  - source: memory_engine_mtls_ca
-    target: memory_engine_mtls_ca
-  - source: memory_engine_mtls_task_runner_identity
-    target: memory_engine_mtls_client_identity
-  - source: plugin_management_mtls_ca
-    target: plugin_management_mtls_ca
-  - source: plugin_management_mtls_task_runner_identity
-    target: plugin_management_mtls_client_identity
-  - source: chatos_mtls_ca
-    target: chatos_mtls_ca
-  - source: chatos_mtls_task_runner_identity
-    target: chatos_mtls_client_identity
-  - source: user_service_mtls_ca
-    target: user_service_mtls_ca
-  - source: user_service_mtls_task_runner_identity
-    target: user_service_mtls_client_identity
-
-x-config-center-mtls-task-runner-api-secrets: &config-center-mtls-task-runner-api-secrets
-  - source: config_center_mtls_ca
-    target: config_center_mtls_ca
-  - source: config_center_mtls_task_runner_identity
-    target: config_center_mtls_client_identity
-  - source: mcp_management_mtls_ca
-    target: mcp_management_mtls_ca
-  - source: mcp_management_mtls_task_runner_identity
-    target: mcp_management_mtls_client_identity
-  - source: task_runner_mtls_ca
-    target: task_runner_mtls_ca
-  - source: task_runner_mtls_server_cert
-    target: task_runner_mtls_server_cert
-  - source: task_runner_mtls_server_key
-    target: task_runner_mtls_server_key
-  - source: memory_engine_mtls_ca
-    target: memory_engine_mtls_ca
-  - source: memory_engine_mtls_task_runner_identity
-    target: memory_engine_mtls_client_identity
-  - source: plugin_management_mtls_ca
-    target: plugin_management_mtls_ca
-  - source: plugin_management_mtls_task_runner_identity
-    target: plugin_management_mtls_client_identity
-  - source: chatos_mtls_ca
-    target: chatos_mtls_ca
-  - source: chatos_mtls_task_runner_identity
-    target: chatos_mtls_client_identity
-  - source: user_service_mtls_ca
-    target: user_service_mtls_ca
-  - source: user_service_mtls_task_runner_identity
-    target: user_service_mtls_client_identity
-
 x-config-center-mtls-user-service-secrets: &config-center-mtls-user-service-secrets
   - source: config_center_mtls_ca
     target: config_center_mtls_ca
   - source: config_center_mtls_user_service_identity
     target: config_center_mtls_client_identity
-  - source: task_runner_mtls_ca
-    target: task_runner_mtls_ca
-  - source: task_runner_mtls_user_service_identity
-    target: task_runner_mtls_client_identity
   - source: user_service_mtls_ca
     target: user_service_mtls_ca
   - source: user_service_mtls_server_cert
@@ -363,16 +261,12 @@ services:
       USER_SERVICE_APP_PASSWORD: ${USER_SERVICE_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}
       PLUGIN_MANAGEMENT_APP_PASSWORD: ${PLUGIN_MANAGEMENT_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}
       LOCAL_CONNECTOR_APP_PASSWORD: ${LOCAL_CONNECTOR_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}
-      TASK_RUNNER_APP_PASSWORD: ${TASK_RUNNER_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}
-      MCP_MANAGEMENT_APP_PASSWORD: ${MCP_MANAGEMENT_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}
       MEMORY_ENGINE_APP_PASSWORD: ${MEMORY_ENGINE_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}
       CHATOS_MIGRATOR_PASSWORD: ${CHATOS_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}
       CONFIG_CENTER_MIGRATOR_PASSWORD: ${CONFIG_CENTER_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}
       USER_SERVICE_MIGRATOR_PASSWORD: ${USER_SERVICE_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}
       PLUGIN_MANAGEMENT_MIGRATOR_PASSWORD: ${PLUGIN_MANAGEMENT_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}
       LOCAL_CONNECTOR_MIGRATOR_PASSWORD: ${LOCAL_CONNECTOR_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}
-      TASK_RUNNER_MIGRATOR_PASSWORD: ${TASK_RUNNER_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}
-      MCP_MANAGEMENT_MIGRATOR_PASSWORD: ${MCP_MANAGEMENT_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}
       MEMORY_ENGINE_MIGRATOR_PASSWORD: ${MEMORY_ENGINE_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}
     volumes:
       - ../scripts/postgres-provision-local.sh:/scripts/postgres-provision-local.sh:ro
@@ -406,18 +300,6 @@ services:
     environment:
       LOCAL_CONNECTOR_MIGRATION_DATABASE_URL: postgresql://local_connector_migrator:${LOCAL_CONNECTOR_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}@postgres:5432/local_connector_service
 
-  task-runner-migrate:
-    <<: *postgres-migration
-    image: ${TASK_RUNNER_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-task-runner-backend:${CHATOS_IMAGE_TAG:-latest}}
-    environment:
-      TASK_RUNNER_MIGRATION_DATABASE_URL: postgresql://task_runner_migrator:${TASK_RUNNER_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}@postgres:5432/task_runner_service
-
-  mcp-management-migrate:
-    <<: *postgres-migration
-    image: ${MCP_MANAGEMENT_SERVICE_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-mcp-management-service-backend:${CHATOS_IMAGE_TAG:-latest}}
-    environment:
-      MCP_MANAGEMENT_MIGRATION_DATABASE_URL: postgresql://mcp_management_migrator:${MCP_MANAGEMENT_MIGRATOR_PASSWORD:-${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}}@postgres:5432/mcp_management_service
-
   memory-engine-migrate:
     <<: *postgres-migration
     image: ${MEMORY_ENGINE_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-memory-engine-backend:${CHATOS_IMAGE_TAG:-latest}}
@@ -449,10 +331,6 @@ services:
       plugin-management-migrate:
         condition: service_completed_successfully
       local-connector-migrate:
-        condition: service_completed_successfully
-      task-runner-migrate:
-        condition: service_completed_successfully
-      mcp-management-migrate:
         condition: service_completed_successfully
       memory-engine-migrate:
         condition: service_completed_successfully
@@ -520,8 +398,6 @@ services:
       CONFIG_CENTER_MTLS_SERVER_CERT_PATH: /run/secrets/config_center_mtls_server_cert
       CONFIG_CENTER_MTLS_SERVER_KEY_PATH: /run/secrets/config_center_mtls_server_key
       CONFIG_CENTER_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/config_center_mtls_ca
-      MCP_MANAGEMENT_MTLS_CA_CERT_PATH: /run/secrets/mcp_management_mtls_ca
-      MCP_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/mcp_management_mtls_client_identity
       MEMORY_ENGINE_MTLS_CA_CERT_PATH: /run/secrets/memory_engine_mtls_ca
       MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/memory_engine_mtls_client_identity
       CONFIG_CENTER_DATABASE_URL: postgresql://config_center_app:${CONFIG_CENTER_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/configuration_center
@@ -533,15 +409,12 @@ services:
       CONFIG_CENTER_POSTGRES_STATEMENT_TIMEOUT_MS: ${CONFIG_CENTER_POSTGRES_STATEMENT_TIMEOUT_MS:-30000}
       CONFIG_CENTER_POSTGRES_LOCK_TIMEOUT_MS: ${CONFIG_CENTER_POSTGRES_LOCK_TIMEOUT_MS:-5000}
       CONFIG_CENTER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
-      CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL: https://mcp-management-service-backend:39282
       CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL: https://memory-engine-backend:7083/api/memory-engine/v1
       CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET:-change_me_config_center_chatos_backend_signing_secret}
       CONFIG_CENTER_LOCAL_CONNECTOR_SERVICE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_LOCAL_CONNECTOR_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_local_connector_signing_secret}
-      CONFIG_CENTER_MCP_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_MCP_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_mcp_management_signing_secret}
       CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET:-change_me_config_center_memory_engine_signing_secret}
       CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET:-change_me_config_center_official_website_signing_secret}
       CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_plugin_management_signing_secret}
-      CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET:-change_me_config_center_task_runner_signing_secret}
       CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_user_service_signing_secret}
       CONFIG_CENTER_CONSUL_REQUIRED: ${CONFIG_CENTER_CONSUL_REQUIRED:-false}
       CONFIG_CENTER_CORS_ORIGINS: ${CONFIG_CENTER_CORS_ORIGINS:-http://127.0.0.1:39271,http://localhost:39271}
@@ -642,7 +515,6 @@ services:
       USER_SERVICE_JWT_SECRET: ${USER_SERVICE_JWT_SECRET:-change_me_user_service_secret}
       USER_SERVICE_JWT_ISSUER: ${USER_SERVICE_JWT_ISSUER:-user_service}
       USER_SERVICE_USER_AUDIENCE: ${USER_SERVICE_USER_AUDIENCE:-user_service}
-      USER_SERVICE_TASK_RUNNER_AUDIENCE: ${USER_SERVICE_TASK_RUNNER_AUDIENCE:-task_runner}
       CHATOS_USER_SERVICE_INTERNAL_API_SECRET: ${CHATOS_USER_SERVICE_INTERNAL_API_SECRET:-change_me_chatos_user_service_secret}
       USER_SERVICE_SMTP_HOST: ${USER_SERVICE_SMTP_HOST:-}
       USER_SERVICE_SMTP_PORT: ${USER_SERVICE_SMTP_PORT:-587}
@@ -670,10 +542,6 @@ services:
       USER_SERVICE_SUPER_ADMIN_PASSWORD: ${CHATOS_ADMIN_PASSWORD:-admin123456}
       USER_SERVICE_SUPER_ADMIN_DISPLAY_NAME: ${CHATOS_ADMIN_DISPLAY_NAME:-System Admin}
       USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_user_service_memory_engine_secret}
-      USER_SERVICE_TASK_RUNNER_BASE_URL: https://task-runner-backend:39092
-      USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET: ${USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_user_service_task_runner_secret}
-      TASK_RUNNER_MTLS_CA_CERT_PATH: /run/secrets/task_runner_mtls_ca
-      TASK_RUNNER_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/task_runner_mtls_client_identity
       HARNESS_PROVISIONING_ENABLED: ${HARNESS_PROVISIONING_ENABLED:-true}
       HARNESS_BASE_URL: ${HARNESS_BASE_URL:-http://harness:3000}
       HARNESS_SYNTHETIC_EMAIL_DOMAIN: ${HARNESS_SYNTHETIC_EMAIL_DOMAIN:-chatos.local}
@@ -727,7 +595,6 @@ services:
       MEMORY_ENGINE_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/memory_engine_mtls_ca
       MEMORY_ENGINE_DATABASE_URL: postgresql://memory_engine_app:${MEMORY_ENGINE_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/memory_engine
       CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET: ${CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_chatos_memory_engine_secret}
-      TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
       USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_user_service_memory_engine_secret}
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_plugin_management_memory_engine_secret}
@@ -778,7 +645,6 @@ services:
       MEMORY_ENGINE_WORKER_ENABLED: "true"
       MEMORY_ENGINE_DATABASE_URL: postgresql://memory_engine_app:${MEMORY_ENGINE_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/memory_engine
       CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET: ${CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_chatos_memory_engine_secret}
-      TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
       USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_user_service_memory_engine_secret}
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_plugin_management_memory_engine_secret}
@@ -816,12 +682,9 @@ services:
       PLUGIN_MANAGEMENT_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/plugin_management_mtls_ca
       PLUGIN_MANAGEMENT_SERVICE_DATABASE_URL: postgresql://plugin_management_app:${PLUGIN_MANAGEMENT_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/plugin_management_service
       PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL: http://user-service-backend:39190
-      PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL: http://task-runner-backend:39090
       PLUGIN_MANAGEMENT_CORS_ORIGINS: ${PLUGIN_MANAGEMENT_CORS_ORIGINS:-http://127.0.0.1:39261,http://localhost:39261}
-      PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_plugin_management_task_runner_secret}
       PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET:-change_me_plugin_management_local_connector_secret}
       PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_plugin_management_memory_engine_secret}
-      PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_mcp_management_secret}
       PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_USERNAME: ${CHATOS_ADMIN_USERNAME:-admin}
       PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_PASSWORD: ${CHATOS_ADMIN_PASSWORD:-admin123456}
       PLUGIN_MANAGEMENT_SERVICE_SEED_SYSTEM_RESOURCES: ${PLUGIN_MANAGEMENT_SERVICE_SEED_SYSTEM_RESOURCES:-true}
@@ -877,7 +740,6 @@ services:
       LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID:-}
       LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS:-86400}
       CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_chatos_local_connector_secret}
-      MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_mcp_management_local_connector_secret}
       LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${LOCAL_CONNECTOR_INTERNAL_API_SECRET:-}
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET:-change_me_plugin_management_local_connector_secret}
@@ -901,281 +763,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 30
-
-  mcp-management-service-backend:
-    <<: *rust-service
-    deploy:
-      resources:
-        limits:
-          cpus: "${MCP_MANAGEMENT_CPU_LIMIT:-2.0}"
-          memory: ${MCP_MANAGEMENT_MEMORY_LIMIT:-1536M}
-        reservations:
-          cpus: "${MCP_MANAGEMENT_CPU_RESERVATION:-0.10}"
-          memory: ${MCP_MANAGEMENT_MEMORY_RESERVATION:-256M}
-    image: ${MCP_MANAGEMENT_SERVICE_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-mcp-management-service-backend:${CHATOS_IMAGE_TAG:-latest}}
-    secrets: *config-center-mtls-mcp-management-secrets
-    environment:
-      <<: *service-runtime-env
-      CHATOS_SERVICE_NAME: mcp-management-service
-      CONFIG_CENTER_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_MCP_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_mcp_management_signing_secret}
-      CHATOS_SERVICE_ID: mcp-management-service-docker
-      CHATOS_SERVICE_ADDRESS: mcp-management-service-backend
-      CHATOS_SERVICE_PORT: 39280
-      CHATOS_SERVICE_HEALTH_PATH: /health
-      MCP_MANAGEMENT_HOST: 0.0.0.0
-      MCP_MANAGEMENT_PORT: 39280
-      MCP_MANAGEMENT_INTERNAL_MTLS_PORT: 39282
-      MCP_MANAGEMENT_MTLS_SERVER_CERT_PATH: /run/secrets/mcp_management_mtls_server_cert
-      MCP_MANAGEMENT_MTLS_SERVER_KEY_PATH: /run/secrets/mcp_management_mtls_server_key
-      MCP_MANAGEMENT_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/mcp_management_mtls_ca
-      MCP_MANAGEMENT_PUBLIC_BASE_URL: http://mcp-management-service-backend:39280
-      MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET:-change_me_configuration_center_mcp_management_secret}
-      MCP_MANAGEMENT_RUNTIME_GRANT_SECRET: ${MCP_MANAGEMENT_RUNTIME_GRANT_SECRET:-change_me_mcp_management_runtime_grant_secret}
-      MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET: ${MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET:-change_me_mcp_management_runtime_session_encryption_secret}
-      MCP_MANAGEMENT_DATABASE_URL: postgresql://mcp_management_app:${MCP_MANAGEMENT_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/mcp_management_service
-      MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS: ${MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS:-7200}
-      MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL: https://plugin-management-backend:39262
-      PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_mcp_management_secret}
-      MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL: https://task-runner-backend:39092
-      TASK_RUNNER_MTLS_CA_CERT_PATH: /run/secrets/task_runner_mtls_ca
-      TASK_RUNNER_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/task_runner_mtls_client_identity
-      MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_mcp_management_task_runner_secret}
-      MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS: ${MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS:-7200000}
-      MCP_MANAGEMENT_TASK_RUNNER_ASK_USER_TOOL_TIMEOUT_MS: ${MCP_MANAGEMENT_TASK_RUNNER_ASK_USER_TOOL_TIMEOUT_MS:-86700000}
-      MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL: https://chatos-backend:3999
-      CHATOS_MTLS_CA_CERT_PATH: /run/secrets/chatos_mtls_ca
-      CHATOS_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/chatos_mtls_client_identity
-      MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET:-change_me_mcp_management_chatos_secret}
-      MCP_MANAGEMENT_CHATOS_ASK_USER_TOOL_TIMEOUT_MS: ${MCP_MANAGEMENT_CHATOS_ASK_USER_TOOL_TIMEOUT_MS:-86700000}
-      MCP_MANAGEMENT_CHATOS_BROWSER_TOOL_TIMEOUT_MS: ${MCP_MANAGEMENT_CHATOS_BROWSER_TOOL_TIMEOUT_MS:-7200000}
-      MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL: https://local-connector-service-backend:39232
-      LOCAL_CONNECTOR_MTLS_CA_CERT_PATH: /run/secrets/local_connector_mtls_ca
-      LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/local_connector_mtls_client_identity
-      MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_mcp_management_local_connector_secret}
-      MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS: ${MCP_MANAGEMENT_EXTERNAL_HTTP_TOOL_TIMEOUT_MS:-7200000}
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${MCP_MANAGEMENT_PORT:-39280}:39280"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      postgres-finalize:
-        condition: service_completed_successfully
-      consul:
-        condition: service_healthy
-      configuration-center-backend:
-        condition: service_healthy
-      valkey:
-        condition: service_healthy
-      plugin-management-backend:
-        condition: service_healthy
-      local-connector-service-backend:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39280/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-
-  task-runner-backend:
-    <<: *rust-service
-    deploy:
-      resources:
-        limits:
-          cpus: "${TASK_RUNNER_API_CPU_LIMIT:-2.0}"
-          memory: ${TASK_RUNNER_API_MEMORY_LIMIT:-1536M}
-        reservations:
-          cpus: "${TASK_RUNNER_API_CPU_RESERVATION:-0.10}"
-          memory: ${TASK_RUNNER_API_MEMORY_RESERVATION:-256M}
-    image: ${TASK_RUNNER_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-task-runner-backend:${CHATOS_IMAGE_TAG:-latest}}
-    secrets: *config-center-mtls-task-runner-api-secrets
-    environment:
-      <<: *service-runtime-env
-      CHATOS_SERVICE_NAME: task-runner
-      CONFIG_CENTER_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET:-change_me_config_center_task_runner_signing_secret}
-      CHATOS_SERVICE_ID: task-runner-docker
-      CHATOS_SERVICE_ADDRESS: task-runner-backend
-      CHATOS_SERVICE_PORT: 39090
-      CHATOS_SERVICE_HEALTH_PATH: /api/health
-      TASK_RUNNER_HOST: 0.0.0.0
-      TASK_RUNNER_PORT: 39090
-      TASK_RUNNER_INTERNAL_MTLS_PORT: 39092
-      TASK_RUNNER_MTLS_SERVER_CERT_PATH: /run/secrets/task_runner_mtls_server_cert
-      TASK_RUNNER_MTLS_SERVER_KEY_PATH: /run/secrets/task_runner_mtls_server_key
-      TASK_RUNNER_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/task_runner_mtls_ca
-      TASK_RUNNER_ROLE: ${TASK_RUNNER_ROLE:-api}
-      TASK_RUNNER_STORE_MODE: postgres
-      TASK_RUNNER_DATABASE_URL: postgresql://task_runner_app:${TASK_RUNNER_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/task_runner_service
-      TASK_RUNNER_WORKSPACE_DIR: /data/task-runner/workspace
-      TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
-      USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
-      USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
-      TASK_RUNNER_MEMORY_ENGINE_BASE_URL: https://memory-engine-backend:7083/api/memory-engine/v1
-      MEMORY_ENGINE_MTLS_CA_CERT_PATH: /run/secrets/memory_engine_mtls_ca
-      MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/memory_engine_mtls_client_identity
-      TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
-      MCP_MANAGEMENT_SERVICE_BASE_URL: https://mcp-management-service-backend:39282
-      MCP_MANAGEMENT_MTLS_CA_CERT_PATH: /run/secrets/mcp_management_mtls_ca
-      MCP_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/mcp_management_mtls_client_identity
-      TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS: ${TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-7200000}
-      TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS: ${TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS:-86700000}
-      PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
-      PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_plugin_management_task_runner_secret}
-      TASK_RUNNER_CHATOS_CALLBACK_URL: https://chatos-backend:3999/api/agent/chat/task-runner/callback
-      CHATOS_MTLS_CA_CERT_PATH: /run/secrets/chatos_mtls_ca
-      CHATOS_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/chatos_mtls_client_identity
-      CHATOS_TASK_RUNNER_INTERNAL_API_SECRET: ${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}
-      MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_mcp_management_task_runner_secret}
-      USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET: ${USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_user_service_task_runner_secret}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${TASK_RUNNER_BACKEND_PORT:-39090}:39090"
-    volumes:
-      - task-runner-data:/data/task-runner
-    depends_on:
-      consul:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-      postgres-finalize:
-        condition: service_completed_successfully
-      user-service-backend:
-        condition: service_healthy
-      memory-engine-backend:
-        condition: service_healthy
-      plugin-management-backend:
-        condition: service_healthy
-      mcp-management-service-backend:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:39090/api/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-
-  task-runner-worker:
-    <<: *rust-service
-    deploy:
-      resources:
-        limits:
-          cpus: "${TASK_RUNNER_WORKER_CPU_LIMIT:-4.0}"
-          memory: ${TASK_RUNNER_WORKER_MEMORY_LIMIT:-2G}
-        reservations:
-          cpus: "${TASK_RUNNER_WORKER_CPU_RESERVATION:-0.25}"
-          memory: ${TASK_RUNNER_WORKER_MEMORY_RESERVATION:-256M}
-    image: ${TASK_RUNNER_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-task-runner-backend:${CHATOS_IMAGE_TAG:-latest}}
-    secrets: *config-center-mtls-task-runner-secrets
-    environment:
-      <<: *service-runtime-env
-      CHATOS_SERVICE_NAME: task-runner
-      CONFIG_CENTER_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET:-change_me_config_center_task_runner_signing_secret}
-      CHATOS_SERVICE_ID: task-runner-worker-docker
-      CHATOS_SERVICE_ADDRESS: task-runner-worker
-      CHATOS_SERVICE_PORT: 39090
-      CHATOS_SERVICE_HEALTH_PATH: /api/health
-      TASK_RUNNER_HOST: 0.0.0.0
-      TASK_RUNNER_PORT: 39090
-      TASK_RUNNER_ROLE: ${TASK_RUNNER_WORKER_ROLE:-worker}
-      TASK_RUNNER_WORKER_ID: ${TASK_RUNNER_WORKER_ID:-task-runner-worker-docker}
-      TASK_RUNNER_STORE_MODE: postgres
-      TASK_RUNNER_DATABASE_URL: postgresql://task_runner_app:${TASK_RUNNER_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/task_runner_service
-      TASK_RUNNER_WORKSPACE_DIR: /data/task-runner/workspace
-      TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
-      USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
-      USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
-      TASK_RUNNER_MEMORY_ENGINE_BASE_URL: https://memory-engine-backend:7083/api/memory-engine/v1
-      MEMORY_ENGINE_MTLS_CA_CERT_PATH: /run/secrets/memory_engine_mtls_ca
-      MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/memory_engine_mtls_client_identity
-      TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
-      MCP_MANAGEMENT_SERVICE_BASE_URL: https://mcp-management-service-backend:39282
-      MCP_MANAGEMENT_MTLS_CA_CERT_PATH: /run/secrets/mcp_management_mtls_ca
-      MCP_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/mcp_management_mtls_client_identity
-      TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS: ${TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-7200000}
-      TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS: ${TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS:-86700000}
-      PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
-      PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_plugin_management_task_runner_secret}
-      TASK_RUNNER_CHATOS_CALLBACK_URL: https://chatos-backend:3999/api/agent/chat/task-runner/callback
-      CHATOS_MTLS_CA_CERT_PATH: /run/secrets/chatos_mtls_ca
-      CHATOS_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/chatos_mtls_client_identity
-      CHATOS_TASK_RUNNER_INTERNAL_API_SECRET: ${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}
-      MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_mcp_management_task_runner_secret}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
-    volumes:
-      - task-runner-data:/data/task-runner
-    depends_on:
-      consul:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-      postgres-finalize:
-        condition: service_completed_successfully
-      user-service-backend:
-        condition: service_healthy
-      memory-engine-backend:
-        condition: service_healthy
-      plugin-management-backend:
-        condition: service_healthy
-      mcp-management-service-backend:
-        condition: service_healthy
-
-  task-runner-scheduler:
-    <<: *rust-service
-    image: ${TASK_RUNNER_BACKEND_IMAGE:-${CHATOS_IMAGE_NAMESPACE:-ghcr.io/leeoohoo}/chatos-rs-task-runner-backend:${CHATOS_IMAGE_TAG:-latest}}
-    secrets: *config-center-mtls-task-runner-secrets
-    environment:
-      <<: *service-runtime-env
-      CHATOS_SERVICE_NAME: task-runner
-      CONFIG_CENTER_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET:-change_me_config_center_task_runner_signing_secret}
-      CHATOS_SERVICE_ID: task-runner-scheduler-docker
-      CHATOS_SERVICE_ADDRESS: task-runner-scheduler
-      CHATOS_SERVICE_PORT: 39090
-      CHATOS_SERVICE_HEALTH_PATH: /api/health
-      TASK_RUNNER_HOST: 0.0.0.0
-      TASK_RUNNER_PORT: 39090
-      TASK_RUNNER_ROLE: ${TASK_RUNNER_SCHEDULER_ROLE:-scheduler}
-      TASK_RUNNER_WORKER_ID: ${TASK_RUNNER_SCHEDULER_WORKER_ID:-task-runner-scheduler-docker}
-      TASK_RUNNER_STORE_MODE: postgres
-      TASK_RUNNER_DATABASE_URL: postgresql://task_runner_app:${TASK_RUNNER_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/task_runner_service
-      TASK_RUNNER_WORKSPACE_DIR: /data/task-runner/workspace
-      TASK_RUNNER_USER_SERVICE_BASE_URL: http://user-service-backend:39190
-      USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
-      USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
-      TASK_RUNNER_MEMORY_ENGINE_BASE_URL: https://memory-engine-backend:7083/api/memory-engine/v1
-      MEMORY_ENGINE_MTLS_CA_CERT_PATH: /run/secrets/memory_engine_mtls_ca
-      MEMORY_ENGINE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/memory_engine_mtls_client_identity
-      TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET: ${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}
-      MCP_MANAGEMENT_SERVICE_BASE_URL: https://mcp-management-service-backend:39282
-      MCP_MANAGEMENT_MTLS_CA_CERT_PATH: /run/secrets/mcp_management_mtls_ca
-      MCP_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/mcp_management_mtls_client_identity
-      TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS: ${TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-7200000}
-      TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS: ${TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS:-86700000}
-      PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
-      PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_plugin_management_task_runner_secret}
-      TASK_RUNNER_CHATOS_CALLBACK_URL: https://chatos-backend:3999/api/agent/chat/task-runner/callback
-      CHATOS_MTLS_CA_CERT_PATH: /run/secrets/chatos_mtls_ca
-      CHATOS_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/chatos_mtls_client_identity
-      CHATOS_TASK_RUNNER_INTERNAL_API_SECRET: ${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}
-      MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_mcp_management_task_runner_secret}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
-    volumes:
-      - task-runner-data:/data/task-runner
-    depends_on:
-      consul:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-      postgres-finalize:
-        condition: service_completed_successfully
-      user-service-backend:
-        condition: service_healthy
-      memory-engine-backend:
-        condition: service_healthy
-      plugin-management-backend:
-        condition: service_healthy
-      mcp-management-service-backend:
-        condition: service_healthy
 
   chatos-backend:
     <<: *rust-service
@@ -1218,17 +805,6 @@ services:
       CHATOS_USER_SERVICE_INTERNAL_API_SECRET: ${CHATOS_USER_SERVICE_INTERNAL_API_SECRET:-change_me_chatos_user_service_secret}
       USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
       USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
-      CHATOS_TASK_RUNNER_INTERNAL_BASE_URL: https://task-runner-backend:39092
-      TASK_RUNNER_MTLS_CA_CERT_PATH: /run/secrets/task_runner_mtls_ca
-      TASK_RUNNER_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/task_runner_mtls_client_identity
-      CHATOS_TASK_RUNNER_BASE_URL: http://task-runner-backend:39090
-      CHATOS_TASK_RUNNER_INTERNAL_API_SECRET: ${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}
-      MCP_MANAGEMENT_SERVICE_BASE_URL: https://mcp-management-service-backend:39282
-      MCP_MANAGEMENT_MTLS_CA_CERT_PATH: /run/secrets/mcp_management_mtls_ca
-      MCP_MANAGEMENT_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/mcp_management_mtls_client_identity
-      MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET: ${MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET:-change_me_mcp_management_chatos_secret}
-      CHATOS_MCP_MANAGEMENT_TOOL_TIMEOUT_MS: ${CHATOS_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-7200000}
-      CHATOS_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS: ${CHATOS_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS:-86700000}
       CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL: https://local-connector-service-backend:39232
       LOCAL_CONNECTOR_MTLS_CA_CERT_PATH: /run/secrets/local_connector_mtls_ca
       LOCAL_CONNECTOR_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/local_connector_mtls_client_identity
@@ -1267,15 +843,11 @@ services:
         condition: service_completed_successfully
       user-service-backend:
         condition: service_healthy
-      task-runner-backend:
-        condition: service_healthy
       memory-engine-backend:
         condition: service_healthy
       local-connector-service-backend:
         condition: service_healthy
       plugin-management-backend:
-        condition: service_healthy
-      mcp-management-service-backend:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3997/health"]
@@ -1314,7 +886,6 @@ services:
       MAIN_BACKEND_PORT: ${MAIN_BACKEND_PORT:-3997}
       MEMORY_ENGINE_PORT: ${MEMORY_ENGINE_PORT:-7081}
       USER_SERVICE_PORT: ${USER_SERVICE_PORT:-39190}
-      TASK_RUNNER_BACKEND_PORT: ${TASK_RUNNER_BACKEND_PORT:-39090}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -1342,8 +913,6 @@ services:
         condition: service_healthy
       plugin-management-backend:
         condition: service_healthy
-      task-runner-backend:
-        condition: service_healthy
 
   official-website-frontend:
     <<: *frontend-service
@@ -1358,7 +927,6 @@ volumes:
   postgres-data:
   minio-data:
   chatos-data:
-  task-runner-data:
   local-connector-data:
   plugin-management-data:
   harness-data:
@@ -1374,42 +942,14 @@ secrets:
     file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/chatos-backend.identity.pem
   config_center_mtls_local_connector_identity:
     file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/local-connector-service.identity.pem
-  config_center_mtls_mcp_management_identity:
-    file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/mcp-management-service.identity.pem
   config_center_mtls_memory_engine_identity:
     file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/memory-engine.identity.pem
   config_center_mtls_official_website_identity:
     file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/official-website.identity.pem
   config_center_mtls_plugin_management_identity:
     file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/plugin-management-service.identity.pem
-  config_center_mtls_task_runner_identity:
-    file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/task-runner.identity.pem
   config_center_mtls_user_service_identity:
     file: ${CONFIG_CENTER_MTLS_DIR:-./secrets/config-center-mtls}/user-service.identity.pem
-  mcp_management_mtls_ca:
-    file: ${MCP_MANAGEMENT_MTLS_DIR:-./secrets/mcp-management-mtls}/ca.crt
-  mcp_management_mtls_server_cert:
-    file: ${MCP_MANAGEMENT_MTLS_DIR:-./secrets/mcp-management-mtls}/server.crt
-  mcp_management_mtls_server_key:
-    file: ${MCP_MANAGEMENT_MTLS_DIR:-./secrets/mcp-management-mtls}/server.key
-  mcp_management_mtls_chatos_identity:
-    file: ${MCP_MANAGEMENT_MTLS_DIR:-./secrets/mcp-management-mtls}/chatos.identity.pem
-  mcp_management_mtls_task_runner_identity:
-    file: ${MCP_MANAGEMENT_MTLS_DIR:-./secrets/mcp-management-mtls}/task-runner.identity.pem
-  mcp_management_mtls_configuration_center_identity:
-    file: ${MCP_MANAGEMENT_MTLS_DIR:-./secrets/mcp-management-mtls}/configuration-center.identity.pem
-  task_runner_mtls_ca:
-    file: ${TASK_RUNNER_MTLS_DIR:-./secrets/task-runner-mtls}/ca.crt
-  task_runner_mtls_server_cert:
-    file: ${TASK_RUNNER_MTLS_DIR:-./secrets/task-runner-mtls}/server.crt
-  task_runner_mtls_server_key:
-    file: ${TASK_RUNNER_MTLS_DIR:-./secrets/task-runner-mtls}/server.key
-  task_runner_mtls_chatos_identity:
-    file: ${TASK_RUNNER_MTLS_DIR:-./secrets/task-runner-mtls}/chatos.identity.pem
-  task_runner_mtls_mcp_management_identity:
-    file: ${TASK_RUNNER_MTLS_DIR:-./secrets/task-runner-mtls}/mcp-management-service.identity.pem
-  task_runner_mtls_user_service_identity:
-    file: ${TASK_RUNNER_MTLS_DIR:-./secrets/task-runner-mtls}/user-service.identity.pem
   memory_engine_mtls_ca:
     file: ${MEMORY_ENGINE_MTLS_DIR:-./secrets/memory-engine-mtls}/ca.crt
   memory_engine_mtls_server_cert:
@@ -1420,8 +960,6 @@ secrets:
     file: ${MEMORY_ENGINE_MTLS_DIR:-./secrets/memory-engine-mtls}/configuration-center.identity.pem
   memory_engine_mtls_chatos_identity:
     file: ${MEMORY_ENGINE_MTLS_DIR:-./secrets/memory-engine-mtls}/chatos-backend.identity.pem
-  memory_engine_mtls_task_runner_identity:
-    file: ${MEMORY_ENGINE_MTLS_DIR:-./secrets/memory-engine-mtls}/task-runner.identity.pem
   local_connector_mtls_ca:
     file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/ca.crt
   local_connector_mtls_server_cert:
@@ -1430,18 +968,12 @@ secrets:
     file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/server.key
   local_connector_mtls_chatos_identity:
     file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/chatos-backend.identity.pem
-  local_connector_mtls_mcp_management_identity:
-    file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/mcp-management-service.identity.pem
   chatos_mtls_ca:
     file: ${CHATOS_MTLS_DIR:-./secrets/chatos-mtls}/ca.crt
   chatos_mtls_server_cert:
     file: ${CHATOS_MTLS_DIR:-./secrets/chatos-mtls}/server.crt
   chatos_mtls_server_key:
     file: ${CHATOS_MTLS_DIR:-./secrets/chatos-mtls}/server.key
-  chatos_mtls_task_runner_identity:
-    file: ${CHATOS_MTLS_DIR:-./secrets/chatos-mtls}/task-runner.identity.pem
-  chatos_mtls_mcp_management_identity:
-    file: ${CHATOS_MTLS_DIR:-./secrets/chatos-mtls}/mcp-management-service.identity.pem
   user_service_mtls_ca:
     file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/ca.crt
   user_service_mtls_server_cert:
@@ -1450,8 +982,6 @@ secrets:
     file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/server.key
   user_service_mtls_chatos_identity:
     file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/chatos-backend.identity.pem
-  user_service_mtls_task_runner_identity:
-    file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/task-runner.identity.pem
   user_service_mtls_memory_engine_identity:
     file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/memory-engine.identity.pem
   plugin_management_mtls_ca:
@@ -1462,14 +992,10 @@ secrets:
     file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/server.key
   plugin_management_mtls_chatos_identity:
     file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/chatos-backend.identity.pem
-  plugin_management_mtls_task_runner_identity:
-    file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/task-runner.identity.pem
   plugin_management_mtls_local_connector_identity:
     file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/local-connector-service.identity.pem
   plugin_management_mtls_memory_engine_identity:
     file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/memory-engine.identity.pem
-  plugin_management_mtls_mcp_management_identity:
-    file: ${PLUGIN_MANAGEMENT_MTLS_DIR:-./secrets/plugin-management-mtls}/mcp-management-service.identity.pem
 
 networks:
   cloud:

@@ -28,8 +28,6 @@ database_specs=(
   "user_service:user_service_app"
   "plugin_management_service:plugin_management_app"
   "local_connector_service:local_connector_app"
-  "task_runner_service:task_runner_app"
-  "mcp_management_service:mcp_management_app"
   "memory_engine:memory_engine_app"
 )
 
@@ -73,4 +71,4 @@ SELECT format('GRANT SELECT ON TABLE public._sqlx_migrations TO %I', :'app_role'
 SQL
 done
 
-echo "Finalized PostgreSQL runtime privileges for 8 application roles."
+echo "Finalized PostgreSQL runtime privileges for 6 application roles."

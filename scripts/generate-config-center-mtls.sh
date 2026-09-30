@@ -17,11 +17,9 @@ fi
 CALLERS=(
   chatos-backend
   local-connector-service
-  mcp-management-service
   memory-engine
   official-website
   plugin-management-service
-  task-runner
   user-service
 )
 

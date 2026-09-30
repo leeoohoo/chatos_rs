@@ -41,16 +41,6 @@ export_local_env() {
   export CONFIG_CENTER_MTLS_SERVER_KEY_PATH="${CONFIG_CENTER_MTLS_SERVER_KEY_PATH:-$CONFIG_CENTER_MTLS_DIR/server.key}"
   export CONFIG_CENTER_MTLS_CLIENT_CA_CERT_PATH="${CONFIG_CENTER_MTLS_CLIENT_CA_CERT_PATH:-$CONFIG_CENTER_MTLS_DIR/ca.crt}"
   export CONFIG_CENTER_MTLS_CA_CERT_PATH="${CONFIG_CENTER_MTLS_CA_CERT_PATH:-$CONFIG_CENTER_MTLS_DIR/ca.crt}"
-  export MCP_MANAGEMENT_MTLS_DIR="${MCP_MANAGEMENT_MTLS_DIR:-$STATE_DIR/mcp-management-mtls}"
-  export MCP_MANAGEMENT_MTLS_SERVER_CERT_PATH="${MCP_MANAGEMENT_MTLS_SERVER_CERT_PATH:-$MCP_MANAGEMENT_MTLS_DIR/server.crt}"
-  export MCP_MANAGEMENT_MTLS_SERVER_KEY_PATH="${MCP_MANAGEMENT_MTLS_SERVER_KEY_PATH:-$MCP_MANAGEMENT_MTLS_DIR/server.key}"
-  export MCP_MANAGEMENT_MTLS_CLIENT_CA_CERT_PATH="${MCP_MANAGEMENT_MTLS_CLIENT_CA_CERT_PATH:-$MCP_MANAGEMENT_MTLS_DIR/ca.crt}"
-  export MCP_MANAGEMENT_MTLS_CA_CERT_PATH="${MCP_MANAGEMENT_MTLS_CA_CERT_PATH:-$MCP_MANAGEMENT_MTLS_DIR/ca.crt}"
-  export TASK_RUNNER_MTLS_DIR="${TASK_RUNNER_MTLS_DIR:-$STATE_DIR/task-runner-mtls}"
-  export TASK_RUNNER_MTLS_SERVER_CERT_PATH="${TASK_RUNNER_MTLS_SERVER_CERT_PATH:-$TASK_RUNNER_MTLS_DIR/server.crt}"
-  export TASK_RUNNER_MTLS_SERVER_KEY_PATH="${TASK_RUNNER_MTLS_SERVER_KEY_PATH:-$TASK_RUNNER_MTLS_DIR/server.key}"
-  export TASK_RUNNER_MTLS_CLIENT_CA_CERT_PATH="${TASK_RUNNER_MTLS_CLIENT_CA_CERT_PATH:-$TASK_RUNNER_MTLS_DIR/ca.crt}"
-  export TASK_RUNNER_MTLS_CA_CERT_PATH="${TASK_RUNNER_MTLS_CA_CERT_PATH:-$TASK_RUNNER_MTLS_DIR/ca.crt}"
   export CHATOS_MTLS_DIR="${CHATOS_MTLS_DIR:-$STATE_DIR/chatos-mtls}"
   export CHATOS_MTLS_SERVER_CERT_PATH="${CHATOS_MTLS_SERVER_CERT_PATH:-$CHATOS_MTLS_DIR/server.crt}"
   export CHATOS_MTLS_SERVER_KEY_PATH="${CHATOS_MTLS_SERVER_KEY_PATH:-$CHATOS_MTLS_DIR/server.key}"
@@ -76,11 +66,9 @@ export_local_env() {
   export MEMORY_ENGINE_MTLS_CA_CERT_PATH="${MEMORY_ENGINE_MTLS_CA_CERT_PATH:-$MEMORY_ENGINE_MTLS_DIR/ca.crt}"
   export CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET="${CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET:-change_me_config_center_chatos_backend_signing_secret}"
   export CONFIG_CENTER_LOCAL_CONNECTOR_SERVICE_CALLER_SIGNING_SECRET="${CONFIG_CENTER_LOCAL_CONNECTOR_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_local_connector_signing_secret}"
-  export CONFIG_CENTER_MCP_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET="${CONFIG_CENTER_MCP_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_mcp_management_signing_secret}"
   export CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET="${CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET:-change_me_config_center_memory_engine_signing_secret}"
   export CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET="${CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET:-change_me_config_center_official_website_signing_secret}"
   export CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET="${CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_plugin_management_signing_secret}"
-  export CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET="${CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET:-change_me_config_center_task_runner_signing_secret}"
   export CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET="${CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_user_service_signing_secret}"
   export AGENT_MAX_ITERATIONS="${AGENT_MAX_ITERATIONS:-600}"
   export CHATOS_AI_CONNECT_TIMEOUT_SECS="${CHATOS_AI_CONNECT_TIMEOUT_SECS:-15}"
@@ -119,28 +107,9 @@ export_local_env() {
   export AUTH_JWT_SECRET="${AUTH_JWT_SECRET:-dev-only-change-me-please}"
   export USER_SERVICE_JWT_SECRET="${USER_SERVICE_JWT_SECRET:-change_me_user_service_secret}"
   export CHATOS_USER_SERVICE_INTERNAL_API_SECRET="${CHATOS_USER_SERVICE_INTERNAL_API_SECRET:-change_me_chatos_user_service_secret}"
-  export CHATOS_TASK_RUNNER_INTERNAL_API_SECRET="${CHATOS_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_chatos_task_runner_internal_secret}"
   export PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET="${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_plugin_management_memory_engine_secret}"
-  export PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET="${PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET:-change_me_plugin_management_mcp_management_secret}"
-  export MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET="${MCP_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_mcp_management_task_runner_secret}"
-  export USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET="${USER_SERVICE_TASK_RUNNER_INTERNAL_API_SECRET:-change_me_user_service_task_runner_secret}"
-  export MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS="${MCP_MANAGEMENT_TASK_RUNNER_TOOL_TIMEOUT_MS:-7200000}"
-  export MCP_MANAGEMENT_TASK_RUNNER_ASK_USER_TOOL_TIMEOUT_MS="${MCP_MANAGEMENT_TASK_RUNNER_ASK_USER_TOOL_TIMEOUT_MS:-86700000}"
-  export MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET="${MCP_MANAGEMENT_CHATOS_INTERNAL_API_SECRET:-change_me_mcp_management_chatos_secret}"
-  export MCP_MANAGEMENT_CHATOS_ASK_USER_TOOL_TIMEOUT_MS="${MCP_MANAGEMENT_CHATOS_ASK_USER_TOOL_TIMEOUT_MS:-86700000}"
-  export MCP_MANAGEMENT_CHATOS_BROWSER_TOOL_TIMEOUT_MS="${MCP_MANAGEMENT_CHATOS_BROWSER_TOOL_TIMEOUT_MS:-7200000}"
   export CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET="${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_chatos_local_connector_secret}"
-  export MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET="${MCP_MANAGEMENT_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_mcp_management_local_connector_secret}"
-  export MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET="${MCP_MANAGEMENT_CONFIGURATION_CENTER_INTERNAL_API_SECRET:-change_me_configuration_center_mcp_management_secret}"
-  export MCP_MANAGEMENT_RUNTIME_GRANT_SECRET="${MCP_MANAGEMENT_RUNTIME_GRANT_SECRET:-change_me_mcp_management_runtime_grant_secret}"
-  export MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET="${MCP_MANAGEMENT_RUNTIME_SESSION_ENCRYPTION_SECRET:-change_me_mcp_management_runtime_session_encryption_secret}"
-  export MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS="${MCP_MANAGEMENT_RUNTIME_SESSION_TTL_SECONDS:-7200}"
-  export TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS="${TASK_RUNNER_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-7200000}"
-  export TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS="${TASK_RUNNER_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS:-86700000}"
-  export CHATOS_MCP_MANAGEMENT_TOOL_TIMEOUT_MS="${CHATOS_MCP_MANAGEMENT_TOOL_TIMEOUT_MS:-7200000}"
-  export CHATOS_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS="${CHATOS_MCP_MANAGEMENT_ASK_USER_TOOL_TIMEOUT_MS:-86700000}"
   export CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET="${CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_chatos_memory_engine_secret}"
-  export TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET="${TASK_RUNNER_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_task_runner_memory_engine_secret}"
   export USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET="${USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_user_service_memory_engine_secret}"
 
   export USER_SERVICE_HOST="${USER_SERVICE_HOST:-0.0.0.0}"
@@ -160,13 +129,6 @@ export_local_env() {
   export LOCAL_CONNECTOR_SERVICE_HOST="${LOCAL_CONNECTOR_SERVICE_HOST:-0.0.0.0}"
   export LOCAL_CONNECTOR_SERVICE_PORT="${LOCAL_CONNECTOR_SERVICE_PORT:-39230}"
   export LOCAL_CONNECTOR_INTERNAL_MTLS_PORT="${LOCAL_CONNECTOR_INTERNAL_MTLS_PORT:-39231}"
-  export MCP_MANAGEMENT_HOST="${MCP_MANAGEMENT_HOST:-0.0.0.0}"
-  export MCP_MANAGEMENT_PORT="${MCP_MANAGEMENT_PORT:-39280}"
-  export MCP_MANAGEMENT_INTERNAL_MTLS_PORT="${MCP_MANAGEMENT_INTERNAL_MTLS_PORT:-39282}"
-  export TASK_RUNNER_HOST="${TASK_RUNNER_HOST:-0.0.0.0}"
-  export TASK_RUNNER_PORT="${TASK_RUNNER_PORT:-39090}"
-  export TASK_RUNNER_INTERNAL_MTLS_PORT="${TASK_RUNNER_INTERNAL_MTLS_PORT:-39092}"
-  export TASK_RUNNER_BACKEND_PORT="${TASK_RUNNER_BACKEND_PORT:-39090}"
   export HOST="${HOST:-0.0.0.0}"
   export BACKEND_PORT="${BACKEND_PORT:-3997}"
   export CHATOS_INTERNAL_MTLS_PORT="${CHATOS_INTERNAL_MTLS_PORT:-3999}"
@@ -175,8 +137,6 @@ export_local_env() {
   export USER_SERVICE_DATABASE_URL="postgresql://user_service_app:${USER_SERVICE_APP_PASSWORD:-$postgres_app_password}@${postgres_host}:${postgres_port}/user_service"
   export PLUGIN_MANAGEMENT_SERVICE_DATABASE_URL="postgresql://plugin_management_app:${PLUGIN_MANAGEMENT_APP_PASSWORD:-$postgres_app_password}@${postgres_host}:${postgres_port}/plugin_management_service"
   export LOCAL_CONNECTOR_DATABASE_URL="postgresql://local_connector_app:${LOCAL_CONNECTOR_APP_PASSWORD:-$postgres_app_password}@${postgres_host}:${postgres_port}/local_connector_service"
-  export TASK_RUNNER_DATABASE_URL="postgresql://task_runner_app:${TASK_RUNNER_APP_PASSWORD:-$postgres_app_password}@${postgres_host}:${postgres_port}/task_runner_service"
-  export MCP_MANAGEMENT_DATABASE_URL="postgresql://mcp_management_app:${MCP_MANAGEMENT_APP_PASSWORD:-$postgres_app_password}@${postgres_host}:${postgres_port}/mcp_management_service"
   export MEMORY_ENGINE_DATABASE_URL="postgresql://memory_engine_app:${MEMORY_ENGINE_APP_PASSWORD:-$postgres_app_password}@${postgres_host}:${postgres_port}/memory_engine"
   export CONFIG_CENTER_POSTGRES_POOL_MAX_CONNECTIONS="${CONFIG_CENTER_POSTGRES_POOL_MAX_CONNECTIONS:-10}"
   export CONFIG_CENTER_POSTGRES_POOL_MIN_CONNECTIONS="${CONFIG_CENTER_POSTGRES_POOL_MIN_CONNECTIONS:-1}"
@@ -190,8 +150,6 @@ export_local_env() {
   export USER_SERVICE_MIGRATION_DATABASE_URL="postgresql://user_service_migrator:${USER_SERVICE_MIGRATOR_PASSWORD:-$postgres_migration_password}@${postgres_host}:${postgres_port}/user_service"
   export PLUGIN_MANAGEMENT_MIGRATION_DATABASE_URL="postgresql://plugin_management_migrator:${PLUGIN_MANAGEMENT_MIGRATOR_PASSWORD:-$postgres_migration_password}@${postgres_host}:${postgres_port}/plugin_management_service"
   export LOCAL_CONNECTOR_MIGRATION_DATABASE_URL="postgresql://local_connector_migrator:${LOCAL_CONNECTOR_MIGRATOR_PASSWORD:-$postgres_migration_password}@${postgres_host}:${postgres_port}/local_connector_service"
-  export TASK_RUNNER_MIGRATION_DATABASE_URL="postgresql://task_runner_migrator:${TASK_RUNNER_MIGRATOR_PASSWORD:-$postgres_migration_password}@${postgres_host}:${postgres_port}/task_runner_service"
-  export MCP_MANAGEMENT_MIGRATION_DATABASE_URL="postgresql://mcp_management_migrator:${MCP_MANAGEMENT_MIGRATOR_PASSWORD:-$postgres_migration_password}@${postgres_host}:${postgres_port}/mcp_management_service"
   export MEMORY_ENGINE_MIGRATION_DATABASE_URL="postgresql://memory_engine_migrator:${MEMORY_ENGINE_MIGRATOR_PASSWORD:-$postgres_migration_password}@${postgres_host}:${postgres_port}/memory_engine"
 
   export MEMORY_ENGINE_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
@@ -201,34 +159,14 @@ export_local_env() {
   export MEMORY_ENGINE_INTERNAL_BASE_URL="https://127.0.0.1:${MEMORY_ENGINE_INTERNAL_MTLS_PORT}/api/memory-engine/v1"
   export CONFIGURATION_CENTER_MEMORY_ENGINE_BASE_URL="$MEMORY_ENGINE_INTERNAL_BASE_URL"
   export CHATOS_MEMORY_ENGINE_BASE_URL="$MEMORY_ENGINE_INTERNAL_BASE_URL"
-  export TASK_RUNNER_BASE_URL="http://127.0.0.1:${TASK_RUNNER_PORT}"
-  export CHATOS_TASK_RUNNER_BASE_URL="http://127.0.0.1:${TASK_RUNNER_PORT}"
-  export CHATOS_TASK_RUNNER_INTERNAL_BASE_URL="https://127.0.0.1:${TASK_RUNNER_INTERNAL_MTLS_PORT}"
   export CHATOS_RUN_WORKSPACE_ROOT="${CHATOS_RUN_WORKSPACE_ROOT:-$STATE_DIR/run-workspaces}"
   export PLUGIN_MANAGEMENT_SERVICE_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
-  export PLUGIN_MANAGEMENT_TASK_RUNNER_BASE_URL="http://127.0.0.1:${TASK_RUNNER_PORT}"
   export PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_USERNAME="$CHATOS_ADMIN_USERNAME"
   export PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_PASSWORD="$CHATOS_ADMIN_PASSWORD"
   export PLUGIN_MANAGEMENT_SERVICE_SEED_SYSTEM_RESOURCES="${PLUGIN_MANAGEMENT_SERVICE_SEED_SYSTEM_RESOURCES:-true}"
   export LOCAL_CONNECTOR_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
   export LOCAL_CONNECTOR_PUBLIC_BASE_URL="http://127.0.0.1:${LOCAL_CONNECTOR_SERVICE_PORT}"
   export LOCAL_CONNECTOR_INTERNAL_API_SECRET="${LOCAL_CONNECTOR_INTERNAL_API_SECRET:-}"
-  export MCP_MANAGEMENT_PUBLIC_BASE_URL="http://127.0.0.1:${MCP_MANAGEMENT_PORT}"
-  export MCP_MANAGEMENT_SERVICE_BASE_URL="https://127.0.0.1:${MCP_MANAGEMENT_INTERNAL_MTLS_PORT}"
-  export CONFIGURATION_CENTER_MCP_MANAGEMENT_BASE_URL="$MCP_MANAGEMENT_SERVICE_BASE_URL"
-  export MCP_MANAGEMENT_PLUGIN_MANAGEMENT_SERVICE_BASE_URL="$PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL"
-  export MCP_MANAGEMENT_TASK_RUNNER_SERVICE_BASE_URL="https://127.0.0.1:${TASK_RUNNER_INTERNAL_MTLS_PORT}"
-  export USER_SERVICE_TASK_RUNNER_BASE_URL="https://127.0.0.1:${TASK_RUNNER_INTERNAL_MTLS_PORT}"
-  export MCP_MANAGEMENT_CHATOS_SERVICE_BASE_URL="https://127.0.0.1:${CHATOS_INTERNAL_MTLS_PORT}"
-  export MCP_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_BASE_URL="https://127.0.0.1:${LOCAL_CONNECTOR_INTERNAL_MTLS_PORT}"
-  export TASK_RUNNER_STORE_MODE="${TASK_RUNNER_STORE_MODE:-postgres}"
-  # Do not inject a local default for TASK_RUNNER_WORKER_CONCURRENCY here.
-  # Task Runner loads the authoritative value from Configuration Center at
-  # startup unless the operator explicitly exports an environment override.
-  export TASK_RUNNER_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
-  export TASK_RUNNER_USER_SERVICE_INTERNAL_BASE_URL="https://127.0.0.1:${USER_SERVICE_INTERNAL_MTLS_PORT}"
-  export TASK_RUNNER_MEMORY_ENGINE_BASE_URL="$MEMORY_ENGINE_INTERNAL_BASE_URL"
-  export TASK_RUNNER_CHATOS_CALLBACK_URL="https://127.0.0.1:${CHATOS_INTERNAL_MTLS_PORT}/api/agent/chat/task-runner/callback"
   export CHATOS_USER_SERVICE_BASE_URL="http://127.0.0.1:${USER_SERVICE_PORT}"
   export CHATOS_USER_SERVICE_INTERNAL_BASE_URL="https://127.0.0.1:${USER_SERVICE_INTERNAL_MTLS_PORT}"
   export CHATOS_LOCAL_CONNECTOR_SERVICE_BASE_URL="https://127.0.0.1:${LOCAL_CONNECTOR_INTERNAL_MTLS_PORT}"
@@ -244,11 +182,9 @@ config_center_caller_signing_secret() {
   case "$1" in
     chatos-backend) printf '%s' "$CONFIG_CENTER_CHATOS_BACKEND_CALLER_SIGNING_SECRET" ;;
     local-connector-service) printf '%s' "$CONFIG_CENTER_LOCAL_CONNECTOR_SERVICE_CALLER_SIGNING_SECRET" ;;
-    mcp-management-service) printf '%s' "$CONFIG_CENTER_MCP_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET" ;;
     memory-engine) printf '%s' "$CONFIG_CENTER_MEMORY_ENGINE_CALLER_SIGNING_SECRET" ;;
     official-website) printf '%s' "$CONFIG_CENTER_OFFICIAL_WEBSITE_CALLER_SIGNING_SECRET" ;;
     plugin-management-service) printf '%s' "$CONFIG_CENTER_PLUGIN_MANAGEMENT_SERVICE_CALLER_SIGNING_SECRET" ;;
-    task-runner) printf '%s' "$CONFIG_CENTER_TASK_RUNNER_CALLER_SIGNING_SECRET" ;;
     user-service) printf '%s' "$CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET" ;;
     *) return 1 ;;
   esac
@@ -257,30 +193,8 @@ config_center_caller_signing_secret() {
 config_center_client_identity_path() {
   local caller="$1"
   case "$caller" in
-    chatos-backend|local-connector-service|mcp-management-service|memory-engine|official-website|plugin-management-service|task-runner|user-service)
+    chatos-backend|local-connector-service|memory-engine|official-website|plugin-management-service|user-service)
       printf '%s/%s.identity.pem' "$CONFIG_CENTER_MTLS_DIR" "$caller"
-      ;;
-    *) return 1 ;;
-  esac
-}
-
-mcp_management_client_identity_path() {
-  local caller="$1"
-  case "$caller" in
-    chatos-backend) printf '%s/chatos.identity.pem' "$MCP_MANAGEMENT_MTLS_DIR" ;;
-    task-runner|configuration-center)
-      printf '%s/%s.identity.pem' "$MCP_MANAGEMENT_MTLS_DIR" "$caller"
-      ;;
-    *) return 1 ;;
-  esac
-}
-
-task_runner_client_identity_path() {
-  local caller="$1"
-  case "$caller" in
-    chatos-backend) printf '%s/chatos.identity.pem' "$TASK_RUNNER_MTLS_DIR" ;;
-    mcp-management-service|user-service)
-      printf '%s/%s.identity.pem' "$TASK_RUNNER_MTLS_DIR" "$caller"
       ;;
     *) return 1 ;;
   esac
@@ -289,18 +203,8 @@ task_runner_client_identity_path() {
 memory_engine_client_identity_path() {
   local caller="$1"
   case "$caller" in
-    configuration-center|user-service|chatos-backend|task-runner)
+    configuration-center|user-service|chatos-backend)
       printf '%s/%s.identity.pem' "$MEMORY_ENGINE_MTLS_DIR" "$caller"
-      ;;
-    *) return 1 ;;
-  esac
-}
-
-chatos_client_identity_path() {
-  local caller="$1"
-  case "$caller" in
-    task-runner|mcp-management-service)
-      printf '%s/%s.identity.pem' "$CHATOS_MTLS_DIR" "$caller"
       ;;
     *) return 1 ;;
   esac
@@ -309,7 +213,7 @@ chatos_client_identity_path() {
 local_connector_identity_path() {
   local caller="$1"
   case "$caller" in
-    chatos-backend|task-runner|mcp-management-service)
+    chatos-backend)
       printf '%s/%s.identity.pem' "$LOCAL_CONNECTOR_MTLS_DIR" "$caller"
       ;;
     *) return 1 ;;
@@ -319,7 +223,7 @@ local_connector_identity_path() {
 user_service_client_identity_path() {
   local caller="$1"
   case "$caller" in
-    chatos-backend|task-runner|memory-engine)
+    chatos-backend|memory-engine)
       printf '%s/%s.identity.pem' "$USER_SERVICE_MTLS_DIR" "$caller"
       ;;
     *) return 1 ;;
@@ -329,7 +233,7 @@ user_service_client_identity_path() {
 plugin_management_client_identity_path() {
   local caller="$1"
   case "$caller" in
-    chatos-backend|task-runner|local-connector-service|memory-engine|mcp-management-service)
+    chatos-backend|local-connector-service|memory-engine)
       printf '%s/%s.identity.pem' "$PLUGIN_MANAGEMENT_MTLS_DIR" "$caller"
       ;;
     *) return 1 ;;
@@ -340,7 +244,6 @@ ensure_dirs() {
   mkdir -p \
     "$LOG_DIR" \
     "$PID_DIR" \
-    "$STATE_DIR/task-runner" \
     "$STATE_DIR/chatos" \
     "$STATE_DIR/local-connector"
 }
@@ -358,9 +261,7 @@ prepare_local_dev_apisix_config() {
     -e "s/\"chatos-backend:3997\"/\"${host_address}:3997\"/g" \
     -e "s/\"user-service-backend:39190\"/\"${host_address}:39190\"/g" \
     -e "s/\"plugin-management-backend:39260\"/\"${host_address}:39260\"/g" \
-    -e "s/\"mcp-management-service-backend:39280\"/\"${host_address}:39280\"/g" \
     -e "s/\"local-connector-service-backend:39230\"/\"${host_address}:39230\"/g" \
-    -e "s/\"task-runner-backend:39090\"/\"${host_address}:39090\"/g" \
     -e "s/\"memory-engine-backend:7081\"/\"${host_address}:7081\"/g" \
     -e "s/\"admin-console-frontend:80\"/\"${host_address}:39200\"/g" \
     -e "s/\"official-website-frontend:80\"/\"${host_address}:39251\"/g" \
@@ -451,8 +352,6 @@ managed = {
     "memory-engine",
     "plugin-management-service",
     "local-connector-service",
-    "mcp-management-service",
-    "task-runner",
     "chatos-backend",
     "harness",
 }

@@ -76,8 +76,6 @@ expected_databases=(
   user_service
   plugin_management_service
   local_connector_service
-  task_runner_service
-  mcp_management_service
   memory_engine
 )
 expected_app_roles=(
@@ -86,8 +84,6 @@ expected_app_roles=(
   user_service_app
   plugin_management_app
   local_connector_app
-  task_runner_app
-  mcp_management_app
   memory_engine_app
 )
 
@@ -150,8 +146,6 @@ WITH expected(role_name, database_name) AS (
     ('user_service_app', 'user_service'),
     ('plugin_management_app', 'plugin_management_service'),
     ('local_connector_app', 'local_connector_service'),
-    ('task_runner_app', 'task_runner_service'),
-    ('mcp_management_app', 'mcp_management_service'),
     ('memory_engine_app', 'memory_engine')
 )
 SELECT count(*)
@@ -179,7 +173,7 @@ role_attribute_violation_count="$(run_psql "$postgres_admin_database" \
   --command "
 SELECT count(*)
 FROM pg_roles
-WHERE rolname = ANY(ARRAY['chatos_app','config_center_app','user_service_app','plugin_management_app','local_connector_app','task_runner_app','mcp_management_app','memory_engine_app'])
+WHERE rolname = ANY(ARRAY['chatos_app','config_center_app','user_service_app','plugin_management_app','local_connector_app','memory_engine_app'])
   AND (rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls)")"
 if [[ "$role_attribute_violation_count" -ne 0 ]]; then
   echo "PostgreSQL application roles have $role_attribute_violation_count unsafe role attribute(s)" >&2
