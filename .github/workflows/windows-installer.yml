@@ -4,9 +4,18 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - 3.0.7
+      - 3.0.8
     paths:
       - "clients/windows/**"
+      - "clients/local_agent_host/**"
+      - "crates/chatos_ai_runtime/**"
+      - "crates/chatos_config_sdk/**"
+      - "crates/chatos_internal_auth/**"
+      - "crates/chatos_mcp_runtime/**"
+      - "crates/chatos_service_runtime/**"
+      - "crates/memory_engine_sdk/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - "scripts/install-windows-client.cmd"
       - ".github/workflows/windows-installer.yml"
 
@@ -31,6 +40,12 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: x86_64-pc-windows-msvc
+
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --no-progress --yes
@@ -40,7 +55,7 @@ jobs:
         run: >-
           ./clients/windows/scripts/package-client.ps1
           -Platform x64
-          -Version 3.0.7
+          -Version 3.0.8
           -SkipTests
           -SkipToolInstall
 
@@ -49,19 +64,26 @@ jobs:
         run: |
           $installer = "clients/windows/BundleArtifacts/installer-x64/ChatOS-Setup-x64.exe"
           $metadata = "clients/windows/BundleArtifacts/payload-x64/package-metadata.json"
+          $localAgentHost = "clients/windows/BundleArtifacts/payload-x64/chatos_local_agent_host.exe"
           if (-not (Test-Path $installer -PathType Leaf)) { throw "Installer was not created." }
           if ((Get-Item $installer).Length -lt 1MB) { throw "Installer is unexpectedly small." }
           if (-not (Test-Path $metadata -PathType Leaf)) { throw "Package metadata was not created." }
+          if (-not (Test-Path $localAgentHost -PathType Leaf)) { throw "Local Agent Host was not packaged." }
           $package = Get-Content $metadata -Raw | ConvertFrom-Json
-          if ($package.app_version -ne "3.0.7" -or $package.runtime_identifier -ne "win-x64" -or
-              $package.self_contained -ne $true -or [string]::IsNullOrWhiteSpace($package.executable_sha256)) {
+          if ($package.app_version -ne "3.0.8" -or $package.runtime_identifier -ne "win-x64" -or
+              $package.self_contained -ne $true -or [string]::IsNullOrWhiteSpace($package.executable_sha256) -or
+              [string]::IsNullOrWhiteSpace($package.local_agent_host_sha256)) {
             throw "Package metadata is incomplete or incorrect."
+          }
+          $localAgentHostHash = (Get-FileHash $localAgentHost -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($localAgentHostHash -ne $package.local_agent_host_sha256) {
+            throw "Local Agent Host package hash does not match metadata."
           }
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: ChatOS-Windows-x64-3.0.7
+          name: ChatOS-Windows-x64-3.0.8
           path: clients/windows/BundleArtifacts/installer-x64/ChatOS-Setup-x64.exe
           if-no-files-found: error
           retention-days: 14

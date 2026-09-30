@@ -10,7 +10,7 @@ param(
     [string]$LocalConnectorCloudBaseUrl = "https://local-connector.jgoool.com",
 
     [ValidatePattern("^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$")]
-    [string]$Version = "3.0.7",
+    [string]$Version = "3.0.8",
 
     [switch]$SkipTests,
 
@@ -169,6 +169,8 @@ if (-not ($sdkVersions | Where-Object { $_ -match '^8\.' })) {
 }
 
 $runtimeIdentifier = if ($Platform -eq "ARM64") { "win-arm64" } else { "win-x64" }
+$rustTarget = if ($Platform -eq "ARM64") { "aarch64-pc-windows-msvc" } else { "x86_64-pc-windows-msvc" }
+$monorepoRoot = (Resolve-Path (Join-Path $repoRoot "..\..")).Path
 $normalizedApiBaseUrl = $ApiBaseUrl.TrimEnd('/')
 $normalizedConnectorBaseUrl = $LocalConnectorCloudBaseUrl.TrimEnd('/')
 $desktopProject = Join-Path $repoRoot "src\ChatOS.Desktop\ChatOS.Desktop.csproj"
@@ -248,6 +250,22 @@ try {
     $null = New-Item -ItemType Directory -Path $payloadRoot -Force
     $null = New-Item -ItemType Directory -Path $installerRoot -Force
 
+    Write-Host "Building Local Agent Host Release/$Platform..."
+    cargo build `
+        --manifest-path (Join-Path $monorepoRoot "Cargo.toml") `
+        -p chatos_local_agent_host `
+        --release `
+        --target $rustTarget
+    if ($LASTEXITCODE -ne 0) {
+        throw "Local Agent Host build failed with exit code $LASTEXITCODE."
+    }
+    $localAgentHost = Join-Path `
+        $monorepoRoot `
+        "target-shared\$rustTarget\release\chatos_local_agent_host.exe"
+    if (-not (Test-Path $localAgentHost -PathType Leaf)) {
+        throw "Local Agent Host executable was not produced at $localAgentHost."
+    }
+
     Write-Host "Cleaning stale ChatOS Desktop build state..."
     & $dotnetExecutable clean $desktopProject `
         -c Release `
@@ -265,6 +283,8 @@ try {
         -p:RuntimeIdentifier=$runtimeIdentifier `
         -p:WindowsPackageType=None `
         -p:WindowsAppSDKSelfContained=true `
+        -p:LocalAgentHostExecutable=$localAgentHost `
+        -p:RequireLocalAgentHost=true `
         --self-contained true `
         --output $payloadRoot `
         --nologo
@@ -277,6 +297,10 @@ try {
     $executable = Join-Path $payloadRoot "ChatOS.Desktop.exe"
     if (-not (Test-Path $executable -PathType Leaf)) {
         throw "Installer payload does not contain ChatOS.Desktop.exe."
+    }
+    $packagedLocalAgentHost = Join-Path $payloadRoot "chatos_local_agent_host.exe"
+    if (-not (Test-Path $packagedLocalAgentHost -PathType Leaf)) {
+        throw "Installer payload does not contain chatos_local_agent_host.exe."
     }
 
     $runtimeSettings = [ordered]@{
@@ -304,6 +328,7 @@ try {
         local_connector_cloud_base_url = $normalizedConnectorBaseUrl
         source_revision = if ([string]::IsNullOrWhiteSpace($sourceRevision)) { $null } else { $sourceRevision.Trim() }
         executable_sha256 = (Get-FileHash $executable -Algorithm SHA256).Hash.ToLowerInvariant()
+        local_agent_host_sha256 = (Get-FileHash $packagedLocalAgentHost -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     $metadata | ConvertTo-Json -Depth 5 | Set-Content `
         (Join-Path $payloadRoot "package-metadata.json") `
