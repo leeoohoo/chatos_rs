@@ -115,8 +115,6 @@ impl LocalAgentHostCoordinator {
         self.wakeup.notify_one();
     }
 
-    /// Runs until the watch value becomes true or all senders are dropped.
-    /// Work is event-driven; the only timer is the next durable retry.
     pub async fn run_until_shutdown(
         &self,
         mut shutdown: watch::Receiver<bool>,
@@ -325,6 +323,19 @@ impl HostRequestHandler for LocalAgentHostCoordinator {
                 HostError::new(
                     "reserved_command",
                     "model Run claims and commits are owned by the built-in local worker",
+                    false,
+                ),
+            );
+        }
+        if matches!(
+            request.command,
+            HostCommand::CreateRun(_) | HostCommand::CreateTaskGraph(_)
+        ) {
+            return HostResponseEnvelope::failure(
+                request.command_id,
+                HostError::new(
+                    "reserved_command",
+                    "Runs and Task Graphs can only be created by built-in Host workflows",
                     false,
                 ),
             );
@@ -655,6 +666,25 @@ mod tests {
         );
         let runtime = Arc::new(LocalAgentRuntime::new(storage));
         runtime.initialize("user-1").await.expect("initialize");
+        runtime
+            .try_handle(HostRequestEnvelope {
+                protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+                command_id: "create-coordinator".to_string(),
+                command: HostCommand::CreateRun(CreateRunCommand {
+                    run_id: "run-coordinator".to_string(),
+                    owner_user_id: "user-1".to_string(),
+                    owner_entity_type: "conversation".to_string(),
+                    owner_entity_id: "conversation-1".to_string(),
+                    profile_key: "coordinator".to_string(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: json!({"message": "hello"}),
+                    max_iterations: 4,
+                }),
+            })
+            .await
+            .expect("create Run inside Host");
         let mut profiles = LocalAgentProfileRegistry::new();
         profiles
             .register("coordinator", ModelProfile)
@@ -695,10 +725,6 @@ mod tests {
         };
         assert_eq!(routed.exclude_tool_names, vec!["create_task"]);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let task = {
-            let coordinator = Arc::clone(&coordinator);
-            tokio::spawn(async move { coordinator.run_until_shutdown(shutdown_rx).await })
-        };
         let wait_task = {
             let coordinator = Arc::clone(&coordinator);
             tokio::spawn(async move {
@@ -717,23 +743,17 @@ mod tests {
                     .await
             })
         };
+        tokio::task::yield_now().await;
+        let task = {
+            let coordinator = Arc::clone(&coordinator);
+            tokio::spawn(async move { coordinator.run_until_shutdown(shutdown_rx).await })
+        };
         let (mut client, server) = tokio::io::duplex(16 * 1024);
         let ipc_task = tokio::spawn(serve_stream(server, Arc::clone(&coordinator)));
         let request = HostRequestEnvelope {
             protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
-            command_id: "create-coordinator".to_string(),
-            command: HostCommand::CreateRun(CreateRunCommand {
-                run_id: "run-coordinator".to_string(),
-                owner_user_id: "user-1".to_string(),
-                owner_entity_type: "conversation".to_string(),
-                owner_entity_id: "conversation-1".to_string(),
-                profile_key: "coordinator".to_string(),
-                model_config_ref: "model-1".to_string(),
-                model_config_revision: "revision-1".to_string(),
-                capability_policy_revision: "policy-1".to_string(),
-                input: json!({"message": "hello"}),
-                max_iterations: 4,
-            }),
+            command_id: "health-coordinator-ipc".to_string(),
+            command: HostCommand::Health,
         };
         write_frame(&mut client, &serde_json::to_vec(&request).expect("request"))
             .await
@@ -745,7 +765,7 @@ mod tests {
         let response = decode_response(&response).expect("decode");
         assert!(response.ok);
         let waited = wait_task.await.expect("wait join");
-        assert!(response_has_events(&waited));
+        assert!(response_has_events(&waited), "wait response: {waited:?}");
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         loop {
             let response = runtime

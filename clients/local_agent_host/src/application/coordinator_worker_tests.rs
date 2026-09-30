@@ -6,8 +6,9 @@ use crate::HostRequestHandler;
 use async_trait::async_trait;
 use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
-    ClaimNextRunCommand, CommitStepCommand, CreateRunCommand, HostCommand, HostRequestEnvelope,
-    HostResult, LocalAgentRunClaim, LocalAgentStepOutcome, LOCAL_AGENT_PROTOCOL_VERSION,
+    ClaimNextRunCommand, CommitStepCommand, CreateRunCommand, CreateTaskGraphCommand, HostCommand,
+    HostRequestEnvelope, HostResult, LocalAgentRunClaim, LocalAgentStepOutcome, LocalTaskSpec,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileRegistry, LocalAgentRuntime};
 use serde_json::json;
@@ -74,6 +75,45 @@ async fn coordinator_keeps_model_claims_and_commits_inside_the_host() {
     let coordinator =
         LocalAgentHostCoordinator::new(Arc::clone(&runtime), "user-1", Some(scheduler), None)
             .expect("coordinator");
+    let rejected_run_creation = coordinator
+        .handle_request(envelope(
+            "external-run-create",
+            HostCommand::CreateRun(CreateRunCommand {
+                run_id: "forged-run".to_string(),
+                owner_user_id: "user-1".to_string(),
+                owner_entity_type: "conversation".to_string(),
+                owner_entity_id: "conversation-1".to_string(),
+                profile_key: "main_chat".to_string(),
+                model_config_ref: "model-1".to_string(),
+                model_config_revision: "revision-1".to_string(),
+                capability_policy_revision: "policy-1".to_string(),
+                input: json!({"message": "forged"}),
+                max_iterations: 4,
+            }),
+        ))
+        .await;
+    let rejected_graph_creation = coordinator
+        .handle_request(envelope(
+            "external-graph-create",
+            HostCommand::CreateTaskGraph(CreateTaskGraphCommand {
+                graph_id: "forged-graph".to_string(),
+                owner_user_id: "user-1".to_string(),
+                source_entity_type: "conversation".to_string(),
+                source_entity_id: "conversation-1".to_string(),
+                tasks: vec![LocalTaskSpec {
+                    task_id: "forged-task".to_string(),
+                    title: "Forged".to_string(),
+                    profile_key: "task_execution".to_string(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: json!({"prompt": "forged"}),
+                    max_iterations: 4,
+                }],
+                dependencies: Vec::new(),
+            }),
+        ))
+        .await;
     let claim_command = ClaimNextRunCommand {
         owner_user_id: "user-1".to_string(),
         worker_id: "external-model-worker".to_string(),
@@ -87,6 +127,20 @@ async fn coordinator_keeps_model_claims_and_commits_inside_the_host() {
         ))
         .await;
 
+    assert_eq!(
+        rejected_run_creation
+            .error
+            .expect("reserved Run creation")
+            .code,
+        "reserved_command"
+    );
+    assert_eq!(
+        rejected_graph_creation
+            .error
+            .expect("reserved Task Graph creation")
+            .code,
+        "reserved_command"
+    );
     assert_eq!(
         rejected_claim.error.expect("reserved claim").code,
         "reserved_command"
