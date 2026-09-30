@@ -130,6 +130,7 @@ fn create_single_graph(
 ) -> Result<CreateTaskGraphCommand, String> {
     ensure_no_external_prerequisites(&args.prerequisite_task_ids)?;
     ensure_parent_model(parent, args.default_model_config_id.as_deref())?;
+    let prompt = task_prompt(&args.objective, &args.description, &args.input_payload)?;
     let graph_id = format!("local-task-graph-{}", invocation.invocation_id);
     let source_context = source_conversation_context(parent);
     Ok(CreateTaskGraphCommand {
@@ -145,6 +146,7 @@ fn create_single_graph(
             model_config_revision: parent.model_config_revision.clone(),
             capability_policy_revision: parent.capability_policy_revision.clone(),
             input: json!({
+                "prompt": prompt,
                 "objective": args.objective,
                 "description": args.description,
                 "input_payload": args.input_payload,
@@ -183,6 +185,7 @@ fn create_batch_graph(
     for item in args.tasks {
         ensure_no_external_prerequisites(&item.prerequisite_task_ids)?;
         ensure_parent_model(parent, item.default_model_config_id.as_deref())?;
+        let prompt = task_prompt(&item.objective, &item.description, &item.input_payload)?;
         let task_id = ref_to_id
             .get(item.client_ref.trim())
             .cloned()
@@ -205,6 +208,7 @@ fn create_batch_graph(
             model_config_revision: parent.model_config_revision.clone(),
             capability_policy_revision: parent.capability_policy_revision.clone(),
             input: json!({
+                "prompt": prompt,
                 "objective": item.objective,
                 "description": item.description,
                 "input_payload": item.input_payload,
@@ -224,6 +228,31 @@ fn create_batch_graph(
         tasks,
         dependencies,
     })
+}
+
+fn task_prompt(
+    objective: &str,
+    description: &str,
+    input_payload: &Value,
+) -> Result<String, String> {
+    let objective = objective.trim();
+    if objective.is_empty() {
+        return Err("task objective cannot be empty".to_string());
+    }
+    let mut prompt = format!("Objective: {objective}");
+    let description = description.trim();
+    if !description.is_empty() {
+        prompt.push_str("\n\nDescription: ");
+        prompt.push_str(description);
+    }
+    if !input_payload.is_null() {
+        prompt.push_str("\n\nStructured input: ");
+        prompt.push_str(
+            &serde_json::to_string(input_payload)
+                .map_err(|error| format!("task input is not serializable: {error}"))?,
+        );
+    }
+    Ok(prompt)
 }
 
 #[derive(Debug, Clone)]
@@ -395,6 +424,14 @@ mod tests {
             "conversation-1"
         );
         assert_eq!(graph.tasks[1].input["source_turn_id"], "turn-1");
+        assert_eq!(
+            graph.tasks[0].input["prompt"],
+            "Objective: Inspect the code"
+        );
+        assert_eq!(
+            graph.tasks[1].input["prompt"],
+            "Objective: Apply the change"
+        );
     }
 
     #[tokio::test]
@@ -411,5 +448,20 @@ mod tests {
             .await
             .expect_err("model revision must be resolved");
         assert!(error.contains("cannot switch model_config_id"));
+    }
+
+    #[tokio::test]
+    async fn task_tool_rejects_an_empty_execution_prompt() {
+        let executor = LocalTaskToolExecutor::new(runtime_with_parent().await);
+        let mut invocation = invocation(json!({
+            "title": "Task",
+            "objective": "   "
+        }));
+        invocation.tool_name = CREATE_TASK_TOOL.to_string();
+        let error = executor
+            .execute_tool(&invocation)
+            .await
+            .expect_err("empty objective must not create an unexecutable task");
+        assert!(error.contains("objective cannot be empty"));
     }
 }
