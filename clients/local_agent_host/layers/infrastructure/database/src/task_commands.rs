@@ -143,6 +143,8 @@ async fn cancel_active_run(
         now_unix_ms,
     )
     .await?;
+    super::requirement_survey_store::delete_open_surveys_for_cancelled_run(connection, &run_id)
+        .await?;
     SqliteClientStorage::insert_event(
         connection,
         run_event_id,

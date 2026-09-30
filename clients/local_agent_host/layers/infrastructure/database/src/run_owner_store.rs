@@ -61,6 +61,13 @@ pub(super) async fn resume_run(
         {
             return Ok(replay);
         }
+        if expected_status == LocalAgentRunStatus::WaitingUser {
+            super::requirement_survey_store::reject_resume_with_open_survey(
+                &mut connection,
+                run_id,
+            )
+            .await?;
+        }
         let updated = sqlx::query(
             "UPDATE local_agent_runs SET status = 'continuation_ready', \
              version = version + 1, continuation_input_json = ?, updated_at_unix_ms = ? \

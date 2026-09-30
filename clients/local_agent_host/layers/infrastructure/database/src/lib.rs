@@ -132,9 +132,8 @@ impl SqliteClientStorage {
         artifact_root: std::path::PathBuf,
         temporary_root: Option<std::sync::Arc<tempfile::TempDir>>,
     ) -> Result<Self, ClientStorageError> {
-        // A single connection plus BEGIN IMMEDIATE gives SQLite and the runtime
-        // one unambiguous local writer. IPC can remain concurrent without
-        // allowing two commands to claim the same event.
+        // A single connection plus BEGIN IMMEDIATE gives the runtime one local
+        // writer while IPC remains concurrent.
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(options)
@@ -631,6 +630,10 @@ impl LocalAgentRunStore for SqliteClientStorage {
         let result = async {
             if let Some(replay) = Self::replay(&mut connection, command).await.db()? {
                 return Ok(replay);
+            }
+            if expected_status == LocalAgentRunStatus::WaitingUser {
+                requirement_survey_store::reject_resume_with_open_survey(&mut connection, run_id)
+                    .await?;
             }
             let updated = sqlx::query(
                 "UPDATE local_agent_runs SET status = 'continuation_ready', \

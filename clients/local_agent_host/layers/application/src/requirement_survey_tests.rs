@@ -4,12 +4,13 @@
 use super::*;
 use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
-    ClaimNextRunCommand, CommitStepCommand, CreateConversationCommand,
+    CancelRunCommand, ClaimNextRunCommand, CommitStepCommand, CreateConversationCommand,
     CreateRequirementSurveyCommand, CreateRunCommand, HostCommand, HostRequestEnvelope, HostResult,
     ListRequirementSurveysCommand, LocalAgentRunStatus, LocalAgentStepOutcome,
     LocalConversationResourceBinding, LocalConversationResourceKind,
     LocalRequirementSurveyQuestion, LocalRequirementSurveyResponseKind,
-    LocalRequirementSurveyStatus, ResolveRequirementSurveyCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalRequirementSurveyStatus, ResolveRequirementSurveyCommand, ResumeRunCommand,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde_json::json;
 use std::{collections::BTreeMap, sync::Arc};
@@ -77,7 +78,7 @@ async fn resolves_project_survey_and_atomically_resumes_waiting_task_run() {
     let HostResult::Claim { claim: Some(claim) } = claimed else {
         panic!("expected run claim");
     };
-    runtime
+    let waiting = runtime
         .try_handle(request(
             "wait-user",
             HostCommand::CommitStep(CommitStepCommand {
@@ -93,6 +94,9 @@ async fn resolves_project_survey_and_atomically_resumes_waiting_task_run() {
         ))
         .await
         .expect("wait for user");
+    let HostResult::Run { run: waiting_run } = waiting else {
+        panic!("expected waiting Run");
+    };
     let question = LocalRequirementSurveyQuestion {
         question_id: "deployment".to_string(),
         prompt: "Where should this run?".to_string(),
@@ -117,6 +121,23 @@ async fn resolves_project_survey_and_atomically_resumes_waiting_task_run() {
         ))
         .await
         .expect("survey");
+    let bypass = runtime
+        .try_handle(request(
+            "bypass-survey",
+            HostCommand::ResumeRun(ResumeRunCommand {
+                owner_user_id: "user-1".to_string(),
+                run_id: "run-1".to_string(),
+                expected_version: waiting_run.version,
+                expected_status: LocalAgentRunStatus::WaitingUser,
+                reason: "bypass structured answers".to_string(),
+                input: json!({"answer": "local"}),
+            }),
+        ))
+        .await
+        .expect_err("generic resume must not bypass an open survey");
+    assert!(bypass
+        .to_string()
+        .contains("must be resumed by resolving requirement survey survey-1"));
     let duplicate = runtime
         .try_handle(request(
             "create-second-survey",
@@ -188,4 +209,137 @@ async fn resolves_project_survey_and_atomically_resumes_waiting_task_run() {
         resolution.resumed_run.continuation_input.as_ref().unwrap()["survey_id"],
         "survey-1"
     );
+}
+
+#[tokio::test]
+async fn cancelling_a_run_removes_its_unanswerable_open_survey() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(20_000)));
+    runtime
+        .try_handle(request(
+            "create-cancel-conversation",
+            HostCommand::CreateConversation(CreateConversationCommand {
+                conversation_id: "conversation-cancel".to_string(),
+                owner_user_id: "user-1".to_string(),
+                title: "Project".to_string(),
+                resource: Some(LocalConversationResourceBinding {
+                    kind: LocalConversationResourceKind::Project,
+                    resource_id: "project-1".to_string(),
+                }),
+            }),
+        ))
+        .await
+        .expect("conversation");
+    runtime
+        .try_handle(request(
+            "create-cancel-run",
+            HostCommand::CreateRun(CreateRunCommand {
+                run_id: "run-cancelled-survey".to_string(),
+                owner_user_id: "user-1".to_string(),
+                owner_entity_type: "survey_test".to_string(),
+                owner_entity_id: "survey-test-1".to_string(),
+                profile_key: "task_execution".to_string(),
+                model_config_ref: "model-1".to_string(),
+                model_config_revision: "revision-1".to_string(),
+                capability_policy_revision: "policy-1".to_string(),
+                input: json!({
+                    "source_conversation_id": "conversation-cancel",
+                    "prompt": "cancel"
+                }),
+                max_iterations: 8,
+            }),
+        ))
+        .await
+        .expect("create cancellable run");
+    let claimed = runtime
+        .try_handle(request(
+            "claim-cancelled-run",
+            HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                owner_user_id: "user-1".to_string(),
+                worker_id: "worker-1".to_string(),
+                lease_duration_ms: 30_000,
+            }),
+        ))
+        .await
+        .expect("claim cancellable run");
+    let HostResult::Claim { claim: Some(claim) } = claimed else {
+        panic!("expected cancellable run claim");
+    };
+    let waiting = runtime
+        .try_handle(request(
+            "wait-cancelled-run",
+            HostCommand::CommitStep(CommitStepCommand {
+                owner_user_id: "user-1".to_string(),
+                run_id: claim.run.run_id,
+                claim_token: claim.claim_token,
+                expected_version: claim.run.version,
+                outcome: LocalAgentStepOutcome::WaitForUser {
+                    prompt: json!({"survey_id": "survey-cancelled"}),
+                    checkpoint: json!({"phase": "requirements"}),
+                },
+            }),
+        ))
+        .await
+        .expect("wait cancellable run");
+    let HostResult::Run {
+        run: cancellable_run,
+    } = waiting
+    else {
+        panic!("expected waiting cancellable Run");
+    };
+    runtime
+        .try_handle(request(
+            "create-cancelled-survey",
+            HostCommand::CreateRequirementSurvey(CreateRequirementSurveyCommand {
+                survey_id: "survey-cancelled".to_string(),
+                owner_user_id: "user-1".to_string(),
+                project_resource_id: "project-1".to_string(),
+                source_conversation_id: "conversation-cancel".to_string(),
+                source_run_id: "run-cancelled-survey".to_string(),
+                source_task_id: None,
+                title: "Cancelled requirements".to_string(),
+                description: None,
+                questions: vec![LocalRequirementSurveyQuestion {
+                    question_id: "cancelled".to_string(),
+                    prompt: "This survey will be discarded".to_string(),
+                    response_kind: LocalRequirementSurveyResponseKind::Boolean,
+                    required: true,
+                    options: Vec::new(),
+                }],
+            }),
+        ))
+        .await
+        .expect("create cancellable survey");
+    runtime
+        .try_handle(request(
+            "cancel-survey-run",
+            HostCommand::CancelRun(CancelRunCommand {
+                owner_user_id: "user-1".to_string(),
+                run_id: "run-cancelled-survey".to_string(),
+                expected_version: Some(cancellable_run.version),
+                reason: "user cancelled the task".to_string(),
+            }),
+        ))
+        .await
+        .expect("cancel survey run");
+    let listed = runtime
+        .try_handle(request(
+            "list-after-cancel",
+            HostCommand::ListRequirementSurveys(ListRequirementSurveysCommand {
+                owner_user_id: "user-1".to_string(),
+                project_resource_id: Some("project-1".to_string()),
+                status: None,
+                limit: 20,
+            }),
+        ))
+        .await
+        .expect("list after cancel");
+    assert!(matches!(
+        listed,
+        HostResult::RequirementSurveys { surveys } if surveys.is_empty()
+    ));
 }

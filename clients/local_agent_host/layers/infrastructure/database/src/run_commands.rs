@@ -52,6 +52,8 @@ pub(crate) async fn cancel_run_on(
     }
     tool_store::fail_open_invocations_for_cancelled_run(connection, run_id, reason, now_unix_ms)
         .await?;
+    super::requirement_survey_store::delete_open_surveys_for_cancelled_run(connection, run_id)
+        .await?;
     SqliteClientStorage::insert_event(
         connection,
         event_id,

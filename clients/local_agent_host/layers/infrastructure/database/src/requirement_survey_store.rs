@@ -17,6 +17,41 @@ const SURVEY_SELECT: &str =
      version, created_at_unix_ms, updated_at_unix_ms, resolved_at_unix_ms \
      FROM local_requirement_surveys";
 
+pub(crate) async fn reject_resume_with_open_survey(
+    database: &mut SqliteConnection,
+    run_id: &str,
+) -> Result<(), ClientStorageError> {
+    let survey_id: Option<String> = sqlx::query_scalar(
+        "SELECT survey_id FROM local_requirement_surveys \
+         WHERE source_run_id = ? AND status = 'open' \
+         ORDER BY created_at_unix_ms, survey_id LIMIT 1",
+    )
+    .bind(run_id)
+    .fetch_optional(&mut *database)
+    .await
+    .db()?;
+    if let Some(survey_id) = survey_id {
+        return Err(ClientStorageError::Conflict(format!(
+            "Run {run_id} must be resumed by resolving requirement survey {survey_id}"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) async fn delete_open_surveys_for_cancelled_run(
+    database: &mut SqliteConnection,
+    run_id: &str,
+) -> Result<u64, ClientStorageError> {
+    Ok(sqlx::query(
+        "DELETE FROM local_requirement_surveys WHERE source_run_id = ? AND status = 'open'",
+    )
+    .bind(run_id)
+    .execute(&mut *database)
+    .await
+    .db()?
+    .rows_affected())
+}
+
 #[async_trait]
 impl LocalRequirementSurveyStore for SqliteClientStorage {
     async fn create_requirement_survey(
