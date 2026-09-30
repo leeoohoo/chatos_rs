@@ -38,7 +38,6 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
         config = (ROOT / "docker/apisix/apisix.yaml").read_text()
         for service in (
             "user-service",
-            "task-runner",
             "plugin-management",
             "memory-engine",
             "config-center",
@@ -48,8 +47,11 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
         self.assertIn("uri-blocker: *block_internal_api", config)
         self.assertIn("hosts: &admin_hosts", config)
         self.assertIn("hosts: *admin_hosts", config)
-        self.assertIn("admin/(?:user-service|task-runner", config)
-        self.assertIn("(?:chatos|user|plugin|plugins|task|memory|local)", config)
+        self.assertIn("admin/(?:user-service|plugin-management", config)
+        self.assertIn("(?:chatos|user|plugin|plugins|memory|local)", config)
+        self.assertNotIn("/api/admin/task-runner", config)
+        self.assertNotIn("/api/task/*", config)
+        self.assertNotIn("id: mcp-protocol-api", config)
         self.assertNotIn("project.jgoool.com", config)
         self.assertNotIn("project-management", config)
         self.assertIn("(?:api/)?internal(?:/|\\\\?|$)", config)
