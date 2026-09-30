@@ -25,7 +25,7 @@
       "description": "Summarize a failed CircleCI pipeline and propose the next safe action.",
       "argumentHint": "project-slug pipeline-number",
       "requiresConfirmation": true,
-      "targetAgent": "task_runner_run_phase",
+      "targetAgent": "local_agent_execution_agent",
       "allowedTools": ["plugin_circleci_pipeline_read", "plugin_circleci_job_log_read"]
     }
   ],

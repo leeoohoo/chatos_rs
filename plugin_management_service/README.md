@@ -95,16 +95,16 @@ Vite 会把 `/api/admin/plugin-management` 交给本地 APISIX，再转发到 `h
 - `optional`：该 agent 可以按需调用。
 - `required`：该 agent 默认必须携带。
 
-项目工作区通过运行上下文收口。MCP Management 根据 Project Execution Context 将文件、终端、浏览器和本地 Plugin 工具统一路由到 Local Connector。模型和 Task Runner Agent 身份不感知底层连接方式。
+项目工作区与执行状态由客户端 Local Agent Host 收口。Plugin Management 只发布签名能力策略、Plugin 元数据和不可变安装来源，不代理文件、终端、浏览器或 Plugin 工具执行。
 
-Task Runner 只登记 `task_runner_run_phase`。只读分析与实际工程执行使用同一运行身份，能力由任务配置和可信插件策略共同限制；不存在聊天规划模式或另一套规划 Agent。项目工作区能力由 MCP Management 路由到 Local Connector。
+本地执行只登记 `local_agent_execution_agent`。只读分析与实际工程执行使用同一本地运行身份，能力由本地任务快照和可信 Plugin 策略共同限制；不存在服务端 Task Runner、MCP Management 执行路由或另一套规划 Agent。
 
 ## 当前系统 Agent
 
 系统 Agent registry 登记当前代码中真实存在、具有独立 MCP/skills 能力边界的系统级智能体角色或运行模式：
 
-- `chatos_conversation_agent`：Chat OS 普通对话智能体。可选使用 `task_runner_service`；用户联系人只提供角色上下文，不逐条登记。
-- `task_runner_run_phase`：Task Runner 执行任务智能体。负责代码修改、终端执行、测试、部署及工程验收。
+- `chatos_conversation_agent`：Chat OS 普通对话智能体；需要持久执行时只创建 Local Agent Host 本地任务。
+- `local_agent_execution_agent`：Local Agent Host 执行任务智能体。负责代码修改、终端执行、测试、部署及工程验收。
 - `local_connector_command_approval_agent`：本机命令审批智能体。必需只读 `CodeMaintainerRead` 和 `local_connector_approval`。
 - `memory_engine_summary_agent`、`memory_engine_rollup_agent`、`memory_engine_subject_memory_agent`、`memory_engine_memory_rollup_agent`、`memory_engine_thread_repair_agent`：Memory Engine 的消息总结、层级归并、主体记忆与上下文修复智能体。
 

@@ -4,8 +4,8 @@
 use super::*;
 
 #[test]
-fn task_runner_run_phase_defaults_cover_execution_capabilities() {
-    let kinds = task_runner_run_phase_optional_builtin_kinds()
+fn local_agent_execution_defaults_cover_execution_capabilities() {
+    let kinds = local_agent_execution_optional_builtin_kinds()
         .into_iter()
         .map(|(kind, _)| kind)
         .collect::<Vec<_>>();
@@ -105,7 +105,7 @@ fn system_agent_registry_contains_all_runtime_roles() {
         keys,
         vec![
             CHATOS_CONVERSATION_AGENT_KEY,
-            TASK_RUNNER_RUN_AGENT_KEY,
+            LOCAL_AGENT_EXECUTION_AGENT_KEY,
             LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_KEY,
             "memory_engine_summary_agent",
             "memory_engine_rollup_agent",

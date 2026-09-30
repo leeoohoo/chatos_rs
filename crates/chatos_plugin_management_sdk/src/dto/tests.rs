@@ -24,12 +24,16 @@ fn agent_tool_plane_defaults_to_managed_and_serializes_stably() {
 
 #[test]
 fn system_agent_keys_match_registry_keys() {
-    assert_eq!(SystemAgentKey::ALL.len(), 8);
+    assert_eq!(SystemAgentKey::ALL.len(), 9);
     assert!(serde_json::from_str::<SystemAgentKey>("\"task_runner_plan_phase\"").is_err());
-    assert_eq!(SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len(), 32);
+    assert_eq!(SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len(), 36);
     assert_eq!(
         SystemAgentKey::ChatosConversationAgent.as_str(),
         "chatos_conversation_agent"
+    );
+    assert_eq!(
+        SystemAgentKey::LocalAgentExecutionAgent.as_str(),
+        "local_agent_execution_agent"
     );
     assert_eq!(
         SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str(),

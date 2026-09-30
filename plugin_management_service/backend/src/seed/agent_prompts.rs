@@ -238,9 +238,9 @@ fn baseline_prompts() -> Vec<(&'static str, &'static str, &'static str)> {
             include_str!("../../seed_data/agent_prompts/chatos_conversation_agent.md"),
         ),
         (
-            SystemAgentKey::TaskRunnerRunPhase.as_str(),
+            SystemAgentKey::LocalAgentExecutionAgent.as_str(),
             DEFAULT_AGENT_PROMPT_PROFILE,
-            include_str!("../../seed_data/agent_prompts/task_runner_run_phase.md"),
+            include_str!("../../seed_data/agent_prompts/local_agent_execution_agent.md"),
         ),
         (
             SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str(),
@@ -316,7 +316,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_prompts_assign_network_plugins_per_task() {
+    fn managed_prompts_delegate_durable_work_to_local_agent_host() {
         let prompts = baseline_prompts();
         let (agent_key, profile) = (
             SystemAgentKey::ChatosConversationAgent.as_str(),
@@ -327,26 +327,21 @@ mod tests {
             .find(|(key, candidate_profile, _)| *key == agent_key && *candidate_profile == profile)
             .map(|(_, _, content)| *content)
             .unwrap_or_else(|| panic!("missing prompt: {agent_key}/{profile}"));
-        assert!(content.contains("plugin_hints"));
-        assert!(content.contains("Browser CDP"));
-        assert!(content.contains("公开互联网"));
-        assert!(content.contains("读取成功不等于当前需求已经完成"));
-        assert!(content.contains("不得把旧 Task 的完成状态"));
-        assert!(content.contains("项目绑定本身不是创建 Task 的条件"));
-        assert!(content.contains("`wait_for_task_completion` 表示"));
-        assert!(content.contains("不得等待任务终态或产物"));
-        assert!(content.contains("以联系人第一人称自然说明"));
-        assert!(content.contains("不得向用户提及 Task"));
-        assert!(content.contains("然后结束当前轮"));
+        assert!(content.contains("Local Agent Host"));
+        assert!(content.contains("`create_task`"));
+        assert!(content.contains("`create_tasks_with_prerequisites`"));
+        assert!(content.contains("本地 SQLite 持久化"));
+        assert!(content.contains("不要在同一轮重复创建等价任务"));
+        assert!(content.contains("不要把中间状态冒充最终交付物"));
 
         let run_prompt = prompts
             .iter()
             .find(|(key, profile, _)| {
-                *key == SystemAgentKey::TaskRunnerRunPhase.as_str()
+                *key == SystemAgentKey::LocalAgentExecutionAgent.as_str()
                     && *profile == DEFAULT_AGENT_PROMPT_PROFILE
             })
             .map(|(_, _, content)| *content)
-            .expect("Task Runner run Prompt");
+            .expect("Local Agent execution Prompt");
         assert!(run_prompt.contains("`requires_execution=false`"));
         assert!(run_prompt.contains("不能据此推断任务是“仅文件处理任务”"));
         assert!(run_prompt.contains("本轮实际注册并暴露的工具"));
@@ -360,7 +355,7 @@ mod tests {
         let prompts = baseline_prompts();
         for agent_key in [
             SystemAgentKey::ChatosConversationAgent.as_str(),
-            SystemAgentKey::TaskRunnerRunPhase.as_str(),
+            SystemAgentKey::LocalAgentExecutionAgent.as_str(),
         ] {
             let content = prompts
                 .iter()
@@ -371,7 +366,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing prompt: {agent_key}"));
             assert!(content.contains("用户语言") || content.contains("用户当前语言"));
             assert!(content.contains("代码标识符"));
-            if [SystemAgentKey::TaskRunnerRunPhase.as_str()].contains(&agent_key) {
+            if [SystemAgentKey::LocalAgentExecutionAgent.as_str()].contains(&agent_key) {
                 assert!(content.contains("都针对同一个当前项目工作区"));
                 assert!(content.contains("自动收集工作区输出"));
                 assert!(content.contains("重复复制"));

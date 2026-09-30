@@ -25,7 +25,7 @@
       "description": "Prepare a web preview build and return bounded artifact metadata.",
       "argumentHint": "project environment git-ref",
       "requiresConfirmation": true,
-      "targetAgent": "task_runner_run_phase",
+      "targetAgent": "local_agent_execution_agent",
       "allowedTools": ["plugin_build_web_project_read", "plugin_build_web_preview_prepare"]
     },
     {
@@ -34,7 +34,7 @@
       "description": "Prepare a production promotion plan from an approved preview.",
       "argumentHint": "preview-id",
       "requiresConfirmation": true,
-      "targetAgent": "task_runner_run_phase",
+      "targetAgent": "local_agent_execution_agent",
       "allowedTools": ["plugin_build_web_preview_read", "plugin_build_web_deploy_prepare"]
     }
   ],

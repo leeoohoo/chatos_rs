@@ -208,10 +208,10 @@ mod tests {
     }
 
     #[test]
-    fn task_runner_uses_execution_identity() {
+    fn transitional_task_runner_uses_local_execution_descriptor() {
         assert_eq!(
             TASK_RUNNER_AGENT.descriptor().key,
-            SystemAgentKey::TaskRunnerRunPhase
+            SystemAgentKey::LocalAgentExecutionAgent
         );
     }
 }

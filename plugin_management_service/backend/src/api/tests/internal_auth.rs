@@ -499,7 +499,7 @@ fn memory_engine_is_an_allowed_internal_prompt_caller() {
 
 fn runtime_request(owner_user_id: &str) -> RuntimeCapabilitiesRequest {
     RuntimeCapabilitiesRequest {
-        agent_key: chatos_plugin_management_sdk::SystemAgentKey::TaskRunnerRunPhase,
+        agent_key: chatos_plugin_management_sdk::SystemAgentKey::LocalAgentExecutionAgent,
         owner_user_id: owner_user_id.to_string(),
         include_unavailable: true,
         task_profile: None,

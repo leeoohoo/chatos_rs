@@ -132,6 +132,9 @@ impl std::str::FromStr for SystemMcpKey {
 #[serde(rename_all = "snake_case")]
 pub enum SystemAgentKey {
     ChatosConversationAgent,
+    LocalAgentExecutionAgent,
+    /// Transitional compile-time identity for the server Task Runner. It is not registered or
+    /// published by Plugin Management and will be removed with the legacy service package.
     TaskRunnerRunPhase,
     LocalConnectorCommandApprovalAgent,
     MemoryEngineSummaryAgent,
@@ -142,8 +145,9 @@ pub enum SystemAgentKey {
 }
 
 impl SystemAgentKey {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::ChatosConversationAgent,
+        Self::LocalAgentExecutionAgent,
         Self::TaskRunnerRunPhase,
         Self::LocalConnectorCommandApprovalAgent,
         Self::MemoryEngineSummaryAgent,
@@ -156,6 +160,7 @@ impl SystemAgentKey {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ChatosConversationAgent => "chatos_conversation_agent",
+            Self::LocalAgentExecutionAgent => "local_agent_execution_agent",
             Self::TaskRunnerRunPhase => "task_runner_run_phase",
             Self::LocalConnectorCommandApprovalAgent => "local_connector_command_approval_agent",
             Self::MemoryEngineSummaryAgent => "memory_engine_summary_agent",

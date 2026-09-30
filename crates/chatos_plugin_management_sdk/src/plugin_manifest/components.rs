@@ -245,7 +245,9 @@ pub struct PluginAgent {
 }
 
 pub fn default_plugin_agent_base_agent() -> String {
-    SystemAgentKey::TaskRunnerRunPhase.as_str().to_string()
+    SystemAgentKey::LocalAgentExecutionAgent
+        .as_str()
+        .to_string()
 }
 
 pub const fn default_plugin_agent_max_iterations() -> usize {

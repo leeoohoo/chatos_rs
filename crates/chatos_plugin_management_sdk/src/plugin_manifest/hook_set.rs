@@ -387,7 +387,7 @@ mod tests {
     use super::*;
     use crate::SystemAgentKey;
 
-    const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
+    const RUN_AGENT_KEY: &str = SystemAgentKey::LocalAgentExecutionAgent.as_str();
 
     #[test]
     fn hook_set_normalizes_structured_matchers_and_hashes_stably() {

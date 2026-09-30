@@ -67,14 +67,14 @@ pub static CHATOS_CONVERSATION_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescript
     AgentExecutionLocation::ServerOrchestrated,
 );
 
-pub static TASK_RUNNER_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
-    SystemAgentKey::TaskRunnerRunPhase,
-    "Task Runner Execution Agent",
-    "task-runner",
-    "Executes implementation, testing, repair, deployment, and other mutating Task Runner work.",
+pub static LOCAL_AGENT_EXECUTION_AGENT_DESCRIPTOR: AgentDescriptor = AgentDescriptor::new(
+    SystemAgentKey::LocalAgentExecutionAgent,
+    "Local Agent Execution Agent",
+    "local-agent-host",
+    "Executes implementation, testing, repair, deployment, and other durable work on the local client.",
     true,
     AgentToolPlane::Managed,
-    AgentExecutionLocation::ServerOrchestrated,
+    AgentExecutionLocation::ClientEmbedded,
 );
 
 pub static LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR: AgentDescriptor =
@@ -140,7 +140,7 @@ pub static MEMORY_ENGINE_THREAD_REPAIR_AGENT_DESCRIPTOR: AgentDescriptor = Agent
 
 static SYSTEM_AGENT_CATALOG: [&AgentDescriptor; 8] = [
     &CHATOS_CONVERSATION_AGENT_DESCRIPTOR,
-    &TASK_RUNNER_AGENT_DESCRIPTOR,
+    &LOCAL_AGENT_EXECUTION_AGENT_DESCRIPTOR,
     &LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR,
     &MEMORY_ENGINE_SUMMARY_AGENT_DESCRIPTOR,
     &MEMORY_ENGINE_ROLLUP_AGENT_DESCRIPTOR,
@@ -174,11 +174,14 @@ pub const fn is_chatos_callback_agent(key: SystemAgentKey) -> bool {
 }
 
 pub const fn is_task_runner_phase_agent(key: SystemAgentKey) -> bool {
-    matches!(key, SystemAgentKey::TaskRunnerRunPhase)
+    matches!(
+        key,
+        SystemAgentKey::LocalAgentExecutionAgent | SystemAgentKey::TaskRunnerRunPhase
+    )
 }
 
 pub const fn is_task_runner_execution_agent(key: SystemAgentKey) -> bool {
-    matches!(key, SystemAgentKey::TaskRunnerRunPhase)
+    is_task_runner_phase_agent(key)
 }
 
 pub const fn uses_chatos_notepad_callback(key: SystemAgentKey) -> bool {
@@ -200,7 +203,9 @@ pub const fn chatos_task_runner_tool_profile(key: SystemAgentKey) -> Option<&'st
 pub fn agent_descriptor(key: SystemAgentKey) -> &'static AgentDescriptor {
     match key {
         SystemAgentKey::ChatosConversationAgent => &CHATOS_CONVERSATION_AGENT_DESCRIPTOR,
-        SystemAgentKey::TaskRunnerRunPhase => &TASK_RUNNER_AGENT_DESCRIPTOR,
+        SystemAgentKey::LocalAgentExecutionAgent | SystemAgentKey::TaskRunnerRunPhase => {
+            &LOCAL_AGENT_EXECUTION_AGENT_DESCRIPTOR
+        }
         SystemAgentKey::LocalConnectorCommandApprovalAgent => {
             &LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR
         }
@@ -225,7 +230,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_contains_all_system_agent_keys_once() {
+    fn active_catalog_contains_each_registered_agent_once() {
         let keys = system_agent_catalog()
             .iter()
             .map(|descriptor| descriptor.key.as_str())
@@ -238,7 +243,7 @@ mod tests {
             keys,
             vec![
                 "chatos_conversation_agent",
-                "task_runner_run_phase",
+                "local_agent_execution_agent",
                 "local_connector_command_approval_agent",
                 "memory_engine_summary_agent",
                 "memory_engine_rollup_agent",
@@ -288,10 +293,10 @@ mod tests {
             SystemAgentKey::ChatosConversationAgent
         ));
         assert!(is_task_runner_execution_agent(
-            SystemAgentKey::TaskRunnerRunPhase
+            SystemAgentKey::LocalAgentExecutionAgent
         ));
         assert!(uses_chatos_notepad_callback(
-            SystemAgentKey::TaskRunnerRunPhase
+            SystemAgentKey::LocalAgentExecutionAgent
         ));
         assert!(uses_chatos_browser_callback(
             SystemAgentKey::ChatosConversationAgent
@@ -316,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    fn desktop_approval_is_the_only_client_embedded_agent() {
+    fn local_execution_and_approval_are_client_embedded_agents() {
         let local_loop_agents = system_agent_catalog()
             .iter()
             .filter(|descriptor| {
@@ -327,7 +332,10 @@ mod tests {
 
         assert_eq!(
             local_loop_agents,
-            vec![SystemAgentKey::LocalConnectorCommandApprovalAgent]
+            vec![
+                SystemAgentKey::LocalAgentExecutionAgent,
+                SystemAgentKey::LocalConnectorCommandApprovalAgent,
+            ]
         );
         assert_eq!(
             system_agent_catalog()

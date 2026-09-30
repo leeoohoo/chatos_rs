@@ -19,13 +19,16 @@ pub(super) async fn seed_agent_bindings(
     }
     // Durable task orchestration is local. The conversation agent receives its reserved task
     // tools from Local Agent Host rather than from a managed service MCP, so remove every legacy
-    // Task Runner binding during reconciliation.
+    // server execution binding during reconciliation.
     store
         .delete_mcp_bindings_for_agent(CHATOS_CONVERSATION_AGENT_KEY)
         .await?;
-    for (agent_key, kind, required, priority) in
-        [(TASK_RUNNER_RUN_AGENT_KEY, BuiltinMcpKind::AskUser, true, 20)]
-    {
+    for (agent_key, kind, required, priority) in [(
+        LOCAL_AGENT_EXECUTION_AGENT_KEY,
+        BuiltinMcpKind::AskUser,
+        true,
+        20,
+    )] {
         let resource_id = builtin_resource_id(kind);
         seed_agent_mcp_binding(
             store,
@@ -37,8 +40,8 @@ pub(super) async fn seed_agent_bindings(
         )
         .await?;
     }
-    for agent_key in [TASK_RUNNER_RUN_AGENT_KEY] {
-        for (kind, priority) in task_runner_run_phase_optional_builtin_kinds() {
+    for agent_key in [LOCAL_AGENT_EXECUTION_AGENT_KEY] {
+        for (kind, priority) in local_agent_execution_optional_builtin_kinds() {
             let resource_id = builtin_resource_id(kind);
             seed_agent_mcp_binding(
                 store,
@@ -277,7 +280,7 @@ fn binding_matches_admin_override(
         && binding.owner_user_id.is_none()
 }
 
-pub(super) fn task_runner_run_phase_optional_builtin_kinds() -> Vec<(BuiltinMcpKind, i64)> {
+pub(super) fn local_agent_execution_optional_builtin_kinds() -> Vec<(BuiltinMcpKind, i64)> {
     use BuiltinMcpKind::*;
     vec![
         (CodeMaintainerRead, 100),

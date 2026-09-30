@@ -356,7 +356,7 @@ fn disabled_mcp_bindings_are_persisted_but_excluded_from_runtime() {
 #[test]
 fn automatic_user_resources_are_optional_and_owner_scoped() {
     let binding = automatic_user_binding(
-        chatos_agent::SystemAgentKey::TaskRunnerRunPhase.as_str(),
+        chatos_agent::SystemAgentKey::LocalAgentExecutionAgent.as_str(),
         "user-1",
         "mcp",
         "mcp-1",

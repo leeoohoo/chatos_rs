@@ -58,7 +58,7 @@ mod tests {
 
     impl AgentIdentity for TestAgent {
         fn descriptor(&self) -> &'static AgentDescriptor {
-            crate::agent_descriptor(SystemAgentKey::TaskRunnerRunPhase)
+            crate::agent_descriptor(SystemAgentKey::LocalAgentExecutionAgent)
         }
     }
 

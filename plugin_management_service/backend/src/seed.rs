@@ -17,9 +17,9 @@ mod agent_prompts;
 mod agents;
 mod system_mcps;
 
-use agent_bindings::seed_agent_bindings;
 #[cfg(test)]
-use agent_bindings::task_runner_run_phase_optional_builtin_kinds;
+use agent_bindings::local_agent_execution_optional_builtin_kinds;
+use agent_bindings::seed_agent_bindings;
 pub(crate) use agent_prompts::agent_prompt_profiles_for_agent;
 use agent_prompts::{backfill_agent_prompt_versions, seed_agent_prompts};
 #[cfg(test)]
@@ -34,7 +34,7 @@ use system_mcps::{builtin_resource_id, remove_retired_system_mcps, seed_system_m
 
 pub use chatos_plugin_management_sdk::LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID;
 const CHATOS_CONVERSATION_AGENT_KEY: &str = SystemAgentKey::ChatosConversationAgent.as_str();
-const TASK_RUNNER_RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
+const LOCAL_AGENT_EXECUTION_AGENT_KEY: &str = SystemAgentKey::LocalAgentExecutionAgent.as_str();
 const LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_KEY: &str =
     SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str();
 const RETIRED_SYSTEM_AGENT_KEYS: &[&str] = &[
@@ -48,6 +48,7 @@ const RETIRED_SYSTEM_AGENT_KEYS: &[&str] = &[
     "project_requirement_execution_planner_agent",
     "task_runner_local_plan_phase",
     "task_runner_local_run_phase",
+    "task_runner_run_phase",
     "project_environment_agent",
     "local_connector_client_agent",
     "memory_engine_context_agent",

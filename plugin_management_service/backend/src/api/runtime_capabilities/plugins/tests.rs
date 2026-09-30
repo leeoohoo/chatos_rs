@@ -8,7 +8,7 @@ use chatos_plugin_management_sdk::{
 
 use super::*;
 
-const RUN_AGENT_KEY: &str = SystemAgentKey::TaskRunnerRunPhase.as_str();
+const RUN_AGENT_KEY: &str = SystemAgentKey::LocalAgentExecutionAgent.as_str();
 
 struct PluginRecords {
     catalog: PluginCatalogRecord,

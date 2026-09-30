@@ -23,7 +23,7 @@
       "componentKey": "incident-triage",
       "source": "./agents/incident-triage.md",
       "description": "Correlate selected Sentry issues with releases and produce a bounded triage report.",
-      "baseAgent": "task_runner_run_phase",
+      "baseAgent": "local_agent_execution_agent",
       "allowedTools": ["plugin_sentry_issue_read", "plugin_sentry_release_read", "plugin_sentry_trace_read"],
       "maxIterations": 12
     }

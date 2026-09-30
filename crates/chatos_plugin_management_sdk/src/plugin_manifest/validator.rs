@@ -199,11 +199,16 @@ pub fn validate_plugin_manifest(
             );
         }
         if let Some(target_agent) = command.target_agent.as_deref() {
-            if ![SystemAgentKey::TaskRunnerRunPhase.as_str()].contains(&target_agent) {
+            if ![
+                SystemAgentKey::LocalAgentExecutionAgent.as_str(),
+                SystemAgentKey::TaskRunnerRunPhase.as_str(),
+            ]
+            .contains(&target_agent)
+            {
                 issue(
                     &mut issues,
                     format!("commands[{index}].target_agent").as_str(),
-                    "target agent must be the task_runner execution system agent",
+                    "target agent must be the local execution system agent",
                 );
             }
         }
@@ -261,11 +266,16 @@ pub fn validate_plugin_manifest(
                 "description exceeds 4096 bytes",
             );
         }
-        if ![SystemAgentKey::TaskRunnerRunPhase.as_str()].contains(&agent.base_agent.as_str()) {
+        if ![
+            SystemAgentKey::LocalAgentExecutionAgent.as_str(),
+            SystemAgentKey::TaskRunnerRunPhase.as_str(),
+        ]
+        .contains(&agent.base_agent.as_str())
+        {
             issue(
                 &mut issues,
                 format!("agents[{index}].base_agent").as_str(),
-                "base agent must be the task_runner execution system agent",
+                "base agent must be the local execution system agent",
             );
         }
         validate_allowed_tools(
