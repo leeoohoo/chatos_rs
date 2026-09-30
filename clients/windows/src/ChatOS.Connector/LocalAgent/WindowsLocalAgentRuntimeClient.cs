@@ -34,9 +34,11 @@ internal sealed record WindowsLocalAgentEvent(
     long Cursor, string EventId, string RunId, string EventType,
     JsonElement Payload, long CreatedAtUnixMs);
 internal sealed record ListLocalEventsCommand(
-    string Type, string OwnerUserId, long AfterCursor, uint Limit, string RunId);
+    string Type, string OwnerUserId, long AfterCursor, uint Limit, string? RunId);
 internal sealed record ListLocalEventsResult(
     string Type, IReadOnlyList<WindowsLocalAgentEvent> Events, long NextCursor);
+internal sealed record WindowsLocalAgentEventPage(
+    IReadOnlyList<WindowsLocalAgentEvent> Events, long NextCursor);
 internal sealed record ResumeLocalRunCommand(
     string Type, string OwnerUserId, string RunId, ulong ExpectedVersion,
     string ExpectedStatus, string Reason, JsonElement Input);
@@ -75,9 +77,24 @@ public sealed class WindowsLocalAgentRuntimeClient(ILocalAgentHostClient host)
     internal async Task<IReadOnlyList<WindowsLocalAgentEvent>> ListEventsAsync(
         string ownerUserId, string runId, CancellationToken cancellationToken = default)
     {
+        var page = await ListEventPageAsync(
+            ownerUserId, 0, runId, 500, cancellationToken).ConfigureAwait(false);
+        return page.Events;
+    }
+
+    internal async Task<WindowsLocalAgentEventPage> ListEventPageAsync(
+        string ownerUserId,
+        long afterCursor,
+        string? runId = null,
+        uint limit = 100,
+        CancellationToken cancellationToken = default)
+    {
         var result = await host.SendAsync<ListLocalEventsCommand, ListLocalEventsResult>(new(
-            "list_events", ownerUserId, 0, 500, runId), cancellationToken).ConfigureAwait(false);
-        return result.Type == "events" ? result.Events : throw new InvalidDataException("Invalid Events result.");
+            "list_events", ownerUserId, afterCursor, limit, runId), cancellationToken)
+            .ConfigureAwait(false);
+        return result.Type == "events"
+            ? new WindowsLocalAgentEventPage(result.Events, result.NextCursor)
+            : throw new InvalidDataException("Invalid Events result.");
     }
 
     internal async Task<WindowsLocalAgentRun> ResumeWaitingRunAsync(
