@@ -122,7 +122,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let agentSkillLibrary: LocalAgentSkillLibrary
     let agentGroupChatScheduler: LocalAgentGroupChatScheduler
     let agentGroupChatBuilderService: LocalAgentBuilderService
-    let notepadService: ChatOSNotepadService
+    let notepadService: NativeLocalAgentNotepadService
     let wechatCompanionService: ChatOSWeChatCompanionService
     let userLanguagePreferencesService: ChatOSUserLanguagePreferencesService
     var conversationCache: [String: ConversationSessionViewModel] = [:]
@@ -377,7 +377,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         self.projectFilesystemService = NativeProjectFilesystemService(connector: localConnectorService)
         self.projectCodeNavigationService = NativeProjectCodeNavigationService(connector: localConnectorService)
         self.projectGitService = NativeProjectGitService(connector: localConnectorService)
-        self.notepadService = ChatOSNotepadService(client: apiClient)
+        self.notepadService = NativeLocalAgentNotepadService(host: localAgentHost)
         self.wechatCompanionService = ChatOSWeChatCompanionService(client: apiClient)
         self.userLanguagePreferencesService = ChatOSUserLanguagePreferencesService(client: apiClient)
         self.projectRunService = NativeProjectRunService(

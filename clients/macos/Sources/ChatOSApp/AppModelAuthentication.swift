@@ -119,6 +119,7 @@ extension AppModel {
                 }
                 await self?.workspaceService?.configure(ownerUserID: ownerUserID)
                 await self?.projectConversationService?.configure(ownerUserID: ownerUserID)
+                await self?.notepadService.configure(ownerUserID: ownerUserID)
                 self?.refreshWorkspace()
             } catch is CancellationError {
                 await localAgentHost.stop()
@@ -143,6 +144,7 @@ extension AppModel {
         let platformToolWorker = platformToolWorker
         let workspaceService = workspaceService
         let projectConversationService = projectConversationService
+        let notepadService = notepadService
         Task {
             await commandService?.reset()
             await petActivityService?.reset()
@@ -153,6 +155,7 @@ extension AppModel {
             await platformToolWorker?.reset()
             await workspaceService?.reset()
             await projectConversationService?.reset()
+            await notepadService.reset()
             await localAgentHost.stop()
         }
     }
