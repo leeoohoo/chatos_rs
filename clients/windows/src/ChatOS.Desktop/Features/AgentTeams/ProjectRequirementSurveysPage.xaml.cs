@@ -29,7 +29,7 @@ public sealed partial class ProjectRequirementSurveysPage : UserControl
         var item = ViewModel.SelectedSurvey;
         if (item is null || !item.CanSubmit) return;
         var survey = item.Survey;
-        var answers = new Dictionary<string, List<CheckBox>>(StringComparer.Ordinal);
+        var answers = new Dictionary<string, SurveyAnswerEditor>(StringComparer.Ordinal);
         var validation = new TextBlock
         {
             Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ChatOSFailureBrush"],
@@ -53,33 +53,49 @@ public sealed partial class ProjectRequirementSurveysPage : UserControl
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 TextWrapping = TextWrapping.Wrap,
             });
-            var boxes = new List<CheckBox>();
-            foreach (var option in question.Options)
+            var editor = new SurveyAnswerEditor(question.Kind);
+            if (question.Kind == AgentRequirementQuestionKind.Text)
             {
-                var box = new CheckBox { Content = option.Label, Tag = option.Id };
-                if (question.Kind == AgentRequirementQuestionKind.SingleChoice)
+                editor.Text = new TextBox
                 {
-                    box.Checked += (_, _) =>
-                    {
-                        foreach (var other in boxes.Where(value => !ReferenceEquals(value, box)))
-                            other.IsChecked = false;
-                    };
-                }
-                boxes.Add(box);
-                questionPanel.Children.Add(box);
+                    AcceptsReturn = true,
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxLength = 16_000,
+                    MinHeight = 72,
+                };
+                questionPanel.Children.Add(editor.Text);
             }
-            answers[question.Id] = boxes;
+            else if (question.Kind == AgentRequirementQuestionKind.Boolean)
+            {
+                editor.Boolean = new ComboBox
+                {
+                    PlaceholderText = "请选择",
+                    ItemsSource = new[] { "是", "否" },
+                    MinWidth = 160,
+                };
+                questionPanel.Children.Add(editor.Boolean);
+            }
+            else
+            {
+                foreach (var option in question.Options)
+                {
+                    var box = new CheckBox { Content = option.Label, Tag = option.Id };
+                    if (question.Kind == AgentRequirementQuestionKind.SingleChoice)
+                    {
+                        box.Checked += (_, _) =>
+                        {
+                            foreach (var other in editor.Options
+                                .Where(value => !ReferenceEquals(value, box)))
+                                other.IsChecked = false;
+                        };
+                    }
+                    editor.Options.Add(box);
+                    questionPanel.Children.Add(box);
+                }
+            }
+            answers[question.Id] = editor;
             panel.Children.Add(questionPanel);
         }
-        var notes = new TextBox
-        {
-            Header = "备注（选项未覆盖时补充）",
-            AcceptsReturn = true,
-            TextWrapping = TextWrapping.Wrap,
-            MinHeight = 90,
-            MaxLength = 16_000,
-        };
-        panel.Children.Add(notes);
 
         var dialog = new ContentDialog
         {
@@ -99,7 +115,7 @@ public sealed partial class ProjectRequirementSurveysPage : UserControl
         {
             if (args.Result != ContentDialogResult.Primary) return;
             var missing = survey.Draft.Questions.FirstOrDefault(question =>
-                question.IsRequired && answers[question.Id].All(value => value.IsChecked != true));
+                question.IsRequired && !answers[question.Id].IsAnswered);
             if (missing is null) return;
             args.Cancel = true;
             validation.Text = $"请先回答必填问题：{missing.Prompt}";
@@ -108,10 +124,32 @@ public sealed partial class ProjectRequirementSurveysPage : UserControl
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
 
         var submission = new AgentRequirementSubmission(survey.Draft.Questions
-            .Select(question => new AgentRequirementAnswer(question.Id,
-                answers[question.Id].Where(value => value.IsChecked == true)
-                    .Select(value => (string)value.Tag).ToArray()))
-            .Where(value => value.SelectedOptionIds.Count > 0).ToArray(), notes.Text.Trim());
+            .Where(question => answers[question.Id].IsAnswered)
+            .Select(question => answers[question.Id].ToAnswer(question.Id))
+            .ToArray());
         await ViewModel.SubmitAsync(survey, submission);
     }
+}
+
+internal sealed class SurveyAnswerEditor(AgentRequirementQuestionKind kind)
+{
+    public List<CheckBox> Options { get; } = [];
+    public TextBox? Text { get; set; }
+    public ComboBox? Boolean { get; set; }
+
+    public bool IsAnswered => kind switch
+    {
+        AgentRequirementQuestionKind.Text => !string.IsNullOrWhiteSpace(Text?.Text),
+        AgentRequirementQuestionKind.Boolean => Boolean?.SelectedIndex is 0 or 1,
+        _ => Options.Any(value => value.IsChecked == true),
+    };
+
+    public AgentRequirementAnswer ToAnswer(string questionId) => kind switch
+    {
+        AgentRequirementQuestionKind.Text => new(questionId, [], Text?.Text.Trim() ?? string.Empty),
+        AgentRequirementQuestionKind.Boolean => new(
+            questionId, [], BooleanValue: Boolean?.SelectedIndex == 0),
+        _ => new(questionId, Options.Where(value => value.IsChecked == true)
+            .Select(value => (string)value.Tag).ToArray()),
+    };
 }

@@ -77,6 +77,9 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<IAskUserPromptService>(provider =>
                 provider.GetRequiredService<WindowsLocalAgentAskUserPromptService>());
             services.AddSingleton<WindowsLocalAgentTaskClient>();
+            services.AddSingleton<WindowsLocalAgentRequirementSurveyService>();
+            services.AddSingleton<IProjectRequirementSurveyService>(provider =>
+                provider.GetRequiredService<WindowsLocalAgentRequirementSurveyService>());
             services.AddSingleton<WindowsLocalAgentMessageTaskGraphService>();
             services.AddSingleton<IMessageTaskGraphService>(provider =>
                 provider.GetRequiredService<WindowsLocalAgentMessageTaskGraphService>());

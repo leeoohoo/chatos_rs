@@ -10,7 +10,7 @@ public sealed class ProjectRequirementSurveysViewModelTests
     [Fact]
     public async Task OpenOrdersActionableSurveysBeforeResolvedHistory()
     {
-        var service = new StubAgentTeamService
+        var service = new StubRequirementSurveyService
         {
             Surveys =
             [
@@ -27,7 +27,7 @@ public sealed class ProjectRequirementSurveysViewModelTests
         Assert.Equal(["pending", "awaiting", "resolved"],
             viewModel.Surveys.Select(value => value.Id));
         Assert.Equal(1, viewModel.PendingCount);
-        Assert.Equal(1, viewModel.AwaitingResolutionCount);
+        Assert.Equal(0, viewModel.AwaitingResolutionCount);
         Assert.Equal(1, viewModel.ResolvedCount);
         Assert.True(viewModel.SelectedSurvey!.CanSubmit);
         Assert.Contains("Human", viewModel.SelectedSurvey.PermissionText);
@@ -37,7 +37,7 @@ public sealed class ProjectRequirementSurveysViewModelTests
     public async Task SubmitUsesProjectScopeAndLocksHumanAnswers()
     {
         var pending = Survey("pending", AgentRequirementSurveyStatus.Pending, 100);
-        var service = new StubAgentTeamService { Surveys = [pending] };
+        var service = new StubRequirementSurveyService { Surveys = [pending] };
         using var viewModel = new ProjectRequirementSurveysViewModel(
             service, new ImmediateUiDispatcher());
         await viewModel.OpenAsync("owner", Project());
@@ -50,7 +50,7 @@ public sealed class ProjectRequirementSurveysViewModelTests
         Assert.Equal("project", service.SubmittedProjectId);
         Assert.Equal("pending", service.SubmittedSurveyId);
         Assert.Equal(0, viewModel.PendingCount);
-        Assert.Equal(1, viewModel.AwaitingResolutionCount);
+        Assert.Equal(1, viewModel.ResolvedCount);
         Assert.False(viewModel.SelectedSurvey!.CanSubmit);
         Assert.Equal("范围确认完毕", viewModel.SelectedSurvey.SubmissionNotes);
         Assert.Contains("只读", viewModel.SelectedSurvey.PermissionText);
@@ -59,7 +59,7 @@ public sealed class ProjectRequirementSurveysViewModelTests
     [Fact]
     public async Task RefreshFailureProducesRecoverableErrorState()
     {
-        var service = new StubAgentTeamService { ListError = new IOException("database busy") };
+        var service = new StubRequirementSurveyService { ListError = new IOException("database busy") };
         using var viewModel = new ProjectRequirementSurveysViewModel(
             service, new ImmediateUiDispatcher());
 
@@ -99,16 +99,16 @@ public sealed class ProjectRequirementSurveysViewModelTests
             resolved ? createdAt + 2 : null);
     }
 
-    private sealed class StubAgentTeamService : IAgentTeamService
+    private sealed class StubRequirementSurveyService : IProjectRequirementSurveyService
     {
-        public event EventHandler<AgentTeamChangedEventArgs>? Changed;
+        public event EventHandler<ProjectRequirementSurveyChangedEventArgs>? Changed;
 
         public IReadOnlyList<AgentRequirementSurvey> Surveys { get; set; } = [];
         public Exception? ListError { get; set; }
         public string? SubmittedProjectId { get; private set; }
         public string? SubmittedSurveyId { get; private set; }
 
-        public Task<IReadOnlyList<AgentRequirementSurvey>> ListProjectRequirementSurveysAsync(
+        public Task<IReadOnlyList<AgentRequirementSurvey>> ListAsync(
             string ownerUserId,
             string projectId,
             CancellationToken cancellationToken = default) =>
@@ -116,7 +116,7 @@ public sealed class ProjectRequirementSurveysViewModelTests
                 ? Task.FromResult(Surveys)
                 : Task.FromException<IReadOnlyList<AgentRequirementSurvey>>(ListError);
 
-        public Task<AgentRequirementSurvey> SubmitProjectRequirementSurveyAsync(
+        public Task<AgentRequirementSurvey> SubmitAsync(
             string ownerUserId,
             string projectId,
             string surveyId,
@@ -131,73 +131,12 @@ public sealed class ProjectRequirementSurveysViewModelTests
                 Status = AgentRequirementSurveyStatus.Submitted,
                 Submission = submission,
                 SubmittedAtUnixMs = current.CreatedAtUnixMs + 1,
+                ResolvedAtUnixMs = current.CreatedAtUnixMs + 1,
             };
             Surveys = Surveys.Select(value => value.Id == surveyId ? updated : value).ToArray();
-            Changed?.Invoke(this, new AgentTeamChangedEventArgs(
-                ownerUserId, projectId, null, "requirement_survey_submitted"));
+            Changed?.Invoke(this, new ProjectRequirementSurveyChangedEventArgs(
+                ownerUserId, projectId));
             return Task.FromResult(updated);
         }
-
-        public Task<IReadOnlyList<AgentProfile>> ListAgentsAsync(string ownerUserId,
-            bool includeArchived = false, CancellationToken cancellationToken = default) => Unsupported<IReadOnlyList<AgentProfile>>();
-        public Task<AgentProfile> SaveAgentAsync(string ownerUserId, string? agentId,
-            AgentProfileDraft draft, CancellationToken cancellationToken = default) => Unsupported<AgentProfile>();
-        public Task ArchiveAgentAsync(string ownerUserId, string agentId,
-            CancellationToken cancellationToken = default) => Unsupported();
-        public Task<IReadOnlyList<AgentRoom>> ListRoomsAsync(string ownerUserId, string projectId,
-            CancellationToken cancellationToken = default) => Unsupported<IReadOnlyList<AgentRoom>>();
-        public Task<AgentRoom> CreateTeamAsync(string ownerUserId, string projectId,
-            AgentRoomDraft draft, string projectManagerAgentId,
-            CancellationToken cancellationToken = default) => Unsupported<AgentRoom>();
-        public Task<AgentRoom> OpenDirectAsync(string ownerUserId, string agentId,
-            CancellationToken cancellationToken = default) => Unsupported<AgentRoom>();
-        public Task<AgentRoomMember> AddMemberAsync(string ownerUserId, string roomId,
-            string agentId, AgentRoomMemberDraft draft,
-            CancellationToken cancellationToken = default) => Unsupported<AgentRoomMember>();
-        public Task RemoveMemberAsync(string ownerUserId, string roomId, string agentId,
-            CancellationToken cancellationToken = default) => Unsupported();
-        public Task<AgentRoom> ConfigureTeamAsync(string ownerUserId, string roomId,
-            AgentRoomDraft draft, string? defaultAgentId, string projectManagerAgentId,
-            CancellationToken cancellationToken = default) => Unsupported<AgentRoom>();
-        public Task<AgentTeamSnapshot> LoadSnapshotAsync(string ownerUserId, string roomId,
-            CancellationToken cancellationToken = default) => Unsupported<AgentTeamSnapshot>();
-        public Task<AgentPostResult> PostHumanMessageAsync(string ownerUserId, string roomId,
-            string content, IReadOnlyList<string>? mentionedAgentIds = null,
-            IReadOnlyList<AgentMessageAttachment>? attachments = null,
-            CancellationToken cancellationToken = default) => Unsupported<AgentPostResult>();
-        public Task<AgentMessageAttachment?> GetMessageAttachmentAsync(string ownerUserId,
-            string roomId, string attachmentId, CancellationToken cancellationToken = default) =>
-            Unsupported<AgentMessageAttachment?>();
-        public Task<AgentTodo> CreateTodoAsync(string ownerUserId, string managerAgentId,
-            AgentTodoDraft draft, CancellationToken cancellationToken = default) => Unsupported<AgentTodo>();
-        public Task<AgentTodo> UpdateTodoAsync(string ownerUserId, string actingAgentId,
-            string todoId, long expectedRevision, AgentTodoStatus status, string result,
-            string? assignedAgentId = null, CancellationToken cancellationToken = default) => Unsupported<AgentTodo>();
-        public Task<IReadOnlyList<AgentTodo>> ReorderTodosAsync(string ownerUserId,
-            string managerAgentId, string roomId, IReadOnlyList<string> todoIds,
-            CancellationToken cancellationToken = default) => Unsupported<IReadOnlyList<AgentTodo>>();
-        public Task<IReadOnlyList<AgentTodoProgress>> ListTodoProgressAsync(string ownerUserId,
-            string todoId, CancellationToken cancellationToken = default) => Unsupported<IReadOnlyList<AgentTodoProgress>>();
-        public Task<AgentTeamAsset> SaveAssetAsync(string ownerUserId, string roomId,
-            string? assetId, string? editorAgentId, AgentTeamAssetCategory category, string title,
-            string markdown, int? expectedRevision, CancellationToken cancellationToken = default) => Unsupported<AgentTeamAsset>();
-        public Task ArchiveAssetAsync(string ownerUserId, string roomId, string assetId,
-            string? editorAgentId, int expectedRevision,
-            CancellationToken cancellationToken = default) => Unsupported();
-        public Task<IReadOnlyList<AgentTeamAssetRevision>> ListAssetRevisionsAsync(
-            string ownerUserId, string roomId, string assetId,
-            CancellationToken cancellationToken = default) =>
-            Unsupported<IReadOnlyList<AgentTeamAssetRevision>>();
-        public Task<AgentRequirementSurvey> SubmitRequirementSurveyAsync(string ownerUserId,
-            string roomId, string surveyId, AgentRequirementSubmission submission,
-            CancellationToken cancellationToken = default) => Unsupported<AgentRequirementSurvey>();
-        public Task<AgentStaffingProposal> ResolveStaffingProposalAsync(string ownerUserId,
-            string roomId, string proposalId, bool approve,
-            CancellationToken cancellationToken = default) => Unsupported<AgentStaffingProposal>();
-        public Task DrainAsync(string ownerUserId,
-            CancellationToken cancellationToken = default) => Unsupported();
-
-        private static Task Unsupported() => Task.FromException(new NotSupportedException());
-        private static Task<T> Unsupported<T>() => Task.FromException<T>(new NotSupportedException());
     }
 }

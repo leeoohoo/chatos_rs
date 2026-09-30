@@ -10,13 +10,15 @@ namespace ChatOS.Desktop.Features.AgentTeams;
 public sealed partial class ProjectFeatureHubPage : Page
 {
     private WorkspaceResourceKind _feature = WorkspaceResourceKind.AgentTeams;
-    private readonly IAgentTeamService _teams;
+    private readonly IProjectRequirementSurveyService _surveys;
     private int _summaryGeneration;
 
-    public ProjectFeatureHubPage(MainWindowViewModel shell, IAgentTeamService teams)
+    public ProjectFeatureHubPage(
+        MainWindowViewModel shell,
+        IProjectRequirementSurveyService surveys)
     {
         Shell = shell;
-        _teams = teams;
+        _surveys = surveys;
         InitializeComponent();
         Shell.Projects.CollectionChanged += (_, _) =>
         {
@@ -39,11 +41,11 @@ public sealed partial class ProjectFeatureHubPage : Page
         : "Agent";
 
     public string FeatureDescription => _feature == WorkspaceResourceKind.RequirementSurveys
-        ? "跨项目查看需求确认进度，再进入项目收集 Human 答案并形成可执行方案。"
+        ? "跨项目查看本地任务发起的需求确认，填写后由任务在本机继续执行。"
         : "进入项目团队，管理 Agent、私聊、任务、共享资产、成员提案与运行队列。";
 
     public string FeatureHelpText => _feature == WorkspaceResourceKind.RequirementSurveys
-        ? "汇总当前账户所有本机项目的需求调研。选择项目后进入完整问卷、答案、方案与执行计划。"
+        ? "汇总当前账户所有本机项目的需求调研。选择项目后查看问卷并提交答案。"
         : "Agent 团队保存在对应的本机项目中。选择项目后将直接进入完整工作区。";
 
     public string FeatureListTitle => _feature == WorkspaceResourceKind.RequirementSurveys
@@ -51,7 +53,7 @@ public sealed partial class ProjectFeatureHubPage : Page
         : "选择项目";
 
     public string FeatureListDescription => _feature == WorkspaceResourceKind.RequirementSurveys
-        ? "优先处理待填写和等待方案的项目。"
+        ? "优先处理等待 Human 填写的项目。"
         : "继续最近的工作，或者先从侧栏创建一个本机项目。";
 
     public bool IsLoadingSurveySummary { get; private set; }
@@ -108,7 +110,7 @@ public sealed partial class ProjectFeatureHubPage : Page
             var summaries = new List<ProjectSurveySummary>();
             foreach (var project in Shell.Projects.ToArray())
             {
-                var surveys = await _teams.ListProjectRequirementSurveysAsync(owner, project.Id);
+                var surveys = await _surveys.ListAsync(owner, project.Id);
                 summaries.Add(ProjectSurveySummary.Create(project, surveys));
             }
             if (generation != _summaryGeneration || _feature != WorkspaceResourceKind.RequirementSurveys) return;
@@ -169,17 +171,15 @@ public sealed class ProjectSurveySummary
 
     public string StatusLabel => PendingCount > 0
         ? $"有 {PendingCount} 张问卷等待 Human 填写"
-        : AwaitingCount > 0
-            ? $"有 {AwaitingCount} 张问卷等待形成方案"
-            : ResolvedCount > 0 ? "当前调研均已形成方案" : "暂无需求调研";
+        : ResolvedCount > 0 ? "当前调研均已提交" : "暂无需求调研";
 
     public static ProjectSurveySummary Create(
         ShellResourceViewModel project,
         IReadOnlyList<AgentRequirementSurvey> surveys) => new(
             project,
             surveys.Count(survey => survey.Status == AgentRequirementSurveyStatus.Pending),
-            surveys.Count(survey => survey.Status != AgentRequirementSurveyStatus.Pending && survey.Resolution is null),
-            surveys.Count(survey => survey.Resolution is not null));
+            0,
+            surveys.Count(survey => survey.Status != AgentRequirementSurveyStatus.Pending));
 }
 
 public sealed class ProjectFeatureRequestedEventArgs(

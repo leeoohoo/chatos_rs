@@ -44,7 +44,7 @@
                         <StackPanel Spacing="3"><TextBlock Text="{x:Bind PendingSurveyCount, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" /><TextBlock Text="待 Human 填写" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
                     </Border>
                     <Border Grid.Column="1" Padding="14" Style="{StaticResource ChatOSSectionCardStyle}">
-                        <StackPanel Spacing="3"><TextBlock Text="{x:Bind AwaitingSurveyCount, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" /><TextBlock Text="等待形成方案" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
+                        <StackPanel Spacing="3"><TextBlock Text="{x:Bind AwaitingSurveyCount, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" /><TextBlock Text="处理中" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
                     </Border>
                     <Border Grid.Column="2" Padding="14" Style="{StaticResource ChatOSSectionCardStyle}">
                         <StackPanel Spacing="3"><TextBlock Text="{x:Bind ResolvedSurveyCount, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" /><TextBlock Text="已有解决方案" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>

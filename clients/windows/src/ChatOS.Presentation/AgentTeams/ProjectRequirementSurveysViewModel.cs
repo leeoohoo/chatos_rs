@@ -8,7 +8,7 @@ namespace ChatOS.Presentation.AgentTeams;
 
 public sealed partial class ProjectRequirementSurveysViewModel : ObservableObject, IDisposable
 {
-    private readonly IAgentTeamService _service;
+    private readonly IProjectRequirementSurveyService _service;
     private readonly IUiDispatcher _dispatcher;
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private CancellationTokenSource? _sessionCancellation;
@@ -18,7 +18,7 @@ public sealed partial class ProjectRequirementSurveysViewModel : ObservableObjec
     private int _localMutationCount;
 
     public ProjectRequirementSurveysViewModel(
-        IAgentTeamService service,
+        IProjectRequirementSurveyService service,
         IUiDispatcher dispatcher)
     {
         _service = service;
@@ -85,7 +85,7 @@ public sealed partial class ProjectRequirementSurveysViewModel : ObservableObjec
         try
         {
             await SetBusyAsync(true, null, context.Token).ConfigureAwait(false);
-            var surveys = await _service.ListProjectRequirementSurveysAsync(
+            var surveys = await _service.ListAsync(
                 context.Owner, context.Project, context.Token).ConfigureAwait(false);
             EnsureCurrent(context.Generation, context.Token);
             await _dispatcher.InvokeAsync(() => ReplaceSurveys(surveys), context.Token)
@@ -122,7 +122,7 @@ public sealed partial class ProjectRequirementSurveysViewModel : ObservableObjec
             AgentRequirementSurvey updated;
             try
             {
-                updated = await _service.SubmitProjectRequirementSurveyAsync(
+                updated = await _service.SubmitAsync(
                     context.Owner, context.Project, survey.Id, submission, context.Token)
                     .ConfigureAwait(false);
             }
@@ -134,7 +134,7 @@ public sealed partial class ProjectRequirementSurveysViewModel : ObservableObjec
             await _dispatcher.InvokeAsync(() =>
             {
                 ReplaceSurvey(updated);
-                StatusMessage = "答案已提交，正在等待有权限的项目经理或 Agent 形成方案。";
+                StatusMessage = "答案已提交，本地任务已恢复执行。";
             }, context.Token).ConfigureAwait(false);
             await SetBusyAsync(false, null, context.Token, preserveStatus: true).ConfigureAwait(false);
             return true;
@@ -186,11 +186,13 @@ public sealed partial class ProjectRequirementSurveysViewModel : ObservableObjec
         OnPropertyChanged(nameof(CanSubmitSelected));
     }
 
-    private async void OnServiceChanged(object? sender, AgentTeamChangedEventArgs args)
+    private async void OnServiceChanged(
+        object? sender,
+        ProjectRequirementSurveyChangedEventArgs args)
     {
         if (Volatile.Read(ref _localMutationCount) > 0 ||
             !string.Equals(args.OwnerUserId, _ownerUserId, StringComparison.Ordinal) ||
-            args.ProjectId is not null && !string.Equals(args.ProjectId, _projectId, StringComparison.Ordinal))
+            !string.Equals(args.ProjectId, _projectId, StringComparison.Ordinal))
             return;
         try
         {
@@ -265,14 +267,32 @@ public sealed class ProjectRequirementSurveyItemViewModel
             value => value.QuestionId, StringComparer.Ordinal) ?? [];
         Questions = survey.Draft.Questions.Select(question =>
         {
-            var selected = answers.GetValueOrDefault(question.Id)?.SelectedOptionIds ?? [];
+            var submitted = answers.GetValueOrDefault(question.Id);
+            var selected = submitted?.SelectedOptionIds ?? [];
             var selectedSet = selected.ToHashSet(StringComparer.Ordinal);
-            var answer = string.Join("、", question.Options
-                .Where(option => selectedSet.Contains(option.Id))
-                .Select(option => option.Label));
+            var answer = question.Kind switch
+            {
+                AgentRequirementQuestionKind.Text => submitted?.TextValue ?? string.Empty,
+                AgentRequirementQuestionKind.Boolean => submitted?.BooleanValue switch
+                {
+                    true => "是",
+                    false => "否",
+                    null => string.Empty,
+                },
+                _ => string.Join("、", question.Options
+                    .Where(option => selectedSet.Contains(option.Id))
+                    .Select(option => option.Label)),
+            };
             return new ProjectRequirementSurveyQuestionViewModel(
                 question.Prompt,
-                question.Kind == AgentRequirementQuestionKind.SingleChoice ? "单选" : "多选",
+                question.Kind switch
+                {
+                    AgentRequirementQuestionKind.Text => "文本",
+                    AgentRequirementQuestionKind.SingleChoice => "单选",
+                    AgentRequirementQuestionKind.MultipleChoice => "多选",
+                    AgentRequirementQuestionKind.Boolean => "是/否",
+                    _ => string.Empty,
+                },
                 question.IsRequired,
                 string.IsNullOrWhiteSpace(answer) ? "尚未填写" : answer);
         }).ToArray();
@@ -282,23 +302,22 @@ public sealed class ProjectRequirementSurveyItemViewModel
     public string Id => Survey.Id;
     public string Title => Survey.Draft.Title;
     public string Purpose => Survey.Draft.Purpose;
-    public string StatusText => IsPending ? "待填写" : HasResolution ? "已形成方案" : "等待形成方案";
+    public string StatusText => IsPending ? "待填写" : "已提交";
     public string QuestionCountText => $"{Survey.Draft.Questions.Count} 个问题";
     public string CreatedAtText => DateTimeOffset.FromUnixTimeMilliseconds(Survey.CreatedAtUnixMs)
         .ToLocalTime().ToString("g");
     public bool IsPending => Survey.Status == AgentRequirementSurveyStatus.Pending;
     public bool IsSubmitted => !IsPending;
-    public bool HasResolution => Survey.Resolution is not null;
-    public bool IsAwaitingResolution => IsSubmitted && !HasResolution;
+    public bool HasResolution => Survey.ResolvedAtUnixMs is not null;
+    public bool HasDetailedResolution => Survey.Resolution is not null;
+    public bool IsAwaitingResolution => false;
     public bool CanSubmit => IsPending;
     public string PermissionText => IsPending
         ? "Human 可填写并提交；Agent 不可代替 Human 作答。"
-        : HasResolution
-            ? "调研已解决并转为只读；解决方案由获授调研权限的项目经理或 Agent 提交。"
-            : "Human 答案已锁定并转为只读；仅获授调研权限的项目经理或 Agent 可以形成解决方案。";
+        : "Human 答案已锁定并转为只读；对应本地任务已恢复执行。";
     public string SubmissionNotes => string.IsNullOrWhiteSpace(Survey.Submission?.Notes)
         ? "无补充备注" : Survey.Submission.Notes;
-    public string ResolutionSummary => Survey.Resolution?.Summary ?? "答案已提交，方案尚未生成。";
+    public string ResolutionSummary => Survey.Resolution?.Summary ?? "答案已提交，本地任务已恢复执行。";
     public string SolutionMarkdown => Survey.Resolution?.SolutionMarkdown ?? string.Empty;
     public string RisksAndOpenQuestions => string.IsNullOrWhiteSpace(
         Survey.Resolution?.RisksAndOpenQuestions) ? "无" : Survey.Resolution!.RisksAndOpenQuestions;

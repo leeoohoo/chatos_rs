@@ -8,8 +8,10 @@ public enum AgentRequirementSurveyStatus
 
 public enum AgentRequirementQuestionKind
 {
+    Text,
     SingleChoice,
     MultipleChoice,
+    Boolean,
 }
 
 public sealed record AgentRequirementOption(string Id, string Label)
@@ -31,8 +33,11 @@ public sealed record AgentRequirementQuestion(
     public void Validate()
     {
         AgentTeamValidation.Identifier(Id, nameof(Id));
-        AgentTeamValidation.Text(Prompt, nameof(Prompt), 1_000);
-        if (Options.Count is < 2 or > 12 ||
+        AgentTeamValidation.Text(Prompt, nameof(Prompt), 4_000);
+        var choice = Kind is AgentRequirementQuestionKind.SingleChoice or
+            AgentRequirementQuestionKind.MultipleChoice;
+        if (choice && Options.Count is < 2 or > 50 ||
+            !choice && Options.Count != 0 ||
             Options.Select(value => value.Id).Distinct(StringComparer.Ordinal).Count() != Options.Count)
             throw AgentTeamValidation.Invalid(nameof(Options));
         foreach (var option in Options) option.Validate();
@@ -46,9 +51,9 @@ public sealed record AgentRequirementSurveyDraft(
 {
     public void Validate()
     {
-        AgentTeamValidation.Text(Title, nameof(Title), 240);
-        AgentTeamValidation.Text(Purpose, nameof(Purpose), 4_000);
-        if (Questions.Count is < 1 or > 12 ||
+        AgentTeamValidation.Text(Title, nameof(Title), 1_000);
+        AgentTeamValidation.Text(Purpose, nameof(Purpose), 16_000);
+        if (Questions.Count is < 1 or > 50 ||
             Questions.Select(value => value.Id).Distinct(StringComparer.Ordinal).Count() != Questions.Count)
             throw AgentTeamValidation.Invalid(nameof(Questions));
         foreach (var question in Questions) question.Validate();
@@ -57,7 +62,9 @@ public sealed record AgentRequirementSurveyDraft(
 
 public sealed record AgentRequirementAnswer(
     string QuestionId,
-    IReadOnlyList<string> SelectedOptionIds);
+    IReadOnlyList<string> SelectedOptionIds,
+    string TextValue = "",
+    bool? BooleanValue = null);
 
 public sealed record AgentRequirementSubmission(
     IReadOnlyList<AgentRequirementAnswer> Answers,
@@ -143,7 +150,7 @@ public sealed record AgentRequirementSurvey(
             if (ResolvedAtUnixMs < SubmittedAtUnixMs) throw AgentTeamValidation.Invalid(nameof(Resolution));
             Resolution.Validate();
         }
-        else if (ResolvedAtUnixMs is not null)
+        else if (ResolvedAtUnixMs is not null && ResolvedAtUnixMs < SubmittedAtUnixMs)
         {
             throw AgentTeamValidation.Invalid(nameof(ResolvedAtUnixMs));
         }
@@ -162,12 +169,45 @@ public sealed record AgentRequirementSurvey(
             throw AgentTeamValidation.Invalid(nameof(submission.Answers));
         foreach (var question in questions)
         {
-            var selected = answers.GetValueOrDefault(question.Id)?.SelectedOptionIds ?? [];
+            var answer = answers.GetValueOrDefault(question.Id);
+            var selected = answer?.SelectedOptionIds ?? [];
             if (selected.Distinct(StringComparer.Ordinal).Count() != selected.Count ||
-                selected.Except(question.Options.Select(value => value.Id), StringComparer.Ordinal).Any() ||
-                question.IsRequired && selected.Count == 0 ||
-                question.Kind == AgentRequirementQuestionKind.SingleChoice && selected.Count > 1)
+                selected.Except(question.Options.Select(value => value.Id),
+                    StringComparer.Ordinal).Any())
+            {
                 throw AgentTeamValidation.Invalid(nameof(submission.Answers));
+            }
+            switch (question.Kind)
+            {
+                case AgentRequirementQuestionKind.Text:
+                    if (selected.Count > 0 || answer?.BooleanValue is not null ||
+                        (question.IsRequired || answer is not null) &&
+                            string.IsNullOrWhiteSpace(answer?.TextValue))
+                        throw AgentTeamValidation.Invalid(nameof(submission.Answers));
+                    AgentTeamValidation.OptionalText(
+                        answer?.TextValue ?? string.Empty,
+                        nameof(AgentRequirementAnswer.TextValue),
+                        16_000);
+                    break;
+                case AgentRequirementQuestionKind.Boolean:
+                    if (selected.Count > 0 || !string.IsNullOrEmpty(answer?.TextValue) ||
+                        (question.IsRequired || answer is not null) && answer?.BooleanValue is null)
+                        throw AgentTeamValidation.Invalid(nameof(submission.Answers));
+                    break;
+                case AgentRequirementQuestionKind.SingleChoice:
+                    if (selected.Count > 1 ||
+                        (question.IsRequired || answer is not null) && selected.Count == 0 ||
+                        !string.IsNullOrEmpty(answer?.TextValue) || answer?.BooleanValue is not null)
+                        throw AgentTeamValidation.Invalid(nameof(submission.Answers));
+                    break;
+                case AgentRequirementQuestionKind.MultipleChoice:
+                    if ((question.IsRequired || answer is not null) && selected.Count == 0 ||
+                        !string.IsNullOrEmpty(answer?.TextValue) || answer?.BooleanValue is not null)
+                        throw AgentTeamValidation.Invalid(nameof(submission.Answers));
+                    break;
+                default:
+                    throw AgentTeamValidation.Invalid(nameof(question.Kind));
+            }
         }
     }
 }
