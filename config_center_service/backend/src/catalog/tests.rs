@@ -1155,9 +1155,6 @@ fn catalog_exposes_local_connector_remote_control_trust_as_managed_config_only()
         LOCAL_CONNECTOR_REMOTE_CONTROL_REQUIRE_SIGNED_CONFIG_KEY,
         LOCAL_CONNECTOR_REMOTE_CONTROL_SIGNATURE_MAX_SKEW_SECONDS_CONFIG_KEY,
         LOCAL_CONNECTOR_REMOTE_CONTROL_TRUSTED_RELAY_PUBLIC_KEYS_CONFIG_KEY,
-        LOCAL_CONNECTOR_TERMINAL_MAX_ACTIVE_SESSIONS_CONFIG_KEY,
-        LOCAL_CONNECTOR_TERMINAL_NEW_SESSION_SOFT_LIMIT_CONFIG_KEY,
-        LOCAL_CONNECTOR_TERMINAL_MAX_SUBSCRIBERS_PER_SESSION_CONFIG_KEY,
     ] {
         let definition = definitions
             .iter()
@@ -1294,21 +1291,6 @@ fn catalog_exposes_local_connector_runtime_routes_via_env_projection() {
         (
             LOCAL_CONNECTOR_RELAY_CORRELATION_GRACE_SECONDS_CONFIG_KEY,
             "LOCAL_CONNECTOR_RELAY_CORRELATION_GRACE_SECONDS",
-            "integer",
-        ),
-        (
-            LOCAL_CONNECTOR_RELAY_DELIVERY_ACK_TIMEOUT_MS_CONFIG_KEY,
-            "LOCAL_CONNECTOR_RELAY_DELIVERY_ACK_TIMEOUT_MS",
-            "duration_ms",
-        ),
-        (
-            LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_TTL_SECONDS_CONFIG_KEY,
-            "LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_TTL_SECONDS",
-            "integer",
-        ),
-        (
-            LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_REFRESH_SECONDS_CONFIG_KEY,
-            "LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_REFRESH_SECONDS",
             "integer",
         ),
         (

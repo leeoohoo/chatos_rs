@@ -35,12 +35,6 @@ pub const LOCAL_CONNECTOR_VALKEY_RECONNECT_MS_CONFIG_KEY: &str =
     "local_connector.coordination.valkey_reconnect_ms";
 pub const LOCAL_CONNECTOR_RELAY_CORRELATION_GRACE_SECONDS_CONFIG_KEY: &str =
     "local_connector.coordination.relay_correlation_grace_seconds";
-pub const LOCAL_CONNECTOR_RELAY_DELIVERY_ACK_TIMEOUT_MS_CONFIG_KEY: &str =
-    "local_connector.coordination.relay_delivery_ack_timeout_ms";
-pub const LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_TTL_SECONDS_CONFIG_KEY: &str =
-    "local_connector.coordination.terminal_subscriber_ttl_seconds";
-pub const LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_REFRESH_SECONDS_CONFIG_KEY: &str =
-    "local_connector.coordination.terminal_subscriber_refresh_seconds";
 pub const LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS_CONFIG_KEY: &str =
     "local_connector.managed_requirements.bundle_ttl_seconds";
 pub const LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_TOML_PATH_CONFIG_KEY: &str =
@@ -67,16 +61,6 @@ pub const LOCAL_CONNECTOR_REMOTE_CONTROL_TRUSTED_RELAY_PUBLIC_KEYS_CONFIG_KEY: &
     "local_connector.remote_control.trusted_relay_public_keys";
 pub const LOCAL_CONNECTOR_RELAY_MAX_PENDING_REQUESTS_PER_DEVICE_CONFIG_KEY: &str =
     "local_connector.relay.max_pending_requests_per_device";
-pub const LOCAL_CONNECTOR_TERMINAL_MAX_EVENT_BYTES_CONFIG_KEY: &str =
-    "local_connector.terminal.max_event_bytes";
-pub const LOCAL_CONNECTOR_TERMINAL_EVENT_CHANNEL_CAPACITY_CONFIG_KEY: &str =
-    "local_connector.terminal.event_channel_capacity";
-pub const LOCAL_CONNECTOR_TERMINAL_MAX_ACTIVE_SESSIONS_CONFIG_KEY: &str =
-    "local_connector.terminal.max_active_sessions";
-pub const LOCAL_CONNECTOR_TERMINAL_NEW_SESSION_SOFT_LIMIT_CONFIG_KEY: &str =
-    "local_connector.terminal.new_session_soft_limit";
-pub const LOCAL_CONNECTOR_TERMINAL_MAX_SUBSCRIBERS_PER_SESSION_CONFIG_KEY: &str =
-    "local_connector.terminal.max_subscribers_per_session";
 pub const LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_ELEVATED_CONFIG_KEY: &str =
     "local_connector.pressure.pending_relay_elevated_requests";
 pub const LOCAL_CONNECTOR_PRESSURE_PENDING_RELAY_CRITICAL_CONFIG_KEY: &str =

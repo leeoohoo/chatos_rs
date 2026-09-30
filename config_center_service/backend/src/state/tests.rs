@@ -25,11 +25,8 @@ use crate::catalog::{
     LOCAL_CONNECTOR_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY,
     LOCAL_CONNECTOR_PUBLIC_BASE_URL_CONFIG_KEY,
     LOCAL_CONNECTOR_RELAY_CORRELATION_GRACE_SECONDS_CONFIG_KEY,
-    LOCAL_CONNECTOR_RELAY_DELIVERY_ACK_TIMEOUT_MS_CONFIG_KEY,
     LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS_CONFIG_KEY,
     LOCAL_CONNECTOR_REQUIRE_DEVICE_CONNECT_SIGNATURE_CONFIG_KEY,
-    LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_REFRESH_SECONDS_CONFIG_KEY,
-    LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_TTL_SECONDS_CONFIG_KEY,
     LOCAL_CONNECTOR_USER_SERVICE_BASE_URL_CONFIG_KEY,
     LOCAL_CONNECTOR_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
     LOCAL_CONNECTOR_VALKEY_KEY_PREFIX_CONFIG_KEY, LOCAL_CONNECTOR_VALKEY_RECONNECT_MS_CONFIG_KEY,
@@ -957,18 +954,6 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
             json!(30),
         ),
         (
-            LOCAL_CONNECTOR_RELAY_DELIVERY_ACK_TIMEOUT_MS_CONFIG_KEY.to_string(),
-            json!(3_000),
-        ),
-        (
-            LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_TTL_SECONDS_CONFIG_KEY.to_string(),
-            json!(60),
-        ),
-        (
-            LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_REFRESH_SECONDS_CONFIG_KEY.to_string(),
-            json!(20),
-        ),
-        (
             LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS_CONFIG_KEY.to_string(),
             json!(24 * 60 * 60),
         ),
@@ -1075,24 +1060,6 @@ fn local_connector_snapshot_exposes_runtime_environment_aliases() {
             .env
             .get("LOCAL_CONNECTOR_RELAY_CORRELATION_GRACE_SECONDS"),
         Some(&"30".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("LOCAL_CONNECTOR_RELAY_DELIVERY_ACK_TIMEOUT_MS"),
-        Some(&"3000".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_TTL_SECONDS"),
-        Some(&"60".to_string())
-    );
-    assert_eq!(
-        snapshot
-            .env
-            .get("LOCAL_CONNECTOR_TERMINAL_SUBSCRIBER_REFRESH_SECONDS"),
-        Some(&"20".to_string())
     );
     assert_eq!(
         snapshot
