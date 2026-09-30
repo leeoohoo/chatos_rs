@@ -35,7 +35,6 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAuthenticationService, AuthenticationService>();
         services.AddSingleton<ILocalConnectorPairingTicketService, LocalConnectorPairingTicketService>();
         services.AddSingleton<IRemoteConnectionCloudService, RemoteConnectionCloudService>();
-        services.AddSingleton<IProjectFilesystemService, ProjectFilesystemService>();
         services.AddSingleton<IProjectRunService, ProjectRunService>();
         services.AddSingleton<INotepadService, NotepadService>();
         services.AddSingleton<IMediaGenerationService, MediaGenerationService>();

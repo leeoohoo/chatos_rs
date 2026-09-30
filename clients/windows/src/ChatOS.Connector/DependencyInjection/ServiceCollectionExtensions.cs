@@ -131,6 +131,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IConnectorWorkspaceContext>(provider =>
             provider.GetRequiredService<ConnectorRuntimeContext>());
         services.AddSingleton<ILocalProjectPathResolver, LocalProjectPathResolver>();
+        services.AddSingleton<IProjectFilesystemService, WindowsProjectFilesystemService>();
         services.AddSingleton<IProjectGitService, WindowsProjectGitService>();
         services.AddSingleton<IProjectCodeNavigationService, WindowsProjectCodeNavigationService>();
         services.AddSingleton<RemoteConnectionCredentialStore>();

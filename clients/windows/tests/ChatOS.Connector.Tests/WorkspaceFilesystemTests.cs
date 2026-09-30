@@ -1,5 +1,6 @@
 using ChatOS.Connector.Relay;
 using ChatOS.Connector.Workspaces;
+using ChatOS.Core.Domain;
 
 namespace ChatOS.Connector.Tests;
 
@@ -114,6 +115,51 @@ public sealed class WorkspaceFilesystemTests
     }
 
     [Fact]
+    public async Task ProjectFilesystemServiceReadsAndSearchesTheLocalWorkspace()
+    {
+        using var workspace = TestWorkspace.Create();
+        Directory.CreateDirectory(Path.Combine(workspace.Root, "src"));
+        await File.WriteAllTextAsync(
+            Path.Combine(workspace.Root, "src", "App.cs"),
+            "class LocalAgentHost {}");
+        var service = workspace.ProjectFilesystemService();
+
+        var listing = await service.ListEntriesAsync(workspace.LogicalRoot);
+        var content = await service.ReadFileAsync($"{workspace.LogicalRoot}/src/App.cs");
+        var names = await service.SearchEntriesAsync(workspace.LogicalRoot, "App", 10);
+        var matches = await service.SearchContentAsync(workspace.LogicalRoot, "LocalAgent", 10);
+
+        Assert.Equal(workspace.LogicalRoot, listing.Path);
+        Assert.Equal($"{workspace.LogicalRoot}/src", Assert.Single(listing.Entries).Path);
+        Assert.Equal("class LocalAgentHost {}", content.Content);
+        Assert.Equal("text/x-csharp", content.ContentType);
+        Assert.Equal($"{workspace.LogicalRoot}/src/App.cs", Assert.Single(names).Path);
+        Assert.Equal(1, Assert.Single(matches).Line);
+    }
+
+    [Fact]
+    public async Task ProjectFilesystemServiceMutatesOnlyTheResolvedLocalWorkspace()
+    {
+        using var workspace = TestWorkspace.Create();
+        var service = workspace.ProjectFilesystemService();
+
+        await service.CreateDirectoryAsync(workspace.LogicalRoot, "docs");
+        await service.CreateFileAsync($"{workspace.LogicalRoot}/docs", "draft.md");
+        await service.WriteFileAsync($"{workspace.LogicalRoot}/docs/draft.md", "local content");
+        var moved = await service.MoveEntryAsync(
+            $"{workspace.LogicalRoot}/docs/draft.md",
+            workspace.LogicalRoot,
+            "README.md");
+        await service.DeleteEntryAsync($"{workspace.LogicalRoot}/docs", recursive: false);
+
+        Assert.True(moved.WasMoved);
+        Assert.Equal($"{workspace.LogicalRoot}/README.md", moved.ToPath);
+        Assert.Equal("local content", await File.ReadAllTextAsync(
+            Path.Combine(workspace.Root, "README.md")));
+        Assert.False(Directory.Exists(Path.Combine(workspace.Root, "docs")));
+    }
+
+    [Fact]
     public async Task WorkspaceRelayUsesWorkspaceIdentityAndReturnsDetailsInline()
     {
         using var workspace = TestWorkspace.Create();
@@ -161,6 +207,8 @@ public sealed class WorkspaceFilesystemTests
 
         public ConnectorWorkspace Model { get; }
 
+        public string LogicalRoot => "local://connector/device/workspace-1";
+
         public static TestWorkspace Create()
         {
             var root = Path.Combine(Path.GetTempPath(), $"chatos-workspace-{Guid.NewGuid():N}");
@@ -170,11 +218,34 @@ public sealed class WorkspaceFilesystemTests
 
         public WorkspaceFilesystem Filesystem() => new(Model);
 
+        public WindowsProjectFilesystemService ProjectFilesystemService() =>
+            new(new TestPathResolver(this));
+
         public void Dispose()
         {
             if (Directory.Exists(Root))
             {
                 Directory.Delete(Root, recursive: true);
+            }
+        }
+
+        private sealed class TestPathResolver(TestWorkspace workspace) : ILocalProjectPathResolver
+        {
+            public ResolvedLocalProjectPath Resolve(string rawPath)
+            {
+                if (!rawPath.StartsWith(workspace.LogicalRoot, StringComparison.Ordinal))
+                {
+                    throw new RelayRequestException(404, "outside test workspace");
+                }
+                var suffix = rawPath[workspace.LogicalRoot.Length..].TrimStart('/');
+                var relative = suffix.Length == 0 ? "." : suffix;
+                var guard = new WorkspacePathGuard(workspace.Root);
+                var absolute = guard.ResolveExisting(relative);
+                return new ResolvedLocalProjectPath(
+                    workspace.Model,
+                    guard.RelativePath(absolute),
+                    absolute,
+                    workspace.LogicalRoot);
             }
         }
     }
