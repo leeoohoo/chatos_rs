@@ -77,33 +77,15 @@ struct NativeLocalAgentAttachmentVault: Sendable {
         offset: UInt64,
         limit: Int
     ) throws -> NativeLocalAgentResolvedAttachment {
-        guard record.authorizedLocalRef.hasPrefix(Self.referencePrefix),
-              record.byteSize > 0,
-              record.byteSize <= Self.maximumAttachmentBytes,
-              record.sha256.count == 64,
-              (1...Self.maximumReadBytes).contains(limit),
+        guard (1...Self.maximumReadBytes).contains(limit),
               offset <= record.byteSize else {
             throw NativeLocalAgentAttachmentVaultError.invalidAttachment
         }
-        let token = String(record.authorizedLocalRef.dropFirst(Self.referencePrefix.count))
-        guard let uuid = UUID(uuidString: token),
-              uuid.uuidString.lowercased() == token else {
-            throw NativeLocalAgentAttachmentVaultError.invalidReference
-        }
-        let directory = scopedDirectory(
+        let file = try validatedFileURL(
+            record,
             ownerUserID: ownerUserID,
             conversationID: conversationID
         )
-        let file = directory.appendingPathComponent(token, isDirectory: false)
-        let values = try file.resourceValues(forKeys: [
-            .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
-        ])
-        guard values.isRegularFile == true,
-              values.isSymbolicLink != true,
-              values.fileSize == Int(record.byteSize),
-              Self.isContained(file: file, in: directory) else {
-            throw NativeLocalAgentAttachmentVaultError.invalidAttachment
-        }
         let data = try Data(contentsOf: file, options: [.mappedIfSafe])
         guard data.count == Int(record.byteSize),
               data.count <= Self.maximumAttachmentBytes,
@@ -126,6 +108,51 @@ struct NativeLocalAgentAttachmentVault: Sendable {
             encoding: encoding,
             content: content
         )
+    }
+
+    func previewURL(
+        _ record: LocalAgentConversationAttachmentRecord,
+        ownerUserID: String,
+        conversationID: String
+    ) throws -> URL {
+        try validatedFileURL(
+            record,
+            ownerUserID: ownerUserID,
+            conversationID: conversationID
+        )
+    }
+
+    private func validatedFileURL(
+        _ record: LocalAgentConversationAttachmentRecord,
+        ownerUserID: String,
+        conversationID: String
+    ) throws -> URL {
+        guard record.authorizedLocalRef.hasPrefix(Self.referencePrefix),
+              record.byteSize > 0,
+              record.byteSize <= Self.maximumAttachmentBytes,
+              record.sha256.count == 64 else {
+            throw NativeLocalAgentAttachmentVaultError.invalidAttachment
+        }
+        let token = String(record.authorizedLocalRef.dropFirst(Self.referencePrefix.count))
+        guard let uuid = UUID(uuidString: token),
+              uuid.uuidString.lowercased() == token else {
+            throw NativeLocalAgentAttachmentVaultError.invalidReference
+        }
+        let directory = scopedDirectory(
+            ownerUserID: ownerUserID,
+            conversationID: conversationID
+        )
+        let file = directory.appendingPathComponent(token, isDirectory: false)
+        let values = try file.resourceValues(forKeys: [
+            .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
+        ])
+        guard values.isRegularFile == true,
+              values.isSymbolicLink != true,
+              values.fileSize == Int(record.byteSize),
+              Self.isContained(file: file, in: directory) else {
+            throw NativeLocalAgentAttachmentVaultError.invalidAttachment
+        }
+        return file
     }
 
     private func scopedDirectory(ownerUserID: String, conversationID: String) -> URL {

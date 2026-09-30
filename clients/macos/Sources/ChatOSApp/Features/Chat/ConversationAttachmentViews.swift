@@ -1,5 +1,6 @@
 import AppKit
 import ChatOSCore
+import CryptoKit
 import SwiftUI
 
 struct ComposerAttachmentChip: View {
@@ -78,9 +79,7 @@ struct MessageAttachmentChips: View {
         AttachmentFlowLayout(spacing: 7) {
             ForEach(attachments) { attachment in
                 if attachment.kind == .image,
-                   RuntimeConfiguration.attachmentURL(
-                    for: attachment.viewURL ?? attachment.url
-                   ) != nil {
+                   attachment.localURL?.isFileURL == true {
                     MessageInlineImage(
                         attachment: attachment,
                         onPreview: { previewedImage = attachment }
@@ -91,7 +90,7 @@ struct MessageAttachmentChips: View {
             }
         }
         .sheet(item: $previewedImage) { attachment in
-            MessageRemoteImagePreview(attachment: attachment)
+            MessageLocalImagePreview(attachment: attachment)
         }
     }
 }
@@ -102,44 +101,19 @@ private struct MessageInlineImage: View {
 
     var body: some View {
         Button(action: onPreview) {
-            AsyncImage(url: RuntimeConfiguration.attachmentURL(
-                for: attachment.viewURL ?? attachment.url
-            )) { phase in
-                switch phase {
-                case let .success(image):
-                    image
-                        .resizable()
-                        .scaledToFit()
-                case .failure:
-                    imagePlaceholder(systemImage: "exclamationmark.triangle")
-                case .empty:
-                    ZStack {
-                        imagePlaceholder(systemImage: "photo")
-                        ProgressView()
-                            .controlSize(.small)
-                    }
-                @unknown default:
-                    imagePlaceholder(systemImage: "photo")
+            LocalAttachmentImage(url: attachment.localURL, sha256: attachment.sha256)
+                .frame(width: 360, height: 220)
+                .background(AppPalette.inputSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(AppPalette.border, lineWidth: 1)
                 }
-            }
-            .frame(width: 360, height: 220)
-            .background(AppPalette.inputSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(AppPalette.border, lineWidth: 1)
-            }
         }
         .buttonStyle(.plain)
         .help("点击查看大图：\(attachment.name)")
     }
 
-    private func imagePlaceholder(systemImage: String) -> some View {
-        Image(systemName: systemImage)
-            .appFont(.system(size: 24))
-            .foregroundStyle(.secondary)
-            .frame(width: 220, height: 140)
-    }
 }
 
 private struct MessageFileAttachmentChip: View {
@@ -171,7 +145,7 @@ private struct MessageFileAttachmentChip: View {
     }
 }
 
-private struct MessageRemoteImagePreview: View {
+private struct MessageLocalImagePreview: View {
     let attachment: ConversationAttachmentReference
     @Environment(\.dismiss) private var dismiss
 
@@ -186,32 +160,71 @@ private struct MessageRemoteImagePreview: View {
             }
             .padding(16)
             Divider()
-            AsyncImage(url: RuntimeConfiguration.attachmentURL(
-                for: attachment.viewURL ?? attachment.url
-            )) { phase in
-                switch phase {
-                case let .success(image):
-                    ScrollView([.horizontal, .vertical]) {
-                        image
-                            .resizable()
-                            .scaledToFit()
-                            .padding(20)
-                    }
-                case let .failure(error):
-                    ContentUnavailableView(
-                        "图片加载失败",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text(error.localizedDescription)
-                    )
-                case .empty:
-                    ProgressView("正在加载图片…")
-                @unknown default:
-                    EmptyView()
-                }
+            ScrollView([.horizontal, .vertical]) {
+                LocalAttachmentImage(url: attachment.localURL, sha256: attachment.sha256)
+                    .padding(20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 760, idealWidth: 920, minHeight: 560, idealHeight: 720)
+    }
+}
+
+private struct LocalAttachmentImage: View {
+    let url: URL?
+    let sha256: String?
+    @State private var image: NSImage?
+    @State private var loadFailed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else if loadFailed {
+                ContentUnavailableView(
+                    "图片加载失败",
+                    systemImage: "exclamationmark.triangle"
+                )
+            } else {
+                ZStack {
+                    Image(systemName: "photo")
+                        .appFont(.system(size: 24))
+                        .foregroundStyle(.secondary)
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+        }
+        .task(id: url) {
+            image = nil
+            loadFailed = false
+            guard let url, url.isFileURL else {
+                loadFailed = true
+                return
+            }
+            do {
+                let data = try await Task.detached(priority: .userInitiated) {
+                    let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+                    guard let sha256,
+                          SHA256.hash(data: data).map({
+                              String(format: "%02x", $0)
+                          }).joined() == sha256.lowercased() else {
+                        throw CocoaError(.fileReadCorruptFile)
+                    }
+                    return data
+                }.value
+                guard !Task.isCancelled, let decoded = NSImage(data: data) else {
+                    loadFailed = !Task.isCancelled
+                    return
+                }
+                image = decoded
+            } catch {
+                if !Task.isCancelled { loadFailed = true }
+            }
+        }
     }
 }
 

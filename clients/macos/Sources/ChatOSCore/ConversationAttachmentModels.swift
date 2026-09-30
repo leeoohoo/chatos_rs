@@ -56,11 +56,8 @@ public struct ConversationAttachmentReference: Identifiable, Codable, Sendable, 
     public var mimeType: String
     public var size: Int
     public var kind: ConversationAttachmentKind
-    public var storageProvider: String?
-    public var bucket: String?
-    public var objectKey: String?
-    public var url: String?
-    public var viewURL: String?
+    public var sha256: String?
+    public var localURL: URL?
 
     public init(
         id: String = UUID().uuidString.lowercased(),
@@ -68,30 +65,21 @@ public struct ConversationAttachmentReference: Identifiable, Codable, Sendable, 
         mimeType: String,
         size: Int,
         kind: ConversationAttachmentKind,
-        storageProvider: String? = nil,
-        bucket: String? = nil,
-        objectKey: String? = nil,
-        url: String? = nil,
-        viewURL: String? = nil
+        sha256: String? = nil,
+        localURL: URL? = nil
     ) {
         self.id = id
         self.name = name
         self.mimeType = mimeType
         self.size = size
         self.kind = kind
-        self.storageProvider = storageProvider
-        self.bucket = bucket
-        self.objectKey = objectKey
-        self.url = url
-        self.viewURL = viewURL
+        self.sha256 = sha256
+        self.localURL = localURL
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, size, bucket, url
+        case id, name, size, sha256, localURL
         case mimeType
         case kind = "type"
-        case storageProvider
-        case objectKey
-        case viewURL = "viewUrl"
     }
 }

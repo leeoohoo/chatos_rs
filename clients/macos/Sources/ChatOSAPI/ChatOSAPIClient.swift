@@ -56,19 +56,6 @@ public actor ChatOSAPIClient {
 
     enum Service { case chatOS, userService, memoryEngine }
 
-    public func webSocketURL(path: String, ticket: String) -> URL? {
-        let base = configuration.baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let cleanedPath = path.hasPrefix("/") ? path : "/\(path)"
-        guard var components = URLComponents(string: base + cleanedPath) else { return nil }
-        components.scheme = components.scheme == "https" ? "wss" : "ws"
-        components.queryItems = [URLQueryItem(name: "ws_ticket", value: ticket)]
-        return components.url
-    }
-
-    func resolvePublicURL(_ value: String) -> URL? {
-        ChatOSAttachmentURLResolver.resolve(value, apiBaseURL: configuration.baseURL)
-    }
-
     func request<Response: Decodable & Sendable>(
         _ endpoint: String,
         method: String = "GET",
@@ -162,78 +149,6 @@ public actor ChatOSAPIClient {
         service: Service = .chatOS
     ) async throws {
         let _: EmptyResponse = try await request(endpoint, method: method, service: service)
-    }
-
-    func requestData(
-        _ endpoint: String,
-        method: String = "GET",
-        body: Data? = nil,
-        additionalHeaders: [String: String] = [:],
-        timeoutInterval: TimeInterval? = nil,
-        expectedAuthenticationSessionID: UUID? = nil
-    ) async throws -> HTTPResponse {
-        if let expectedAuthenticationSessionID {
-            guard accessToken != nil,
-                  expectedAuthenticationSessionID == authenticationSessionID else {
-                throw ChatOSAPIError.unauthorized
-            }
-        }
-        guard let url = makeURL(endpoint: endpoint) else {
-            throw ChatOSAPIError.invalidEndpoint
-        }
-        let requestAccessToken = accessToken
-        var headers = [
-            "Accept": "application/octet-stream",
-            "X-Chatos-Client-Surface": configuration.clientSurface,
-        ]
-        if let requestAccessToken {
-            headers["Authorization"] = "Bearer \(requestAccessToken)"
-        }
-        additionalHeaders.forEach { headers[$0] = $1 }
-        let response = try await transport.send(HTTPRequest(
-            url: url,
-            method: method,
-            headers: headers,
-            body: body,
-            timeoutInterval: timeoutInterval
-        ))
-        if let expectedAuthenticationSessionID,
-           expectedAuthenticationSessionID != authenticationSessionID {
-            throw ChatOSAPIError.unauthorized
-        }
-        if let refreshedToken = response.headers["x-access-token"]?.trimmedNonEmpty,
-           accessToken == requestAccessToken {
-            accessToken = refreshedToken
-            try await credentialStore?.saveAccessToken(refreshedToken)
-        }
-        if response.statusCode == 401 {
-            if let requestAccessToken, accessToken == requestAccessToken {
-                accessToken = nil
-                authenticationSessionID = UUID()
-                try? await credentialStore?.deleteAccessToken()
-                NotificationCenter.default.post(
-                    name: .chatOSAuthenticationDidExpire,
-                    object: nil
-                )
-            }
-            throw ChatOSAPIError.unauthorized
-        }
-        guard (200..<300).contains(response.statusCode) else {
-            let payload = APIErrorPayload.decode(response.body, statusCode: response.statusCode)
-            if payload.code != nil || payload.challengePrompt != nil {
-                throw ChatOSAPIError.serverDetail(
-                    statusCode: response.statusCode,
-                    message: payload.resolvedMessage,
-                    code: payload.code,
-                    challengePrompt: payload.challengePrompt
-                )
-            }
-            throw ChatOSAPIError.server(
-                statusCode: response.statusCode,
-                message: payload.resolvedMessage
-            )
-        }
-        return response
     }
 
     private func makeURL(endpoint: String, service: Service = .chatOS) -> URL? {

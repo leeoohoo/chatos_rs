@@ -41,6 +41,14 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         ).first)
         let record = attachmentRecord(spec)
 
+        let previewURL = try vault.previewURL(
+            record,
+            ownerUserID: "owner/a",
+            conversationID: "conversation/a"
+        )
+        XCTAssertTrue(previewURL.isFileURL)
+        XCTAssertEqual(try Data(contentsOf: previewURL), data)
+
         let first = try vault.resolve(
             record,
             ownerUserID: "owner/a",

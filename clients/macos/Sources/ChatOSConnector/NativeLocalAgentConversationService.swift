@@ -301,13 +301,17 @@ public actor NativeLocalAgentConversationService:
             let userMessage = mapMessage(
                 user,
                 fallbackID: turn.userMessageID,
-                attachments: attachmentsByMessage[turn.userMessageID] ?? []
+                attachments: attachmentsByMessage[turn.userMessageID] ?? [],
+                ownerUserID: page.conversation.ownerUserID,
+                conversationID: turn.conversationID
             )
             let replies = assistants.map { message in
                 ConversationAssistantReply(message: mapMessage(
                     message,
                     fallbackID: message.messageID,
-                    attachments: attachmentsByMessage[message.messageID] ?? []
+                    attachments: attachmentsByMessage[message.messageID] ?? [],
+                    ownerUserID: page.conversation.ownerUserID,
+                    conversationID: turn.conversationID
                 ))
             }
             let status = mapStatus(turn.status)
@@ -336,7 +340,9 @@ public actor NativeLocalAgentConversationService:
     private func mapMessage(
         _ message: LocalAgentConversationMessageRecord?,
         fallbackID: String,
-        attachments: [LocalAgentConversationAttachmentRecord]
+        attachments: [LocalAgentConversationAttachmentRecord],
+        ownerUserID: String,
+        conversationID: String
     ) -> ChatMessage {
         ChatMessage(
             id: message?.messageID ?? fallbackID,
@@ -351,7 +357,13 @@ public actor NativeLocalAgentConversationService:
                     name: $0.displayName,
                     mimeType: $0.mediaType,
                     size: Int(clamping: $0.byteSize),
-                    kind: $0.mediaType.hasPrefix("image/") ? .image : .file
+                    kind: $0.mediaType.hasPrefix("image/") ? .image : .file,
+                    sha256: $0.sha256,
+                    localURL: try? attachmentVault.previewURL(
+                        $0,
+                        ownerUserID: ownerUserID,
+                        conversationID: conversationID
+                    )
                 )
             }
         )
