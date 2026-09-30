@@ -3,6 +3,7 @@
 
 use crate::{memory::memory_plan, LocalAiStepPlanner, PreparedLocalAiStep};
 use async_trait::async_trait;
+use chatos_ai_runtime::model_config::normalize_thinking_level;
 use chatos_ai_runtime::{
     append_responses_history_items, message_item, user_text_item, ContextualTurnRunner,
     ModelRuntimeConfig, RuntimeTurnSpec,
@@ -166,6 +167,7 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 &claim.run.model_config_revision,
             )
             .await?;
+        apply_run_thinking_level(&mut transient.model_config, &claim.run.input)?;
         let capabilities = self
             .capability_resolver
             .resolve_capabilities(
@@ -215,6 +217,28 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 .unwrap_or_default(),
         })
     }
+}
+
+fn apply_run_thinking_level(config: &mut ModelRuntimeConfig, input: &Value) -> Result<(), String> {
+    let Some(settings) = input.get("runtime_settings").and_then(Value::as_object) else {
+        return Ok(());
+    };
+    let enabled = settings
+        .get("reasoning_enabled")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| "runtime_settings.reasoning_enabled must be a boolean".to_string())?;
+    let requested = if enabled {
+        settings
+            .get("selected_thinking_level")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                "enabled runtime reasoning requires selected_thinking_level".to_string()
+            })?
+    } else {
+        "none"
+    };
+    config.thinking_level = normalize_thinking_level(&config.provider, Some(requested))?;
+    Ok(())
 }
 
 fn merge_instructions(controlled: Option<String>, configured: Option<String>) -> Option<String> {
@@ -543,6 +567,34 @@ mod tests {
             prepared.request.runtime_options.caller_model.as_deref(),
             Some("test-model")
         );
+    }
+
+    #[test]
+    fn conversation_runtime_settings_override_the_snapshot_thinking_level_per_run() {
+        let mut config = ModelRuntimeConfig {
+            provider: "openai".to_string(),
+            thinking_level: Some("medium".to_string()),
+            ..ModelRuntimeConfig::default()
+        };
+        apply_run_thinking_level(
+            &mut config,
+            &json!({"runtime_settings": {
+                "reasoning_enabled": true,
+                "selected_thinking_level": "high"
+            }}),
+        )
+        .expect("enabled override");
+        assert_eq!(config.thinking_level.as_deref(), Some("high"));
+
+        apply_run_thinking_level(
+            &mut config,
+            &json!({"runtime_settings": {
+                "reasoning_enabled": false,
+                "selected_thinking_level": "high"
+            }}),
+        )
+        .expect("disabled override");
+        assert_eq!(config.thinking_level.as_deref(), Some("none"));
     }
 
     #[test]

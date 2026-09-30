@@ -102,7 +102,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let petActivityService: NativeLocalAgentPetActivityService?
     let turnProcessService: NativeLocalAgentTurnProcessService?
     let messageTaskGraphService: NativeLocalAgentMessageTaskGraphService?
-    let runtimeSettingsService: ChatOSConversationRuntimeSettingsService
+    let runtimeSettingsService: NativeLocalAgentConversationRuntimeSettingsService?
     let askUserPromptService: NativeLocalAgentAskUserPromptService?
     let workspaceService: ChatOSWorkspaceService
     let localConnectorService: NativeLocalConnectorService
@@ -212,13 +212,21 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         let localAgentHost = RuntimeConfiguration.localAgentHostConfiguration.map {
             NativeLocalAgentHostLifecycle(configuration: $0)
         }
-        let localAgentConversationService = localAgentHost.map {
-            NativeLocalAgentConversationService(
-                host: $0,
+        let localAgentRuntimeSettingsService: NativeLocalAgentConversationRuntimeSettingsService?
+        let localAgentConversationService: NativeLocalAgentConversationService?
+        if let localAgentHost {
+            let settings = NativeLocalAgentConversationRuntimeSettingsService(host: localAgentHost)
+            localAgentRuntimeSettingsService = settings
+            localAgentConversationService = NativeLocalAgentConversationService(
+                host: localAgentHost,
                 attachmentRootURL: RuntimeConfiguration.nativeConnectorStateURL
                     .deletingLastPathComponent()
-                    .appendingPathComponent("LocalAgent/Attachments", isDirectory: true)
+                    .appendingPathComponent("LocalAgent/Attachments", isDirectory: true),
+                runtimeSettings: settings
             )
+        } else {
+            localAgentRuntimeSettingsService = nil
+            localAgentConversationService = nil
         }
         self.localAgentHost = localAgentHost
         self.conversationService = localAgentConversationService
@@ -361,7 +369,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 .appendingPathComponent("ProjectRunSettings.json")
         )
         self.commandService = localAgentConversationService
-        self.runtimeSettingsService = ChatOSConversationRuntimeSettingsService(client: apiClient)
+        self.runtimeSettingsService = localAgentRuntimeSettingsService
         idleSleepController.setEnabled(preventsIdleSystemSleep)
         authentication.$phase
             .removeDuplicates()

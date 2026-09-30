@@ -1,4 +1,5 @@
 @testable import ChatOSConnector
+import ChatOSCore
 import Foundation
 import XCTest
 
@@ -54,7 +55,8 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             baseURL: "https://example.invalid/v1",
             model: "model-1",
             provider: "openai",
-            supportsResponses: true
+            supportsResponses: true,
+            thinkingLevel: "medium"
         )
         let publishedModel = try await controlPlane.publishModel(model)
         XCTAssertEqual(publishedModel, model)
@@ -90,16 +92,30 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             modelConfigRevision: "model-revision-1"
         )
         XCTAssertEqual(persistedModel, model)
+        let runtimeSettings = NativeLocalAgentConversationRuntimeSettingsService(host: lifecycle)
         let conversationService = NativeLocalAgentConversationService(
             host: lifecycle,
-            attachmentRootURL: root.appendingPathComponent("attachments")
+            attachmentRootURL: root.appendingPathComponent("attachments"),
+            runtimeSettings: runtimeSettings
         )
+        let modelOption = ConversationModelOption(
+            id: "model-1",
+            displayName: "Test model",
+            modelName: model.model,
+            provider: model.provider,
+            thinkingLevel: model.thinkingLevel,
+            supportsReasoning: true,
+            thinkingLevels: ["none", "medium", "high"]
+        )
+        let bootstrap = NativeLocalAgentBootstrapResult(
+            modelSnapshots: [model],
+            modelOptions: [modelOption],
+            capabilitySnapshot: capabilities
+        )
+        try await runtimeSettings.configure(ownerUserID: "user-1", bootstrap: bootstrap)
         try await conversationService.configure(
             ownerUserID: "user-1",
-            bootstrap: .init(
-                modelSnapshots: [model],
-                capabilitySnapshot: capabilities
-            )
+            bootstrap: bootstrap
         )
         let acknowledgement = try await conversationService.sendNewTurn(.init(
             sessionID: "conversation-1",
@@ -107,6 +123,19 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             content: "hello locally"
         ))
         XCTAssertTrue(acknowledgement.accepted)
+        let runPage = try await NativeLocalAgentRuntimeClient(host: lifecycle).listRuns(
+            ownerUserID: "user-1",
+            scope: "all"
+        )
+        let turnRun = try XCTUnwrap(runPage.runs.first(where: {
+            $0.ownerEntityID == "turn-1"
+        }))
+        guard case let .object(runInput) = turnRun.input,
+              case let .object(runtimeInput)? = runInput["runtime_settings"] else {
+            return XCTFail("Turn Run must freeze local runtime settings")
+        }
+        XCTAssertEqual(runtimeInput["selected_thinking_level"], .string("medium"))
+        XCTAssertEqual(runtimeInput["reasoning_enabled"], .bool(true))
         let localHistory = try await conversationService.fetchHistory(.init(
             sessionID: "conversation-1",
             requestGeneration: 1

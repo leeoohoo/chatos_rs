@@ -11,9 +11,10 @@ use chatos_local_agent_protocol::{
     LocalAgentToolApprovalDecision, LocalAgentToolApprovalResult, LocalAgentToolBatch,
     LocalAgentToolClaim, LocalAgentToolCommitResult, LocalAgentToolInvocationRecord,
     LocalAgentToolOutcome, LocalConversationDetail, LocalConversationHistoryPage,
-    LocalConversationPage, LocalConversationTurnStart, LocalConversationTurnUpdate,
-    LocalPluginInstallationPage, LocalPluginInstallationRecord, LocalPluginInstallationSpec,
-    LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage, ResumeConversationTurnCommand,
+    LocalConversationPage, LocalConversationRuntimeSettings, LocalConversationTurnStart,
+    LocalConversationTurnUpdate, LocalPluginInstallationPage, LocalPluginInstallationRecord,
+    LocalPluginInstallationSpec, LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage,
+    PutConversationRuntimeSettingsCommand, ResumeConversationTurnCommand,
     StartConversationTurnCommand,
 };
 use serde::{Deserialize, Serialize};
@@ -486,12 +487,29 @@ pub trait LocalConversationStore: Send + Sync {
     ) -> Result<LocalConversationTurnUpdate, ClientStorageError>;
 }
 
+#[async_trait]
+pub trait LocalConversationRuntimeSettingsStore: Send + Sync {
+    async fn get_conversation_runtime_settings(
+        &self,
+        owner_user_id: &str,
+        conversation_id: &str,
+    ) -> Result<Option<LocalConversationRuntimeSettings>, ClientStorageError>;
+
+    async fn put_conversation_runtime_settings(
+        &self,
+        command: &IdempotentCommand,
+        settings: &PutConversationRuntimeSettingsCommand,
+        now_unix_ms: i64,
+    ) -> Result<LocalConversationRuntimeSettings, ClientStorageError>;
+}
+
 pub trait LocalAgentStore:
     LocalAgentRunStore
     + LocalAgentToolStore
     + LocalAgentTaskStore
     + LocalPluginInstallationStore
     + LocalConversationStore
+    + LocalConversationRuntimeSettingsStore
     + LocalCapabilitySnapshotStore
     + LocalModelConfigSnapshotStore
     + LocalMemoryOutboxStore
@@ -505,6 +523,7 @@ impl<T> LocalAgentStore for T where
         + LocalAgentTaskStore
         + LocalPluginInstallationStore
         + LocalConversationStore
+        + LocalConversationRuntimeSettingsStore
         + LocalCapabilitySnapshotStore
         + LocalModelConfigSnapshotStore
         + LocalMemoryOutboxStore

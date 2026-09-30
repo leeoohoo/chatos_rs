@@ -10,6 +10,73 @@ pub const LOCAL_CONVERSATION_MAX_ATTACHMENTS: usize = 32;
 pub const LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE: u32 = 100;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetConversationRuntimeSettingsCommand {
+    pub owner_user_id: String,
+    pub conversation_id: String,
+}
+
+impl GetConversationRuntimeSettingsCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
+        validate_identifier("conversation_id", &self.conversation_id)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PutConversationRuntimeSettingsCommand {
+    pub owner_user_id: String,
+    pub conversation_id: String,
+    pub selected_model_config_ref: String,
+    pub selected_model_config_revision: String,
+    pub selected_thinking_level: Option<String>,
+    pub remote_connection_id: Option<String>,
+    pub reasoning_enabled: bool,
+    pub expected_version: Option<u64>,
+}
+
+impl PutConversationRuntimeSettingsCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        for (field, value) in [
+            ("owner_user_id", self.owner_user_id.as_str()),
+            ("conversation_id", self.conversation_id.as_str()),
+            (
+                "selected_model_config_ref",
+                self.selected_model_config_ref.as_str(),
+            ),
+            (
+                "selected_model_config_revision",
+                self.selected_model_config_revision.as_str(),
+            ),
+        ] {
+            validate_identifier(field, value)?;
+        }
+        if let Some(level) = self.selected_thinking_level.as_deref() {
+            validate_identifier("selected_thinking_level", level)?;
+        }
+        if let Some(connection_id) = self.remote_connection_id.as_deref() {
+            validate_identifier("remote_connection_id", connection_id)?;
+        }
+        if self.expected_version == Some(0) {
+            return Err("expected_version must be greater than zero".to_string());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalConversationRuntimeSettings {
+    pub owner_user_id: String,
+    pub conversation_id: String,
+    pub selected_model_config_ref: String,
+    pub selected_model_config_revision: String,
+    pub selected_thinking_level: Option<String>,
+    pub remote_connection_id: Option<String>,
+    pub reasoning_enabled: bool,
+    pub version: u64,
+    pub updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateConversationCommand {
     pub conversation_id: String,
     pub owner_user_id: String,

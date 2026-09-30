@@ -29,6 +29,7 @@ mod control_plane_runtime;
 #[cfg(test)]
 mod conversation_query_tests;
 mod conversation_runtime;
+mod conversation_settings_runtime;
 #[cfg(test)]
 mod plugin_query_tests;
 mod plugin_runtime;
@@ -414,6 +415,11 @@ impl LocalAgentRuntime {
             | HostCommand::ResumeConversationTurn(_)
             | HostCommand::CancelConversationTurn(_)) => {
                 self.handle_conversation_command(&idempotency, command)
+                    .await
+            }
+            command @ (HostCommand::GetConversationRuntimeSettings(_)
+            | HostCommand::PutConversationRuntimeSettings(_)) => {
+                self.handle_conversation_settings_command(&idempotency, command)
                     .await
             }
         }

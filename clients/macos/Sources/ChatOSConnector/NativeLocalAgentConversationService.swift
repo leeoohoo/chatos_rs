@@ -9,30 +9,34 @@ public actor NativeLocalAgentConversationService:
 {
     private struct Context: Sendable {
         let ownerUserID: String
-        let model: LocalAgentModelConfigSnapshot
         let capability: LocalAgentCapabilityPolicySnapshot
     }
 
     private let client: NativeLocalAgentConversationClient
     private let attachmentVault: NativeLocalAgentAttachmentVault
+    private let runtimeSettings: NativeLocalAgentConversationRuntimeSettingsService
     private var context: Context?
 
-    public init(host: any LocalAgentHostClientServicing, attachmentRootURL: URL) {
+    public init(
+        host: any LocalAgentHostClientServicing,
+        attachmentRootURL: URL,
+        runtimeSettings: NativeLocalAgentConversationRuntimeSettingsService
+    ) {
         self.client = NativeLocalAgentConversationClient(host: host)
         self.attachmentVault = NativeLocalAgentAttachmentVault(rootURL: attachmentRootURL)
+        self.runtimeSettings = runtimeSettings
     }
 
     public func configure(
         ownerUserID: String,
         bootstrap: NativeLocalAgentBootstrapResult
     ) throws {
-        guard let model = bootstrap.modelSnapshots.first,
+        guard !bootstrap.modelSnapshots.isEmpty,
               bootstrap.capabilitySnapshot.ownerUserID == ownerUserID else {
             throw NativeLocalAgentConversationServiceError.notConfigured
         }
         context = .init(
             ownerUserID: ownerUserID,
-            model: model,
             capability: bootstrap.capabilitySnapshot
         )
     }
@@ -45,6 +49,9 @@ public actor NativeLocalAgentConversationService:
         _ command: ConversationSendCommand
     ) async throws -> ConversationCommandAck {
         let context = try requireContext()
+        let runtimeSelection = try await runtimeSettings.resolveSelection(
+            sessionID: command.sessionID
+        )
         let conversation = try await ensureConversation(
             ownerUserID: context.ownerUserID,
             conversationID: command.sessionID
@@ -68,8 +75,8 @@ public actor NativeLocalAgentConversationService:
                 "reasoning_enabled": .bool(command.reasoningEnabled ?? false),
             ]),
             attachments: attachments,
-            modelConfigRef: context.model.modelConfigRef,
-            modelConfigRevision: context.model.modelConfigRevision,
+            modelConfigRef: runtimeSelection.modelSnapshot.modelConfigRef,
+            modelConfigRevision: runtimeSelection.modelSnapshot.modelConfigRevision,
             capabilityPolicyRevision: context.capability.capabilityPolicyRevision
         ))
         return .init(

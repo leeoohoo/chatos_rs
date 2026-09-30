@@ -43,6 +43,8 @@ impl HostCommand {
             Self::GetConversation(command) => Some(&command.owner_user_id),
             Self::GetConversationHistory(command) => Some(&command.owner_user_id),
             Self::ListConversations(command) => Some(&command.owner_user_id),
+            Self::GetConversationRuntimeSettings(command) => Some(&command.owner_user_id),
+            Self::PutConversationRuntimeSettings(command) => Some(&command.owner_user_id),
             Self::StartConversationTurn(command) => Some(&command.owner_user_id),
             Self::GuideConversationTurn(command) => Some(&command.owner_user_id),
             Self::ResumeConversationTurn(command) => Some(&command.owner_user_id),

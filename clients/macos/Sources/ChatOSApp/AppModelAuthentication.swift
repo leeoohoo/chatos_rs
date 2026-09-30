@@ -137,12 +137,14 @@ extension AppModel {
         let messageTaskGraphService = messageTaskGraphService
         let askUserPromptService = askUserPromptService
         let turnProcessService = turnProcessService
+        let runtimeSettingsService = runtimeSettingsService
         Task {
             await commandService?.reset()
             await petActivityService?.reset()
             await messageTaskGraphService?.reset()
             await askUserPromptService?.reset()
             await turnProcessService?.reset()
+            await runtimeSettingsService?.reset()
             await localAgentHost.stop()
         }
     }
@@ -160,6 +162,10 @@ extension AppModel {
                     await host.stop()
                     return
                 }
+                try await self?.runtimeSettingsService?.configure(
+                    ownerUserID: ownerUserID,
+                    bootstrap: bootstrap
+                )
                 try await self?.commandService?.configure(
                     ownerUserID: ownerUserID,
                     bootstrap: bootstrap

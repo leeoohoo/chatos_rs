@@ -1,15 +1,19 @@
 import CryptoKit
+import ChatOSCore
 import Foundation
 
 public struct NativeLocalAgentBootstrapResult: Sendable, Equatable {
     public let modelSnapshots: [LocalAgentModelConfigSnapshot]
+    public let modelOptions: [ConversationModelOption]
     public let capabilitySnapshot: LocalAgentCapabilityPolicySnapshot
 
     public init(
         modelSnapshots: [LocalAgentModelConfigSnapshot],
+        modelOptions: [ConversationModelOption],
         capabilitySnapshot: LocalAgentCapabilityPolicySnapshot
     ) {
         self.modelSnapshots = modelSnapshots
+        self.modelOptions = modelOptions
         self.capabilitySnapshot = capabilitySnapshot
     }
 }
@@ -30,6 +34,7 @@ extension NativeLocalConnectorService {
         let credentialStore = NativeLocalAgentModelCredentialStore()
         var environment: [String: String] = [:]
         var snapshots: [LocalAgentModelConfigSnapshot] = []
+        var modelOptions: [ConversationModelOption] = []
         for config in configs {
             let resolved = try await gateway.modelConfig(
                 token: token,
@@ -77,6 +82,19 @@ extension NativeLocalConnectorService {
                 }
             )
             snapshots.append(snapshot)
+            let supportsReasoning = resolved.supportsReasoning
+                ?? (resolved.taskThinkingLevel?.trimmedNonEmpty != nil)
+            modelOptions.append(.init(
+                id: resolved.id,
+                displayName: resolved.name.trimmedNonEmpty ?? resolved.model,
+                modelName: resolved.model,
+                provider: resolved.provider,
+                thinkingLevel: resolved.taskThinkingLevel?.trimmedNonEmpty,
+                supportsReasoning: supportsReasoning,
+                thinkingLevels: supportsReasoning
+                    ? Self.thinkingLevels(provider: resolved.provider)
+                    : []
+            ))
         }
         guard !snapshots.isEmpty else { throw NativeLocalAgentBootstrapError.noEnabledModel }
 
@@ -95,7 +113,11 @@ extension NativeLocalConnectorService {
             capabilityPolicyRevision: "native-main-chat-v1"
         )
         try await controlPlane.publishCapabilities(capability)
-        return .init(modelSnapshots: snapshots, capabilitySnapshot: capability)
+        return .init(
+            modelSnapshots: snapshots,
+            modelOptions: modelOptions,
+            capabilitySnapshot: capability
+        )
     }
 
     private func modelRevision(_ model: GatewayModelConfigDTO) -> String {
@@ -114,6 +136,20 @@ extension NativeLocalConnectorService {
             .map { String(format: "%02x", $0) }
             .joined()
         return "sha256-\(digest)"
+    }
+
+    private static func thinkingLevels(provider: String) -> [String] {
+        switch provider.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased().replacingOccurrences(of: "-", with: "_") {
+        case "gpt", "openai":
+            ["none", "minimal", "low", "medium", "high", "xhigh"]
+        case "deepseek":
+            ["none", "low", "medium", "high", "max"]
+        case "kimi", "kimik2", "moonshot":
+            ["none", "auto", "low", "medium", "high", "xhigh"]
+        default:
+            ["none", "low", "medium", "high", "xhigh"]
+        }
     }
 }
 

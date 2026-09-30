@@ -431,3 +431,27 @@ pub(super) const SCHEMA_V20: &[&str] = &[
        status, claim_until_unix_ms, run_id, invocation_id\
      )",
 ];
+
+pub(super) const SCHEMA_V21: &[&str] = &[
+    "CREATE TABLE local_conversation_runtime_settings (\
+       owner_user_id TEXT NOT NULL,\
+       conversation_id TEXT NOT NULL,\
+       selected_model_config_ref TEXT NOT NULL,\
+       selected_model_config_revision TEXT NOT NULL,\
+       selected_thinking_level TEXT,\
+       remote_connection_id TEXT,\
+       reasoning_enabled INTEGER NOT NULL CHECK(reasoning_enabled IN (0, 1)),\
+       version INTEGER NOT NULL CHECK(version > 0),\
+       updated_at_unix_ms INTEGER NOT NULL,\
+       PRIMARY KEY(owner_user_id, conversation_id),\
+       FOREIGN KEY(\
+         owner_user_id, selected_model_config_ref, selected_model_config_revision\
+       ) REFERENCES local_model_config_snapshots(\
+         owner_user_id, model_config_ref, model_config_revision\
+       )\
+     )",
+    "CREATE INDEX local_conversation_runtime_settings_model ON \
+     local_conversation_runtime_settings(\
+       owner_user_id, selected_model_config_ref, selected_model_config_revision\
+     )",
+];

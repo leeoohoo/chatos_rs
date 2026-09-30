@@ -22,6 +22,7 @@ mod conversation_guidance;
 mod conversation_history;
 mod conversation_lifecycle;
 mod conversation_query_store;
+mod conversation_runtime_settings_store;
 mod conversation_store;
 mod maintenance;
 mod memory_cache_store;
@@ -52,10 +53,10 @@ mod tool_store;
 pub use chatos_local_agent_ports::{
     ClientStorageError, IdempotentCommand, LocalAgentRunStore, LocalAgentStore,
     LocalAgentTaskStore, LocalAgentToolStore, LocalCapabilityPolicySnapshot,
-    LocalCapabilitySnapshotStore, LocalConversationStore, LocalMemoryContextCacheStore,
-    LocalMemoryOutboxRecord, LocalMemoryOutboxStatus, LocalMemoryOutboxStore,
-    LocalMemorySyncStatus, LocalModelConfigSnapshot, LocalModelConfigSnapshotStore,
-    LocalPluginInstallationStore, RunTransition,
+    LocalCapabilitySnapshotStore, LocalConversationRuntimeSettingsStore, LocalConversationStore,
+    LocalMemoryContextCacheStore, LocalMemoryOutboxRecord, LocalMemoryOutboxStatus,
+    LocalMemoryOutboxStore, LocalMemorySyncStatus, LocalModelConfigSnapshot,
+    LocalModelConfigSnapshotStore, LocalPluginInstallationStore, RunTransition,
 };
 use run_record::decode_run;
 use schema::RUN_SELECT;

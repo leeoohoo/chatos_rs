@@ -21,6 +21,7 @@ The current milestone provides:
 - durable installed-Plugin/MCP snapshots in the client-owned SQLite database;
 - durable non-secret model and capability control-plane revisions;
 - a client-owned Conversation/Turn/Message fact source with atomic Main Chat Run creation and control;
+- versioned per-Conversation model, reasoning and remote-connection runtime settings;
 - durable local Message attachment references without storing file bodies in SQLite;
 - idempotent Task Graph terminal summaries written back to their source Conversation;
 - an event-driven Host Coordinator that drains model and tool work to quiescence;
@@ -28,9 +29,11 @@ The current milestone provides:
 - conservative crash recovery to `needs_review`;
 - length-prefixed JSON over Unix sockets, Windows named pipes, or stdio.
 
-The standalone binary now assembles both production Profiles, the model Scheduler, the two Rust Task tools, the Tool Scheduler and the event-driven Coordinator. Authenticated native code publishes non-secret control-plane revisions through IPC and claims platform tools from the durable Tool Invocation Ledger. The macOS and Windows clients now package this binary, launch it over protected stdio after authentication, verify IPC v26 health, restart it when the account changes, and stop it on sign-out or application exit. Both lifecycle adapters also expose serialized typed request/response clients over the same framed process, validate response identity and protocol version, map structured Host errors, and reject native requests whose owner differs from the active account. Windows production data-source switching and the remaining Task Inspector/Ask User UI services are still required before all old runtime paths can be retired.
+The standalone binary now assembles both production Profiles, the model Scheduler, the two Rust Task tools, the Tool Scheduler and the event-driven Coordinator. Authenticated native code publishes non-secret control-plane revisions through IPC and claims platform tools from the durable Tool Invocation Ledger. The macOS and Windows clients now package this binary, launch it over protected stdio after authentication, verify IPC v27 health, restart it when the account changes, and stop it on sign-out or application exit. Both lifecycle adapters also expose serialized typed request/response clients over the same framed process, validate response identity and protocol version, map structured Host errors, and reject native requests whose owner differs from the active account. Windows production data-source switching remains required before all old runtime paths can be retired.
 
 The macOS connector additionally exposes a native Conversation gateway for create, detail, stable list pagination, bounded history pagination, and versioned start/guidance/resume/cancel Turn mutations. Its DTOs mirror the Rust protocol explicitly, including opaque JSON content and metadata, attachment authority references, immutable control-plane revisions and optimistic versions. Main Chat now uses this gateway for commands and history, while an account-scoped local polling stream observes Conversation versions and drives UI reconciliation without a server WebSocket. Attachments are copied into a client-owned `0600` vault and only opaque authority tokens cross IPC. Integration tests execute the flow against the actual Host transport, including send, SQLite history and local realtime reconciliation.
+
+Main Chat runtime settings now use the same local Host instead of `/conversations/*/runtime-settings` or `/ai-model-configs` during a Conversation. IPC v27 and SQLite v21 persist an owner-scoped exact model revision, reasoning state, selected thinking level and opaque remote-connection identifier with optimistic versioning. The application layer verifies that the selected model revision exists in the owner-scoped control-plane cache before storage accepts it. macOS builds its model menu from the authenticated bootstrap snapshot, resolves that durable selection before every new Turn, and the Planner applies the frozen reasoning level to that Run's transient model request without mutating a shared model snapshot.
 
 The macOS pet overlay now derives chat and task activity from owner-scoped local Run pages and refreshes through Host `wait_events`. It no longer opens the server realtime WebSocket or reads the server `/pet-activities` inbox. Terminal success/cancellation cards expire locally, while failures and review states remain visible; dismissing a projected card changes UI state only and never deletes durable Run facts.
 
@@ -162,7 +165,7 @@ Example health request:
 
 ```json
 {
-  "protocol_version": 26,
+  "protocol_version": 27,
   "command_id": "health-019",
   "command": {
     "type": "health"

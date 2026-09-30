@@ -103,6 +103,20 @@ impl LocalAgentRuntime {
             .get_conversation(&command.owner_user_id, &command.conversation_id)
             .await?
             .ok_or_else(|| ClientStorageError::NotFound(command.conversation_id.clone()))?;
+        let runtime_settings = self
+            .store
+            .get_conversation_runtime_settings(&command.owner_user_id, &command.conversation_id)
+            .await?;
+        if let Some(settings) = &runtime_settings {
+            if settings.selected_model_config_ref != command.model_config_ref
+                || settings.selected_model_config_revision != command.model_config_revision
+            {
+                return Err(LocalAgentRuntimeError::InvalidRequest(
+                    "Turn model does not match the current conversation runtime settings"
+                        .to_string(),
+                ));
+            }
+        }
         let now = self.now()?;
         let input = json!({
             "conversation_id": &command.conversation_id,
@@ -110,6 +124,12 @@ impl LocalAgentRuntime {
             "message_id": &command.message_id,
             "message": &command.message,
             "attachments": &command.attachments,
+            "runtime_settings": runtime_settings.as_ref().map(|settings| json!({
+                "version": settings.version,
+                "selected_thinking_level": settings.selected_thinking_level,
+                "remote_connection_id": settings.remote_connection_id,
+                "reasoning_enabled": settings.reasoning_enabled,
+            })),
         });
         let run = LocalAgentRunRecord {
             run_id: command.run_id.clone(),

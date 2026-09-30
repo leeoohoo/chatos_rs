@@ -27,13 +27,15 @@ pub use control_plane::{
 };
 pub use conversation::{
     CancelConversationTurnCommand, CreateConversationCommand, GetConversationCommand,
-    GetConversationHistoryCommand, GuideConversationTurnCommand, ListConversationsCommand,
-    LocalConversationAttachmentRecord, LocalConversationAttachmentSpec, LocalConversationDetail,
-    LocalConversationHistoryPage, LocalConversationMessageRecord, LocalConversationMessageRole,
-    LocalConversationPage, LocalConversationRecord, LocalConversationTurnRecord,
+    GetConversationHistoryCommand, GetConversationRuntimeSettingsCommand,
+    GuideConversationTurnCommand, ListConversationsCommand, LocalConversationAttachmentRecord,
+    LocalConversationAttachmentSpec, LocalConversationDetail, LocalConversationHistoryPage,
+    LocalConversationMessageRecord, LocalConversationMessageRole, LocalConversationPage,
+    LocalConversationRecord, LocalConversationRuntimeSettings, LocalConversationTurnRecord,
     LocalConversationTurnStart, LocalConversationTurnStatus, LocalConversationTurnUpdate,
-    ResumeConversationTurnCommand, StartConversationTurnCommand,
-    LOCAL_CONVERSATION_MAX_ATTACHMENTS, LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE,
+    PutConversationRuntimeSettingsCommand, ResumeConversationTurnCommand,
+    StartConversationTurnCommand, LOCAL_CONVERSATION_MAX_ATTACHMENTS,
+    LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE,
 };
 pub use memory::{GetMemorySyncStatusCommand, LocalMemorySyncStatus};
 pub use plugin::{
@@ -57,7 +59,7 @@ pub use tool::{
     LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 26;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 27;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -119,6 +121,8 @@ pub enum HostCommand {
     GetConversation(GetConversationCommand),
     GetConversationHistory(GetConversationHistoryCommand),
     ListConversations(ListConversationsCommand),
+    GetConversationRuntimeSettings(GetConversationRuntimeSettingsCommand),
+    PutConversationRuntimeSettings(PutConversationRuntimeSettingsCommand),
     StartConversationTurn(StartConversationTurnCommand),
     GuideConversationTurn(GuideConversationTurnCommand),
     ResumeConversationTurn(ResumeConversationTurnCommand),
@@ -162,6 +166,8 @@ impl HostCommand {
             Self::GetConversation(command) => command.validate(),
             Self::GetConversationHistory(command) => command.validate(),
             Self::ListConversations(command) => command.validate(),
+            Self::GetConversationRuntimeSettings(command) => command.validate(),
+            Self::PutConversationRuntimeSettings(command) => command.validate(),
             Self::StartConversationTurn(command) => command.validate(),
             Self::GuideConversationTurn(command) => command.validate(),
             Self::ResumeConversationTurn(command) => command.validate(),
@@ -673,6 +679,9 @@ pub enum HostResult {
     },
     ConversationHistory {
         page: Box<LocalConversationHistoryPage>,
+    },
+    ConversationRuntimeSettings {
+        settings: LocalConversationRuntimeSettings,
     },
     ConversationTurnStarted {
         result: Box<LocalConversationTurnStart>,
