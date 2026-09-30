@@ -2,9 +2,9 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    notepad_model_tools, requirement_survey_model_tools, LocalNotepadToolExecutor,
-    LocalRequirementSurveyToolExecutor, NOTEPAD_READ_ONLY_TOOLS, NOTEPAD_TOOL_NAMES,
-    REQUIREMENT_SURVEY_CREATE_TOOL, REQUIREMENT_SURVEY_TOOL_NAMES,
+    notepad_model_tools, requirement_survey_model_tools, task_model_tools,
+    LocalNotepadToolExecutor, LocalRequirementSurveyToolExecutor, NOTEPAD_READ_ONLY_TOOLS,
+    NOTEPAD_TOOL_NAMES, REQUIREMENT_SURVEY_CREATE_TOOL, REQUIREMENT_SURVEY_TOOL_NAMES,
 };
 use crate::{
     ChatosAiRuntimeStepExecutor, ControlPlaneLocalAiStepPlanner, DurableAiProfile,
@@ -143,11 +143,13 @@ impl LocalAgentHostAssembly {
                 .chain([CREATE_TASK_TOOL.to_string(), CREATE_TASKS_TOOL.to_string()])
                 .chain([REQUIREMENT_SURVEY_CREATE_TOOL.to_string()]),
         );
+        let mut main_tools = notepad_model_tools();
+        main_tools.extend(task_model_tools());
         let mut main_chat_planner = ControlPlaneLocalAiStepPlanner::main_chat(
             Arc::clone(&model_resolver),
             Arc::clone(&capability_resolver),
         )
-        .with_local_tools(notepad_model_tools())?
+        .with_local_tools(main_tools)?
         .with_local_tool_prefixes(["notepad_"])?;
         let mut task_tools = notepad_model_tools();
         task_tools.extend(requirement_survey_model_tools());

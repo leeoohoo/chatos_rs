@@ -35,7 +35,9 @@ pub use requirement_survey_tools::{
     REQUIREMENT_SURVEY_CREATE_TOOL, REQUIREMENT_SURVEY_TOOL_NAMES,
 };
 pub use scheduler::{LocalAgentScheduler, LocalAgentSchedulerError, SchedulerTick};
-pub use task_tools::{LocalTaskToolExecutor, CREATE_TASKS_TOOL, CREATE_TASK_TOOL};
+pub use task_tools::{
+    task_model_tools, LocalTaskToolExecutor, CREATE_TASKS_TOOL, CREATE_TASK_TOOL,
+};
 pub use tool_scheduler::{
     LocalToolExecutor, LocalToolRegistry, LocalToolScheduler, LocalToolSchedulerError,
     ToolSchedulerTick,

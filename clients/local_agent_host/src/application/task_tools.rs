@@ -16,6 +16,61 @@ use std::{collections::HashMap, sync::Arc};
 pub const CREATE_TASK_TOOL: &str = "create_task";
 pub const CREATE_TASKS_TOOL: &str = "create_tasks_with_prerequisites";
 
+pub fn task_model_tools() -> Vec<Value> {
+    vec![
+        json!({
+            "type": "function",
+            "name": CREATE_TASK_TOOL,
+            "description": "Create one durable local task derived from the current conversation. Use it only for user-requested tracked work. The Rust Local Agent Host persists and schedules it locally.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "minLength": 1},
+                    "objective": {"type": "string", "minLength": 1},
+                    "description": {"type": "string"},
+                    "input_payload": {"type": "object"}
+                },
+                "required": ["title", "objective"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": CREATE_TASKS_TOOL,
+            "description": "Create a durable local task graph. Each task uses a unique client_ref and prerequisite_refs may only reference tasks in this call. The Rust Local Agent Host persists and schedules the DAG locally.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tasks": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 50,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "client_ref": {"type": "string", "minLength": 1},
+                                "title": {"type": "string", "minLength": 1},
+                                "objective": {"type": "string", "minLength": 1},
+                                "description": {"type": "string"},
+                                "input_payload": {"type": "object"},
+                                "prerequisite_refs": {
+                                    "type": "array",
+                                    "items": {"type": "string", "minLength": 1},
+                                    "uniqueItems": true
+                                }
+                            },
+                            "required": ["client_ref", "title", "objective"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["tasks"],
+                "additionalProperties": false
+            }
+        }),
+    ]
+}
+
 #[derive(Clone)]
 pub struct LocalTaskToolExecutor {
     runtime: Arc<LocalAgentRuntime>,
@@ -446,6 +501,23 @@ mod tests {
         assert_eq!(
             graph.tasks[1].input["prompt"],
             "Objective: Apply the change"
+        );
+    }
+
+    #[test]
+    fn task_model_definitions_are_host_owned_and_closed() {
+        let tools = task_model_tools();
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0]["name"], CREATE_TASK_TOOL);
+        assert_eq!(tools[1]["name"], CREATE_TASKS_TOOL);
+        assert_eq!(tools[0]["parameters"]["additionalProperties"], false);
+        assert_eq!(
+            tools[1]["parameters"]["properties"]["tasks"]["maxItems"],
+            50
+        );
+        assert_eq!(
+            tools[1]["parameters"]["properties"]["tasks"]["items"]["additionalProperties"],
+            false
         );
     }
 

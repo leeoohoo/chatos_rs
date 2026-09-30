@@ -10,11 +10,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                   case let .string(name)? = tool["name"] else { return nil as String? }
             return name
         }
-        XCTAssertEqual(Set(names), Set([
-            "local_attachment_read",
-            "create_task",
-            "create_tasks_with_prerequisites",
-        ]))
+        XCTAssertEqual(names, ["local_attachment_read"])
         XCTAssertEqual(
             NativeLocalAgentPlatformToolCatalog.readOnlyToolNames,
             [

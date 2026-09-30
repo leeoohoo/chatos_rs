@@ -57,62 +57,6 @@ public enum NativeLocalAgentPlatformToolCatalog {
                 "additionalProperties": .bool(false),
             ]),
         ]),
-        .object([
-            "type": .string("function"),
-            "name": .string(createTaskToolName),
-            "description": .string(
-                "Create one durable local task derived from the current conversation. Use it only when the user asks for work that should continue as a tracked task. The Rust Local Agent Host persists and schedules the task locally."
-            ),
-            "parameters": .object([
-                "type": .string("object"),
-                "properties": .object([
-                    "title": .object(["type": .string("string"), "minLength": .number(1)]),
-                    "objective": .object(["type": .string("string"), "minLength": .number(1)]),
-                    "description": .object(["type": .string("string")]),
-                    "input_payload": .object(["type": .string("object")]),
-                ]),
-                "required": .array([.string("title"), .string("objective")]),
-                "additionalProperties": .bool(false),
-            ]),
-        ]),
-        .object([
-            "type": .string("function"),
-            "name": .string(createTasksToolName),
-            "description": .string(
-                "Create a durable local task graph. Each task uses a unique client_ref; prerequisite_refs may only reference tasks in this same call. The Rust Local Agent Host validates, persists, and schedules the DAG locally."
-            ),
-            "parameters": .object([
-                "type": .string("object"),
-                "properties": .object([
-                    "tasks": .object([
-                        "type": .string("array"),
-                        "minItems": .number(1),
-                        "maxItems": .number(50),
-                        "items": .object([
-                            "type": .string("object"),
-                            "properties": .object([
-                                "client_ref": .object(["type": .string("string"), "minLength": .number(1)]),
-                                "title": .object(["type": .string("string"), "minLength": .number(1)]),
-                                "objective": .object(["type": .string("string"), "minLength": .number(1)]),
-                                "description": .object(["type": .string("string")]),
-                                "input_payload": .object(["type": .string("object")]),
-                                "prerequisite_refs": .object([
-                                    "type": .string("array"),
-                                    "items": .object(["type": .string("string"), "minLength": .number(1)]),
-                                    "uniqueItems": .bool(true),
-                                ]),
-                            ]),
-                            "required": .array([
-                                .string("client_ref"), .string("title"), .string("objective"),
-                            ]),
-                            "additionalProperties": .bool(false),
-                        ]),
-                    ]),
-                ]),
-                "required": .array([.string("tasks")]),
-                "additionalProperties": .bool(false),
-            ]),
-        ]),
     ]
 
     public static let taskExecutionCapabilityTools: [LocalAgentJSONValue] =
