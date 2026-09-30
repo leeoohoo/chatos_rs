@@ -13,6 +13,11 @@ public interface ILocalAgentHostLifecycle
 
 public interface ILocalAgentHostClient : ILocalAgentHostLifecycle
 {
+    Task RestartForOwnerAsync(
+        string ownerUserId,
+        IReadOnlyDictionary<string, string> credentialEnvironment,
+        CancellationToken cancellationToken = default);
+
     Task<TResponse> SendAsync<TCommand, TResponse>(
         TCommand command,
         CancellationToken cancellationToken = default)

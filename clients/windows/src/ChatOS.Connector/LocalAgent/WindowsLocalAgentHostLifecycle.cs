@@ -44,22 +44,32 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
                 return;
             }
             await StopLockedAsync().ConfigureAwait(false);
-            var process = await _launcher
-                .LaunchAsync(_options, ownerUserId, cancellationToken)
-                .ConfigureAwait(false);
-            _process = process;
-            try
-            {
-                using var startup = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                startup.CancelAfter(_options.StartupTimeout);
-                await VerifyHealthAsync(process, startup.Token).ConfigureAwait(false);
-                ActiveOwnerUserId = ownerUserId;
-            }
-            catch
-            {
-                await StopLockedAsync().ConfigureAwait(false);
-                throw;
-            }
+            await StartLockedAsync(
+                ownerUserId,
+                new Dictionary<string, string>(),
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task RestartForOwnerAsync(
+        string ownerUserId,
+        IReadOnlyDictionary<string, string> credentialEnvironment,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateOwner(ownerUserId);
+        ValidateCredentialEnvironment(credentialEnvironment);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await StopLockedAsync().ConfigureAwait(false);
+            await StartLockedAsync(
+                ownerUserId,
+                credentialEnvironment,
+                cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -147,6 +157,29 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
         }
     }
 
+    private async Task StartLockedAsync(
+        string ownerUserId,
+        IReadOnlyDictionary<string, string> credentialEnvironment,
+        CancellationToken cancellationToken)
+    {
+        var process = await _launcher
+            .LaunchAsync(_options, ownerUserId, credentialEnvironment, cancellationToken)
+            .ConfigureAwait(false);
+        _process = process;
+        try
+        {
+            using var startup = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            startup.CancelAfter(_options.StartupTimeout);
+            await VerifyHealthAsync(process, startup.Token).ConfigureAwait(false);
+            ActiveOwnerUserId = ownerUserId;
+        }
+        catch
+        {
+            await StopLockedAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
     private static async Task<TResponse> RoundTripAsync<TResponse>(
         ILocalAgentHostProcess process,
         JsonElement command,
@@ -206,6 +239,32 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
             throw new ArgumentException(
                 "Local Agent owner must be 1..=256 non-control characters.",
                 nameof(ownerUserId));
+        }
+    }
+
+    private static void ValidateCredentialEnvironment(
+        IReadOnlyDictionary<string, string> credentialEnvironment)
+    {
+        if (credentialEnvironment.Count > 64)
+        {
+            throw new ArgumentException(
+                "Local Agent Host accepts at most 64 model credentials.",
+                nameof(credentialEnvironment));
+        }
+        foreach (var (name, value) in credentialEnvironment)
+        {
+            if (!name.StartsWith("CHATOS_LOCAL_AGENT_MODEL_", StringComparison.Ordinal) ||
+                name.Length > 128 ||
+                name.Any(character => character != '_' &&
+                    !char.IsAsciiLetterUpper(character) && !char.IsAsciiDigit(character)) ||
+                string.IsNullOrEmpty(value) ||
+                System.Text.Encoding.UTF8.GetByteCount(value) > 64 * 1024 ||
+                value.Contains('\0'))
+            {
+                throw new ArgumentException(
+                    "Local Agent Host credential environment is invalid.",
+                    nameof(credentialEnvironment));
+            }
         }
     }
 

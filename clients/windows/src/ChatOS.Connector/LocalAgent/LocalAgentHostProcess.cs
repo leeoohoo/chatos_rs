@@ -18,6 +18,7 @@ internal interface ILocalAgentHostProcessLauncher
     Task<ILocalAgentHostProcess> LaunchAsync(
         LocalAgentHostOptions options,
         string ownerUserId,
+        IReadOnlyDictionary<string, string> credentialEnvironment,
         CancellationToken cancellationToken);
 }
 
@@ -31,6 +32,7 @@ internal sealed class LocalAgentHostProcessLauncher : ILocalAgentHostProcessLaun
     public Task<ILocalAgentHostProcess> LaunchAsync(
         LocalAgentHostOptions options,
         string ownerUserId,
+        IReadOnlyDictionary<string, string> credentialEnvironment,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -56,6 +58,10 @@ internal sealed class LocalAgentHostProcessLauncher : ILocalAgentHostProcessLaun
         {
             var value = Environment.GetEnvironmentVariable(name);
             if (!string.IsNullOrEmpty(value)) start.Environment[name] = value;
+        }
+        foreach (var (name, value) in credentialEnvironment)
+        {
+            start.Environment[name] = value;
         }
 
         var process = new Process { StartInfo = start, EnableRaisingEvents = true };

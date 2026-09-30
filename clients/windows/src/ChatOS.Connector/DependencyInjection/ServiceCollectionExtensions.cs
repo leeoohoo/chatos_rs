@@ -29,6 +29,7 @@ public static class ServiceCollectionExtensions
         {
             services.AddSingleton(localAgentHostOptions);
             services.AddSingleton<WindowsLocalAgentHostLifecycle>();
+            services.AddSingleton<WindowsLocalAgentModelCredentialStore>();
             services.AddSingleton<ILocalAgentHostLifecycle>(provider =>
                 provider.GetRequiredService<WindowsLocalAgentHostLifecycle>());
             services.AddSingleton<ILocalAgentHostClient>(provider =>
