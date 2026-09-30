@@ -515,7 +515,7 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
             let paired = (try? await service.isBrowserExtensionPaired(pluginID: identity.pluginID)) == true
             arguments = NativeLocalConnectorService.browserSessionArguments(
                 arguments: arguments,
-                relayBody: [:],
+                contextBody: [:],
                 browserExtensionPaired: paired
             )
         }

@@ -326,24 +326,6 @@ struct NativePluginRuntimeTests {
         }
     }
 
-    @Test("device-only plugin relay accepts no workspace and rejects workspace permissions")
-    func deviceOnlyPluginRelayScope() throws {
-        let scope = try NativePluginRelayScope.resolve(workspaceID: "", workspaces: [])
-
-        #expect(scope.workspaceID == nil)
-        try scope.validate(permissionSnapshot: ["process.spawn", "browser.page.read"])
-        #expect(throws: NativePluginRuntimeError.self) {
-            try scope.validate(permissionSnapshot: ["process.spawn", "workspace.read"])
-        }
-    }
-
-    @Test("plugin relay rejects a workspace that is not registered on this device")
-    func pluginRelayRejectsUnknownWorkspace() {
-        #expect(throws: NativePluginRuntimeError.self) {
-            try NativePluginRelayScope.resolve(workspaceID: "workspace-other", workspaces: [])
-        }
-    }
-
     @Test
     func browserSessionApprovalSummaryExplainsExistingChromeInsteadOfOnlyHashingArguments() {
         let summary = NativeLocalConnectorService.safeArgumentSummary(
@@ -368,7 +350,7 @@ struct NativePluginRuntimeTests {
                 "headless": .bool(true),
                 "persistent_profile": .bool(true),
             ]),
-            relayBody: ["task_title": .string("今日 AI 新闻")],
+            contextBody: ["task_title": .string("今日 AI 新闻")],
             browserExtensionPaired: true
         )
 
@@ -382,7 +364,7 @@ struct NativePluginRuntimeTests {
     func browserSessionOpenBuildsManagedFallbackExecutionRequestWithoutPairing() {
         let arguments = NativeLocalConnectorService.browserSessionArguments(
             arguments: .object(["mode": .string("chrome_extension")]),
-            relayBody: ["task_title": .string("首次使用")],
+            contextBody: ["task_title": .string("首次使用")],
             browserExtensionPaired: false
         )
 
@@ -394,7 +376,7 @@ struct NativePluginRuntimeTests {
     func browserSessionOpenInheritsTaskTitleForNativeChromeGroup() {
         let arguments = NativeLocalConnectorService.browserSessionArguments(
             arguments: .object(["mode": .string("chrome_extension")]),
-            relayBody: [
+            contextBody: [
                 "task_id": .string("task-123"),
                 "task_title": .string("WMS 发布验证"),
             ]
@@ -410,7 +392,7 @@ struct NativePluginRuntimeTests {
                 "mode": .string("chrome_extension"),
                 "session_name": .string("Explicit group"),
             ]),
-            relayBody: ["task_title": .string("Ignored title")]
+            contextBody: ["task_title": .string("Ignored title")]
         )
 
         #expect(arguments.jsonObject?["session_name"]?.jsonString == "Explicit group")

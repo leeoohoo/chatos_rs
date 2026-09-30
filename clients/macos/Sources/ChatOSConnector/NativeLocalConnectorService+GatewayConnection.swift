@@ -138,12 +138,6 @@ extension NativeLocalConnectorService {
                             Task { [weak self] in
                                 await self?.handleTerminalRelayMessage(data, socket: socket)
                             }
-                        case "plugin_prepare_request",
-                             "plugin_execute_request",
-                             "plugin_cancel_request":
-                            Task { [weak self] in
-                                await self?.handlePluginRelayMessage(data, socket: socket)
-                            }
                         case "workspace_directory_list_request",
                              "workspace_directory_create_request",
                              "workspace_filesystem_request":
@@ -437,7 +431,6 @@ extension NativeLocalConnectorService {
         lastGatewayPongAt = nil
         if terminatePluginSessions {
             await pluginRuntimeStore.terminateAll()
-            pluginSkillRuntimeSessions.removeAll()
         }
     }
 }
