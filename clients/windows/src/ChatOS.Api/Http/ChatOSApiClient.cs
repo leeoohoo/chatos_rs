@@ -7,12 +7,6 @@ namespace ChatOS.Api.Http;
 
 public sealed class ChatOSApiClient
 {
-    private enum ApiService
-    {
-        ChatOS,
-        UserService,
-    }
-
     private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(60);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -28,9 +22,6 @@ public sealed class ChatOSApiClient
         _tokenStore = tokenStore;
     }
 
-    public Task<T> GetAsync<T>(string path, CancellationToken cancellationToken = default) =>
-        SendAsync<T>(HttpMethod.Get, path, null, cancellationToken);
-
     public Task<T> GetUserServiceAsync<T>(
         string path,
         CancellationToken cancellationToken = default) =>
@@ -38,14 +29,7 @@ public sealed class ChatOSApiClient
             HttpMethod.Get,
             path,
             null,
-            cancellationToken,
-            service: ApiService.UserService);
-
-    public Task<T> PostAsync<T>(
-        string path,
-        object? body = null,
-        CancellationToken cancellationToken = default) =>
-        SendAsync<T>(HttpMethod.Post, path, body, cancellationToken);
+            cancellationToken);
 
     public Task<T> PostUserServiceAsync<T>(
         string path,
@@ -55,47 +39,18 @@ public sealed class ChatOSApiClient
             HttpMethod.Post,
             path,
             body,
-            cancellationToken,
-            service: ApiService.UserService);
-
-    public Task<T> PostAsync<T>(
-        string path,
-        object? body,
-        TimeSpan timeout,
-        CancellationToken cancellationToken = default) =>
-        SendAsync<T>(HttpMethod.Post, path, body, cancellationToken, timeout);
-
-    public Task<T> PutAsync<T>(
-        string path,
-        object? body = null,
-        CancellationToken cancellationToken = default) =>
-        SendAsync<T>(HttpMethod.Put, path, body, cancellationToken);
-
-    public Task<T> DeleteAsync<T>(
-        string path,
-        CancellationToken cancellationToken = default) =>
-        SendAsync<T>(HttpMethod.Delete, path, null, cancellationToken);
-
-    public Task<T> SendAsync<T>(
-        HttpMethod method,
-        string path,
-        object? body,
-        CancellationToken cancellationToken = default,
-        TimeSpan? timeout = null) =>
-        SendCoreAsync<T>(method, path, body, cancellationToken, timeout);
+            cancellationToken);
 
     private async Task<T> SendCoreAsync<T>(
         HttpMethod method,
         string path,
         object? body,
-        CancellationToken cancellationToken = default,
-        TimeSpan? timeout = null,
-        ApiService service = ApiService.ChatOS)
+        CancellationToken cancellationToken = default)
     {
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(timeout ?? DefaultRequestTimeout);
+        timeoutSource.CancelAfter(DefaultRequestTimeout);
         var requestCancellationToken = timeoutSource.Token;
-        using var request = new HttpRequestMessage(method, ResolveRequestUri(path, service));
+        using var request = new HttpRequestMessage(method, ResolveUserServiceUri(path));
         try
         {
             var token = await _tokenStore.GetAccessTokenAsync(requestCancellationToken).ConfigureAwait(false);
@@ -162,28 +117,23 @@ public sealed class ChatOSApiClient
 
     private static string NormalizePath(string path) => path.TrimStart('/');
 
-    private Uri ResolveRequestUri(string path, ApiService service)
+    private Uri ResolveUserServiceUri(string path)
     {
         var normalizedPath = NormalizePath(path);
-        if (service == ApiService.ChatOS)
-        {
-            return new Uri(normalizedPath, UriKind.Relative);
-        }
-
         var baseAddress = _httpClient.BaseAddress
             ?? throw new InvalidOperationException("ChatOS API base address is required.");
-        const string chatOSPath = "/api/chatos";
-        var basePath = baseAddress.AbsolutePath.TrimEnd('/');
-        if (!basePath.EndsWith(chatOSPath, StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrEmpty(baseAddress.UserInfo) ||
+            !string.IsNullOrEmpty(baseAddress.Query) ||
+            !string.IsNullOrEmpty(baseAddress.Fragment))
         {
             throw new InvalidOperationException(
-                "ChatOS API base address must end with /api/chatos to resolve service routes.");
+                "ChatOS API base address must not contain credentials, a query, or a fragment.");
         }
 
-        var prefix = basePath[..^chatOSPath.Length];
+        var basePath = baseAddress.AbsolutePath.TrimEnd('/');
         var builder = new UriBuilder(baseAddress)
         {
-            Path = $"{prefix}/api/user/",
+            Path = $"{basePath}/api/user/",
             Query = string.Empty,
             Fragment = string.Empty,
         };

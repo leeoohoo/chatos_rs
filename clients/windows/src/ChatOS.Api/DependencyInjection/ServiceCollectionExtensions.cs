@@ -22,8 +22,7 @@ public static class ServiceCollectionExtensions
                 ? options.BaseUrl
                 : $"{options.BaseUrl}/";
             client.BaseAddress = new Uri(baseUrl, UriKind.Absolute);
-            // Per-request deadlines are enforced by ChatOSApiClient so Harness imports can
-            // opt into a longer timeout without being preempted by HttpClient's global limit.
+            // Request deadlines are enforced by ChatOSApiClient rather than HttpClient.
             client.Timeout = Timeout.InfiniteTimeSpan;
         });
         services.AddHttpClient(MediaGenerationService.ProviderClientName, client =>

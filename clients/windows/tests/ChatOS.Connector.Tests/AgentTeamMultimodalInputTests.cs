@@ -203,7 +203,7 @@ public sealed class AgentTeamMultimodalInputTests : IAsyncLifetime
                  "api_key":"provider-secret","base_url":"https://provider.example/v1/chat/completions"}
                 """))))
         {
-            BaseAddress = new Uri("https://api.example/api/chatos/"),
+            BaseAddress = new Uri("https://api.example/"),
         }, new EmptyTokenStore());
         return new AgentTeamModelGateway(api,
             new FixedHttpClientFactory(new HttpClient(new AsyncHandler(provider))));

@@ -7,7 +7,7 @@ param(
     [string]$Platform = "x64",
 
     [ValidatePattern("^https?://")]
-    [string]$ApiBaseUrl = "https://gateway.jgoool.com/api/chatos",
+    [string]$ApiBaseUrl = "https://gateway.jgoool.com",
 
     [ValidatePattern("^https?://")]
     [string]$LocalConnectorCloudBaseUrl = "https://local-connector.jgoool.com",

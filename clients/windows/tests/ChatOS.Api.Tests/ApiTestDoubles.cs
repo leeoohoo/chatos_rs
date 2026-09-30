@@ -57,7 +57,7 @@ internal static class ApiTestClient
     {
         var httpClient = new HttpClient(new StubHttpMessageHandler(handler))
         {
-            BaseAddress = new Uri("http://127.0.0.1:9080/api/chatos/"),
+            BaseAddress = new Uri("http://127.0.0.1:9080/"),
         };
         return new ChatOSApiClient(httpClient, tokenStore);
     }

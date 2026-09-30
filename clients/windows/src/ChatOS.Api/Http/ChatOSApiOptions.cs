@@ -6,5 +6,5 @@ public sealed class ChatOSApiOptions
 
     public string BaseUrl { get; set; } =
         Environment.GetEnvironmentVariable("CHATOS_API_BASE_URL")
-        ?? "http://127.0.0.1:9080/api/chatos/";
+        ?? "http://127.0.0.1:9080/";
 }

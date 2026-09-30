@@ -7,7 +7,7 @@ param(
     [string]$Platform = "x64",
 
     [ValidatePattern("^https?://")]
-    [string]$ApiBaseUrl = "https://gateway.jgoool.com/api/chatos",
+    [string]$ApiBaseUrl = "https://gateway.jgoool.com",
 
     [ValidatePattern("^https?://")]
     [string]$LocalConnectorCloudBaseUrl = "https://local-connector.jgoool.com",
@@ -40,19 +40,19 @@ if (-not ($sdkVersions | Where-Object { $_ -match '^8\.' })) {
 
 $normalizedApiBaseUrl = $ApiBaseUrl.TrimEnd('/')
 $normalizedConnectorBaseUrl = $LocalConnectorCloudBaseUrl.TrimEnd('/')
-$healthUrl = "$normalizedApiBaseUrl/health"
+$healthUrl = "$normalizedApiBaseUrl/api/user/health"
 $connectorHealthUrl = "$normalizedConnectorBaseUrl/api/health"
 
-Write-Host "Checking ChatOS server: $healthUrl"
+Write-Host "Checking User Service gateway: $healthUrl"
 try {
     $healthResponse = Invoke-WebRequest -Uri $healthUrl -Method Get -TimeoutSec 15 -UseBasicParsing
 }
 catch {
-    throw "ChatOS server health check failed: $($_.Exception.GetType().Name)"
+    throw "User Service gateway health check failed: $($_.Exception.GetType().Name)"
 }
 
 if ($healthResponse.StatusCode -ne 200) {
-    throw "ChatOS server is not healthy. HTTP status: $($healthResponse.StatusCode)"
+    throw "User Service gateway is not healthy. HTTP status: $($healthResponse.StatusCode)"
 }
 
 Write-Host "Checking Local Connector service: $connectorHealthUrl"

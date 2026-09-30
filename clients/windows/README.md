@@ -42,10 +42,10 @@ docs                  实施方案与能力矩阵
 
 打包脚本会生成所需的 Windows 图标资源，并在没有真实 MSIX/AppX 输出时直接失败。发布证书不会写入仓库；正式发布时由受控 CI 或本机证书存储完成签名。
 
-默认 API 地址是 `http://127.0.0.1:9080/api/chatos`，可通过环境变量覆盖：
+默认 API 网关地址是 `http://127.0.0.1:9080`，可通过环境变量覆盖：
 
 ```powershell
-$env:CHATOS_API_BASE_URL = "https://example.com/api/chatos"
+$env:CHATOS_API_BASE_URL = "https://example.com"
 ```
 
 ## 一键安装到 Windows 本机
@@ -119,7 +119,7 @@ clients\windows\BundleArtifacts\installer-x64\ChatOS-Setup-x64.exe
 
 # 连接指定测试环境
 .\scripts\package-client.cmd `
-  -ApiBaseUrl "http://127.0.0.1:9080/api/chatos" `
+  -ApiBaseUrl "http://127.0.0.1:9080" `
   -LocalConnectorCloudBaseUrl "http://127.0.0.1:39230"
 ```
 
@@ -156,7 +156,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 默认连接：
 
-- API：`https://gateway.jgoool.com/api/chatos`
+- API 网关：`https://gateway.jgoool.com`
 - Local Connector 云端入口：`https://local-connector.jgoool.com`
 
 如需连接其他环境，可使用 `-ApiBaseUrl` 和 `-LocalConnectorCloudBaseUrl` 覆盖。
