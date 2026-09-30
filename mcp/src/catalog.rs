@@ -37,7 +37,7 @@ impl SystemMcpDescriptor {
     }
 }
 
-const LOCAL_CONNECTOR_HOST: &[SystemMcpHost] = &[SystemMcpHost::LocalConnector];
+const LOCAL_AGENT_HOST: &[SystemMcpHost] = &[SystemMcpHost::LocalAgentHost];
 
 macro_rules! embedded_descriptor {
     ($key:ident, $resource_id:expr, $server_name:expr, $display_name:expr, $description:expr, $allow_writes:expr, $owner:expr, $hosts:expr, $kind:ident) => {
@@ -67,7 +67,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         "Read-only code inspection and search tools.",
         false,
         "shared",
-        LOCAL_CONNECTOR_HOST,
+        LOCAL_AGENT_HOST,
         CodeMaintainerRead
     ),
     embedded_descriptor!(
@@ -78,7 +78,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         "Code editing and patch application tools.",
         true,
         "shared",
-        LOCAL_CONNECTOR_HOST,
+        LOCAL_AGENT_HOST,
         CodeMaintainerWrite
     ),
     embedded_descriptor!(
@@ -89,7 +89,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         "Managed terminal execution and process lifecycle tools.",
         true,
         "shared",
-        LOCAL_CONNECTOR_HOST,
+        LOCAL_AGENT_HOST,
         TerminalController
     ),
     SystemMcpDescriptor {
@@ -103,7 +103,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         category: Some("builtin"),
         owner_service: "local_connector_client",
         backend: SystemMcpBackend::HostAdapter,
-        implementation_hosts: LOCAL_CONNECTOR_HOST,
+        implementation_hosts: LOCAL_AGENT_HOST,
         embedded_kind: Some(BuiltinMcpKind::RequirementSurveyRead),
     },
     SystemMcpDescriptor {
@@ -117,7 +117,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         category: Some("builtin"),
         owner_service: "local_connector_client",
         backend: SystemMcpBackend::HostAdapter,
-        implementation_hosts: LOCAL_CONNECTOR_HOST,
+        implementation_hosts: LOCAL_AGENT_HOST,
         embedded_kind: Some(BuiltinMcpKind::RequirementSurveyWrite),
     },
     SystemMcpDescriptor {
@@ -131,7 +131,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         category: Some("builtin"),
         owner_service: "local_agent_host",
         backend: SystemMcpBackend::Embedded,
-        implementation_hosts: LOCAL_CONNECTOR_HOST,
+        implementation_hosts: LOCAL_AGENT_HOST,
         embedded_kind: Some(BuiltinMcpKind::Notepad),
     },
     SystemMcpDescriptor {
@@ -145,7 +145,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         category: Some("builtin"),
         owner_service: "local_agent_host",
         backend: SystemMcpBackend::Embedded,
-        implementation_hosts: LOCAL_CONNECTOR_HOST,
+        implementation_hosts: LOCAL_AGENT_HOST,
         embedded_kind: Some(BuiltinMcpKind::AgentBuilder),
     },
     embedded_descriptor!(
@@ -156,7 +156,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         "Structured user clarification and decision tools.",
         true,
         "shared",
-        LOCAL_CONNECTOR_HOST,
+        LOCAL_AGENT_HOST,
         AskUser
     ),
     SystemMcpDescriptor {
@@ -170,7 +170,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         category: Some("builtin"),
         owner_service: "local_connector_client",
         backend: SystemMcpBackend::HostAdapter,
-        implementation_hosts: LOCAL_CONNECTOR_HOST,
+        implementation_hosts: LOCAL_AGENT_HOST,
         embedded_kind: Some(BuiltinMcpKind::RemoteConnectionController),
     },
     embedded_descriptor!(
@@ -181,7 +181,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         "Read agent skills from memory context.",
         false,
         "local_agent_host",
-        LOCAL_CONNECTOR_HOST,
+        LOCAL_AGENT_HOST,
         MemorySkillReader
     ),
     embedded_descriptor!(
@@ -192,7 +192,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         "Read agent commands from memory context.",
         false,
         "local_agent_host",
-        LOCAL_CONNECTOR_HOST,
+        LOCAL_AGENT_HOST,
         MemoryCommandReader
     ),
     embedded_descriptor!(
@@ -203,7 +203,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         "Read agent plugins from memory context.",
         false,
         "local_agent_host",
-        LOCAL_CONNECTOR_HOST,
+        LOCAL_AGENT_HOST,
         MemoryPluginReader
     ),
     SystemMcpDescriptor {
@@ -217,7 +217,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         category: Some("local_connector"),
         owner_service: "local_connector_client",
         backend: SystemMcpBackend::HostAdapter,
-        implementation_hosts: LOCAL_CONNECTOR_HOST,
+        implementation_hosts: LOCAL_AGENT_HOST,
         embedded_kind: None,
     },
 ];
@@ -338,11 +338,10 @@ mod tests {
     }
 
     #[test]
-    fn terminal_controller_executes_only_in_local_connector() {
+    fn terminal_controller_executes_only_in_local_agent_host() {
         let descriptor = system_mcp_descriptor(SystemMcpKey::TerminalController);
 
-        assert!(!descriptor.supports_implementation_host(SystemMcpHost::Chatos));
-        assert!(descriptor.supports_implementation_host(SystemMcpHost::LocalConnector));
+        assert!(descriptor.supports_implementation_host(SystemMcpHost::LocalAgentHost));
     }
 
     #[test]
@@ -352,7 +351,7 @@ mod tests {
         assert_eq!(descriptor.owner_service, "local_agent_host");
         assert_eq!(descriptor.backend, SystemMcpBackend::Embedded);
         assert_eq!(descriptor.embedded_kind, Some(BuiltinMcpKind::Notepad));
-        assert!(descriptor.supports_implementation_host(SystemMcpHost::LocalConnector));
+        assert!(descriptor.supports_implementation_host(SystemMcpHost::LocalAgentHost));
     }
 
     #[test]
@@ -362,7 +361,7 @@ mod tests {
         assert_eq!(descriptor.owner_service, "local_agent_host");
         assert_eq!(descriptor.backend, SystemMcpBackend::Embedded);
         assert_eq!(descriptor.embedded_kind, Some(BuiltinMcpKind::AgentBuilder));
-        assert!(descriptor.supports_implementation_host(SystemMcpHost::LocalConnector));
+        assert!(descriptor.supports_implementation_host(SystemMcpHost::LocalAgentHost));
     }
 
     #[test]

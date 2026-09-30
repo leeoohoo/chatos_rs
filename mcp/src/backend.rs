@@ -4,12 +4,10 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SystemMcpBackend {
     Embedded,
-    ServiceHttp,
     HostAdapter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SystemMcpHost {
-    Chatos,
-    LocalConnector,
+    LocalAgentHost,
 }
