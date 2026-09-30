@@ -1,6 +1,6 @@
 ---
 name: chatos-async-task-orchestration
-description: Arrange durable background work through the bound Task Runner tools, including finding related history, creating scoped tasks with minimal capabilities, cancelling obsolete work, and handing off once. Use when work must continue against real project or external resources beyond the current response.
+description: Arrange durable background work through the bound local task execution tools, including finding related history, creating scoped tasks with minimal capabilities, cancelling obsolete work, and handing off once. Use when work must continue against real project or external resources beyond the current response.
 ---
 
 # Asynchronous task orchestration

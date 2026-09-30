@@ -50,7 +50,7 @@ public struct TurnProcessEvent: Identifiable, Codable, Sendable, Equatable {
     }
 }
 
-public struct TaskRunnerCallbackReference: Codable, Sendable, Equatable {
+public struct TaskExecutionCallbackReference: Codable, Sendable, Equatable {
     public var taskID: String
     public var runID: String?
     public var event: String?
@@ -81,11 +81,11 @@ public struct TaskRunnerCallbackReference: Codable, Sendable, Equatable {
 public struct ConversationAssistantReply: Identifiable, Codable, Sendable, Equatable {
     public var id: String { message.id }
     public var message: ChatMessage
-    public var taskCallback: TaskRunnerCallbackReference?
+    public var taskCallback: TaskExecutionCallbackReference?
 
     public init(
         message: ChatMessage,
-        taskCallback: TaskRunnerCallbackReference? = nil
+        taskCallback: TaskExecutionCallbackReference? = nil
     ) {
         self.message = message
         self.taskCallback = taskCallback

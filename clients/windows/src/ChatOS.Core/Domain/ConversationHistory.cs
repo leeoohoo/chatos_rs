@@ -29,7 +29,7 @@ public sealed record TurnProcessEvent(
     string? Detail,
     TurnStatus Status);
 
-public sealed record TaskRunnerCallbackReference(
+public sealed record TaskExecutionCallbackReference(
     string TaskId,
     string? RunId,
     string? Event,
@@ -40,7 +40,7 @@ public sealed record TaskRunnerCallbackReference(
 
 public sealed record ConversationAssistantReply(
     ChatMessage Message,
-    TaskRunnerCallbackReference? TaskCallback);
+    TaskExecutionCallbackReference? TaskCallback);
 
 public sealed record MessageTaskLookup(
     string ConversationId,

@@ -89,7 +89,7 @@ public enum PetActivityRecoveryMapper {
             return lhs.startedAt < rhs.startedAt
         }
         var activities: [PetActivity] = []
-        var latestCallbacks: [String: (ConversationTurn, ConversationAssistantReply, TaskRunnerCallbackReference)] = [:]
+        var latestCallbacks: [String: (ConversationTurn, ConversationAssistantReply, TaskExecutionCallbackReference)] = [:]
 
         for turn in orderedTurns {
             for reply in turn.assistantReplies {
@@ -111,8 +111,8 @@ public enum PetActivityRecoveryMapper {
             }
             turnsWithSpecificActivity.insert(turn.id)
             activities.append(PetActivity(
-                id: "task-runner:\(callback.taskID)",
-                source: .taskRunner,
+                id: "task-execution:\(callback.taskID)",
+                source: .taskExecution,
                 kind: mapping.kind,
                 title: mapping.title,
                 route: PetActivityRoute(
@@ -150,7 +150,7 @@ public enum PetActivityRecoveryMapper {
     }
 
     private static func taskMapping(
-        _ callback: TaskRunnerCallbackReference,
+        _ callback: TaskExecutionCallbackReference,
         date: Date,
         now: Date
     ) -> (kind: PetActivityKind, title: String, expiresAt: Date?)? {

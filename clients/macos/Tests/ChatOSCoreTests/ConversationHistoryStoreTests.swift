@@ -450,7 +450,7 @@ final class ConversationHistoryStoreTests: XCTestCase {
                     text: "任务已完成",
                     createdAt: Date(timeIntervalSince1970: 2)
                 ),
-                taskCallback: TaskRunnerCallbackReference(
+                taskCallback: TaskExecutionCallbackReference(
                     taskID: "task-1",
                     runID: "run-1",
                     event: "task.completed",

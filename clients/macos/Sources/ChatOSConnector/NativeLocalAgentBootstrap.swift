@@ -124,7 +124,7 @@ extension NativeLocalConnectorService {
             profileKey: "task_execution",
             capabilityPolicyRevision: capability.capabilityPolicyRevision,
             instructions: "Complete the durable local task objective and return a concrete result. Use the local project tools to inspect the bound project. For changes, open an edit session, stage a bounded batch with the read SHA-256 (or null only for a proven-new file), and commit it; the client requests approval before the commit reaches disk. Use execute_command only when project inspection or verification requires it; commands run locally inside the bound project and require approval. For background commands, wait for completion or terminate them before finishing. Requirement surveys are project-bound local records: inspect existing surveys before creating or resolving one, and activate/read the survey skill resources when their detailed contract is needed. Use capability_search only when the task needs an installed Plugin, then describe its opaque option, activate every required Skill, and invoke only a returned tool option. Plugin discovery and execution are account-, project-, and Run-scoped on this client. Do not create nested tasks.",
-            tools: NativeLocalAgentPlatformToolCatalog.taskRunnerCapabilityTools
+            tools: NativeLocalAgentPlatformToolCatalog.taskExecutionCapabilityTools
         ))
         return .init(
             modelSnapshots: snapshots,

@@ -56,7 +56,7 @@ public sealed class WindowsLocalAgentPetActivityService : IPetActivityInboxServi
     {
         var source = run.ProfileKey == "main_chat"
             ? PetActivitySource.Chat
-            : PetActivitySource.TaskRunner;
+            : PetActivitySource.TaskExecution;
         var conversationId = String(run.Input, "conversation_id")
             ?? String(run.Input, "source_conversation_id");
         var turnId = String(run.Input, "turn_id")

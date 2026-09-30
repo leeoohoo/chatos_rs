@@ -92,7 +92,7 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
     }
 
     private static func activity(_ run: LocalAgentRunRecord) -> PetActivity {
-        let source: PetActivitySource = run.profileKey == "main_chat" ? .chat : .taskRunner
+        let source: PetActivitySource = run.profileKey == "main_chat" ? .chat : .taskExecution
         let conversationID = string("conversation_id", in: run.input)
             ?? string("source_conversation_id", in: run.input)
         let turnID = string("turn_id", in: run.input)

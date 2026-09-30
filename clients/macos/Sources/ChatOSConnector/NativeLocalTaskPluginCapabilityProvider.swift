@@ -12,7 +12,7 @@ struct NativeAgentPluginExecutionPresentation: Sendable {
         approvalReasonPrefix: "本地群聊 Agent 请求执行 Plugin 操作",
         taskTitlePrefix: "Agent 群聊"
     )
-    static let localTaskRunner = Self(
+    static let localTaskExecution = Self(
         approvalSource: "local_agent_task_execution",
         approvalReasonPrefix: "本地任务请求执行 Plugin 操作",
         taskTitlePrefix: "本地任务"
@@ -20,7 +20,7 @@ struct NativeAgentPluginExecutionPresentation: Sendable {
 }
 
 extension NativeLocalConnectorService {
-    func makeTaskRunnerCapabilityToolProvider(
+    func makeTaskExecutionCapabilityToolProvider(
         ownerUserID: String,
         runID: String,
         conversationID: String,
@@ -37,7 +37,7 @@ extension NativeLocalConnectorService {
             ownerUserID: ownerUserID,
             projectID: projectID,
             roomID: conversationID,
-            agentID: "local-task-runner",
+            agentID: "local-task-execution",
             deliveryID: runID,
             triggerMessageID: runID,
             rootMessageID: runID,
@@ -53,7 +53,7 @@ extension NativeLocalConnectorService {
             resolvedProject: try resolveProjectPath(projectRoot),
             builtinCapabilities: [],
             installedPlugins: try installedAgentPlugins(ownerUserID: ownerUserID),
-            executionPresentation: .localTaskRunner
+            executionPresentation: .localTaskExecution
         )
     }
 }

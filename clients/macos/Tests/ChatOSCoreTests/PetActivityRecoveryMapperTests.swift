@@ -15,7 +15,7 @@ struct PetActivityRecoveryMapperTests {
                     text: "任务开始",
                     createdAt: now.addingTimeInterval(-10)
                 ),
-                taskCallback: TaskRunnerCallbackReference(
+                taskCallback: TaskExecutionCallbackReference(
                     taskID: "task-1",
                     runID: "run-1",
                     event: "task.run.started",
@@ -52,7 +52,7 @@ struct PetActivityRecoveryMapperTests {
                     text: "任务仍在执行",
                     createdAt: now.addingTimeInterval(-3_500)
                 ),
-                taskCallback: TaskRunnerCallbackReference(
+                taskCallback: TaskExecutionCallbackReference(
                     taskID: "task-long-running",
                     runID: "run-long-running",
                     event: "task.run.started",
@@ -78,8 +78,8 @@ struct PetActivityRecoveryMapperTests {
     func authoritativeCancelledTaskRemovesStaleRunningCallback() {
         let now = Date()
         let staleActivity = PetActivity(
-            id: "task-runner:task-1",
-            source: .taskRunner,
+            id: "task-execution:task-1",
+            source: .taskExecution,
             kind: .working,
             title: "任务正在执行",
             route: PetActivityRoute(messageID: "message-1", taskID: "task-1"),
@@ -105,8 +105,8 @@ struct PetActivityRecoveryMapperTests {
     func authoritativeTaskStatusAndTitleOverrideRunLogStatus() throws {
         let now = Date()
         let staleActivity = PetActivity(
-            id: "task-runner:task-1",
-            source: .taskRunner,
+            id: "task-execution:task-1",
+            source: .taskExecution,
             kind: .cancelled,
             title: "旧状态",
             route: PetActivityRoute(messageID: "message-1", taskID: "task-1"),
@@ -136,8 +136,8 @@ struct PetActivityRecoveryMapperTests {
     func recentLegacyCompletionBridgesInboxDeliveryWithoutBecomingPermanent() throws {
         let now = Date()
         let runningActivity = PetActivity(
-            id: "task-runner:task-1",
-            source: .taskRunner,
+            id: "task-execution:task-1",
+            source: .taskExecution,
             kind: .working,
             title: "任务正在执行",
             route: PetActivityRoute(messageID: "message-1", taskID: "task-1"),
@@ -166,8 +166,8 @@ struct PetActivityRecoveryMapperTests {
     func oldLegacyCompletionIsNotResurrectedAsUnreadPetWork() {
         let now = Date()
         let runningActivity = PetActivity(
-            id: "task-runner:task-old",
-            source: .taskRunner,
+            id: "task-execution:task-old",
+            source: .taskExecution,
             kind: .working,
             title: "旧任务",
             route: PetActivityRoute(messageID: "message-old", taskID: "task-old"),

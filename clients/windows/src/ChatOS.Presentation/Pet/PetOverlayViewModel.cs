@@ -485,7 +485,7 @@ public sealed partial class PetActivityItemViewModel : ObservableObject
             PetActivitySource.AskUserPrompt => "Ask User",
             PetActivitySource.Chat => localization.Text("聊天", "Chat"),
             PetActivitySource.TaskBoard => localization.Text("任务", "Task"),
-            PetActivitySource.TaskRunner => localization.Text("任务执行", "Task run"),
+            PetActivitySource.TaskExecution => localization.Text("任务执行", "Task run"),
             _ => Activity.Source.ToString(),
         };
         TimeLabel = Activity.UpdatedAt.ToLocalTime().ToString("MM-dd HH:mm");

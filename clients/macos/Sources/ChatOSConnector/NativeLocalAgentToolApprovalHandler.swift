@@ -27,7 +27,7 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
         let pending = try await client.pendingApprovals(ownerUserID: ownerUserID)
         guard let invocation = pending.first(where: {
             NativeMCPCodeWriteStore.toolNames.contains($0.toolName)
-                || NativeLocalAgentPlatformToolCatalog.taskRunnerTerminalToolNames.contains(
+                || NativeLocalAgentPlatformToolCatalog.taskExecutionTerminalToolNames.contains(
                     $0.toolName
                 )
                 || NativeMCPRequirementSurveyTools.writeToolNames.contains($0.toolName)

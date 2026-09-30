@@ -413,7 +413,7 @@ enum PetOverlaySizing {
         let completedTaskCount = scope == .primary
             ? store.activities.filter {
                 $0.kind == .succeeded
-                    && ($0.source == .taskRunner || $0.source == .taskBoard)
+                    && ($0.source == .taskExecution || $0.source == .taskBoard)
             }.count
             : 0
         let height: CGFloat

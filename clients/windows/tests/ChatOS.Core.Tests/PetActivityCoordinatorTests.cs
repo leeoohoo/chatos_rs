@@ -75,8 +75,8 @@ public sealed class PetActivityCoordinatorTests
     }
 
     private static PetActivity Activity(string version) => new(
-        "task-runner:task-1",
-        PetActivitySource.TaskRunner,
+        "task-execution:task-1",
+        PetActivitySource.TaskExecution,
         PetActivityKind.Blocked,
         "任务被阻塞",
         route: new PetActivityRoute(TaskId: "task-1", RunId: version),

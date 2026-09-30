@@ -225,7 +225,7 @@ final class PetOverlayCoordinator {
             .askUserPrompt,
             .chat,
             .taskBoard,
-            .taskRunner,
+            .taskExecution,
         ]
         let expectedVersions = store.versions(for: sources)
         recoveryTask = Task { [weak self, weak model] in

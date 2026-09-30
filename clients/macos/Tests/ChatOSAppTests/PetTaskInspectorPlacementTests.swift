@@ -154,7 +154,7 @@ struct PetActivityPanelScopeTests {
     func separatesRunningWorkFromMessages() {
         let running = PetActivity(
             id: "running",
-            source: .taskRunner,
+            source: .taskExecution,
             kind: .working,
             title: "正在执行"
         )

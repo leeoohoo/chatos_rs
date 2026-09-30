@@ -145,7 +145,7 @@ struct MessageTaskInspectorView: View {
             ContentUnavailableView(
                 "暂无运行记录",
                 systemImage: "play.slash",
-                description: Text("该任务节点尚未产生 Task Runner Run。")
+                description: Text("该任务节点尚未产生本地执行 Run。")
             )
         } else {
             Button("加载运行详情", systemImage: "arrow.down.circle") {
@@ -159,7 +159,7 @@ struct MessageTaskInspectorView: View {
             Label("处理阻塞", systemImage: "exclamationmark.triangle")
                 .appFont(.subheadline.weight(.semibold))
                 .foregroundStyle(.orange)
-            Text("补充本次重试需要遵循的说明；提交后会调用原 Rust 后端的 Task Runner 重试接口。")
+            Text("补充本次重试需要遵循的说明；提交后会由本地 Local Agent Host 重试该任务。")
                 .appFont(.caption)
                 .foregroundStyle(.secondary)
             TextEditor(text: $viewModel.retryInstruction)

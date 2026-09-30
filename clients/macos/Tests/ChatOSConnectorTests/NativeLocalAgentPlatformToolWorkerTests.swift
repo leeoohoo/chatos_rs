@@ -27,7 +27,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             ]
         )
         XCTAssertEqual(
-            NativeLocalAgentPlatformToolCatalog.taskRunnerToolNames,
+            NativeLocalAgentPlatformToolCatalog.taskExecutionToolNames,
             Set([
                 "read_file_raw", "read_file_range", "list_dir", "search_text", "read_file",
                 "search_files", "open_edit_session", "stage_edit_batch",
@@ -51,7 +51,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         )
     }
 
-    func testExecutorDispatchesTaskRunnerProjectTool() async throws {
+    func testExecutorDispatchesTaskExecutionProjectTool() async throws {
         let projectExecutor = RecordingProjectToolExecutor()
         let executor = NativeLocalAgentPlatformToolExecutor(
             host: PlatformToolHostStub(mode: .idle),

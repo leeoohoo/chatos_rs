@@ -71,7 +71,7 @@ actor NativeLocalAgentPluginToolExecutor {
             }
             return session.provider
         }
-        let provider = try await connector.makeTaskRunnerCapabilityToolProvider(
+        let provider = try await connector.makeTaskExecutionCapabilityToolProvider(
             ownerUserID: ownerUserID,
             runID: runID,
             conversationID: context.conversationID,

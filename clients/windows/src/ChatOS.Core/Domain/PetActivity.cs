@@ -6,7 +6,7 @@ public enum PetActivitySource
     AskUserPrompt,
     Chat,
     TaskBoard,
-    TaskRunner,
+    TaskExecution,
 }
 
 public enum PetActivityKind

@@ -18,7 +18,7 @@ final class NativeLocalAgentPetActivityServiceTests: XCTestCase {
         XCTAssertEqual(chat.route.runID, "run-chat")
         XCTAssertEqual(chat.route.promptID, "local-ask:run-chat")
 
-        let task = try XCTUnwrap(activities.first(where: { $0.source == .taskRunner }))
+        let task = try XCTUnwrap(activities.first(where: { $0.source == .taskExecution }))
         XCTAssertEqual(task.kind, .failed)
         XCTAssertEqual(task.route.taskID, "task-1")
         XCTAssertEqual(task.detail, "build failed")

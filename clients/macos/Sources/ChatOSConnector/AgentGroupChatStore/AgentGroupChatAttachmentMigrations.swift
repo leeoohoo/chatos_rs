@@ -290,7 +290,7 @@ extension AgentGroupChatMigrations {
             )
         }
         if !hasMigration(31) {
-            // Requirement Survey capability is task-scoped. Task Runner runs do not have local
+            // Requirement Survey capability is task-scoped. Local task execution runs do not have local
             // Agent profile or delivery rows, so provenance remains text without those FKs.
             // There was no released survey data; replace the preview table directly.
             try execute("DROP INDEX IF EXISTS local_agent_requirement_surveys_project")

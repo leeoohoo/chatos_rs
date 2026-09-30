@@ -132,7 +132,7 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
         let userMessage = ChatMessage(id: "user-1", role: .user, text: "执行", createdAt: now)
         let reply = ConversationAssistantReply(
             message: ChatMessage(id: "reply-1", role: .assistant, text: "完成", createdAt: now),
-            taskCallback: TaskRunnerCallbackReference(
+            taskCallback: TaskExecutionCallbackReference(
                 taskID: "task-1",
                 runID: "run-1",
                 sourceSessionID: "session-1",

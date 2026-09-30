@@ -104,7 +104,7 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
         ownerUserID: String,
         invocation: LocalAgentToolInvocationRecord
     ) async throws -> LocalAgentJSONValue {
-        guard NativeLocalAgentPlatformToolCatalog.taskRunnerToolNames.contains(
+        guard NativeLocalAgentPlatformToolCatalog.taskExecutionToolNames.contains(
             invocation.toolName
         ), case let .object(arguments) = invocation.arguments else {
             throw NativeLocalAgentPlatformToolError.invalidArguments
@@ -146,7 +146,7 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                     ),
                     projectRoot: context.resolvedPath.absoluteURL
                 )
-            } else if NativeLocalAgentPlatformToolCatalog.taskRunnerRequirementSurveyToolNames
+            } else if NativeLocalAgentPlatformToolCatalog.taskExecutionRequirementSurveyToolNames
                 .contains(invocation.toolName) {
                 if NativeMCPRequirementSurveyTools.writeToolNames.contains(invocation.toolName) {
                     guard invocation.requiresApproval,
@@ -159,11 +159,11 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                     store: store,
                     ownerUserID: ownerUserID,
                     projectID: context.projectID,
-                    creatorAgentID: "local-task-runner",
+                    creatorAgentID: "local-task-execution",
                     sourceDeliveryID: invocation.runID,
                     now: { Int64(Date().timeIntervalSince1970 * 1_000) }
                 ).call(name: invocation.toolName, arguments: nativeArguments)
-            } else if NativeLocalAgentPlatformToolCatalog.taskRunnerTerminalToolNames.contains(
+            } else if NativeLocalAgentPlatformToolCatalog.taskExecutionTerminalToolNames.contains(
                 invocation.toolName
             ) {
                 result = try await executeTerminal(

@@ -3109,16 +3109,16 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         )
         XCTAssertEqual(pendingSurveys.count, 1)
 
-        let taskRunnerSurvey = try await store.createRequirementSurvey(
+        let taskExecutionSurvey = try await store.createRequirementSurvey(
             ownerUserID: "alice",
             projectID: room.projectID,
-            creatorAgentID: "task-runner",
+            creatorAgentID: "task-execution",
             sourceDeliveryID: "task-run-1",
-            requestKey: "task-runner-survey",
+            requestKey: "task-execution-survey",
             draft: draft,
             nowUnixMs: 103
         )
-        XCTAssertEqual(taskRunnerSurvey.creatorAgentID, "task-runner")
+        XCTAssertEqual(taskExecutionSurvey.creatorAgentID, "task-execution")
 
         do {
             _ = try await store.submitRequirementSurvey(

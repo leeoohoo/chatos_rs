@@ -152,7 +152,7 @@ struct MessageTaskWorkspaceSheet: View {
                 ContentUnavailableView(
                     "当前消息没有任务图",
                     systemImage: "point.3.connected.trianglepath.dotted",
-                    description: Text("AI 尚未通过 Task Runner MCP 为这条消息创建任务节点。")
+                    description: Text("AI 尚未通过本地任务工具为这条消息创建任务节点。")
                 )
             }
         }

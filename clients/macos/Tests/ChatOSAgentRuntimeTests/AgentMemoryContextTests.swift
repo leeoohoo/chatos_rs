@@ -104,7 +104,7 @@ final class AgentMemoryContextTests: XCTestCase {
         XCTAssertEqual(stored[3].message.content, "result-for-call-1")
     }
 
-    func testComposeUsesBlocksRecentRecordsAndStickyTaskLikeTaskRunner() throws {
+    func testComposeUsesBlocksRecentRecordsAndStickyTaskLikeTaskExecution() throws {
         var (checkpoint, scope) = try fixture()
         checkpoint.messages += [
             .init(role: .assistant, toolCalls: [.init(id: "a", name: "read", arguments: "{}"), .init(id: "b", name: "read", arguments: "{}")]),

@@ -16,11 +16,11 @@ public enum NativeLocalAgentPlatformToolCatalog {
         NativeMCPRequirementSurveyTools.readToolNames.sorted()
     private static let pluginReadOnlyToolNames =
         NativeAgentCapabilityBrokerToolCatalog.readOnlyToolNames.sorted()
-    static let taskRunnerTerminalToolNames: Set<String> = [
+    static let taskExecutionTerminalToolNames: Set<String> = [
         "execute_command", "process_poll", "process_log", "process_wait", "process_write",
         "process_kill",
     ]
-    static let taskRunnerRequirementSurveyToolNames =
+    static let taskExecutionRequirementSurveyToolNames =
         NativeMCPRequirementSurveyTools.readToolNames
             .union(NativeMCPRequirementSurveyTools.writeToolNames)
     public static let readOnlyToolNames = [attachmentReadToolName]
@@ -120,7 +120,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
         ]),
     ]
 
-    public static let taskRunnerCapabilityTools: [LocalAgentJSONValue] =
+    public static let taskExecutionCapabilityTools: [LocalAgentJSONValue] =
         NativeMCPCodeReadTools.toolDefinitions.compactMap { value in
             guard case let .object(tool) = value,
                   case let .string(name)? = tool["name"],
@@ -131,15 +131,15 @@ public enum NativeLocalAgentPlatformToolCatalog {
         + NativeMCPTerminalStore.toolDefinitions.compactMap { value in
             guard case let .object(tool) = value,
                   case let .string(name)? = tool["name"],
-                  taskRunnerTerminalToolNames.contains(name) else { return nil }
+                  taskExecutionTerminalToolNames.contains(name) else { return nil }
             return capabilityTool(value)
         }
         + NativeMCPRequirementSurveyTools.readToolDefinitions.map(capabilityTool)
         + NativeMCPRequirementSurveyTools.writeToolDefinitions.map(capabilityTool)
         + NativeAgentCapabilityBrokerToolCatalog.localAgentCapabilityTools
 
-    static var taskRunnerToolNames: Set<String> {
-        Set(taskRunnerCapabilityTools.compactMap { value in
+    static var taskExecutionToolNames: Set<String> {
+        Set(taskExecutionCapabilityTools.compactMap { value in
             guard case let .object(tool) = value,
                   case let .string(name)? = tool["name"] else { return nil }
             return name
@@ -197,7 +197,7 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
         ownerUserID: String,
         invocation: LocalAgentToolInvocationRecord
     ) async throws -> LocalAgentJSONValue {
-        if NativeLocalAgentPlatformToolCatalog.taskRunnerToolNames.contains(invocation.toolName) {
+        if NativeLocalAgentPlatformToolCatalog.taskExecutionToolNames.contains(invocation.toolName) {
             guard let projectTools else {
                 throw NativeLocalAgentPlatformToolError.projectUnavailable
             }

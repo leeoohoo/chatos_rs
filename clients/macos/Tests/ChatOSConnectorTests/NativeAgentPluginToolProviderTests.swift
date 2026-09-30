@@ -519,7 +519,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         XCTAssertFalse(observed.isError)
         XCTAssertTrue(observed.content.contains("process_count"))
 
-        let taskBroker = try await service.makeTaskRunnerCapabilityToolProvider(
+        let taskBroker = try await service.makeTaskExecutionCapabilityToolProvider(
             ownerUserID: "alice",
             runID: "task-run-1",
             conversationID: "conversation-1",

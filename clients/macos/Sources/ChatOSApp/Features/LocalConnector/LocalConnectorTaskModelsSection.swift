@@ -8,7 +8,7 @@ struct LocalConnectorTaskModelsSection: View {
 
     var body: some View {
         LocalConnectorCard(
-            appModel.localized("Task Runner 模型", english: "Task Runner Models"),
+            appModel.localized("本地任务执行模型", english: "Local Task Execution Models"),
             subtitle: appModel.localized(
                 "每个模型分别配置任务用途、默认 Thinking、Temperature 与最大输出长度。",
                 english: "Configure task usage, default thinking, temperature, and maximum output for each model."

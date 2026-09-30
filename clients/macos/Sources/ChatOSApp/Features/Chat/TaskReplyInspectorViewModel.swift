@@ -188,7 +188,7 @@ final class TaskReplyInspectorViewModel: ObservableObject {
 
     private func loadLatestRun(
         for loadedTask: MessageTask,
-        callback: TaskRunnerCallbackReference,
+        callback: TaskExecutionCallbackReference,
         selection: TaskReplySelection,
         generation: Int
     ) async {
@@ -214,7 +214,7 @@ final class TaskReplyInspectorViewModel: ObservableObject {
     }
 
     private func fetchTask(
-        callback: TaskRunnerCallbackReference,
+        callback: TaskExecutionCallbackReference,
         selection: TaskReplySelection
     ) async throws -> MessageTask {
         try await service.fetchTask(
@@ -252,7 +252,7 @@ final class TaskReplyInspectorViewModel: ObservableObject {
     }
 
     private func lookup(
-        _ callback: TaskRunnerCallbackReference,
+        _ callback: TaskExecutionCallbackReference,
         selection: TaskReplySelection
     ) -> MessageTaskLookup {
         MessageTaskLookup(

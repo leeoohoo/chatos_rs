@@ -249,7 +249,7 @@ final class PetOverlayStore: ObservableObject {
         .askUserPrompt,
         .chat,
         .taskBoard,
-        .taskRunner,
+        .taskExecution,
     ]
 
     private static func source(forActivityID id: String) -> PetActivitySource? {
@@ -259,7 +259,7 @@ final class PetOverlayStore: ObservableObject {
         }
         if id.hasPrefix("chat:") { return .chat }
         if id.hasPrefix("task-review:") || id.hasPrefix("task-board:") { return .taskBoard }
-        if id.hasPrefix("task-runner:") { return .taskRunner }
+        if id.hasPrefix("task-execution:") { return .taskExecution }
         return nil
     }
 

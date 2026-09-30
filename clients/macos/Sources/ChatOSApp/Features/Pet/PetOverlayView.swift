@@ -743,7 +743,7 @@ struct PetMessageView: View {
         store.activities.filter {
             $0.id != activityID
                 && $0.kind == .succeeded
-                && ($0.source == .taskRunner || $0.source == .taskBoard)
+                && ($0.source == .taskExecution || $0.source == .taskBoard)
         }
     }
 

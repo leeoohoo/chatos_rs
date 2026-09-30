@@ -22,7 +22,7 @@ extension SQLiteAgentGroupChatStore {
         return try transaction {
             // Identity, project and write authority are fixed by the task capability runtime.
             // This store deliberately does not reintroduce Agent-profession or profile-Skill
-            // authorization; it also accepts Task Runner provenance without an Agent/Delivery row.
+            // authorization; it also accepts local task execution provenance without an Agent/Delivery row.
             if let existing = try AgentRequirementSurveyRepository.findByRequest(
                 database,
                 ownerUserID: ownerUserID,

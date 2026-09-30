@@ -163,7 +163,7 @@ public sealed class PetOverlayViewModelTests
         string title,
         PetActivityRoute? route = null) => new(
             id,
-            kind == PetActivityKind.WaitingForUser ? PetActivitySource.AskUserPrompt : PetActivitySource.TaskRunner,
+            kind == PetActivityKind.WaitingForUser ? PetActivitySource.AskUserPrompt : PetActivitySource.TaskExecution,
             kind,
             title,
             $"Details for {title}",

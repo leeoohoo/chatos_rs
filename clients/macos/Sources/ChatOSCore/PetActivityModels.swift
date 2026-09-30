@@ -5,7 +5,7 @@ public enum PetActivitySource: String, Sendable, Equatable, Codable {
     case askUserPrompt
     case chat
     case taskBoard
-    case taskRunner
+    case taskExecution
 }
 
 public enum PetActivityKind: String, Sendable, Equatable, Codable {

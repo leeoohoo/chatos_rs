@@ -10,7 +10,7 @@ public sealed class PetActivityCoordinator
         PetActivitySource.AskUserPrompt,
         PetActivitySource.Chat,
         PetActivitySource.TaskBoard,
-        PetActivitySource.TaskRunner,
+        PetActivitySource.TaskExecution,
     ];
 
     private readonly IPetActivityInboxService _inboxService;

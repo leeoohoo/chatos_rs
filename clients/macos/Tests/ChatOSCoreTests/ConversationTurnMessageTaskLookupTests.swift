@@ -25,7 +25,7 @@ final class ConversationTurnMessageTaskLookupTests: XCTestCase {
         )
     }
 
-    func testExplicitTaskRunnerSourceAlwaysWins() {
+    func testExplicitTaskExecutionSourceAlwaysWins() {
         let turn = ConversationTurn(
             id: "turn-1",
             sessionID: "conversation-1",

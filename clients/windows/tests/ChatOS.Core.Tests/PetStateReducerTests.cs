@@ -34,14 +34,14 @@ public sealed class PetStateReducerTests
         var reducer = new PetStateReducer();
         reducer.Apply(new PetActivityEvent.Upsert(new PetActivity(
             "task:1",
-            PetActivitySource.TaskRunner,
+            PetActivitySource.TaskExecution,
             PetActivityKind.Succeeded,
             "已完成",
             eventId: "event-2",
             eventSequence: 2)));
         reducer.Apply(new PetActivityEvent.Upsert(new PetActivity(
             "task:1",
-            PetActivitySource.TaskRunner,
+            PetActivitySource.TaskExecution,
             PetActivityKind.Working,
             "运行中",
             eventId: "event-1",
@@ -71,7 +71,7 @@ public sealed class PetStateReducerTests
     {
         var first = new PetActivity(
             "task:1",
-            PetActivitySource.TaskRunner,
+            PetActivitySource.TaskExecution,
             PetActivityKind.Blocked,
             "阻塞",
             activityVersion: "run-1");

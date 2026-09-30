@@ -69,7 +69,7 @@ public struct PetStateReducer: Sendable {
             }
         let conversationsWithSpecificWork = Set(candidates.compactMap { activity -> String? in
             guard activity.kind == .working || activity.kind == .reviewing,
-                  activity.source == .taskRunner || activity.source == .taskBoard else {
+                  activity.source == .taskExecution || activity.source == .taskBoard else {
                 return nil
             }
             return activity.route.conversationID

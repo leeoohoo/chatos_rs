@@ -307,7 +307,7 @@ actor NativePluginStdioClient {
         // call. Merely timing out the continuation leaves the child blocked
         // and every later request queues behind it. Treat a hard timeout as a
         // failed process session and terminate the child so it cannot leave a
-        // Task Runner run looking active for hours.
+        // local task execution looking active for hours.
         logPluginDiagnostics(reason: "request \(requestID) timed out")
         stop(with: NativePluginRuntimeError.timeout, terminateProcess: true)
     }
