@@ -24,6 +24,7 @@ public sealed class WindowsLocalAgentBootstrapService
     private readonly WindowsLocalAgentConversationHistoryService _conversationHistory;
     private readonly WindowsLocalAgentPlatformToolWorker _toolWorker;
     private readonly WindowsLocalAgentRealtimeClient _realtime;
+    private readonly WindowsLocalAgentPetActivityService _petActivities;
     private readonly ChatOSApiClient _api;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -36,6 +37,7 @@ public sealed class WindowsLocalAgentBootstrapService
         WindowsLocalAgentConversationHistoryService conversationHistory,
         WindowsLocalAgentPlatformToolWorker toolWorker,
         WindowsLocalAgentRealtimeClient realtime,
+        WindowsLocalAgentPetActivityService petActivities,
         ChatOSApiClient api)
     {
         _host = host;
@@ -46,6 +48,7 @@ public sealed class WindowsLocalAgentBootstrapService
         _conversationHistory = conversationHistory;
         _toolWorker = toolWorker;
         _realtime = realtime;
+        _petActivities = petActivities;
         _api = api;
     }
 
@@ -64,6 +67,7 @@ public sealed class WindowsLocalAgentBootstrapService
             _conversationHistory.Reset();
             _toolWorker.Reset();
             _realtime.Reset();
+            _petActivities.Reset();
             Current = null;
             if (_host.ActiveOwnerUserId is { } activeOwner &&
                 !string.Equals(activeOwner, ownerUserId, StringComparison.Ordinal))
@@ -171,6 +175,7 @@ public sealed class WindowsLocalAgentBootstrapService
             _conversationHistory.Configure(ownerUserId);
             _toolWorker.Configure(ownerUserId);
             _realtime.Configure(ownerUserId);
+            _petActivities.Configure(ownerUserId);
             Current = result;
             return result;
         }
@@ -187,6 +192,7 @@ public sealed class WindowsLocalAgentBootstrapService
         _conversationHistory.Reset();
         _toolWorker.Reset();
         _realtime.Reset();
+        _petActivities.Reset();
         Current = null;
     }
 
