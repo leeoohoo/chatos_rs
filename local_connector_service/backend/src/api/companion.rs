@@ -44,6 +44,41 @@ pub(super) struct SendCompanionAgentMessageRequest {
     client_message_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct CompanionConversationHistoryQuery {
+    before: Option<u64>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct CompanionMessageTasksQuery {
+    task_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SendCompanionConversationMessageRequest {
+    content: Option<String>,
+    turn_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GuideCompanionConversationRequest {
+    content: Option<String>,
+    turn_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct StopCompanionConversationRequest {
+    turn_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SubmitCompanionAskUserPromptRequest {
+    #[serde(default)]
+    values: BTreeMap<String, String>,
+    selection: Option<Value>,
+}
+
 pub(super) async fn list_companion_resources(
     State(state): State<AppState>,
     Extension(user): Extension<CurrentUser>,
@@ -212,6 +247,234 @@ pub(super) async fn open_companion_agent_direct_conversation(
     .await
 }
 
+pub(super) async fn get_companion_conversation(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path((device_id, conversation_id)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let conversation_id = required_path_value(conversation_id, "conversation_id")?;
+    let relay_path = format!("/companion/conversations/{conversation_id}");
+    companion_relay(
+        &state,
+        &user,
+        device_id,
+        "companion_conversation_request",
+        relay_path.as_str(),
+        "GET",
+        json!({ "conversation_id": conversation_id }),
+    )
+    .await
+}
+
+pub(super) async fn get_companion_conversation_history(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path((device_id, conversation_id)): Path<(String, String)>,
+    Query(query): Query<CompanionConversationHistoryQuery>,
+) -> Result<Response, ApiError> {
+    let conversation_id = required_path_value(conversation_id, "conversation_id")?;
+    let relay_path = format!("/companion/conversations/{conversation_id}/history");
+    companion_relay(
+        &state,
+        &user,
+        device_id,
+        "companion_conversation_history_request",
+        relay_path.as_str(),
+        "GET",
+        json!({
+            "conversation_id": conversation_id,
+            "before_ordinal": query.before,
+            "limit": query.limit.unwrap_or(40).clamp(1, 100),
+        }),
+    )
+    .await
+}
+
+pub(super) async fn get_companion_conversation_state(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path((device_id, conversation_id)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let conversation_id = required_path_value(conversation_id, "conversation_id")?;
+    let relay_path = format!("/companion/conversations/{conversation_id}/state");
+    companion_relay(
+        &state,
+        &user,
+        device_id,
+        "companion_conversation_state_request",
+        relay_path.as_str(),
+        "GET",
+        json!({ "conversation_id": conversation_id }),
+    )
+    .await
+}
+
+pub(super) async fn list_companion_message_tasks(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path((device_id, message_id)): Path<(String, String)>,
+    Query(query): Query<CompanionMessageTasksQuery>,
+) -> Result<Response, ApiError> {
+    let message_id = required_path_value(message_id, "message_id")?;
+    let task_id = query
+        .task_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let relay_path = format!("/companion/messages/{message_id}/tasks");
+    companion_relay(
+        &state,
+        &user,
+        device_id,
+        "companion_message_tasks_request",
+        relay_path.as_str(),
+        "GET",
+        json!({ "message_id": message_id, "task_id": task_id }),
+    )
+    .await
+}
+
+pub(super) async fn send_companion_conversation_message(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path((device_id, conversation_id)): Path<(String, String)>,
+    Json(body): Json<SendCompanionConversationMessageRequest>,
+) -> Result<Response, ApiError> {
+    let conversation_id = required_path_value(conversation_id, "conversation_id")?;
+    let content = required_body_text(body.content, "content", 20_000)?;
+    let turn_id =
+        optional_identifier(body.turn_id, "turn_id")?.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let relay_path = format!("/companion/conversations/{conversation_id}/messages");
+    companion_relay(
+        &state,
+        &user,
+        device_id,
+        "companion_conversation_send_request",
+        relay_path.as_str(),
+        "POST",
+        json!({
+            "conversation_id": conversation_id,
+            "content": content,
+            "turn_id": turn_id,
+        }),
+    )
+    .await
+}
+
+pub(super) async fn guide_companion_conversation(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path((device_id, conversation_id)): Path<(String, String)>,
+    Json(body): Json<GuideCompanionConversationRequest>,
+) -> Result<Response, ApiError> {
+    let conversation_id = required_path_value(conversation_id, "conversation_id")?;
+    let content = required_body_text(body.content, "content", 20_000)?;
+    let turn_id = optional_identifier(body.turn_id, "turn_id")?
+        .ok_or_else(|| ApiError::bad_request("turn_id is required"))?;
+    let relay_path = format!("/companion/conversations/{conversation_id}/guidance");
+    companion_relay(
+        &state,
+        &user,
+        device_id,
+        "companion_conversation_guidance_request",
+        relay_path.as_str(),
+        "POST",
+        json!({
+            "conversation_id": conversation_id,
+            "content": content,
+            "turn_id": turn_id,
+        }),
+    )
+    .await
+}
+
+pub(super) async fn stop_companion_conversation(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path((device_id, conversation_id)): Path<(String, String)>,
+    Json(body): Json<StopCompanionConversationRequest>,
+) -> Result<Response, ApiError> {
+    let conversation_id = required_path_value(conversation_id, "conversation_id")?;
+    let turn_id = optional_identifier(body.turn_id, "turn_id")?;
+    let relay_path = format!("/companion/conversations/{conversation_id}/stop");
+    companion_relay(
+        &state,
+        &user,
+        device_id,
+        "companion_conversation_stop_request",
+        relay_path.as_str(),
+        "POST",
+        json!({ "conversation_id": conversation_id, "turn_id": turn_id }),
+    )
+    .await
+}
+
+pub(super) async fn list_companion_ask_user_prompts(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path((device_id, conversation_id)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let conversation_id = required_path_value(conversation_id, "conversation_id")?;
+    let relay_path = format!("/companion/conversations/{conversation_id}/ask-user-prompts");
+    companion_relay(
+        &state,
+        &user,
+        device_id,
+        "companion_ask_user_prompts_request",
+        relay_path.as_str(),
+        "GET",
+        json!({ "conversation_id": conversation_id, "limit": 100 }),
+    )
+    .await
+}
+
+pub(super) async fn submit_companion_ask_user_prompt(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path((device_id, conversation_id, prompt_id)): Path<(String, String, String)>,
+    Json(body): Json<SubmitCompanionAskUserPromptRequest>,
+) -> Result<Response, ApiError> {
+    let conversation_id = required_path_value(conversation_id, "conversation_id")?;
+    let prompt_id = required_path_value(prompt_id, "prompt_id")?;
+    let relay_path =
+        format!("/companion/conversations/{conversation_id}/ask-user-prompts/{prompt_id}/submit");
+    companion_relay(
+        &state,
+        &user,
+        device_id,
+        "companion_ask_user_submit_request",
+        relay_path.as_str(),
+        "POST",
+        json!({
+            "conversation_id": conversation_id,
+            "prompt_id": prompt_id,
+            "values": body.values,
+            "selection": body.selection,
+        }),
+    )
+    .await
+}
+
+pub(super) async fn cancel_companion_ask_user_prompt(
+    State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
+    Path((device_id, conversation_id, prompt_id)): Path<(String, String, String)>,
+) -> Result<Response, ApiError> {
+    let conversation_id = required_path_value(conversation_id, "conversation_id")?;
+    let prompt_id = required_path_value(prompt_id, "prompt_id")?;
+    let relay_path =
+        format!("/companion/conversations/{conversation_id}/ask-user-prompts/{prompt_id}/cancel");
+    companion_relay(
+        &state,
+        &user,
+        device_id,
+        "companion_ask_user_cancel_request",
+        relay_path.as_str(),
+        "POST",
+        json!({ "conversation_id": conversation_id, "prompt_id": prompt_id }),
+    )
+    .await
+}
+
 fn required_path_value(value: String, field: &str) -> Result<String, ApiError> {
     let value = value.trim().to_string();
     if value.is_empty() {
@@ -219,6 +482,35 @@ fn required_path_value(value: String, field: &str) -> Result<String, ApiError> {
     } else {
         Ok(value)
     }
+}
+
+fn optional_identifier(value: Option<String>, field: &str) -> Result<Option<String>, ApiError> {
+    match value {
+        Some(value) => {
+            let value = value.trim().to_string();
+            if value.is_empty() || value.len() > 128 {
+                Err(ApiError::bad_request(format!("{field} is invalid")))
+            } else {
+                Ok(Some(value))
+            }
+        }
+        None => Ok(None),
+    }
+}
+
+fn required_body_text(
+    value: Option<String>,
+    field: &str,
+    max_chars: usize,
+) -> Result<String, ApiError> {
+    let value = value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::bad_request(format!("{field} is required")))?;
+    if value.chars().count() > max_chars {
+        return Err(ApiError::bad_request(format!("{field} is too long")));
+    }
+    Ok(value)
 }
 
 pub(super) async fn list_companion_approvals(

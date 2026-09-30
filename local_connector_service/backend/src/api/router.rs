@@ -75,6 +75,46 @@ fn protected_api(state: &AppState) -> Router<AppState> {
             post(super::companion::open_companion_agent_direct_conversation),
         )
         .route(
+            "/api/local-connectors/companion/devices/{device_id}/conversations/{conversation_id}",
+            get(super::companion::get_companion_conversation),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/conversations/{conversation_id}/history",
+            get(super::companion::get_companion_conversation_history),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/conversations/{conversation_id}/state",
+            get(super::companion::get_companion_conversation_state),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/conversations/{conversation_id}/messages",
+            post(super::companion::send_companion_conversation_message),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/conversations/{conversation_id}/guidance",
+            post(super::companion::guide_companion_conversation),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/conversations/{conversation_id}/stop",
+            post(super::companion::stop_companion_conversation),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/conversations/{conversation_id}/ask-user-prompts",
+            get(super::companion::list_companion_ask_user_prompts),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/conversations/{conversation_id}/ask-user-prompts/{prompt_id}/submit",
+            post(super::companion::submit_companion_ask_user_prompt),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/conversations/{conversation_id}/ask-user-prompts/{prompt_id}/cancel",
+            post(super::companion::cancel_companion_ask_user_prompt),
+        )
+        .route(
+            "/api/local-connectors/companion/devices/{device_id}/messages/{message_id}/tasks",
+            get(super::companion::list_companion_message_tasks),
+        )
+        .route(
             "/api/local-connectors/companion/devices/{device_id}/approvals",
             get(super::companion::list_companion_approvals),
         )
