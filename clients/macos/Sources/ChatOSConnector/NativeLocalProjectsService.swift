@@ -361,7 +361,7 @@ extension NativeLocalConnectorService {
         }
         let url = try NativeWorkspaceFilesystem(workspace: workspace).resolveExistingURL(draft.relativeRoot.isEmpty ? "." : draft.relativeRoot)
         guard try url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
-            throw NativeWorkspaceRelayError.notDirectory
+            throw NativeWorkspaceFilesystemError.notDirectory
         }
         return .init(workspaceID: workspace.id, relativeRoot: draft.relativeRoot,
                      absolutePath: url.path, workspaceFingerprint: workspace.fingerprint)

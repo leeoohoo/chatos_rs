@@ -180,7 +180,7 @@ require(
 
 macos_local_approval = "clients/macos/Sources/ChatOSConnector/NativeApprovalAgent.swift"
 require(
-    "clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+TerminalRelay.swift",
+    "clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+Approval.swift",
     "case .requestApproval:",
     "the fail-closed user approval path",
 )

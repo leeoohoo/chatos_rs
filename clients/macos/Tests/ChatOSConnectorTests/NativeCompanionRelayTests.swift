@@ -44,7 +44,7 @@ final class NativeCompanionRelayTests: XCTestCase {
             )
         }
 
-        for messageType in ["connected", "terminal_exec_request", "companion_unknown_request"] {
+        for messageType in ["connected", "unknown_request", "companion_unknown_request"] {
             XCTAssertFalse(NativeLocalConnectorService.isCompanionRelayMessageType(messageType))
         }
     }

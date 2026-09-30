@@ -182,7 +182,6 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 deploymentIdentifier: RuntimeConfiguration.deployment.identifier
             ),
             ticketProvider: connectorTicketProvider,
-            remoteConnectionRuntime: remoteConnectionService,
             approvalMemoryProviderFactory: { tenantID, workspaceID, runID, runtimeScope in
                 let scope = try AgentMemoryScope(
                     tenantID: tenantID, profile: "approval", projectID: workspaceID,

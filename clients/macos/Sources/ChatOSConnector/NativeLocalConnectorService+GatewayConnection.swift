@@ -123,27 +123,6 @@ extension NativeLocalConnectorService {
                                     ?? envelope.code
                                     ?? "Local Connector 网关会话异常"
                             )
-                        case "terminal_exec_request",
-                             "terminal_session_create_request",
-                             "terminal_input",
-                             "terminal_command",
-                             "terminal_resize",
-                             "terminal_snapshot_request",
-                             "terminal_close",
-                             "remote_terminal_session_create_request",
-                             "remote_terminal_input",
-                             "remote_terminal_resize",
-                             "remote_terminal_snapshot_request",
-                             "remote_terminal_close":
-                            Task { [weak self] in
-                                await self?.handleTerminalRelayMessage(data, socket: socket)
-                            }
-                        case "workspace_directory_list_request",
-                             "workspace_directory_create_request",
-                             "workspace_filesystem_request":
-                            Task { [weak self] in
-                                await self?.handleWorkspaceRelayMessage(data, socket: socket)
-                            }
                         case let messageType where Self.isCompanionRelayMessageType(messageType):
                             Task { [weak self] in
                                 await self?.handleCompanionRelayMessage(data, socket: socket)

@@ -37,62 +37,6 @@ struct NativeRelayRequest: Decodable, Sendable {
     }
 }
 
-struct NativeTerminalRelayBody: Decodable, Sendable {
-    var command: String
-    var args: [String]
-    var cwd: String?
-    var timeoutMilliseconds: Int?
-    var source: String?
-
-    enum CodingKeys: String, CodingKey {
-        case command, args, cwd, source
-        case timeoutMilliseconds = "timeout_ms"
-    }
-}
-
-struct NativeTerminalSessionCreateRelayBody: Decodable, Sendable {
-    var terminalSessionID: String
-    var cwd: String?
-    var columns: Int?
-    var rows: Int?
-
-    enum CodingKeys: String, CodingKey {
-        case cwd, rows
-        case terminalSessionID = "terminal_session_id"
-        case columns = "cols"
-    }
-}
-
-struct NativeTerminalControlRelayBody: Decodable, Sendable {
-    var terminalSessionID: String
-    var data: String?
-    var command: String?
-    var columns: Int?
-    var rows: Int?
-    var lines: Int?
-
-    enum CodingKeys: String, CodingKey {
-        case data, command, rows, lines
-        case terminalSessionID = "terminal_session_id"
-        case columns = "cols"
-    }
-}
-
-struct NativeRemoteTerminalSessionCreateRelayBody: Decodable, Sendable {
-    var terminalSessionID: String
-    var connection: NativeJSONValue
-    var verificationCode: String?
-    var columns: Int?
-    var rows: Int?
-
-    enum CodingKeys: String, CodingKey {
-        case connection, rows
-        case terminalSessionID = "terminal_session_id"
-        case verificationCode = "verification_code"
-        case columns = "cols"
-    }
-}
-
 struct NativeRelayResponse: Encodable, Sendable {
     var type: String
     var requestID: String
@@ -103,6 +47,14 @@ struct NativeRelayResponse: Encodable, Sendable {
     enum CodingKeys: String, CodingKey {
         case type, status, headers, body
         case requestID = "request_id"
+    }
+}
+
+enum NativeRelayTransportError: LocalizedError {
+    case invalidResponse
+
+    var errorDescription: String? {
+        "无法编码设备协同 Relay 响应"
     }
 }
 

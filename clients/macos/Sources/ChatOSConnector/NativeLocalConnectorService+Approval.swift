@@ -222,7 +222,7 @@ extension NativeLocalConnectorService {
         guard resolved.path == workspaceRoot.path || resolved.path.hasPrefix(prefix),
               FileManager.default.fileExists(atPath: resolved.path, isDirectory: &isDirectory),
               isDirectory.boolValue else {
-            throw NativeTerminalRelayError.unsafeDirectory
+            throw NativeWorkspaceFilesystemError.unsafePath
         }
         return resolved
     }
@@ -280,41 +280,13 @@ extension NativeLocalConnectorService {
         try? stateStore.save(state)
     }
 
-    func terminalResponse(
-        requestID: String,
-        command: String,
-        arguments: [String],
-        cwd: String,
-        result: LocalConnectorTerminalResult?,
-        error: String?,
-        approvalDecision: String
-    ) -> NativeRelayResponse {
-        .init(
-            type: "terminal_response",
-            requestID: requestID,
-            status: 200,
-            body: .object([
-                "command": .string(command),
-                "args": .array(arguments.map(NativeJSONValue.string)),
-                "cwd": .string(cwd),
-                "success": .bool(result?.success ?? false),
-                "exit_code": result?.exitCode.map { .number(Double($0)) } ?? .null,
-                "timed_out": .bool(result?.timedOut ?? false),
-                "stdout": .string(result?.stdout ?? ""),
-                "stderr": .string(result?.stderr ?? ""),
-                "error": error.map(NativeJSONValue.string) ?? .null,
-                "approval_decision": .string(approvalDecision),
-            ])
-        )
-    }
-
     func sendRelayResponse(
         _ response: NativeRelayResponse,
         socket: URLSessionWebSocketTask
     ) async throws {
         let data = try JSONEncoder().encode(response)
         guard let text = String(data: data, encoding: .utf8) else {
-            throw NativeTerminalRelayError.invalidResponse
+            throw NativeRelayTransportError.invalidResponse
         }
         try await socket.send(.string(text))
     }

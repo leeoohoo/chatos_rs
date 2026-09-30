@@ -29,7 +29,7 @@ struct NativeWorkspaceFilesystem: Sendable {
         let root = try workspaceRoot()
         let directory = try existingURL(path, root: root)
         guard try resourceValues(directory).isDirectory == true else {
-            throw NativeWorkspaceRelayError.notDirectory
+            throw NativeWorkspaceFilesystemError.notDirectory
         }
         let keys: Set<URLResourceKey> = [
             .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
@@ -75,14 +75,14 @@ struct NativeWorkspaceFilesystem: Sendable {
         let root = try workspaceRoot()
         let url = try existingURL(path, root: root)
         let values = try resourceValues(url)
-        guard values.isRegularFile == true else { throw NativeWorkspaceRelayError.notFile }
+        guard values.isRegularFile == true else { throw NativeWorkspaceFilesystemError.notFile }
         let size = Int64(values.fileSize ?? 0)
         let extensionName = url.pathExtension.lowercased()
         let maximumPreviewBytes = Self.previewableImageExtensions.contains(extensionName)
             ? Self.maximumImagePreviewBytes
             : Self.maximumTextPreviewBytes
         guard size <= maximumPreviewBytes else {
-            throw NativeWorkspaceRelayError.fileTooLarge(size)
+            throw NativeWorkspaceFilesystemError.fileTooLarge(size)
         }
         let data = try Data(contentsOf: url, options: [.mappedIfSafe])
         let isBinary = data.prefix(8_000).contains(0)
@@ -99,10 +99,10 @@ struct NativeWorkspaceFilesystem: Sendable {
         let root = try workspaceRoot()
         let start = try existingURL(path, root: root)
         guard try resourceValues(start).isDirectory == true else {
-            throw NativeWorkspaceRelayError.notDirectory
+            throw NativeWorkspaceFilesystemError.notDirectory
         }
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !needle.isEmpty else { throw NativeWorkspaceRelayError.missingField("query") }
+        guard !needle.isEmpty else { throw NativeWorkspaceFilesystemError.missingField("query") }
         let maximum = min(max(limit, 1), 500)
         let deadline = Date().addingTimeInterval(Self.searchDuration)
         var stack = [start]
@@ -159,7 +159,7 @@ struct NativeWorkspaceFilesystem: Sendable {
         let root = try workspaceRoot()
         let start = try existingURL(path, root: root)
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !needle.isEmpty else { throw NativeWorkspaceRelayError.missingField("query") }
+        guard !needle.isEmpty else { throw NativeWorkspaceFilesystemError.missingField("query") }
         let maximum = min(max(limit, 1), 500)
         let deadline = Date().addingTimeInterval(Self.searchDuration)
         var stack = [start]
@@ -240,8 +240,8 @@ struct NativeWorkspaceFilesystem: Sendable {
             current.appendPathComponent(component, isDirectory: true)
             do {
                 let values = try current.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-                guard values.isSymbolicLink != true else { throw NativeWorkspaceRelayError.symbolicLink }
-                guard values.isDirectory == true else { throw NativeWorkspaceRelayError.notDirectory }
+                guard values.isSymbolicLink != true else { throw NativeWorkspaceFilesystemError.symbolicLink }
+                guard values.isDirectory == true else { throw NativeWorkspaceFilesystemError.notDirectory }
             } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
                 try fileManager.createDirectory(at: current, withIntermediateDirectories: false)
             }
@@ -256,16 +256,16 @@ struct NativeWorkspaceFilesystem: Sendable {
         if existed {
             let values = try resourceValues(target)
             guard values.isSymbolicLink != true, values.isRegularFile == true else {
-                throw NativeWorkspaceRelayError.notFile
+                throw NativeWorkspaceFilesystemError.notFile
             }
-            guard !createOnly else { throw NativeWorkspaceRelayError.alreadyExists }
+            guard !createOnly else { throw NativeWorkspaceFilesystemError.alreadyExists }
         }
         let data = Data(content.utf8)
         if createOnly {
             do {
                 try data.write(to: target, options: [.withoutOverwriting])
             } catch let error as CocoaError where error.code == .fileWriteFileExists {
-                throw NativeWorkspaceRelayError.alreadyExists
+                throw NativeWorkspaceFilesystemError.alreadyExists
             }
         } else {
             try data.write(to: target, options: [.atomic])
@@ -291,7 +291,7 @@ struct NativeWorkspaceFilesystem: Sendable {
                 try fileManager.removeItem(at: target)
             }
         } catch let error as CocoaError where error.code == .fileWriteFileExists || error.code == .fileWriteUnknown {
-            if isDirectory && !recursive { throw NativeWorkspaceRelayError.directoryNotEmpty }
+            if isDirectory && !recursive { throw NativeWorkspaceFilesystemError.directoryNotEmpty }
             throw error
         }
         return .object([
@@ -313,11 +313,11 @@ struct NativeWorkspaceFilesystem: Sendable {
         }
         if isDirectory {
             let sourcePrefix = source.path.hasSuffix("/") ? source.path : source.path + "/"
-            guard !target.path.hasPrefix(sourcePrefix) else { throw NativeWorkspaceRelayError.unsafePath }
+            guard !target.path.hasPrefix(sourcePrefix) else { throw NativeWorkspaceFilesystemError.unsafePath }
         }
         var replaced = false
         if fileManager.fileExists(atPath: target.path) {
-            guard replaceExisting else { throw NativeWorkspaceRelayError.alreadyExists }
+            guard replaceExisting else { throw NativeWorkspaceFilesystemError.alreadyExists }
             try fileManager.removeItem(at: target)
             replaced = true
         }
@@ -347,16 +347,16 @@ struct NativeWorkspaceFilesystem: Sendable {
         let raw = URL(fileURLWithPath: workspace.absoluteRoot, isDirectory: true).standardizedFileURL
         let root = raw.resolvingSymlinksInPath().standardizedFileURL
         let values = try resourceValues(root)
-        guard values.isDirectory == true else { throw NativeWorkspaceRelayError.notDirectory }
+        guard values.isDirectory == true else { throw NativeWorkspaceFilesystemError.notDirectory }
         return root
     }
 
     private func existingURL(_ path: String, root: URL) throws -> URL {
         let components = try normalizedComponents(path, permitsRoot: true)
         let candidate = components.reduce(root) { $0.appendingPathComponent($1) }
-        guard fileManager.fileExists(atPath: candidate.path) else { throw NativeWorkspaceRelayError.notFound }
+        guard fileManager.fileExists(atPath: candidate.path) else { throw NativeWorkspaceFilesystemError.notFound }
         let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
-        guard contains(resolved, root: root) else { throw NativeWorkspaceRelayError.unsafePath }
+        guard contains(resolved, root: root) else { throw NativeWorkspaceFilesystemError.unsafePath }
         return resolved
     }
 
@@ -367,7 +367,7 @@ struct NativeWorkspaceFilesystem: Sendable {
         if fileManager.fileExists(atPath: target.path) {
             let resolved = target.resolvingSymlinksInPath().standardizedFileURL
             guard resolved == target.standardizedFileURL, contains(resolved, root: root) else {
-                throw NativeWorkspaceRelayError.symbolicLink
+                throw NativeWorkspaceFilesystemError.symbolicLink
             }
         }
         return target.standardizedFileURL
@@ -377,34 +377,34 @@ struct NativeWorkspaceFilesystem: Sendable {
         let components = try normalizedComponents(path, permitsRoot: false)
         let target = components.reduce(root) { $0.appendingPathComponent($1) }.standardizedFileURL
         try validateParent(target.deletingLastPathComponent(), root: root)
-        guard fileManager.fileExists(atPath: target.path) else { throw NativeWorkspaceRelayError.notFound }
+        guard fileManager.fileExists(atPath: target.path) else { throw NativeWorkspaceFilesystemError.notFound }
         return target
     }
 
     private func validateParent(_ parent: URL, root: URL) throws {
-        guard fileManager.fileExists(atPath: parent.path) else { throw NativeWorkspaceRelayError.notFound }
+        guard fileManager.fileExists(atPath: parent.path) else { throw NativeWorkspaceFilesystemError.notFound }
         let resolved = parent.resolvingSymlinksInPath().standardizedFileURL
         guard resolved == parent.standardizedFileURL, contains(resolved, root: root) else {
-            throw NativeWorkspaceRelayError.symbolicLink
+            throw NativeWorkspaceFilesystemError.symbolicLink
         }
         guard try resourceValues(resolved).isDirectory == true else {
-            throw NativeWorkspaceRelayError.notDirectory
+            throw NativeWorkspaceFilesystemError.notDirectory
         }
     }
 
     private func normalizedComponents(_ path: String, permitsRoot: Bool) throws -> [String] {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.hasPrefix("/"), !trimmed.contains("\0") else {
-            throw NativeWorkspaceRelayError.unsafePath
+            throw NativeWorkspaceFilesystemError.unsafePath
         }
         var result: [String] = []
         for component in trimmed.split(separator: "/", omittingEmptySubsequences: true) {
             let value = String(component)
             if value == "." { continue }
-            guard value != ".." else { throw NativeWorkspaceRelayError.unsafePath }
+            guard value != ".." else { throw NativeWorkspaceFilesystemError.unsafePath }
             result.append(value)
         }
-        guard permitsRoot || !result.isEmpty else { throw NativeWorkspaceRelayError.rootMutation }
+        guard permitsRoot || !result.isEmpty else { throw NativeWorkspaceFilesystemError.rootMutation }
         return result
     }
 
@@ -415,7 +415,7 @@ struct NativeWorkspaceFilesystem: Sendable {
                 .fileSizeKey, .contentModificationDateKey,
             ])
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
-            throw NativeWorkspaceRelayError.notFound
+            throw NativeWorkspaceFilesystemError.notFound
         }
     }
 

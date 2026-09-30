@@ -44,7 +44,6 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let pluginApplicationRuntime: NativePluginApplicationRuntime
     let browserExtensionPairingRuntime = NativeBrowserExtensionPairingRuntime()
     let pluginRuntimeRootURL: URL
-    let remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)?
     let approvalMemoryProviderFactory: NativeApprovalMemoryProviderFactory?
     weak var companionRuntime: (any LocalConnectorCompanionRuntimeProviding)?
     var agentGroupChatService: NativeAgentGroupChatService?
@@ -79,14 +78,10 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     ] = [:]
     var sessionApprovalAllowlist: Set<String> = []
     var seenRelayNonces: [String: Int64] = [:]
-    var terminalRelaySessions: [String: any NativeTerminalRelaySessionProtocol] = [:]
-    let terminalRelayEventPump = NativeTerminalRelayEventPump()
-    var terminalRelayEventTask: Task<Void, Never>?
 
     public init(
         configuration: NativeConnectorConfiguration,
         ticketProvider: any LocalConnectorPairingTicketProviding,
-        remoteConnectionRuntime: (any NativeRemoteConnectionRuntimeProviding)? = nil,
         approvalMemoryProviderFactory: NativeApprovalMemoryProviderFactory? = nil
     ) {
         self.configuration = configuration
@@ -109,7 +104,6 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
                 .appendingPathComponent("application-processes.json"),
             pluginInstallationRootURL: pluginInstallationRootURL
         )
-        self.remoteConnectionRuntime = remoteConnectionRuntime
         self.approvalMemoryProviderFactory = approvalMemoryProviderFactory
         self.state = (try? stateStore.load()) ?? .empty
     }
@@ -252,7 +246,6 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         invalidateManagedRuntimeConfig()
         shouldMaintainGatewayConnection = false
         gatewayReconnectFailureCount = 0
-        closeAllTerminalRelaySessions()
         await stopGatewayConnection()
     }
 

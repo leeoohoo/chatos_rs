@@ -14,13 +14,13 @@ final class NativeRelayVerifierTests: XCTestCase {
             "path": .string("/Users/lilei/project/java"),
         ])
         let request = NativeRelayRequest(
-            type: "workspace_directory_list_request",
+            type: "companion_resources_request",
             requestID: "request-1",
             ownerUserID: "user-1",
             deviceID: "device-1",
             workspaceID: "workspace-1",
             method: "POST",
-            path: "/workspace/directory/list",
+            path: "/companion/resources",
             headers: [:],
             body: body,
             platformSignature: nil,
@@ -31,7 +31,7 @@ final class NativeRelayVerifierTests: XCTestCase {
         )
         let payload = [
             "v1", request.type, request.requestID, "user-1", "device-1", "workspace-1",
-            "POST", "/workspace/directory/list", keyID, "ed25519", String(timestamp), nonce,
+            "POST", "/companion/resources", keyID, "ed25519", String(timestamp), nonce,
             "{}", #"{"include_files":false,"path":"/Users/lilei/project/java"}"#,
         ].joined(separator: "\n")
         var signedRequest = request
