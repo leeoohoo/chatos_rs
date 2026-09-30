@@ -9,14 +9,12 @@ use crate::system_mcp_descriptor;
 #[derive(Debug, Clone, PartialEq)]
 pub enum SystemMcpToolCatalog {
     Static(Vec<Value>),
-    Dynamic,
 }
 
 impl SystemMcpToolCatalog {
     pub fn tools(&self) -> Option<&[Value]> {
         match self {
             Self::Static(tools) => Some(tools.as_slice()),
-            Self::Dynamic => None,
         }
     }
 }
@@ -32,10 +30,6 @@ pub fn system_mcp_tool_catalog(key: SystemMcpKey) -> Result<SystemMcpToolCatalog
         SystemMcpKey::LocalCommandApproval => {
             crate::system_tool_catalog::local_command_approval_tool_definitions()
         }
-        SystemMcpKey::TaskProcessLog => {
-            crate::system_tool_catalog::task_process_log_tool_definitions()
-        }
-        SystemMcpKey::TaskRunnerService => return Ok(SystemMcpToolCatalog::Dynamic),
         _ => {
             return Err(format!(
                 "system MCP {} has no tool catalog source",
@@ -49,10 +43,6 @@ pub fn system_mcp_tool_catalog(key: SystemMcpKey) -> Result<SystemMcpToolCatalog
 pub fn system_mcp_static_tools(key: SystemMcpKey) -> Result<Vec<Value>, String> {
     match system_mcp_tool_catalog(key)? {
         SystemMcpToolCatalog::Static(tools) => Ok(tools),
-        SystemMcpToolCatalog::Dynamic => Err(format!(
-            "system MCP {} uses dynamic tool discovery",
-            key.as_str()
-        )),
     }
 }
 
@@ -61,14 +51,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_system_mcp_declares_a_static_or_dynamic_catalog() {
+    fn every_system_mcp_declares_a_static_catalog() {
         for key in SystemMcpKey::ALL {
             let catalog = system_mcp_tool_catalog(key)
                 .unwrap_or_else(|error| panic!("{}: {error}", key.as_str()));
-            if let SystemMcpToolCatalog::Static(tools) = catalog {
-                assert!(!tools.is_empty(), "{}", key.as_str());
-                assert!(tools.iter().all(|tool| tool.get("name").is_some()));
-            }
+            let SystemMcpToolCatalog::Static(tools) = catalog;
+            assert!(!tools.is_empty(), "{}", key.as_str());
+            assert!(tools.iter().all(|tool| tool.get("name").is_some()));
         }
     }
 }

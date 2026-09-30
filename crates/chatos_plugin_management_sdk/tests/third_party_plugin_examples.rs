@@ -8,15 +8,21 @@ fn documented_third_party_plugin_manifests_parse() {
     for (name, raw) in [
         (
             "circleci",
-            include_str!("../../../docs/plugins/examples/circleci-plugin.manifest.json"),
+            include_str!(
+                "../../../plugins/browser/docs/plans/examples/circleci-plugin.manifest.json"
+            ),
         ),
         (
             "sentry",
-            include_str!("../../../docs/plugins/examples/sentry-plugin.manifest.json"),
+            include_str!(
+                "../../../plugins/browser/docs/plans/examples/sentry-plugin.manifest.json"
+            ),
         ),
         (
             "build-web",
-            include_str!("../../../docs/plugins/examples/build-web-plugin.manifest.json"),
+            include_str!(
+                "../../../plugins/browser/docs/plans/examples/build-web-plugin.manifest.json"
+            ),
         ),
     ] {
         let manifest = parse_plugin_manifest(raw)

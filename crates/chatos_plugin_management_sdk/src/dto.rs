@@ -14,9 +14,7 @@ use crate::plugin_runtime::{
     UserPluginPreferenceRecord,
 };
 
-pub const CHATOS_TASK_RUNNER_MCP_RESOURCE_ID: &str = "system_mcp_chatos_task_runner";
 pub const LOCAL_CONNECTOR_APPROVAL_MCP_RESOURCE_ID: &str = "system_mcp_local_connector_approval";
-pub const TASK_PROCESS_LOG_MCP_RESOURCE_ID: &str = "system_mcp_task_process_log";
 
 pub const SYSTEM_MCP_RUNTIME_KIND: &str = "system";
 pub const LEGACY_BUILTIN_MCP_RUNTIME_KIND: &str = "builtin";
@@ -65,12 +63,10 @@ pub enum SystemMcpKey {
     MemoryCommandReader,
     MemoryPluginReader,
     LocalCommandApproval,
-    TaskProcessLog,
-    TaskRunnerService,
 }
 
 impl SystemMcpKey {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 13] = [
         Self::CodeMaintainerRead,
         Self::CodeMaintainerWrite,
         Self::TerminalController,
@@ -84,8 +80,6 @@ impl SystemMcpKey {
         Self::MemoryCommandReader,
         Self::MemoryPluginReader,
         Self::LocalCommandApproval,
-        Self::TaskProcessLog,
-        Self::TaskRunnerService,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -104,8 +98,6 @@ impl SystemMcpKey {
             Self::MemoryCommandReader => "memory_command_reader",
             Self::MemoryPluginReader => "memory_plugin_reader",
             Self::LocalCommandApproval => "local_command_approval",
-            Self::TaskProcessLog => "task_process_log",
-            Self::TaskRunnerService => "task_runner_service",
         }
     }
 }
@@ -133,9 +125,6 @@ impl std::str::FromStr for SystemMcpKey {
 pub enum SystemAgentKey {
     ChatosConversationAgent,
     LocalAgentExecutionAgent,
-    /// Transitional compile-time identity for the server Task Runner. It is not registered or
-    /// published by Plugin Management and will be removed with the legacy service package.
-    TaskRunnerRunPhase,
     LocalConnectorCommandApprovalAgent,
     MemoryEngineSummaryAgent,
     MemoryEngineRollupAgent,
@@ -145,10 +134,9 @@ pub enum SystemAgentKey {
 }
 
 impl SystemAgentKey {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 8] = [
         Self::ChatosConversationAgent,
         Self::LocalAgentExecutionAgent,
-        Self::TaskRunnerRunPhase,
         Self::LocalConnectorCommandApprovalAgent,
         Self::MemoryEngineSummaryAgent,
         Self::MemoryEngineRollupAgent,
@@ -161,7 +149,6 @@ impl SystemAgentKey {
         match self {
             Self::ChatosConversationAgent => "chatos_conversation_agent",
             Self::LocalAgentExecutionAgent => "local_agent_execution_agent",
-            Self::TaskRunnerRunPhase => "task_runner_run_phase",
             Self::LocalConnectorCommandApprovalAgent => "local_connector_command_approval_agent",
             Self::MemoryEngineSummaryAgent => "memory_engine_summary_agent",
             Self::MemoryEngineRollupAgent => "memory_engine_rollup_agent",

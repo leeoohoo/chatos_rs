@@ -20,10 +20,7 @@ pub(crate) async fn live_mcp_descriptor(
     _config: &AppConfig,
     record: &McpRecord,
 ) -> Result<Option<LiveMcpDescriptor>, String> {
-    if let Some(descriptor) = system_mcp_descriptor_for_record(record) {
-        if descriptor.key == chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService {
-            return Ok(None);
-        }
+    if system_mcp_descriptor_for_record(record).is_some() {
         return live_system_mcp_descriptor(record).map(Some);
     }
     match record.runtime.kind.as_str() {
@@ -38,10 +35,7 @@ pub(crate) async fn live_mcp_descriptor(
 fn live_system_mcp_descriptor(record: &McpRecord) -> Result<LiveMcpDescriptor, String> {
     let descriptor = system_mcp_descriptor_for_record(record)
         .ok_or_else(|| format!("unknown system MCP: {}", record.id))?;
-    let tools = match system_mcp_tool_catalog(descriptor.key)? {
-        SystemMcpToolCatalog::Static(tools) => tools,
-        SystemMcpToolCatalog::Dynamic => Vec::new(),
-    };
+    let SystemMcpToolCatalog::Static(tools) = system_mcp_tool_catalog(descriptor.key)?;
     let skills = system_mcp_provider_skills(descriptor.key)
         .into_iter()
         .map(|skill| serde_json::from_value(serde_json::to_value(skill).unwrap_or(Value::Null)))
@@ -58,10 +52,9 @@ mod tests {
     fn every_static_system_mcp_has_real_tools() {
         for descriptor in chatos_mcp::system_mcp_catalog() {
             let catalog = system_mcp_tool_catalog(descriptor.key).expect("catalog");
-            if let SystemMcpToolCatalog::Static(tools) = catalog {
-                assert!(!tools.is_empty(), "{}", descriptor.server_name);
-                assert!(tools.iter().all(|tool| tool.get("name").is_some()));
-            }
+            let SystemMcpToolCatalog::Static(tools) = catalog;
+            assert!(!tools.is_empty(), "{}", descriptor.server_name);
+            assert!(tools.iter().all(|tool| tool.get("name").is_some()));
         }
     }
 }

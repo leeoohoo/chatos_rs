@@ -302,35 +302,21 @@ mod tests {
         SystemMcpToolCatalog,
     };
 
-    const TASK_RUNNER_TOOLS: &[&str] = &[
-        "list_tasks",
-        "get_task",
-        "create_task",
-        "create_tasks_with_prerequisites",
-        "cancel_task",
-        "wait_for_task_completion",
-        "get_task_dependency_graph",
-    ];
-
     #[test]
     fn every_bound_system_tool_skill_resolves_from_the_central_bundle() {
         let mut required_skills = BTreeSet::new();
         for descriptor in system_mcp_catalog() {
-            let tool_names = match system_mcp_tool_catalog(descriptor.key).expect("tool catalog") {
-                SystemMcpToolCatalog::Static(tools) => tools
-                    .iter()
-                    .map(|tool| {
-                        tool.get("name")
-                            .and_then(serde_json::Value::as_str)
-                            .expect("static tool name")
-                            .to_string()
-                    })
-                    .collect::<Vec<_>>(),
-                SystemMcpToolCatalog::Dynamic => TASK_RUNNER_TOOLS
-                    .iter()
-                    .map(|name| (*name).to_string())
-                    .collect(),
-            };
+            let SystemMcpToolCatalog::Static(tools) =
+                system_mcp_tool_catalog(descriptor.key).expect("tool catalog");
+            let tool_names = tools
+                .iter()
+                .map(|tool| {
+                    tool.get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .expect("static tool name")
+                        .to_string()
+                })
+                .collect::<Vec<_>>();
             for tool_name in tool_names {
                 let binding = system_mcp_product_skill_binding(descriptor.key, tool_name.as_str())
                     .unwrap_or_else(|| {

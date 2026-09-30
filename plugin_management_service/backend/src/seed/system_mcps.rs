@@ -7,22 +7,9 @@ use super::*;
 #[cfg(test)]
 use chatos_mcp::system_mcp_descriptor_by_resource_id;
 
-fn is_retired_execution_mcp(descriptor: &SystemMcpDescriptor) -> bool {
-    matches!(
-        descriptor.key,
-        chatos_plugin_management_sdk::SystemMcpKey::TaskProcessLog
-            | chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService
-    )
-}
-
-fn active_system_mcp_catalog() -> impl Iterator<Item = &'static SystemMcpDescriptor> {
-    system_mcp_catalog()
-        .iter()
-        .filter(|descriptor| !is_retired_execution_mcp(descriptor))
-}
-
 pub(super) async fn remove_retired_system_mcps(store: &AppStore) -> Result<(), String> {
-    let active_resource_ids = active_system_mcp_catalog()
+    let active_resource_ids = system_mcp_catalog()
+        .iter()
         .map(|descriptor| descriptor.resource_id.to_string())
         .collect::<Vec<_>>();
     store
@@ -40,7 +27,7 @@ pub(super) async fn remove_retired_system_mcps(store: &AppStore) -> Result<(), S
 }
 
 pub(super) async fn seed_system_mcps(store: &AppStore, admin_user_id: &str) -> Result<(), String> {
-    for descriptor in active_system_mcp_catalog() {
+    for descriptor in system_mcp_catalog() {
         seed_system_mcp(store, admin_user_id, descriptor).await?;
     }
     Ok(())
@@ -100,9 +87,8 @@ pub(super) fn system_mcp_record(
     let mut extra: BTreeMap<String, Value> = [("provider_skills".to_string(), provider_skills)]
         .into_iter()
         .collect();
-    if let SystemMcpToolCatalog::Static(tools) = system_mcp_tool_catalog(descriptor.key)? {
-        extra.insert("tool_catalog".to_string(), Value::Array(tools));
-    }
+    let SystemMcpToolCatalog::Static(tools) = system_mcp_tool_catalog(descriptor.key)?;
+    extra.insert("tool_catalog".to_string(), Value::Array(tools));
     Ok(McpRecord {
         id: descriptor.resource_id.to_string(),
         owner_user_id: admin_user_id.to_string(),
@@ -170,14 +156,16 @@ pub(super) fn provider_skills_for_builtin_mcp(kind: BuiltinMcpKind) -> Value {
 
 #[cfg(test)]
 pub(super) fn builtin_kinds() -> Vec<BuiltinMcpKind> {
-    active_system_mcp_catalog()
+    system_mcp_catalog()
+        .iter()
         .filter_map(|descriptor| descriptor.embedded_kind)
         .collect()
 }
 
 #[cfg(test)]
 pub(super) fn active_system_mcp_resource_ids() -> Vec<&'static str> {
-    active_system_mcp_catalog()
+    system_mcp_catalog()
+        .iter()
         .map(|descriptor| descriptor.resource_id)
         .collect()
 }

@@ -51,8 +51,6 @@ const USER_CLARIFICATION_SKILLS: &[&str] = &["chatos-user-clarification"];
 const NOTEPAD_SKILLS: &[&str] = &["chatos-notepad"];
 const MEMORY_CONTEXT_SKILLS: &[&str] = &["chatos-memory-context"];
 const COMMAND_APPROVAL_SKILLS: &[&str] = &["chatos-command-approval"];
-const TASK_PROGRESS_SKILLS: &[&str] = &["chatos-task-progress"];
-const ASYNC_TASK_ORCHESTRATION_SKILLS: &[&str] = &["chatos-async-task-orchestration"];
 
 const fn product_binding(
     binding_id: &'static str,
@@ -200,27 +198,6 @@ pub fn system_mcp_product_skill_binding(
             "chatos-command-approval",
             COMMAND_APPROVAL_SKILLS,
         )),
-        (SystemMcpKey::TaskProcessLog, "record_process" | "report_outcome") => {
-            Some(product_binding(
-                "task-progress.reporting",
-                "chatos-task-progress",
-                TASK_PROGRESS_SKILLS,
-            ))
-        }
-        (
-            SystemMcpKey::TaskRunnerService,
-            "list_tasks"
-            | "get_task"
-            | "create_task"
-            | "create_tasks_with_prerequisites"
-            | "cancel_task"
-            | "wait_for_task_completion"
-            | "get_task_dependency_graph",
-        ) => Some(product_binding(
-            "task-runner.orchestration",
-            "chatos-async-task-orchestration",
-            ASYNC_TASK_ORCHESTRATION_SKILLS,
-        )),
         _ => None,
     }
 }
@@ -229,28 +206,11 @@ pub fn system_mcp_provider_skills(key: SystemMcpKey) -> Vec<SystemMcpProviderSki
     if key == SystemMcpKey::TaskManager {
         return Vec::new();
     }
-    if key == SystemMcpKey::TaskRunnerService {
-        return vec![task_runner_provider_skill()];
-    }
     let descriptor = system_mcp_descriptor(key);
     if let Some(kind) = descriptor.embedded_kind {
         return builtin_provider_skills(kind, descriptor.display_name);
     }
     service_provider_skill(key).into_iter().collect()
-}
-
-pub fn task_runner_provider_skill() -> SystemMcpProviderSkill {
-    SystemMcpProviderSkill {
-        id: "task_runner_usage".to_string(),
-        name: "异步任务工具使用指南".to_string(),
-        description: "指导 AI 把当前用户和项目需求安排为可持续执行和回传结果的后台任务。"
-            .to_string(),
-        instructions: include_str!("../provider_skills/task-runner-service.md")
-            .trim()
-            .to_string(),
-        locale: None,
-        task_profiles: vec!["default".to_string()],
-    }
 }
 
 fn builtin_provider_skills(
@@ -295,12 +255,6 @@ fn service_provider_skill(key: SystemMcpKey) -> Option<SystemMcpProviderSkill> {
             "指导 AI 根据当前项目证据完成本地命令审批，不执行命令或修改文件。",
             include_str!("../provider_skills/local-command-approval.md"),
         ),
-        SystemMcpKey::TaskProcessLog => (
-            "task_process_log_usage",
-            "任务过程记录工具使用指南",
-            "指导执行 Agent 记录简短、可展示的当前任务执行过程。",
-            include_str!("../provider_skills/task-process-log.md"),
-        ),
         _ => return None,
     };
     Some(SystemMcpProviderSkill {
@@ -333,7 +287,6 @@ mod tests {
             SystemMcpKey::MemoryCommandReader,
             SystemMcpKey::MemoryPluginReader,
             SystemMcpKey::LocalCommandApproval,
-            SystemMcpKey::TaskProcessLog,
         ] {
             for tool in crate::system_mcp_static_tools(key).expect("static tool catalog") {
                 let tool_name = tool
@@ -362,79 +315,5 @@ mod tests {
             "future_unreviewed_tool"
         )
         .is_none());
-    }
-
-    #[test]
-    fn task_runner_model_tools_have_explicit_bindings() {
-        for tool_name in [
-            "list_tasks",
-            "get_task",
-            "create_task",
-            "create_tasks_with_prerequisites",
-            "cancel_task",
-            "wait_for_task_completion",
-            "get_task_dependency_graph",
-        ] {
-            assert!(
-                system_mcp_product_skill_binding(SystemMcpKey::TaskRunnerService, tool_name)
-                    .is_some()
-            );
-        }
-        assert!(system_mcp_product_skill_binding(
-            SystemMcpKey::TaskRunnerService,
-            "admin_only_future_tool"
-        )
-        .is_none());
-    }
-
-    #[test]
-    fn agent_facing_service_guidance_hides_execution_routing_internals() {
-        for key in [
-            SystemMcpKey::TaskRunnerService,
-            SystemMcpKey::TaskProcessLog,
-        ] {
-            let guidance = system_mcp_provider_skills(key);
-            assert!(!guidance.is_empty(), "service tool guidance");
-            for guidance in guidance {
-                let content = format!(
-                    "{}\n{}\n{}",
-                    guidance.name, guidance.description, guidance.instructions
-                );
-                for forbidden in [
-                    "MCP",
-                    "Local Connector",
-                    "Harness",
-                    "Provider",
-                    "execution plane",
-                    "Runtime Session",
-                ] {
-                    assert!(!content.contains(forbidden), "{key:?}: {forbidden}");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn task_runner_guidance_has_no_planning_mode_variant() {
-        let skills = system_mcp_provider_skills(SystemMcpKey::TaskRunnerService);
-        assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].task_profiles, ["default"]);
-        assert!(!skills[0].instructions.contains("规划模式"));
-        assert!(skills[0].instructions.contains("wait_for_task_completion"));
-        assert!(skills[0]
-            .instructions
-            .contains("不是等待任务终态的轮询函数"));
-        assert!(skills[0].instructions.contains("本轮不得再调用"));
-        assert!(skills[0].instructions.contains("以联系人第一人称自然说明"));
-        assert!(skills[0].instructions.contains("不得向用户提及 Task"));
-    }
-
-    #[test]
-    fn task_process_guidance_requires_continuous_visible_updates() {
-        let skills = system_mcp_provider_skills(SystemMcpKey::TaskProcessLog);
-        assert_eq!(skills.len(), 1);
-        assert!(skills[0].instructions.contains("过程记录应贯穿任务"));
-        assert!(skills[0].instructions.contains("关键步骤和阶段变化"));
-        assert!(skills[0].instructions.contains("不要为每次工具调用"));
     }
 }

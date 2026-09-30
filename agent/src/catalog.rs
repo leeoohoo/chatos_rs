@@ -174,10 +174,7 @@ pub const fn is_chatos_callback_agent(key: SystemAgentKey) -> bool {
 }
 
 pub const fn is_task_runner_phase_agent(key: SystemAgentKey) -> bool {
-    matches!(
-        key,
-        SystemAgentKey::LocalAgentExecutionAgent | SystemAgentKey::TaskRunnerRunPhase
-    )
+    matches!(key, SystemAgentKey::LocalAgentExecutionAgent)
 }
 
 pub const fn is_task_runner_execution_agent(key: SystemAgentKey) -> bool {
@@ -203,9 +200,7 @@ pub const fn chatos_task_runner_tool_profile(key: SystemAgentKey) -> Option<&'st
 pub fn agent_descriptor(key: SystemAgentKey) -> &'static AgentDescriptor {
     match key {
         SystemAgentKey::ChatosConversationAgent => &CHATOS_CONVERSATION_AGENT_DESCRIPTOR,
-        SystemAgentKey::LocalAgentExecutionAgent | SystemAgentKey::TaskRunnerRunPhase => {
-            &LOCAL_AGENT_EXECUTION_AGENT_DESCRIPTOR
-        }
+        SystemAgentKey::LocalAgentExecutionAgent => &LOCAL_AGENT_EXECUTION_AGENT_DESCRIPTOR,
         SystemAgentKey::LocalConnectorCommandApprovalAgent => {
             &LOCAL_CONNECTOR_COMMAND_APPROVAL_AGENT_DESCRIPTOR
         }

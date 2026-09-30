@@ -199,12 +199,7 @@ pub fn validate_plugin_manifest(
             );
         }
         if let Some(target_agent) = command.target_agent.as_deref() {
-            if ![
-                SystemAgentKey::LocalAgentExecutionAgent.as_str(),
-                SystemAgentKey::TaskRunnerRunPhase.as_str(),
-            ]
-            .contains(&target_agent)
-            {
+            if target_agent != SystemAgentKey::LocalAgentExecutionAgent.as_str() {
                 issue(
                     &mut issues,
                     format!("commands[{index}].target_agent").as_str(),
@@ -266,12 +261,7 @@ pub fn validate_plugin_manifest(
                 "description exceeds 4096 bytes",
             );
         }
-        if ![
-            SystemAgentKey::LocalAgentExecutionAgent.as_str(),
-            SystemAgentKey::TaskRunnerRunPhase.as_str(),
-        ]
-        .contains(&agent.base_agent.as_str())
-        {
+        if agent.base_agent != SystemAgentKey::LocalAgentExecutionAgent.as_str() {
             issue(
                 &mut issues,
                 format!("agents[{index}].base_agent").as_str(),

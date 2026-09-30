@@ -129,7 +129,7 @@ pub(crate) async fn call_tool_once(
 
     if info.server_type == "http" {
         let url = info.server_url.clone().ok_or("missing server url")?;
-        let headers = http_tool_call_headers(info, session_id, conversation_turn_id);
+        let headers = http_tool_call_headers(info);
         let result = jsonrpc_http_call(
             &url,
             headers.as_ref(),
@@ -229,26 +229,8 @@ fn heavy_io_session_limiter(session_id: Option<&str>) -> Arc<Semaphore> {
     limiter
 }
 
-fn http_tool_call_headers(
-    info: &ToolInfo,
-    session_id: Option<&str>,
-    conversation_turn_id: Option<&str>,
-) -> Option<HashMap<String, String>> {
-    let mut headers = info.server_headers.clone().unwrap_or_default();
-    if info.server_name
-        == chatos_mcp::system_mcp_descriptor(
-            chatos_plugin_management_sdk::SystemMcpKey::TaskRunnerService,
-        )
-        .server_name
-    {
-        if let Some(session_id) = normalized_context_value(session_id) {
-            headers.insert("X-Chatos-Session-Id".to_string(), session_id.clone());
-            headers.insert("X-Chatos-Conversation-Id".to_string(), session_id);
-        }
-        if let Some(turn_id) = normalized_context_value(conversation_turn_id) {
-            headers.insert("X-Chatos-Turn-Id".to_string(), turn_id);
-        }
-    }
+fn http_tool_call_headers(info: &ToolInfo) -> Option<HashMap<String, String>> {
+    let headers = info.server_headers.clone().unwrap_or_default();
     (!headers.is_empty()).then_some(headers)
 }
 

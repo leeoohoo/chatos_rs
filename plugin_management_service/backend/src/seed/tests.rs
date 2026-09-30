@@ -161,13 +161,3 @@ fn seeded_system_mcp_records_use_the_unified_runtime_kind() {
         assert!(record.runtime.builtin_kind.is_none());
     }
 }
-
-#[test]
-fn server_execution_mcps_are_not_seeded() {
-    let resource_ids = active_system_mcp_resource_ids();
-
-    assert!(
-        !resource_ids.contains(&chatos_plugin_management_sdk::CHATOS_TASK_RUNNER_MCP_RESOURCE_ID)
-    );
-    assert!(!resource_ids.contains(&chatos_plugin_management_sdk::TASK_PROCESS_LOG_MCP_RESOURCE_ID));
-}

@@ -129,7 +129,7 @@ fn test_binding(
         binding_scope: binding_scope.to_string(),
         owner_user_id: None,
         resource_kind: RESOURCE_KIND_MCP.to_string(),
-        resource_id: "system_mcp_chatos_task_runner".to_string(),
+        resource_id: "system_mcp_profiled_tool".to_string(),
         enabled: true,
         required: true,
         priority,

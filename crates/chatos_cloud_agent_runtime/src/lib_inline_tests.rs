@@ -169,14 +169,14 @@ mod tests {
     #[test]
     fn a_single_mcp_result_uses_the_same_call_and_output_pair() {
         let calls = serde_json::json!([
-            {"id": "call-1", "function": {"name": "TaskProcessLog", "arguments": "{}"}}
+            {"id": "call-1", "function": {"name": "ExampleMcpTool", "arguments": "{}"}}
         ]);
         let results = serde_json::json!([
             {"status": "completed", "result": "recorded"}
         ]);
 
         let response_output = serde_json::json!([
-            {"type":"function_call","id":"fc-1","call_id":"call-1","name":"TaskProcessLog","arguments":"{}"}
+            {"type":"function_call","id":"fc-1","call_id":"call-1","name":"ExampleMcpTool","arguments":"{}"}
         ]);
         let items = cloud_agent_mcp_result_input_items(
             response_output.as_array().unwrap(),

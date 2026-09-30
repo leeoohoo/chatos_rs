@@ -69,10 +69,8 @@ pub use product_skills::{
     PRODUCT_SKILL_RUNTIME_RESOURCE_ID, PRODUCT_SKILL_RUNTIME_SERVER_NAME,
 };
 pub use skills::{
-    system_mcp_product_skill_binding, system_mcp_provider_skills, task_runner_provider_skill,
-    SystemMcpProductSkillBinding, SystemMcpProviderSkill,
+    system_mcp_product_skill_binding, system_mcp_provider_skills, SystemMcpProductSkillBinding,
+    SystemMcpProviderSkill,
 };
-pub use system_tool_catalog::{
-    local_command_approval_decision_tool_definition, task_process_log_tool_definitions,
-};
+pub use system_tool_catalog::local_command_approval_decision_tool_definition;
 pub use tool_catalog::{system_mcp_static_tools, system_mcp_tool_catalog, SystemMcpToolCatalog};

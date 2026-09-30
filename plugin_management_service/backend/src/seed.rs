@@ -48,7 +48,6 @@ const RETIRED_SYSTEM_AGENT_KEYS: &[&str] = &[
     "project_requirement_execution_planner_agent",
     "task_runner_local_plan_phase",
     "task_runner_local_run_phase",
-    "task_runner_run_phase",
     "project_environment_agent",
     "local_connector_client_agent",
     "memory_engine_context_agent",

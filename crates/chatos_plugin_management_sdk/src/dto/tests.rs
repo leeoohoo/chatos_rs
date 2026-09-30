@@ -24,9 +24,9 @@ fn agent_tool_plane_defaults_to_managed_and_serializes_stably() {
 
 #[test]
 fn system_agent_keys_match_registry_keys() {
-    assert_eq!(SystemAgentKey::ALL.len(), 9);
+    assert_eq!(SystemAgentKey::ALL.len(), 8);
     assert!(serde_json::from_str::<SystemAgentKey>("\"task_runner_plan_phase\"").is_err());
-    assert_eq!(SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len(), 36);
+    assert_eq!(SystemAgentKey::ALL.len() * AgentPromptVendor::ALL.len(), 32);
     assert_eq!(
         SystemAgentKey::ChatosConversationAgent.as_str(),
         "chatos_conversation_agent"
@@ -47,17 +47,10 @@ fn system_agent_keys_match_registry_keys() {
 
 #[test]
 fn system_mcp_keys_are_stable_and_complete() {
-    assert_eq!(SystemMcpKey::ALL.len(), 15);
+    assert_eq!(SystemMcpKey::ALL.len(), 13);
     assert!("task_manager".parse::<SystemMcpKey>().is_err());
-    assert_eq!(SystemMcpKey::TaskProcessLog.as_str(), "task_process_log");
-    assert_eq!(
-        "task_runner_service".parse::<SystemMcpKey>(),
-        Ok(SystemMcpKey::TaskRunnerService)
-    );
-    assert_eq!(
-        "task_process_log".parse::<SystemMcpKey>(),
-        Ok(SystemMcpKey::TaskProcessLog)
-    );
+    assert!("task_runner_service".parse::<SystemMcpKey>().is_err());
+    assert!("task_process_log".parse::<SystemMcpKey>().is_err());
 }
 
 #[test]

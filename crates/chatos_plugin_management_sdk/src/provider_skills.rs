@@ -411,8 +411,8 @@ mod tests {
 
     #[test]
     fn provider_prompt_selects_only_the_program_task_profile() {
-        let mut task_runner = resolved_mcp("task-runner", "task_runner_service", true, true);
-        task_runner.resource.metadata.extra.insert(
+        let mut profiled_tool = resolved_mcp("profiled-tool", "profiled_tool", true, true);
+        profiled_tool.resource.metadata.extra.insert(
             PROVIDER_SKILLS_METADATA_KEY.to_string(),
             json!([
                 {
@@ -429,21 +429,17 @@ mod tests {
                 }
             ]),
         );
-        let capabilities = capabilities(vec![task_runner]);
+        let capabilities = capabilities(vec![profiled_tool]);
 
         let ordinary = capabilities
-            .compose_provider_skills_prompt_for_task_profile(
-                ["task_runner_service"],
-                Some("zh-CN"),
-                None,
-            )
+            .compose_provider_skills_prompt_for_task_profile(["profiled_tool"], Some("zh-CN"), None)
             .expect("ordinary provider prompt");
         assert!(ordinary.contains("创建普通执行任务"));
         assert!(!ordinary.contains("创建规划任务并等待回传"));
 
         let planning = capabilities
             .compose_provider_skills_prompt_for_task_profile(
-                ["task_runner_service"],
+                ["profiled_tool"],
                 Some("zh-CN"),
                 Some("chatos_plan"),
             )
