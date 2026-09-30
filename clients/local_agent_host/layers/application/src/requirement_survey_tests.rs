@@ -117,6 +117,32 @@ async fn resolves_project_survey_and_atomically_resumes_waiting_task_run() {
         ))
         .await
         .expect("survey");
+    let duplicate = runtime
+        .try_handle(request(
+            "create-second-survey",
+            HostCommand::CreateRequirementSurvey(CreateRequirementSurveyCommand {
+                survey_id: "survey-2".to_string(),
+                owner_user_id: "user-1".to_string(),
+                project_resource_id: "project-1".to_string(),
+                source_conversation_id: "conversation-1".to_string(),
+                source_run_id: "run-1".to_string(),
+                source_task_id: Some("task-1".to_string()),
+                title: "Duplicate requirements".to_string(),
+                description: None,
+                questions: vec![LocalRequirementSurveyQuestion {
+                    question_id: "duplicate".to_string(),
+                    prompt: "This survey must not be created".to_string(),
+                    response_kind: LocalRequirementSurveyResponseKind::Boolean,
+                    required: true,
+                    options: Vec::new(),
+                }],
+            }),
+        ))
+        .await
+        .expect_err("second open survey must conflict");
+    assert!(duplicate
+        .to_string()
+        .contains("already has open requirement survey survey-1"));
     let listed = runtime
         .try_handle(request(
             "list-surveys",

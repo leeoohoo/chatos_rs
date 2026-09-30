@@ -31,6 +31,22 @@ impl LocalRequirementSurveyStore for SqliteClientStorage {
                 return Ok(replay);
             }
             ensure_source_context(&mut database, survey).await?;
+            let existing_open_survey: Option<String> = sqlx::query_scalar(
+                "SELECT survey_id FROM local_requirement_surveys \
+                 WHERE owner_user_id = ? AND source_run_id = ? AND status = 'open' \
+                 ORDER BY created_at_unix_ms, survey_id LIMIT 1",
+            )
+            .bind(&survey.owner_user_id)
+            .bind(&survey.source_run_id)
+            .fetch_optional(&mut *database)
+            .await
+            .db()?;
+            if let Some(existing_survey_id) = existing_open_survey {
+                return Err(ClientStorageError::Conflict(format!(
+                    "Run {} already has open requirement survey {existing_survey_id}",
+                    survey.source_run_id
+                )));
+            }
             sqlx::query(
                 "INSERT INTO local_requirement_surveys(\
                    owner_user_id, survey_id, project_resource_id, source_conversation_id, \
