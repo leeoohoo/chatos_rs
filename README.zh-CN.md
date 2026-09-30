@@ -6,11 +6,11 @@
 
 ChatOS 是一个让 AI 在真实项目环境中持续工作的原生桌面工作台。它不只回答问题，还能围绕项目读取上下文、拆解需求、执行后台任务，调用本机文件、Git、终端和插件，并把执行过程、权限请求与最终结果完整呈现给用户。
 
-云端负责对话、任务、记忆与能力编排；原生客户端和 Local Connector 负责在用户明确授权的设备与工作区内执行操作。两者共同组成一条可以检查、干预、停止和追踪的长期协作工作流。
+原生客户端拥有会话、任务和执行。云端仅保留认证、模型配置、持久记忆、Plugin Marketplace、版本发布和 Companion Relay。Local Agent Host 与 Local Connector 只在用户明确授权的设备和工作区内执行操作。
 
 ## 产品界面
 
-官网与公开资料只展示用户实际使用的原生客户端，不再使用 Memory Engine、Task Runner 或内部管理控制台截图代替产品界面。
+官网与公开资料只展示用户实际使用的原生客户端，不使用 Memory Engine 或内部管理控制台截图代替产品界面。
 
 | 客户端区域 | 当前能力 |
 | --- | --- |
@@ -22,7 +22,7 @@ ChatOS 是一个让 AI 在真实项目环境中持续工作的原生桌面工作
 ## 现在的项目是什么
 
 - **原生桌面客户端：** macOS 使用 SwiftUI，Windows 使用 WinUI，两端独立实现。已经退役的 Electron 客户端不再是产品运行时。
-- **云端业务编排：** 对话、任务、智能体、配置、插件元数据和记忆由服务端统一管理。
+- **云端控制面：** 认证、模型配置、持久记忆、Plugin Marketplace 元数据与版本、Companion Relay 由服务端提供。
 - **设备侧能力执行：** 每个项目绑定一个明确授权的本机工作区。文件、Git、命令、本地 MCP、插件应用和设备权限通过原生客户端内置的 Local Connector 执行。
 - **可观察的后台任务：** 复杂需求可以进入可恢复的任务生命周期，持续保留进度、日志、工具调用、审批、重试和最终结果。
 - **长期项目上下文：** 会话摘要、项目事实和角色记忆可以跨会话继续使用。
@@ -35,23 +35,22 @@ ChatOS 不会把设备侧操作静默切换到服务端文件系统或另一台�
 ```mermaid
 flowchart LR
     U[用户] --> C[macOS / Windows 原生客户端]
+    C --> A[Local Agent Host]
+    A --> W[已授权工作区]
+    A --> X[Git / 终端 / 本地 MCP / 插件应用]
     C --> G[APISIX 统一网关]
-    G --> S[云端业务服务]
-    S --> T[Task Runner 与 Worker]
-    S --> M[Memory Engine]
-    S --> P[Plugin / MCP Management]
-    T --> L[Local Connector Service]
-    P --> L
-    L --> N[原生 Local Connector]
-    N --> W[已授权工作区]
-    N --> X[Git / 终端 / 本地 MCP / 插件应用]
-    S --> H[Harness 仓库与集成平面]
+    G --> I[认证与模型配置]
+    G --> M[持久记忆]
+    G --> P[Plugin Marketplace]
+    G --> L[Companion Relay]
+    L --> C
+    G --> H[Harness 仓库与集成平面]
 ```
 
 这条边界是当前架构的核心：
 
-- 云端服务是账号与任务数据的事实来源。
-- 原生客户端是项目的唯一权威，并负责本机凭据、工作区授权和设备能力。
+- 云端只是账号、配置、持久 Memory、Plugin Marketplace 元数据和 Relay 状态的事实来源。
+- 原生客户端是会话、任务、项目、本机凭据、工作区授权和设备能力的唯一权威。
 - Local Connector 主动建立出站连接，只开放用户授权的工作区和能力。
 - Harness 负责仓库、同步、CI 与集成，不是项目文件或命令执行的回退环境。
 
@@ -106,7 +105,7 @@ Windows 客户端使用相同的产品协议与视觉语言，同时拥有独立
 | `official_website_service` | 官网、注册和客户端版本分发。 |
 | `docker` | Compose 拓扑、部署脚本、网关与可观测性配置。 |
 
-会话、任务、工具、终端、工作区和插件执行现已通过 `clients/local_agent_host` 完全落在原生客户端，不再保留云端 ChatOS Task Runner 或会话后端。
+会话、任务、工具、终端、工作区和插件执行完全通过 `clients/local_agent_host` 落在原生客户端，云端不运行会话或任务执行时。
 
 根 Rust workspace 定义在 [Cargo.toml](./Cargo.toml)。Memory Engine 保持独立 Rust workspace，由 Makefile 显式构建和测试。
 

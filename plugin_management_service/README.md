@@ -1,6 +1,6 @@
 # Plugin Management Service
 
-插件管理服务负责 Plugin Marketplace、不可变 Release、MCP、skills、skill packages、系统内部 agent 和 agent capability bindings 的统一管理，并向 ChatOS、Task Runner 与 Local Connector 提供经过签名验证的能力和安装来源。
+插件管理服务负责 Plugin Marketplace、不可变 Release、MCP、skills、skill packages、系统 agent 和 agent capability bindings 的统一管理，并向原生客户端 Local Agent Host 提供经过签名验证的能力和安装来源。
 
 ## 目录
 
@@ -97,7 +97,7 @@ Vite 会把 `/api/admin/plugin-management` 交给本地 APISIX，再转发到 `h
 
 项目工作区与执行状态由客户端 Local Agent Host 收口。Plugin Management 只发布签名能力策略、Plugin 元数据和不可变安装来源，不代理文件、终端、浏览器或 Plugin 工具执行。
 
-本地执行只登记 `local_agent_execution_agent`。只读分析与实际工程执行使用同一本地运行身份，能力由本地任务快照和可信 Plugin 策略共同限制；不存在服务端 Task Runner、MCP Management 执行路由或另一套规划 Agent。
+本地执行只登记 `local_agent_execution_agent`。只读分析与实际工程执行使用同一本地运行身份，能力由本地任务快照和可信 Plugin 策略共同限制；服务端不承载对话、任务规划或工具执行。
 
 ## 当前系统 Agent
 

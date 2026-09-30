@@ -6,11 +6,11 @@ English · [简体中文](./README.zh-CN.md)
 
 ChatOS is a native desktop workspace that lets AI keep working inside real projects. It goes beyond answering questions: it can read project context, break down requirements, execute background tasks, use local files, Git, terminals, and plugins, and present the full execution process, permission requests, and results to the user.
 
-The cloud coordinates conversations, tasks, memory, and capabilities. Native clients and the Local Connector execute operations only on explicitly authorized devices and workspaces. Together they provide a long-running workflow that users can inspect, guide, stop, and audit.
+Native clients own conversations, tasks, and execution. The cloud is limited to authentication, model configuration, retained memory, the Plugin Marketplace, release distribution, and Companion relay. Local Agent Host and the Local Connector execute operations only on explicitly authorized devices and workspaces.
 
 ## Product interfaces
 
-The website and other public-facing material show the native client that users actually operate. Internal Memory Engine, Task Runner, and administration-console screenshots are not used as product UI.
+The website and other public-facing material show the native client that users actually operate. Internal Memory Engine and administration-console screenshots are not used as product UI.
 
 | Client area | Current capabilities |
 | --- | --- |
@@ -22,7 +22,7 @@ The website and other public-facing material show the native client that users a
 ## What the project is today
 
 - **Native desktop clients:** independent SwiftUI and WinUI applications for macOS and Windows. The retired Electron client is no longer the product runtime.
-- **Cloud orchestration:** conversations, tasks, agents, configuration, plugin metadata, and memory are managed by server-side services.
+- **Cloud control plane:** authentication, model configuration, retained memory, Plugin Marketplace metadata, releases, and Companion relay are provided by server-side services.
 - **Device-side execution:** every project binds an explicitly authorized local workspace. Files, Git, commands, local MCP servers, plugin applications, and device permissions execute through the Local Connector built into the native client.
 - **Observable background work:** complex requests can become resumable tasks with progress, logs, tool calls, approvals, retries, and final results.
 - **Long-term project context:** conversation summaries, project facts, and role-specific memory can be reused across sessions.
@@ -35,23 +35,22 @@ ChatOS does not silently move a device-scoped operation to a server filesystem o
 ```mermaid
 flowchart LR
     U[User] --> C[Native macOS / Windows client]
+    C --> A[Local Agent Host]
+    A --> W[Authorized workspace]
+    A --> X[Git / terminal / local MCP / plugin apps]
     C --> G[APISIX API gateway]
-    G --> S[Cloud business services]
-    S --> T[Task Runner and workers]
-    S --> M[Memory Engine]
-    S --> P[Plugin / MCP management]
-    T --> L[Local Connector service]
-    P --> L
-    L --> N[Native Local Connector]
-    N --> W[Authorized workspace]
-    N --> X[Git / terminal / local MCP / plugin apps]
-    S --> H[Harness repository and integration plane]
+    G --> I[Authentication and model configuration]
+    G --> M[Retained Memory]
+    G --> P[Plugin Marketplace]
+    G --> L[Companion relay]
+    L --> C
+    G --> H[Harness repository and integration plane]
 ```
 
 The boundary is intentional:
 
-- Cloud services are authoritative for account and task data.
-- The native client is authoritative for projects, local credentials, workspace authorization, and device capabilities.
+- Cloud services are authoritative only for accounts, configuration, retained Memory, Plugin Marketplace metadata, and relay state.
+- The native client is authoritative for conversations, tasks, projects, local credentials, workspace authorization, and device capabilities.
 - Local Connector uses outbound connectivity and exposes only the workspace and capabilities the user authorized.
 - Harness manages repositories, synchronization, CI, and integrations; it is not a fallback project filesystem or command executor.
 
@@ -106,7 +105,7 @@ Plugins can combine MCP servers, skills, permission declarations, managed artifa
 | `official_website_service` | Product website, registration, and client release distribution. |
 | `docker` | Compose topology, deployment scripts, gateway, and observability configuration. |
 
-Conversation, task, tool, terminal, workspace, and plugin execution now live in the native clients through `clients/local_agent_host`; there is no cloud ChatOS task runner or conversation backend.
+Conversation, task, tool, terminal, workspace, and plugin execution live in the native clients through `clients/local_agent_host`; the cloud has no conversation or task execution runtime.
 
 The root Rust workspace is defined in [Cargo.toml](./Cargo.toml). Memory Engine remains a separate Rust workspace and is built explicitly by the Makefile.
 

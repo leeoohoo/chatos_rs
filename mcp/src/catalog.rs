@@ -22,7 +22,7 @@ pub struct SystemMcpDescriptor {
     pub owner_service: &'static str,
     pub backend: SystemMcpBackend,
     /// Hosts that contain a concrete provider implementation for this system MCP.
-    /// Agent runtime routing is owned by MCP Management Service.
+    /// Agent runtime routing is owned by the client-side Local Agent Host.
     pub implementation_hosts: &'static [SystemMcpHost],
     pub embedded_kind: Option<BuiltinMcpKind>,
 }
@@ -37,9 +37,6 @@ impl SystemMcpDescriptor {
     }
 }
 
-const CHATOS_AND_LOCAL_HOSTS: &[SystemMcpHost] =
-    &[SystemMcpHost::Chatos, SystemMcpHost::LocalConnector];
-const CHATOS_HOST: &[SystemMcpHost] = &[SystemMcpHost::Chatos];
 const LOCAL_CONNECTOR_HOST: &[SystemMcpHost] = &[SystemMcpHost::LocalConnector];
 
 macro_rules! embedded_descriptor {
@@ -70,7 +67,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         "Read-only code inspection and search tools.",
         false,
         "shared",
-        CHATOS_AND_LOCAL_HOSTS,
+        LOCAL_CONNECTOR_HOST,
         CodeMaintainerRead
     ),
     embedded_descriptor!(
@@ -81,7 +78,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         "Code editing and patch application tools.",
         true,
         "shared",
-        CHATOS_AND_LOCAL_HOSTS,
+        LOCAL_CONNECTOR_HOST,
         CodeMaintainerWrite
     ),
     embedded_descriptor!(
@@ -128,13 +125,13 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         resource_id: "builtin_notepad",
         server_name: "notepad",
         display_name: "Notepad (Builtin)",
-        description: "Persistent agent notepad tools backed by the cloud ChatOS user store.",
+        description: "Persistent agent notepad tools backed by the client-owned local store.",
         allow_writes: true,
         tags: &["system", "builtin"],
         category: Some("builtin"),
-        owner_service: "chatos",
-        backend: SystemMcpBackend::ServiceHttp,
-        implementation_hosts: CHATOS_HOST,
+        owner_service: "local_agent_host",
+        backend: SystemMcpBackend::Embedded,
+        implementation_hosts: LOCAL_CONNECTOR_HOST,
         embedded_kind: Some(BuiltinMcpKind::Notepad),
     },
     SystemMcpDescriptor {
@@ -146,9 +143,9 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         allow_writes: true,
         tags: &["system", "builtin"],
         category: Some("builtin"),
-        owner_service: "chatos",
-        backend: SystemMcpBackend::ServiceHttp,
-        implementation_hosts: CHATOS_HOST,
+        owner_service: "local_agent_host",
+        backend: SystemMcpBackend::Embedded,
+        implementation_hosts: LOCAL_CONNECTOR_HOST,
         embedded_kind: Some(BuiltinMcpKind::AgentBuilder),
     },
     embedded_descriptor!(
@@ -159,7 +156,7 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         "Structured user clarification and decision tools.",
         true,
         "shared",
-        CHATOS_AND_LOCAL_HOSTS,
+        LOCAL_CONNECTOR_HOST,
         AskUser
     ),
     SystemMcpDescriptor {
@@ -183,8 +180,8 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         "Memory Skill Reader (Builtin)",
         "Read agent skills from memory context.",
         false,
-        "chatos",
-        CHATOS_HOST,
+        "local_agent_host",
+        LOCAL_CONNECTOR_HOST,
         MemorySkillReader
     ),
     embedded_descriptor!(
@@ -194,8 +191,8 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         "Memory Command Reader (Builtin)",
         "Read agent commands from memory context.",
         false,
-        "chatos",
-        CHATOS_HOST,
+        "local_agent_host",
+        LOCAL_CONNECTOR_HOST,
         MemoryCommandReader
     ),
     embedded_descriptor!(
@@ -205,8 +202,8 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         "Memory Plugin Reader (Builtin)",
         "Read agent plugins from memory context.",
         false,
-        "chatos",
-        CHATOS_HOST,
+        "local_agent_host",
+        LOCAL_CONNECTOR_HOST,
         MemoryPluginReader
     ),
     SystemMcpDescriptor {
@@ -349,23 +346,23 @@ mod tests {
     }
 
     #[test]
-    fn notepad_is_owned_by_the_chatos_cloud_service() {
+    fn notepad_is_owned_by_the_local_agent_host() {
         let descriptor = system_mcp_descriptor(SystemMcpKey::Notepad);
 
-        assert_eq!(descriptor.owner_service, "chatos");
-        assert_eq!(descriptor.backend, SystemMcpBackend::ServiceHttp);
+        assert_eq!(descriptor.owner_service, "local_agent_host");
+        assert_eq!(descriptor.backend, SystemMcpBackend::Embedded);
         assert_eq!(descriptor.embedded_kind, Some(BuiltinMcpKind::Notepad));
-        assert!(descriptor.supports_implementation_host(SystemMcpHost::Chatos));
+        assert!(descriptor.supports_implementation_host(SystemMcpHost::LocalConnector));
     }
 
     #[test]
-    fn agent_builder_is_owned_by_the_chatos_cloud_service() {
+    fn agent_builder_is_owned_by_the_local_agent_host() {
         let descriptor = system_mcp_descriptor(SystemMcpKey::AgentBuilder);
 
-        assert_eq!(descriptor.owner_service, "chatos");
-        assert_eq!(descriptor.backend, SystemMcpBackend::ServiceHttp);
+        assert_eq!(descriptor.owner_service, "local_agent_host");
+        assert_eq!(descriptor.backend, SystemMcpBackend::Embedded);
         assert_eq!(descriptor.embedded_kind, Some(BuiltinMcpKind::AgentBuilder));
-        assert!(descriptor.supports_implementation_host(SystemMcpHost::Chatos));
+        assert!(descriptor.supports_implementation_host(SystemMcpHost::LocalConnector));
     }
 
     #[test]

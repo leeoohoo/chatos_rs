@@ -670,7 +670,6 @@ Unified gateway:          http://localhost:${APISIX_GATEWAY_PORT:-9080}
 Prometheus:               http://127.0.0.1:${PROMETHEUS_PORT:-9090}
 Alertmanager:             http://127.0.0.1:${ALERTMANAGER_PORT:-9093}
 Grafana:                  http://127.0.0.1:${GRAFANA_PORT:-3001}
-Main backend:             http://localhost:3997
 Harness:                  http://localhost:3000
 Local Connector Service:  http://localhost:39230
 
