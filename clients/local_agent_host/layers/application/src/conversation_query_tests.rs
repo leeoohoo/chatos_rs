@@ -6,7 +6,8 @@ use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
     CancelConversationTurnCommand, CreateConversationCommand, GetConversationCommand,
     GetConversationHistoryCommand, HostCommand, HostRequestEnvelope, HostResult,
-    ListConversationsCommand, StartConversationTurnCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+    ListConversationsCommand, LocalConversationResourceBinding, LocalConversationResourceKind,
+    StartConversationTurnCommand, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -19,11 +20,69 @@ fn request(command_id: &str, command: HostCommand) -> HostRequestEnvelope {
     }
 }
 
+#[tokio::test]
+async fn persists_unique_owner_scoped_resource_bindings() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
+    let project = LocalConversationResourceBinding {
+        kind: LocalConversationResourceKind::Project,
+        resource_id: "project-1".to_string(),
+    };
+    let created = runtime
+        .try_handle(request(
+            "create-project-conversation",
+            HostCommand::CreateConversation(CreateConversationCommand {
+                conversation_id: "conversation-project-1".to_string(),
+                owner_user_id: "user-1".to_string(),
+                title: "Project 1".to_string(),
+                resource: Some(project.clone()),
+            }),
+        ))
+        .await
+        .expect("create resource-bound Conversation");
+    assert!(matches!(
+        created,
+        HostResult::Conversation { conversation }
+            if conversation.conversation.resource == Some(project.clone())
+    ));
+
+    let duplicate = runtime
+        .try_handle(request(
+            "create-duplicate-project-conversation",
+            HostCommand::CreateConversation(CreateConversationCommand {
+                conversation_id: "conversation-project-1-duplicate".to_string(),
+                owner_user_id: "user-1".to_string(),
+                title: "Project 1 duplicate".to_string(),
+                resource: Some(project.clone()),
+            }),
+        ))
+        .await;
+    assert!(duplicate.is_err());
+
+    runtime
+        .try_handle(request(
+            "create-other-owner-project-conversation",
+            HostCommand::CreateConversation(CreateConversationCommand {
+                conversation_id: "conversation-other-owner-project-1".to_string(),
+                owner_user_id: "user-2".to_string(),
+                title: "Project 1".to_string(),
+                resource: Some(project),
+            }),
+        ))
+        .await
+        .expect("resource binding is owner scoped");
+}
+
 fn create(conversation_id: &str, owner_user_id: &str) -> HostCommand {
     HostCommand::CreateConversation(CreateConversationCommand {
         conversation_id: conversation_id.to_string(),
         owner_user_id: owner_user_id.to_string(),
         title: conversation_id.to_string(),
+        resource: None,
     })
 }
 

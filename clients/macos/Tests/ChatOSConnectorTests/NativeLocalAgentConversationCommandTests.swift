@@ -4,6 +4,26 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentConversationCommandTests: XCTestCase {
+    func testCreateConversationPersistsTypedProjectBinding() async throws {
+        let host = ConversationCommandHostStub()
+        let client = NativeLocalAgentConversationClient(host: host)
+        let detail = try await client.create(
+            ownerUserID: "user-1",
+            conversationID: "conversation-project-1",
+            title: "Project 1",
+            resource: .init(kind: .project, resourceID: "project-1")
+        )
+
+        XCTAssertEqual(detail.conversation.resource?.kind, .project)
+        XCTAssertEqual(detail.conversation.resource?.resourceID, "project-1")
+        let command = try await host.lastCommandObject()
+        guard case let .object(resource) = command["resource"] else {
+            return XCTFail("Expected typed resource binding")
+        }
+        XCTAssertEqual(resource["kind"], .string("project"))
+        XCTAssertEqual(resource["resource_id"], .string("project-1"))
+    }
+
     func testStartTurnEncodesCompleteVersionedCommand() async throws {
         let host = ConversationCommandHostStub()
         let client = NativeLocalAgentConversationClient(host: host)
@@ -62,6 +82,27 @@ private actor ConversationCommandHostStub: LocalAgentHostClientServicing {
         commands.append(command)
         let value = try JSONSerialization.jsonObject(with: command) as? [String: Any]
         let commandType = value?["type"] as? String
+        if commandType == "create_conversation" {
+            let resource = value?["resource"] ?? NSNull()
+            let response: [String: Any] = [
+                "type": "conversation",
+                "conversation": [
+                    "conversation": [
+                        "conversation_id": "conversation-project-1",
+                        "owner_user_id": "user-1",
+                        "title": "Project 1",
+                        "resource": resource,
+                        "version": 1,
+                        "created_at_unix_ms": 1,
+                        "updated_at_unix_ms": 1,
+                    ],
+                    "turns": [],
+                    "messages": [],
+                    "attachments": [],
+                ],
+            ]
+            return try JSONSerialization.data(withJSONObject: response)
+        }
         let cancelled = commandType == "cancel_conversation_turn"
         let responseType = commandType == "start_conversation_turn"
             ? "conversation_turn_started"

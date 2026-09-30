@@ -9,7 +9,12 @@ internal sealed record WindowsLocalConversationRecord(
     string Title,
     ulong Version,
     long CreatedAtUnixMs,
-    long UpdatedAtUnixMs);
+    long UpdatedAtUnixMs,
+    WindowsLocalConversationResourceBinding? Resource = null);
+
+internal sealed record WindowsLocalConversationResourceBinding(
+    string Kind,
+    string ResourceId);
 
 internal sealed record WindowsLocalConversationTurnRecord(
     string TurnId,
@@ -72,7 +77,8 @@ internal sealed record CreateLocalConversationCommand(
     string Type,
     string ConversationId,
     string OwnerUserId,
-    string Title);
+    string Title,
+    WindowsLocalConversationResourceBinding? Resource = null);
 
 internal sealed record GetLocalConversationCommand(
     string Type,
@@ -165,6 +171,20 @@ public sealed class WindowsLocalAgentConversationClient(ILocalAgentHostClient ho
                 conversationId,
                 ownerUserId,
                 "Conversation"),
+            cancellationToken);
+
+    internal Task<WindowsLocalConversationDetail> CreateAsync(
+        string ownerUserId,
+        string conversationId,
+        string title,
+        WindowsLocalConversationResourceBinding resource,
+        CancellationToken cancellationToken) => SendConversationAsync(
+            new CreateLocalConversationCommand(
+                "create_conversation",
+                conversationId,
+                ownerUserId,
+                title,
+                resource),
             cancellationToken);
 
     internal Task<WindowsLocalConversationDetail> GetAsync(

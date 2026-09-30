@@ -326,6 +326,7 @@ mod tests {
                     conversation_id: "conversation-1".to_string(),
                     owner_user_id: "user-1".to_string(),
                     title: "Local conversation".to_string(),
+                    resource: None,
                 },
                 1_000,
             )

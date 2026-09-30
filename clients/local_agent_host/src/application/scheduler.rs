@@ -294,6 +294,7 @@ mod tests {
                     conversation_id: "conversation-guided-scheduler".to_string(),
                     owner_user_id: "user-1".to_string(),
                     title: "Guided scheduler".to_string(),
+                    resource: None,
                 }),
                 "create-guided-conversation",
             ))

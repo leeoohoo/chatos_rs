@@ -107,6 +107,24 @@ public sealed class WindowsLocalAgentConversationCommandTests
         Assert.Equal("conversation-1", Assert.Single(page.Conversations).ConversationId);
     }
 
+    [Fact]
+    public async Task CreatesConversationWithTypedProjectBinding()
+    {
+        var host = new ConversationHost();
+        var resource = new WindowsLocalConversationResourceBinding("project", "project-1");
+
+        _ = await new WindowsLocalAgentConversationClient(host).CreateAsync(
+            "user-1",
+            "conversation-project-1",
+            "Project 1",
+            resource,
+            CancellationToken.None);
+
+        var command = Assert.IsType<CreateLocalConversationCommand>(host.LastCreate);
+        Assert.Equal("Project 1", command.Title);
+        Assert.Equal(resource, command.Resource);
+    }
+
     private static WindowsLocalAgentConversationCommandService CreateCommandService(
         ConversationHost host,
         WindowsLocalAgentConversationRuntimeSettingsService runtime)
@@ -154,6 +172,7 @@ public sealed class WindowsLocalAgentConversationCommandTests
     {
         public StartLocalConversationTurnCommand? LastStart { get; private set; }
         public ListLocalConversationsCommand? LastList { get; private set; }
+        public CreateLocalConversationCommand? LastCreate { get; private set; }
 
         public string? ActiveOwnerUserId => "user-1";
 
@@ -193,9 +212,7 @@ public sealed class WindowsLocalAgentConversationCommandTests
                     "not_found",
                     "missing",
                     false),
-                CreateLocalConversationCommand create => new LocalConversationResult(
-                    "conversation",
-                    Detail(create.ConversationId)),
+                CreateLocalConversationCommand create => Created(create),
                 ListLocalConversationsCommand list => Listed(list),
                 StartLocalConversationTurnCommand start => Started(start),
                 _ => throw new InvalidOperationException(
@@ -232,6 +249,21 @@ public sealed class WindowsLocalAgentConversationCommandTests
                         start.MessageMetadata,
                         1_000),
                     []));
+        }
+
+        private LocalConversationResult Created(CreateLocalConversationCommand command)
+        {
+            LastCreate = command;
+            return new(
+                "conversation",
+                Detail(command.ConversationId) with
+                {
+                    Conversation = Detail(command.ConversationId).Conversation with
+                    {
+                        Title = command.Title,
+                        Resource = command.Resource,
+                    },
+                });
         }
 
         private LocalConversationsResult Listed(ListLocalConversationsCommand command)

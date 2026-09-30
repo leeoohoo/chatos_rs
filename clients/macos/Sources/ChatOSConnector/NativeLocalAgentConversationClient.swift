@@ -5,6 +5,7 @@ public struct LocalAgentConversationRecord: Decodable, Sendable, Equatable {
     public let conversationID: String
     public let ownerUserID: String
     public let title: String
+    public let resource: LocalAgentConversationResourceBinding?
     public let version: UInt64
     public let createdAtUnixMs: Int64
     public let updatedAtUnixMs: Int64
@@ -12,9 +13,29 @@ public struct LocalAgentConversationRecord: Decodable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case conversationID = "conversation_id"
         case ownerUserID = "owner_user_id"
-        case title, version
+        case title, resource, version
         case createdAtUnixMs = "created_at_unix_ms"
         case updatedAtUnixMs = "updated_at_unix_ms"
+    }
+}
+
+public struct LocalAgentConversationResourceBinding: Codable, Sendable, Equatable {
+    public enum Kind: String, Codable, Sendable {
+        case contact
+        case project
+    }
+
+    public let kind: Kind
+    public let resourceID: String
+
+    public init(kind: Kind, resourceID: String) {
+        self.kind = kind
+        self.resourceID = resourceID
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case resourceID = "resource_id"
     }
 }
 
@@ -160,13 +181,15 @@ public struct NativeLocalAgentConversationClient: Sendable {
     public func create(
         ownerUserID: String,
         conversationID: String,
-        title: String
+        title: String,
+        resource: LocalAgentConversationResourceBinding? = nil
     ) async throws -> LocalAgentConversationDetail {
         let response: ConversationResult = try await host.request(CreateCommand(
             type: "create_conversation",
             conversationID: conversationID,
             ownerUserID: ownerUserID,
-            title: title
+            title: title,
+            resource: resource
         ))
         try Self.require(response.type, expected: "conversation")
         return response.conversation
@@ -229,9 +252,10 @@ private struct CreateCommand: Encodable, Sendable {
     let conversationID: String
     let ownerUserID: String
     let title: String
+    let resource: LocalAgentConversationResourceBinding?
 
     private enum CodingKeys: String, CodingKey {
-        case type, title
+        case type, title, resource
         case conversationID = "conversation_id"
         case ownerUserID = "owner_user_id"
     }

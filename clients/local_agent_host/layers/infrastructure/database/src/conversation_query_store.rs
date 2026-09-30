@@ -26,7 +26,7 @@ pub(super) async fn list_conversations(
         ""
     };
     let sql = format!(
-        "SELECT conversation_id, owner_user_id, title, version, created_at_unix_ms, \
+        "SELECT conversation_id, owner_user_id, title, resource_kind, resource_id, version, created_at_unix_ms, \
          updated_at_unix_ms FROM local_conversations WHERE owner_user_id = ?{cursor_filter} \
          ORDER BY updated_at_unix_ms DESC, conversation_id ASC LIMIT ?"
     );

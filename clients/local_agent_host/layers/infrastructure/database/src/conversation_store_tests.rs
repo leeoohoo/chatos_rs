@@ -21,6 +21,7 @@ fn conversation(conversation_id: &str) -> CreateConversationCommand {
         conversation_id: conversation_id.to_string(),
         owner_user_id: "user-1".to_string(),
         title: "Local conversation".to_string(),
+        resource: None,
     }
 }
 

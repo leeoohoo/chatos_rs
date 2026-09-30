@@ -31,8 +31,9 @@ pub use conversation::{
     GuideConversationTurnCommand, ListConversationsCommand, LocalConversationAttachmentRecord,
     LocalConversationAttachmentSpec, LocalConversationDetail, LocalConversationHistoryPage,
     LocalConversationMessageRecord, LocalConversationMessageRole, LocalConversationPage,
-    LocalConversationRecord, LocalConversationRuntimeSettings, LocalConversationTurnRecord,
-    LocalConversationTurnStart, LocalConversationTurnStatus, LocalConversationTurnUpdate,
+    LocalConversationRecord, LocalConversationResourceBinding, LocalConversationResourceKind,
+    LocalConversationRuntimeSettings, LocalConversationTurnRecord, LocalConversationTurnStart,
+    LocalConversationTurnStatus, LocalConversationTurnUpdate,
     PutConversationRuntimeSettingsCommand, ResumeConversationTurnCommand,
     StartConversationTurnCommand, LOCAL_CONVERSATION_MAX_ATTACHMENTS,
     LOCAL_CONVERSATION_MAX_HISTORY_PAGE_SIZE,
@@ -59,7 +60,7 @@ pub use tool::{
     LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 27;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 28;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;

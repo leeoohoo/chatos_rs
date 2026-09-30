@@ -100,7 +100,7 @@ async fn version_nineteen_discards_ownerless_control_plane_snapshots() {
     assert!(backup_path
         .file_name()
         .and_then(|value| value.to_str())
-        .is_some_and(|name| name.contains(".pre-migration-v18-to-v21-")));
+        .is_some_and(|name| name.contains(".pre-migration-v18-to-v22-")));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -180,7 +180,7 @@ async fn version_nineteen_discards_ownerless_control_plane_snapshots() {
             .fetch_one(&storage.pool)
             .await
             .expect("schema version");
-    assert_eq!(schema_version, 21);
+    assert_eq!(schema_version, 22);
 
     storage.pool.close().await;
     drop(storage);

@@ -77,17 +77,42 @@ pub struct LocalConversationRuntimeSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalConversationResourceKind {
+    Contact,
+    Project,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalConversationResourceBinding {
+    pub kind: LocalConversationResourceKind,
+    pub resource_id: String,
+}
+
+impl LocalConversationResourceBinding {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("resource_id", &self.resource_id)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateConversationCommand {
     pub conversation_id: String,
     pub owner_user_id: String,
     pub title: String,
+    #[serde(default)]
+    pub resource: Option<LocalConversationResourceBinding>,
 }
 
 impl CreateConversationCommand {
     pub fn validate(&self) -> Result<(), String> {
         validate_identifier("conversation_id", &self.conversation_id)?;
         validate_identifier("owner_user_id", &self.owner_user_id)?;
-        validate_text("title", &self.title, 1_000)
+        validate_text("title", &self.title, 1_000)?;
+        if let Some(resource) = &self.resource {
+            resource.validate()?;
+        }
+        Ok(())
     }
 }
 
@@ -419,6 +444,7 @@ pub struct LocalConversationRecord {
     pub conversation_id: String,
     pub owner_user_id: String,
     pub title: String,
+    pub resource: Option<LocalConversationResourceBinding>,
     pub version: u64,
     pub created_at_unix_ms: i64,
     pub updated_at_unix_ms: i64,

@@ -20,7 +20,7 @@ impl LocalAgentRuntime {
                         &command.conversation_id,
                     )
                     .await?
-                    .ok_or_else(|| ClientStorageError::NotFound(command.conversation_id))?;
+                    .ok_or(ClientStorageError::NotFound(command.conversation_id))?;
                 Ok(HostResult::ConversationRuntimeSettings { settings })
             }
             HostCommand::PutConversationRuntimeSettings(command) => {

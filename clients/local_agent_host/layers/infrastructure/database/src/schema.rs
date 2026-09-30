@@ -455,3 +455,12 @@ pub(super) const SCHEMA_V21: &[&str] = &[
        owner_user_id, selected_model_config_ref, selected_model_config_revision\
      )",
 ];
+
+pub(super) const SCHEMA_V22: &[&str] = &[
+    "ALTER TABLE local_conversations ADD COLUMN resource_kind TEXT \
+       CHECK(resource_kind IN ('contact','project'))",
+    "ALTER TABLE local_conversations ADD COLUMN resource_id TEXT",
+    "CREATE UNIQUE INDEX local_conversations_owner_resource ON local_conversations(\
+       owner_user_id, resource_kind, resource_id\
+     ) WHERE resource_kind IS NOT NULL AND resource_id IS NOT NULL",
+];

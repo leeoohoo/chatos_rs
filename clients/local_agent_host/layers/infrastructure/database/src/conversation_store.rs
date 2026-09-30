@@ -36,12 +36,31 @@ impl LocalConversationStore for SqliteClientStorage {
             }
             let inserted = sqlx::query(
                 "INSERT INTO local_conversations(\
-                 conversation_id, owner_user_id, title, version, created_at_unix_ms, \
-                 updated_at_unix_ms) VALUES(?, ?, ?, 1, ?, ?)",
+                 conversation_id, owner_user_id, title, resource_kind, resource_id, version, \
+                 created_at_unix_ms, updated_at_unix_ms) VALUES(?, ?, ?, ?, ?, 1, ?, ?)",
             )
             .bind(&conversation.conversation_id)
             .bind(&conversation.owner_user_id)
             .bind(conversation.title.trim())
+            .bind(
+                conversation
+                    .resource
+                    .as_ref()
+                    .map(|value| match value.kind {
+                        chatos_local_agent_protocol::LocalConversationResourceKind::Contact => {
+                            "contact"
+                        }
+                        chatos_local_agent_protocol::LocalConversationResourceKind::Project => {
+                            "project"
+                        }
+                    }),
+            )
+            .bind(
+                conversation
+                    .resource
+                    .as_ref()
+                    .map(|value| value.resource_id.as_str()),
+            )
             .bind(now_unix_ms)
             .bind(now_unix_ms)
             .execute(&mut *connection)
@@ -450,7 +469,7 @@ pub(super) async fn fetch_conversation_record(
     conversation_id: &str,
 ) -> Result<Option<LocalConversationRecord>, ClientStorageError> {
     sqlx::query(
-        "SELECT conversation_id, owner_user_id, title, version, created_at_unix_ms, \
+        "SELECT conversation_id, owner_user_id, title, resource_kind, resource_id, version, created_at_unix_ms, \
          updated_at_unix_ms FROM local_conversations WHERE conversation_id = ?",
     )
     .bind(conversation_id)
@@ -467,7 +486,7 @@ pub(super) async fn fetch_conversation_record_for_owner(
     conversation_id: &str,
 ) -> Result<Option<LocalConversationRecord>, ClientStorageError> {
     sqlx::query(
-        "SELECT conversation_id, owner_user_id, title, version, created_at_unix_ms, \
+        "SELECT conversation_id, owner_user_id, title, resource_kind, resource_id, version, created_at_unix_ms, \
          updated_at_unix_ms FROM local_conversations \
          WHERE conversation_id = ? AND owner_user_id = ?",
     )
@@ -497,10 +516,33 @@ async fn fetch_conversation_for_owner(
 pub(super) fn decode_conversation(
     row: SqliteRow,
 ) -> Result<LocalConversationRecord, ClientStorageError> {
+    let resource_kind: Option<String> = row.try_get("resource_kind").db()?;
+    let resource_id: Option<String> = row.try_get("resource_id").db()?;
+    let resource = match (resource_kind.as_deref(), resource_id) {
+        (None, None) => None,
+        (Some("contact"), Some(resource_id)) => Some(
+            chatos_local_agent_protocol::LocalConversationResourceBinding {
+                kind: chatos_local_agent_protocol::LocalConversationResourceKind::Contact,
+                resource_id,
+            },
+        ),
+        (Some("project"), Some(resource_id)) => Some(
+            chatos_local_agent_protocol::LocalConversationResourceBinding {
+                kind: chatos_local_agent_protocol::LocalConversationResourceKind::Project,
+                resource_id,
+            },
+        ),
+        _ => {
+            return Err(ClientStorageError::InvalidState(
+                "Conversation resource binding is incomplete".to_string(),
+            ))
+        }
+    };
     Ok(LocalConversationRecord {
         conversation_id: row.try_get("conversation_id").db()?,
         owner_user_id: row.try_get("owner_user_id").db()?,
         title: row.try_get("title").db()?,
+        resource,
         version: decode_u64(&row, "version")?,
         created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
         updated_at_unix_ms: row.try_get("updated_at_unix_ms").db()?,
