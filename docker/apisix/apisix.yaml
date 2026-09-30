@@ -39,7 +39,7 @@ routes:
       request-id: *request_id
       uri-blocker: &block_internal_api
         block_rules:
-          - "^/api/(?:admin/(?:user-service|plugin-management|memory-engine|config-center)/|(?:chatos|user|plugin|plugins|memory|local)/)(?:api/)?internal(?:/|\\?|$)"
+          - "^/api/(?:admin/(?:user-service|plugin-management|memory-engine|config-center)/|(?:user|plugin|plugins|memory|local)/)(?:api/)?internal(?:/|\\?|$)"
         rejected_code: 404
       client-control: &admin_api_body_limit
         max_body_size: 268435456
