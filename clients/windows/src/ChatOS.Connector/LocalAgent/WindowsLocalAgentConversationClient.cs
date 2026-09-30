@@ -30,17 +30,38 @@ internal sealed record WindowsLocalConversationMessageRecord(
     JsonElement Metadata,
     long CreatedAtUnixMs);
 
+internal sealed record WindowsLocalConversationAttachmentRecord(
+    string AttachmentId,
+    string ConversationId,
+    string TurnId,
+    string MessageId,
+    ulong Ordinal,
+    string DisplayName,
+    string MediaType,
+    ulong ByteSize,
+    string Sha256,
+    string AuthorizedLocalRef,
+    JsonElement Metadata,
+    long CreatedAtUnixMs);
+
 internal sealed record WindowsLocalConversationDetail(
     WindowsLocalConversationRecord Conversation,
     IReadOnlyList<WindowsLocalConversationTurnRecord> Turns,
     IReadOnlyList<WindowsLocalConversationMessageRecord> Messages,
-    IReadOnlyList<JsonElement> Attachments);
+    IReadOnlyList<WindowsLocalConversationAttachmentRecord> Attachments);
 
 internal sealed record WindowsLocalConversationTurnMutation(
     WindowsLocalConversationRecord Conversation,
     WindowsLocalConversationTurnRecord Turn,
     WindowsLocalConversationMessageRecord? Message,
-    IReadOnlyList<JsonElement> Attachments);
+    IReadOnlyList<WindowsLocalConversationAttachmentRecord> Attachments);
+
+internal sealed record WindowsLocalConversationHistoryPage(
+    WindowsLocalConversationRecord Conversation,
+    IReadOnlyList<WindowsLocalConversationTurnRecord> Turns,
+    IReadOnlyList<WindowsLocalConversationMessageRecord> Messages,
+    IReadOnlyList<WindowsLocalConversationAttachmentRecord> Attachments,
+    ulong? NextBeforeOrdinal);
 
 internal sealed record CreateLocalConversationCommand(
     string Type,
@@ -52,6 +73,13 @@ internal sealed record GetLocalConversationCommand(
     string Type,
     string OwnerUserId,
     string ConversationId);
+
+internal sealed record GetLocalConversationHistoryCommand(
+    string Type,
+    string OwnerUserId,
+    string ConversationId,
+    ulong? BeforeOrdinal,
+    uint Limit);
 
 internal sealed record StartLocalConversationTurnCommand(
     string Type,
@@ -98,6 +126,10 @@ internal sealed record LocalConversationTurnMutationResult(
     string Type,
     WindowsLocalConversationTurnMutation Result);
 
+internal sealed record LocalConversationHistoryResult(
+    string Type,
+    WindowsLocalConversationHistoryPage Page);
+
 public sealed class WindowsLocalAgentConversationClient(ILocalAgentHostClient host)
 {
     internal Task<WindowsLocalConversationDetail> CreateAsync(
@@ -120,6 +152,27 @@ public sealed class WindowsLocalAgentConversationClient(ILocalAgentHostClient ho
                 ownerUserId,
                 conversationId),
             cancellationToken);
+
+    internal async Task<WindowsLocalConversationHistoryPage> HistoryAsync(
+        string ownerUserId,
+        string conversationId,
+        ulong? beforeOrdinal,
+        uint limit,
+        CancellationToken cancellationToken)
+    {
+        var response = await host.SendAsync<
+            GetLocalConversationHistoryCommand,
+            LocalConversationHistoryResult>(new(
+                "get_conversation_history",
+                ownerUserId,
+                conversationId,
+                beforeOrdinal,
+                limit), cancellationToken).ConfigureAwait(false);
+        return response.Type == "conversation_history"
+            ? response.Page
+            : throw new InvalidDataException(
+                "Local Agent Host returned an invalid conversation history result.");
+    }
 
     internal async Task<WindowsLocalConversationTurnMutation> StartTurnAsync(
         StartLocalConversationTurnCommand command,

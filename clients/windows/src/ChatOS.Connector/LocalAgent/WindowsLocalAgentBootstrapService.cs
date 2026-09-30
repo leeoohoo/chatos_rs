@@ -21,6 +21,7 @@ public sealed class WindowsLocalAgentBootstrapService
     private readonly WindowsLocalAgentModelCredentialStore _credentials;
     private readonly WindowsLocalAgentConversationRuntimeSettingsService _runtimeSettings;
     private readonly WindowsLocalAgentConversationCommandService _conversationCommands;
+    private readonly WindowsLocalAgentConversationHistoryService _conversationHistory;
     private readonly ChatOSApiClient _api;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -30,6 +31,7 @@ public sealed class WindowsLocalAgentBootstrapService
         WindowsLocalAgentModelCredentialStore credentials,
         WindowsLocalAgentConversationRuntimeSettingsService runtimeSettings,
         WindowsLocalAgentConversationCommandService conversationCommands,
+        WindowsLocalAgentConversationHistoryService conversationHistory,
         ChatOSApiClient api)
     {
         _host = host;
@@ -37,6 +39,7 @@ public sealed class WindowsLocalAgentBootstrapService
         _credentials = credentials;
         _runtimeSettings = runtimeSettings;
         _conversationCommands = conversationCommands;
+        _conversationHistory = conversationHistory;
         _api = api;
     }
 
@@ -52,6 +55,7 @@ public sealed class WindowsLocalAgentBootstrapService
         {
             _runtimeSettings.Reset();
             _conversationCommands.Reset();
+            _conversationHistory.Reset();
             Current = null;
             if (_host.ActiveOwnerUserId is { } activeOwner &&
                 !string.Equals(activeOwner, ownerUserId, StringComparison.Ordinal))
@@ -156,6 +160,7 @@ public sealed class WindowsLocalAgentBootstrapService
                 mainCapabilities);
             _runtimeSettings.Configure(ownerUserId, result);
             _conversationCommands.Configure(ownerUserId, result);
+            _conversationHistory.Configure(ownerUserId);
             Current = result;
             return result;
         }
@@ -169,6 +174,7 @@ public sealed class WindowsLocalAgentBootstrapService
     {
         _runtimeSettings.Reset();
         _conversationCommands.Reset();
+        _conversationHistory.Reset();
         Current = null;
     }
 
