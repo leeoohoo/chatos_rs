@@ -258,7 +258,7 @@ async fn ensure_source_context(
     survey: &LocalRequirementSurvey,
 ) -> Result<(), ClientStorageError> {
     let row = sqlx::query(
-        "SELECT owner_user_id, owner_entity_type, owner_entity_id, input_json \
+        "SELECT owner_user_id, owner_entity_type, owner_entity_id, input_json, status \
          FROM local_agent_runs WHERE run_id = ?",
     )
     .bind(&survey.source_run_id)
@@ -269,6 +269,33 @@ async fn ensure_source_context(
     let owner: String = row.try_get("owner_user_id").db()?;
     if owner != survey.owner_user_id {
         return Err(ClientStorageError::NotFound(survey.source_run_id.clone()));
+    }
+    let status: String = row.try_get("status").db()?;
+    match status.as_str() {
+        "waiting_user" => {}
+        "waiting_tool_result" => {
+            let matching_tool: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM local_agent_tool_invocations \
+                 WHERE run_id = ? AND tool_name = 'requirement_survey_create' \
+                   AND status = 'running' AND ('local-survey-' || invocation_id) = ?",
+            )
+            .bind(&survey.source_run_id)
+            .bind(&survey.survey_id)
+            .fetch_one(&mut *database)
+            .await
+            .db()?;
+            if matching_tool != 1 {
+                return Err(ClientStorageError::Conflict(
+                    "survey does not match the active requirement_survey_create invocation"
+                        .to_string(),
+                ));
+            }
+        }
+        _ => {
+            return Err(ClientStorageError::Conflict(
+                "survey source Run must be waiting_user or waiting_tool_result".to_string(),
+            ));
+        }
     }
     let input_json: String = row.try_get("input_json").db()?;
     let input: serde_json::Value = serde_json::from_str(&input_json)?;

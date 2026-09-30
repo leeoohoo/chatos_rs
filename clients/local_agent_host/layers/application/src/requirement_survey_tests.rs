@@ -64,6 +64,32 @@ async fn resolves_project_survey_and_atomically_resumes_waiting_task_run() {
         ))
         .await
         .expect("run");
+    let early = runtime
+        .try_handle(request(
+            "create-survey-too-early",
+            HostCommand::CreateRequirementSurvey(CreateRequirementSurveyCommand {
+                survey_id: "survey-too-early".to_string(),
+                owner_user_id: "user-1".to_string(),
+                project_resource_id: "project-1".to_string(),
+                source_conversation_id: "conversation-1".to_string(),
+                source_run_id: "run-1".to_string(),
+                source_task_id: Some("task-1".to_string()),
+                title: "Must not be created".to_string(),
+                description: None,
+                questions: vec![LocalRequirementSurveyQuestion {
+                    question_id: "early".to_string(),
+                    prompt: "Too early?".to_string(),
+                    response_kind: LocalRequirementSurveyResponseKind::Boolean,
+                    required: true,
+                    options: Vec::new(),
+                }],
+            }),
+        ))
+        .await
+        .expect_err("queued Run must not accept a survey");
+    assert!(early
+        .to_string()
+        .contains("must be waiting_user or waiting_tool_result"));
     let claimed = runtime
         .try_handle(request(
             "claim-run",

@@ -272,6 +272,16 @@ impl HostRequestHandler for LocalAgentHostCoordinator {
                 ),
             );
         }
+        if matches!(request.command, HostCommand::CreateRequirementSurvey(_)) {
+            return HostResponseEnvelope::failure(
+                request.command_id,
+                HostError::new(
+                    "reserved_command",
+                    "requirement surveys can only be created by the built-in local tool",
+                    false,
+                ),
+            );
+        }
         if let HostCommand::WaitEvents(command) = &request.command {
             return self
                 .wait_for_events(request.clone(), command.timeout_ms)
@@ -311,8 +321,9 @@ mod tests {
     use async_trait::async_trait;
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
-        ClaimNextToolCommand, CreateRunCommand, GetRunCommand, HostCommand, HostResult,
-        LocalAgentRunClaim, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
+        ClaimNextToolCommand, CreateRequirementSurveyCommand, CreateRunCommand, GetRunCommand,
+        HostCommand, HostResult, LocalAgentRunClaim, LocalAgentToolInvocationRecord,
+        LocalAgentToolOutcome, LocalRequirementSurveyQuestion, LocalRequirementSurveyResponseKind,
         WaitEventsCommand, LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileRegistry};
@@ -420,6 +431,34 @@ mod tests {
             })
             .await;
         assert!(health.ok);
+
+        let reserved = coordinator
+            .handle_request(HostRequestEnvelope {
+                protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+                command_id: "external-survey-create".to_string(),
+                command: HostCommand::CreateRequirementSurvey(CreateRequirementSurveyCommand {
+                    survey_id: "survey-external".to_string(),
+                    owner_user_id: "user-1".to_string(),
+                    project_resource_id: "project-1".to_string(),
+                    source_conversation_id: "conversation-1".to_string(),
+                    source_run_id: "run-1".to_string(),
+                    source_task_id: Some("task-1".to_string()),
+                    title: "Must be rejected".to_string(),
+                    description: None,
+                    questions: vec![LocalRequirementSurveyQuestion {
+                        question_id: "confirm".to_string(),
+                        prompt: "Continue?".to_string(),
+                        response_kind: LocalRequirementSurveyResponseKind::Boolean,
+                        required: true,
+                        options: Vec::new(),
+                    }],
+                }),
+            })
+            .await;
+        assert_eq!(
+            reserved.error.expect("reserved command").code,
+            "reserved_command"
+        );
     }
 
     #[tokio::test]

@@ -206,9 +206,8 @@ mod tests {
     use chatos_local_agent_protocol::{
         ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand, CommitToolCommand,
         CreateConversationCommand, CreateRunCommand, GetRequirementSurveyCommand,
-        LocalAgentRunStatus, LocalAgentStepOutcome, LocalAgentToolApprovalStatus,
-        LocalAgentToolCall, LocalAgentToolStatus, LocalConversationResourceBinding,
-        ResolveRequirementSurveyCommand,
+        LocalAgentRunStatus, LocalAgentStepOutcome, LocalAgentToolCall,
+        LocalConversationResourceBinding, ResolveRequirementSurveyCommand,
     };
     use std::collections::BTreeMap;
 
@@ -218,102 +217,6 @@ mod tests {
             command_id: command_id.to_string(),
             command,
         }
-    }
-
-    #[tokio::test]
-    async fn task_tool_derives_project_and_source_identity_from_local_state() {
-        let storage = Arc::new(
-            SqliteClientStorage::connect_memory()
-                .await
-                .expect("storage"),
-        );
-        let runtime = Arc::new(LocalAgentRuntime::new(storage));
-        runtime
-            .try_handle(envelope(
-                "conversation",
-                HostCommand::CreateConversation(CreateConversationCommand {
-                    conversation_id: "conversation-1".to_string(),
-                    owner_user_id: "user-1".to_string(),
-                    title: "Project".to_string(),
-                    resource: Some(LocalConversationResourceBinding {
-                        kind: LocalConversationResourceKind::Project,
-                        resource_id: "project-1".to_string(),
-                    }),
-                }),
-            ))
-            .await
-            .expect("conversation");
-        runtime
-            .try_handle(envelope(
-                "run",
-                HostCommand::CreateRun(CreateRunCommand {
-                    run_id: "run-1".to_string(),
-                    owner_user_id: "user-1".to_string(),
-                    owner_entity_type: "task".to_string(),
-                    owner_entity_id: "task-1".to_string(),
-                    profile_key: "task_execution".to_string(),
-                    model_config_ref: "model-1".to_string(),
-                    model_config_revision: "revision-1".to_string(),
-                    capability_policy_revision: "policy-1".to_string(),
-                    input: json!({"source_conversation_id": "conversation-1", "prompt": "build"}),
-                    max_iterations: 8,
-                }),
-            ))
-            .await
-            .expect("run");
-        let invocation = LocalAgentToolInvocationRecord {
-            invocation_id: "invocation-1".to_string(),
-            run_id: "run-1".to_string(),
-            batch_id: "batch-1".to_string(),
-            call_id: "call-1".to_string(),
-            tool_name: REQUIREMENT_SURVEY_CREATE_TOOL.to_string(),
-            arguments: json!({
-                "title": "Choose deployment",
-                "questions": [{
-                    "question_id": "deployment",
-                    "prompt": "Where should this run?",
-                    "response_kind": "single_choice",
-                    "required": true,
-                    "options": ["local", "cloud"]
-                }]
-            }),
-            side_effecting: true,
-            requires_approval: false,
-            approval_status: LocalAgentToolApprovalStatus::NotRequired,
-            approval_decided_by: None,
-            approval_reason: None,
-            approval_decided_at_unix_ms: None,
-            status: LocalAgentToolStatus::Running,
-            result: None,
-            error: None,
-            version: 1,
-            claim_token: Some("claim-1".to_string()),
-            claim_until_unix_ms: Some(i64::MAX),
-            created_at_unix_ms: 1_000,
-            updated_at_unix_ms: 1_000,
-        };
-        let outcome = LocalRequirementSurveyToolExecutor::new(Arc::clone(&runtime), "user-1")
-            .expect("executor")
-            .execute_tool(&invocation)
-            .await
-            .expect("outcome");
-        assert!(matches!(outcome, LocalAgentToolOutcome::Succeeded { .. }));
-        let stored = runtime
-            .try_handle(envelope(
-                "get-survey",
-                HostCommand::GetRequirementSurvey(GetRequirementSurveyCommand {
-                    owner_user_id: "user-1".to_string(),
-                    survey_id: "local-survey-invocation-1".to_string(),
-                }),
-            ))
-            .await
-            .expect("stored survey");
-        assert!(matches!(
-            stored,
-            HostResult::RequirementSurvey { survey }
-                if survey.project_resource_id == "project-1"
-                    && survey.source_task_id.as_deref() == Some("task-1")
-        ));
     }
 
     #[tokio::test]
@@ -465,6 +368,22 @@ mod tests {
         assert_eq!(replayed_commit, HostResult::ToolCommit { result });
 
         let survey_id = format!("local-survey-{}", tool_claim.invocation.invocation_id);
+        let stored = runtime
+            .try_handle(envelope(
+                "get-survey",
+                HostCommand::GetRequirementSurvey(GetRequirementSurveyCommand {
+                    owner_user_id: "user-1".to_string(),
+                    survey_id: survey_id.clone(),
+                }),
+            ))
+            .await
+            .expect("stored survey");
+        assert!(matches!(
+            stored,
+            HostResult::RequirementSurvey { survey }
+                if survey.project_resource_id == "project-1"
+                    && survey.source_task_id.as_deref() == Some("task-1")
+        ));
         let answers = BTreeMap::from([("deployment".to_string(), json!("local"))]);
         let resolve_command = ResolveRequirementSurveyCommand {
             owner_user_id: "user-1".to_string(),
