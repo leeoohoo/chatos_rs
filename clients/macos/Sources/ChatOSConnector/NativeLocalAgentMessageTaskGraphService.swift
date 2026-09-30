@@ -79,10 +79,6 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         lookup: MessageTaskLookup?,
         instruction: String?
     ) async throws -> MessageTaskRun {
-        if let instruction,
-           !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            throw NativeLocalAgentMessageTaskGraphServiceError.retryInstructionUnsupported
-        }
         let owner = try requireOwner()
         let run = try await client.run(ownerUserID: owner, runID: runID)
         let graphs = try await matchingGraphs(
@@ -97,7 +93,9 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         let graph = try await client.retry(
             ownerUserID: owner,
             taskID: current.taskID,
-            expectedVersion: current.version
+            expectedVersion: current.version,
+            retryInstruction: instruction?.trimmingCharacters(in: .whitespacesAndNewlines)
+                .nilIfEmpty
         )
         guard let retried = graph.tasks.first(where: { $0.taskID == current.taskID }) else {
             throw NativeLocalAgentMessageTaskGraphServiceError.taskNotFound
@@ -307,14 +305,11 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
 public enum NativeLocalAgentMessageTaskGraphServiceError: LocalizedError {
     case notConfigured
     case taskNotFound
-    case retryInstructionUnsupported
 
     public var errorDescription: String? {
         switch self {
         case .notConfigured: "Local Agent task service is not configured."
         case .taskNotFound: "The local task does not exist."
-        case .retryInstructionUnsupported:
-            "The local task retry protocol does not yet accept an additional instruction."
         }
     }
 }

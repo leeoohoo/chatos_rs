@@ -40,6 +40,23 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         XCTAssertEqual(command["task_id"], .string("task-2"))
         XCTAssertEqual(command["expected_version"], .number(2))
     }
+
+    func testRetryPersistsAdditionalInstructionInLocalCommand() async throws {
+        let host = LocalTaskHostStub()
+        let service = NativeLocalAgentMessageTaskGraphService(host: host)
+        await service.configure(ownerUserID: "user-1")
+
+        _ = try await service.retryRun(
+            messageID: "message-1",
+            runID: "run-task-2",
+            lookup: .init(turnID: "turn-1"),
+            instruction: "Use the local fallback"
+        )
+
+        let command = try await host.lastCommand()
+        XCTAssertEqual(command["type"], .string("retry_task"))
+        XCTAssertEqual(command["retry_instruction"], .string("Use the local fallback"))
+    }
 }
 
 private actor LocalTaskHostStub: LocalAgentHostClientServicing {
@@ -68,6 +85,24 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
             ])
         case "get_task_graph", "cancel_task":
             return try json(["type": "task_graph", "graph": graph()])
+        case "retry_task":
+            return try json(["type": "task_graph", "graph": graph()])
+        case "get_run":
+            return try json([
+                "type": "run",
+                "run": [
+                    "run_id": "run-task-2",
+                    "owner_user_id": "user-1",
+                    "owner_entity_type": "task",
+                    "owner_entity_id": "task-2",
+                    "profile_key": "task_runner",
+                    "input": [:],
+                    "status": "failed",
+                    "version": 3,
+                    "created_at_unix_ms": 1,
+                    "updated_at_unix_ms": 2,
+                ],
+            ])
         case "get_task_runs":
             return try json([
                 "type": "task_runs",

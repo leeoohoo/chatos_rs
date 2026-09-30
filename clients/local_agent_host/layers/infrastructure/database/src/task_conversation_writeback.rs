@@ -400,7 +400,7 @@ mod tests {
         )
         .await;
         storage
-            .retry_task(&command("retry-task"), "user-1", "task-1", 3, 6_000)
+            .retry_task(&command("retry-task"), "user-1", "task-1", 3, None, 6_000)
             .await
             .expect("retry Task");
         finish_task_run(

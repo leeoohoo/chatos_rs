@@ -90,7 +90,7 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         }
         let commandID = "native-command-\(UUID().uuidString.lowercased())"
         let envelope: [String: Any] = [
-            "protocol_version": 25,
+            "protocol_version": 26,
             "command_id": commandID,
             "command": commandObject,
         ]
@@ -98,7 +98,7 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         let responseData = try managedProcess.roundTrip(request)
         guard let response = try JSONSerialization.jsonObject(with: responseData)
             as? [String: Any],
-              response["protocol_version"] as? Int == 25,
+              response["protocol_version"] as? Int == 26,
               response["command_id"] as? String == commandID,
               let ok = response["ok"] as? Bool else {
             throw NativeLocalAgentHostError.invalidResponse
@@ -290,7 +290,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
     private func verifyHealth() throws {
         let commandID = "native-health-\(UUID().uuidString.lowercased())"
         let request = HealthRequest(
-            protocolVersion: 25,
+            protocolVersion: 26,
             commandId: commandID,
             command: .init(type: "health")
         )
@@ -299,7 +299,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
             HealthResponse.self,
             from: payload
         )
-        guard response.protocolVersion == 25,
+        guard response.protocolVersion == 26,
               response.commandId == commandID else {
             throw NativeLocalAgentHostError.invalidResponse
         }

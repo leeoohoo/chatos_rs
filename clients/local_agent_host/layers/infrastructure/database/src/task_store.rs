@@ -170,6 +170,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         owner_user_id: &str,
         task_id: &str,
         expected_version: u64,
+        retry_instruction: Option<&str>,
         now_unix_ms: i64,
     ) -> Result<LocalTaskGraph, ClientStorageError> {
         let mut connection = self.pool.acquire().await.db()?;
@@ -180,6 +181,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
             owner_user_id,
             task_id,
             expected_version,
+            retry_instruction,
             now_unix_ms,
         )
         .await;

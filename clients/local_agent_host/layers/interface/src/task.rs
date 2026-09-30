@@ -233,6 +233,8 @@ pub struct RetryTaskCommand {
     pub owner_user_id: String,
     pub task_id: String,
     pub expected_version: u64,
+    #[serde(default)]
+    pub retry_instruction: Option<String>,
 }
 
 impl RetryTaskCommand {
@@ -241,6 +243,9 @@ impl RetryTaskCommand {
         validate_identifier("task_id", &self.task_id)?;
         if self.expected_version == 0 {
             return Err("expected_version must be greater than zero".to_string());
+        }
+        if let Some(instruction) = self.retry_instruction.as_deref() {
+            validate_text("retry_instruction", instruction, 8_000)?;
         }
         Ok(())
     }

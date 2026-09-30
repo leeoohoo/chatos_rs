@@ -185,13 +185,15 @@ public struct NativeLocalAgentTaskClient: Sendable {
     public func retry(
         ownerUserID: String,
         taskID: String,
-        expectedVersion: UInt64
+        expectedVersion: UInt64,
+        retryInstruction: String?
     ) async throws -> LocalAgentTaskGraph {
         try await mutate(RetryTaskCommand(
             type: "retry_task",
             ownerUserID: ownerUserID,
             taskID: taskID,
-            expectedVersion: expectedVersion
+            expectedVersion: expectedVersion,
+            retryInstruction: retryInstruction
         ))
     }
 
@@ -287,11 +289,13 @@ private struct RetryTaskCommand: Encodable, Sendable {
     let ownerUserID: String
     let taskID: String
     let expectedVersion: UInt64
+    let retryInstruction: String?
     private enum CodingKeys: String, CodingKey {
         case type
         case ownerUserID = "owner_user_id"
         case taskID = "task_id"
         case expectedVersion = "expected_version"
+        case retryInstruction = "retry_instruction"
     }
 }
 

@@ -272,6 +272,7 @@ pub trait LocalAgentTaskStore: Send + Sync {
         owner_user_id: &str,
         task_id: &str,
         expected_version: u64,
+        retry_instruction: Option<&str>,
         now_unix_ms: i64,
     ) -> Result<LocalTaskGraph, ClientStorageError>;
 

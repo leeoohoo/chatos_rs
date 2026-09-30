@@ -142,6 +142,7 @@ impl LocalAgentRuntime {
                 &command.owner_user_id,
                 &command.task_id,
                 command.expected_version,
+                command.retry_instruction.as_deref(),
                 self.now()?,
             )
             .await?)
@@ -304,6 +305,7 @@ mod tests {
                     owner_user_id: "user-1".to_string(),
                     task_id: "task-1".to_string(),
                     expected_version: 2,
+                    retry_instruction: None,
                 }),
             ))
             .await;

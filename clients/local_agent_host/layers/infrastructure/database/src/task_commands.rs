@@ -164,13 +164,14 @@ pub(super) async fn retry_task(
     owner_user_id: &str,
     task_id: &str,
     expected_version: u64,
+    retry_instruction: Option<&str>,
     now_unix_ms: i64,
 ) -> Result<LocalTaskGraph, ClientStorageError> {
     if let Some(replay) = SqliteClientStorage::replay(connection, command).await? {
         return Ok(replay);
     }
     let row = sqlx::query(
-        "SELECT t.graph_id, t.status, t.version FROM local_tasks t \
+        "SELECT t.graph_id, t.status, t.version, t.input_json FROM local_tasks t \
          JOIN local_task_graphs g ON g.graph_id = t.graph_id \
          WHERE t.task_id = ? AND g.owner_user_id = ?",
     )
@@ -197,10 +198,16 @@ pub(super) async fn retry_task(
     }
     require_satisfied_prerequisites(connection, &graph_id, task_id).await?;
     reset_blocked_descendants(connection, &graph_id, task_id, now_unix_ms).await?;
+    let input_json = super::task_retry_input::append_instruction(
+        &row.try_get::<String, _>("input_json").db()?,
+        retry_instruction,
+    )?;
     let updated = sqlx::query(
         "UPDATE local_tasks SET status = 'ready', active_run_id = NULL, \
-         version = version + 1, updated_at_unix_ms = ? WHERE task_id = ? AND version = ?",
+         input_json = ?, version = version + 1, updated_at_unix_ms = ? \
+         WHERE task_id = ? AND version = ?",
     )
+    .bind(input_json)
     .bind(now_unix_ms)
     .bind(task_id)
     .bind(
@@ -590,7 +597,7 @@ mod tests {
         assert_eq!(replay, cancelled);
 
         let retried = storage
-            .retry_task(&command("retry"), "user-1", "task-root", 2, 4_000)
+            .retry_task(&command("retry"), "user-1", "task-root", 2, None, 4_000)
             .await
             .expect("retry task");
         assert_eq!(retried.tasks[0].status, LocalTaskStatus::Pending);
@@ -646,6 +653,7 @@ mod tests {
                 "user-1",
                 "task-root",
                 cancelled.tasks[0].version,
+                Some("try another way"),
                 4_000,
             )
             .await
@@ -662,6 +670,10 @@ mod tests {
             .expect("latest run");
         assert_eq!(latest.len(), 1);
         assert_eq!(latest[0].run_id, "run-root-retry");
+        assert_eq!(
+            latest[0].input["retry_instructions"],
+            serde_json::json!(["try another way"])
+        );
         let history = storage
             .list_task_runs("user-1", "task-root", 10)
             .await
