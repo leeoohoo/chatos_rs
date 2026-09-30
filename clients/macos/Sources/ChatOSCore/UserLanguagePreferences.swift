@@ -29,7 +29,7 @@ public struct UserLanguagePreferences: Equatable, Sendable {
 }
 
 public protocol UserLanguagePreferencesServicing: Sendable {
-    func fetch() async throws -> UserLanguagePreferences
+    func fetch(userID: String) async throws -> UserLanguagePreferences
     func update(
         userID: String,
         preferences: UserLanguagePreferences

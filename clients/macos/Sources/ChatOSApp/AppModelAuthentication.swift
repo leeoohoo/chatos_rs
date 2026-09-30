@@ -210,7 +210,7 @@ extension AppModel {
         let service = userLanguagePreferencesService
         Task { [weak self] in
             do {
-                let preferences = try await service.fetch()
+                let preferences = try await service.fetch(userID: expectedUserID)
                 guard let self, authenticatedUserID == expectedUserID else { return }
                 applyLanguagePreferences(preferences)
             } catch {

@@ -125,7 +125,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let agentGroupChatBuilderService: LocalAgentBuilderService
     let notepadService: NativeLocalAgentNotepadService
     let wechatCompanionService: ChatOSWeChatCompanionService
-    let userLanguagePreferencesService: ChatOSUserLanguagePreferencesService
+    let userLanguagePreferencesService: LocalUserLanguagePreferencesService
     var conversationCache: [String: ConversationSessionViewModel] = [:]
     var conversationCacheRecency = ConversationCacheRecency(capacity: 8)
     var projectConversationPreparationTasks: [String: Task<String, Error>] = [:]
@@ -386,7 +386,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         self.projectGitService = NativeProjectGitService(connector: localConnectorService)
         self.notepadService = NativeLocalAgentNotepadService(host: localAgentHost)
         self.wechatCompanionService = ChatOSWeChatCompanionService(client: apiClient)
-        self.userLanguagePreferencesService = ChatOSUserLanguagePreferencesService(client: apiClient)
+        self.userLanguagePreferencesService = LocalUserLanguagePreferencesService()
         self.projectRunService = NativeProjectRunService(
             connector: localConnectorService,
             preferencesURL: RuntimeConfiguration.nativeConnectorStateURL
