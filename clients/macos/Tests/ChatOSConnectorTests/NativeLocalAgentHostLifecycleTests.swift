@@ -178,6 +178,38 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         XCTAssertEqual(try LocalAgentHostFrameCodec.read(from: replay.fileHandleForReading), payload)
     }
 
+    func testLaunchArgumentsAndEnvironmentKeepMemoryTokenOffCommandLine() throws {
+        let database = URL(fileURLWithPath: "/tmp/chatos-local-agent-test.sqlite3")
+        let configuration = NativeLocalAgentHostConfiguration(
+            executableURL: URL(fileURLWithPath: "/tmp/chatos_local_agent_host"),
+            databaseURL: database,
+            readOnlyToolNames: ["read_b", "read_a"],
+            approvalExemptToolNames: ["approve_b", "approve_a"],
+            memoryBaseURL: URL(string: "https://gateway.example/api/memory")!,
+            memorySourceID: "local_agent",
+            memoryTimeoutMilliseconds: 12_345
+        )
+        let arguments = ManagedLocalAgentHostProcess.arguments(
+            configuration: configuration,
+            database: database,
+            ownerUserID: "user-1"
+        )
+        XCTAssertTrue(arguments.contains("https://gateway.example/api/memory"))
+        XCTAssertTrue(arguments.contains("local_agent"))
+        XCTAssertTrue(arguments.contains("12345"))
+        XCTAssertFalse(arguments.contains("memory-secret"))
+        XCTAssertEqual(arguments.last, "--stdio")
+
+        let environment = ManagedLocalAgentHostProcess.safeEnvironment(
+            credentialEnvironment: [
+                "CHATOS_LOCAL_AGENT_MODEL_MODEL_1": "model-secret",
+                "CHATOS_MEMORY_ACCESS_TOKEN": "memory-secret",
+            ]
+        )
+        XCTAssertEqual(environment["CHATOS_MEMORY_ACCESS_TOKEN"], "memory-secret")
+        XCTAssertEqual(environment["CHATOS_LOCAL_AGENT_MODEL_MODEL_1"], "model-secret")
+    }
+
     func testFrameCodecRejectsEmptyOversizedAndTruncatedFrames() throws {
         let sink = Pipe()
         XCTAssertThrowsError(try LocalAgentHostFrameCodec.write(Data(), to: sink.fileHandleForWriting))

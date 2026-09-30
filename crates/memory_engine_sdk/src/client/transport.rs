@@ -204,6 +204,9 @@ pub(super) fn normalize_base_url(mut base_url: String) -> String {
     if base_url.ends_with("/api/memory-engine/v1") {
         return base_url;
     }
+    if base_url.ends_with("/api/memory") {
+        return base_url;
+    }
     if base_url.contains("/api/memory-engine/") {
         return base_url;
     }
@@ -265,6 +268,10 @@ mod tests {
         assert_eq!(
             normalize_base_url("http://localhost:3000/custom/api/memory-engine/v2".to_string()),
             "http://localhost:3000/custom/api/memory-engine/v2"
+        );
+        assert_eq!(
+            normalize_base_url("https://gateway.example/api/memory/".to_string()),
+            "https://gateway.example/api/memory"
         );
     }
 

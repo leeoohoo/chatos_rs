@@ -53,7 +53,31 @@ enum RuntimeConfiguration {
             .deletingLastPathComponent()
             .appendingPathComponent("LocalAgent", isDirectory: true)
             .appendingPathComponent("local-agent.sqlite3", isDirectory: false)
-        return .init(executableURL: executable, databaseURL: database)
+        return .init(
+            executableURL: executable,
+            databaseURL: database,
+            memoryBaseURL: memoryBaseURL,
+            memorySourceID: "local_agent"
+        )
+    }
+
+    private static var memoryBaseURL: URL {
+        if let configured = nonEmptyEnvironmentValue("CHATOS_MEMORY_BASE_URL"),
+           let url = validHTTPURL(configured) {
+            return url
+        }
+        var components = URLComponents(
+            url: apiBaseURL,
+            resolvingAgainstBaseURL: false
+        )!
+        components.path = apiBaseURL.path.trimmingCharacters(
+            in: CharacterSet(charactersIn: "/")
+        ).isEmpty
+            ? "/api/memory"
+            : "/\(apiBaseURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/api/memory"
+        components.query = nil
+        components.fragment = nil
+        return components.url!
     }
 
     static var contactConversationID: String {

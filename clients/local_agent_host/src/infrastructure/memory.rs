@@ -25,8 +25,6 @@ pub struct LocalMemoryRuntimeConfig {
     source_id: String,
     timeout: Duration,
     access_token: Option<String>,
-    internal_caller: Option<String>,
-    internal_secret: Option<String>,
 }
 
 impl LocalMemoryRuntimeConfig {
@@ -40,23 +38,11 @@ impl LocalMemoryRuntimeConfig {
             source_id: source_id.into(),
             timeout,
             access_token: None,
-            internal_caller: None,
-            internal_secret: None,
         }
     }
 
     pub fn with_access_token(mut self, access_token: Option<String>) -> Self {
         self.access_token = normalized(access_token);
-        self
-    }
-
-    pub fn with_internal_service_auth(
-        mut self,
-        caller: Option<String>,
-        secret: Option<String>,
-    ) -> Self {
-        self.internal_caller = normalized(caller);
-        self.internal_secret = normalized(secret);
         self
     }
 
@@ -113,12 +99,6 @@ impl LocalMemoryRuntimeConfig {
         let mut client = MemoryEngineClient::new_direct_with_http_client(base_url, source_id, http);
         if let Some(access_token) = self.access_token.as_deref() {
             client = client.with_bearer_token(access_token);
-        } else if let Some(internal_secret) = self.internal_secret.as_deref() {
-            let caller = self.internal_caller.as_deref().ok_or_else(|| {
-                "Memory internal caller is required when an internal secret is configured"
-                    .to_string()
-            })?;
-            client = client.with_internal_service_auth(caller, internal_secret);
         }
         Ok(client)
     }
@@ -156,16 +136,5 @@ mod tests {
 
         let invalid = LocalMemoryRuntimeConfig::new(" ", "local_agent", Duration::from_secs(1));
         assert!(invalid.build_client().is_err());
-    }
-
-    #[test]
-    fn internal_secret_requires_a_caller() {
-        let config = LocalMemoryRuntimeConfig::new(
-            "http://127.0.0.1:8080",
-            "local_agent",
-            Duration::from_secs(1),
-        )
-        .with_internal_service_auth(None, Some("secret".to_string()));
-        assert!(config.build_client().is_err());
     }
 }

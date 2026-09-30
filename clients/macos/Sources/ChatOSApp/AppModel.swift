@@ -71,6 +71,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     @Published var localAgentHostError: String?
 
     let historyStore: ConversationHistoryStore
+    let apiClient: ChatOSAPIClient
     let authentication: AuthenticationViewModel
     let localConnectorControl: LocalConnectorControlCenterViewModel
     let mediaStudio: MediaStudioViewModel
@@ -203,6 +204,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         )
 
         self.historyStore = historyStore
+        self.apiClient = apiClient
         self.authentication = AuthenticationViewModel(service: authenticationService)
         self.localConnectorControl = LocalConnectorControlCenterViewModel(
             service: localConnectorService

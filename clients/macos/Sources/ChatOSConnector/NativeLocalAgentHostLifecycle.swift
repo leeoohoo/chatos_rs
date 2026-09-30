@@ -7,6 +7,9 @@ public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
     public let startupTimeout: Duration
     public let readOnlyToolNames: [String]
     public let approvalExemptToolNames: [String]
+    public let memoryBaseURL: URL?
+    public let memorySourceID: String?
+    public let memoryTimeoutMilliseconds: Int
 
     public init(
         executableURL: URL,
@@ -14,13 +17,19 @@ public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
         startupTimeout: Duration = .seconds(10),
         readOnlyToolNames: [String] = NativeLocalAgentPlatformToolCatalog.readOnlyToolNames,
         approvalExemptToolNames: [String] =
-            NativeLocalAgentPlatformToolCatalog.approvalExemptToolNames
+            NativeLocalAgentPlatformToolCatalog.approvalExemptToolNames,
+        memoryBaseURL: URL? = nil,
+        memorySourceID: String? = nil,
+        memoryTimeoutMilliseconds: Int = 30_000
     ) {
         self.executableURL = executableURL
         self.databaseURL = databaseURL
         self.startupTimeout = startupTimeout
         self.readOnlyToolNames = readOnlyToolNames
         self.approvalExemptToolNames = approvalExemptToolNames
+        self.memoryBaseURL = memoryBaseURL
+        self.memorySourceID = memorySourceID
+        self.memoryTimeoutMilliseconds = memoryTimeoutMilliseconds
     }
 }
 
@@ -145,7 +154,8 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
             throw NativeLocalAgentHostError.invalidCredentialEnvironment
         }
         for (name, value) in credentialEnvironment {
-            guard name.hasPrefix("CHATOS_LOCAL_AGENT_MODEL_"),
+            guard (name == "CHATOS_MEMORY_ACCESS_TOKEN"
+                    || name.hasPrefix("CHATOS_LOCAL_AGENT_MODEL_")),
                   name.count <= 128,
                   name.unicodeScalars.allSatisfy({ scalar in
                       CharacterSet.uppercaseLetters.contains(scalar)
@@ -238,20 +248,19 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
             withIntermediateDirectories: true
         )
 
+        try validateMemoryConfiguration(configuration)
+
         let process = Process()
         let inputPipe = Pipe()
         let outputPipe = Pipe()
         let errorPipe = Pipe()
         process.executableURL = executable
         process.currentDirectoryURL = executable.deletingLastPathComponent()
-        process.arguments = [
-            "--database", database.path,
-            "--owner-user-id", ownerUserID,
-            "--stdio",
-        ] + configuration.readOnlyToolNames.sorted().flatMap { ["--read-only-tool", $0] }
-            + configuration.approvalExemptToolNames.sorted().flatMap {
-                ["--approval-exempt-tool", $0]
-            }
+        process.arguments = arguments(
+            configuration: configuration,
+            database: database,
+            ownerUserID: ownerUserID
+        )
         process.environment = safeEnvironment(credentialEnvironment: credentialEnvironment)
         process.standardInput = inputPipe
         process.standardOutput = outputPipe
@@ -331,7 +340,65 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         return try LocalAgentHostFrameCodec.read(from: output)
     }
 
-    private static func safeEnvironment(
+    static func arguments(
+        configuration: NativeLocalAgentHostConfiguration,
+        database: URL,
+        ownerUserID: String
+    ) -> [String] {
+        var arguments = [
+            "--database", database.path,
+            "--owner-user-id", ownerUserID,
+        ]
+        if let baseURL = configuration.memoryBaseURL,
+           let sourceID = configuration.memorySourceID {
+            arguments += [
+                "--memory-base-url", baseURL.absoluteString,
+                "--memory-source-id", sourceID,
+                "--memory-timeout-ms", String(configuration.memoryTimeoutMilliseconds),
+            ]
+        }
+        arguments += configuration.readOnlyToolNames.sorted().flatMap {
+            ["--read-only-tool", $0]
+        }
+        arguments += configuration.approvalExemptToolNames.sorted().flatMap {
+            ["--approval-exempt-tool", $0]
+        }
+        arguments.append("--stdio")
+        return arguments
+    }
+
+    private static func validateMemoryConfiguration(
+        _ configuration: NativeLocalAgentHostConfiguration
+    ) throws {
+        guard configuration.memoryBaseURL != nil || configuration.memorySourceID == nil else {
+            throw NativeLocalAgentHostError.invalidConfiguration(
+                "Local Agent Host Memory base URL and source ID must be configured together."
+            )
+        }
+        guard configuration.memoryBaseURL == nil || configuration.memorySourceID != nil else {
+            throw NativeLocalAgentHostError.invalidConfiguration(
+                "Local Agent Host Memory base URL and source ID must be configured together."
+            )
+        }
+        guard let baseURL = configuration.memoryBaseURL,
+              let sourceID = configuration.memorySourceID else { return }
+        guard ["http", "https"].contains(baseURL.scheme?.lowercased() ?? ""),
+              baseURL.host != nil,
+              baseURL.user == nil,
+              baseURL.password == nil,
+              baseURL.query == nil,
+              baseURL.fragment == nil,
+              !sourceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              sourceID.count <= 128,
+              !sourceID.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
+              (1...300_000).contains(configuration.memoryTimeoutMilliseconds) else {
+            throw NativeLocalAgentHostError.invalidConfiguration(
+                "Local Agent Host Memory configuration is invalid."
+            )
+        }
+    }
+
+    static func safeEnvironment(
         credentialEnvironment: [String: String]
     ) -> [String: String] {
         let allowed = ["HOME", "LANG", "LC_ALL", "PATH", "SHELL", "TMPDIR", "USER"]

@@ -17,15 +17,19 @@ using ChatOS.Connector.NetworkGuard;
 using ChatOS.Connector.LocalAgent;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.State;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace ChatOS.Connector.DependencyInjection;
 
 public static class ServiceCollectionExtensions
 {
-    public static IServiceCollection AddChatOSConnector(this IServiceCollection services)
+    public static IServiceCollection AddChatOSConnector(
+        this IServiceCollection services,
+        IConfiguration configuration)
     {
-        if (LocalAgentHostOptions.Detect() is { } localAgentHostOptions)
+        if (LocalAgentHostOptions.Detect(configuration["ChatOS:Api:BaseUrl"]) is
+            { } localAgentHostOptions)
         {
             services.AddSingleton(localAgentHostOptions);
             services.AddSingleton<WindowsLocalAgentHostLifecycle>();

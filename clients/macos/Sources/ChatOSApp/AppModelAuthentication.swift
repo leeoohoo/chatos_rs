@@ -167,9 +167,11 @@ extension AppModel {
         guard let host = localAgentHost as? NativeLocalAgentHostLifecycle else { return }
         localAgentBootstrapTask = Task { [weak self] in
             do {
+                let memoryAccessToken = await self?.apiClient.currentAccessToken()
                 guard let bootstrap = try await self?.localConnectorService.bootstrapLocalAgentHost(
                     host,
-                    ownerUserID: ownerUserID
+                    ownerUserID: ownerUserID,
+                    memoryAccessToken: memoryAccessToken
                 ) else { return }
                 guard !Task.isCancelled, self?.authenticatedUserID == ownerUserID else {
                     await host.stop()

@@ -21,7 +21,8 @@ public struct NativeLocalAgentBootstrapResult: Sendable, Equatable {
 extension NativeLocalConnectorService {
     public func bootstrapLocalAgentHost(
         _ host: NativeLocalAgentHostLifecycle,
-        ownerUserID: String
+        ownerUserID: String,
+        memoryAccessToken: String?
     ) async throws -> NativeLocalAgentBootstrapResult {
         guard state.user?.id == ownerUserID else {
             throw NativeConnectorError.notPaired
@@ -97,6 +98,9 @@ extension NativeLocalConnectorService {
             ))
         }
         guard !snapshots.isEmpty else { throw NativeLocalAgentBootstrapError.noEnabledModel }
+        if let memoryAccessToken = memoryAccessToken?.trimmedNonEmpty {
+            environment["CHATOS_MEMORY_ACCESS_TOKEN"] = memoryAccessToken
+        }
 
         try await host.restart(
             ownerUserID: ownerUserID,

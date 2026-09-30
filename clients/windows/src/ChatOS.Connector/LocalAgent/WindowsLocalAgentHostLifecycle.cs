@@ -253,7 +253,8 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
         }
         foreach (var (name, value) in credentialEnvironment)
         {
-            if (!name.StartsWith("CHATOS_LOCAL_AGENT_MODEL_", StringComparison.Ordinal) ||
+            if ((name != "CHATOS_MEMORY_ACCESS_TOKEN" &&
+                    !name.StartsWith("CHATOS_LOCAL_AGENT_MODEL_", StringComparison.Ordinal)) ||
                 name.Length > 128 ||
                 name.Any(character => character != '_' &&
                     !char.IsAsciiLetterUpper(character) && !char.IsAsciiDigit(character)) ||

@@ -38,33 +38,7 @@ internal sealed class LocalAgentHostProcessLauncher : ILocalAgentHostProcessLaun
         cancellationToken.ThrowIfCancellationRequested();
         Directory.CreateDirectory(Path.GetDirectoryName(options.DatabasePath)
             ?? throw new InvalidOperationException("Local Agent database path has no parent."));
-        var start = new ProcessStartInfo
-        {
-            FileName = Path.GetFullPath(options.ExecutablePath),
-            WorkingDirectory = Path.GetDirectoryName(Path.GetFullPath(options.ExecutablePath))!,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        start.ArgumentList.Add("--database");
-        start.ArgumentList.Add(Path.GetFullPath(options.DatabasePath));
-        start.ArgumentList.Add("--owner-user-id");
-        start.ArgumentList.Add(ownerUserId);
-        start.ArgumentList.Add("--read-only-tool");
-        start.ArgumentList.Add("local_attachment_read");
-        start.ArgumentList.Add("--stdio");
-        start.Environment.Clear();
-        foreach (var name in AllowedEnvironmentVariables)
-        {
-            var value = Environment.GetEnvironmentVariable(name);
-            if (!string.IsNullOrEmpty(value)) start.Environment[name] = value;
-        }
-        foreach (var (name, value) in credentialEnvironment)
-        {
-            start.Environment[name] = value;
-        }
+        var start = CreateStartInfo(options, ownerUserId, credentialEnvironment);
 
         var process = new Process { StartInfo = start, EnableRaisingEvents = true };
         try
@@ -81,6 +55,48 @@ internal sealed class LocalAgentHostProcessLauncher : ILocalAgentHostProcessLaun
             process.Dispose();
             throw;
         }
+    }
+
+    internal static ProcessStartInfo CreateStartInfo(
+        LocalAgentHostOptions options,
+        string ownerUserId,
+        IReadOnlyDictionary<string, string> credentialEnvironment)
+    {
+        var start = new ProcessStartInfo
+        {
+            FileName = Path.GetFullPath(options.ExecutablePath),
+            WorkingDirectory = Path.GetDirectoryName(Path.GetFullPath(options.ExecutablePath))!,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        start.ArgumentList.Add("--database");
+        start.ArgumentList.Add(Path.GetFullPath(options.DatabasePath));
+        start.ArgumentList.Add("--owner-user-id");
+        start.ArgumentList.Add(ownerUserId);
+        start.ArgumentList.Add("--memory-base-url");
+        start.ArgumentList.Add(options.MemoryBaseUri.AbsoluteUri);
+        start.ArgumentList.Add("--memory-source-id");
+        start.ArgumentList.Add(options.MemorySourceId);
+        start.ArgumentList.Add("--memory-timeout-ms");
+        start.ArgumentList.Add(((long)options.MemoryTimeout.TotalMilliseconds).ToString(
+            System.Globalization.CultureInfo.InvariantCulture));
+        start.ArgumentList.Add("--read-only-tool");
+        start.ArgumentList.Add("local_attachment_read");
+        start.ArgumentList.Add("--stdio");
+        start.Environment.Clear();
+        foreach (var name in AllowedEnvironmentVariables)
+        {
+            var value = Environment.GetEnvironmentVariable(name);
+            if (!string.IsNullOrEmpty(value)) start.Environment[name] = value;
+        }
+        foreach (var (name, value) in credentialEnvironment)
+        {
+            start.Environment[name] = value;
+        }
+        return start;
     }
 
     private static async Task DrainStandardErrorAsync(StreamReader reader)

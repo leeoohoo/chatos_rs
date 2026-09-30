@@ -32,6 +32,7 @@ public sealed class WindowsLocalAgentBootstrapService
     private readonly WindowsLocalAgentNotepadService _notepad;
     private readonly WindowsLocalAgentRemoteConnectionMetadataService _remoteConnections;
     private readonly ChatOSApiClient _api;
+    private readonly IAuthTokenStore _authTokens;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     public WindowsLocalAgentBootstrapService(
@@ -50,7 +51,8 @@ public sealed class WindowsLocalAgentBootstrapService
         WindowsLocalAgentProjectConversationService projectConversations,
         WindowsLocalAgentNotepadService notepad,
         WindowsLocalAgentRemoteConnectionMetadataService remoteConnections,
-        ChatOSApiClient api)
+        ChatOSApiClient api,
+        IAuthTokenStore authTokens)
     {
         _host = host;
         _controlPlane = controlPlane;
@@ -68,6 +70,7 @@ public sealed class WindowsLocalAgentBootstrapService
         _notepad = notepad;
         _remoteConnections = remoteConnections;
         _api = api;
+        _authTokens = authTokens;
     }
 
     public WindowsLocalAgentBootstrapSnapshot? Current { get; private set; }
@@ -153,6 +156,13 @@ public sealed class WindowsLocalAgentBootstrapService
                 {
                     throw new InvalidOperationException(
                         "No enabled Local Agent model with a credential is configured.");
+                }
+                var memoryAccessToken = (await _authTokens
+                    .GetAccessTokenAsync(cancellationToken)
+                    .ConfigureAwait(false))?.Trim();
+                if (!string.IsNullOrEmpty(memoryAccessToken))
+                {
+                    environment["CHATOS_MEMORY_ACCESS_TOKEN"] = memoryAccessToken;
                 }
                 await _host.RestartForOwnerAsync(
                     ownerUserId,

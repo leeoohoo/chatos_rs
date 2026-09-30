@@ -73,7 +73,7 @@ public partial class App : Application
 
             builder.Services
                 .AddChatOSApi(builder.Configuration)
-                .AddChatOSConnector()
+                .AddChatOSConnector(builder.Configuration)
                 .AddChatOSPresentation();
             builder.Services.AddSingleton<IUiDispatcher>(_ => new DispatcherQueueUiDispatcher(
                 DispatcherQueue.GetForCurrentThread()

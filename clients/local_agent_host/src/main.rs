@@ -60,11 +60,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 memory.source_id.clone(),
                 Duration::from_millis(memory.timeout_ms),
             )
-            .with_access_token(non_empty_env("CHATOS_MEMORY_ACCESS_TOKEN"))
-            .with_internal_service_auth(
-                non_empty_env("CHATOS_MEMORY_INTERNAL_CALLER"),
-                non_empty_env("CHATOS_MEMORY_INTERNAL_SECRET"),
-            );
+            .with_access_token(non_empty_env("CHATOS_MEMORY_ACCESS_TOKEN"));
             let services = config.build_services(storage.clone(), options.owner_user_id.clone())?;
             (
                 Arc::new(services.runner),
