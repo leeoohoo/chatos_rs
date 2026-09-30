@@ -109,6 +109,7 @@ public sealed partial class MainWindowViewModel
             StopRegistrationCountdown();
             Password = ConfirmPassword = VerificationCode = string.Empty;
             ApplySession(session);
+            await StartLocalAgentAsync(session.User.Id, CancellationToken.None);
             await ReloadWorkspaceCoreAsync();
         }
         catch (OperationCanceledException) { }

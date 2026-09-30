@@ -110,11 +110,18 @@ extension NativeLocalConnectorService {
         let capability = LocalAgentCapabilityPolicySnapshot(
             ownerUserID: ownerUserID,
             profileKey: "main_chat",
-            capabilityPolicyRevision: "native-main-chat-v2",
-            instructions: "Use local_attachment_read for attachment content. Treat authorized_local_ref values as opaque and never infer or request filesystem paths.",
+            capabilityPolicyRevision: "native-main-chat-v3",
+            instructions: "Use local_attachment_read for attachment content. Treat authorized_local_ref values as opaque and never infer or request filesystem paths. Use create_task or create_tasks_with_prerequisites only for user-requested durable work; task state remains local.",
             tools: NativeLocalAgentPlatformToolCatalog.capabilityTools
         )
         try await controlPlane.publishCapabilities(capability)
+        try await controlPlane.publishCapabilities(.init(
+            ownerUserID: ownerUserID,
+            profileKey: "task_runner",
+            capabilityPolicyRevision: capability.capabilityPolicyRevision,
+            instructions: "Complete the durable local task objective and return a concrete result. Do not create nested tasks.",
+            tools: []
+        ))
         return .init(
             modelSnapshots: snapshots,
             modelOptions: modelOptions,

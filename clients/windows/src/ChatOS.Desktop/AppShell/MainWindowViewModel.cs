@@ -11,6 +11,7 @@ using ChatOS.Presentation.Settings;
 using ChatOS.Presentation.Remote;
 using ChatOS.Connector.Remote;
 using ChatOS.Connector.Terminal;
+using ChatOS.Connector.LocalAgent;
 
 namespace ChatOS.Desktop.AppShell;
 
@@ -33,6 +34,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private readonly TerminalSessionManager? _terminalSessions;
     private readonly RemoteTerminalSessionManager? _remoteTerminalSessions;
     private readonly ILocalAgentHostLifecycle? _localAgentHost;
+    private readonly WindowsLocalAgentBootstrapService? _localAgentBootstrap;
 
     public MainWindowViewModel(
         IAuthenticationService authenticationService,
@@ -51,7 +53,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ProjectRequirementSurveysViewModel? requirementSurveys = null,
         TerminalSessionManager? terminalSessions = null,
         RemoteTerminalSessionManager? remoteTerminalSessions = null,
-        ILocalAgentHostLifecycle? localAgentHost = null)
+        ILocalAgentHostLifecycle? localAgentHost = null,
+        WindowsLocalAgentBootstrapService? localAgentBootstrap = null)
     {
         _authenticationService = authenticationService;
         _workspaceRelations = workspaceRelations;
@@ -70,6 +73,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _terminalSessions = terminalSessions;
         _remoteTerminalSessions = remoteTerminalSessions;
         _localAgentHost = localAgentHost;
+        _localAgentBootstrap = localAgentBootstrap;
         RemoteConnections.Connections.CollectionChanged += (_, _) => RebuildRemoteResources();
         Localization.PropertyChanged += (_, _) => RelocalizeResources();
         AddWorkspaceTools();
@@ -290,11 +294,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             if (session is not null)
             {
                 ApplySession(session);
-                if (_localAgentHost is not null)
-                {
-                    await _localAgentHost
-                        .StartForOwnerAsync(session.User.Id, cancellationToken);
-                }
+                await StartLocalAgentAsync(session.User.Id, cancellationToken);
                 await ReloadWorkspaceCoreAsync(cancellationToken);
             }
         }
@@ -327,10 +327,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             if (authenticationGeneration != AccountGeneration) return;
             Password = string.Empty;
             ApplySession(session);
-            if (_localAgentHost is not null)
-            {
-                await _localAgentHost.StartForOwnerAsync(session.User.Id);
-            }
+            await StartLocalAgentAsync(session.User.Id, CancellationToken.None);
             await ReloadWorkspaceCoreAsync();
         }
         catch (OperationCanceledException) { }
@@ -413,6 +410,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             await _localAgentHost.StopAsync(CancellationToken.None);
         }
+        _localAgentBootstrap?.Reset();
         await _authenticationService.LogoutAsync();
         await ProjectRun.CloseAsync();
         await ProjectGit.CloseAsync();
@@ -452,6 +450,22 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _ownerUserId = session.User.Id;
         CurrentUserLabel = session.User.EffectiveDisplayName;
         IsAuthenticated = true;
+    }
+
+    private async Task StartLocalAgentAsync(
+        string ownerUserId,
+        CancellationToken cancellationToken)
+    {
+        if (_localAgentBootstrap is not null)
+        {
+            _ = await _localAgentBootstrap
+                .BootstrapForOwnerAsync(ownerUserId, cancellationToken);
+            return;
+        }
+        if (_localAgentHost is not null)
+        {
+            await _localAgentHost.StartForOwnerAsync(ownerUserId, cancellationToken);
+        }
     }
 
     private async Task ReloadWorkspaceCoreAsync(CancellationToken cancellationToken = default)

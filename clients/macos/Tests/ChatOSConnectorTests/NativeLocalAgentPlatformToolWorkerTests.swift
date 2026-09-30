@@ -4,6 +4,23 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
+    func testCapabilityCatalogPartitionsRustAndNativeTools() {
+        let names = NativeLocalAgentPlatformToolCatalog.capabilityTools.compactMap { value in
+            guard case let .object(tool) = value,
+                  case let .string(name)? = tool["name"] else { return nil as String? }
+            return name
+        }
+        XCTAssertEqual(Set(names), Set([
+            "local_attachment_read",
+            "create_task",
+            "create_tasks_with_prerequisites",
+        ]))
+        XCTAssertEqual(
+            NativeLocalAgentPlatformToolCatalog.readOnlyToolNames,
+            ["local_attachment_read"]
+        )
+    }
+
     func testAttachmentVaultResolvesBoundedContentAndRejectsTampering() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-attachment-test-\(UUID().uuidString)")
