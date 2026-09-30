@@ -9,7 +9,7 @@ final class ChatOSAuthenticationServiceTests: XCTestCase {
             HTTPResponse(
                 statusCode: 200,
                 headers: [:],
-                body: Data(#"{"access_token":"token-new","user":{"id":"user-1","username":"person@example.com","display_name":"Person","role":"user"}}"#.utf8)
+                body: Data(#"{"token":"token-new","user":{"id":"user-1","username":"person@example.com","display_name":"Person","role":"user"}}"#.utf8)
             ),
         ])
         let store = MemoryCredentialStore()
@@ -90,7 +90,7 @@ final class ChatOSAuthenticationServiceTests: XCTestCase {
             HTTPResponse(
                 statusCode: 200,
                 headers: [:],
-                body: Data(#"{"access_token":"registered-token","user":{"id":"user-new","username":"new@example.com","display_name":null,"role":"user"}}"#.utf8)
+                body: Data(#"{"token":"registered-token","user":{"id":"user-new","username":"new@example.com","display_name":null,"role":"user"}}"#.utf8)
             ),
         ])
         let store = MemoryCredentialStore()
@@ -130,6 +130,24 @@ final class ChatOSAuthenticationServiceTests: XCTestCase {
         XCTAssertNil(session)
         let storedToken = try await store.loadAccessToken()
         XCTAssertNil(storedToken)
+    }
+
+    func testLoginAcceptsLegacyAccessTokenFieldDuringRollingUpgrade() async throws {
+        let transport = QueueTransport(responses: [
+            HTTPResponse(
+                statusCode: 200,
+                headers: [:],
+                body: Data(#"{"access_token":"legacy-token","user":{"id":"user-legacy","username":"legacy@example.com","display_name":null,"role":"user"}}"#.utf8)
+            ),
+        ])
+        let store = MemoryCredentialStore()
+        let service = makeService(transport: transport, store: store)
+
+        let session = try await service.login(username: "legacy@example.com", password: "secret")
+        let storedToken = try await store.loadAccessToken()
+
+        XCTAssertEqual(session.user.id, "user-legacy")
+        XCTAssertEqual(storedToken, "legacy-token")
     }
 
     func testLogoutClearsCredential() async throws {

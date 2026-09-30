@@ -150,8 +150,16 @@ private struct LoginResponseDTO: Decodable, Sendable {
     var user: AuthUserDTO
 
     enum CodingKeys: String, CodingKey {
+        case token
         case accessToken = "access_token"
         case user
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        accessToken = try values.decodeIfPresent(String.self, forKey: .token)
+            ?? values.decode(String.self, forKey: .accessToken)
+        user = try values.decode(AuthUserDTO.self, forKey: .user)
     }
 }
 
