@@ -14,6 +14,8 @@ public enum NativeLocalAgentPlatformToolCatalog {
     ]
     private static let requirementSurveyReadOnlyToolNames =
         NativeMCPRequirementSurveyTools.readToolNames.sorted()
+    private static let pluginReadOnlyToolNames =
+        NativeAgentCapabilityBrokerToolCatalog.readOnlyToolNames.sorted()
     static let taskRunnerTerminalToolNames: Set<String> = [
         "execute_command", "process_poll", "process_log", "process_wait", "process_write",
         "process_kill",
@@ -23,9 +25,10 @@ public enum NativeLocalAgentPlatformToolCatalog {
             .union(NativeMCPRequirementSurveyTools.writeToolNames)
     public static let readOnlyToolNames = [attachmentReadToolName]
         + projectReadOnlyToolNames + terminalReadOnlyToolNames
-        + requirementSurveyReadOnlyToolNames
+        + requirementSurveyReadOnlyToolNames + pluginReadOnlyToolNames
     public static let approvalExemptToolNames = [
         "open_edit_session", "stage_edit_batch", "abort_edit_session",
+        NativeAgentCapabilityBrokerToolCatalog.invokeToolName,
     ]
 
     public static let capabilityTools: [LocalAgentJSONValue] = [
@@ -133,6 +136,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
         }
         + NativeMCPRequirementSurveyTools.readToolDefinitions.map(capabilityTool)
         + NativeMCPRequirementSurveyTools.writeToolDefinitions.map(capabilityTool)
+        + NativeAgentCapabilityBrokerToolCatalog.localAgentCapabilityTools
 
     static var taskRunnerToolNames: Set<String> {
         Set(taskRunnerCapabilityTools.compactMap { value in
@@ -248,6 +252,10 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
             // before the outcome crosses IPC and becomes model-visible.
             throw NativeLocalAgentAttachmentVaultError.invalidAttachment
         }
+    }
+
+    func reset() async {
+        await projectTools?.reset()
     }
 
     private static func object(

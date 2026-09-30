@@ -59,7 +59,8 @@ extension NativeLocalConnectorService {
         ownerUserID: String,
         runContext: LocalAgentChatRunContext,
         pluginIDs: [String],
-        projectContext: LocalConnectorPluginApplicationContext
+        projectContext: LocalConnectorPluginApplicationContext,
+        executionPresentation: NativeAgentPluginExecutionPresentation = .agentGroupChat
     ) async throws -> [NativeAgentPluginToolProvider] {
         guard state.user?.id == ownerUserID,
               runContext.ownerUserID == ownerUserID,
@@ -143,7 +144,7 @@ extension NativeLocalConnectorService {
                             sourceUserMessageID: runContext.triggerMessageID,
                             taskID: runContext.deliveryID,
                             taskRunID: runContext.runID,
-                            taskTitle: "Agent 群聊 · \(launch.displayName)"
+                            taskTitle: "\(executionPresentation.taskTitlePrefix) · \(launch.displayName)"
                         ),
                         adapterSessionID: adapterSessionID
                     )
@@ -158,6 +159,7 @@ extension NativeLocalConnectorService {
                             projectRootURL: resolvedProject.absoluteURL,
                             workspaceID: resolvedProject.workspace.id,
                             permissionSnapshot: permissionSnapshot,
+                            executionPresentation: executionPresentation,
                             pluginSkillSnapshot: skillSnapshot,
                             pluginSkillSession: skillSession
                         ))
@@ -225,7 +227,8 @@ extension NativeLocalConnectorService {
         arguments: NativeJSONValue,
         policy: NativePluginToolPolicy,
         projectRootURL: URL,
-        workspaceID: String
+        workspaceID: String,
+        executionPresentation: NativeAgentPluginExecutionPresentation
     ) async -> Bool {
         guard policy.approvalMode == "per_call" else { return true }
         let summary = Self.safeArgumentSummary(toolName: toolName, arguments: arguments)
@@ -236,10 +239,10 @@ extension NativeLocalConnectorService {
             arguments: [summary],
             cwd: projectRootURL,
             projectRoot: projectRootURL,
-            source: "plugin_agent_group_chat",
+            source: executionPresentation.approvalSource,
             risk: .init(
                 level: policy.riskLevel,
-                reason: "本地群聊 Agent 请求执行 Plugin 操作：\(summary)"
+                reason: "\(executionPresentation.approvalReasonPrefix)：\(summary)"
             ),
             requestedPermissionsDescription: Self.permissionDescription(
                 toolName: toolName,
@@ -293,12 +296,13 @@ extension NativeLocalConnectorService {
     }
 }
 
-private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
-    static let searchToolName = "capability_search"
-    static let describeToolName = "capability_describe"
-    static let activateSkillToolName = "capability_skill_activate"
-    static let readSkillResourceToolName = "capability_skill_read_resource"
-    static let invokeToolName = "capability_invoke"
+actor NativeAgentCapabilityToolProvider: AgentToolProvider {
+    static let searchToolName = NativeAgentCapabilityBrokerToolCatalog.searchToolName
+    static let describeToolName = NativeAgentCapabilityBrokerToolCatalog.describeToolName
+    static let activateSkillToolName = NativeAgentCapabilityBrokerToolCatalog.activateSkillToolName
+    static let readSkillResourceToolName =
+        NativeAgentCapabilityBrokerToolCatalog.readSkillResourceToolName
+    static let invokeToolName = NativeAgentCapabilityBrokerToolCatalog.invokeToolName
 
     private enum CapabilityKind: Sendable {
         case builtIn
@@ -394,6 +398,7 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     private let projectContext: LocalConnectorPluginApplicationContext
     private let resolvedProject: NativeResolvedProjectPath
     private let builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>
+    private let executionPresentation: NativeAgentPluginExecutionPresentation
     private let options: [CapabilityOption]
     private var registries: [String: AgentToolProviderRegistry] = [:]
     private var toolNamesByOption: [String: [String: String]] = [:]
@@ -408,7 +413,8 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         projectContext: LocalConnectorPluginApplicationContext,
         resolvedProject: NativeResolvedProjectPath,
         builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>,
-        installedPlugins: [NativeInstalledAgentPlugin]
+        installedPlugins: [NativeInstalledAgentPlugin],
+        executionPresentation: NativeAgentPluginExecutionPresentation = .agentGroupChat
     ) {
         self.service = service
         self.ownerUserID = ownerUserID
@@ -416,6 +422,7 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         self.projectContext = projectContext
         self.resolvedProject = resolvedProject
         self.builtinCapabilities = builtinCapabilities
+        self.executionPresentation = executionPresentation
         let builtinOptions: [CapabilityOption] = builtinCapabilities.isEmpty ? [] : [
             .init(
                 token: "builtin_1",
@@ -435,44 +442,7 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     }
 
     func definitions() async throws -> [AgentToolDefinition] {
-        [
-            .init(
-                name: Self.searchToolName,
-                description: "按任务关键词搜索本机已安装能力。只返回匹配 Plugin 的本轮临时选项和简介，不启动 Plugin，也不展开全部工具。",
-                schema: Data(#"{"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":200}},"required":["query"],"additionalProperties":false}"#.utf8),
-                providerID: ProductToolProviderID.capabilityBroker,
-                skillBindingID: ProductToolSkillBindingID.capabilityBroker
-            ),
-            .init(
-                name: Self.describeToolName,
-                description: "按 capability_search 返回的临时 plugin_option，惰性启动一个能力，并读取本轮工具 schema、所需 Skill Router 和叶子目录。调用带 required_skills 的工具前必须逐个激活。",
-                schema: Data(#"{"type":"object","properties":{"plugin_option":{"type":"string","minLength":1,"maxLength":80}},"required":["plugin_option"],"additionalProperties":false}"#.utf8),
-                providerID: ProductToolProviderID.capabilityBroker,
-                skillBindingID: ProductToolSkillBindingID.capabilityBroker
-            ),
-            .init(
-                name: Self.activateSkillToolName,
-                description: "激活 capability_describe 为该能力列出的一个产品 Skill 或固定 Plugin Skill，返回完整 SKILL.md 和可按需读取的资源路径。只能激活当前能力真实工具所引用的 Skill。",
-                schema: Data(#"{"type":"object","properties":{"plugin_option":{"type":"string","minLength":1,"maxLength":80},"skill_name":{"type":"string","minLength":1,"maxLength":120}},"required":["plugin_option","skill_name"],"additionalProperties":false}"#.utf8),
-                providerID: ProductToolProviderID.capabilityBroker,
-                skillBindingID: ProductToolSkillBindingID.capabilityBroker
-            ),
-            .init(
-                name: Self.readSkillResourceToolName,
-                description: "分页读取已经激活的产品或固定 Plugin Skill 参考资料。只在当前决策需要对应场景、正反例或恢复细节时读取。",
-                schema: Data(#"{"type":"object","properties":{"plugin_option":{"type":"string","minLength":1,"maxLength":80},"skill_name":{"type":"string","minLength":1,"maxLength":120},"relative_path":{"type":"string","minLength":1,"maxLength":500},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":64000}},"required":["plugin_option","skill_name","relative_path"],"additionalProperties":false}"#.utf8),
-                providerID: ProductToolProviderID.capabilityBroker,
-                skillBindingID: ProductToolSkillBindingID.capabilityBroker
-            ),
-            .init(
-                name: Self.invokeToolName,
-                description: "调用已经通过 capability_describe 展开的一个工具。若工具声明 required_skills，必须先逐个 capability_skill_activate；plugin_option 和 tool_option 使用本轮临时选项。",
-                schema: Data(#"{"type":"object","properties":{"plugin_option":{"type":"string","minLength":1,"maxLength":80},"tool_option":{"type":"string","minLength":1,"maxLength":80},"arguments":{"type":"object"}},"required":["plugin_option","tool_option","arguments"],"additionalProperties":false}"#.utf8),
-                effect: .write,
-                providerID: ProductToolProviderID.capabilityBroker,
-                skillBindingID: ProductToolSkillBindingID.capabilityBroker
-            ),
-        ]
+        NativeAgentCapabilityBrokerToolCatalog.definitions
     }
 
     func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
@@ -643,7 +613,8 @@ private actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 ownerUserID: ownerUserID,
                 runContext: runContext,
                 pluginIDs: [plugin.id],
-                projectContext: projectContext
+                projectContext: projectContext,
+                executionPresentation: executionPresentation
             )
             guard let first = pluginProviders.first else {
                 throw NativePluginRuntimeError.invalidRequest("Plugin 没有可用的 MCP 组件")

@@ -518,6 +518,108 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         ))
         XCTAssertFalse(observed.isError)
         XCTAssertTrue(observed.content.contains("process_count"))
+
+        let taskBroker = try await service.makeTaskRunnerCapabilityToolProvider(
+            ownerUserID: "alice",
+            runID: "task-run-1",
+            conversationID: "conversation-1",
+            projectContext: .init(
+                projectID: "project-1",
+                projectName: "Test",
+                projectRoot: project.path
+            )
+        )
+        let taskSearch = try await taskBroker.execute(.init(
+            id: "task-search-1",
+            name: "capability_search",
+            arguments: #"{"query":"test"}"#
+        ))
+        XCTAssertTrue(taskSearch.content.contains("plugin_1"))
+        XCTAssertFalse(taskSearch.content.contains("builtin_1"))
+        let taskDescription = try await taskBroker.execute(.init(
+            id: "task-describe-1",
+            name: "capability_describe",
+            arguments: #"{"plugin_option":"plugin_1"}"#
+        ))
+        let taskDescriptionObject = try JSONDecoder().decode(
+            NativeJSONValue.self,
+            from: Data(taskDescription.content.utf8)
+        ).jsonObject
+        let taskTool = try XCTUnwrap(
+            taskDescriptionObject?["tools"]?.jsonArray?.first?.jsonObject
+        )
+        let taskToolOption = try XCTUnwrap(taskTool["tool_option"]?.jsonString)
+        let taskActivation = try await taskBroker.execute(.init(
+            id: "task-activate-1",
+            name: "capability_skill_activate",
+            arguments: #"{"plugin_option":"plugin_1","skill_name":"test-agent-plugin"}"#
+        ))
+        XCTAssertFalse(taskActivation.isError)
+        let taskInvocation = try await taskBroker.execute(.init(
+            id: "task-invoke-1",
+            name: "capability_invoke",
+            arguments: """
+            {"plugin_option":"plugin_1","tool_option":"\(taskToolOption)","arguments":{"value":"task"}}
+            """
+        ))
+        XCTAssertFalse(taskInvocation.isError)
+        XCTAssertTrue(taskInvocation.content.contains("local-plugin-ok"))
+
+        let platformExecutor = NativeLocalAgentPluginToolExecutor(connector: service)
+        let platformSearch = try await platformExecutor.execute(
+            ownerUserID: "alice",
+            invocation: platformInvocation(
+                runID: "task-run-2",
+                name: "capability_search",
+                arguments: .object(["query": .string("test")])
+            ),
+            context: .init(
+                conversationID: "conversation-2",
+                projectID: "project-1",
+                applicationContext: .init(
+                    projectID: "project-1",
+                    projectName: "Test",
+                    projectRoot: project.path
+                ),
+                resolvedPath: try await service.resolveProjectPath(project.path)
+            ),
+            arguments: ["query": .string("test")]
+        )
+        XCTAssertEqual(platformSearch.jsonObject?["is_error"]?.jsonBool, false)
+        XCTAssertTrue(
+            platformSearch.jsonObject?["content"]?.jsonObject?["matches"]?
+                .jsonArray?.first?.jsonObject?["plugin_option"]?.jsonString == "plugin_1"
+        )
+        await platformExecutor.reset()
+    }
+
+    private func platformInvocation(
+        runID: String,
+        name: String,
+        arguments: LocalAgentJSONValue
+    ) -> LocalAgentToolInvocationRecord {
+        .init(
+            invocationID: "invocation-\(name)",
+            runID: runID,
+            batchID: "batch-1",
+            callID: "call-\(name)",
+            toolName: name,
+            arguments: arguments,
+            sideEffecting: name == "capability_invoke",
+            requiresApproval: false,
+            approvalStatus: "not_required",
+            approvalDecidedBy: nil,
+            approvalReason: nil,
+            approvalDecidedAtUnixMs: nil,
+            status: "running",
+            result: nil,
+            error: nil,
+            version: 1,
+            claimToken: "claim-1",
+            claimUntilUnixMs: nil,
+            createdAtUnixMs: 1,
+            updatedAtUnixMs: 1
+        )
     }
 }
 

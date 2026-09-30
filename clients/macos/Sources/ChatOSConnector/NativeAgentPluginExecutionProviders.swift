@@ -400,6 +400,7 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
     private let projectRootURL: URL
     private let workspaceID: String
     private let permissionSnapshot: Set<String>
+    private let executionPresentation: NativeAgentPluginExecutionPresentation
     private let lease: NativeAgentPluginSessionLease
     let pluginSkillSnapshot: PluginSkillSnapshot
     let pluginSkillSession: PluginToolSkillSession
@@ -414,6 +415,7 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
         projectRootURL: URL,
         workspaceID: String,
         permissionSnapshot: Set<String>,
+        executionPresentation: NativeAgentPluginExecutionPresentation = .agentGroupChat,
         pluginSkillSnapshot: PluginSkillSnapshot,
         pluginSkillSession: PluginToolSkillSession
     ) throws {
@@ -424,6 +426,7 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
         self.projectRootURL = projectRootURL
         self.workspaceID = workspaceID
         self.permissionSnapshot = permissionSnapshot
+        self.executionPresentation = executionPresentation
         self.pluginSkillSnapshot = pluginSkillSnapshot
         self.pluginSkillSession = pluginSkillSession
         self.lease = .init(runtimeStore: runtimeStore, adapterSessionID: identity.adapterSessionID)
@@ -527,7 +530,8 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
             arguments: arguments,
             policy: policy,
             projectRootURL: projectRootURL,
-            workspaceID: workspaceID
+            workspaceID: workspaceID,
+            executionPresentation: executionPresentation
         ) else {
             return .failure("用户未批准这次 Plugin 操作。")
         }

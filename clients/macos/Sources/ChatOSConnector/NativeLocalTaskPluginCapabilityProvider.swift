@@ -1,0 +1,59 @@
+import ChatOSAgentRuntime
+import ChatOSCore
+import Foundation
+
+struct NativeAgentPluginExecutionPresentation: Sendable {
+    let approvalSource: String
+    let approvalReasonPrefix: String
+    let taskTitlePrefix: String
+
+    static let agentGroupChat = Self(
+        approvalSource: "plugin_agent_group_chat",
+        approvalReasonPrefix: "本地群聊 Agent 请求执行 Plugin 操作",
+        taskTitlePrefix: "Agent 群聊"
+    )
+    static let localTaskRunner = Self(
+        approvalSource: "local_agent_task_runner",
+        approvalReasonPrefix: "本地任务请求执行 Plugin 操作",
+        taskTitlePrefix: "本地任务"
+    )
+}
+
+extension NativeLocalConnectorService {
+    func makeTaskRunnerCapabilityToolProvider(
+        ownerUserID: String,
+        runID: String,
+        conversationID: String,
+        projectContext: LocalConnectorPluginApplicationContext
+    ) throws -> any AgentToolProvider {
+        guard state.user?.id == ownerUserID,
+              let projectID = projectContext.projectID,
+              let projectRoot = projectContext.projectRoot else {
+            throw NativePluginRuntimeError.invalidRequest(
+                "本地任务 Plugin 与当前账户或项目不匹配"
+            )
+        }
+        let runContext = try LocalAgentChatRunContext(
+            ownerUserID: ownerUserID,
+            projectID: projectID,
+            roomID: conversationID,
+            agentID: "local-task-runner",
+            deliveryID: runID,
+            triggerMessageID: runID,
+            rootMessageID: runID,
+            runID: runID,
+            hopCount: 0,
+            lane: .executor
+        )
+        return NativeAgentCapabilityToolProvider(
+            service: self,
+            ownerUserID: ownerUserID,
+            runContext: runContext,
+            projectContext: projectContext,
+            resolvedProject: try resolveProjectPath(projectRoot),
+            builtinCapabilities: [],
+            installedPlugins: try installedAgentPlugins(ownerUserID: ownerUserID),
+            executionPresentation: .localTaskRunner
+        )
+    }
+}

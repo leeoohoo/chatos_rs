@@ -6,11 +6,13 @@ protocol NativeLocalAgentProjectToolExecuting: Sendable {
         ownerUserID: String,
         invocation: LocalAgentToolInvocationRecord
     ) async throws -> LocalAgentJSONValue
+    func reset() async
 }
 
 struct NativeLocalAgentProjectContext: Sendable {
     let conversationID: String
     let projectID: String
+    let applicationContext: LocalConnectorPluginApplicationContext
     let resolvedPath: NativeResolvedProjectPath
 }
 
@@ -61,6 +63,7 @@ struct NativeLocalAgentProjectContextResolver: Sendable {
         return .init(
             conversationID: conversationID,
             projectID: resource.resourceID,
+            applicationContext: context,
             resolvedPath: resolvedPath
         )
     }
@@ -80,6 +83,7 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
     private let writeStore: NativeMCPCodeWriteStore
     private let terminalStore: NativeLocalAgentTerminalStore
     private let agentGroupChats: NativeAgentGroupChatService
+    private let pluginTools: NativeLocalAgentPluginToolExecutor
 
     init(
         host: any LocalAgentHostClientServicing,
@@ -93,6 +97,7 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
         self.writeStore = writeStore
         self.terminalStore = terminalStore
         self.agentGroupChats = agentGroupChats
+        pluginTools = .init(connector: connector)
     }
 
     func execute(
@@ -166,6 +171,15 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                     arguments: nativeArguments,
                     context: context
                 )
+            } else if NativeAgentCapabilityBrokerToolCatalog.toolNames.contains(
+                invocation.toolName
+            ) {
+                result = try await pluginTools.execute(
+                    ownerUserID: ownerUserID,
+                    invocation: invocation,
+                    context: context,
+                    arguments: nativeArguments
+                )
             } else {
                 result = try await Task.detached {
                     try tool.call(name: invocation.toolName, arguments: nativeArguments)
@@ -183,6 +197,7 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
 
     func reset() async {
         await terminalStore.cancelAll()
+        await pluginTools.reset()
     }
 
     private func executeTerminal(

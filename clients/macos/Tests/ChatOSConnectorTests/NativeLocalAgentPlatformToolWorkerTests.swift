@@ -22,7 +22,8 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                 "search_text", "read_file", "search_files", "process_poll", "process_log",
                 "process_wait", "requirement_survey_get", "requirement_survey_list",
                 "requirement_survey_project_tasks", "skill_activate", "skill_list_resources",
-                "skill_read_resource",
+                "skill_read_resource", "capability_describe", "capability_search",
+                "capability_skill_activate", "capability_skill_read_resource",
             ]
         )
         XCTAssertEqual(
@@ -37,11 +38,16 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                 "requirement_survey_list", "requirement_survey_get",
                 "requirement_survey_project_tasks", "requirement_survey_create",
                 "requirement_survey_resolve",
+                "capability_search", "capability_describe", "capability_skill_activate",
+                "capability_skill_read_resource", "capability_invoke",
             ])
         )
         XCTAssertEqual(
             NativeLocalAgentPlatformToolCatalog.approvalExemptToolNames,
-            ["open_edit_session", "stage_edit_batch", "abort_edit_session"]
+            [
+                "open_edit_session", "stage_edit_batch", "abort_edit_session",
+                "capability_invoke",
+            ]
         )
     }
 
@@ -246,6 +252,8 @@ private actor RecordingProjectToolExecutor: NativeLocalAgentProjectToolExecuting
     }
 
     func recordedInvocation() -> LocalAgentToolInvocationRecord? { invocation }
+
+    func reset() async {}
 }
 
 private struct FailingPlatformToolExecutor: NativeLocalAgentPlatformToolExecuting {
