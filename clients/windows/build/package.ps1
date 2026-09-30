@@ -18,6 +18,8 @@ if (-not $IsWindows) {
 }
 
 $runtimeIdentifier = if ($Platform -eq "ARM64") { "win-arm64" } else { "win-x64" }
+$rustTarget = if ($Platform -eq "ARM64") { "aarch64-pc-windows-msvc" } else { "x86_64-pc-windows-msvc" }
+$monorepoRoot = (Resolve-Path (Join-Path $repoRoot "..\..")).Path
 $signingEnabled = -not [string]::IsNullOrWhiteSpace($CertificateThumbprint)
 $packagesRoot = Join-Path $repoRoot "src\ChatOS.Desktop\AppPackages\$Platform"
 
@@ -38,6 +40,15 @@ if ($signingEnabled) {
 Push-Location $repoRoot
 try {
     & (Join-Path $repoRoot "build\ensure-package-assets.ps1")
+    cargo build --manifest-path (Join-Path $monorepoRoot "Cargo.toml") `
+        -p chatos_local_agent_host --release --target $rustTarget
+    if ($LASTEXITCODE -ne 0) {
+        throw "Local Agent Host build failed with exit code $LASTEXITCODE."
+    }
+    $localAgentHost = Join-Path $monorepoRoot "target-shared\$rustTarget\release\chatos_local_agent_host.exe"
+    if (-not (Test-Path $localAgentHost -PathType Leaf)) {
+        throw "Local Agent Host executable was not produced at $localAgentHost."
+    }
     if (Test-Path $packagesRoot) {
         Remove-Item $packagesRoot -Recurse -Force
     }
@@ -53,6 +64,8 @@ try {
         "-p:GenerateAppxPackageOnBuild=true",
         "-p:AppxBundle=Never",
         "-p:AppxPackageDir=$packagesRoot\",
+        "-p:LocalAgentHostExecutable=$localAgentHost",
+        "-p:RequireLocalAgentHost=true",
         "-p:AppxPackageSigningEnabled=$($signingEnabled.ToString().ToLowerInvariant())",
         "--nologo"
     )

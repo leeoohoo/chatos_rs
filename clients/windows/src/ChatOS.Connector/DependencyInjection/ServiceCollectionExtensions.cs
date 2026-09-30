@@ -14,6 +14,7 @@ using ChatOS.Connector.Git;
 using ChatOS.Connector.Remote;
 using ChatOS.Connector.Plugins;
 using ChatOS.Connector.NetworkGuard;
+using ChatOS.Connector.LocalAgent;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.State;
 using Microsoft.Extensions.DependencyInjection;
@@ -24,6 +25,13 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddChatOSConnector(this IServiceCollection services)
     {
+        if (LocalAgentHostOptions.Detect() is { } localAgentHostOptions)
+        {
+            services.AddSingleton(localAgentHostOptions);
+            services.AddSingleton<WindowsLocalAgentHostLifecycle>();
+            services.AddSingleton<ILocalAgentHostLifecycle>(provider =>
+                provider.GetRequiredService<WindowsLocalAgentHostLifecycle>());
+        }
         services.AddSingleton<IAuthTokenStore, WindowsCredentialTokenStore>();
         services.AddSingleton<IConnectorAccessTokenStore, WindowsCredentialConnectorTokenStore>();
         services.AddSingleton<IConnectorSecretStore, WindowsCredentialConnectorSecretStore>();

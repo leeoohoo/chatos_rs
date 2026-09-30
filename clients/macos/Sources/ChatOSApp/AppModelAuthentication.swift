@@ -34,6 +34,7 @@ extension AppModel {
                 projectConversationPreparationErrors = [:]
             }
             authenticatedUserID = session.user.id
+            startLocalAgentHost(ownerUserID: session.user.id)
             restartAgentHeartbeatCoordinator()
             restartAgentArtifactSyncCoordinator()
             mediaStudio.activate(userID: session.user.id)
@@ -55,6 +56,7 @@ extension AppModel {
             agentArtifactSyncTask = nil
             agentArtifactSyncOwnerUserID = nil
             authenticatedUserID = nil
+            stopLocalAgentHost()
             languagePreferencesSaveTask?.cancel()
             isLanguagePreferencesLoading = false
             isLanguagePreferencesSaving = false
@@ -89,12 +91,41 @@ extension AppModel {
         agentArtifactSyncOwnerUserID = nil
         localConnectorRecoveryTask?.cancel()
         localConnectorRecoveryTask = nil
+        stopLocalAgentHost()
         deactivateAllConversations()
         stopVisualSessionMonitoring()
         globalUtilityCoordinator.stop()
         localConnectorService.terminatePluginApplicationsForHostExit()
         terminalWorkspace.closeAllTerminals()
         remoteConnectionWorkspaceStore.removeAllWorkspaces()
+    }
+
+    private func startLocalAgentHost(ownerUserID: String) {
+        localAgentHostLifecycleTask?.cancel()
+        localAgentHostError = nil
+        guard let localAgentHost else { return }
+        localAgentHostLifecycleTask = Task { [weak self] in
+            do {
+                try await localAgentHost.start(ownerUserID: ownerUserID)
+                guard !Task.isCancelled, self?.authenticatedUserID == ownerUserID else {
+                    await localAgentHost.stop()
+                    return
+                }
+            } catch is CancellationError {
+                await localAgentHost.stop()
+            } catch {
+                guard self?.authenticatedUserID == ownerUserID else { return }
+                self?.localAgentHostError = error.localizedDescription
+            }
+        }
+    }
+
+    private func stopLocalAgentHost() {
+        localAgentHostLifecycleTask?.cancel()
+        localAgentHostLifecycleTask = nil
+        localAgentHostError = nil
+        guard let localAgentHost else { return }
+        Task { await localAgentHost.stop() }
     }
 
     private func deactivateAllConversations() {

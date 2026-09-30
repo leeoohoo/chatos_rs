@@ -12,7 +12,8 @@ fi
 
 INFO_PLIST="$APP_PATH/Contents/Info.plist"
 EXECUTABLE="$APP_PATH/Contents/MacOS/ChatOSSwift"
-if [[ ! -f "$INFO_PLIST" || ! -x "$EXECUTABLE" ]]; then
+LOCAL_AGENT_HOST="$APP_PATH/Contents/MacOS/chatos_local_agent_host"
+if [[ ! -f "$INFO_PLIST" || ! -x "$EXECUTABLE" || ! -x "$LOCAL_AGENT_HOST" ]]; then
   echo "Invalid ChatOS app bundle: $APP_PATH" >&2
   exit 1
 fi
@@ -46,6 +47,11 @@ if [[ "$CONFIGURATION" == "release" ]] && strings "$EXECUTABLE" | grep -F '/debu
   echo "Release ChatOS binary contains a Debug build path" >&2
   exit 1
 fi
+if [[ "$CONFIGURATION" == "release" ]] && strings "$LOCAL_AGENT_HOST" | grep -F '/debug/' >/dev/null; then
+  echo "Release Local Agent Host contains a Debug build path" >&2
+  exit 1
+fi
 
+codesign --verify --strict "$LOCAL_AGENT_HOST"
 codesign --verify --deep --strict "$APP_PATH"
 echo "Verified ChatOS $CONFIGURATION build $GIT_COMMIT ($BUILD_DATE)"

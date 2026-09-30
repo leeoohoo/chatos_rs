@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR=${0:A:h}
 PROJECT_DIR=${SCRIPT_DIR:h}
+REPOSITORY_DIR=${PROJECT_DIR:h:h}
 APP_DIR="$PROJECT_DIR/.build/ChatOS.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
@@ -71,6 +72,22 @@ if [[ ! -x "$EXECUTABLE" ]]; then
   exit 1
 fi
 
+CARGO_PROFILE_ARGUMENTS=()
+RUST_PROFILE=debug
+if [[ "$BUILD_CONFIGURATION" == "release" ]]; then
+  CARGO_PROFILE_ARGUMENTS=(--release)
+  RUST_PROFILE=release
+fi
+cargo build \
+  --manifest-path "$REPOSITORY_DIR/Cargo.toml" \
+  -p chatos_local_agent_host \
+  "${CARGO_PROFILE_ARGUMENTS[@]}"
+LOCAL_AGENT_HOST="$REPOSITORY_DIR/target-shared/$RUST_PROFILE/chatos_local_agent_host"
+if [[ ! -x "$LOCAL_AGENT_HOST" ]]; then
+  echo "Local Agent Host executable not found at $LOCAL_AGENT_HOST" >&2
+  exit 1
+fi
+
 # A binary produced by SwiftPM's alternate build path can compile and launch
 # while carrying an older LC_BUILD_VERSION SDK. AppKit then selects legacy
 # control rendering (notably square segmented controls), so never package a
@@ -86,6 +103,7 @@ fi
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$TOOLS_DIR" "$RIPGREP_NOTICE_DIR" "$SWIFTTERM_NOTICE_DIR" "$PET_DIR" "$EN_LOCALIZATION_DIR" "$ZH_HANS_LOCALIZATION_DIR"
 cp "$EXECUTABLE" "$MACOS_DIR/ChatOSSwift"
+cp "$LOCAL_AGENT_HOST" "$MACOS_DIR/chatos_local_agent_host"
 CORE_RESOURCE_BUNDLE="$BIN_DIR/ChatOSSwift_ChatOSCore.bundle"
 if [[ ! -d "$CORE_RESOURCE_BUNDLE" ]]; then
   echo "ChatOSCore resource bundle not found at $CORE_RESOURCE_BUNDLE" >&2
@@ -105,15 +123,18 @@ cp "$PROJECT_DIR/Support/Pets/fengtuan/spritesheet.webp" "$PET_DIR/spritesheet.w
 cp "$PROJECT_DIR/Support/Localization/en.lproj/Localizable.strings" "$EN_LOCALIZATION_DIR/Localizable.strings"
 cp "$PROJECT_DIR/Support/Localization/zh-Hans.lproj/Localizable.strings" "$ZH_HANS_LOCALIZATION_DIR/Localizable.strings"
 chmod 755 "$TOOLS_DIR/rg"
+chmod 755 "$MACOS_DIR/chatos_local_agent_host"
 
 if [[ -n "$SIGNING_IDENTITY" ]]; then
   codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$TOOLS_DIR/rg"
+  codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$MACOS_DIR/chatos_local_agent_host"
   codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$APP_DIR"
 else
   # Keep a stable designated requirement across local debug rebuilds. A plain
   # ad-hoc signature falls back to its changing cdhash and makes Keychain treat
   # every build as a different application.
   codesign --force --sign - "$TOOLS_DIR/rg"
+  codesign --force --sign - "$MACOS_DIR/chatos_local_agent_host"
   codesign \
     --force \
     --sign - \

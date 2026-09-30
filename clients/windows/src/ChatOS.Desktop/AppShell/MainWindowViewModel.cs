@@ -32,6 +32,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private bool _suppressSelectionActivation;
     private readonly TerminalSessionManager? _terminalSessions;
     private readonly RemoteTerminalSessionManager? _remoteTerminalSessions;
+    private readonly ILocalAgentHostLifecycle? _localAgentHost;
 
     public MainWindowViewModel(
         IAuthenticationService authenticationService,
@@ -49,7 +50,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         AgentTeamWorkspaceViewModel? agentTeam = null,
         ProjectRequirementSurveysViewModel? requirementSurveys = null,
         TerminalSessionManager? terminalSessions = null,
-        RemoteTerminalSessionManager? remoteTerminalSessions = null)
+        RemoteTerminalSessionManager? remoteTerminalSessions = null,
+        ILocalAgentHostLifecycle? localAgentHost = null)
     {
         _authenticationService = authenticationService;
         _workspaceRelations = workspaceRelations;
@@ -67,6 +69,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         Localization = localization;
         _terminalSessions = terminalSessions;
         _remoteTerminalSessions = remoteTerminalSessions;
+        _localAgentHost = localAgentHost;
         RemoteConnections.Connections.CollectionChanged += (_, _) => RebuildRemoteResources();
         Localization.PropertyChanged += (_, _) => RelocalizeResources();
         AddWorkspaceTools();
@@ -287,6 +290,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
             if (session is not null)
             {
                 ApplySession(session);
+                if (_localAgentHost is not null)
+                {
+                    await _localAgentHost
+                        .StartForOwnerAsync(session.User.Id, cancellationToken);
+                }
                 await ReloadWorkspaceCoreAsync(cancellationToken);
             }
         }
@@ -319,6 +327,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
             if (authenticationGeneration != AccountGeneration) return;
             Password = string.Empty;
             ApplySession(session);
+            if (_localAgentHost is not null)
+            {
+                await _localAgentHost.StartForOwnerAsync(session.User.Id);
+            }
             await ReloadWorkspaceCoreAsync();
         }
         catch (OperationCanceledException) { }
@@ -396,6 +408,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
             catch
             {
             }
+        }
+        if (_localAgentHost is not null)
+        {
+            await _localAgentHost.StopAsync(CancellationToken.None);
         }
         await _authenticationService.LogoutAsync();
         await ProjectRun.CloseAsync();

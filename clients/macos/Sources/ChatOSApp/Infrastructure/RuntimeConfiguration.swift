@@ -1,4 +1,5 @@
 import ChatOSAPI
+import ChatOSConnector
 import Foundation
 
 enum RuntimeConfiguration {
@@ -38,6 +39,22 @@ enum RuntimeConfiguration {
         return deploymentRoot
             .appendingPathComponent("NativeConnector", isDirectory: true)
             .appendingPathComponent("state.json", isDirectory: false)
+    }
+
+    static var localAgentHostConfiguration: NativeLocalAgentHostConfiguration? {
+        let executable: URL
+        if let configured = nonEmptyEnvironmentValue("CHATOS_LOCAL_AGENT_HOST_PATH") {
+            executable = URL(fileURLWithPath: configured)
+        } else if let bundled = Bundle.main.url(forAuxiliaryExecutable: "chatos_local_agent_host") {
+            executable = bundled
+        } else {
+            return nil
+        }
+        let database = nativeConnectorStateURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("LocalAgent", isDirectory: true)
+            .appendingPathComponent("local-agent.sqlite3", isDirectory: false)
+        return .init(executableURL: executable, databaseURL: database)
     }
 
     static var contactConversationID: String {

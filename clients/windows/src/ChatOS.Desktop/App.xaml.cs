@@ -9,6 +9,7 @@ using ChatOS.Presentation.DependencyInjection;
 using ChatOS.Presentation.Threading;
 using ChatOS.Presentation.Settings;
 using ChatOS.Core.State;
+using ChatOS.Core.Abstractions;
 using ChatOS.Desktop.Features.Settings;
 using ChatOS.Desktop.Features.Notepad;
 using ChatOS.Desktop.Features.Remote;
@@ -217,6 +218,14 @@ public partial class App : Application
         {
             _host.Services.GetRequiredService<RemoteTerminalSessionManager>()
                 .CloseAllAsync(CancellationToken.None).GetAwaiter().GetResult();
+        }
+        catch
+        {
+        }
+        try
+        {
+            _host.Services.GetService<ILocalAgentHostLifecycle>()?
+                .StopAsync(CancellationToken.None).GetAwaiter().GetResult();
         }
         catch
         {

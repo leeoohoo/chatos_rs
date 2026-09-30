@@ -27,5 +27,15 @@
   <ItemGroup>
     <Content Include="Assets\**\*.png" />
     <Content Include="Assets\**\*.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(LocalAgentHostExecutable)"
+             Condition="'$(LocalAgentHostExecutable)' != '' and Exists('$(LocalAgentHostExecutable)')"
+             Link="chatos_local_agent_host.exe"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <Target Name="RequireLocalAgentHost" BeforeTargets="PrepareForBuild"
+          Condition="'$(RequireLocalAgentHost)' == 'true' and ('$(LocalAgentHostExecutable)' == '' or !Exists('$(LocalAgentHostExecutable)'))">
+    <Error Text="Local Agent Host executable is required but was not built." />
+  </Target>
 </Project>

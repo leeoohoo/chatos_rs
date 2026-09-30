@@ -68,6 +68,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     @Published var workspaceError: String?
     @Published var preparingProjectConversationIDs: Set<String> = []
     @Published var projectConversationPreparationErrors: [String: String] = [:]
+    @Published var localAgentHostError: String?
 
     let historyStore: ConversationHistoryStore
     let authentication: AuthenticationViewModel
@@ -106,6 +107,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let petActivityInboxService: ChatOSPetActivityInboxService
     let workspaceService: ChatOSWorkspaceService
     let localConnectorService: NativeLocalConnectorService
+    let localAgentHost: (any LocalAgentHostLifecycleServicing)?
     let projectConversationService: ChatOSProjectConversationService
     let localProjectsService: NativeLocalProjectsService
     let remoteConnectionService: NativeRemoteConnectionService
@@ -143,6 +145,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var agentArtifactSyncTask: Task<Void, Never>?
     var agentArtifactSyncOwnerUserID: String?
     var localConnectorRecoveryTask: Task<Void, Never>?
+    var localAgentHostLifecycleTask: Task<Void, Never>?
     var localConnectorRecoveryGeneration: UInt64 = 0
     var lastLocalConnectorRecoveryDate: Date?
     var mainWindowPresentationHandler: (() -> Void)?
@@ -207,6 +210,9 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             storyPlanner: remoteAgentServices
         )
         self.localConnectorService = localConnectorService
+        self.localAgentHost = RuntimeConfiguration.localAgentHostConfiguration.map {
+            NativeLocalAgentHostLifecycle(configuration: $0)
+        }
         self.conversationService = conversationService
         self.workspaceService = ChatOSWorkspaceService(client: apiClient)
         self.projectConversationService = ChatOSProjectConversationService(client: apiClient)
