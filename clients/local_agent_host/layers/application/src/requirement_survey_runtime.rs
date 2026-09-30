@@ -4,9 +4,28 @@
 use super::{new_event_id, LocalAgentRuntime, LocalAgentRuntimeError};
 use chatos_local_agent_ports::{ClientStorageError, IdempotentCommand};
 use chatos_local_agent_protocol::{
-    CreateRequirementSurveyCommand, HostCommand, HostResult, LocalRequirementSurvey,
-    LocalRequirementSurveyStatus,
+    CreateRequirementSurveyCommand, HostCommand, HostResult, LocalAgentStepOutcome,
+    LocalRequirementSurvey, LocalRequirementSurveyStatus,
+    LOCAL_REQUIREMENT_SURVEY_CREATE_TOOL_NAME,
 };
+
+pub(super) fn validate_tool_batch(
+    outcome: &LocalAgentStepOutcome,
+) -> Result<(), LocalAgentRuntimeError> {
+    let LocalAgentStepOutcome::WaitForTool { tool_calls, .. } = outcome else {
+        return Ok(());
+    };
+    let survey_calls = tool_calls
+        .iter()
+        .filter(|call| call.tool_name == LOCAL_REQUIREMENT_SURVEY_CREATE_TOOL_NAME)
+        .count();
+    if survey_calls > 0 && (survey_calls != 1 || tool_calls.len() != 1) {
+        return Err(LocalAgentRuntimeError::InvalidRequest(
+            "requirement_survey_create must be the only call in its tool batch".to_string(),
+        ));
+    }
+    Ok(())
+}
 
 impl LocalAgentRuntime {
     pub(super) async fn handle_requirement_survey_command(

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-//! Durable, client-owned Local Agent state machine.
-//! Owns run creation, leases, transitions, cancellation, events,
+//! Durable, client-owned Local Agent state machine for runs, leases, transitions, and events.
 
 use chatos_local_agent_ports::{
     ClientStorageError, IdempotentCommand, LocalAgentStore, RunTransition,
@@ -475,6 +474,7 @@ fn transition_for_outcome(
     outcome: LocalAgentStepOutcome,
     now: i64,
 ) -> Result<RunTransition, LocalAgentRuntimeError> {
+    requirement_survey_runtime::validate_tool_batch(&outcome)?;
     let tool_batch = match &outcome {
         LocalAgentStepOutcome::WaitForTool {
             batch_id,

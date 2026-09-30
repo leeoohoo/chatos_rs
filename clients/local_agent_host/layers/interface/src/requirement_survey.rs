@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, HashSet};
 
 pub const LOCAL_REQUIREMENT_SURVEY_MAX_QUESTIONS: usize = 50;
 pub const LOCAL_REQUIREMENT_SURVEY_MAX_LIST_LIMIT: u32 = 200;
+pub const LOCAL_REQUIREMENT_SURVEY_CREATE_TOOL_NAME: &str = "requirement_survey_create";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

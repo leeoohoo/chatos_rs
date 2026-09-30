@@ -6,7 +6,7 @@ use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
     CancelRunCommand, ClaimNextRunCommand, CommitStepCommand, CreateConversationCommand,
     CreateRequirementSurveyCommand, CreateRunCommand, HostCommand, HostRequestEnvelope, HostResult,
-    ListRequirementSurveysCommand, LocalAgentRunStatus, LocalAgentStepOutcome,
+    ListRequirementSurveysCommand, LocalAgentRunStatus, LocalAgentStepOutcome, LocalAgentToolCall,
     LocalConversationResourceBinding, LocalConversationResourceKind,
     LocalRequirementSurveyQuestion, LocalRequirementSurveyResponseKind,
     LocalRequirementSurveyStatus, ResolveRequirementSurveyCommand, ResumeRunCommand,
@@ -104,6 +104,41 @@ async fn resolves_project_survey_and_atomically_resumes_waiting_task_run() {
     let HostResult::Claim { claim: Some(claim) } = claimed else {
         panic!("expected run claim");
     };
+    let mixed_batch = runtime
+        .try_handle(request(
+            "mixed-survey-batch",
+            HostCommand::CommitStep(CommitStepCommand {
+                owner_user_id: "user-1".to_string(),
+                run_id: "run-1".to_string(),
+                claim_token: claim.claim_token.clone(),
+                expected_version: claim.run.version,
+                outcome: LocalAgentStepOutcome::WaitForTool {
+                    batch_id: "mixed-batch".to_string(),
+                    tool_calls: vec![
+                        LocalAgentToolCall {
+                            call_id: "survey-call".to_string(),
+                            tool_name: "requirement_survey_create".to_string(),
+                            arguments: json!({"title": "Survey", "questions": []}),
+                            side_effecting: true,
+                            requires_approval: false,
+                        },
+                        LocalAgentToolCall {
+                            call_id: "read-call".to_string(),
+                            tool_name: "read_file".to_string(),
+                            arguments: json!({"path": "README.md"}),
+                            side_effecting: false,
+                            requires_approval: false,
+                        },
+                    ],
+                    checkpoint: json!({"phase": "requirements"}),
+                },
+            }),
+        ))
+        .await
+        .expect_err("survey creation must be an isolated tool batch");
+    assert!(mixed_batch
+        .to_string()
+        .contains("must be the only call in its tool batch"));
     let waiting = runtime
         .try_handle(request(
             "wait-user",

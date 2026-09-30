@@ -7,13 +7,14 @@ use chatos_local_agent_protocol::{
     CreateRequirementSurveyCommand, GetConversationCommand, HostCommand, HostRequestEnvelope,
     HostResult, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
     LocalConversationResourceKind, LocalRequirementSurveyQuestion, LOCAL_AGENT_PROTOCOL_VERSION,
+    LOCAL_REQUIREMENT_SURVEY_CREATE_TOOL_NAME,
 };
 use chatos_local_agent_runtime::LocalAgentRuntime;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-pub const REQUIREMENT_SURVEY_CREATE_TOOL: &str = "requirement_survey_create";
+pub const REQUIREMENT_SURVEY_CREATE_TOOL: &str = LOCAL_REQUIREMENT_SURVEY_CREATE_TOOL_NAME;
 pub const REQUIREMENT_SURVEY_TOOL_NAMES: [&str; 1] = [REQUIREMENT_SURVEY_CREATE_TOOL];
 
 #[derive(Clone)]
