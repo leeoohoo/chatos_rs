@@ -115,6 +115,21 @@ forbid(
     ['owner_service: "chatos"', "SystemMcpHost::Chatos", "ServiceHttp"],
     "system MCP catalog must not publish a server execution host",
 )
+forbid(
+    "crates/chatos_plugin_management_sdk/src/dto.rs",
+    ["    TaskManager,", "Self::TaskManager"],
+    "the retired Task Manager must not remain in the public system MCP contract",
+)
+forbid(
+    "crates/chatos_mcp_runtime/src/builtin_catalog.rs",
+    ["    TaskManager,", "Self::TaskManager"],
+    "the retired Task Manager must not remain in the builtin runtime contract",
+)
+forbid(
+    "plugin_management_service/backend/src/store.rs",
+    ["RETIRED_TASK_MANAGER", "is_retired_task_manager_mcp"],
+    "Plugin Marketplace must not carry old Task Manager data compatibility",
+)
 
 require(
     "clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+Approval.swift",
