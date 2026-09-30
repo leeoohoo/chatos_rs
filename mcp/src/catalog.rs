@@ -58,7 +58,7 @@ macro_rules! embedded_descriptor {
     };
 }
 
-static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
+static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 11] = [
     embedded_descriptor!(
         CodeMaintainerRead,
         "builtin_code_maintainer_read",
@@ -92,34 +92,6 @@ static SYSTEM_MCP_CATALOG: [SystemMcpDescriptor; 13] = [
         LOCAL_AGENT_HOST,
         TerminalController
     ),
-    SystemMcpDescriptor {
-        key: SystemMcpKey::RequirementSurveyRead,
-        resource_id: "builtin_requirement_survey_read",
-        server_name: "requirement_survey_read",
-        display_name: "Requirement Survey Read (Builtin)",
-        description: "Read project surveys, Human answers, resolutions, execution plans, and project task state.",
-        allow_writes: false,
-        tags: &["system", "builtin", "requirement_survey"],
-        category: Some("builtin"),
-        owner_service: "local_connector_client",
-        backend: SystemMcpBackend::HostAdapter,
-        implementation_hosts: LOCAL_AGENT_HOST,
-        embedded_kind: Some(BuiltinMcpKind::RequirementSurveyRead),
-    },
-    SystemMcpDescriptor {
-        key: SystemMcpKey::RequirementSurveyWrite,
-        resource_id: "builtin_requirement_survey_write",
-        server_name: "requirement_survey_write",
-        display_name: "Requirement Survey Create & Resolve (Builtin)",
-        description: "Create project surveys and write resolutions and execution plans. Requires Requirement Survey Read.",
-        allow_writes: true,
-        tags: &["system", "builtin", "requirement_survey"],
-        category: Some("builtin"),
-        owner_service: "local_connector_client",
-        backend: SystemMcpBackend::HostAdapter,
-        implementation_hosts: LOCAL_AGENT_HOST,
-        embedded_kind: Some(BuiltinMcpKind::RequirementSurveyWrite),
-    },
     SystemMcpDescriptor {
         key: SystemMcpKey::Notepad,
         resource_id: "builtin_notepad",

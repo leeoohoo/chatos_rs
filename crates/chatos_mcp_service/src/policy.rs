@@ -4,8 +4,6 @@
 pub const BUILTIN_KIND_CODE_MAINTAINER_READ: &str = "CodeMaintainerRead";
 pub const BUILTIN_KIND_CODE_MAINTAINER_WRITE: &str = "CodeMaintainerWrite";
 pub const BUILTIN_KIND_TERMINAL_CONTROLLER: &str = "TerminalController";
-pub const BUILTIN_KIND_REQUIREMENT_SURVEY_READ: &str = "RequirementSurveyRead";
-pub const BUILTIN_KIND_REQUIREMENT_SURVEY_WRITE: &str = "RequirementSurveyWrite";
 pub const BUILTIN_KIND_LOCAL_COMMAND_APPROVAL: &str = "LocalCommandApproval";
 pub const BUILTIN_KIND_REMOTE_CONNECTION_CONTROLLER: &str = "RemoteConnectionController";
 
@@ -28,8 +26,6 @@ impl BuiltinHostBackend {
                     BUILTIN_KIND_CODE_MAINTAINER_READ
                         | BUILTIN_KIND_CODE_MAINTAINER_WRITE
                         | BUILTIN_KIND_TERMINAL_CONTROLLER
-                        | BUILTIN_KIND_REQUIREMENT_SURVEY_READ
-                        | BUILTIN_KIND_REQUIREMENT_SURVEY_WRITE
                         | BUILTIN_KIND_LOCAL_COMMAND_APPROVAL
                 )
             ),
@@ -51,8 +47,6 @@ pub enum BuiltinToolAccess {
     CodeWrite,
     Terminal,
     LocalCommandApproval,
-    RequirementSurveyRead,
-    RequirementSurveyWrite,
 }
 
 impl BuiltinToolAccess {
@@ -62,8 +56,6 @@ impl BuiltinToolAccess {
             Self::CodeWrite => BUILTIN_KIND_CODE_MAINTAINER_WRITE,
             Self::Terminal => BUILTIN_KIND_TERMINAL_CONTROLLER,
             Self::LocalCommandApproval => BUILTIN_KIND_LOCAL_COMMAND_APPROVAL,
-            Self::RequirementSurveyRead => BUILTIN_KIND_REQUIREMENT_SURVEY_READ,
-            Self::RequirementSurveyWrite => BUILTIN_KIND_REQUIREMENT_SURVEY_WRITE,
         }
     }
 }
@@ -74,8 +66,6 @@ pub struct HostCapabilityPolicy {
     pub code_write: bool,
     pub terminal: bool,
     pub local_command_approval: bool,
-    pub requirement_survey_read: bool,
-    pub requirement_survey_write: bool,
 }
 
 impl HostCapabilityPolicy {
@@ -104,11 +94,6 @@ impl HostCapabilityPolicy {
             }
             Some(BUILTIN_KIND_TERMINAL_CONTROLLER) => self.terminal = true,
             Some(BUILTIN_KIND_LOCAL_COMMAND_APPROVAL) => self.local_command_approval = true,
-            Some(BUILTIN_KIND_REQUIREMENT_SURVEY_READ) => self.requirement_survey_read = true,
-            Some(BUILTIN_KIND_REQUIREMENT_SURVEY_WRITE) => {
-                self.requirement_survey_read = true;
-                self.requirement_survey_write = true;
-            }
             _ => {}
         }
     }
@@ -119,8 +104,6 @@ impl HostCapabilityPolicy {
             Some(BUILTIN_KIND_CODE_MAINTAINER_WRITE) => self.code_write,
             Some(BUILTIN_KIND_TERMINAL_CONTROLLER) => self.terminal,
             Some(BUILTIN_KIND_LOCAL_COMMAND_APPROVAL) => self.local_command_approval,
-            Some(BUILTIN_KIND_REQUIREMENT_SURVEY_READ) => self.requirement_survey_read,
-            Some(BUILTIN_KIND_REQUIREMENT_SURVEY_WRITE) => self.requirement_survey_write,
             _ => false,
         }
     }
@@ -131,8 +114,6 @@ impl HostCapabilityPolicy {
             Some(BuiltinToolAccess::CodeWrite) => self.code_write,
             Some(BuiltinToolAccess::Terminal) => self.terminal,
             Some(BuiltinToolAccess::LocalCommandApproval) => self.local_command_approval,
-            Some(BuiltinToolAccess::RequirementSurveyRead) => self.requirement_survey_read,
-            Some(BuiltinToolAccess::RequirementSurveyWrite) => self.requirement_survey_write,
             None => false,
         }
     }
@@ -150,12 +131,6 @@ impl HostCapabilityPolicy {
         }
         if self.local_command_approval {
             out.push(BUILTIN_KIND_LOCAL_COMMAND_APPROVAL);
-        }
-        if self.requirement_survey_read {
-            out.push(BUILTIN_KIND_REQUIREMENT_SURVEY_READ);
-        }
-        if self.requirement_survey_write {
-            out.push(BUILTIN_KIND_REQUIREMENT_SURVEY_WRITE);
         }
         out
     }
@@ -210,8 +185,6 @@ pub fn normalize_builtin_kind_name(value: &str) -> Option<&'static str> {
         "terminalcontroller" => Some(BUILTIN_KIND_TERMINAL_CONTROLLER),
         "localcommandapproval" => Some(BUILTIN_KIND_LOCAL_COMMAND_APPROVAL),
         "remoteconnectioncontroller" => Some(BUILTIN_KIND_REMOTE_CONNECTION_CONTROLLER),
-        "requirementsurveyread" => Some(BUILTIN_KIND_REQUIREMENT_SURVEY_READ),
-        "requirementsurveywrite" => Some(BUILTIN_KIND_REQUIREMENT_SURVEY_WRITE),
         _ => None,
     }
 }
@@ -228,15 +201,6 @@ pub fn classify_builtin_tool(name: &str) -> Option<BuiltinToolAccess> {
             Some(BuiltinToolAccess::Terminal)
         }
         "approval_decision" => Some(BuiltinToolAccess::LocalCommandApproval),
-        "skill_activate"
-        | "skill_list_resources"
-        | "skill_read_resource"
-        | "requirement_survey_list"
-        | "requirement_survey_get"
-        | "requirement_survey_project_tasks" => Some(BuiltinToolAccess::RequirementSurveyRead),
-        "requirement_survey_create" | "requirement_survey_resolve" => {
-            Some(BuiltinToolAccess::RequirementSurveyWrite)
-        }
         _ => None,
     }
 }
@@ -313,10 +277,7 @@ mod tests {
             classify_builtin_tool("approval_decision"),
             Some(BuiltinToolAccess::LocalCommandApproval)
         );
-        assert_eq!(
-            classify_builtin_tool("skill_activate"),
-            Some(BuiltinToolAccess::RequirementSurveyRead)
-        );
+        assert_eq!(classify_builtin_tool("skill_activate"), None);
         assert_eq!(classify_builtin_tool("local_fs_read"), None);
     }
 

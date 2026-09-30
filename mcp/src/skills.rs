@@ -36,15 +36,6 @@ const TERMINAL_COMMAND_SKILLS: &[&str] = &["chatos-terminal", "chatos-terminal-c
 const TERMINAL_OBSERVATION_SKILLS: &[&str] =
     &["chatos-terminal", "chatos-terminal-process-observation"];
 const TERMINAL_CONTROL_SKILLS: &[&str] = &["chatos-terminal", "chatos-terminal-process-control"];
-const REQUIREMENT_SURVEY_ROUTER_SKILLS: &[&str] = &["requirement-survey"];
-const REQUIREMENT_SURVEY_CREATE_SKILLS: &[&str] =
-    &["requirement-survey", "requirement-survey-create"];
-const REQUIREMENT_SURVEY_READ_SKILLS: &[&str] =
-    &["requirement-survey", "requirement-survey-read-results"];
-const REQUIREMENT_SURVEY_RESOLVE_SKILLS: &[&str] =
-    &["requirement-survey", "requirement-survey-resolve"];
-const REQUIREMENT_SURVEY_REVIEW_SKILLS: &[&str] =
-    &["requirement-survey", "requirement-survey-review-execution"];
 const AGENT_BUILDER_SKILLS: &[&str] = &["chatos-agent-builder"];
 const REMOTE_CONNECTION_SKILLS: &[&str] = &["chatos-remote-connection"];
 const USER_CLARIFICATION_SKILLS: &[&str] = &["chatos-user-clarification"];
@@ -110,43 +101,6 @@ pub fn system_mcp_product_skill_binding(
                 "terminal.process-control",
                 "chatos-terminal-process-control",
                 TERMINAL_CONTROL_SKILLS,
-            ))
-        }
-        (
-            SystemMcpKey::RequirementSurveyRead,
-            "skill_activate" | "skill_list_resources" | "skill_read_resource",
-        ) => Some(product_binding(
-            "requirement-survey.control-plane",
-            "requirement-survey",
-            REQUIREMENT_SURVEY_ROUTER_SKILLS,
-        )),
-        (
-            SystemMcpKey::RequirementSurveyRead,
-            "requirement_survey_list" | "requirement_survey_get",
-        ) => Some(product_binding(
-            "requirement-survey.read-results",
-            "requirement-survey-read-results",
-            REQUIREMENT_SURVEY_READ_SKILLS,
-        )),
-        (SystemMcpKey::RequirementSurveyRead, "requirement_survey_project_tasks") => {
-            Some(product_binding(
-                "requirement-survey.review-execution",
-                "requirement-survey-review-execution",
-                REQUIREMENT_SURVEY_REVIEW_SKILLS,
-            ))
-        }
-        (SystemMcpKey::RequirementSurveyWrite, "requirement_survey_create") => {
-            Some(product_binding(
-                "requirement-survey.create",
-                "requirement-survey-create",
-                REQUIREMENT_SURVEY_CREATE_SKILLS,
-            ))
-        }
-        (SystemMcpKey::RequirementSurveyWrite, "requirement_survey_resolve") => {
-            Some(product_binding(
-                "requirement-survey.resolve",
-                "requirement-survey-resolve",
-                REQUIREMENT_SURVEY_RESOLVE_SKILLS,
             ))
         }
         (
@@ -274,8 +228,6 @@ mod tests {
             SystemMcpKey::CodeMaintainerRead,
             SystemMcpKey::CodeMaintainerWrite,
             SystemMcpKey::TerminalController,
-            SystemMcpKey::RequirementSurveyRead,
-            SystemMcpKey::RequirementSurveyWrite,
             SystemMcpKey::AgentBuilder,
             SystemMcpKey::RemoteConnectionController,
             SystemMcpKey::AskUser,
