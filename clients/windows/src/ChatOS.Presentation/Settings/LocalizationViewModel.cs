@@ -239,7 +239,7 @@ public sealed class LocalizationViewModel : ObservableObject
     public string NoAvailableConversation => Text("这个资源还没有可用会话", "This resource has no available conversation");
     public string ConversationPreparationNotice => Text("项目会自动准备默认会话；联系人需要已有会话。", "Projects prepare a default conversation automatically; contacts require an existing conversation.");
     public string TaskDetails => Text("任务详情", "Task details");
-    public string AuthoritativeTaskStatus => Text("状态与运行过程来自服务端权威数据", "Status and run events come from authoritative server data");
+    public string AuthoritativeTaskStatus => Text("状态与运行过程保存在本机 Local Agent Host", "Status and run events are stored by the on-device Local Agent Host");
     public string RunResult => Text("运行结果", "Run result");
     public string ExecutionProcess => Text("执行过程", "Execution process");
     public string LoadEarlierProcess => Text("加载更早过程", "Load earlier events");

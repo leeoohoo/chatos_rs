@@ -116,7 +116,7 @@ public sealed class WindowsLocalAgentProjectToolExecutor
         WindowsLocalToolInvocation invocation,
         CancellationToken cancellationToken)
     {
-        if (!WindowsLocalAgentCapabilityCatalog.TaskExecutionToolNames.Contains(
+        if (!WindowsLocalAgentCapabilityCatalog.ProjectToolNames.Contains(
                 invocation.ToolName) || invocation.Arguments.ValueKind != JsonValueKind.Object)
         {
             throw new InvalidOperationException("Unsupported Local Agent project tool.");

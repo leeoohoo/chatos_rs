@@ -86,11 +86,14 @@ internal sealed class LocalAgentHostProcessLauncher : ILocalAgentHostProcessLaun
         foreach (var name in new[]
         {
             "local_attachment_read", "project_list", "project_read", "project_search",
+            "capability_search", "capability_describe",
         })
         {
             start.ArgumentList.Add("--read-only-tool");
             start.ArgumentList.Add(name);
         }
+        start.ArgumentList.Add("--approval-exempt-tool");
+        start.ArgumentList.Add("capability_invoke");
         start.ArgumentList.Add("--stdio");
         start.Environment.Clear();
         foreach (var name in AllowedEnvironmentVariables)

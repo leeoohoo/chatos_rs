@@ -194,7 +194,7 @@ public sealed class WindowsLocalAgentBootstrapService
                     ownerUserId,
                     "task_execution",
                     mainCapabilities.CapabilityPolicyRevision,
-                    "Complete the durable local task objective using only the project bound to its source conversation. Project writes and terminal commands require Host approval. Do not create nested tasks.",
+                    "Complete the durable local task objective using only the project bound to its source conversation and enabled local Plugins. Project writes and terminal commands require Host approval; Plugin permissions and per-call approval are enforced by the native client. Do not create nested tasks.",
                     [],
                     WindowsLocalAgentCapabilityCatalog.TaskExecutionTools),
                 cancellationToken).ConfigureAwait(false);

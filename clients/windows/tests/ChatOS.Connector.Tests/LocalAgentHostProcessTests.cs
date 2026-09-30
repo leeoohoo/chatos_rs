@@ -36,6 +36,9 @@ public sealed class LocalAgentHostProcessTests
         AssertReadOnly(arguments, "project_list");
         AssertReadOnly(arguments, "project_read");
         AssertReadOnly(arguments, "project_search");
+        AssertReadOnly(arguments, "capability_search");
+        AssertReadOnly(arguments, "capability_describe");
+        AssertApprovalExempt(arguments, "capability_invoke");
         Assert.DoesNotContain("project_write", arguments);
         Assert.DoesNotContain("terminal_exec", arguments);
     }
@@ -45,5 +48,12 @@ public sealed class LocalAgentHostProcessTests
         var index = Array.IndexOf(arguments.ToArray(), toolName);
         Assert.True(index > 0);
         Assert.Equal("--read-only-tool", arguments[index - 1]);
+    }
+
+    private static void AssertApprovalExempt(IReadOnlyList<string> arguments, string toolName)
+    {
+        var index = Array.IndexOf(arguments.ToArray(), toolName);
+        Assert.True(index > 0);
+        Assert.Equal("--approval-exempt-tool", arguments[index - 1]);
     }
 }

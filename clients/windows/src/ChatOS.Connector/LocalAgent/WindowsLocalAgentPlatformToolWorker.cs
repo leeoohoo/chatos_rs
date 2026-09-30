@@ -44,6 +44,7 @@ public sealed class WindowsLocalAgentPlatformToolWorker
     private readonly WindowsLocalAgentConversationClient _conversations;
     private readonly WindowsLocalAgentAttachmentVault _vault;
     private readonly WindowsLocalAgentProjectToolExecutor? _projectTools;
+    private readonly IWindowsLocalAgentPluginToolExecutor? _pluginTools;
     private readonly WindowsLocalAgentToolApprovalHandler? _approvals;
     private readonly object _gate = new();
     private string? _owner;
@@ -55,12 +56,14 @@ public sealed class WindowsLocalAgentPlatformToolWorker
         WindowsLocalAgentConversationClient conversations,
         WindowsLocalAgentAttachmentVault vault,
         WindowsLocalAgentProjectToolExecutor projectTools,
+        IWindowsLocalAgentPluginToolExecutor pluginTools,
         WindowsLocalAgentToolApprovalHandler approvals)
     {
         _host = host;
         _conversations = conversations;
         _vault = vault;
         _projectTools = projectTools;
+        _pluginTools = pluginTools;
         _approvals = approvals;
     }
 
@@ -87,6 +90,7 @@ public sealed class WindowsLocalAgentPlatformToolWorker
         {
             _owner = null;
             _pendingWake = false;
+            _pluginTools?.Reset();
             _polling?.Cancel();
             _polling = null;
         }
@@ -168,7 +172,21 @@ public sealed class WindowsLocalAgentPlatformToolWorker
     {
         try
         {
-            if (WindowsLocalAgentCapabilityCatalog.TaskExecutionToolNames.Contains(
+            if (WindowsLocalAgentCapabilityCatalog.PluginToolNames.Contains(
+                    claim.Invocation.ToolName))
+            {
+                if (_pluginTools is null)
+                    throw new InvalidOperationException("Local Plugin tools are unavailable.");
+                var output = await _pluginTools.ExecuteAsync(
+                    owner,
+                    claim.Invocation.RunId,
+                    claim.Invocation.CallId,
+                    claim.Invocation.ToolName,
+                    claim.Invocation.Arguments,
+                    cancellationToken).ConfigureAwait(false);
+                return JsonSerializer.SerializeToElement(new { type = "succeeded", output });
+            }
+            if (WindowsLocalAgentCapabilityCatalog.ProjectToolNames.Contains(
                     claim.Invocation.ToolName))
             {
                 if (_projectTools is null)

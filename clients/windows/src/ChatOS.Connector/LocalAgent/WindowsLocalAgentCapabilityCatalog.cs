@@ -170,7 +170,62 @@ internal static class WindowsLocalAgentCapabilityCatalog
           }
         }
         """),
+        Parse("""
+        {
+          "type": "function",
+          "name": "capability_search",
+          "description": "Search enabled local Plugins by task keywords without starting a Plugin runtime.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "query": { "type": "string", "minLength": 1, "maxLength": 200 }
+            },
+            "required": ["query"],
+            "additionalProperties": false
+          }
+        }
+        """),
+        Parse("""
+        {
+          "type": "function",
+          "name": "capability_describe",
+          "description": "Lazily start one Plugin returned by capability_search and describe its run-scoped local tools.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "plugin_option": { "type": "string", "minLength": 1, "maxLength": 80 }
+            },
+            "required": ["plugin_option"],
+            "additionalProperties": false
+          }
+        }
+        """),
+        Parse("""
+        {
+          "type": "function",
+          "name": "capability_invoke",
+          "description": "Invoke a local Plugin tool previously returned by capability_describe. Plugin permissions and per-call approval remain enforced by the native client.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "plugin_option": { "type": "string", "minLength": 1, "maxLength": 80 },
+              "tool_option": { "type": "string", "minLength": 1, "maxLength": 80 },
+              "arguments": { "type": "object" }
+            },
+            "required": ["plugin_option", "tool_option", "arguments"],
+            "additionalProperties": false
+          }
+        }
+        """),
     ];
+
+    public static IReadOnlySet<string> ProjectToolNames { get; } = new HashSet<string>(
+        ["project_list", "project_read", "project_search", "project_write", "terminal_exec"],
+        StringComparer.Ordinal);
+
+    public static IReadOnlySet<string> PluginToolNames { get; } = new HashSet<string>(
+        ["capability_search", "capability_describe", "capability_invoke"],
+        StringComparer.Ordinal);
 
     public static IReadOnlySet<string> TaskExecutionToolNames { get; } =
         TaskExecutionTools
