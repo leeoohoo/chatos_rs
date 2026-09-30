@@ -29,25 +29,27 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         try await lifecycle.start(ownerUserID: "user-1")
         var owner = await lifecycle.activeOwnerUserID
         XCTAssertEqual(owner, "user-1")
-        let result: TestConversationResult = try await lifecycle.request(
-            TestCreateConversationCommand(
-                type: "create_conversation",
-                conversationID: "conversation-1",
-                ownerUserID: "user-1",
-                title: "Local conversation"
-            )
+        let conversations = NativeLocalAgentConversationClient(host: lifecycle)
+        let created = try await conversations.create(
+            ownerUserID: "user-1",
+            conversationID: "conversation-1",
+            title: "Local conversation"
         )
-        XCTAssertEqual(result.type, "conversation")
-        XCTAssertEqual(result.conversation.conversation.conversationId, "conversation-1")
-        XCTAssertEqual(result.conversation.conversation.version, 1)
+        XCTAssertEqual(created.conversation.conversationID, "conversation-1")
+        XCTAssertEqual(created.conversation.version, 1)
+        let page = try await conversations.list(ownerUserID: "user-1")
+        XCTAssertEqual(page.conversations.map(\.conversationID), ["conversation-1"])
+        let history = try await conversations.history(
+            ownerUserID: "user-1",
+            conversationID: "conversation-1"
+        )
+        XCTAssertEqual(history.conversation, created.conversation)
+        XCTAssertTrue(history.messages.isEmpty)
         await XCTAssertThrowsErrorAsync {
-            let _: TestConversationResult = try await lifecycle.request(
-                TestCreateConversationCommand(
-                    type: "create_conversation",
-                    conversationID: "conversation-2",
-                    ownerUserID: "another-user",
-                    title: "Wrong owner"
-                )
+            _ = try await conversations.create(
+                ownerUserID: "another-user",
+                conversationID: "conversation-2",
+                title: "Wrong owner"
             )
         }
         try await lifecycle.start(ownerUserID: "user-2")
@@ -85,27 +87,6 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         try truncated.fileHandleForWriting.close()
         XCTAssertThrowsError(try LocalAgentHostFrameCodec.read(from: truncated.fileHandleForReading))
     }
-}
-
-private struct TestCreateConversationCommand: Encodable, Sendable {
-    let type: String
-    let conversationID: String
-    let ownerUserID: String
-    let title: String
-}
-
-private struct TestConversationResult: Decodable, Sendable {
-    let type: String
-    let conversation: TestConversationDetail
-}
-
-private struct TestConversationDetail: Decodable, Sendable {
-    let conversation: TestConversationRecord
-}
-
-private struct TestConversationRecord: Decodable, Sendable {
-    let conversationId: String
-    let version: UInt64
 }
 
 private func XCTAssertThrowsErrorAsync(

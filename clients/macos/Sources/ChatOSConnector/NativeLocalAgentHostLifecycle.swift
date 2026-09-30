@@ -355,9 +355,9 @@ public extension LocalAgentHostClientServicing {
         _ command: Command,
         as resultType: Result.Type = Result.self
     ) async throws -> Result {
-        let data = try JSONEncoder.localAgent.encode(command)
+        let data = try JSONEncoder().encode(command)
         let response = try await request(command: data)
-        return try JSONDecoder.localAgent.decode(resultType, from: response)
+        return try JSONDecoder().decode(resultType, from: response)
     }
 }
 
