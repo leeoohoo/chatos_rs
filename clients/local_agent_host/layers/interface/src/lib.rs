@@ -16,6 +16,7 @@ mod conversation;
 mod memory;
 mod notepad;
 mod plugin;
+mod remote_connection;
 mod response;
 mod run_query;
 mod task;
@@ -54,6 +55,11 @@ pub use plugin::{
     LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalPluginInstallationSummary,
     PutPluginInstallationCommand, RemovePluginInstallationCommand,
 };
+pub use remote_connection::{
+    CreateRemoteConnectionCommand, DeleteRemoteConnectionCommand, GetRemoteConnectionCommand,
+    ListRemoteConnectionsCommand, LocalRemoteAuthenticationType, LocalRemoteConnection,
+    LocalRemoteConnectionSpec, LocalRemoteHostKeyPolicy, UpdateRemoteConnectionCommand,
+};
 pub use response::{HostError, HostResponseEnvelope, HostResult};
 pub use run_query::{ListRunsCommand, LocalAgentRunListScope, LocalAgentRunPage};
 
@@ -71,7 +77,7 @@ pub use tool::{
     LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 29;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 30;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -150,6 +156,11 @@ pub enum HostCommand {
     UpdateNotepadNote(UpdateNotepadNoteCommand),
     DeleteNotepadNote(DeleteNotepadNoteCommand),
     PutNotepadImage(PutNotepadImageCommand),
+    ListRemoteConnections(ListRemoteConnectionsCommand),
+    GetRemoteConnection(GetRemoteConnectionCommand),
+    CreateRemoteConnection(CreateRemoteConnectionCommand),
+    UpdateRemoteConnection(UpdateRemoteConnectionCommand),
+    DeleteRemoteConnection(DeleteRemoteConnectionCommand),
 }
 
 impl HostCommand {
@@ -206,6 +217,11 @@ impl HostCommand {
             Self::UpdateNotepadNote(command) => command.validate(),
             Self::DeleteNotepadNote(command) => command.validate(),
             Self::PutNotepadImage(command) => command.validate(),
+            Self::ListRemoteConnections(command) => command.validate(),
+            Self::GetRemoteConnection(command) => command.validate(),
+            Self::CreateRemoteConnection(command) => command.validate(),
+            Self::UpdateRemoteConnection(command) => command.validate(),
+            Self::DeleteRemoteConnection(command) => command.validate(),
         }
     }
 }

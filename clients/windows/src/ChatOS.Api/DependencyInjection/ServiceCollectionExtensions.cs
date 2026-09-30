@@ -32,7 +32,6 @@ public static class ServiceCollectionExtensions
             client.Timeout = Timeout.InfiniteTimeSpan);
         services.AddSingleton<IAuthenticationService, AuthenticationService>();
         services.AddSingleton<ILocalConnectorPairingTicketService, LocalConnectorPairingTicketService>();
-        services.AddSingleton<IRemoteConnectionCloudService, RemoteConnectionCloudService>();
         services.AddSingleton<IMediaGenerationService, MediaGenerationService>();
         services.AddSingleton<IStoryPlanningService, StoryPlanningService>();
         return services;

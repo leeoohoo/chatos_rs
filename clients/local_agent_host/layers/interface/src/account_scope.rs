@@ -60,6 +60,11 @@ impl HostCommand {
             Self::UpdateNotepadNote(command) => Some(&command.owner_user_id),
             Self::DeleteNotepadNote(command) => Some(&command.owner_user_id),
             Self::PutNotepadImage(command) => Some(&command.owner_user_id),
+            Self::ListRemoteConnections(command) => Some(&command.owner_user_id),
+            Self::GetRemoteConnection(command) => Some(&command.owner_user_id),
+            Self::CreateRemoteConnection(command) => Some(&command.owner_user_id),
+            Self::UpdateRemoteConnection(command) => Some(&command.owner_user_id),
+            Self::DeleteRemoteConnection(command) => Some(&command.owner_user_id),
         }
     }
 }

@@ -30,6 +30,7 @@ public sealed class WindowsLocalAgentBootstrapService
     private readonly WindowsLocalAgentWorkspaceService _workspace;
     private readonly WindowsLocalAgentProjectConversationService _projectConversations;
     private readonly WindowsLocalAgentNotepadService _notepad;
+    private readonly WindowsLocalAgentRemoteConnectionMetadataService _remoteConnections;
     private readonly ChatOSApiClient _api;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -48,6 +49,7 @@ public sealed class WindowsLocalAgentBootstrapService
         WindowsLocalAgentWorkspaceService workspace,
         WindowsLocalAgentProjectConversationService projectConversations,
         WindowsLocalAgentNotepadService notepad,
+        WindowsLocalAgentRemoteConnectionMetadataService remoteConnections,
         ChatOSApiClient api)
     {
         _host = host;
@@ -64,6 +66,7 @@ public sealed class WindowsLocalAgentBootstrapService
         _workspace = workspace;
         _projectConversations = projectConversations;
         _notepad = notepad;
+        _remoteConnections = remoteConnections;
         _api = api;
     }
 
@@ -88,6 +91,7 @@ public sealed class WindowsLocalAgentBootstrapService
             _workspace.Reset();
             _projectConversations.Reset();
             _notepad.Reset();
+            _remoteConnections.Reset();
             Current = null;
             if (_host.ActiveOwnerUserId is { } activeOwner &&
                 !string.Equals(activeOwner, ownerUserId, StringComparison.Ordinal))
@@ -201,6 +205,7 @@ public sealed class WindowsLocalAgentBootstrapService
             _workspace.Configure(ownerUserId);
             _projectConversations.Configure(ownerUserId);
             _notepad.Configure(ownerUserId);
+            _remoteConnections.Configure(ownerUserId);
             Current = result;
             return result;
         }
@@ -223,6 +228,7 @@ public sealed class WindowsLocalAgentBootstrapService
         _workspace.Reset();
         _projectConversations.Reset();
         _notepad.Reset();
+        _remoteConnections.Reset();
         Current = null;
     }
 

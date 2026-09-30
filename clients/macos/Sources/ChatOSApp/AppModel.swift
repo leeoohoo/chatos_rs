@@ -110,6 +110,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let localAgentHost: (any LocalAgentHostClientServicing)?
     let projectConversationService: NativeLocalAgentProjectConversationService?
     let localProjectsService: NativeLocalProjectsService
+    let remoteConnectionMetadataService: NativeLocalAgentRemoteConnectionMetadataService
     let remoteConnectionService: NativeRemoteConnectionService
     let remoteFileService: NativeRemoteFileService
     let remoteConnectionWorkspaceStore: RemoteConnectionWorkspaceStore
@@ -158,14 +159,20 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             configuration: .init(baseURL: RuntimeConfiguration.apiBaseURL),
             credentialStore: credentialStore
         )
+        let localAgentHost = RuntimeConfiguration.localAgentHostConfiguration.map {
+            NativeLocalAgentHostLifecycle(configuration: $0)
+        }
         let authenticationService = ChatOSAuthenticationService(
             client: apiClient,
             credentialStore: credentialStore
         )
         let historyStore = ConversationHistoryStore()
         let connectorTicketProvider = ChatOSLocalConnectorPairingTicketProvider(client: apiClient)
+        let remoteConnectionMetadataService = NativeLocalAgentRemoteConnectionMetadataService(
+            host: localAgentHost
+        )
         let remoteConnectionService = NativeRemoteConnectionService(
-            upstream: ChatOSRemoteConnectionService(client: apiClient),
+            upstream: remoteConnectionMetadataService,
             connectorStateURL: RuntimeConfiguration.nativeConnectorStateURL
         )
         let localConnectorService = NativeLocalConnectorService(
@@ -210,9 +217,6 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             storyPlanner: remoteAgentServices
         )
         self.localConnectorService = localConnectorService
-        let localAgentHost = RuntimeConfiguration.localAgentHostConfiguration.map {
-            NativeLocalAgentHostLifecycle(configuration: $0)
-        }
         let localAgentRuntimeSettingsService: NativeLocalAgentConversationRuntimeSettingsService?
         let localAgentConversationService: NativeLocalAgentConversationService?
         let localAgentPlatformToolWorker: NativeLocalAgentPlatformToolWorker?
@@ -368,6 +372,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             skillLibrary: agentSkillLibrary
         )
         let remoteFileService = NativeRemoteFileService(runtime: remoteConnectionService)
+        self.remoteConnectionMetadataService = remoteConnectionMetadataService
         self.remoteConnectionService = remoteConnectionService
         self.remoteFileService = remoteFileService
         self.remoteConnectionWorkspaceStore = RemoteConnectionWorkspaceStore(

@@ -18,16 +18,16 @@ public interface IRemoteConnectionRuntime
 
 public sealed class WindowsRemoteConnectionService : IRemoteConnectionService, IRemoteConnectionRuntime
 {
-    private readonly IRemoteConnectionCloudService _cloud;
+    private readonly IRemoteConnectionMetadataService _metadata;
     private readonly RemoteConnectionCredentialStore _credentials;
     private readonly IRemoteConnectionTester _tester;
 
     public WindowsRemoteConnectionService(
-        IRemoteConnectionCloudService cloud,
+        IRemoteConnectionMetadataService metadata,
         RemoteConnectionCredentialStore credentials,
         IRemoteConnectionTester tester)
     {
-        _cloud = cloud;
+        _metadata = metadata;
         _credentials = credentials;
         _tester = tester;
     }
@@ -35,7 +35,7 @@ public sealed class WindowsRemoteConnectionService : IRemoteConnectionService, I
     public async Task<IReadOnlyList<RemoteConnection>> ListAsync(
         CancellationToken cancellationToken = default)
     {
-        var values = await _cloud.ListAsync(cancellationToken).ConfigureAwait(false);
+        var values = await _metadata.ListAsync(cancellationToken).ConfigureAwait(false);
         var result = new List<RemoteConnection>(values.Count);
         foreach (var value in values)
         {
@@ -49,7 +49,7 @@ public sealed class WindowsRemoteConnectionService : IRemoteConnectionService, I
         CancellationToken cancellationToken = default)
     {
         var resolved = await ResolveAsync(draft, cancellationToken).ConfigureAwait(false);
-        var created = await _cloud.CreateAsync(Sanitize(resolved), cancellationToken).ConfigureAwait(false);
+        var created = await _metadata.CreateAsync(Sanitize(resolved), cancellationToken).ConfigureAwait(false);
         try
         {
             await _credentials.SaveAsync(
@@ -59,7 +59,7 @@ public sealed class WindowsRemoteConnectionService : IRemoteConnectionService, I
         }
         catch
         {
-            try { await _cloud.DeleteAsync(created.Id, CancellationToken.None).ConfigureAwait(false); }
+            try { await _metadata.DeleteAsync(created.Id, CancellationToken.None).ConfigureAwait(false); }
             catch { }
             throw;
         }
@@ -74,7 +74,7 @@ public sealed class WindowsRemoteConnectionService : IRemoteConnectionService, I
         var resolved = await ResolveAsync(
             draft with { LocalCredentialReferenceId = id },
             cancellationToken).ConfigureAwait(false);
-        var updated = await _cloud.UpdateAsync(id, Sanitize(resolved), cancellationToken).ConfigureAwait(false);
+        var updated = await _metadata.UpdateAsync(id, Sanitize(resolved), cancellationToken).ConfigureAwait(false);
         await _credentials.SaveAsync(
             id,
             RemoteConnectionCredentials.From(resolved),
@@ -84,7 +84,7 @@ public sealed class WindowsRemoteConnectionService : IRemoteConnectionService, I
 
     public async Task DeleteAsync(string id, CancellationToken cancellationToken = default)
     {
-        await _cloud.DeleteAsync(id, cancellationToken).ConfigureAwait(false);
+        await _metadata.DeleteAsync(id, cancellationToken).ConfigureAwait(false);
         await _credentials.DeleteAsync(id, cancellationToken).ConfigureAwait(false);
     }
 
@@ -112,7 +112,7 @@ public sealed class WindowsRemoteConnectionService : IRemoteConnectionService, I
         string id,
         CancellationToken cancellationToken = default)
     {
-        var connections = await _cloud.ListAsync(cancellationToken).ConfigureAwait(false);
+        var connections = await _metadata.ListAsync(cancellationToken).ConfigureAwait(false);
         var connection = connections.FirstOrDefault(value => value.Id == id)
             ?? throw new InvalidOperationException("远程连接不存在。");
         return await ResolveAsync(

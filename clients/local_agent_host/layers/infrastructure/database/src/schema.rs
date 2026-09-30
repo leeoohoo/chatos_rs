@@ -510,3 +510,35 @@ pub(super) const SCHEMA_V23: &[&str] = &[
        owner_user_id, note_id, created_at_unix_ms\
      )",
 ];
+
+pub(super) const SCHEMA_V24: &[&str] = &[
+    "CREATE TABLE local_remote_connections (\
+       owner_user_id TEXT NOT NULL,\
+       connection_id TEXT NOT NULL,\
+       name TEXT NOT NULL,\
+       host TEXT NOT NULL,\
+       port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),\
+       username TEXT NOT NULL,\
+       authentication_type TEXT NOT NULL CHECK(authentication_type IN (\
+         'private_key','private_key_cert','password'\
+       )),\
+       default_remote_path TEXT,\
+       host_key_policy TEXT NOT NULL CHECK(host_key_policy IN ('strict','accept_new')),\
+       local_connector_device_id TEXT NOT NULL,\
+       local_connector_workspace_id TEXT NOT NULL,\
+       jump_enabled INTEGER NOT NULL CHECK(jump_enabled IN (0, 1)),\
+       jump_connection_id TEXT,\
+       jump_host TEXT,\
+       jump_port INTEGER CHECK(jump_port BETWEEN 1 AND 65535),\
+       jump_username TEXT,\
+       last_active_at_unix_ms INTEGER,\
+       version INTEGER NOT NULL CHECK(version > 0),\
+       created_at_unix_ms INTEGER NOT NULL,\
+       updated_at_unix_ms INTEGER NOT NULL,\
+       PRIMARY KEY(owner_user_id, connection_id),\
+       CHECK(jump_connection_id IS NULL OR jump_connection_id <> connection_id)\
+     )",
+    "CREATE INDEX local_remote_connections_owner_updated ON local_remote_connections(\
+       owner_user_id, updated_at_unix_ms DESC, connection_id\
+     )",
+];

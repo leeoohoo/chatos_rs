@@ -2,7 +2,7 @@ using ChatOS.Core.Domain;
 
 namespace ChatOS.Core.Abstractions;
 
-public interface IRemoteConnectionCloudService
+public interface IRemoteConnectionMetadataService
 {
     Task<IReadOnlyList<RemoteConnection>> ListAsync(CancellationToken cancellationToken = default);
 
@@ -18,7 +18,7 @@ public interface IRemoteConnectionCloudService
     Task DeleteAsync(string id, CancellationToken cancellationToken = default);
 }
 
-public interface IRemoteConnectionService : IRemoteConnectionCloudService
+public interface IRemoteConnectionService : IRemoteConnectionMetadataService
 {
     Task<RemoteConnectionTestResult> TestDraftAsync(
         RemoteConnectionDraft draft,

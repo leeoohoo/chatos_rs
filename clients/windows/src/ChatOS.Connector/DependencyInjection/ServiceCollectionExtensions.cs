@@ -40,6 +40,10 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<WindowsLocalAgentNotepadService>();
             services.AddSingleton<INotepadService>(provider =>
                 provider.GetRequiredService<WindowsLocalAgentNotepadService>());
+            services.AddSingleton<WindowsLocalAgentRemoteConnectionClient>();
+            services.AddSingleton<WindowsLocalAgentRemoteConnectionMetadataService>();
+            services.AddSingleton<IRemoteConnectionMetadataService>(provider =>
+                provider.GetRequiredService<WindowsLocalAgentRemoteConnectionMetadataService>());
             services.AddSingleton<WindowsLocalAgentWorkspaceService>();
             services.AddSingleton<IWorkspaceRelationsService>(provider =>
                 provider.GetRequiredService<WindowsLocalAgentWorkspaceService>());

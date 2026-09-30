@@ -8,8 +8,8 @@ use crate::{
     LocalConversationHistoryPage, LocalConversationPage, LocalConversationRuntimeSettings,
     LocalConversationTurnStart, LocalConversationTurnUpdate, LocalMemorySyncStatus,
     LocalModelConfigSnapshot, LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail,
-    LocalPluginInstallationPage, LocalPluginInstallationRecord, LocalTaskGraph, LocalTaskGraphPage,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalPluginInstallationPage, LocalPluginInstallationRecord, LocalRemoteConnection,
+    LocalTaskGraph, LocalTaskGraphPage, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 
@@ -143,6 +143,15 @@ pub enum HostResult {
     },
     NotepadImage {
         image: LocalNotepadImage,
+    },
+    RemoteConnections {
+        connections: Vec<LocalRemoteConnection>,
+    },
+    RemoteConnection {
+        connection: Option<LocalRemoteConnection>,
+    },
+    RemoteConnectionDeleted {
+        connection_id: String,
     },
 }
 

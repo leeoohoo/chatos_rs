@@ -120,6 +120,7 @@ extension AppModel {
                 await self?.workspaceService?.configure(ownerUserID: ownerUserID)
                 await self?.projectConversationService?.configure(ownerUserID: ownerUserID)
                 await self?.notepadService.configure(ownerUserID: ownerUserID)
+                await self?.remoteConnectionMetadataService.configure(ownerUserID: ownerUserID)
                 self?.refreshWorkspace()
             } catch is CancellationError {
                 await localAgentHost.stop()
@@ -156,6 +157,7 @@ extension AppModel {
             await workspaceService?.reset()
             await projectConversationService?.reset()
             await notepadService.reset()
+            await remoteConnectionMetadataService.reset()
             await localAgentHost.stop()
         }
     }

@@ -35,6 +35,7 @@ mod notepad_runtime;
 mod plugin_query_tests;
 mod plugin_runtime;
 mod profile;
+mod remote_connection_runtime;
 mod run_factory;
 #[cfg(test)]
 mod task_query_tests;
@@ -435,6 +436,14 @@ impl LocalAgentRuntime {
             | HostCommand::DeleteNotepadNote(_)
             | HostCommand::PutNotepadImage(_)) => {
                 self.handle_notepad_command(&idempotency, command).await
+            }
+            command @ (HostCommand::ListRemoteConnections(_)
+            | HostCommand::GetRemoteConnection(_)
+            | HostCommand::CreateRemoteConnection(_)
+            | HostCommand::UpdateRemoteConnection(_)
+            | HostCommand::DeleteRemoteConnection(_)) => {
+                self.handle_remote_connection_command(&idempotency, command)
+                    .await
             }
         }
     }
