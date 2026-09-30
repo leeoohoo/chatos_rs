@@ -17,8 +17,55 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         ]))
         XCTAssertEqual(
             NativeLocalAgentPlatformToolCatalog.readOnlyToolNames,
-            ["local_attachment_read"]
+            [
+                "local_attachment_read", "read_file_raw", "read_file_range", "list_dir",
+                "search_text", "read_file", "search_files",
+            ]
         )
+        XCTAssertEqual(
+            NativeLocalAgentPlatformToolCatalog.taskRunnerToolNames,
+            Set([
+                "read_file_raw", "read_file_range", "list_dir", "search_text", "read_file",
+                "search_files",
+            ])
+        )
+    }
+
+    func testExecutorDispatchesTaskRunnerProjectTool() async throws {
+        let projectExecutor = RecordingProjectToolExecutor()
+        let executor = NativeLocalAgentPlatformToolExecutor(
+            host: PlatformToolHostStub(mode: .idle),
+            attachmentRootURL: FileManager.default.temporaryDirectory,
+            projectTools: projectExecutor
+        )
+        let invocation = LocalAgentToolInvocationRecord(
+            invocationID: "invocation-1",
+            runID: "run-1",
+            batchID: "batch-1",
+            callID: "call-1",
+            toolName: "read_file_raw",
+            arguments: .object(["path": .string("README.md")]),
+            sideEffecting: false,
+            requiresApproval: false,
+            approvalStatus: "not_required",
+            approvalDecidedBy: nil,
+            approvalReason: nil,
+            approvalDecidedAtUnixMs: nil,
+            status: "running",
+            result: nil,
+            error: nil,
+            version: 1,
+            claimToken: "token-1",
+            claimUntilUnixMs: 2,
+            createdAtUnixMs: 1,
+            updatedAtUnixMs: 1
+        )
+
+        let result = try await executor.execute(ownerUserID: "user-1", invocation: invocation)
+
+        XCTAssertEqual(result, .object(["dispatched": .bool(true)]))
+        let recorded = await projectExecutor.recordedInvocation()
+        XCTAssertEqual(recorded?.toolName, "read_file_raw")
     }
 
     func testAttachmentVaultResolvesBoundedContentAndRejectsTampering() throws {
@@ -148,6 +195,20 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             createdAtUnixMs: 1
         )
     }
+}
+
+private actor RecordingProjectToolExecutor: NativeLocalAgentProjectToolExecuting {
+    private var invocation: LocalAgentToolInvocationRecord?
+
+    func execute(
+        ownerUserID: String,
+        invocation: LocalAgentToolInvocationRecord
+    ) async throws -> LocalAgentJSONValue {
+        self.invocation = invocation
+        return .object(["dispatched": .bool(true)])
+    }
+
+    func recordedInvocation() -> LocalAgentToolInvocationRecord? { invocation }
 }
 
 private struct FailingPlatformToolExecutor: NativeLocalAgentPlatformToolExecuting {

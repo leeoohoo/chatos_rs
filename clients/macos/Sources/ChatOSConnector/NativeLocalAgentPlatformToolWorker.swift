@@ -5,7 +5,11 @@ public enum NativeLocalAgentPlatformToolCatalog {
     public static let attachmentReadToolName = "local_attachment_read"
     public static let createTaskToolName = "create_task"
     public static let createTasksToolName = "create_tasks_with_prerequisites"
-    public static let readOnlyToolNames = [attachmentReadToolName]
+    private static let projectReadOnlyToolNames = [
+        "read_file_raw", "read_file_range", "list_dir", "search_text", "read_file",
+        "search_files",
+    ]
+    public static let readOnlyToolNames = [attachmentReadToolName] + projectReadOnlyToolNames
 
     public static let capabilityTools: [LocalAgentJSONValue] = [
         .object([
@@ -95,6 +99,39 @@ public enum NativeLocalAgentPlatformToolCatalog {
             ]),
         ]),
     ]
+
+    public static let taskRunnerCapabilityTools: [LocalAgentJSONValue] =
+        NativeMCPCodeReadTools.toolDefinitions.compactMap { value in
+            guard case let .object(tool) = value,
+                  case let .string(name)? = tool["name"],
+                  projectReadOnlyToolNames.contains(name) else { return nil }
+            return capabilityTool(value)
+        }
+
+    static var taskRunnerToolNames: Set<String> {
+        Set(taskRunnerCapabilityTools.compactMap { value in
+            guard case let .object(tool) = value,
+                  case let .string(name)? = tool["name"] else { return nil }
+            return name
+        })
+    }
+
+    private static func capabilityTool(_ value: NativeJSONValue) -> LocalAgentJSONValue {
+        guard case let .object(tool) = value,
+              case let .string(name)? = tool["name"],
+              case let .object(schema)? = tool["inputSchema"] else {
+            preconditionFailure("Native project-read tool definition is invalid")
+        }
+        let description: String
+        if case let .string(value)? = tool["description"] { description = value }
+        else { description = "" }
+        return .object([
+            "type": .string("function"),
+            "name": .string(name),
+            "description": .string(description),
+            "parameters": .object(schema.mapValues(LocalAgentJSONValue.init(native:))),
+        ])
+    }
 }
 
 protocol NativeLocalAgentPlatformToolExecuting: Sendable {
@@ -108,17 +145,32 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
     private let runtime: NativeLocalAgentRuntimeClient
     private let conversations: NativeLocalAgentConversationClient
     private let attachmentVault: NativeLocalAgentAttachmentVault
+    private let projectTools: (any NativeLocalAgentProjectToolExecuting)?
 
-    init(host: any LocalAgentHostClientServicing, attachmentRootURL: URL) {
+    init(
+        host: any LocalAgentHostClientServicing,
+        attachmentRootURL: URL,
+        projectTools: (any NativeLocalAgentProjectToolExecuting)? = nil
+    ) {
         runtime = .init(host: host)
         conversations = .init(host: host)
         attachmentVault = .init(rootURL: attachmentRootURL)
+        self.projectTools = projectTools
     }
 
     func execute(
         ownerUserID: String,
         invocation: LocalAgentToolInvocationRecord
     ) async throws -> LocalAgentJSONValue {
+        if NativeLocalAgentPlatformToolCatalog.taskRunnerToolNames.contains(invocation.toolName) {
+            guard let projectTools else {
+                throw NativeLocalAgentPlatformToolError.projectUnavailable
+            }
+            return try await projectTools.execute(
+                ownerUserID: ownerUserID,
+                invocation: invocation
+            )
+        }
         guard invocation.toolName == NativeLocalAgentPlatformToolCatalog.attachmentReadToolName else {
             throw NativeLocalAgentPlatformToolError.unsupportedTool
         }
@@ -212,12 +264,19 @@ public actor NativeLocalAgentPlatformToolWorker {
     public init(
         host: any LocalAgentHostClientServicing,
         attachmentRootURL: URL,
+        projects: NativeLocalProjectsService,
+        connector: NativeLocalConnectorService,
         workerID: String = "macos-platform-tool-worker"
     ) {
         client = .init(host: host)
         executor = NativeLocalAgentPlatformToolExecutor(
             host: host,
-            attachmentRootURL: attachmentRootURL
+            attachmentRootURL: attachmentRootURL,
+            projectTools: NativeLocalAgentProjectToolExecutor(
+                host: host,
+                projects: projects,
+                connector: connector
+            )
         )
         self.workerID = workerID
     }
@@ -373,6 +432,7 @@ enum NativeLocalAgentPlatformToolError: LocalizedError, Equatable {
     case invalidField(String)
     case invalidRunContext
     case attachmentNotAuthorized
+    case projectUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -381,6 +441,7 @@ enum NativeLocalAgentPlatformToolError: LocalizedError, Equatable {
         case let .invalidField(field): "The local platform tool field is invalid: \(field)."
         case .invalidRunContext: "The local platform tool Run context is invalid."
         case .attachmentNotAuthorized: "The attachment is not authorized for this conversation."
+        case .projectUnavailable: "The local project is unavailable for this conversation."
         }
     }
 }

@@ -192,6 +192,11 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 return AgentMemoryContextProvider(scope: scope, service: memory)
             }
         )
+        let localProjectsService = NativeLocalProjectsService(
+            connector: localConnectorService,
+            databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
+                .appendingPathComponent("Projects.sqlite3")
+        )
 
         self.historyStore = historyStore
         self.authentication = AuthenticationViewModel(service: authenticationService)
@@ -227,7 +232,9 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             let settings = NativeLocalAgentConversationRuntimeSettingsService(host: localAgentHost)
             let worker = NativeLocalAgentPlatformToolWorker(
                 host: localAgentHost,
-                attachmentRootURL: attachmentRootURL
+                attachmentRootURL: attachmentRootURL,
+                projects: localProjectsService,
+                connector: localConnectorService
             )
             localAgentRuntimeSettingsService = settings
             localAgentPlatformToolWorker = worker
@@ -266,11 +273,6 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 NativeLocalAgentProjectConversationService(host: host, workspace: $0)
             }
         }
-        let localProjectsService = NativeLocalProjectsService(
-            connector: localConnectorService,
-            databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
-                .appendingPathComponent("Projects.sqlite3")
-        )
         self.localProjectsService = localProjectsService
         let agentGroupChatService = NativeAgentGroupChatService(
             databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
