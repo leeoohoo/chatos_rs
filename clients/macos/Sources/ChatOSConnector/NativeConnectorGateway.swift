@@ -71,7 +71,7 @@ struct NativeConnectorGateway: Sendable {
                 displayName: alias,
                 localPathAlias: alias,
                 localPathFingerprint: fingerprint,
-                capabilities: ["mcp", "terminal", "sandbox"]
+                capabilities: ["terminal", "sandbox"]
             )
         )
     }

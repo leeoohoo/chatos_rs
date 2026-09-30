@@ -138,10 +138,6 @@ extension NativeLocalConnectorService {
                             Task { [weak self] in
                                 await self?.handleTerminalRelayMessage(data, socket: socket)
                             }
-                        case "mcp":
-                            Task { [weak self] in
-                                await self?.handleMCPRelayMessage(data, socket: socket)
-                            }
                         case "plugin_prepare_request",
                              "plugin_execute_request",
                              "plugin_cancel_request":
