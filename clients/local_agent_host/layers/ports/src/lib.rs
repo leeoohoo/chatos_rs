@@ -6,15 +6,16 @@
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     CancelConversationTurnCommand, CreateConversationCommand, CreateTaskGraphCommand,
-    GuideConversationTurnCommand, LocalAgentEventRecord, LocalAgentRunClaim,
-    LocalAgentRunListScope, LocalAgentRunPage, LocalAgentRunRecord, LocalAgentRunStatus,
-    LocalAgentToolApprovalDecision, LocalAgentToolApprovalResult, LocalAgentToolBatch,
-    LocalAgentToolClaim, LocalAgentToolCommitResult, LocalAgentToolInvocationRecord,
-    LocalAgentToolOutcome, LocalConversationDetail, LocalConversationHistoryPage,
-    LocalConversationPage, LocalConversationRuntimeSettings, LocalConversationTurnStart,
-    LocalConversationTurnUpdate, LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail,
-    LocalPluginInstallationPage, LocalPluginInstallationRecord, LocalPluginInstallationSpec,
-    LocalRemoteConnection, LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage,
+    GuideConversationTurnCommand, LocalAgentArtifact, LocalAgentArtifactPage,
+    LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunListScope, LocalAgentRunPage,
+    LocalAgentRunRecord, LocalAgentRunStatus, LocalAgentToolApprovalDecision,
+    LocalAgentToolApprovalResult, LocalAgentToolBatch, LocalAgentToolClaim,
+    LocalAgentToolCommitResult, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
+    LocalConversationDetail, LocalConversationHistoryPage, LocalConversationPage,
+    LocalConversationRuntimeSettings, LocalConversationTurnStart, LocalConversationTurnUpdate,
+    LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail, LocalPluginInstallationPage,
+    LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalRemoteConnection,
+    LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage,
     PutConversationRuntimeSettingsCommand, ResumeConversationTurnCommand,
     StartConversationTurnCommand, UpdateNotepadNoteCommand,
 };
@@ -76,6 +77,13 @@ impl ClientStorageError {
 pub struct IdempotentCommand {
     pub command_id: String,
     pub request_fingerprint: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct LocalAgentArtifactWrite {
+    pub artifact: LocalAgentArtifact,
+    pub idempotency_key: String,
+    pub data: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -629,6 +637,37 @@ pub trait LocalRemoteConnectionStore: Send + Sync {
     ) -> Result<(), ClientStorageError>;
 }
 
+#[async_trait]
+pub trait LocalAgentArtifactStore: Send + Sync {
+    async fn create_artifact(
+        &self,
+        command: &IdempotentCommand,
+        write: &LocalAgentArtifactWrite,
+    ) -> Result<LocalAgentArtifact, ClientStorageError>;
+
+    async fn list_artifacts(
+        &self,
+        owner_user_id: &str,
+        before_updated_at_unix_ms: Option<i64>,
+        before_artifact_id: Option<&str>,
+        limit: u32,
+    ) -> Result<LocalAgentArtifactPage, ClientStorageError>;
+
+    async fn read_artifact_data(
+        &self,
+        owner_user_id: &str,
+        artifact_id: &str,
+    ) -> Result<Option<Vec<u8>>, ClientStorageError>;
+
+    async fn delete_artifact(
+        &self,
+        command: &IdempotentCommand,
+        owner_user_id: &str,
+        artifact_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<(), ClientStorageError>;
+}
+
 pub trait LocalAgentStore:
     LocalAgentRunStore
     + LocalAgentToolStore
@@ -638,6 +677,7 @@ pub trait LocalAgentStore:
     + LocalConversationRuntimeSettingsStore
     + LocalNotepadStore
     + LocalRemoteConnectionStore
+    + LocalAgentArtifactStore
     + LocalCapabilitySnapshotStore
     + LocalModelConfigSnapshotStore
     + LocalMemoryOutboxStore
@@ -654,6 +694,7 @@ impl<T> LocalAgentStore for T where
         + LocalConversationRuntimeSettingsStore
         + LocalNotepadStore
         + LocalRemoteConnectionStore
+        + LocalAgentArtifactStore
         + LocalCapabilitySnapshotStore
         + LocalModelConfigSnapshotStore
         + LocalMemoryOutboxStore

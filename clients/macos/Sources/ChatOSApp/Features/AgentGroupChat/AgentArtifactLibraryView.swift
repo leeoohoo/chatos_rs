@@ -4,10 +4,11 @@ import ChatOSCore
 import CryptoKit
 import SwiftUI
 
-struct AgentRemoteArtifactLibraryView: View {
+struct AgentArtifactLibraryView: View {
+    let ownerUserID: String
     let service: NativeAgentGroupChatService
 
-    @State private var artifacts: [AgentArtifactRemoteItem] = []
+    @State private var artifacts: [AgentArtifactItem] = []
     @State private var nextCursor: String?
     @State private var isLoading = false
     @State private var loadingArtifactIDs: Set<String> = []
@@ -27,7 +28,7 @@ struct AgentRemoteArtifactLibraryView: View {
         .sheet(item: $previewedDocument) { item in
             AgentMarkdownAttachmentPreview(item: item)
         }
-        .alert("云端文档操作失败", isPresented: Binding(
+        .alert("本地文档操作失败", isPresented: Binding(
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }
         )) {
@@ -41,9 +42,9 @@ struct AgentRemoteArtifactLibraryView: View {
     private var header: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("云端 Agent 文档")
+                Text("本地 Agent 文档")
                     .font(.title3.weight(.semibold))
-                Text("显示当前账户已完成同步的 Markdown；用于其他设备发现和预览，不代表本地消息记录已跨设备同步。")
+                Text("显示当前账户由 Local Agent Host 保存的 Markdown 文档。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -59,13 +60,13 @@ struct AgentRemoteArtifactLibraryView: View {
     @ViewBuilder
     private var content: some View {
         if isLoading, artifacts.isEmpty {
-            ProgressView("正在读取云端文档…")
+            ProgressView("正在读取本地文档…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if artifacts.isEmpty {
             ContentUnavailableView {
-                Label("还没有云端 Agent 文档", systemImage: "doc.text.magnifyingglass")
+                Label("还没有本地 Agent 文档", systemImage: "doc.text.magnifyingglass")
             } description: {
-                Text("Agent 创建并成功同步的 Markdown 会出现在这里。")
+                Text("Agent 创建并由 Local Agent Host 保存的 Markdown 会出现在这里。")
             }
         } else {
             List {
@@ -88,7 +89,7 @@ struct AgentRemoteArtifactLibraryView: View {
         }
     }
 
-    private func artifactRow(_ artifact: AgentArtifactRemoteItem) -> some View {
+    private func artifactRow(_ artifact: AgentArtifactItem) -> some View {
         HStack(spacing: 12) {
             Image(systemName: "doc.text")
                 .font(.title3)
@@ -128,7 +129,8 @@ struct AgentRemoteArtifactLibraryView: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            let page = try await service.remoteAgentArtifacts(
+            let page = try await service.localAgentArtifacts(
+                ownerUserID: ownerUserID,
                 limit: 50,
                 cursor: reset ? nil : nextCursor
             )
@@ -146,14 +148,14 @@ struct AgentRemoteArtifactLibraryView: View {
         }
     }
 
-    private func preview(_ artifact: AgentArtifactRemoteItem) {
+    private func preview(_ artifact: AgentArtifactItem) {
         guard loadingArtifactIDs.insert(artifact.id).inserted else { return }
         Task {
             defer { loadingArtifactIDs.remove(artifact.id) }
             do {
                 let data = try await validatedData(artifact)
                 guard let markdown = String(data: data, encoding: .utf8) else {
-                    throw AgentRemoteArtifactPresentationError.invalidUTF8
+                    throw AgentArtifactPresentationError.invalidUTF8
                 }
                 previewedDocument = .init(
                     id: artifact.id,
@@ -167,7 +169,7 @@ struct AgentRemoteArtifactLibraryView: View {
         }
     }
 
-    private func save(_ artifact: AgentArtifactRemoteItem) {
+    private func save(_ artifact: AgentArtifactItem) {
         guard loadingArtifactIDs.insert(artifact.id).inserted else { return }
         Task {
             defer { loadingArtifactIDs.remove(artifact.id) }
@@ -184,12 +186,15 @@ struct AgentRemoteArtifactLibraryView: View {
         }
     }
 
-    private func validatedData(_ artifact: AgentArtifactRemoteItem) async throws -> Data {
-        let data = try await service.remoteAgentArtifactData(artifactID: artifact.id)
+    private func validatedData(_ artifact: AgentArtifactItem) async throws -> Data {
+        let data = try await service.localAgentArtifactData(
+            ownerUserID: ownerUserID,
+            artifactID: artifact.id
+        )
         guard data.count == artifact.size,
               SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined()
                 == artifact.sha256 else {
-            throw AgentRemoteArtifactPresentationError.integrityMismatch
+            throw AgentArtifactPresentationError.integrityMismatch
         }
         return data
     }
@@ -206,14 +211,14 @@ struct AgentRemoteArtifactLibraryView: View {
     }
 }
 
-private enum AgentRemoteArtifactPresentationError: LocalizedError {
+private enum AgentArtifactPresentationError: LocalizedError {
     case integrityMismatch
     case invalidUTF8
 
     var errorDescription: String? {
         switch self {
-        case .integrityMismatch: "云端文档的大小或 SHA-256 与元数据不一致。"
-        case .invalidUTF8: "云端 Markdown 不是有效的 UTF-8 文本。"
+        case .integrityMismatch: "本地文档的大小或 SHA-256 与元数据不一致。"
+        case .invalidUTF8: "本地 Markdown 不是有效的 UTF-8 文本。"
         }
     }
 }

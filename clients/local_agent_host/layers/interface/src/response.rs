@@ -2,14 +2,14 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use crate::{
-    LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunPage, LocalAgentRunRecord,
-    LocalAgentToolApprovalResult, LocalAgentToolClaim, LocalAgentToolCommitResult,
-    LocalAgentToolInvocationRecord, LocalCapabilityPolicySnapshot, LocalConversationDetail,
-    LocalConversationHistoryPage, LocalConversationPage, LocalConversationRuntimeSettings,
-    LocalConversationTurnStart, LocalConversationTurnUpdate, LocalMemorySyncStatus,
-    LocalModelConfigSnapshot, LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail,
-    LocalPluginInstallationPage, LocalPluginInstallationRecord, LocalRemoteConnection,
-    LocalTaskGraph, LocalTaskGraphPage, LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalAgentArtifact, LocalAgentArtifactPage, LocalAgentEventRecord, LocalAgentRunClaim,
+    LocalAgentRunPage, LocalAgentRunRecord, LocalAgentToolApprovalResult, LocalAgentToolClaim,
+    LocalAgentToolCommitResult, LocalAgentToolInvocationRecord, LocalCapabilityPolicySnapshot,
+    LocalConversationDetail, LocalConversationHistoryPage, LocalConversationPage,
+    LocalConversationRuntimeSettings, LocalConversationTurnStart, LocalConversationTurnUpdate,
+    LocalMemorySyncStatus, LocalModelConfigSnapshot, LocalNotepadImage, LocalNotepadNote,
+    LocalNotepadNoteDetail, LocalPluginInstallationPage, LocalPluginInstallationRecord,
+    LocalRemoteConnection, LocalTaskGraph, LocalTaskGraphPage, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 
@@ -152,6 +152,19 @@ pub enum HostResult {
     },
     RemoteConnectionDeleted {
         connection_id: String,
+    },
+    Artifact {
+        artifact: LocalAgentArtifact,
+    },
+    Artifacts {
+        page: LocalAgentArtifactPage,
+    },
+    ArtifactData {
+        artifact_id: String,
+        data_base64: String,
+    },
+    ArtifactDeleted {
+        artifact_id: String,
     },
 }
 

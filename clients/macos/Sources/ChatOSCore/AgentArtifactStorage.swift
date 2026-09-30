@@ -8,7 +8,7 @@ public enum ProjectAgentMessageAttachmentSyncStatus: String, Codable, Sendable {
     case failed
 }
 
-public struct AgentArtifactUploadRequest: Sendable, Equatable {
+public struct AgentArtifactWriteRequest: Sendable, Equatable {
     public let name: String
     public let mimeType: String
     public let data: Data
@@ -30,48 +30,35 @@ public struct AgentArtifactUploadRequest: Sendable, Equatable {
     }
 }
 
-public struct AgentArtifactRemoteMetadata: Sendable, Equatable {
+public struct AgentArtifactMetadata: Sendable, Equatable {
     public let artifactID: String
     public let name: String
     public let mimeType: String
     public let size: Int
     public let sha256: String
-    public let storageProvider: String?
-    public let bucket: String?
-    public let objectKey: String?
-    public let remoteViewPath: String?
 
     public init(
         artifactID: String,
         name: String,
         mimeType: String,
         size: Int,
-        sha256: String,
-        storageProvider: String? = nil,
-        bucket: String? = nil,
-        objectKey: String? = nil,
-        remoteViewPath: String? = nil
+        sha256: String
     ) {
         self.artifactID = artifactID
         self.name = name
         self.mimeType = mimeType
         self.size = size
         self.sha256 = sha256
-        self.storageProvider = storageProvider
-        self.bucket = bucket
-        self.objectKey = objectKey
-        self.remoteViewPath = remoteViewPath
     }
 }
 
-public struct AgentArtifactRemoteItem: Identifiable, Sendable, Equatable {
+public struct AgentArtifactItem: Identifiable, Sendable, Equatable {
     public let artifactID: String
     public let name: String
     public let mimeType: String
     public let size: Int
     public let sha256: String
     public let status: String
-    public let remoteViewPath: String?
     public let createdAtUnixMs: Int64
     public let updatedAtUnixMs: Int64
 
@@ -84,7 +71,6 @@ public struct AgentArtifactRemoteItem: Identifiable, Sendable, Equatable {
         size: Int,
         sha256: String,
         status: String,
-        remoteViewPath: String? = nil,
         createdAtUnixMs: Int64,
         updatedAtUnixMs: Int64
     ) {
@@ -94,27 +80,28 @@ public struct AgentArtifactRemoteItem: Identifiable, Sendable, Equatable {
         self.size = size
         self.sha256 = sha256
         self.status = status
-        self.remoteViewPath = remoteViewPath
         self.createdAtUnixMs = createdAtUnixMs
         self.updatedAtUnixMs = updatedAtUnixMs
     }
 }
 
-public struct AgentArtifactRemotePage: Sendable, Equatable {
-    public let artifacts: [AgentArtifactRemoteItem]
+public struct AgentArtifactPage: Sendable, Equatable {
+    public let artifacts: [AgentArtifactItem]
     public let nextCursor: String?
 
-    public init(artifacts: [AgentArtifactRemoteItem], nextCursor: String?) {
+    public init(artifacts: [AgentArtifactItem], nextCursor: String?) {
         self.artifacts = artifacts
         self.nextCursor = nextCursor
     }
 }
 
-/// Authenticated account service for Agent-authored Markdown artifacts. Implementations must not
-/// expose upload URLs, object keys or authorization material to an Agent tool result.
-public protocol AgentArtifactRemoteServing: Sendable {
-    func upload(_ request: AgentArtifactUploadRequest) async throws -> AgentArtifactRemoteMetadata
-    func list(limit: Int, cursor: String?) async throws -> AgentArtifactRemotePage
-    func download(artifactID: String) async throws -> Data
-    func delete(artifactID: String) async throws
+/// Account-scoped local persistence for Agent-authored Markdown artifacts.
+public protocol AgentArtifactServing: Sendable {
+    func store(
+        ownerUserID: String,
+        request: AgentArtifactWriteRequest
+    ) async throws -> AgentArtifactMetadata
+    func list(ownerUserID: String, limit: Int, cursor: String?) async throws -> AgentArtifactPage
+    func read(ownerUserID: String, artifactID: String) async throws -> Data
+    func remove(ownerUserID: String, artifactID: String) async throws
 }

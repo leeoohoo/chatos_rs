@@ -65,6 +65,10 @@ impl HostCommand {
             Self::CreateRemoteConnection(command) => Some(&command.owner_user_id),
             Self::UpdateRemoteConnection(command) => Some(&command.owner_user_id),
             Self::DeleteRemoteConnection(command) => Some(&command.owner_user_id),
+            Self::CreateArtifact(command) => Some(&command.owner_user_id),
+            Self::ListArtifacts(command) => Some(&command.owner_user_id),
+            Self::GetArtifactData(command) => Some(&command.owner_user_id),
+            Self::DeleteArtifact(command) => Some(&command.owner_user_id),
         }
     }
 }

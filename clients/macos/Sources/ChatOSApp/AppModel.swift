@@ -143,8 +143,8 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var languagePreferencesSaveTask: Task<Void, Never>?
     var agentHeartbeatTask: Task<Void, Never>?
     var agentCommunicationTask: Task<Void, Never>?
-    var agentArtifactSyncTask: Task<Void, Never>?
-    var agentArtifactSyncOwnerUserID: String?
+    var agentArtifactStorageTask: Task<Void, Never>?
+    var agentArtifactStorageOwnerUserID: String?
     var localConnectorRecoveryTask: Task<Void, Never>?
     var localAgentHostLifecycleTask: Task<Void, Never>?
     var localAgentBootstrapTask: Task<Void, Never>?
@@ -275,7 +275,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         let agentGroupChatService = NativeAgentGroupChatService(
             databaseURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
                 .appendingPathComponent("AgentGroupChat.sqlite3"),
-            agentArtifactService: ChatOSAgentArtifactService(client: apiClient)
+            agentArtifactStore: localAgentHost.map(NativeLocalAgentArtifactClient.init(host:))
         )
         Task { await localConnectorService.setAgentGroupChatService(agentGroupChatService) }
         let agentSkillLibrary = LocalAgentSkillLibrary(
@@ -418,7 +418,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             .sink { [weak self] _ in
                 self?.recoverLocalConnector(forceReconnect: true)
                 self?.restartAgentHeartbeatCoordinator()
-                self?.restartAgentArtifactSyncCoordinator()
+                self?.restartAgentArtifactStorageCoordinator()
             }
             .store(in: &cancellables)
         NotificationCenter.default.publisher(for: .agentHeartbeatConfigurationDidChange)
@@ -431,7 +431,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.recoverLocalConnector(forceReconnect: false)
-                self?.ensureAgentArtifactSyncCoordinator()
+                self?.ensureAgentArtifactStorageCoordinator()
                 self?.startVisualSessionMonitoring()
             }
             .store(in: &cancellables)

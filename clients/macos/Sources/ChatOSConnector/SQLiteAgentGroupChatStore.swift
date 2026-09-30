@@ -4,17 +4,17 @@ import CryptoKit
 import Foundation
 import SQLite3
 
-public struct ProjectAgentArtifactUploadJob: Sendable, Equatable {
+public struct ProjectAgentArtifactWriteJob: Sendable, Equatable {
     public let attachmentID: String
     public let roomID: String
     public let attempt: Int
-    public let request: AgentArtifactUploadRequest
+    public let request: AgentArtifactWriteRequest
 
     public init(
         attachmentID: String,
         roomID: String,
         attempt: Int,
-        request: AgentArtifactUploadRequest
+        request: AgentArtifactWriteRequest
     ) {
         self.attachmentID = attachmentID
         self.roomID = roomID
@@ -28,18 +28,18 @@ public struct ProjectAgentArtifactUploadJob: Sendable, Equatable {
 public actor SQLiteAgentGroupChatStore: AgentGroupChatStore, LocalAgentGroupChatRunStoring {
     nonisolated(unsafe) var database: OpaquePointer?
     let attachmentsRootURL: URL
-    let agentArtifactService: (any AgentArtifactRemoteServing)?
+    let agentArtifactStore: (any AgentArtifactServing)?
 #if DEBUG
     var debugPreparedStatementCount = 0
 #endif
 
     public init(
         databaseURL: URL,
-        agentArtifactService: (any AgentArtifactRemoteServing)? = nil
+        agentArtifactStore: (any AgentArtifactServing)? = nil
     ) throws {
         attachmentsRootURL = databaseURL.deletingLastPathComponent()
             .appendingPathComponent("AgentGroupChatAttachments", isDirectory: true)
-        self.agentArtifactService = agentArtifactService
+        self.agentArtifactStore = agentArtifactStore
         database = try AgentGroupChatDatabase.open(at: databaseURL)
     }
 

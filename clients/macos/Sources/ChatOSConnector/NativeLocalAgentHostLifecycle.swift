@@ -93,7 +93,7 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         }
         let commandID = "native-command-\(UUID().uuidString.lowercased())"
         let envelope: [String: Any] = [
-            "protocol_version": 30,
+            "protocol_version": 31,
             "command_id": commandID,
             "command": commandObject,
         ]
@@ -101,7 +101,7 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         let responseData = try managedProcess.roundTrip(request)
         guard let response = try JSONSerialization.jsonObject(with: responseData)
             as? [String: Any],
-              response["protocol_version"] as? Int == 30,
+              response["protocol_version"] as? Int == 31,
               response["command_id"] as? String == commandID,
               let ok = response["ok"] as? Bool else {
             throw NativeLocalAgentHostError.invalidResponse
@@ -293,7 +293,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
     private func verifyHealth() throws {
         let commandID = "native-health-\(UUID().uuidString.lowercased())"
         let request = HealthRequest(
-            protocolVersion: 30,
+            protocolVersion: 31,
             commandId: commandID,
             command: .init(type: "health")
         )
@@ -302,7 +302,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
             HealthResponse.self,
             from: payload
         )
-        guard response.protocolVersion == 30,
+        guard response.protocolVersion == 31,
               response.commandId == commandID else {
             throw NativeLocalAgentHostError.invalidResponse
         }
@@ -338,7 +338,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
 }
 
 enum LocalAgentHostFrameCodec {
-    static let maximumFrameBytes = 1_024 * 1_024
+    static let maximumFrameBytes = 4 * 1_024 * 1_024
 
     static func write(_ payload: Data, to handle: FileHandle) throws {
         guard !payload.isEmpty, payload.count <= maximumFrameBytes else {

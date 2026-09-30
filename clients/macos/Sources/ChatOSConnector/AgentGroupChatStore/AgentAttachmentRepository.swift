@@ -6,7 +6,7 @@ struct StoredMessageAttachment {
     let relativePath: String
 }
 
-struct AgentArtifactUploadCandidate {
+struct AgentArtifactWriteCandidate {
     let id: String
     let roomID: String
     let name: String
@@ -97,7 +97,7 @@ enum AgentAttachmentRepository {
         ownerUserID: String,
         nowUnixMs: Int64,
         preparedStatement: () -> Void
-    ) throws -> AgentArtifactUploadCandidate? {
+    ) throws -> AgentArtifactWriteCandidate? {
         preparedStatement()
         return try AgentGroupChatDatabase.query(
             handle,
@@ -115,7 +115,7 @@ enum AgentAttachmentRepository {
             """,
             [.text(ownerUserID), .integer(nowUnixMs)]
         ) { statement in
-            AgentArtifactUploadCandidate(
+            AgentArtifactWriteCandidate(
                 id: string(statement, 0),
                 roomID: string(statement, 1),
                 name: string(statement, 2),

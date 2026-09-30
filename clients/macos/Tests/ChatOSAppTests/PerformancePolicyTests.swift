@@ -173,21 +173,21 @@ struct PerformancePolicyTests {
         ) == .seconds(15))
     }
 
-    @Test("application activation keeps an existing artifact sync coordinator")
-    func applicationActivationKeepsArtifactSyncCoordinator() {
-        #expect(!AgentArtifactSyncCoordinatorPolicy.shouldStart(
+    @Test("application activation keeps an existing artifact storage coordinator")
+    func applicationActivationKeepsArtifactStorageCoordinator() {
+        #expect(!AgentArtifactStorageCoordinatorPolicy.shouldStart(
             existingOwnerUserID: "owner",
             requestedOwnerUserID: "owner",
             hasLiveTask: true,
             forceRestart: false
         ))
-        #expect(AgentArtifactSyncCoordinatorPolicy.shouldStart(
+        #expect(AgentArtifactStorageCoordinatorPolicy.shouldStart(
             existingOwnerUserID: "old-owner",
             requestedOwnerUserID: "new-owner",
             hasLiveTask: true,
             forceRestart: false
         ))
-        #expect(AgentArtifactSyncCoordinatorPolicy.shouldStart(
+        #expect(AgentArtifactStorageCoordinatorPolicy.shouldStart(
             existingOwnerUserID: "owner",
             requestedOwnerUserID: "owner",
             hasLiveTask: true,

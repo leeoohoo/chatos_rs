@@ -36,7 +36,7 @@ extension AppModel {
             authenticatedUserID = session.user.id
             startLocalAgentHost(ownerUserID: session.user.id)
             restartAgentHeartbeatCoordinator()
-            restartAgentArtifactSyncCoordinator()
+            restartAgentArtifactStorageCoordinator()
             mediaStudio.activate(userID: session.user.id)
             loadLanguagePreferences()
             localConnectorControl.activate(
@@ -54,9 +54,9 @@ extension AppModel {
             agentHeartbeatTask = nil
             agentCommunicationTask?.cancel()
             agentCommunicationTask = nil
-            agentArtifactSyncTask?.cancel()
-            agentArtifactSyncTask = nil
-            agentArtifactSyncOwnerUserID = nil
+            agentArtifactStorageTask?.cancel()
+            agentArtifactStorageTask = nil
+            agentArtifactStorageOwnerUserID = nil
             authenticatedUserID = nil
             localAgentBootstrapTask?.cancel()
             localAgentBootstrapTask = nil
@@ -91,8 +91,8 @@ extension AppModel {
     }
 
     func prepareForApplicationTermination() {
-        agentArtifactSyncTask?.cancel()
-        agentArtifactSyncOwnerUserID = nil
+        agentArtifactStorageTask?.cancel()
+        agentArtifactStorageOwnerUserID = nil
         localConnectorRecoveryTask?.cancel()
         localConnectorRecoveryTask = nil
         localAgentBootstrapTask?.cancel()

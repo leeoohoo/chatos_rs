@@ -16,6 +16,7 @@ use sqlx::{
 };
 use std::{path::Path, str::FromStr, time::Duration};
 
+mod artifact_store;
 mod capability_snapshot_store;
 mod conversation_commands;
 mod conversation_guidance;
@@ -54,13 +55,14 @@ mod tool_approval_store;
 mod tool_store;
 
 pub use chatos_local_agent_ports::{
-    ClientStorageError, IdempotentCommand, LocalAgentRunStore, LocalAgentStore,
-    LocalAgentTaskStore, LocalAgentToolStore, LocalCapabilityPolicySnapshot,
-    LocalCapabilitySnapshotStore, LocalConversationRuntimeSettingsStore, LocalConversationStore,
-    LocalMemoryContextCacheStore, LocalMemoryOutboxRecord, LocalMemoryOutboxStatus,
-    LocalMemoryOutboxStore, LocalMemorySyncStatus, LocalModelConfigSnapshot,
-    LocalModelConfigSnapshotStore, LocalNotepadImageWrite, LocalNotepadStore,
-    LocalPluginInstallationStore, LocalRemoteConnectionStore, RunTransition,
+    ClientStorageError, IdempotentCommand, LocalAgentArtifactStore, LocalAgentArtifactWrite,
+    LocalAgentRunStore, LocalAgentStore, LocalAgentTaskStore, LocalAgentToolStore,
+    LocalCapabilityPolicySnapshot, LocalCapabilitySnapshotStore,
+    LocalConversationRuntimeSettingsStore, LocalConversationStore, LocalMemoryContextCacheStore,
+    LocalMemoryOutboxRecord, LocalMemoryOutboxStatus, LocalMemoryOutboxStore,
+    LocalMemorySyncStatus, LocalModelConfigSnapshot, LocalModelConfigSnapshotStore,
+    LocalNotepadImageWrite, LocalNotepadStore, LocalPluginInstallationStore,
+    LocalRemoteConnectionStore, RunTransition,
 };
 use run_record::decode_run;
 use schema::RUN_SELECT;
@@ -87,17 +89,13 @@ impl<T> SqliteResultExt<T> for Result<T, ClientStorageError> {
 #[derive(Debug, Clone)]
 pub struct SqliteClientStorage {
     pub(crate) pool: SqlitePool,
+    pub(crate) artifact_root: std::path::PathBuf,
+    _temporary_root: Option<std::sync::Arc<tempfile::TempDir>>,
 }
 
 impl SqliteClientStorage {
     pub async fn connect_file(path: &Path) -> Result<Self, ClientStorageError> {
-        if let Some(parent) = path.parent().filter(|value| !value.as_os_str().is_empty()) {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                ClientStorageError::InvalidState(format!(
-                    "create client storage directory failed: {error}"
-                ))
-            })?;
-        }
+        maintenance::create_database_parent(path)?;
         let requires_existing_database_backup = path
             .metadata()
             .map(|metadata| metadata.len() > 0)
@@ -108,7 +106,14 @@ impl SqliteClientStorage {
             .foreign_keys(true)
             .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
             .busy_timeout(Duration::from_secs(5));
-        Self::connect_with_options(options, Some((path, requires_existing_database_backup))).await
+        let artifact_root = path.with_extension("artifacts");
+        Self::connect_with_options(
+            options,
+            Some((path, requires_existing_database_backup)),
+            artifact_root,
+            None,
+        )
+        .await
     }
 
     pub async fn connect_memory() -> Result<Self, ClientStorageError> {
@@ -116,12 +121,15 @@ impl SqliteClientStorage {
             .db()?
             .foreign_keys(true)
             .busy_timeout(Duration::from_secs(5));
-        Self::connect_with_options(options, None).await
+        let (artifact_root, temporary_root) = maintenance::temporary_artifact_root()?;
+        Self::connect_with_options(options, None, artifact_root, Some(temporary_root)).await
     }
 
     async fn connect_with_options(
         options: SqliteConnectOptions,
         file_context: Option<(&Path, bool)>,
+        artifact_root: std::path::PathBuf,
+        temporary_root: Option<std::sync::Arc<tempfile::TempDir>>,
     ) -> Result<Self, ClientStorageError> {
         // A single connection plus BEGIN IMMEDIATE gives SQLite and the runtime
         // one unambiguous local writer. IPC can remain concurrent without
@@ -131,7 +139,12 @@ impl SqliteClientStorage {
             .connect_with(options)
             .await
             .db()?;
-        let storage = Self { pool };
+        maintenance::create_private_directory(&artifact_root)?;
+        let storage = Self {
+            pool,
+            artifact_root,
+            _temporary_root: temporary_root,
+        };
         if let Some((path, _)) = file_context {
             maintenance::restrict_file_permissions(path)?;
         }

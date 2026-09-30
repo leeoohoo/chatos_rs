@@ -110,41 +110,41 @@ extension AppModel {
         }
     }
 
-    func ensureAgentArtifactSyncCoordinator() {
-        startAgentArtifactSyncCoordinator(forceRestart: false)
+    func ensureAgentArtifactStorageCoordinator() {
+        startAgentArtifactStorageCoordinator(forceRestart: false)
     }
 
-    func restartAgentArtifactSyncCoordinator() {
-        startAgentArtifactSyncCoordinator(forceRestart: true)
+    func restartAgentArtifactStorageCoordinator() {
+        startAgentArtifactStorageCoordinator(forceRestart: true)
     }
 
-    private func startAgentArtifactSyncCoordinator(forceRestart: Bool) {
+    private func startAgentArtifactStorageCoordinator(forceRestart: Bool) {
         guard let ownerUserID = authenticatedUserID else {
-            agentArtifactSyncTask?.cancel()
-            agentArtifactSyncTask = nil
-            agentArtifactSyncOwnerUserID = nil
+            agentArtifactStorageTask?.cancel()
+            agentArtifactStorageTask = nil
+            agentArtifactStorageOwnerUserID = nil
             return
         }
-        let hasLiveTask = agentArtifactSyncTask.map { !$0.isCancelled } ?? false
-        guard AgentArtifactSyncCoordinatorPolicy.shouldStart(
-            existingOwnerUserID: agentArtifactSyncOwnerUserID,
+        let hasLiveTask = agentArtifactStorageTask.map { !$0.isCancelled } ?? false
+        guard AgentArtifactStorageCoordinatorPolicy.shouldStart(
+            existingOwnerUserID: agentArtifactStorageOwnerUserID,
             requestedOwnerUserID: ownerUserID,
             hasLiveTask: hasLiveTask,
             forceRestart: forceRestart
         ) else { return }
 
-        agentArtifactSyncTask?.cancel()
-        agentArtifactSyncOwnerUserID = ownerUserID
+        agentArtifactStorageTask?.cancel()
+        agentArtifactStorageOwnerUserID = ownerUserID
         let service = agentGroupChatService
-        agentArtifactSyncTask = Task { [weak self] in
+        agentArtifactStorageTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
-                    _ = try await service.syncPendingAgentArtifacts(ownerUserID: ownerUserID)
+                    _ = try await service.persistPendingAgentArtifacts(ownerUserID: ownerUserID)
                     guard !Task.isCancelled, self?.authenticatedUserID == ownerUserID else {
                         return
                     }
                     let store = try await service.store()
-                    let nextDue = try await store.nextAgentArtifactSyncDue(ownerUserID: ownerUserID)
+                    let nextDue = try await store.nextAgentArtifactStorageDue(ownerUserID: ownerUserID)
                     let now = Int64(Date().timeIntervalSince1970 * 1_000)
                     let delayMilliseconds = nextDue.map {
                         min(Int64(60_000), max(Int64(1_000), $0 - now))
@@ -162,7 +162,7 @@ extension AppModel {
 
 }
 
-enum AgentArtifactSyncCoordinatorPolicy {
+enum AgentArtifactStorageCoordinatorPolicy {
     static func shouldStart(
         existingOwnerUserID: String?,
         requestedOwnerUserID: String,

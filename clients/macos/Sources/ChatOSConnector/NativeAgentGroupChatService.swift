@@ -38,34 +38,34 @@ public actor NativeAgentGroupChatService {
     }
 
     private let databaseURL: URL
-    private let agentArtifactService: (any AgentArtifactRemoteServing)?
+    private let agentArtifactStore: (any AgentArtifactServing)?
     private var openedStore: SQLiteAgentGroupChatStore?
     private var changeObservers: [UUID: ChangeObserver] = [:]
 
     public init(
         databaseURL: URL,
-        agentArtifactService: (any AgentArtifactRemoteServing)? = nil
+        agentArtifactStore: (any AgentArtifactServing)? = nil
     ) {
         self.databaseURL = databaseURL
-        self.agentArtifactService = agentArtifactService
+        self.agentArtifactStore = agentArtifactStore
     }
 
     public func store() throws -> SQLiteAgentGroupChatStore {
         if let openedStore { return openedStore }
         let store = try SQLiteAgentGroupChatStore(
             databaseURL: databaseURL,
-            agentArtifactService: agentArtifactService
+            agentArtifactStore: agentArtifactStore
         )
         openedStore = store
         return store
     }
 
     @discardableResult
-    public func syncPendingAgentArtifacts(
+    public func persistPendingAgentArtifacts(
         ownerUserID: String,
         limit: Int = 8
     ) async throws -> Int {
-        guard let agentArtifactService else { return 0 }
+        guard let agentArtifactStore else { return 0 }
         guard (1...32).contains(limit) else {
             throw AgentGroupChatError.invalidField("limit")
         }
@@ -74,23 +74,26 @@ public actor NativeAgentGroupChatService {
         for _ in 0..<limit {
             try Task.checkCancellation()
             let now = Int64(Date().timeIntervalSince1970 * 1_000)
-            guard let job = try await store.claimNextAgentArtifactUpload(
+            guard let job = try await store.claimNextAgentArtifactStorage(
                 ownerUserID: ownerUserID,
                 nowUnixMs: now
             ) else { break }
             do {
-                let metadata = try await agentArtifactService.upload(job.request)
+                let metadata = try await agentArtifactStore.store(
+                    ownerUserID: ownerUserID,
+                    request: job.request
+                )
                 guard metadata.sha256 == job.request.sha256,
                       metadata.size == job.request.data.count else {
                     throw AgentGroupChatError.storage("Agent artifact metadata mismatch")
                 }
-                try await store.markAgentArtifactUploadSynced(
+                try await store.markAgentArtifactStored(
                     ownerUserID: ownerUserID,
                     attachmentID: job.attachmentID,
                     metadata: metadata,
                     nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
                 )
-                try? await store.recordAgentArtifactUpload(
+                try? await store.recordAgentArtifactStorage(
                     ownerUserID: ownerUserID,
                     outcome: .succeeded,
                     bytes: job.request.data.count,
@@ -105,14 +108,14 @@ public actor NativeAgentGroupChatService {
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                try await store.markAgentArtifactUploadFailed(
+                try await store.markAgentArtifactStorageFailed(
                     ownerUserID: ownerUserID,
                     attachmentID: job.attachmentID,
                     attempt: job.attempt,
-                    error: "云端同步暂时失败，请稍后重试。",
+                    error: "本地文档存储暂时失败，请稍后重试。",
                     nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
                 )
-                try? await store.recordAgentArtifactUpload(
+                try? await store.recordAgentArtifactStorage(
                     ownerUserID: ownerUserID,
                     outcome: .failed,
                     bytes: job.request.data.count,
@@ -128,13 +131,13 @@ public actor NativeAgentGroupChatService {
         return completed
     }
 
-    public func retryAgentArtifactUpload(
+    public func retryAgentArtifactStorage(
         ownerUserID: String,
         roomID: String,
         attachmentID: String
     ) async throws {
         let store = try store()
-        try await store.retryAgentArtifactUpload(
+        try await store.retryAgentArtifactStorage(
             ownerUserID: ownerUserID,
             attachmentID: attachmentID
         )
@@ -143,24 +146,35 @@ public actor NativeAgentGroupChatService {
             roomID: roomID,
             kind: .roomUpdated
         ))
-        _ = try await syncPendingAgentArtifacts(ownerUserID: ownerUserID, limit: 1)
+        _ = try await persistPendingAgentArtifacts(ownerUserID: ownerUserID, limit: 1)
     }
 
-    public func remoteAgentArtifacts(
+    public func localAgentArtifacts(
+        ownerUserID: String,
         limit: Int = 50,
         cursor: String? = nil
-    ) async throws -> AgentArtifactRemotePage {
-        guard let agentArtifactService else {
-            throw AgentGroupChatError.storage("Agent artifact service is unavailable")
+    ) async throws -> AgentArtifactPage {
+        guard let agentArtifactStore else {
+            throw AgentGroupChatError.storage("Local Agent artifact store is unavailable")
         }
-        return try await agentArtifactService.list(limit: limit, cursor: cursor)
+        return try await agentArtifactStore.list(
+            ownerUserID: ownerUserID,
+            limit: limit,
+            cursor: cursor
+        )
     }
 
-    public func remoteAgentArtifactData(artifactID: String) async throws -> Data {
-        guard let agentArtifactService else {
-            throw AgentGroupChatError.storage("Agent artifact service is unavailable")
+    public func localAgentArtifactData(
+        ownerUserID: String,
+        artifactID: String
+    ) async throws -> Data {
+        guard let agentArtifactStore else {
+            throw AgentGroupChatError.storage("Local Agent artifact store is unavailable")
         }
-        return try await agentArtifactService.download(artifactID: artifactID)
+        return try await agentArtifactStore.read(
+            ownerUserID: ownerUserID,
+            artifactID: artifactID
+        )
     }
 
     /// Emits process-local invalidations after the durable SQLite write has completed. Consumers

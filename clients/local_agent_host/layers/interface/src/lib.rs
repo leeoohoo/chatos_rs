@@ -11,6 +11,7 @@ use serde_json::Value;
 use std::{fmt, str::FromStr};
 
 mod account_scope;
+mod artifact;
 mod control_plane;
 mod conversation;
 mod memory;
@@ -22,6 +23,11 @@ mod run_query;
 mod task;
 mod tool;
 
+pub use artifact::{
+    CreateArtifactCommand, DeleteArtifactCommand, GetArtifactDataCommand, ListArtifactsCommand,
+    LocalAgentArtifact, LocalAgentArtifactPage, LOCAL_AGENT_ARTIFACT_MAX_BYTES,
+    LOCAL_AGENT_ARTIFACT_MAX_PAGE_SIZE,
+};
 pub use control_plane::{
     GetCapabilityPolicySnapshotCommand, GetModelConfigSnapshotCommand,
     LocalCapabilityPolicySnapshot, LocalJsonSchemaOutputFormat, LocalModelConfigSnapshot,
@@ -77,8 +83,8 @@ pub use tool::{
     LocalAgentToolStatus,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 30;
-pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 1024 * 1024;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 31;
+pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
 
@@ -161,6 +167,10 @@ pub enum HostCommand {
     CreateRemoteConnection(CreateRemoteConnectionCommand),
     UpdateRemoteConnection(UpdateRemoteConnectionCommand),
     DeleteRemoteConnection(DeleteRemoteConnectionCommand),
+    CreateArtifact(CreateArtifactCommand),
+    ListArtifacts(ListArtifactsCommand),
+    GetArtifactData(GetArtifactDataCommand),
+    DeleteArtifact(DeleteArtifactCommand),
 }
 
 impl HostCommand {
@@ -222,6 +232,10 @@ impl HostCommand {
             Self::CreateRemoteConnection(command) => command.validate(),
             Self::UpdateRemoteConnection(command) => command.validate(),
             Self::DeleteRemoteConnection(command) => command.validate(),
+            Self::CreateArtifact(command) => command.validate(),
+            Self::ListArtifacts(command) => command.validate(),
+            Self::GetArtifactData(command) => command.validate(),
+            Self::DeleteArtifact(command) => command.validate(),
         }
     }
 }

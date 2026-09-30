@@ -4,20 +4,20 @@ import Foundation
 import SQLite3
 import XCTest
 
-final class AgentArtifactSyncTests: XCTestCase {
+final class AgentArtifactStorageTests: XCTestCase {
     private func databaseURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("agent-artifact-sync-\(UUID().uuidString)")
             .appendingPathComponent("group-chat.db")
     }
 
-    func testMarkdownOutboxRetriesSyncsAndRestoresMissingLocalFile() async throws {
+    func testMarkdownArtifactRetriesStoresAndRestoresMissingLocalFile() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        let remote = AgentArtifactRemoteStub(failuresBeforeSuccess: 1)
+        let artifactStore = AgentArtifactStoreStub(failuresBeforeSuccess: 1)
         let service = NativeAgentGroupChatService(
             databaseURL: url,
-            agentArtifactService: remote
+            agentArtifactStore: artifactStore
         )
         let store = try await service.store()
         let agent = try await store.createAgent(
@@ -51,43 +51,43 @@ final class AgentArtifactSyncTests: XCTestCase {
         XCTAssertEqual(posted.message.attachmentItems.first?.syncStatus, .queued)
         XCTAssertNotNil(posted.message.attachmentItems.first?.sha256)
 
-        let firstSyncCount = try await service.syncPendingAgentArtifacts(ownerUserID: "alice")
-        XCTAssertEqual(firstSyncCount, 0)
+        let firstStorageCount = try await service.persistPendingAgentArtifacts(ownerUserID: "alice")
+        XCTAssertEqual(firstStorageCount, 0)
         var messages = try await store.listMessages(ownerUserID: "alice", roomID: room.id)
         var attachment = try XCTUnwrap(messages.last?.attachmentItems.first)
         XCTAssertEqual(attachment.syncStatus, .failed)
-        XCTAssertEqual(attachment.uploadError, "云端同步暂时失败，请稍后重试。")
+        XCTAssertEqual(attachment.uploadError, "本地文档存储暂时失败，请稍后重试。")
 
         let resumedService = NativeAgentGroupChatService(
             databaseURL: url,
-            agentArtifactService: remote
+            agentArtifactStore: artifactStore
         )
         let resumedStore = try await resumedService.store()
-        try await resumedStore.retryAgentArtifactUpload(
+        try await resumedStore.retryAgentArtifactStorage(
             ownerUserID: "alice",
             attachmentID: attachmentID
         )
-        let secondSyncCount = try await resumedService.syncPendingAgentArtifacts(
+        let secondStorageCount = try await resumedService.persistPendingAgentArtifacts(
             ownerUserID: "alice"
         )
-        XCTAssertEqual(secondSyncCount, 1)
-        let idempotentSyncCount = try await resumedService.syncPendingAgentArtifacts(
+        XCTAssertEqual(secondStorageCount, 1)
+        let idempotentStorageCount = try await resumedService.persistPendingAgentArtifacts(
             ownerUserID: "alice"
         )
-        XCTAssertEqual(idempotentSyncCount, 0)
-        let uploadCount = await remote.uploadCount()
-        XCTAssertEqual(uploadCount, 1)
+        XCTAssertEqual(idempotentStorageCount, 0)
+        let storeCount = await artifactStore.storeCount()
+        XCTAssertEqual(storeCount, 1)
         messages = try await resumedStore.listMessages(ownerUserID: "alice", roomID: room.id)
         attachment = try XCTUnwrap(messages.last?.attachmentItems.first)
         XCTAssertEqual(attachment.syncStatus, .synced)
         XCTAssertNotNil(attachment.artifactID)
         XCTAssertNil(attachment.uploadError)
-        let remotePage = try await resumedService.remoteAgentArtifacts()
+        let localPage = try await resumedService.localAgentArtifacts(ownerUserID: "alice")
         XCTAssertEqual(
-            remotePage.artifacts.map(\.artifactID),
+            localPage.artifacts.map(\.artifactID),
             [try XCTUnwrap(attachment.artifactID)]
         )
-        XCTAssertEqual(remotePage.artifacts.first?.name, "方案.md")
+        XCTAssertEqual(localPage.artifacts.first?.name, "方案.md")
 
         let localResult = try await resumedStore.messageAttachment(
             ownerUserID: "alice",
@@ -105,7 +105,7 @@ final class AgentArtifactSyncTests: XCTestCase {
         )
         let restored = try XCTUnwrap(restoredResult)
         XCTAssertEqual(try Data(contentsOf: restored.localFileURL), markdown)
-        let downloadCount = await remote.downloadCount()
+        let downloadCount = await artifactStore.downloadCount()
         XCTAssertEqual(downloadCount, 1)
     }
 
@@ -190,23 +190,27 @@ final class AgentArtifactSyncTests: XCTestCase {
     }
 }
 
-private enum AgentArtifactRemoteStubError: Error { case offline }
+private enum AgentArtifactStoreStubError: Error { case offline }
 
-private actor AgentArtifactRemoteStub: AgentArtifactRemoteServing {
+private actor AgentArtifactStoreStub: AgentArtifactServing {
     private var failuresBeforeSuccess: Int
     private var artifacts: [String: Data] = [:]
-    private var metadataByID: [String: AgentArtifactRemoteItem] = [:]
+    private var metadataByID: [String: AgentArtifactItem] = [:]
     private var downloads = 0
-    private var successfulUploads = 0
+    private var successfulStores = 0
 
     init(failuresBeforeSuccess: Int) {
         self.failuresBeforeSuccess = failuresBeforeSuccess
     }
 
-    func upload(_ request: AgentArtifactUploadRequest) async throws -> AgentArtifactRemoteMetadata {
+    func store(
+        ownerUserID: String,
+        request: AgentArtifactWriteRequest
+    ) async throws -> AgentArtifactMetadata {
+        XCTAssertEqual(ownerUserID, "alice")
         if failuresBeforeSuccess > 0 {
             failuresBeforeSuccess -= 1
-            throw AgentArtifactRemoteStubError.offline
+            throw AgentArtifactStoreStubError.offline
         }
         let artifactID = "artifact_0123456789abcdef0123456789abcdef"
         artifacts[artifactID] = request.data
@@ -216,27 +220,23 @@ private actor AgentArtifactRemoteStub: AgentArtifactRemoteServing {
             mimeType: request.mimeType,
             size: request.data.count,
             sha256: request.sha256,
-            status: "uploaded",
-            remoteViewPath: "/api/agent-artifacts/\(artifactID)/content",
+            status: "stored",
             createdAtUnixMs: 1,
             updatedAtUnixMs: 1
         )
-        successfulUploads += 1
+        successfulStores += 1
         return .init(
             artifactID: artifactID,
             name: request.name,
             mimeType: request.mimeType,
             size: request.data.count,
-            sha256: request.sha256,
-            storageProvider: "minio",
-            bucket: "private-bucket",
-            objectKey: "private-object-key",
-            remoteViewPath: "/api/agent-artifacts/\(artifactID)/content"
+            sha256: request.sha256
         )
     }
 
-    func list(limit: Int, cursor: String?) async throws -> AgentArtifactRemotePage {
-        .init(
+    func list(ownerUserID: String, limit: Int, cursor: String?) async throws -> AgentArtifactPage {
+        XCTAssertEqual(ownerUserID, "alice")
+        return .init(
             artifacts: Array(metadataByID.values.sorted {
                 $0.artifactID < $1.artifactID
             }.prefix(limit)),
@@ -244,17 +244,19 @@ private actor AgentArtifactRemoteStub: AgentArtifactRemoteServing {
         )
     }
 
-    func download(artifactID: String) async throws -> Data {
+    func read(ownerUserID: String, artifactID: String) async throws -> Data {
+        XCTAssertEqual(ownerUserID, "alice")
         downloads += 1
-        guard let data = artifacts[artifactID] else { throw AgentArtifactRemoteStubError.offline }
+        guard let data = artifacts[artifactID] else { throw AgentArtifactStoreStubError.offline }
         return data
     }
 
-    func delete(artifactID: String) async throws {
+    func remove(ownerUserID: String, artifactID: String) async throws {
+        XCTAssertEqual(ownerUserID, "alice")
         artifacts.removeValue(forKey: artifactID)
         metadataByID.removeValue(forKey: artifactID)
     }
 
     func downloadCount() -> Int { downloads }
-    func uploadCount() -> Int { successfulUploads }
+    func storeCount() -> Int { successfulStores }
 }

@@ -11,7 +11,7 @@ public enum AgentDocumentCreationMetricOutcome: String, Sendable {
     case storageFailed = "storage_failed"
 }
 
-public enum AgentArtifactUploadMetricOutcome: String, Sendable {
+public enum AgentArtifactStorageMetricOutcome: String, Sendable {
     case succeeded
     case failed
 }

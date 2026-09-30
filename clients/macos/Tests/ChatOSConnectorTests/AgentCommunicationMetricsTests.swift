@@ -146,13 +146,13 @@ final class AgentCommunicationMetricsTests: XCTestCase {
             bytes: 3_000_000,
             nowUnixMs: 12
         )
-        try await store.recordAgentArtifactUpload(
+        try await store.recordAgentArtifactStorage(
             ownerUserID: "owner-a",
             outcome: .succeeded,
             bytes: 1_024,
             nowUnixMs: 20
         )
-        try await store.recordAgentArtifactUpload(
+        try await store.recordAgentArtifactStorage(
             ownerUserID: "owner-a",
             outcome: .failed,
             bytes: 2_048,
@@ -204,11 +204,11 @@ final class AgentCommunicationMetricsTests: XCTestCase {
             1
         )
         XCTAssertEqual(
-            try metric(snapshot, name: "artifact_upload", dimension: "succeeded").totalValue,
+            try metric(snapshot, name: "artifact_storage", dimension: "succeeded").totalValue,
             1_024
         )
         XCTAssertEqual(
-            try metric(snapshot, name: "artifact_upload", dimension: "failed").totalValue,
+            try metric(snapshot, name: "artifact_storage", dimension: "failed").totalValue,
             2_048
         )
         let previewed = try metric(snapshot, name: "document_preview", dimension: "succeeded")
@@ -220,10 +220,10 @@ final class AgentCommunicationMetricsTests: XCTestCase {
             40
         )
 
-        let allowedNames = Set(["document_create", "artifact_upload", "document_preview", "tool_rejection"])
+        let allowedNames = Set(["document_create", "artifact_storage", "document_preview", "tool_rejection"])
         let allowedDimensions = Set(
             AgentDocumentCreationMetricOutcome.allMetricValues
-                + AgentArtifactUploadMetricOutcome.allMetricValues
+                + AgentArtifactStorageMetricOutcome.allMetricValues
                 + AgentDocumentPreviewMetricOutcome.allMetricValues
                 + AgentCommunicationRejectionMetricReason.allMetricValues
         )
@@ -240,7 +240,7 @@ private extension AgentDocumentCreationMetricOutcome {
     ].map(\.rawValue)
 }
 
-private extension AgentArtifactUploadMetricOutcome {
+private extension AgentArtifactStorageMetricOutcome {
     static let allMetricValues = [succeeded, failed].map(\.rawValue)
 }
 

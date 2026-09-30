@@ -4,7 +4,51 @@
 use super::{ClientStorageError, SqliteResultExt};
 use sqlx::{sqlite::SqliteConnectOptions, Connection, SqliteConnection, SqlitePool};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use uuid::Uuid;
+
+pub(super) fn create_database_parent(path: &Path) -> Result<(), ClientStorageError> {
+    if let Some(parent) = path.parent().filter(|value| !value.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            ClientStorageError::InvalidState(format!(
+                "create client storage directory failed: {error}"
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+pub(super) fn temporary_artifact_root(
+) -> Result<(PathBuf, Arc<tempfile::TempDir>), ClientStorageError> {
+    let temporary_root = Arc::new(
+        tempfile::Builder::new()
+            .prefix("chatos-local-agent-")
+            .tempdir()
+            .map_err(ClientStorageError::database)?,
+    );
+    Ok((temporary_root.path().join("artifacts"), temporary_root))
+}
+
+pub(super) fn create_private_directory(path: &Path) -> Result<(), ClientStorageError> {
+    std::fs::create_dir_all(path).map_err(ClientStorageError::database)?;
+    restrict_directory_permissions(path)
+}
+
+#[cfg(unix)]
+fn restrict_directory_permissions(path: &Path) -> Result<(), ClientStorageError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = std::fs::metadata(path)
+        .map_err(ClientStorageError::database)?
+        .permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(path, permissions).map_err(ClientStorageError::database)
+}
+
+#[cfg(not(unix))]
+fn restrict_directory_permissions(_path: &Path) -> Result<(), ClientStorageError> {
+    Ok(())
+}
 
 pub(super) async fn verify_integrity(pool: &SqlitePool) -> Result<(), ClientStorageError> {
     let mut connection = pool.acquire().await.db()?;

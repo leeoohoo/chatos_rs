@@ -13,7 +13,7 @@ extension Notification.Name {
 
 private enum AgentGroupChatWorkspaceDestination: Hashable {
     case agents
-    case remoteArtifacts
+    case artifacts
     case direct(String)
     case room(String)
 }
@@ -167,7 +167,7 @@ struct AgentGroupChatWorkspaceView: View {
 
                         Label {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("云端 Agent 文档")
+                                Text("本地 Agent 文档")
                                     .font(.body.weight(.medium))
                                 Text("跨设备发现与预览")
                                     .font(.caption)
@@ -178,7 +178,7 @@ struct AgentGroupChatWorkspaceView: View {
                                 .foregroundStyle(AppPalette.ai)
                         }
                         .padding(.vertical, 4)
-                        .tag(AgentGroupChatWorkspaceDestination.remoteArtifacts)
+                        .tag(AgentGroupChatWorkspaceDestination.artifacts)
                     }
 
                     Section("团队") {
@@ -300,8 +300,8 @@ struct AgentGroupChatWorkspaceView: View {
                     }
                 }
             }
-        } else if destination == .remoteArtifacts {
-            AgentRemoteArtifactLibraryView(service: service)
+        } else if destination == .artifacts {
+            AgentArtifactLibraryView(ownerUserID: ownerUserID, service: service)
         } else if let conversation = selectedDirectConversation {
             AgentDirectChatView(
                 ownerUserID: ownerUserID,

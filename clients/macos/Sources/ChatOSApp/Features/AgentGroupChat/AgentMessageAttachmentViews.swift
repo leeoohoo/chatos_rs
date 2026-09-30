@@ -78,7 +78,7 @@ struct AgentMessageAttachmentChips: View {
                                 retryUpload(attachment)
                             }
                             .labelStyle(.iconOnly)
-                            .help(attachment.uploadError ?? "重新同步到云端")
+                            .help(attachment.uploadError ?? "重新保存到本地文档库")
                             .disabled(retryingAttachmentIDs.contains(attachment.id))
                         }
                         Button("另存为", systemImage: "square.and.arrow.down") {
@@ -180,7 +180,7 @@ struct AgentMessageAttachmentChips: View {
         Task {
             defer { retryingAttachmentIDs.remove(attachment.id) }
             do {
-                try await service.retryAgentArtifactUpload(
+                try await service.retryAgentArtifactStorage(
                     ownerUserID: ownerUserID,
                     roomID: roomID,
                     attachmentID: attachment.id
@@ -227,10 +227,10 @@ struct AgentMessageAttachmentChips: View {
     private func syncStatusText(_ attachment: ProjectAgentMessageAttachment) -> String {
         switch attachment.syncStatus {
         case .localOnly: "本机可用"
-        case .queued: "等待云端同步"
-        case .uploading: "正在同步"
-        case .synced: "云端已同步"
-        case .failed: attachment.uploadError ?? "云端同步失败"
+        case .queued: "等待本地归档"
+        case .uploading: "正在本地归档"
+        case .synced: "本地已归档"
+        case .failed: attachment.uploadError ?? "本地归档失败"
         }
     }
 
@@ -239,8 +239,8 @@ struct AgentMessageAttachmentChips: View {
         case .localOnly: "desktopcomputer"
         case .queued: "clock"
         case .uploading: "arrow.triangle.2.circlepath"
-        case .synced: "checkmark.icloud"
-        case .failed: "exclamationmark.icloud"
+        case .synced: "checkmark.circle"
+        case .failed: "exclamationmark.triangle"
         }
     }
 

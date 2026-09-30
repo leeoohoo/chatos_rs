@@ -4,7 +4,7 @@ namespace ChatOS.Connector.LocalAgent;
 
 internal static class LocalAgentHostFrameCodec
 {
-    internal const int MaximumFrameBytes = 1024 * 1024;
+    internal const int MaximumFrameBytes = 4 * 1024 * 1024;
 
     public static async Task WriteAsync(
         Stream stream,

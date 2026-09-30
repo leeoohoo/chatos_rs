@@ -230,10 +230,13 @@ extension SQLiteAgentGroupChatStore {
             guard stored.attachment.syncStatus == .synced,
                   let artifactID = stored.attachment.artifactID,
                   let expectedSHA256 = stored.attachment.sha256,
-                  let agentArtifactService else {
+                  let agentArtifactStore else {
                 throw AgentGroupChatError.storage("message attachment file is missing")
             }
-            let data = try await agentArtifactService.download(artifactID: artifactID)
+            let data = try await agentArtifactStore.read(
+                ownerUserID: ownerUserID,
+                artifactID: artifactID
+            )
             guard data.count == stored.attachment.size,
                   Self.sha256(data) == expectedSHA256 else {
                 throw AgentGroupChatError.storage("restored message attachment failed integrity check")
@@ -255,13 +258,13 @@ extension SQLiteAgentGroupChatStore {
         )
     }
 
-    public func claimNextAgentArtifactUpload(
+    public func claimNextAgentArtifactStorage(
         ownerUserID: String,
         nowUnixMs: Int64
-    ) throws -> ProjectAgentArtifactUploadJob? {
+    ) throws -> ProjectAgentArtifactWriteJob? {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
-        guard let candidate: AgentArtifactUploadCandidate = try transaction({
+        guard let candidate: AgentArtifactWriteCandidate = try transaction({
             guard let candidate = try AgentAttachmentRepository.nextUploadCandidate(
                 database,
                 ownerUserID: ownerUserID,
@@ -289,7 +292,7 @@ extension SQLiteAgentGroupChatStore {
         guard let data = try? Data(contentsOf: fileURL, options: [.mappedIfSafe]),
               data.count == candidate.size,
               Self.sha256(data) == candidate.sha256 else {
-            try markAgentArtifactUploadFailed(
+            try markAgentArtifactStorageFailed(
                 ownerUserID: ownerUserID,
                 attachmentID: candidate.id,
                 attempt: candidate.attempt,
@@ -298,7 +301,7 @@ extension SQLiteAgentGroupChatStore {
             )
             return nil
         }
-        return ProjectAgentArtifactUploadJob(
+        return ProjectAgentArtifactWriteJob(
             attachmentID: candidate.id,
             roomID: candidate.roomID,
             attempt: candidate.attempt,
@@ -312,10 +315,10 @@ extension SQLiteAgentGroupChatStore {
         )
     }
 
-    public func markAgentArtifactUploadSynced(
+    public func markAgentArtifactStored(
         ownerUserID: String,
         attachmentID: String,
-        metadata: AgentArtifactRemoteMetadata,
+        metadata: AgentArtifactMetadata,
         nowUnixMs: Int64
     ) throws {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
@@ -331,9 +334,8 @@ extension SQLiteAgentGroupChatStore {
               AND sha256 = ? AND size_bytes = ?
             """,
             [
-                .text(metadata.artifactID), .optionalText(metadata.storageProvider),
-                .optionalText(metadata.bucket), .optionalText(metadata.objectKey),
-                .optionalText(metadata.remoteViewPath), .integer(nowUnixMs),
+                .text(metadata.artifactID), .text("local_agent_host"),
+                .null, .null, .null, .integer(nowUnixMs),
                 .text(ownerUserID), .text(attachmentID), .text(metadata.sha256),
                 .integer(Int64(metadata.size)),
             ]
@@ -341,7 +343,7 @@ extension SQLiteAgentGroupChatStore {
         guard sqlite3_changes(database) == 1 else { throw AgentGroupChatError.conflict }
     }
 
-    public func markAgentArtifactUploadFailed(
+    public func markAgentArtifactStorageFailed(
         ownerUserID: String,
         attachmentID: String,
         attempt: Int,
@@ -369,7 +371,7 @@ extension SQLiteAgentGroupChatStore {
         )
     }
 
-    public func retryAgentArtifactUpload(
+    public func retryAgentArtifactStorage(
         ownerUserID: String,
         attachmentID: String
     ) throws {
@@ -385,7 +387,7 @@ extension SQLiteAgentGroupChatStore {
         )
     }
 
-    public func nextAgentArtifactSyncDue(ownerUserID: String) throws -> Int64? {
+    public func nextAgentArtifactStorageDue(ownerUserID: String) throws -> Int64? {
         try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
         return try AgentAttachmentRepository.nextSyncDue(
             database,
@@ -439,15 +441,15 @@ extension SQLiteAgentGroupChatStore {
         )
     }
 
-    public func recordAgentArtifactUpload(
+    public func recordAgentArtifactStorage(
         ownerUserID: String,
-        outcome: AgentArtifactUploadMetricOutcome,
+        outcome: AgentArtifactStorageMetricOutcome,
         bytes: Int,
         nowUnixMs: Int64
     ) throws {
         try recordAgentCommunicationMetric(
             ownerUserID: ownerUserID,
-            name: "artifact_upload",
+            name: "artifact_storage",
             dimension: outcome.rawValue,
             value: Int64(max(bytes, 0)),
             nowUnixMs: nowUnixMs

@@ -542,3 +542,23 @@ pub(super) const SCHEMA_V24: &[&str] = &[
        owner_user_id, updated_at_unix_ms DESC, connection_id\
      )",
 ];
+
+pub(super) const SCHEMA_V25: &[&str] = &[
+    "CREATE TABLE local_agent_artifacts (\
+       owner_user_id TEXT NOT NULL,\
+       artifact_id TEXT NOT NULL,\
+       idempotency_key TEXT NOT NULL,\
+       name TEXT NOT NULL,\
+       mime_type TEXT NOT NULL,\
+       size INTEGER NOT NULL CHECK(size > 0 AND size <= 2097152),\
+       sha256 TEXT NOT NULL CHECK(length(sha256) = 64),\
+       relative_path TEXT NOT NULL,\
+       created_at_unix_ms INTEGER NOT NULL,\
+       updated_at_unix_ms INTEGER NOT NULL,\
+       PRIMARY KEY(owner_user_id, artifact_id),\
+       UNIQUE(owner_user_id, idempotency_key)\
+     )",
+    "CREATE INDEX local_agent_artifacts_owner_updated ON local_agent_artifacts(\
+       owner_user_id, updated_at_unix_ms DESC, artifact_id DESC\
+     )",
+];

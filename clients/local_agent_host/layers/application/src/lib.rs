@@ -25,6 +25,7 @@ use std::{
 use thiserror::Error;
 use uuid::Uuid;
 
+mod artifact_runtime;
 mod control_plane_runtime;
 #[cfg(test)]
 mod conversation_query_tests;
@@ -444,6 +445,12 @@ impl LocalAgentRuntime {
             | HostCommand::DeleteRemoteConnection(_)) => {
                 self.handle_remote_connection_command(&idempotency, command)
                     .await
+            }
+            command @ (HostCommand::CreateArtifact(_)
+            | HostCommand::ListArtifacts(_)
+            | HostCommand::GetArtifactData(_)
+            | HostCommand::DeleteArtifact(_)) => {
+                self.handle_artifact_command(&idempotency, command).await
             }
         }
     }
