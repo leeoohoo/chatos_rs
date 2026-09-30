@@ -234,10 +234,6 @@ fn validate_artifact_public_base_url(value: &str) -> Result<(), String> {
 fn caller_internal_api_secrets() -> Result<HashMap<String, String>, String> {
     [
         (
-            "chatos-backend",
-            "PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET",
-        ),
-        (
             "local-connector-service",
             "PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET",
         ),

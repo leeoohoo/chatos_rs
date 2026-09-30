@@ -95,7 +95,6 @@ Plugins can combine MCP servers, skills, permission declarations, managed artifa
 | `clients/macos` | Swift 6.2 / SwiftUI native client and macOS Local Connector. |
 | `clients/windows` | .NET 8 / WinUI 3 native client, Windows Local Connector, Network Guard, and installer. |
 | `clients/local_agent_host` | Rust local task, tool, scheduling, and execution host embedded by native clients. |
-| `chatos/backend` | Main ChatOS API and conversation orchestration service. |
 | `memory_engine/backend` | Conversation summaries and layered project/subject memory. |
 | `plugin_management_service/backend` | Plugin catalog, releases, packages, and runtime capability metadata. |
 | `local_connector_service/backend` | Cloud routing and coordination for native Local Connectors. |
@@ -106,6 +105,8 @@ Plugins can combine MCP servers, skills, permission declarations, managed artifa
 | `admin_console` | React administration console. |
 | `official_website_service` | Product website, registration, and client release distribution. |
 | `docker` | Compose topology, deployment scripts, gateway, and observability configuration. |
+
+Conversation, task, tool, terminal, workspace, and plugin execution now live in the native clients through `clients/local_agent_host`; there is no cloud ChatOS task runner or conversation backend.
 
 The root Rust workspace is defined in [Cargo.toml](./Cargo.toml). Memory Engine remains a separate Rust workspace and is built explicitly by the Makefile.
 
@@ -152,7 +153,7 @@ make dev
 To rebuild only selected Compose services:
 
 ```bash
-make docker-rebuild SERVICES="chatos-backend task-runner-backend"
+make docker-rebuild SERVICES="local-connector-service-backend memory-engine-backend"
 ```
 
 For faster host-side backend and administration frontend development:
@@ -160,7 +161,7 @@ For faster host-side backend and administration frontend development:
 ```bash
 make local-dev
 make local-dev-status
-make local-dev-logs SERVICE=chatos-backend
+make local-dev-logs SERVICE=local-connector-service-backend
 make local-dev-stop
 ```
 

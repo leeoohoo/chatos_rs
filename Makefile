@@ -7,8 +7,8 @@ DOCKER_BOOTSTRAP_FILE := $(if $(wildcard docker/bootstrap.conf),docker/bootstrap
 .PHONY: help dev docker-up docker-fast docker-dev docker-rebuild docker-restart docker-restart-fast docker-restart-dev docker-build docker-clean-images docker-down docker-reset docker-logs docker-ps docker-config
 .PHONY: local-dev local-dev-stop local-dev-status local-dev-logs postgres-up postgres-migrate postgres-verify postgres-down
 .PHONY: build build-rust build-frontends build-macos-client build-windows-client build-browser-plugin build-computer-use-plugin build-document-plugin build-plugins
-.PHONY: test smoke smoke-repo smoke-local-project-entry verify verify-fast test-rust-workspaces check-frontends code-size-report hotspot-line-warnings
-.PHONY: test-chat-app-server test-user-service test-local-connector-service test-memory-engine
+.PHONY: test smoke smoke-repo smoke-local-project-entry verify verify-fast test-rust-workspaces check-frontends code-size-report
+.PHONY: test-user-service test-local-connector-service test-memory-engine
 .PHONY: test-macos-client test-windows-client test-browser-plugin test-computer-use-plugin test-document-plugin test-plugins
 .PHONY: type-check-admin-console
 
@@ -25,7 +25,7 @@ help:
 	@echo "  make docker-up              # pull/start the prebuilt Docker stack"
 	@echo "  make docker-fast            # start/reconcile existing Docker images without pulling"
 	@echo "  make docker-dev             # build/start Docker images from local source"
-	@echo "  make docker-rebuild         # rebuild selected services: SERVICES=\"task-runner-backend\""
+	@echo "  make docker-rebuild         # rebuild selected services: SERVICES=\"local-connector-service-backend\""
 	@echo "  make docker-restart         # recreate the prebuilt Docker stack"
 	@echo "  make docker-restart-fast    # recreate existing Docker images without pulling"
 	@echo "  make docker-restart-dev     # recreate with local image builds"
@@ -147,7 +147,7 @@ build-document-plugin:
 
 build-plugins: build-browser-plugin build-computer-use-plugin build-document-plugin
 
-test: smoke test-chat-app-server test-user-service test-local-connector-service test-memory-engine
+test: smoke test-user-service test-local-connector-service test-memory-engine
 
 smoke: smoke-repo
 
@@ -164,10 +164,7 @@ check-frontends:
 	@bash scripts/verify-repository.sh frontends
 
 smoke-repo:
-	@bash scripts/check_api_surface.sh
-	@bash scripts/check_api_path_baseline.sh
 	@python3 scripts/check-agent-tool-plane-boundaries.py
-	@bash scripts/check-hotspot-line-budgets.sh
 	@bash -n docker/deploy.sh
 	@bash -n docker/deploy-harness-ci.sh
 	@bash -n scripts/local-dev-stack.sh scripts/local-dev-stack/environment.sh scripts/local-dev-stack/services.sh
@@ -176,9 +173,6 @@ smoke-repo:
 	@docker compose --env-file $(DOCKER_BOOTSTRAP_FILE) -f docker/compose.yml -f docker/compose.platform.yml config >/dev/null
 	@docker compose --env-file $(DOCKER_BOOTSTRAP_FILE) -f docker/compose.yml -f docker/compose.platform.yml -f docker/compose.build.yml config >/dev/null
 	@bash scripts/check-large-files.sh --fail
-
-test-chat-app-server:
-	@cargo test -p chat_app_server_rs -q
 
 test-user-service:
 	@cd user_service/backend && cargo test -q
@@ -213,9 +207,6 @@ test-plugins: test-browser-plugin test-computer-use-plugin test-document-plugin
 
 code-size-report:
 	@bash scripts/code-size-report.sh
-
-hotspot-line-warnings:
-	@bash scripts/check-hotspot-line-budgets.sh --warn-planned
 
 type-check-admin-console:
 	@cd admin_console && npm run type-check

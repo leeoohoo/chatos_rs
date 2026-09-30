@@ -363,22 +363,6 @@ fn catalog_exposes_shared_memory_policies_for_server_and_client() {
 #[test]
 fn catalog_exposes_local_connector_remote_control_trust_as_managed_config_only() {
     let definitions = builtin_definitions();
-    let require_signed = definitions
-        .iter()
-        .find(|definition| {
-            definition.key == LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY
-        })
-        .expect("local connector internal signing definition");
-    assert_eq!(require_signed.scope, "service");
-    assert_eq!(
-        require_signed.service_name.as_deref(),
-        Some("local-connector-service")
-    );
-    assert_eq!(
-        require_signed.env_aliases,
-        vec!["LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS".to_string()]
-    );
-
     for key in [
         LOCAL_CONNECTOR_RELAY_SIGNING_KEY_PATH_CONFIG_KEY,
         LOCAL_CONNECTOR_RELAY_SIGNING_KEY_ID_CONFIG_KEY,
@@ -446,11 +430,6 @@ fn catalog_exposes_local_connector_runtime_routes_via_env_projection() {
         (
             LOCAL_CONNECTOR_PORT_CONFIG_KEY,
             "LOCAL_CONNECTOR_SERVICE_PORT",
-            "integer",
-        ),
-        (
-            LOCAL_CONNECTOR_INTERNAL_MTLS_PORT_CONFIG_KEY,
-            "LOCAL_CONNECTOR_INTERNAL_MTLS_PORT",
             "integer",
         ),
         (

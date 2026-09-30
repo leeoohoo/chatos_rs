@@ -166,7 +166,6 @@ pub(super) fn ensure_internal_request_security_values(
             key.as_str(),
             crate::catalog::PLUGIN_MANAGEMENT_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY
                 | crate::catalog::MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY
-                | crate::catalog::LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY
         );
         if requires_strict_auth && values.get(key) != Some(&Value::Bool(true)) {
             values.insert(key.clone(), Value::Bool(true));

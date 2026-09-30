@@ -30,7 +30,6 @@ import type {
 } from './types';
 
 const CONFIG_AREA_META: Record<string, { label: string; order: number }> = {
-  'chatos-backend': { label: 'Chat OS', order: 10 },
   'memory-engine': { label: 'Memory Engine', order: 40 },
   'user-service': { label: '用户服务', order: 70 },
   'plugin-management-service': { label: '插件管理', order: 80 },
@@ -40,7 +39,7 @@ const CONFIG_AREA_META: Record<string, { label: string; order: number }> = {
   'platform-shared': { label: '平台与共享', order: 120 },
   developer: { label: '开发参数', order: 900 },
 };
-const RETIRED_CONFIG_AREAS = new Set(['task-runner', 'mcp-management-service']);
+const RETIRED_CONFIG_AREAS = new Set(['chatos-backend', 'task-runner', 'mcp-management-service']);
 
 function configAreaKey(definition: ConfigDefinition) {
   const serviceName = definition.service_name?.trim();
@@ -48,7 +47,6 @@ function configAreaKey(definition: ConfigDefinition) {
     return serviceName;
   }
   const categoryRoot = definition.category.split('/')[0]?.trim().toLowerCase();
-  if (categoryRoot === 'chat os') return 'chatos-backend';
   if (categoryRoot === 'memory engine') return 'memory-engine';
   if (categoryRoot === 'user service') return 'user-service';
   if (categoryRoot === 'plugin management') return 'plugin-management-service';
@@ -83,7 +81,7 @@ export function ConfigEditor({ environment }: { environment: string }) {
   const [publishMessage, setPublishMessage] = useState('');
   const [customOpen, setCustomOpen] = useState(false);
   const [activeArea, setActiveArea] = useState(
-    localStorage.getItem('chatos.configuration-center.config-area') || 'chatos-backend',
+    localStorage.getItem('chatos.configuration-center.config-area') || 'memory-engine',
   );
   const [configSearch, setConfigSearch] = useState('');
   const [customForm] = Form.useForm<{
@@ -362,7 +360,7 @@ export function ConfigEditor({ environment }: { environment: string }) {
           form={customForm}
           layout="vertical"
           initialValues={{
-            service_name: 'chatos-backend',
+            service_name: 'memory-engine',
             value_type: 'string',
             reload_mode: 'next_request',
           }}
@@ -377,7 +375,6 @@ export function ConfigEditor({ environment }: { environment: string }) {
           <Form.Item name="service_name" label="目标服务" rules={[{ required: true }]}>
             <Select
               options={[
-                'chatos-backend',
                 'user-service',
                 'plugin-management-service',
                 'local-connector-service',

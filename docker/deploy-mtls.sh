@@ -58,45 +58,6 @@ ensure_config_center_mtls_material() {
   done
 }
 
-ensure_local_connector_mtls_material() {
-  need_cmd openssl
-  local configured_dir resolved_dir
-  local required_file failures=0
-  configured_dir="$(env_value LOCAL_CONNECTOR_MTLS_DIR ./secrets/local-connector-mtls)"
-  if [[ "$configured_dir" = /* ]]; then
-    resolved_dir="$configured_dir"
-  else
-    resolved_dir="$SCRIPT_DIR/$configured_dir"
-  fi
-
-  for required_file in ca.crt server.crt server.key
-  do
-    if [[ ! -s "$resolved_dir/$required_file" ]]; then
-      failures=1
-      break
-    fi
-  done
-
-  if (( failures > 0 )) && ! is_production_environment; then
-    "$ROOT_DIR/scripts/generate-local-connector-mtls.sh" "$resolved_dir"
-    failures=0
-  fi
-  if (( failures > 0 )); then
-    echo "[ERROR] Local Connector mTLS material is incomplete: $resolved_dir" >&2
-    echo "        Generate or provision it before deployment; production never creates certificates automatically." >&2
-    return 1
-  fi
-  if ! openssl verify -purpose sslserver -CAfile "$resolved_dir/ca.crt" \
-    "$resolved_dir/server.crt" >/dev/null; then
-    echo "[ERROR] Local Connector server certificate is not trusted by the configured CA" >&2
-    return 1
-  fi
-  if ! openssl pkey -in "$resolved_dir/server.key" -noout >/dev/null 2>&1; then
-    echo "[ERROR] Local Connector server key is unreadable" >&2
-    return 1
-  fi
-}
-
 ensure_user_service_mtls_material() {
   need_cmd openssl
   local configured_dir resolved_dir
@@ -153,7 +114,6 @@ ensure_user_service_mtls_material() {
 validate_runtime_material() {
   validate_production_secrets
   ensure_config_center_mtls_material
-  ensure_local_connector_mtls_material
   ensure_user_service_mtls_material
   ensure_plugin_management_mtls_material
   ensure_memory_engine_mtls_material

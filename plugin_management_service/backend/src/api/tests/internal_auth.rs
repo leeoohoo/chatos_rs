@@ -128,16 +128,16 @@ async fn internal_secret_is_bound_to_declared_caller_service() {
         "local-connector-secret".to_string(),
     );
     state.config.internal_api_secrets.insert(
-        "chatos-backend".to_string(),
-        "chatos-backend-secret".to_string(),
+        "memory-engine".to_string(),
+        "memory-engine-secret".to_string(),
     );
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-plugin-management-caller-service",
         HeaderValue::from_static("local-connector-service"),
     );
-    let chatos_token = chatos_service_runtime::issue_internal_service_token(
-        "chatos-backend-secret",
+    let memory_engine_token = chatos_service_runtime::issue_internal_service_token(
+        "memory-engine-secret",
         "local-connector-service",
         INTERNAL_TOKEN_AUDIENCE,
         CAPABILITIES_RESOLVE_SCOPE,
@@ -146,7 +146,7 @@ async fn internal_secret_is_bound_to_declared_caller_service() {
     .expect("issue impersonation token");
     headers.insert(
         "x-plugin-management-internal-token",
-        HeaderValue::from_str(chatos_token.as_str()).expect("token header"),
+        HeaderValue::from_str(memory_engine_token.as_str()).expect("token header"),
     );
 
     let err = require_internal_api_secret(

@@ -1,8 +1,0 @@
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-// Required Notice: Copyright (c) 2025 AI Chat Team
-
-mod factory;
-mod types;
-
-pub use factory::{get_db, get_pool, init_global};
-pub use types::Database;

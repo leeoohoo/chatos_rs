@@ -98,30 +98,42 @@ mod tests {
     fn token_is_bound_to_caller_and_scope() {
         let mut config = test_config();
         config.internal_api_secrets.insert(
-            "task-runner".to_string(),
-            "a-long-task-runner-memory-secret".to_string(),
+            "configuration-center".to_string(),
+            "a-long-configuration-center-memory-secret".to_string(),
         );
         let token = chatos_service_runtime::issue_internal_service_token(
-            "a-long-task-runner-memory-secret",
-            "task-runner",
+            "a-long-configuration-center-memory-secret",
+            "configuration-center",
             TOKEN_AUDIENCE,
-            DATA_SCOPE,
+            OPERATOR_SCOPE,
             60,
         )
         .expect("issue token");
         let mut headers = HeaderMap::new();
-        headers.insert("x-memory-caller", HeaderValue::from_static("task-runner"));
+        headers.insert(
+            "x-memory-caller",
+            HeaderValue::from_static("configuration-center"),
+        );
         headers.insert(
             "x-memory-internal-token",
             HeaderValue::from_str(token.as_str()).expect("token header"),
         );
-        let claims = require_internal_request(&config, &headers, DATA_SCOPE, &["task-runner"])
-            .expect("valid token")
-            .expect("signed identity");
-        assert_eq!(claims.caller, "task-runner");
-        assert!(
-            require_internal_request(&config, &headers, OPERATOR_SCOPE, &["task-runner"]).is_err()
-        );
+        let claims = require_internal_request(
+            &config,
+            &headers,
+            OPERATOR_SCOPE,
+            &["configuration-center"],
+        )
+        .expect("valid token")
+        .expect("signed identity");
+        assert_eq!(claims.caller, "configuration-center");
+        assert!(require_internal_request(
+            &config,
+            &headers,
+            DATA_SCOPE,
+            &["configuration-center"]
+        )
+        .is_err());
     }
 
     fn test_config() -> AppConfig {

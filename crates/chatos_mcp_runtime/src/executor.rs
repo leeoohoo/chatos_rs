@@ -459,7 +459,7 @@ mod tests {
                 name: "local".to_string(),
                 command: "node".to_string(),
                 args: Some(vec!["server.js".to_string()]),
-                cwd: Some("/opt/chatos/backend/data/workspace/users/u1/project".to_string()),
+                cwd: Some("/workspace/users/u1/project".to_string()),
                 env: None,
                 user_id: Some("user-1".to_string()),
             }],

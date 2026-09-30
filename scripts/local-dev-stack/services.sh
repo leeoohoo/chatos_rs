@@ -66,11 +66,6 @@ start_backend() {
       export MEMORY_ENGINE_MTLS_SERVER_KEY_PATH="$MEMORY_ENGINE_MTLS_DIR/server.key"
       export MEMORY_ENGINE_MTLS_CLIENT_CA_CERT_PATH="$MEMORY_ENGINE_MTLS_DIR/ca.crt"
     fi
-    if [[ "$name" == "local-connector-service-backend" ]]; then
-      export LOCAL_CONNECTOR_MTLS_SERVER_CERT_PATH="$LOCAL_CONNECTOR_MTLS_DIR/server.crt"
-      export LOCAL_CONNECTOR_MTLS_SERVER_KEY_PATH="$LOCAL_CONNECTOR_MTLS_DIR/server.key"
-      export LOCAL_CONNECTOR_MTLS_CLIENT_CA_CERT_PATH="$LOCAL_CONNECTOR_MTLS_DIR/ca.crt"
-    fi
     if [[ "$name" == "user-service-backend" ]]; then
       export USER_SERVICE_MTLS_SERVER_CERT_PATH="$USER_SERVICE_MTLS_DIR/server.crt"
       export USER_SERVICE_MTLS_SERVER_KEY_PATH="$USER_SERVICE_MTLS_DIR/server.key"
@@ -95,10 +90,6 @@ start_backend() {
 
 ensure_config_center_mtls_material() {
   "$ROOT_DIR/scripts/generate-config-center-mtls.sh" "$CONFIG_CENTER_MTLS_DIR"
-}
-
-ensure_local_connector_mtls_material() {
-  "$ROOT_DIR/scripts/generate-local-connector-mtls.sh" "$LOCAL_CONNECTOR_MTLS_DIR"
 }
 
 ensure_user_service_mtls_material() {
@@ -534,7 +525,6 @@ start_all() {
   export_local_env
   ensure_dirs
   ensure_config_center_mtls_material
-  ensure_local_connector_mtls_material
   ensure_user_service_mtls_material
   ensure_memory_engine_mtls_material
   ensure_plugin_management_mtls_material

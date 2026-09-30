@@ -31,7 +31,6 @@ VALKEY_PASSWORD=change_me_valkey_password
 
 # Cross-service model runtime lookup. ChatOS Cloud Agent workers use this
 # caller-specific secret together with mTLS; never reuse a user access token.
-CHATOS_USER_SERVICE_INTERNAL_API_SECRET=change_me_chatos_user_service_secret
 
 # Keep the password-based Mini Program simulator entry disabled in normal
 # deployments. Enable it only for a controlled developer-tool test window.
@@ -47,7 +46,6 @@ CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET=change_me_config_center_user_se
 
 # Configuration Center mTLS material is provisioned outside Git.
 CONFIG_CENTER_MTLS_DIR=./secrets/config-center-mtls
-LOCAL_CONNECTOR_MTLS_DIR=./secrets/local-connector-mtls
 USER_SERVICE_MTLS_DIR=./secrets/user-service-mtls
 PLUGIN_MANAGEMENT_MTLS_DIR=./secrets/plugin-management-mtls
 

@@ -19,9 +19,7 @@ Usage: scripts/cleanup-dev-artifacts.sh [--dry-run]
 
 Cleanup common local development artifacts:
 - native client and first-party plugin build outputs
-- chatos/backend/target
 - target-shared
-- chatos/backend logs
 - python __pycache__ / .pyc
 - common .DS_Store files
 EOF
@@ -69,16 +67,13 @@ remove_path "$ROOT_DIR/plugins/browser/target"
 remove_path "$ROOT_DIR/plugins/computer-use/.build"
 remove_path "$ROOT_DIR/plugins/document/dist"
 remove_path "$ROOT_DIR/plugins/document/node_modules"
-remove_path "$ROOT_DIR/chatos/backend/target"
 remove_path "$ROOT_DIR/target-shared"
-remove_glob "$ROOT_DIR/chatos/backend/logs/server.log*"
-remove_glob "$ROOT_DIR/chatos/backend/logs/error.log*"
 
 while IFS= read -r path; do
   remove_path "$path"
 done < <(
   find "$ROOT_DIR" \
-    \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/chatos/backend/target" -o -path "$ROOT_DIR/target-shared" \) -prune \
+    \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/target-shared" \) -prune \
     -o \( -name .DS_Store -o -name __pycache__ -o -name '*.pyc' -o -name '*.pyo' \) -print
 )
 

@@ -22,7 +22,6 @@ mod auth_middleware;
 mod companion;
 mod controlled_network_readiness;
 mod devices;
-mod internal_auth;
 mod managed_requirements;
 mod managed_requirements_admin;
 mod managed_runtime_config;
@@ -37,7 +36,7 @@ mod router;
 mod workspaces;
 
 pub use self::auth_middleware::ApiError;
-use self::auth_middleware::{require_internal_auth, require_public_auth, AuthState};
+use self::auth_middleware::{require_public_auth, AuthState};
 use self::controlled_network_readiness::controlled_network_readiness;
 use self::devices::{
     connect_device, create_device, disconnect_device, get_device, heartbeat_device, list_devices,
@@ -58,7 +57,7 @@ use self::plugin_management_prompts::{get_agent_prompt_bundle, get_agent_prompt_
 use self::project_bindings::{
     create_project_binding, delete_project_binding, list_project_bindings, update_project_binding,
 };
-pub use self::router::{build_internal_router, build_public_router};
+pub use self::router::build_public_router;
 use self::workspaces::{
     create_workspace, delete_workspace, list_workspaces, load_owned_workspace, update_workspace,
 };

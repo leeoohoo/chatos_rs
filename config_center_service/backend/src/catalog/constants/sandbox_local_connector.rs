@@ -1,11 +1,7 @@
-pub const LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS_CONFIG_KEY: &str =
-    "local_connector.security.require_signed_internal_requests";
 pub const LOCAL_CONNECTOR_PLUGIN_MANAGEMENT_INTERNAL_API_SECRET_CONFIG_KEY: &str =
     "local_connector.downstream.plugin_management_internal_api_secret";
 pub const LOCAL_CONNECTOR_HOST_CONFIG_KEY: &str = "local_connector.runtime.host";
 pub const LOCAL_CONNECTOR_PORT_CONFIG_KEY: &str = "local_connector.runtime.port";
-pub const LOCAL_CONNECTOR_INTERNAL_MTLS_PORT_CONFIG_KEY: &str =
-    "local_connector.runtime.internal_mtls_port";
 pub const LOCAL_CONNECTOR_DATABASE_URL_CONFIG_KEY: &str = "local_connector.runtime.database_url";
 pub const LOCAL_CONNECTOR_USER_SERVICE_BASE_URL_CONFIG_KEY: &str =
     "local_connector.downstream.user_service_base_url";

@@ -26,11 +26,6 @@ BASELINE: dict[str, dict[str, str]] = {
     "Cargo.toml": {
         "sqlx": "0.8.6",
     },
-    "chatos/backend/Cargo.toml": {
-        "axum": "0.8",
-        "tower-http": "0.7",
-        "sqlx": "0.8.6",
-    },
     "clients/local_agent_host/layers/infrastructure/database/Cargo.toml": {
         "sqlx": "workspace",
     },

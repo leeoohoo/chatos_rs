@@ -95,7 +95,6 @@ Windows 客户端使用相同的产品协议与视觉语言，同时拥有独立
 | `clients/macos` | Swift 6.2 / SwiftUI 原生客户端与 macOS Local Connector。 |
 | `clients/windows` | .NET 8 / WinUI 3 原生客户端、Windows Local Connector、Network Guard 与安装器。 |
 | `clients/local_agent_host` | 由原生客户端内嵌的 Rust 本地任务、工具、调度与执行宿主。 |
-| `chatos/backend` | ChatOS 主 API 与对话编排服务。 |
 | `memory_engine/backend` | 会话摘要与分层项目/主题记忆。 |
 | `plugin_management_service/backend` | 插件目录、版本、安装包与运行能力元数据。 |
 | `local_connector_service/backend` | 原生 Local Connector 的云端路由与协调。 |
@@ -106,6 +105,8 @@ Windows 客户端使用相同的产品协议与视觉语言，同时拥有独立
 | `admin_console` | React 管理控制台。 |
 | `official_website_service` | 官网、注册和客户端版本分发。 |
 | `docker` | Compose 拓扑、部署脚本、网关与可观测性配置。 |
+
+会话、任务、工具、终端、工作区和插件执行现已通过 `clients/local_agent_host` 完全落在原生客户端，不再保留云端 ChatOS Task Runner 或会话后端。
 
 根 Rust workspace 定义在 [Cargo.toml](./Cargo.toml)。Memory Engine 保持独立 Rust workspace，由 Makefile 显式构建和测试。
 
@@ -152,7 +153,7 @@ make dev
 只重建部分 Compose 服务：
 
 ```bash
-make docker-rebuild SERVICES="chatos-backend task-runner-backend"
+make docker-rebuild SERVICES="local-connector-service-backend memory-engine-backend"
 ```
 
 需要更快地调试后端与管理前端时，可以使用宿主机开发栈：
@@ -160,7 +161,7 @@ make docker-rebuild SERVICES="chatos-backend task-runner-backend"
 ```bash
 make local-dev
 make local-dev-status
-make local-dev-logs SERVICE=chatos-backend
+make local-dev-logs SERVICE=local-connector-service-backend
 make local-dev-stop
 ```
 

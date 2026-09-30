@@ -10,7 +10,6 @@ use crate::config::AppConfig;
 use super::{error, forbidden};
 
 pub(super) const USER_SERVICE_TOKEN_AUDIENCE: &str = "user-service";
-pub(super) const CHATOS_CALLER: &str = "chatos-backend";
 pub(super) const MEMORY_ENGINE_CALLER: &str = "memory-engine";
 pub(super) const MODEL_SETTINGS_READ_SCOPE: &str = "model-settings.read";
 pub(super) const MODEL_RUNTIME_READ_SCOPE: &str = "model-runtime.read";
@@ -38,15 +37,6 @@ pub(super) fn require_user_model_internal_request(
     required_scope: &str,
 ) -> Result<UserServiceInternalRequestIdentity, (StatusCode, Json<Value>)> {
     match header_text(headers, "x-user-service-caller") {
-        Some(CHATOS_CALLER) => {
-            let expected = config
-                .chatos_internal_api_secret
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| forbidden("chatos user API secret is not configured"))?;
-            verify_internal_request(headers, expected, CHATOS_CALLER, required_scope)
-        }
         Some(MEMORY_ENGINE_CALLER) => {
             let expected = config
                 .memory_engine_internal_api_secret
@@ -158,10 +148,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn signed_token_is_bound_to_chatos_audience_and_scope() {
+    fn signed_token_is_bound_to_user_service_audience_and_scope() {
         let token = chatos_service_runtime::issue_internal_service_token(
-            "a-long-chatos-user-service-secret",
-            CHATOS_CALLER,
+            "a-long-memory-engine-user-service-secret",
+            MEMORY_ENGINE_CALLER,
             USER_SERVICE_TOKEN_AUDIENCE,
             MODEL_RUNTIME_READ_SCOPE,
             60,
@@ -170,7 +160,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             "x-user-service-caller",
-            HeaderValue::from_static(CHATOS_CALLER),
+            HeaderValue::from_static(MEMORY_ENGINE_CALLER),
         );
         headers.insert(
             "x-user-service-internal-token",
@@ -179,18 +169,18 @@ mod tests {
 
         let identity = verify_internal_request(
             &headers,
-            "a-long-chatos-user-service-secret",
-            CHATOS_CALLER,
+            "a-long-memory-engine-user-service-secret",
+            MEMORY_ENGINE_CALLER,
             MODEL_RUNTIME_READ_SCOPE,
         )
         .expect("matching signed request");
-        assert_eq!(identity.caller_service, CHATOS_CALLER);
+        assert_eq!(identity.caller_service, MEMORY_ENGINE_CALLER);
         assert_eq!(identity.scope, MODEL_RUNTIME_READ_SCOPE);
         uuid::Uuid::parse_str(identity.trace_id.as_str()).expect("signed trace id");
         let err = verify_internal_request(
             &headers,
-            "a-long-chatos-user-service-secret",
-            CHATOS_CALLER,
+            "a-long-memory-engine-user-service-secret",
+            MEMORY_ENGINE_CALLER,
             MODEL_SETTINGS_READ_SCOPE,
         )
         .expect_err("scope mismatch must fail");
@@ -198,11 +188,11 @@ mod tests {
     }
 
     #[test]
-    fn signed_model_runtime_token_accepts_only_chatos_caller_and_scope() {
-        let secret = "a-long-chatos-user-service-secret";
+    fn signed_model_runtime_token_accepts_only_memory_engine_caller_and_scope() {
+        let secret = "a-long-memory-engine-user-service-secret";
         let token = chatos_service_runtime::issue_internal_service_token(
             secret,
-            CHATOS_CALLER,
+            MEMORY_ENGINE_CALLER,
             USER_SERVICE_TOKEN_AUDIENCE,
             MODEL_RUNTIME_READ_SCOPE,
             60,
@@ -211,7 +201,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             "x-user-service-caller",
-            HeaderValue::from_static(CHATOS_CALLER),
+            HeaderValue::from_static(MEMORY_ENGINE_CALLER),
         );
         headers.insert(
             "x-user-service-internal-token",
@@ -219,13 +209,13 @@ mod tests {
         );
 
         let identity =
-            verify_internal_request(&headers, secret, CHATOS_CALLER, MODEL_RUNTIME_READ_SCOPE)
-                .expect("matching ChatOS model runtime request");
-        assert_eq!(identity.caller_service, CHATOS_CALLER);
+            verify_internal_request(&headers, secret, MEMORY_ENGINE_CALLER, MODEL_RUNTIME_READ_SCOPE)
+                .expect("matching Memory Engine model runtime request");
+        assert_eq!(identity.caller_service, MEMORY_ENGINE_CALLER);
         assert_eq!(identity.scope, MODEL_RUNTIME_READ_SCOPE);
 
         let wrong_scope =
-            verify_internal_request(&headers, secret, CHATOS_CALLER, MODEL_SETTINGS_READ_SCOPE)
+            verify_internal_request(&headers, secret, MEMORY_ENGINE_CALLER, MODEL_SETTINGS_READ_SCOPE)
                 .expect_err("scope mismatch must fail");
         assert_eq!(wrong_scope.0, StatusCode::UNAUTHORIZED);
 
@@ -244,12 +234,12 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             "x-user-service-internal-secret",
-            HeaderValue::from_static("a-long-chatos-user-service-secret"),
+            HeaderValue::from_static("a-long-memory-engine-user-service-secret"),
         );
         let err = verify_internal_request(
             &headers,
-            "a-long-chatos-user-service-secret",
-            CHATOS_CALLER,
+            "a-long-memory-engine-user-service-secret",
+            MEMORY_ENGINE_CALLER,
             MODEL_RUNTIME_READ_SCOPE,
         )
         .expect_err("legacy auth must fail in every environment");
@@ -259,8 +249,8 @@ mod tests {
     #[test]
     fn caller_is_required_when_a_signed_token_is_present() {
         let token = chatos_service_runtime::issue_internal_service_token(
-            "a-long-chatos-user-service-secret",
-            CHATOS_CALLER,
+            "a-long-memory-engine-user-service-secret",
+            MEMORY_ENGINE_CALLER,
             USER_SERVICE_TOKEN_AUDIENCE,
             MODEL_RUNTIME_READ_SCOPE,
             60,
@@ -273,8 +263,8 @@ mod tests {
         );
         let err = verify_internal_request(
             &headers,
-            "a-long-chatos-user-service-secret",
-            CHATOS_CALLER,
+            "a-long-memory-engine-user-service-secret",
+            MEMORY_ENGINE_CALLER,
             MODEL_RUNTIME_READ_SCOPE,
         )
         .expect_err("caller is part of the signed request identity");

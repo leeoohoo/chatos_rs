@@ -32,12 +32,18 @@ def forbid(relative_path: str, needles: list[str], reason: str) -> None:
             ERRORS.append(f"{relative_path}: {reason} ({needle!r})")
 
 
-for retired_root in ("task_runner_service", "mcp_management_service"):
+for retired_root in ("chatos", "task_runner_service", "mcp_management_service"):
     if (ROOT / retired_root).exists():
         ERRORS.append(f"retired server execution root still exists: {retired_root}")
 
 workspace = read("Cargo.toml")
-for retired_member in ("task_runner_service/backend", "mcp_management_service/backend"):
+for retired_member in (
+    "chatos/backend",
+    "task_runner_service/backend",
+    "mcp_management_service/backend",
+    "crates/chatos_mcp_gateway",
+    "crates/chatos_mcp_management_sdk",
+):
     if retired_member in workspace:
         ERRORS.append(f"Cargo workspace still contains retired member: {retired_member}")
 

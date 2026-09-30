@@ -116,13 +116,10 @@ fn required_bootstrap_path(key: &str) -> Result<std::path::PathBuf, String> {
 
 fn caller_secret_env_key(caller_service: &str) -> Option<&'static str> {
     match caller_service {
-        "chatos-backend" => Some("PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET"),
-        "task-runner" => Some("PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET"),
         "local-connector-service" => {
             Some("PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET")
         }
         "memory-engine" => Some("PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET"),
-        "mcp-management-service" => Some("PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET"),
         _ => None,
     }
 }
@@ -134,24 +131,12 @@ mod tests {
     #[test]
     fn maps_known_callers_to_dedicated_secret_variables() {
         assert_eq!(
-            caller_secret_env_key("chatos-backend"),
-            Some("PLUGIN_MANAGEMENT_CHATOS_INTERNAL_API_SECRET")
-        );
-        assert_eq!(
-            caller_secret_env_key("task-runner"),
-            Some("PLUGIN_MANAGEMENT_TASK_RUNNER_INTERNAL_API_SECRET")
-        );
-        assert_eq!(
             caller_secret_env_key("local-connector-service"),
             Some("PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET")
         );
         assert_eq!(
             caller_secret_env_key("memory-engine"),
             Some("PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET")
-        );
-        assert_eq!(
-            caller_secret_env_key("mcp-management-service"),
-            Some("PLUGIN_MANAGEMENT_MCP_MANAGEMENT_INTERNAL_API_SECRET")
         );
         assert_eq!(caller_secret_env_key("unknown"), None);
     }

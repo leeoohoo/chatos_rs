@@ -4,9 +4,7 @@
 use tracing_subscriber::EnvFilter;
 
 use local_connector_service_backend::{
-    build_internal_router, build_public_router,
-    internal_tls::{load_internal_mtls_config, LocalConnectorInternalTlsConfig},
-    load_local_connector_dotenv, AppConfig, AppState,
+    build_public_router, load_local_connector_dotenv, AppConfig, AppState,
 };
 
 #[tokio::main]
@@ -39,12 +37,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await;
     let bind_addr = config.bind_addr();
-    let internal_tls = LocalConnectorInternalTlsConfig::from_env(
-        config.host,
-        config.port,
-        config.internal_mtls_port,
-    )?;
-    let internal_mtls_config = load_internal_mtls_config(&internal_tls)?;
     let state = AppState::new(config.clone(), pressure_state).await?;
     let service_id = std::env::var("CHATOS_SERVICE_ID")
         .ok()
@@ -57,8 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         service_id,
         running_version,
     );
-    let public_app = build_public_router(state.clone());
-    let internal_app = build_internal_router(state);
+    let public_app = build_public_router(state);
     let _service_runtime = chatos_service_runtime::register_current_service(
         "local-connector-service",
         config.port,
@@ -73,20 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.port
     );
 
-    tracing::info!(
-        "Local Connector internal API listening with mandatory mTLS on https://{}",
-        internal_tls.bind_addr
-    );
-
-    tokio::select! {
-        result = axum::serve(listener, public_app) => {
-            result?;
-        }
-        result = axum_server::bind_rustls(internal_tls.bind_addr, internal_mtls_config)
-            .serve(internal_app.into_make_service()) => {
-            result?;
-        }
-    }
+    axum::serve(listener, public_app).await?;
     Ok(())
 }
 

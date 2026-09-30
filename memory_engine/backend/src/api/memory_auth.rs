@@ -205,9 +205,9 @@ pub async fn require_memory_auth(
 ) -> Result<Response, (StatusCode, String)> {
     let required_scope = scope_for_memory_path(request.uri().path());
     let allowed_callers: &[&str] = match required_scope {
-        SOURCE_SCOPE => &["chatos-backend", "task-runner"],
+        SOURCE_SCOPE => &[],
         ADMIN_SCOPE => &[],
-        DATA_SCOPE => &["chatos-backend", "task-runner"],
+        DATA_SCOPE => &[],
         _ => &[],
     };
     if let Some(claims) = require_internal_request(

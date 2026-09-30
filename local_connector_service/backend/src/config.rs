@@ -1,25 +1,22 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub(crate) use chatos_service_runtime::env_text as normalized_env;
-use chatos_service_runtime::{parse_bool_text, validate_production_secret};
+use chatos_service_runtime::parse_bool_text;
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub host: IpAddr,
     pub port: u16,
-    pub internal_mtls_port: u16,
     pub database_url: String,
     pub user_service_base_url: String,
     pub user_service_request_timeout: Duration,
     pub relay_request_timeout: Duration,
     pub public_base_url: Option<String>,
-    pub internal_api_secrets: HashMap<String, String>,
     pub require_device_connect_signature: bool,
     pub device_connect_signature_max_skew: Duration,
     pub active_session_lease_ttl: Duration,
@@ -45,13 +42,6 @@ impl AppConfig {
                 format!("LOCAL_CONNECTOR_SERVICE_HOST must be a valid ip address: {err}")
             })?;
         let port = required_u16("LOCAL_CONNECTOR_SERVICE_PORT")?;
-        let internal_mtls_port = required_u16("LOCAL_CONNECTOR_INTERNAL_MTLS_PORT")?;
-        if internal_mtls_port == port {
-            return Err(
-                "LOCAL_CONNECTOR_INTERNAL_MTLS_PORT must differ from LOCAL_CONNECTOR_SERVICE_PORT"
-                    .to_string(),
-            );
-        }
         let timeout_ms = required_u64("LOCAL_CONNECTOR_USER_SERVICE_REQUEST_TIMEOUT_MS")?.max(300);
         let relay_timeout_ms = required_u64("LOCAL_CONNECTOR_RELAY_REQUEST_TIMEOUT_MS")?.max(1_000);
         let signature_skew_seconds =
@@ -80,20 +70,14 @@ impl AppConfig {
         .transpose()?
         .unwrap_or(300)
         .clamp(30, 24 * 60 * 60);
-        let require_signed_internal_requests =
-            required_managed_bool("LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS")?;
-        ensure_signed_internal_requests_required(require_signed_internal_requests)?;
-
         let config = Self {
             host,
             port,
-            internal_mtls_port,
             database_url: required_text("LOCAL_CONNECTOR_DATABASE_URL")?,
             user_service_base_url: required_text("LOCAL_CONNECTOR_USER_SERVICE_BASE_URL")?,
             user_service_request_timeout: Duration::from_millis(timeout_ms),
             relay_request_timeout: Duration::from_millis(relay_timeout_ms),
             public_base_url: normalized_env("LOCAL_CONNECTOR_PUBLIC_BASE_URL"),
-            internal_api_secrets: caller_internal_api_secrets(),
             require_device_connect_signature: required_managed_bool(
                 "LOCAL_CONNECTOR_REQUIRE_DEVICE_CONNECT_SIGNATURE",
             )?,
@@ -130,13 +114,6 @@ impl AppConfig {
             ),
         };
 
-        for caller in ["chatos-backend"] {
-            if !config.internal_api_secrets.contains_key(caller) {
-                return Err(format!(
-                    "dedicated Local Connector internal secret is required for {caller}"
-                ));
-            }
-        }
         if config.valkey_key_prefix.trim().is_empty() {
             return Err("LOCAL_CONNECTOR_VALKEY_KEY_PREFIX must not be empty".to_string());
         }
@@ -146,68 +123,12 @@ impl AppConfig {
                     .to_string(),
             );
         }
-        for (caller, secret) in &config.internal_api_secrets {
-            validate_production_secret(
-                format!("Local Connector internal secret for {caller}").as_str(),
-                Some(secret.as_str()),
-                &[
-                    "chatos-local-connector-dev-secret",
-                    "change_me_task_runner_internal_secret",
-                    "change_me_chatos_local_connector_secret",
-                    "change_me_task_runner_local_connector_secret",
-                ],
-            )?;
-        }
         Ok(config)
     }
 
     pub fn bind_addr(&self) -> SocketAddr {
         SocketAddr::new(self.host, self.port)
     }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn for_auth_test(secret: &str) -> Self {
-        let mut internal_api_secrets = HashMap::new();
-        internal_api_secrets.insert("chatos-backend".to_string(), secret.to_string());
-        Self {
-            host: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-            port: 0,
-            internal_mtls_port: 1,
-            database_url: "memory://auth-test".to_string(),
-            user_service_base_url: "http://127.0.0.1.invalid".to_string(),
-            user_service_request_timeout: Duration::from_secs(1),
-            relay_request_timeout: Duration::from_secs(2),
-            public_base_url: None,
-            internal_api_secrets,
-            require_device_connect_signature: true,
-            device_connect_signature_max_skew: Duration::from_secs(300),
-            active_session_lease_ttl: Duration::from_secs(90),
-            valkey_url: "redis://127.0.0.1:6379/0".to_string(),
-            valkey_key_prefix: "chatos:local-connector:test".to_string(),
-            device_presence_ttl: Duration::from_secs(120),
-            valkey_reconnect_delay: Duration::from_secs(2),
-            relay_correlation_grace_ttl: Duration::from_secs(30),
-            managed_requirements_toml_path: None,
-            managed_requirements_signing_key_path: None,
-            managed_requirements_signing_key_id: None,
-            managed_requirements_bundle_ttl: Duration::from_secs(3600),
-            controlled_network_signing_key_path: None,
-            controlled_network_signing_key_id: None,
-            controlled_network_policy_ttl: Duration::from_secs(300),
-        }
-    }
-}
-
-fn caller_internal_api_secrets() -> HashMap<String, String> {
-    [(
-        "chatos-backend",
-        "CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET",
-    )]
-    .into_iter()
-    .filter_map(|(caller, env_name)| {
-        normalized_env(env_name).map(|secret| (caller.to_string(), secret))
-    })
-    .collect()
 }
 
 pub fn load_local_connector_dotenv() {
@@ -242,26 +163,4 @@ fn required_managed_bool(key: &str) -> Result<bool, String> {
     let value = normalized_env(key)
         .ok_or_else(|| format!("{key} is required from configuration center"))?;
     parse_bool_text(value.as_str()).ok_or_else(|| format!("invalid {key}: expected true/false"))
-}
-
-fn ensure_signed_internal_requests_required(value: bool) -> Result<(), String> {
-    if value {
-        Ok(())
-    } else {
-        Err("LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS must be true".to_string())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ensure_signed_internal_requests_required;
-
-    #[test]
-    fn local_connector_cannot_start_with_unsigned_internal_requests() {
-        assert!(ensure_signed_internal_requests_required(true).is_ok());
-        assert_eq!(
-            ensure_signed_internal_requests_required(false).unwrap_err(),
-            "LOCAL_CONNECTOR_REQUIRE_SIGNED_INTERNAL_REQUESTS must be true"
-        );
-    }
 }

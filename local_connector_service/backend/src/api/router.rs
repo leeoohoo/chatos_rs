@@ -21,14 +21,13 @@ use super::{
     get_agent_prompt_bundle_manifest, get_device, get_managed_requirements, heartbeat_device,
     list_devices, list_managed_requirements_assignments, list_managed_requirements_policies,
     list_plugin_install_sources, list_project_bindings, list_workspaces,
-    proxy_plugin_release_artifact, require_internal_auth, require_public_auth,
-    resolve_local_runtime_capabilities, revoke_device, system_stats_handler,
-    update_managed_requirements_assignment, update_managed_requirements_policy,
-    update_plugin_preference, update_project_binding, update_workspace,
-    user_service_protected_proxy, user_service_public_proxy, AuthState,
+    proxy_plugin_release_artifact, require_public_auth, resolve_local_runtime_capabilities,
+    revoke_device, system_stats_handler, update_managed_requirements_assignment,
+    update_managed_requirements_policy, update_plugin_preference, update_project_binding,
+    update_workspace, user_service_protected_proxy, user_service_public_proxy, AuthState,
 };
 
-fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
+fn protected_api(state: &AppState) -> Router<AppState> {
     let auth_state = AuthState::from_app_state(state);
     let protected_api = Router::new()
         .route("/api/auth/me", get(current_user_handler))
@@ -175,17 +174,10 @@ fn protected_api(state: &AppState, internal: bool) -> Router<AppState> {
         )
         ;
 
-    if internal {
-        protected_api.route_layer(middleware::from_fn_with_state(
-            auth_state,
-            require_internal_auth,
-        ))
-    } else {
-        protected_api.route_layer(middleware::from_fn_with_state(
-            auth_state,
-            require_public_auth,
-        ))
-    }
+    protected_api.route_layer(middleware::from_fn_with_state(
+        auth_state,
+        require_public_auth,
+    ))
 }
 
 pub fn build_public_router(state: AppState) -> Router {
@@ -203,16 +195,7 @@ pub fn build_public_router(state: AppState) -> Router {
                 "/api/auth/local-connector-ticket/exchange",
                 post(user_service_public_proxy),
             )
-            .merge(protected_api(&state, false))
-            .with_state(state),
-    )
-}
-
-pub fn build_internal_router(state: AppState) -> Router {
-    apply_common_layers(
-        Router::new()
-            .route("/api/health", get(health_handler))
-            .merge(protected_api(&state, true))
+            .merge(protected_api(&state))
             .with_state(state),
     )
 }

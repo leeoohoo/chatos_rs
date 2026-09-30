@@ -490,15 +490,12 @@ python3 - \
   "$update_image_tag" \
   "$deploy_wechat_development_login_enabled" <<'PY'
 from pathlib import Path
-import secrets
 import sys
 
 path = Path(sys.argv[1])
 release_tag = sys.argv[2]
 update_image_tag = sys.argv[3] == "true"
 development_login_enabled = sys.argv[4]
-secret_key = "CHATOS_USER_SERVICE_INTERNAL_API_SECRET"
-development_secret = "change_me_chatos_user_service_secret"
 updates = {
     "CHATOS_DOCKER_MODE": "build",
 }
@@ -520,9 +517,6 @@ if (
     or "127.0.0.1" in website_public_base
 ):
     updates[website_public_base_key] = "https://www.jgoool.com"
-current_secret = current_values.get(secret_key, "").strip()
-if not current_secret or current_secret == development_secret or len(current_secret) < 32:
-    updates[secret_key] = secrets.token_urlsafe(48)
 seen = set()
 rendered = []
 for line in lines:

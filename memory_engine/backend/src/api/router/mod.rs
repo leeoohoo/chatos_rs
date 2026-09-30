@@ -75,7 +75,6 @@ mod tests {
     use tower::ServiceExt;
 
     use super::{build_internal_router, build_public_router};
-    use crate::api::internal_auth::{DATA_SCOPE, OPERATOR_SCOPE, TOKEN_AUDIENCE};
     use crate::config::AppConfig;
     use crate::pressure::{
         MemoryEnginePressurePolicy, MemoryEnginePressureState, PlatformPressureLevel,
@@ -83,7 +82,6 @@ mod tests {
     use crate::state::{AppState, MemoryEngineRuntimeStats};
 
     const USER_SERVICE_SECRET: &str = "test-user-service-memory-engine-signing-secret";
-    const TASK_RUNNER_SECRET: &str = "test-task-runner-memory-engine-signing-secret";
 
     #[tokio::test]
     async fn public_router_does_not_expose_operator_routes() {
@@ -122,12 +120,11 @@ mod tests {
 
     #[tokio::test]
     async fn public_data_route_rejects_internal_service_headers() {
-        let token = service_token(TASK_RUNNER_SECRET, "task-runner", DATA_SCOPE);
         let response = build_public_router(test_state().await)
             .oneshot(
                 Request::get("/api/memory-engine/v1/threads/thread-a")
                     .header("x-memory-caller", "task-runner")
-                    .header("x-memory-internal-token", token)
+                    .header("x-memory-internal-token", "retired-service-token")
                     .body(Body::empty())
                     .expect("request"),
             )
@@ -137,22 +134,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn internal_data_route_requires_allowed_caller_and_data_scope() {
-        let router = build_internal_router(test_state().await);
-        let wrong_scope = service_token(TASK_RUNNER_SECRET, "task-runner", OPERATOR_SCOPE);
-        let wrong_scope_response = router
-            .clone()
-            .oneshot(thread_upsert_request("task-runner", wrong_scope))
+    async fn internal_data_route_rejects_retired_task_runner_caller() {
+        let response = build_internal_router(test_state().await)
+            .oneshot(thread_upsert_request(
+                "task-runner",
+                "retired-service-token".to_string(),
+            ))
             .await
-            .expect("wrong scope response");
-        assert_eq!(wrong_scope_response.status(), StatusCode::UNAUTHORIZED);
-
-        let valid = service_token(TASK_RUNNER_SECRET, "task-runner", DATA_SCOPE);
-        let valid_response = router
-            .oneshot(thread_upsert_request("task-runner", valid))
-            .await
-            .expect("valid identity response");
-        assert_eq!(valid_response.status(), StatusCode::BAD_REQUEST);
+            .expect("router response");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
     fn thread_upsert_request(caller: &str, token: String) -> Request<Body> {
@@ -162,17 +152,6 @@ mod tests {
             .header("content-type", "application/json")
             .body(Body::empty())
             .expect("request")
-    }
-
-    fn service_token(secret: &str, caller: &str, scope: &str) -> String {
-        chatos_service_runtime::issue_internal_service_token(
-            secret,
-            caller,
-            TOKEN_AUDIENCE,
-            scope,
-            60,
-        )
-        .expect("issue service token")
     }
 
     async fn test_state() -> Arc<AppState> {
@@ -204,7 +183,6 @@ mod tests {
     fn test_config() -> AppConfig {
         let mut internal_api_secrets = HashMap::new();
         internal_api_secrets.insert("user-service".to_string(), USER_SERVICE_SECRET.to_string());
-        internal_api_secrets.insert("task-runner".to_string(), TASK_RUNNER_SECRET.to_string());
         AppConfig {
             host: "127.0.0.1".to_string(),
             port: 0,

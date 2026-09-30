@@ -17,8 +17,7 @@ It owns:
 
 The service is now integrated into the repository flow:
 
-- `chat_app_server_rs` can proxy `register`, `login`, and `me` to `user_service`
-- Chat OS model config CRUD can proxy to `user_service`
+- Local clients call `user_service` directly for registration, login, session restore, and model configuration
 - Local clients use the signed-in user's identity and fetch that user's model runtime config through the authenticated control plane
 - `user_service` exposes signed internal model runtime endpoints to approved callers and retains Memory Engine model settings
 - There is no Task Runner token audience, token exchange, internal caller, or task-model catalog API

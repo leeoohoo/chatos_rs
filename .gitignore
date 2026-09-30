@@ -51,7 +51,6 @@ clients/wechat-miniprogram/project.private.config.json
 *.sln
 *.sw?
 
-/chatos/backend/docs/
 # Product and implementation documents are local-only in this repository.
 /docs/
 

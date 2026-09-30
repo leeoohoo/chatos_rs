@@ -10,6 +10,4 @@ clients/macos/Tests/ChatOSAppTests/StoryStudioTests.swift	1558	2026-12-31	Split 
 crates/chatos_ai_runtime/src/runtime/tests.rs	1479	2026-12-31	Split AI runtime tests by execution phase
 crates/chatos_cloud_agent_runtime/src/lib_inline_tests.rs	1128	2026-12-31	Move cloud runtime inline tests into layered test modules
 mcp/src/implementations/builtin/code_maintainer/tests.rs	1082	2026-12-31	Split code maintainer read, edit, and verification scenarios
-chatos/backend/src/api/sessions/history_process_inline_tests.rs	946	2026-12-31	Split session history trimming and error scenarios
 memory_engine/backend/src/repositories/postgres_contract_tests.rs	893	2026-12-31	Split PostgreSQL repository contracts by repository
-chatos/backend/src/api/agent_chat/task_runner_callback/messages/tests.rs	847	2026-12-31	Split task-runner callback tests by message state

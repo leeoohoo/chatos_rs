@@ -5,7 +5,6 @@
 members = [
   "agent",
   "mcp",
-  "chatos/backend",
   "crates/chatos_cloud_agent_protocol",
   "crates/chatos_cloud_agent_runtime",
   "crates/chatos_ai_runtime",
@@ -14,8 +13,6 @@ members = [
   "crates/chatos_sandbox_contract",
   "crates/memory_engine_sdk",
   "crates/chatos_mcp_runtime",
-  "crates/chatos_mcp_gateway",
-  "crates/chatos_mcp_management_sdk",
   "crates/chatos_mcp_service",
   "crates/chatos_service_runtime",
   "crates/chatos_terminal_runtime",

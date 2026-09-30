@@ -46,10 +46,6 @@ done < <(
     "plugins/computer-use/.build" \
     "plugins/document/node_modules" \
     "plugins/document/dist" \
-    "chatos/backend/target" \
-    "chatos/backend/data" \
-    "chatos/backend/logs" \
-    "chatos/backend/docs" \
     "target-shared"
 ) | sort -hr
 
@@ -61,7 +57,7 @@ git -C "$ROOT_DIR" ls-files | rg '(^|/)(__pycache__/|.*\.pyc$|.*\.pyo$|.*\.sqlit
 
 print_header "Local Runtime And Cache Artifacts"
 find "$ROOT_DIR" \
-  \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/chatos/backend/target" -o -path "$ROOT_DIR/target-shared" \) -prune \
+  \( -path "$ROOT_DIR/.git" -o -path "$ROOT_DIR/target-shared" \) -prune \
   -o \( -name '.DS_Store' -o -name '__pycache__' -o -name '*.pyc' -o -name '*.pyo' -o -name '*.sqlite3' -o -name '*.sqlite3-shm' -o -name '*.sqlite3-wal' -o -name '*.db' -o -name '*.db-shm' -o -name '*.db-wal' \) -print \
   | sed "s#^$ROOT_DIR/##" | sort | head -n "$TOP_N"
 
@@ -71,5 +67,4 @@ echo "python scripts/check_source_size_policy.py"
 echo "python scripts/check_new_code_clones.py --min-lines 25"
 echo "python scripts/check-non-test-unwrap-expect.py"
 echo "python scripts/check-rust-dependency-drift.py"
-echo "bash scripts/check-hotspot-line-budgets.sh"
 echo "bash scripts/cleanup-dev-artifacts.sh --dry-run"

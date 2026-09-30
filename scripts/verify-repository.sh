@@ -67,8 +67,6 @@ run_quality() {
   python3 scripts/check_new_code_clones.py --min-lines 25
   python3 scripts/check-agent-tool-plane-boundaries.py
   python3 scripts/check-non-test-unwrap-expect.py
-  bash scripts/check-request-path-panics.sh
-  bash scripts/check-hotspot-line-budgets.sh
   python3 scripts/check-rust-dependency-drift.py
 }
 
@@ -79,7 +77,6 @@ run_rust_build() {
     -p config_center_service_backend \
     -p plugin_management_service_backend \
     -p local_connector_service_backend \
-    -p chat_app_server_rs \
     -p official_website_service_backend
   "${CARGO[@]}" check \
     --manifest-path memory_engine/backend/Cargo.toml \

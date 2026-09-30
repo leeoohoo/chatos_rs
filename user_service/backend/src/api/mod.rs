@@ -442,7 +442,6 @@ mod tests {
             harness_space_prefix: "u-".to_string(),
             harness_request_timeout_ms: 5000,
             harness_project_pat_prefix: "chatos-project".to_string(),
-            chatos_internal_api_secret: Some("test-chatos-service-secret".to_string()),
             smtp_host: None,
             smtp_port: 587,
             smtp_username: None,

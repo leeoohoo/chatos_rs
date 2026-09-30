@@ -42,12 +42,6 @@ x-config-center-mtls-local-connector-secrets: &config-center-mtls-local-connecto
     target: plugin_management_mtls_ca
   - source: plugin_management_mtls_local_connector_identity
     target: plugin_management_mtls_client_identity
-  - source: local_connector_mtls_ca
-    target: local_connector_mtls_ca
-  - source: local_connector_mtls_server_cert
-    target: local_connector_mtls_server_cert
-  - source: local_connector_mtls_server_key
-    target: local_connector_mtls_server_key
 
 x-config-center-mtls-memory-engine-secrets: &config-center-mtls-memory-engine-secrets
   - source: config_center_mtls_ca
@@ -476,7 +470,6 @@ services:
       USER_SERVICE_JWT_SECRET: ${USER_SERVICE_JWT_SECRET:-change_me_user_service_secret}
       USER_SERVICE_JWT_ISSUER: ${USER_SERVICE_JWT_ISSUER:-user_service}
       USER_SERVICE_USER_AUDIENCE: ${USER_SERVICE_USER_AUDIENCE:-user_service}
-      CHATOS_USER_SERVICE_INTERNAL_API_SECRET: ${CHATOS_USER_SERVICE_INTERNAL_API_SECRET:-change_me_chatos_user_service_secret}
       USER_SERVICE_SMTP_HOST: ${USER_SERVICE_SMTP_HOST:-}
       USER_SERVICE_SMTP_PORT: ${USER_SERVICE_SMTP_PORT:-587}
       USER_SERVICE_SMTP_USERNAME: ${USER_SERVICE_SMTP_USERNAME:-}
@@ -555,7 +548,6 @@ services:
       MEMORY_ENGINE_MTLS_SERVER_KEY_PATH: /run/secrets/memory_engine_mtls_server_key
       MEMORY_ENGINE_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/memory_engine_mtls_ca
       MEMORY_ENGINE_DATABASE_URL: postgresql://memory_engine_app:${MEMORY_ENGINE_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/memory_engine
-      CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET: ${CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_chatos_memory_engine_secret}
       USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_user_service_memory_engine_secret}
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_plugin_management_memory_engine_secret}
@@ -605,7 +597,6 @@ services:
       MEMORY_ENGINE_API_ENABLED: "false"
       MEMORY_ENGINE_WORKER_ENABLED: "true"
       MEMORY_ENGINE_DATABASE_URL: postgresql://memory_engine_app:${MEMORY_ENGINE_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/memory_engine
-      CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET: ${CHATOS_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_chatos_memory_engine_secret}
       USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET: ${USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_user_service_memory_engine_secret}
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_MEMORY_ENGINE_INTERNAL_API_SECRET:-change_me_plugin_management_memory_engine_secret}
@@ -689,10 +680,6 @@ services:
       CHATOS_SERVICE_HEALTH_PATH: /api/health
       LOCAL_CONNECTOR_SERVICE_HOST: 0.0.0.0
       LOCAL_CONNECTOR_SERVICE_PORT: 39230
-      LOCAL_CONNECTOR_INTERNAL_MTLS_PORT: 39232
-      LOCAL_CONNECTOR_MTLS_SERVER_CERT_PATH: /run/secrets/local_connector_mtls_server_cert
-      LOCAL_CONNECTOR_MTLS_SERVER_KEY_PATH: /run/secrets/local_connector_mtls_server_key
-      LOCAL_CONNECTOR_MTLS_CLIENT_CA_CERT_PATH: /run/secrets/local_connector_mtls_ca
       LOCAL_CONNECTOR_DATABASE_URL: postgresql://local_connector_app:${LOCAL_CONNECTOR_APP_PASSWORD:-${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}}@postgres:5432/local_connector_service
       LOCAL_CONNECTOR_USER_SERVICE_BASE_URL: http://user-service-backend:39190
       LOCAL_CONNECTOR_PUBLIC_BASE_URL: ${LOCAL_CONNECTOR_PUBLIC_BASE_URL:-http://localhost:39230}
@@ -700,8 +687,6 @@ services:
       LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_PATH:-}
       LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_SIGNING_KEY_ID:-}
       LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS:-86400}
-      CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${CHATOS_LOCAL_CONNECTOR_INTERNAL_API_SECRET:-change_me_chatos_local_connector_secret}
-      LOCAL_CONNECTOR_INTERNAL_API_SECRET: ${LOCAL_CONNECTOR_INTERNAL_API_SECRET:-}
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET:-change_me_plugin_management_local_connector_secret}
     ports:
@@ -825,12 +810,6 @@ secrets:
     file: ${MEMORY_ENGINE_MTLS_DIR:-./secrets/memory-engine-mtls}/server.key
   memory_engine_mtls_configuration_center_identity:
     file: ${MEMORY_ENGINE_MTLS_DIR:-./secrets/memory-engine-mtls}/configuration-center.identity.pem
-  local_connector_mtls_ca:
-    file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/ca.crt
-  local_connector_mtls_server_cert:
-    file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/server.crt
-  local_connector_mtls_server_key:
-    file: ${LOCAL_CONNECTOR_MTLS_DIR:-./secrets/local-connector-mtls}/server.key
   user_service_mtls_ca:
     file: ${USER_SERVICE_MTLS_DIR:-./secrets/user-service-mtls}/ca.crt
   user_service_mtls_server_cert:

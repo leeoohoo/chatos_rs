@@ -16,8 +16,6 @@ use crate::auth::{
 use crate::models::ErrorResponse;
 use crate::state::AppState;
 
-use super::internal_auth::internal_service_auth_from_request;
-
 #[derive(Clone)]
 pub(super) struct AuthState {
     config: crate::config::AppConfig,
@@ -30,18 +28,6 @@ impl AuthState {
             config: state.config.clone(),
             user_service_http: state.user_service_http().clone(),
         }
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub(super) fn for_test(config: crate::config::AppConfig) -> Result<Self, String> {
-        let user_service_http = reqwest::Client::builder()
-            .timeout(config.user_service_request_timeout)
-            .build()
-            .map_err(|error| format!("build test auth client failed: {error}"))?;
-        Ok(Self {
-            config,
-            user_service_http,
-        })
     }
 }
 
@@ -157,64 +143,6 @@ impl IntoResponse for ApiError {
         )
             .into_response()
     }
-}
-
-pub(super) async fn require_internal_auth(
-    State(state): State<AuthState>,
-    mut request: Request<axum::body::Body>,
-    next: Next,
-) -> Result<Response, ApiError> {
-    if request.method() == Method::OPTIONS {
-        return Ok(next.run(request).await);
-    }
-    if let Some((user, identity)) = internal_service_auth_from_request(
-        &state.config,
-        request.headers(),
-        request.method(),
-        request.uri().path(),
-    )? {
-        let method = request.method().to_string();
-        let resource_path = request.uri().path().to_string();
-        request.extensions_mut().insert(user);
-        request.extensions_mut().insert(identity.clone());
-        let response = next.run(request).await;
-        let event = chatos_service_runtime::InternalResourceAccessAudit {
-            caller_service: identity.caller_service,
-            audience_service: super::internal_auth::TOKEN_AUDIENCE.to_string(),
-            scope: identity.scope,
-            trace_id: identity.trace_id,
-            represented_user_id: Some(identity.owner_user_id),
-            tenant_id: None,
-            project_id: None,
-            resource_type: "local_connector_internal_route".to_string(),
-            resource_id: resource_path,
-            resource_name: None,
-            action: method,
-            outcome: response.status().as_u16().to_string(),
-        };
-        if let Err(error) = chatos_service_runtime::record_internal_resource_access(&event) {
-            tracing::error!(
-                error = error.as_str(),
-                "record Local Connector internal access audit failed"
-            );
-        }
-        return Ok(response);
-    }
-    let token = bearer_token_from_request(&request).map_err(ApiError::unauthorized)?;
-    let proof = device_proof_request(&request, "local");
-    let user = verify_request_via_user_service(
-        &state.config,
-        &state.user_service_http,
-        token.as_str(),
-        &proof,
-    )
-    .await
-    .map_err(ApiError::unauthorized)?;
-    if user.is_wechat_companion() {
-        verify_and_restore_device_bound_body(&mut request, proof.body_sha512.as_str()).await?;
-    }
-    request.extensions_mut().insert(user);
-    Ok(next.run(request).await)
 }
 
 fn enforce_client_scope(
@@ -374,13 +302,8 @@ fn has_legacy_query_token(query: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use axum::http::header::AUTHORIZATION;
-    use axum::middleware;
-    use axum::routing::get;
-    use axum::Router;
-    use tower::ServiceExt;
-
     use super::*;
+    use axum::http::header::AUTHORIZATION;
 
     fn request(uri: &str) -> Request<axum::body::Body> {
         Request::builder()
@@ -535,38 +458,5 @@ mod tests {
             error,
             "URL query access tokens are not supported; use Authorization header"
         );
-    }
-
-    #[tokio::test]
-    async fn public_listener_rejects_internal_service_identity() {
-        let secret = "a-long-public-boundary-test-secret";
-        let config = crate::config::AppConfig::for_auth_test(secret);
-        let auth_state = AuthState::for_test(config).expect("test auth state");
-        let token = chatos_service_runtime::issue_internal_service_token(
-            secret,
-            "chatos-backend",
-            super::super::internal_auth::TOKEN_AUDIENCE,
-            super::super::internal_auth::SYSTEM_STATS_READ_SCOPE,
-            60,
-        )
-        .expect("internal token");
-        let app = Router::new()
-            .route("/api/local-connectors/system/stats", get(|| async { "ok" }))
-            .route_layer(middleware::from_fn_with_state(
-                auth_state,
-                require_public_auth,
-            ));
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/local-connectors/system/stats")
-                    .header("x-local-connector-caller", "chatos-backend")
-                    .header("x-local-connector-internal-token", token)
-                    .body(axum::body::Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("router response");
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

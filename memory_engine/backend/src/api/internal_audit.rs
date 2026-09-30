@@ -174,9 +174,9 @@ mod tests {
 
     fn identity() -> InternalServiceTokenClaims {
         InternalServiceTokenClaims {
-            iss: "task-runner".to_string(),
-            sub: "task-runner".to_string(),
-            caller: "task-runner".to_string(),
+            iss: "configuration-center".to_string(),
+            sub: "configuration-center".to_string(),
+            caller: "configuration-center".to_string(),
             aud: TOKEN_AUDIENCE.to_string(),
             scope: "memory.data".to_string(),
             trace_id: Uuid::new_v4().to_string(),
