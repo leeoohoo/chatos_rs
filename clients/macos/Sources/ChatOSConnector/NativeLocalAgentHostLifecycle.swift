@@ -1,4 +1,5 @@
 import ChatOSCore
+import Darwin
 import Foundation
 
 public extension Notification.Name {
@@ -15,6 +16,7 @@ public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
     public let executableURL: URL
     public let databaseURL: URL
     public let startupTimeout: Duration
+    public let requestTimeoutMilliseconds: Int
     public let readOnlyToolNames: [String]
     public let approvalExemptToolNames: [String]
     public let memoryBaseURL: URL?
@@ -25,6 +27,7 @@ public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
         executableURL: URL,
         databaseURL: URL,
         startupTimeout: Duration = .seconds(10),
+        requestTimeoutMilliseconds: Int = 75_000,
         readOnlyToolNames: [String] = NativeLocalAgentPlatformToolCatalog.readOnlyToolNames,
         approvalExemptToolNames: [String] =
             NativeLocalAgentPlatformToolCatalog.approvalExemptToolNames,
@@ -35,6 +38,7 @@ public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
         self.executableURL = executableURL
         self.databaseURL = databaseURL
         self.startupTimeout = startupTimeout
+        self.requestTimeoutMilliseconds = requestTimeoutMilliseconds
         self.readOnlyToolNames = readOnlyToolNames
         self.approvalExemptToolNames = approvalExemptToolNames
         self.memoryBaseURL = memoryBaseURL
@@ -138,7 +142,13 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
             "command": commandObject,
         ]
         let request = try JSONSerialization.data(withJSONObject: envelope)
-        let responseData = try managedProcess.roundTrip(request)
+        let responseData: Data
+        do {
+            responseData = try managedProcess.roundTrip(request)
+        } catch {
+            invalidateAfterTransportFailure(managedProcess)
+            throw error
+        }
         guard let response = try JSONSerialization.jsonObject(with: responseData)
             as? [String: Any],
               response["protocol_version"] as? Int == NativeLocalAgentHostProtocol.version,
@@ -172,6 +182,19 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         activeOwnerUserID = nil
         self.managedProcess = nil
         managedProcess.closeAfterExit()
+        NotificationCenter.default.post(
+            name: .nativeLocalAgentHostDidExit,
+            object: nil,
+            userInfo: ["process_identifier": processIdentifier]
+        )
+    }
+
+    private func invalidateAfterTransportFailure(_ managedProcess: ManagedLocalAgentHostProcess) {
+        guard self.managedProcess?.identity == managedProcess.identity else { return }
+        let processIdentifier = managedProcess.process.processIdentifier
+        activeOwnerUserID = nil
+        self.managedProcess = nil
+        managedProcess.terminate()
         NotificationCenter.default.post(
             name: .nativeLocalAgentHostDidExit,
             object: nil,
@@ -219,6 +242,7 @@ enum NativeLocalAgentHostError: LocalizedError, Equatable {
     case ownerMismatch
     case invalidCredentialEnvironment
     case invalidFrame
+    case requestTimedOut
     case invalidResponse
     case hostError(code: String, message: String, retryable: Bool)
 
@@ -240,6 +264,8 @@ enum NativeLocalAgentHostError: LocalizedError, Equatable {
             "Local Agent Host credential environment is invalid."
         case .invalidFrame:
             "Local Agent Host returned an invalid frame."
+        case .requestTimedOut:
+            "Local Agent Host did not respond before the request deadline."
         case .invalidResponse:
             "Local Agent Host health response is invalid."
         }
@@ -252,12 +278,20 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
     private let input: FileHandle
     private let output: FileHandle
     private let errors: FileHandle
+    private let requestTimeoutMilliseconds: Int
 
-    private init(process: Process, input: FileHandle, output: FileHandle, errors: FileHandle) {
+    private init(
+        process: Process,
+        input: FileHandle,
+        output: FileHandle,
+        errors: FileHandle,
+        requestTimeoutMilliseconds: Int
+    ) {
         self.process = process
         self.input = input
         self.output = output
         self.errors = errors
+        self.requestTimeoutMilliseconds = requestTimeoutMilliseconds
     }
 
     static func launch(
@@ -289,6 +323,11 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         )
 
         try validateMemoryConfiguration(configuration)
+        guard (1...300_000).contains(configuration.requestTimeoutMilliseconds) else {
+            throw NativeLocalAgentHostError.invalidConfiguration(
+                "Local Agent Host request timeout must be between 1 and 300000 milliseconds."
+            )
+        }
 
         let process = Process()
         let inputPipe = Pipe()
@@ -317,8 +356,15 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
             process: process,
             input: inputPipe.fileHandleForWriting,
             output: outputPipe.fileHandleForReading,
-            errors: errorPipe.fileHandleForReading
+            errors: errorPipe.fileHandleForReading,
+            requestTimeoutMilliseconds: configuration.requestTimeoutMilliseconds
         )
+        do {
+            try managed.prepareTransport()
+        } catch {
+            managed.terminate()
+            throw error
+        }
         let watchdog = Task.detached { [managed] in
             try? await Task.sleep(for: configuration.startupTimeout)
             guard !Task.isCancelled, managed.process.isRunning else { return }
@@ -364,6 +410,26 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         try? errors.close()
     }
 
+    private func prepareTransport() throws {
+        try Self.setNonBlocking(input.fileDescriptor)
+        try Self.setNonBlocking(output.fileDescriptor)
+        guard fcntl(input.fileDescriptor, F_SETNOSIGPIPE, 1) != -1 else {
+            throw NativeLocalAgentHostError.launchFailed(
+                "Local Agent Host input pipe could not be configured."
+            )
+        }
+    }
+
+    private static func setNonBlocking(_ fileDescriptor: Int32) throws {
+        let flags = fcntl(fileDescriptor, F_GETFL)
+        guard flags != -1,
+              fcntl(fileDescriptor, F_SETFL, flags | O_NONBLOCK) != -1 else {
+            throw NativeLocalAgentHostError.launchFailed(
+                "Local Agent Host pipe could not be configured."
+            )
+        }
+    }
+
     private func verifyHealth() throws {
         let commandID = "native-health-\(UUID().uuidString.lowercased())"
         let request = HealthRequest(
@@ -394,8 +460,11 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
     }
 
     func roundTrip(_ payload: Data) throws -> Data {
-        try LocalAgentHostFrameCodec.write(payload, to: input)
-        return try LocalAgentHostFrameCodec.read(from: output)
+        let deadline = LocalAgentHostFrameCodec.deadline(
+            timeoutMilliseconds: requestTimeoutMilliseconds
+        )
+        try LocalAgentHostFrameCodec.write(payload, to: input, deadline: deadline)
+        return try LocalAgentHostFrameCodec.read(from: output, deadline: deadline)
     }
 
     static func arguments(
@@ -472,38 +541,136 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
 enum LocalAgentHostFrameCodec {
     static let maximumFrameBytes = 4 * 1_024 * 1_024
 
-    static func write(_ payload: Data, to handle: FileHandle) throws {
+    static func write(
+        _ payload: Data,
+        to handle: FileHandle,
+        deadline: UInt64 = deadline(timeoutMilliseconds: 75_000)
+    ) throws {
         guard !payload.isEmpty, payload.count <= maximumFrameBytes else {
             throw NativeLocalAgentHostError.invalidFrame
         }
         var length = UInt32(payload.count).bigEndian
         let header = withUnsafeBytes(of: &length) { Data($0) }
-        try handle.write(contentsOf: header)
-        try handle.write(contentsOf: payload)
+        try writeExactly(header, to: handle.fileDescriptor, deadline: deadline)
+        try writeExactly(payload, to: handle.fileDescriptor, deadline: deadline)
     }
 
-    static func read(from handle: FileHandle) throws -> Data {
-        let header = try readExactly(4, from: handle)
+    static func read(
+        from handle: FileHandle,
+        deadline: UInt64 = deadline(timeoutMilliseconds: 75_000)
+    ) throws -> Data {
+        let header = try readExactly(4, from: handle.fileDescriptor, deadline: deadline)
         let length = header.withUnsafeBytes { rawBuffer in
             rawBuffer.loadUnaligned(as: UInt32.self).bigEndian
         }
         guard length > 0, length <= maximumFrameBytes else {
             throw NativeLocalAgentHostError.invalidFrame
         }
-        return try readExactly(Int(length), from: handle)
+        return try readExactly(Int(length), from: handle.fileDescriptor, deadline: deadline)
     }
 
-    private static func readExactly(_ count: Int, from handle: FileHandle) throws -> Data {
-        var result = Data()
-        result.reserveCapacity(count)
-        while result.count < count {
-            guard let chunk = try handle.read(upToCount: count - result.count),
-                  !chunk.isEmpty else {
+    static func deadline(timeoutMilliseconds: Int) -> UInt64 {
+        let now = DispatchTime.now().uptimeNanoseconds
+        let milliseconds = UInt64(max(0, timeoutMilliseconds))
+        let (nanoseconds, overflow) = milliseconds.multipliedReportingOverflow(by: 1_000_000)
+        guard !overflow, UInt64.max - now >= nanoseconds else { return UInt64.max }
+        return now + nanoseconds
+    }
+
+    private static func writeExactly(
+        _ data: Data,
+        to fileDescriptor: Int32,
+        deadline: UInt64
+    ) throws {
+        try data.withUnsafeBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else {
                 throw NativeLocalAgentHostError.invalidFrame
             }
-            result.append(chunk)
+            var offset = 0
+            while offset < buffer.count {
+                try wait(
+                    for: Int16(POLLOUT),
+                    fileDescriptor: fileDescriptor,
+                    deadline: deadline
+                )
+                let written = Darwin.write(
+                    fileDescriptor,
+                    baseAddress.advanced(by: offset),
+                    buffer.count - offset
+                )
+                if written > 0 {
+                    offset += written
+                } else if written == -1, errno == EINTR || errno == EAGAIN {
+                    continue
+                } else {
+                    throw NativeLocalAgentHostError.invalidFrame
+                }
+            }
+        }
+    }
+
+    private static func readExactly(
+        _ count: Int,
+        from fileDescriptor: Int32,
+        deadline: UInt64
+    ) throws -> Data {
+        var result = Data(count: count)
+        try result.withUnsafeMutableBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else {
+                throw NativeLocalAgentHostError.invalidFrame
+            }
+            var offset = 0
+            while offset < count {
+                try wait(
+                    for: Int16(POLLIN),
+                    fileDescriptor: fileDescriptor,
+                    deadline: deadline
+                )
+                let received = Darwin.read(
+                    fileDescriptor,
+                    baseAddress.advanced(by: offset),
+                    count - offset
+                )
+                if received > 0 {
+                    offset += received
+                } else if received == -1, errno == EINTR || errno == EAGAIN {
+                    continue
+                } else {
+                    throw NativeLocalAgentHostError.invalidFrame
+                }
+            }
         }
         return result
+    }
+
+    private static func wait(
+        for events: Int16,
+        fileDescriptor: Int32,
+        deadline: UInt64
+    ) throws {
+        while true {
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard now < deadline else {
+                throw NativeLocalAgentHostError.requestTimedOut
+            }
+            let remainingNanoseconds = deadline - now
+            let wholeMilliseconds = remainingNanoseconds / 1_000_000
+            let roundedMilliseconds = wholeMilliseconds
+                + (remainingNanoseconds % 1_000_000 == 0 ? 0 : 1)
+            let timeout = Int32(min(roundedMilliseconds, UInt64(Int32.max)))
+            var descriptor = pollfd(fd: fileDescriptor, events: events, revents: 0)
+            let result = Darwin.poll(&descriptor, 1, timeout)
+            if result > 0 {
+                if descriptor.revents & events != 0 { return }
+                throw NativeLocalAgentHostError.invalidFrame
+            }
+            if result == 0 {
+                throw NativeLocalAgentHostError.requestTimedOut
+            }
+            if errno != EINTR {
+                throw NativeLocalAgentHostError.invalidFrame
+            }
+        }
     }
 }
 

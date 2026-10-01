@@ -47,7 +47,8 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         let lifecycle = NativeLocalAgentHostLifecycle(configuration: .init(
             executableURL: executable,
             databaseURL: root.appendingPathComponent("local-agent.sqlite3"),
-            startupTimeout: .seconds(10)
+            startupTimeout: .seconds(10),
+            requestTimeoutMilliseconds: 500
         ))
 
         try await lifecycle.start(ownerUserID: "user-1")
@@ -203,6 +204,37 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         try await lifecycle.start(ownerUserID: "user-2")
         owner = await lifecycle.activeOwnerUserID
         XCTAssertEqual(owner, "user-2")
+
+        let timeoutProcessIdentifier = await lifecycle.processIdentifier
+        let stalledProcessIdentifier = try XCTUnwrap(timeoutProcessIdentifier)
+        let timeoutNotification = expectation(description: "stalled Host exit notification")
+        let timeoutObserver = NotificationCenter.default.addObserver(
+            forName: .nativeLocalAgentHostDidExit,
+            object: nil,
+            queue: nil
+        ) { notification in
+            guard notification.userInfo?["process_identifier"] as? Int32
+                    == stalledProcessIdentifier else { return }
+            timeoutNotification.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(timeoutObserver) }
+        XCTAssertEqual(kill(stalledProcessIdentifier, SIGSTOP), 0)
+        do {
+            _ = try await conversations.list(ownerUserID: "user-2")
+            XCTFail("A stalled Host request must time out")
+        } catch let error as NativeLocalAgentHostError {
+            XCTAssertEqual(error, .requestTimedOut)
+        }
+        await fulfillment(of: [timeoutNotification], timeout: 2)
+        XCTAssertEqual(kill(stalledProcessIdentifier, SIGCONT), 0)
+        let isRunningAfterTimeout = await lifecycle.isRunning
+        let ownerAfterTimeout = await lifecycle.activeOwnerUserID
+        XCTAssertFalse(isRunningAfterTimeout)
+        XCTAssertNil(ownerAfterTimeout)
+
+        try await lifecycle.start(ownerUserID: "user-3")
+        owner = await lifecycle.activeOwnerUserID
+        XCTAssertEqual(owner, "user-3")
         await lifecycle.stop()
         owner = await lifecycle.activeOwnerUserID
         XCTAssertNil(owner)
@@ -220,6 +252,23 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         try replay.fileHandleForWriting.write(contentsOf: encoded)
         try replay.fileHandleForWriting.close()
         XCTAssertEqual(try LocalAgentHostFrameCodec.read(from: replay.fileHandleForReading), payload)
+    }
+
+    func testFrameCodecReadUsesDeadline() throws {
+        let pipe = Pipe()
+        defer {
+            try? pipe.fileHandleForWriting.close()
+            try? pipe.fileHandleForReading.close()
+        }
+        let deadline = LocalAgentHostFrameCodec.deadline(timeoutMilliseconds: 25)
+        XCTAssertThrowsError(
+            try LocalAgentHostFrameCodec.read(
+                from: pipe.fileHandleForReading,
+                deadline: deadline
+            )
+        ) { error in
+            XCTAssertEqual(error as? NativeLocalAgentHostError, .requestTimedOut)
+        }
     }
 
     func testLaunchArgumentsAndEnvironmentKeepMemoryTokenOffCommandLine() throws {
