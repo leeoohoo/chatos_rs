@@ -145,6 +145,9 @@ extension AppModel {
             } catch {
                 guard self?.authenticatedUserID == ownerUserID else { return }
                 self?.localAgentHostError = error.localizedDescription
+                if refreshControlPlaneAfterStart {
+                    self?.recoverLocalAgentHostAfterUnexpectedExit()
+                }
             }
         }
     }
