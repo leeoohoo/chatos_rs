@@ -7,7 +7,12 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
     func testStandardErrorDrainStopsMonitoringAtEOF() async throws {
         let pipe = Pipe()
         let reader = pipe.fileHandleForReading
-        ManagedLocalAgentHostProcess.installStandardErrorDrain(on: reader)
+        let probe = NativeProcessPipeReaderProbe()
+        NativeProcessPipeReader.install(
+            on: reader,
+            onData: { probe.append($0) },
+            onEOF: { probe.reachEOF() }
+        )
 
         try pipe.fileHandleForWriting.write(contentsOf: Data("diagnostic".utf8))
         try pipe.fileHandleForWriting.close()
@@ -16,6 +21,8 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertNil(reader.readabilityHandler)
+        XCTAssertEqual(probe.data, Data("diagnostic".utf8))
+        XCTAssertEqual(probe.eofCount, 1)
         try? reader.close()
     }
 
@@ -238,6 +245,23 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         try truncated.fileHandleForWriting.close()
         XCTAssertThrowsError(try LocalAgentHostFrameCodec.read(from: truncated.fileHandleForReading))
     }
+}
+
+private final class NativeProcessPipeReaderProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var received = Data()
+    private var reachedEOFCount = 0
+
+    func append(_ data: Data) {
+        lock.withLock { received.append(data) }
+    }
+
+    func reachEOF() {
+        lock.withLock { reachedEOFCount += 1 }
+    }
+
+    var data: Data { lock.withLock { received } }
+    var eofCount: Int { lock.withLock { reachedEOFCount } }
 }
 
 private func XCTAssertThrowsErrorAsync(

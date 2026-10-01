@@ -114,8 +114,8 @@ actor NativePluginApplicationRuntime {
 
         let output = Pipe()
         let error = Pipe()
-        output.fileHandleForReading.readabilityHandler = { handle in _ = handle.availableData }
-        error.fileHandleForReading.readabilityHandler = { handle in _ = handle.availableData }
+        NativeProcessPipeReader.install(on: output.fileHandleForReading)
+        NativeProcessPipeReader.install(on: error.fileHandleForReading)
         var overrides = [
             "CHATOS_PLUGIN_ROOT": installationURL.path,
             "CHATOS_PLUGIN_DATA_DIR": dataURL.path,

@@ -34,14 +34,14 @@ enum NativeTerminalExecutor {
         let stderrPipe = Pipe()
         let stdout = LockedDataBuffer()
         let stderr = LockedDataBuffer()
-        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if !data.isEmpty { stdout.append(data) }
-        }
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if !data.isEmpty { stderr.append(data) }
-        }
+        NativeProcessPipeReader.install(
+            on: stdoutPipe.fileHandleForReading,
+            onData: stdout.append
+        )
+        NativeProcessPipeReader.install(
+            on: stderrPipe.fileHandleForReading,
+            onData: stderr.append
+        )
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe

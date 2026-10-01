@@ -121,10 +121,10 @@ public actor NativeProjectRunService: ProjectRunServicing {
         process.currentDirectoryURL = URL(fileURLWithPath: target.cwd, isDirectory: true)
         let outputPipe = Pipe()
         let logBuffer = NativeProjectLogBuffer(initialText: "$ \(target.command)\n")
-        outputPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if !data.isEmpty { logBuffer.append(data) }
-        }
+        NativeProcessPipeReader.install(
+            on: outputPipe.fileHandleForReading,
+            onData: logBuffer.append
+        )
         process.standardOutput = outputPipe
         process.standardError = outputPipe
         process.standardInput = FileHandle.nullDevice

@@ -156,14 +156,10 @@ actor NativeMCPTerminalStore {
         processes[id] = managed
         append(kind: "command", content: command + "\n", to: id)
 
-        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
+        NativeProcessPipeReader.install(on: output.fileHandleForReading) { [weak self] data in
             Task { await self?.append(kind: "stdout", data: data, to: id) }
         }
-        error.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
+        NativeProcessPipeReader.install(on: error.fileHandleForReading) { [weak self] data in
             Task { await self?.append(kind: "stderr", data: data, to: id) }
         }
         process.terminationHandler = { [weak self] terminated in

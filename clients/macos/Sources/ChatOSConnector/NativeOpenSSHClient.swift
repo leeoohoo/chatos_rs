@@ -576,8 +576,14 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
             process.standardInput = FileHandle.nullDevice
             inputPipe = nil
         }
-        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in stdout.append(handle.availableData) }
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in stderr.append(handle.availableData) }
+        NativeProcessPipeReader.install(
+            on: stdoutPipe.fileHandleForReading,
+            onData: stdout.append
+        )
+        NativeProcessPipeReader.install(
+            on: stderrPipe.fileHandleForReading,
+            onData: stderr.append
+        )
         do {
             try process.run()
         } catch {

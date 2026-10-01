@@ -28,14 +28,14 @@ enum NativeGitProcess {
         let stderrPipe = Pipe()
         let stdoutBuffer = NativeGitDataBuffer()
         let stderrBuffer = NativeGitDataBuffer()
-        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if !data.isEmpty { stdoutBuffer.append(data) }
-        }
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if !data.isEmpty { stderrBuffer.append(data) }
-        }
+        NativeProcessPipeReader.install(
+            on: stdoutPipe.fileHandleForReading,
+            onData: stdoutBuffer.append
+        )
+        NativeProcessPipeReader.install(
+            on: stderrPipe.fileHandleForReading,
+            onData: stderrBuffer.append
+        )
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe

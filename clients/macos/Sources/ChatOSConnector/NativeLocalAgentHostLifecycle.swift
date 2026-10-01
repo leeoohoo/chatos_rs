@@ -273,7 +273,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         process.standardInput = inputPipe
         process.standardOutput = outputPipe
         process.standardError = errorPipe
-        installStandardErrorDrain(on: errorPipe.fileHandleForReading)
+        NativeProcessPipeReader.install(on: errorPipe.fileHandleForReading)
         do {
             try process.run()
         } catch {
@@ -299,17 +299,6 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         } catch {
             managed.terminate()
             throw error
-        }
-    }
-
-    static func installStandardErrorDrain(on handle: FileHandle) {
-        handle.readabilityHandler = { handle in
-            if handle.availableData.isEmpty {
-                // FileHandle keeps delivering readability notifications at EOF.
-                // Leaving the handler installed after the child exits therefore
-                // spins a dispatch queue and can consume an entire CPU core.
-                handle.readabilityHandler = nil
-            }
         }
     }
 

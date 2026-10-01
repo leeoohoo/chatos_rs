@@ -54,24 +54,18 @@ actor NativePluginStdioClient {
     func start() throws {
         guard processID == nil else { return }
         let outputStream = AsyncStream<Data> { continuation in
-            output.readabilityHandler = { handle in
-                let data = handle.availableData
-                if data.isEmpty {
-                    continuation.finish()
-                } else {
-                    continuation.yield(data)
-                }
-            }
+            NativeProcessPipeReader.install(
+                on: output,
+                onData: { continuation.yield($0) },
+                onEOF: continuation.finish
+            )
         }
         let errorStream = AsyncStream<Data> { continuation in
-            errorOutput.readabilityHandler = { handle in
-                let data = handle.availableData
-                if data.isEmpty {
-                    continuation.finish()
-                } else {
-                    continuation.yield(data)
-                }
-            }
+            NativeProcessPipeReader.install(
+                on: errorOutput,
+                onData: { continuation.yield($0) },
+                onEOF: continuation.finish
+            )
         }
         outputReaderTask = Task { [weak self] in
             for await data in outputStream {
