@@ -96,6 +96,9 @@ extension AppModel {
         localConnectorRecoveryTask = nil
         localAgentBootstrapTask?.cancel()
         localAgentBootstrapTask = nil
+        localAgentCrashRecoveryTask?.cancel()
+        localAgentCrashRecoveryTask = nil
+        localAgentCrashRecoveryAttempts = 0
         stopLocalAgentHost()
         deactivateAllConversations()
         stopVisualSessionMonitoring()
@@ -173,7 +176,43 @@ extension AppModel {
         }
     }
 
+    func recoverLocalAgentHostAfterUnexpectedExit() {
+        guard localAgentCrashRecoveryTask == nil,
+              localAgentCrashRecoveryAttempts < 5,
+              let ownerUserID = authenticatedUserID else {
+            if localAgentCrashRecoveryAttempts >= 5 {
+                localAgentHostError = "Local Agent Host repeatedly exited and could not recover."
+            }
+            return
+        }
+        let delays: [Duration] = [
+            .milliseconds(250),
+            .seconds(1),
+            .seconds(2),
+            .seconds(5),
+            .seconds(10),
+        ]
+        let delay = delays[localAgentCrashRecoveryAttempts]
+        localAgentCrashRecoveryAttempts += 1
+        localAgentCrashRecoveryTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: delay)
+            } catch {
+                return
+            }
+            guard let self, authenticatedUserID == ownerUserID else { return }
+            localAgentCrashRecoveryTask = nil
+            startLocalAgentHost(
+                ownerUserID: ownerUserID,
+                refreshControlPlaneAfterStart: true
+            )
+        }
+    }
+
     private func stopLocalAgentHost() {
+        localAgentCrashRecoveryTask?.cancel()
+        localAgentCrashRecoveryTask = nil
+        localAgentCrashRecoveryAttempts = 0
         localAgentHostLifecycleGeneration &+= 1
         localAgentHostLifecycleTask?.cancel()
         localAgentHostLifecycleTask = nil
@@ -255,6 +294,7 @@ extension AppModel {
                     }
                     localAgentControlPlaneOwnerUserID = ownerUserID
                     localAgentControlPlaneBootstrapOwnerUserID = nil
+                    localAgentCrashRecoveryAttempts = 0
                     localAgentHostError = nil
                     return
                 } catch is CancellationError {

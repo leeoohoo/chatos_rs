@@ -151,6 +151,8 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var localConnectorRecoveryTask: Task<Void, Never>?
     var localAgentHostLifecycleTask: Task<Void, Never>?
     var localAgentHostLifecycleGeneration: UInt64 = 0
+    var localAgentCrashRecoveryTask: Task<Void, Never>?
+    var localAgentCrashRecoveryAttempts = 0
     var localAgentBootstrapTask: Task<Void, Never>?
     var localAgentControlPlaneOwnerUserID: String?
     var localAgentControlPlaneBootstrapOwnerUserID: String?
@@ -441,6 +443,12 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 self?.recoverLocalAgentHostAfterSystemWake()
                 self?.restartAgentHeartbeatCoordinator()
                 self?.restartAgentArtifactStorageCoordinator()
+            }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: .nativeLocalAgentHostDidExit)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.recoverLocalAgentHostAfterUnexpectedExit()
             }
             .store(in: &cancellables)
         NotificationCenter.default.publisher(for: .agentHeartbeatConfigurationDidChange)

@@ -1,5 +1,6 @@
 @testable import ChatOSConnector
 import ChatOSCore
+import Darwin
 import Foundation
 import XCTest
 
@@ -178,6 +179,27 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
                 title: "Wrong owner"
             )
         }
+        let processIdentifier = await lifecycle.processIdentifier
+        let exitedProcessID = try XCTUnwrap(processIdentifier)
+        let exitNotification = expectation(description: "unexpected Host exit notification")
+        let observer = NotificationCenter.default.addObserver(
+            forName: .nativeLocalAgentHostDidExit,
+            object: nil,
+            queue: nil
+        ) { notification in
+            guard notification.userInfo?["process_identifier"] as? Int32 == exitedProcessID else {
+                return
+            }
+            exitNotification.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        XCTAssertEqual(kill(exitedProcessID, SIGTERM), 0)
+        await fulfillment(of: [exitNotification], timeout: 2)
+        let isRunningAfterExit = await lifecycle.isRunning
+        let ownerAfterExit = await lifecycle.activeOwnerUserID
+        XCTAssertFalse(isRunningAfterExit)
+        XCTAssertNil(ownerAfterExit)
+
         try await lifecycle.start(ownerUserID: "user-2")
         owner = await lifecycle.activeOwnerUserID
         XCTAssertEqual(owner, "user-2")

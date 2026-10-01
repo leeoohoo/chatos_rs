@@ -1,6 +1,12 @@
 import ChatOSCore
 import Foundation
 
+public extension Notification.Name {
+    static let nativeLocalAgentHostDidExit = Notification.Name(
+        "com.chatos.swift.local-agent-host-did-exit"
+    )
+}
+
 private enum NativeLocalAgentHostProtocol {
     static let version = 32
 }
@@ -50,6 +56,11 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         managedProcess?.process.isRunning == true
     }
 
+    public var processIdentifier: Int32? {
+        guard managedProcess?.process.isRunning == true else { return nil }
+        return managedProcess?.process.processIdentifier
+    }
+
     public func start(ownerUserID: String) async throws {
         try Self.validate(ownerUserID: ownerUserID)
         if managedProcess?.process.isRunning == true, activeOwnerUserID == ownerUserID {
@@ -89,6 +100,14 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
             }.value
             managedProcess = managed
             activeOwnerUserID = ownerUserID
+            managed.installTerminationHandler { [weak self] identity, processIdentifier in
+                Task {
+                    await self?.processDidTerminate(
+                        identity: identity,
+                        processIdentifier: processIdentifier
+                    )
+                }
+            }
         } catch {
             stopLocked()
             throw error
@@ -146,6 +165,18 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         activeOwnerUserID = nil
         managedProcess?.terminate()
         managedProcess = nil
+    }
+
+    private func processDidTerminate(identity: UUID, processIdentifier: Int32) {
+        guard let managedProcess, managedProcess.identity == identity else { return }
+        activeOwnerUserID = nil
+        self.managedProcess = nil
+        managedProcess.closeAfterExit()
+        NotificationCenter.default.post(
+            name: .nativeLocalAgentHostDidExit,
+            object: nil,
+            userInfo: ["process_identifier": processIdentifier]
+        )
     }
 
     private static func validate(ownerUserID: String) throws {
@@ -216,6 +247,7 @@ enum NativeLocalAgentHostError: LocalizedError, Equatable {
 }
 
 final class ManagedLocalAgentHostProcess: @unchecked Sendable {
+    let identity = UUID()
     let process: Process
     private let input: FileHandle
     private let output: FileHandle
@@ -303,13 +335,33 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
     }
 
     func terminate() {
+        process.terminationHandler = nil
+        closeResources()
+        if process.isRunning {
+            process.terminate()
+        }
+    }
+
+    func installTerminationHandler(
+        _ handler: @escaping @Sendable (UUID, Int32) -> Void
+    ) {
+        let identity = identity
+        let processIdentifier = process.processIdentifier
+        process.terminationHandler = { _ in
+            handler(identity, processIdentifier)
+        }
+    }
+
+    func closeAfterExit() {
+        process.terminationHandler = nil
+        closeResources()
+    }
+
+    private func closeResources() {
         errors.readabilityHandler = nil
         try? input.close()
         try? output.close()
         try? errors.close()
-        if process.isRunning {
-            process.terminate()
-        }
     }
 
     private func verifyHealth() throws {
