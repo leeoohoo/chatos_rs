@@ -3,6 +3,7 @@
 
 use super::*;
 use sqlx::Connection;
+use std::time::Duration;
 use uuid::Uuid;
 
 fn run(now: i64) -> LocalAgentRunRecord {
@@ -46,6 +47,41 @@ fn command(id: &str, fingerprint: &str) -> IdempotentCommand {
         command_id: id.to_string(),
         request_fingerprint: fingerprint.to_string(),
     }
+}
+
+#[tokio::test]
+async fn file_database_reads_remain_available_during_a_write_transaction() {
+    let root = tempfile::tempdir().expect("temporary database root");
+    let database_path = root.path().join("local-agent.sqlite");
+    let storage = SqliteClientStorage::connect_file(&database_path)
+        .await
+        .expect("storage");
+    assert_eq!(storage.pool.options().get_max_connections(), 4);
+
+    let mut writer = storage.pool.acquire().await.expect("writer connection");
+    SqliteClientStorage::begin_immediate(&mut writer)
+        .await
+        .expect("write transaction");
+    let value = tokio::time::timeout(
+        Duration::from_secs(1),
+        sqlx::query_scalar::<_, i64>("SELECT 1").fetch_one(&storage.pool),
+    )
+    .await
+    .expect("WAL reader must not wait for the writer")
+    .expect("reader query");
+    assert_eq!(value, 1);
+    sqlx::query("ROLLBACK")
+        .execute(&mut *writer)
+        .await
+        .expect("rollback");
+}
+
+#[tokio::test]
+async fn memory_database_uses_one_shared_connection() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    assert_eq!(storage.pool.options().get_max_connections(), 1);
 }
 
 #[tokio::test]

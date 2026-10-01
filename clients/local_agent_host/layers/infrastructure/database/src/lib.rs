@@ -68,6 +68,9 @@ pub use chatos_local_agent_ports::{
 use run_record::decode_run;
 use schema::RUN_SELECT;
 
+const FILE_DATABASE_MAX_CONNECTIONS: u32 = 4;
+const MEMORY_DATABASE_MAX_CONNECTIONS: u32 = 1;
+
 /// Converts SQLx failures inside the SQLite adapter without leaking SQLx into
 /// the application-facing storage ports. The identity implementation keeps
 /// transaction helpers readable when they already return the port error.
@@ -113,6 +116,7 @@ impl SqliteClientStorage {
             Some((path, requires_existing_database_backup)),
             artifact_root,
             None,
+            FILE_DATABASE_MAX_CONNECTIONS,
         )
         .await
     }
@@ -123,7 +127,14 @@ impl SqliteClientStorage {
             .foreign_keys(true)
             .busy_timeout(Duration::from_secs(5));
         let (artifact_root, temporary_root) = maintenance::temporary_artifact_root()?;
-        Self::connect_with_options(options, None, artifact_root, Some(temporary_root)).await
+        Self::connect_with_options(
+            options,
+            None,
+            artifact_root,
+            Some(temporary_root),
+            MEMORY_DATABASE_MAX_CONNECTIONS,
+        )
+        .await
     }
 
     async fn connect_with_options(
@@ -131,11 +142,15 @@ impl SqliteClientStorage {
         file_context: Option<(&Path, bool)>,
         artifact_root: std::path::PathBuf,
         temporary_root: Option<std::sync::Arc<tempfile::TempDir>>,
+        max_connections: u32,
     ) -> Result<Self, ClientStorageError> {
-        // A single connection plus BEGIN IMMEDIATE gives the runtime one local
-        // writer while IPC remains concurrent.
+        // BEGIN IMMEDIATE still serializes writers. A small file-backed pool
+        // lets WAL readers serve foreground IPC while a background scheduler
+        // or memory-sync transaction is active. In-memory SQLite remains on a
+        // single connection because separate connections have separate stores.
         let pool = SqlitePoolOptions::new()
-            .max_connections(1)
+            .min_connections(1)
+            .max_connections(max_connections)
             .connect_with(options)
             .await
             .db()?;
