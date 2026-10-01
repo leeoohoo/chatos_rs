@@ -225,6 +225,30 @@ final class ConversationSessionViewModelTests: XCTestCase {
         }
     }
 
+    func testRuntimeBecomingReadyReloadsModelsAfterInitialBootstrapFailure() async throws {
+        let runtimeSettings = RecoveringRuntimeSettingsServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            runtimeSettingsService: runtimeSettings
+        )
+
+        try await waitUntil {
+            viewModel.runtimeSettingsError != nil
+        }
+        XCTAssertTrue(viewModel.availableModels.isEmpty)
+
+        await runtimeSettings.configure()
+        viewModel.localAgentRuntimeDidBecomeReady()
+
+        try await waitUntil {
+            viewModel.runtimeSettingsError == nil
+                && viewModel.availableModels.map(\.id) == ["model-1"]
+                && viewModel.selectedModelID == "model-1"
+        }
+    }
+
     private static func reconcileSignal(id: String) -> ConversationRealtimeSignal {
         ConversationRealtimeSignal(
             eventID: id,
@@ -348,5 +372,78 @@ private actor ConversationRealtimeServiceStub: ConversationRealtimeStreaming {
     private func markTerminated(sessionID: String) {
         continuations.removeValue(forKey: sessionID)
         terminatedSessionIDs.insert(sessionID)
+    }
+}
+
+private actor RecoveringRuntimeSettingsServiceStub: ConversationRuntimeSettingsServicing {
+    private var isConfigured = false
+
+    func configure() {
+        isConfigured = true
+    }
+
+    func fetchSettings(sessionID _: String) throws -> ConversationRuntimeSettings {
+        try requireConfigured()
+        return ConversationRuntimeSettings(
+            selectedModelID: "model-1",
+            selectedModelName: "Local model",
+            selectedThinkingLevel: "medium",
+            remoteConnectionID: nil,
+            reasoningEnabled: true
+        )
+    }
+
+    func fetchAvailableModels() throws -> [ConversationModelOption] {
+        try requireConfigured()
+        return [ConversationModelOption(
+            id: "model-1",
+            displayName: "Local model",
+            modelName: "local-model",
+            provider: "openai",
+            thinkingLevel: "medium",
+            supportsReasoning: true,
+            thinkingLevels: ["none", "medium"]
+        )]
+    }
+
+    func updateModel(
+        sessionID: String,
+        modelID _: String
+    ) throws -> ConversationRuntimeSettings {
+        try fetchSettings(sessionID: sessionID)
+    }
+
+    func updateRemoteConnection(
+        sessionID: String,
+        connectionID _: String?
+    ) throws -> ConversationRuntimeSettings {
+        try fetchSettings(sessionID: sessionID)
+    }
+
+    func updateReasoning(
+        sessionID: String,
+        enabled _: Bool
+    ) throws -> ConversationRuntimeSettings {
+        try fetchSettings(sessionID: sessionID)
+    }
+
+    func updateReasoningLevel(
+        sessionID: String,
+        level _: String,
+        enabled _: Bool
+    ) throws -> ConversationRuntimeSettings {
+        try fetchSettings(sessionID: sessionID)
+    }
+
+    private func requireConfigured() throws {
+        guard isConfigured else { throw RecoveringRuntimeSettingsError.notConfigured }
+    }
+}
+
+private enum RecoveringRuntimeSettingsError: LocalizedError {
+    case notConfigured
+
+    var errorDescription: String? {
+        "Local Agent conversation settings are not configured."
     }
 }

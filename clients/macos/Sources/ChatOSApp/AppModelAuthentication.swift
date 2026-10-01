@@ -41,10 +41,7 @@ extension AppModel {
             loadLanguagePreferences()
             localConnectorControl.activate(
                 pairIfNeeded: true,
-                expectedOwnerUserID: session.user.id,
-                onReady: { [weak self] _ in
-                    self?.refreshLocalAgentControlPlane(ownerUserID: session.user.id)
-                }
+                expectedOwnerUserID: session.user.id
             )
             refreshPluginApplications()
         case .signedOut:
@@ -110,6 +107,8 @@ extension AppModel {
 
     private func startLocalAgentHost(ownerUserID: String) {
         localAgentHostLifecycleTask?.cancel()
+        localAgentControlPlaneOwnerUserID = nil
+        localAgentControlPlaneBootstrapOwnerUserID = nil
         localAgentHostError = nil
         guard let localAgentHost else { return }
         localAgentHostLifecycleTask = Task { [weak self] in
@@ -138,6 +137,8 @@ extension AppModel {
         localAgentHostLifecycleTask?.cancel()
         localAgentHostLifecycleTask = nil
         localAgentHostError = nil
+        localAgentControlPlaneOwnerUserID = nil
+        localAgentControlPlaneBootstrapOwnerUserID = nil
         guard let localAgentHost else { return }
         let commandService = commandService
         let petActivityService = petActivityService
@@ -165,9 +166,12 @@ extension AppModel {
         }
     }
 
-    private func refreshLocalAgentControlPlane(ownerUserID: String) {
+    func refreshLocalAgentControlPlane(ownerUserID: String) {
+        guard localAgentControlPlaneOwnerUserID != ownerUserID,
+              localAgentControlPlaneBootstrapOwnerUserID != ownerUserID else { return }
         localAgentBootstrapTask?.cancel()
         guard let host = localAgentHost as? NativeLocalAgentHostLifecycle else { return }
+        localAgentControlPlaneBootstrapOwnerUserID = ownerUserID
         localAgentBootstrapTask = Task { [weak self] in
             do {
                 let memoryAccessToken = await self?.apiClient.currentAccessToken()
@@ -193,10 +197,18 @@ extension AppModel {
                 await self?.askUserPromptService?.configure(ownerUserID: ownerUserID)
                 await self?.turnProcessService?.configure(ownerUserID: ownerUserID)
                 await self?.platformToolWorker?.configure(ownerUserID: ownerUserID)
+                self?.conversationCache.values.forEach {
+                    $0.localAgentRuntimeDidBecomeReady()
+                }
+                self?.localAgentControlPlaneOwnerUserID = ownerUserID
+                self?.localAgentControlPlaneBootstrapOwnerUserID = nil
                 self?.localAgentHostError = nil
             } catch is CancellationError {
+                guard self?.localAgentControlPlaneBootstrapOwnerUserID == ownerUserID else { return }
+                self?.localAgentControlPlaneBootstrapOwnerUserID = nil
             } catch {
                 guard self?.authenticatedUserID == ownerUserID else { return }
+                self?.localAgentControlPlaneBootstrapOwnerUserID = nil
                 self?.localAgentHostError = error.localizedDescription
             }
         }

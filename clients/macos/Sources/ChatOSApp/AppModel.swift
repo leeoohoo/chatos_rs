@@ -151,6 +151,8 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var localConnectorRecoveryTask: Task<Void, Never>?
     var localAgentHostLifecycleTask: Task<Void, Never>?
     var localAgentBootstrapTask: Task<Void, Never>?
+    var localAgentControlPlaneOwnerUserID: String?
+    var localAgentControlPlaneBootstrapOwnerUserID: String?
     var localConnectorRecoveryGeneration: UInt64 = 0
     var lastLocalConnectorRecoveryDate: Date?
     var mainWindowPresentationHandler: (() -> Void)?
@@ -471,6 +473,17 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             .filter { $0 }
             .sink { [weak self] _ in
                 self?.refreshWorkspace()
+            }
+            .store(in: &cancellables)
+        localConnectorControl.$status
+            .map { status -> String? in
+                guard status?.configured == true else { return nil }
+                return status?.user?.id
+            }
+            .compactMap { $0 }
+            .sink { [weak self] ownerUserID in
+                guard self?.authenticatedUserID == ownerUserID else { return }
+                self?.refreshLocalAgentControlPlane(ownerUserID: ownerUserID)
             }
             .store(in: &cancellables)
         localConnectorControl.$plugins

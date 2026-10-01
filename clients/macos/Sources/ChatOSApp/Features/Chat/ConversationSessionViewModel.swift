@@ -97,6 +97,7 @@ final class ConversationSessionViewModel: ObservableObject {
     private var viewportUpdateGeneration: Int64 = 0
     private var taskGraphAvailabilityTasks: [String: Task<Void, Never>] = [:]
     private var taskGraphAvailabilityRevisions: [String: Int64] = [:]
+    private var runtimeSettingsLoadGeneration: UInt64 = 0
     private var isActive = false
 
     init(
@@ -166,6 +167,22 @@ final class ConversationSessionViewModel: ObservableObject {
         latestRefreshPending = nil
         taskGraphAvailabilityTasks.values.forEach { $0.cancel() }
         taskGraphAvailabilityTasks.removeAll()
+    }
+
+    func localAgentRuntimeDidBecomeReady() {
+        realtimeTask?.cancel()
+        realtimeTask = nil
+        historyRetryTask?.cancel()
+        historyRetryTask = nil
+        historyRetryAttempt = 0
+        runtimeSettingsError = nil
+        Task { [weak self] in
+            guard let self else { return }
+            await loadRuntimeSettings()
+            guard runtimeSettingsError == nil, isActive else { return }
+            refreshLatest()
+            startRealtime()
+        }
     }
 
     func refreshLatestSilently() {
@@ -563,13 +580,18 @@ final class ConversationSessionViewModel: ObservableObject {
 
     private func loadRuntimeSettings() async {
         guard let runtimeSettingsService else { return }
+        runtimeSettingsLoadGeneration &+= 1
+        let generation = runtimeSettingsLoadGeneration
         do {
             async let settings = runtimeSettingsService.fetchSettings(sessionID: sessionID)
             async let models = runtimeSettingsService.fetchAvailableModels()
             let (resolvedSettings, resolvedModels) = try await (settings, models)
+            guard generation == runtimeSettingsLoadGeneration else { return }
             availableModels = resolvedModels
             applyRuntimeSettings(resolvedSettings)
+            runtimeSettingsError = nil
         } catch {
+            guard generation == runtimeSettingsLoadGeneration else { return }
             runtimeSettingsError = error.localizedDescription
         }
     }
