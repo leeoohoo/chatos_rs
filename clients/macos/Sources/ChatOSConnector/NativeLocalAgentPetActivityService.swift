@@ -55,6 +55,7 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
             let task = Task { [weak self] in
                 var currentOwner: String?
                 var cursor: Int64 = 0
+                var idleDelay = NativeLocalAgentEventPollingPolicy.activeDelay
                 while !Task.isCancelled {
                     guard let self else { return }
                     guard let owner = await self.configuredOwner() else {
@@ -64,6 +65,7 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
                     if owner != currentOwner {
                         currentOwner = owner
                         cursor = 0
+                        idleDelay = NativeLocalAgentEventPollingPolicy.activeDelay
                         continuation.yield(.reconcile)
                     }
                     do {
@@ -74,9 +76,13 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
                         guard await self.configuredOwner() == owner else { continue }
                         cursor = page.nextCursor
                         if !page.events.isEmpty {
+                            idleDelay = NativeLocalAgentEventPollingPolicy.activeDelay
                             continuation.yield(.reconcile)
                         } else {
-                            try await Task.sleep(for: .milliseconds(400))
+                            try await Task.sleep(for: idleDelay)
+                            idleDelay = NativeLocalAgentEventPollingPolicy.nextIdleDelay(
+                                after: idleDelay
+                            )
                         }
                     } catch is CancellationError {
                         return

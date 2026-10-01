@@ -212,6 +212,7 @@ public actor NativeLocalAgentConversationService:
             let pollingTask = Task {
                 var observedVersion: UInt64?
                 var cursor: Int64 = 0
+                var idleDelay = NativeLocalAgentEventPollingPolicy.activeDelay
                 while !Task.isCancelled {
                     do {
                         if observedVersion == nil {
@@ -240,9 +241,13 @@ public actor NativeLocalAgentConversationService:
                         )
                         cursor = page.nextCursor
                         if page.events.isEmpty {
-                            try await Task.sleep(for: .milliseconds(400))
+                            try await Task.sleep(for: idleDelay)
+                            idleDelay = NativeLocalAgentEventPollingPolicy.nextIdleDelay(
+                                after: idleDelay
+                            )
                             continue
                         }
+                        idleDelay = NativeLocalAgentEventPollingPolicy.activeDelay
 
                         let detail = try await client.get(
                             ownerUserID: context.ownerUserID,
@@ -268,7 +273,10 @@ public actor NativeLocalAgentConversationService:
                             return
                         }
                         do {
-                            try await Task.sleep(for: .milliseconds(400))
+                            try await Task.sleep(for: idleDelay)
+                            idleDelay = NativeLocalAgentEventPollingPolicy.nextIdleDelay(
+                                after: idleDelay
+                            )
                         } catch {
                             return
                         }

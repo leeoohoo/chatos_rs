@@ -36,12 +36,18 @@ extension NativeLocalConnectorService {
         var environment: [String: String] = [:]
         var snapshots: [LocalAgentModelConfigSnapshot] = []
         var modelOptions: [ConversationModelOption] = []
-        for config in configs {
-            let resolved = try await gateway.modelConfig(
+        let gateway = gateway
+        let resolvedConfigs = try await NativeLocalAgentBoundedLoader.load(
+            configs,
+            maximumConcurrentTasks: 4
+        ) { config in
+            try await gateway.modelConfig(
                 token: token,
                 id: config.id,
                 includeSecret: true
             )
+        }
+        for resolved in resolvedConfigs {
             guard let credential = resolved.apiKey?.trimmedNonEmpty,
                   let baseURL = resolved.baseURL?.trimmedNonEmpty,
                   let parsedBaseURL = URL(string: baseURL),
