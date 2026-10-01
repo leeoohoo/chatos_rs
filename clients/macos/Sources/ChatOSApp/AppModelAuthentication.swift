@@ -46,7 +46,6 @@ extension AppModel {
                     self?.refreshLocalAgentControlPlane(ownerUserID: session.user.id)
                 }
             )
-            refreshRemoteConnections()
             refreshPluginApplications()
         case .signedOut:
             workspaceAccountGeneration += 1
@@ -73,7 +72,10 @@ extension AppModel {
             workspaceProjects = []
             workspaceContacts = []
             workspaceConversations = []
+            remoteConnectionsLoadGeneration &+= 1
             remoteConnections = []
+            isRemoteConnectionsLoading = false
+            remoteConnectionsError = nil
             terminalWorkspace.closeAllTerminals()
             remoteConnectionWorkspaceStore.removeAllWorkspaces()
             pluginApplicationsLoadGeneration += 1
@@ -122,6 +124,7 @@ extension AppModel {
                 await self?.notepadService.configure(ownerUserID: ownerUserID)
                 await self?.remoteConnectionMetadataService.configure(ownerUserID: ownerUserID)
                 self?.refreshWorkspace()
+                self?.refreshRemoteConnections()
             } catch is CancellationError {
                 await localAgentHost.stop()
             } catch {

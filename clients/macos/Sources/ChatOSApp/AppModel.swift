@@ -132,6 +132,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var conversationCacheRecency = ConversationCacheRecency(capacity: 8)
     var projectConversationPreparationTasks: [String: Task<String, Error>] = [:]
     var workspaceLoadGeneration: Int64 = 0
+    var remoteConnectionsLoadGeneration: UInt64 = 0
     var pluginApplicationsLoadGeneration: Int64 = 0
     var visualSessionExpansion: [String: Bool] = [:]
     var visualSessionSelection: [String: String] = [:]

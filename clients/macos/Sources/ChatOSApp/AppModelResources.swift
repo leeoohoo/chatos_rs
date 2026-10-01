@@ -149,15 +149,26 @@ extension AppModel {
     }
 
     func refreshRemoteConnections() {
+        guard let expectedOwnerUserID = authenticatedUserID else { return }
+        remoteConnectionsLoadGeneration &+= 1
+        let generation = remoteConnectionsLoadGeneration
         isRemoteConnectionsLoading = true
         remoteConnectionsError = nil
-        Task {
+        Task { [weak self] in
+            guard let self else { return }
             do {
-                remoteConnections = try await remoteConnectionService.listConnections()
+                let connections = try await remoteConnectionService.listConnections()
                     .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+                guard generation == remoteConnectionsLoadGeneration,
+                      expectedOwnerUserID == authenticatedUserID else { return }
+                remoteConnections = connections
             } catch {
+                guard generation == remoteConnectionsLoadGeneration,
+                      expectedOwnerUserID == authenticatedUserID else { return }
                 remoteConnectionsError = error.localizedDescription
             }
+            guard generation == remoteConnectionsLoadGeneration,
+                  expectedOwnerUserID == authenticatedUserID else { return }
             isRemoteConnectionsLoading = false
         }
     }

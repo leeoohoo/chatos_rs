@@ -31,9 +31,8 @@ final class NativeLocalAgentRemoteConnectionMetadataServiceTests: XCTestCase {
     }
 
     func testResetRemovesAccountScope() async throws {
-        let service = NativeLocalAgentRemoteConnectionMetadataService(
-            host: RemoteConnectionHostStub()
-        )
+        let host = RemoteConnectionHostStub()
+        let service = NativeLocalAgentRemoteConnectionMetadataService(host: host)
         await service.configure(ownerUserID: "user-1")
         await service.reset()
         do {
@@ -42,6 +41,11 @@ final class NativeLocalAgentRemoteConnectionMetadataServiceTests: XCTestCase {
         } catch let error as NativeLocalAgentRemoteConnectionMetadataError {
             XCTAssertEqual(error, .notConfigured)
         }
+
+        await service.configure(ownerUserID: "user-2")
+        _ = try await service.listConnections()
+        let command = try await host.lastCommand()
+        XCTAssertEqual(command.ownerUserID, "user-2")
     }
 
     private static func draft(name: String) -> RemoteConnectionDraft {
