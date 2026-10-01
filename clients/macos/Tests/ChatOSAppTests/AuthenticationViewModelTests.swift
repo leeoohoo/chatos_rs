@@ -6,6 +6,29 @@ import Testing
 @Suite("Authentication registration")
 @MainActor
 struct AuthenticationViewModelTests {
+    @Test("session restore retries after a transient startup failure")
+    func retriesFailedSessionRestore() async {
+        let service = AuthenticationRestoreTestService()
+        let viewModel = AuthenticationViewModel(service: service)
+
+        viewModel.start()
+        await waitUntil { viewModel.phase == .signedOut }
+        #expect(await service.restoreCallCount() == 1)
+
+        viewModel.retrySessionRestoreIfNeeded()
+        await waitUntil {
+            if case .authenticated = viewModel.phase { return true }
+            return false
+        }
+
+        guard case let .authenticated(session) = viewModel.phase else {
+            Issue.record("Expected the retry to restore the session")
+            return
+        }
+        #expect(session.user.id == "restored-user")
+        #expect(await service.restoreCallCount() == 2)
+    }
+
     @Test("registration validates matching passwords before calling the service")
     func rejectsMismatchedPasswords() async {
         let service = AuthenticationRegistrationTestService()
@@ -73,6 +96,50 @@ struct AuthenticationViewModelTests {
             try? await Task.sleep(for: .milliseconds(10))
         }
     }
+}
+
+private actor AuthenticationRestoreTestService: AuthenticationServicing {
+    private var restoreCalls = 0
+
+    func restoreSession() async throws -> AuthSession? {
+        restoreCalls += 1
+        if restoreCalls == 1 {
+            throw AuthenticationRestoreTestError.temporarilyUnavailable
+        }
+        return .init(user: .init(
+            id: "restored-user",
+            username: "restored@example.com",
+            role: "user"
+        ))
+    }
+
+    func login(username: String, password: String) async throws -> AuthSession {
+        throw AuthenticationRestoreTestError.temporarilyUnavailable
+    }
+
+    func sendRegistrationCode(
+        email: String,
+        inviteCode: String
+    ) async throws -> RegistrationCodeDelivery {
+        throw AuthenticationRestoreTestError.temporarilyUnavailable
+    }
+
+    func register(
+        email: String,
+        password: String,
+        inviteCode: String,
+        verificationCode: String
+    ) async throws -> AuthSession {
+        throw AuthenticationRestoreTestError.temporarilyUnavailable
+    }
+
+    func logout() async {}
+
+    func restoreCallCount() -> Int { restoreCalls }
+}
+
+private enum AuthenticationRestoreTestError: Error {
+    case temporarilyUnavailable
 }
 
 private actor AuthenticationRegistrationTestService: AuthenticationServicing {

@@ -29,6 +29,7 @@ final class AuthenticationViewModel: ObservableObject {
 
     private let service: any AuthenticationServicing
     private var didStart = false
+    private var shouldRetrySessionRestore = false
     private var registrationCountdownTask: Task<Void, Never>?
 
     init(service: any AuthenticationServicing) {
@@ -61,16 +62,29 @@ final class AuthenticationViewModel: ObservableObject {
     func start() {
         guard !didStart else { return }
         didStart = true
+        restoreSession()
+    }
+
+    func retrySessionRestoreIfNeeded() {
+        guard shouldRetrySessionRestore, phase == .signedOut else { return }
+        restoreSession()
+    }
+
+    private func restoreSession() {
         phase = .restoring
+        errorMessage = nil
 
         Task {
             do {
                 if let session = try await service.restoreSession() {
+                    shouldRetrySessionRestore = false
                     phase = .authenticated(session)
                 } else {
+                    shouldRetrySessionRestore = false
                     phase = .signedOut
                 }
             } catch {
+                shouldRetrySessionRestore = true
                 errorMessage = error.localizedDescription
                 phase = .signedOut
             }
@@ -79,6 +93,7 @@ final class AuthenticationViewModel: ObservableObject {
 
     func login() {
         guard canLogin else { return }
+        shouldRetrySessionRestore = false
         phase = .authenticating
         errorMessage = nil
         let submittedUsername = username
@@ -189,6 +204,7 @@ final class AuthenticationViewModel: ObservableObject {
     }
 
     func logout() {
+        shouldRetrySessionRestore = false
         mode = .signIn
         password = ""
         confirmPassword = ""
@@ -200,6 +216,7 @@ final class AuthenticationViewModel: ObservableObject {
 
     func expireSession() {
         guard case .authenticated = phase else { return }
+        shouldRetrySessionRestore = false
         password = ""
         errorMessage = "登录状态已失效，请重新登录。"
         phase = .signedOut

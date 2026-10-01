@@ -452,6 +452,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
+                self?.authentication.retrySessionRestoreIfNeeded()
                 self?.recoverLocalConnector(forceReconnect: false)
                 self?.recoverLocalAgentHostIfNeeded()
                 self?.ensureAgentArtifactStorageCoordinator()
