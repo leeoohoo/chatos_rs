@@ -4,6 +4,21 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentHostLifecycleTests: XCTestCase {
+    func testStandardErrorDrainStopsMonitoringAtEOF() async throws {
+        let pipe = Pipe()
+        let reader = pipe.fileHandleForReading
+        ManagedLocalAgentHostProcess.installStandardErrorDrain(on: reader)
+
+        try pipe.fileHandleForWriting.write(contentsOf: Data("diagnostic".utf8))
+        try pipe.fileHandleForWriting.close()
+
+        for _ in 0..<100 where reader.readabilityHandler != nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertNil(reader.readabilityHandler)
+        try? reader.close()
+    }
+
     func testStartsHealthChecksAndSwitchesActualRustHost() async throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

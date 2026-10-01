@@ -46,6 +46,10 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         self.configuration = configuration
     }
 
+    public var isRunning: Bool {
+        managedProcess?.process.isRunning == true
+    }
+
     public func start(ownerUserID: String) async throws {
         try Self.validate(ownerUserID: ownerUserID)
         if managedProcess?.process.isRunning == true, activeOwnerUserID == ownerUserID {
@@ -269,9 +273,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         process.standardInput = inputPipe
         process.standardOutput = outputPipe
         process.standardError = errorPipe
-        errorPipe.fileHandleForReading.readabilityHandler = { handle in
-            _ = handle.availableData
-        }
+        installStandardErrorDrain(on: errorPipe.fileHandleForReading)
         do {
             try process.run()
         } catch {
@@ -297,6 +299,17 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         } catch {
             managed.terminate()
             throw error
+        }
+    }
+
+    static func installStandardErrorDrain(on handle: FileHandle) {
+        handle.readabilityHandler = { handle in
+            if handle.availableData.isEmpty {
+                // FileHandle keeps delivering readability notifications at EOF.
+                // Leaving the handler installed after the child exits therefore
+                // spins a dispatch queue and can consume an entire CPU core.
+                handle.readabilityHandler = nil
+            }
         }
     }
 

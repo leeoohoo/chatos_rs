@@ -150,6 +150,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var agentArtifactStorageOwnerUserID: String?
     var localConnectorRecoveryTask: Task<Void, Never>?
     var localAgentHostLifecycleTask: Task<Void, Never>?
+    var localAgentHostLifecycleGeneration: UInt64 = 0
     var localAgentBootstrapTask: Task<Void, Never>?
     var localAgentControlPlaneOwnerUserID: String?
     var localAgentControlPlaneBootstrapOwnerUserID: String?
@@ -437,6 +438,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.recoverLocalConnector(forceReconnect: true)
+                self?.recoverLocalAgentHostAfterSystemWake()
                 self?.restartAgentHeartbeatCoordinator()
                 self?.restartAgentArtifactStorageCoordinator()
             }
@@ -451,6 +453,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.recoverLocalConnector(forceReconnect: false)
+                self?.recoverLocalAgentHostIfNeeded()
                 self?.ensureAgentArtifactStorageCoordinator()
                 self?.startVisualSessionMonitoring()
             }

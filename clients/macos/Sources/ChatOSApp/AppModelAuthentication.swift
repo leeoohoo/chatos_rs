@@ -105,13 +105,23 @@ extension AppModel {
         remoteConnectionWorkspaceStore.removeAllWorkspaces()
     }
 
-    private func startLocalAgentHost(ownerUserID: String) {
+    private func startLocalAgentHost(
+        ownerUserID: String,
+        refreshControlPlaneAfterStart: Bool = false
+    ) {
         localAgentHostLifecycleTask?.cancel()
+        localAgentHostLifecycleGeneration &+= 1
+        let generation = localAgentHostLifecycleGeneration
         localAgentControlPlaneOwnerUserID = nil
         localAgentControlPlaneBootstrapOwnerUserID = nil
         localAgentHostError = nil
         guard let localAgentHost else { return }
         localAgentHostLifecycleTask = Task { [weak self] in
+            defer {
+                if self?.localAgentHostLifecycleGeneration == generation {
+                    self?.localAgentHostLifecycleTask = nil
+                }
+            }
             do {
                 try await localAgentHost.start(ownerUserID: ownerUserID)
                 guard !Task.isCancelled, self?.authenticatedUserID == ownerUserID else {
@@ -124,6 +134,9 @@ extension AppModel {
                 await self?.remoteConnectionMetadataService.configure(ownerUserID: ownerUserID)
                 self?.refreshWorkspace()
                 self?.refreshRemoteConnections()
+                if refreshControlPlaneAfterStart {
+                    self?.refreshLocalAgentControlPlane(ownerUserID: ownerUserID)
+                }
             } catch is CancellationError {
                 await localAgentHost.stop()
             } catch {
@@ -133,7 +146,35 @@ extension AppModel {
         }
     }
 
+    func recoverLocalAgentHostAfterSystemWake() {
+        guard let ownerUserID = authenticatedUserID else { return }
+        // A child process or its stdio pipes may not survive system sleep even
+        // though the SwiftUI application does. Re-run the complete bootstrap so
+        // credentials are sourced again instead of being retained in memory.
+        startLocalAgentHost(
+            ownerUserID: ownerUserID,
+            refreshControlPlaneAfterStart: true
+        )
+    }
+
+    func recoverLocalAgentHostIfNeeded() {
+        guard localAgentHostLifecycleTask == nil,
+              let ownerUserID = authenticatedUserID,
+              let host = localAgentHost as? NativeLocalAgentHostLifecycle else { return }
+        Task { [weak self] in
+            guard await !host.isRunning,
+                  let self,
+                  authenticatedUserID == ownerUserID,
+                  localAgentHostLifecycleTask == nil else { return }
+            startLocalAgentHost(
+                ownerUserID: ownerUserID,
+                refreshControlPlaneAfterStart: true
+            )
+        }
+    }
+
     private func stopLocalAgentHost() {
+        localAgentHostLifecycleGeneration &+= 1
         localAgentHostLifecycleTask?.cancel()
         localAgentHostLifecycleTask = nil
         localAgentHostError = nil
