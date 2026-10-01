@@ -10,6 +10,8 @@ use chatos_local_agent_host::{
 use std::{env, error::Error, future::Future, io, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::watch;
 
+const COORDINATOR_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+
 enum IpcMode {
     Stdio,
     #[cfg(unix)]
@@ -283,7 +285,7 @@ where
     tokio::select! {
         serve_result = serve => {
             let _ = shutdown.send(true);
-            coordinator_task.await??;
+            await_coordinator_shutdown(coordinator_task, COORDINATOR_SHUTDOWN_GRACE).await?;
             serve_result?;
             Ok(())
         }
@@ -295,9 +297,58 @@ where
     }
 }
 
+async fn await_coordinator_shutdown(
+    mut coordinator_task: tokio::task::JoinHandle<
+        Result<(), chatos_local_agent_host::LocalAgentCoordinatorError>,
+    >,
+    grace: Duration,
+) -> Result<(), Box<dyn Error>> {
+    match tokio::time::timeout(grace, &mut coordinator_task).await {
+        Ok(result) => result??,
+        Err(_) => {
+            coordinator_task.abort();
+            match coordinator_task.await {
+                Err(error) if error.is_cancelled() => {}
+                Err(error) => return Err(error.into()),
+                Ok(result) => result?,
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
+    #[tokio::test]
+    async fn coordinator_shutdown_aborts_work_that_exceeds_the_grace_period() {
+        struct DropProbe(Arc<AtomicBool>);
+        impl Drop for DropProbe {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let dropped = Arc::new(AtomicBool::new(false));
+        let coordinator_task = tokio::spawn({
+            let dropped = Arc::clone(&dropped);
+            async move {
+                let _probe = DropProbe(dropped);
+                std::future::pending::<()>().await;
+                Ok::<(), chatos_local_agent_host::LocalAgentCoordinatorError>(())
+            }
+        });
+        tokio::task::yield_now().await;
+        await_coordinator_shutdown(coordinator_task, Duration::from_millis(10))
+            .await
+            .expect("bounded shutdown");
+        assert!(dropped.load(Ordering::SeqCst));
+    }
 
     #[test]
     fn parses_repeated_read_only_tools_without_accepting_secret_arguments() {
