@@ -214,43 +214,59 @@ extension AppModel {
         guard let host = localAgentHost as? NativeLocalAgentHostLifecycle else { return }
         localAgentControlPlaneBootstrapOwnerUserID = ownerUserID
         localAgentBootstrapTask = Task { [weak self] in
-            do {
-                let memoryAccessToken = await self?.apiClient.currentAccessToken()
-                guard let bootstrap = try await self?.localConnectorService.bootstrapLocalAgentHost(
-                    host,
-                    ownerUserID: ownerUserID,
-                    memoryAccessToken: memoryAccessToken
-                ) else { return }
-                guard !Task.isCancelled, self?.authenticatedUserID == ownerUserID else {
-                    await host.stop()
+            guard let self else { return }
+            let retryDelays: [Duration?] = [
+                nil,
+                .seconds(1),
+                .seconds(2),
+                .seconds(5),
+                .seconds(10),
+            ]
+            for (attempt, retryDelay) in retryDelays.enumerated() {
+                do {
+                    if let retryDelay {
+                        try await Task.sleep(for: retryDelay)
+                    }
+                    let memoryAccessToken = await apiClient.currentAccessToken()
+                    let bootstrap = try await localConnectorService.bootstrapLocalAgentHost(
+                        host,
+                        ownerUserID: ownerUserID,
+                        memoryAccessToken: memoryAccessToken
+                    )
+                    guard !Task.isCancelled, authenticatedUserID == ownerUserID else {
+                        await host.stop()
+                        return
+                    }
+                    try await runtimeSettingsService?.configure(
+                        ownerUserID: ownerUserID,
+                        bootstrap: bootstrap
+                    )
+                    try await commandService?.configure(
+                        ownerUserID: ownerUserID,
+                        bootstrap: bootstrap
+                    )
+                    await petActivityService?.configure(ownerUserID: ownerUserID)
+                    await messageTaskGraphService?.configure(ownerUserID: ownerUserID)
+                    await askUserPromptService?.configure(ownerUserID: ownerUserID)
+                    await turnProcessService?.configure(ownerUserID: ownerUserID)
+                    await platformToolWorker?.configure(ownerUserID: ownerUserID)
+                    conversationCache.values.forEach {
+                        $0.localAgentRuntimeDidBecomeReady()
+                    }
+                    localAgentControlPlaneOwnerUserID = ownerUserID
+                    localAgentControlPlaneBootstrapOwnerUserID = nil
+                    localAgentHostError = nil
                     return
+                } catch is CancellationError {
+                    guard localAgentControlPlaneBootstrapOwnerUserID == ownerUserID else { return }
+                    localAgentControlPlaneBootstrapOwnerUserID = nil
+                    return
+                } catch {
+                    guard authenticatedUserID == ownerUserID else { return }
+                    guard attempt == retryDelays.indices.last else { continue }
+                    localAgentControlPlaneBootstrapOwnerUserID = nil
+                    localAgentHostError = error.localizedDescription
                 }
-                try await self?.runtimeSettingsService?.configure(
-                    ownerUserID: ownerUserID,
-                    bootstrap: bootstrap
-                )
-                try await self?.commandService?.configure(
-                    ownerUserID: ownerUserID,
-                    bootstrap: bootstrap
-                )
-                await self?.petActivityService?.configure(ownerUserID: ownerUserID)
-                await self?.messageTaskGraphService?.configure(ownerUserID: ownerUserID)
-                await self?.askUserPromptService?.configure(ownerUserID: ownerUserID)
-                await self?.turnProcessService?.configure(ownerUserID: ownerUserID)
-                await self?.platformToolWorker?.configure(ownerUserID: ownerUserID)
-                self?.conversationCache.values.forEach {
-                    $0.localAgentRuntimeDidBecomeReady()
-                }
-                self?.localAgentControlPlaneOwnerUserID = ownerUserID
-                self?.localAgentControlPlaneBootstrapOwnerUserID = nil
-                self?.localAgentHostError = nil
-            } catch is CancellationError {
-                guard self?.localAgentControlPlaneBootstrapOwnerUserID == ownerUserID else { return }
-                self?.localAgentControlPlaneBootstrapOwnerUserID = nil
-            } catch {
-                guard self?.authenticatedUserID == ownerUserID else { return }
-                self?.localAgentControlPlaneBootstrapOwnerUserID = nil
-                self?.localAgentHostError = error.localizedDescription
             }
         }
     }
