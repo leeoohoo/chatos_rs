@@ -1,6 +1,6 @@
 # macOS 变更的 Windows 同步登记
 
-更新时间：2026-09-29
+更新时间：2026-10-04
 
 本文是 Windows 客户端针对 macOS 端 Bug 修复、功能更新和协议变化的执行队列。macOS 侧的来源登记位于 `chatos_swift/docs/18-cross-platform-change-register.md`。
 
@@ -29,6 +29,16 @@
 ## 未编号工作区观察
 
 - 2026-09-22 审计到两处未提交、由外部并行修改的 macOS 远程连接代码：SSH 二次验证码从“携码重连”改为保留原认证进程并在同一会话续交，以支持 session-bound MFA。Windows 已独立补齐 SSH.NET 同会话 continuation：认证提示出现后保留原 attempt，验证码只提交给当前回调，支持跳板机与目标机的连续挑战；待验证 attempt 限每类 8 个、5 分钟失效、单 attempt 最多 4 轮提示。自动化覆盖同一 attempt 续交、一次性验证码消费和密码提示隔离，仍待 Windows 真机 SSH 服务器验收。macOS 变更仍未提交且未获 `CP-*` 编号，因此这里只记录观察与预同步结果，不触碰外部修改、不伪造编号。
+
+### 2026-10-04：Rust Local Agent Host 性能与稳定性同步
+
+- Windows Host IPC 已对齐共享 Rust Host 协议 39，并覆盖协议 33–39 的累计查询能力：Run 状态/更新时间过滤、Task Graph 来源过滤、事件类型/倒序/payload 模式、durable cursor、`wait_events` 和工具 claim 续租。
+- 聊天、宠物和平台工具 worker 统一使用账号级共享 Event Hub；单条长轮询事件链替代每窗口 400 ms 轮询。订阅队列有界，事件只负责唤醒，权威状态继续从本地 SQLite 投影读取。
+- Windows Host lifecycle 支持并发请求按 `command_id` 关联、串行写/单读取循环、75 秒请求 deadline、进程退出通知、坏 transport 失效、幂等释放和 250 ms/1 s/2 s/5 s/10 s 有界恢复。恢复时重新读取 Credential Manager，不长期保存模型密钥。
+- 平台工具 claim 使用 30 秒 lease 并每 10 秒续租；失去 lease 后取消执行且不提交结果，并关闭“执行完成与续租失败同时发生”时的竞态。
+- 图片、视频、剧情项目和规划记录改为稳定复合 cursor 的有界分页；只解码当前页 manifest，限制 manifest 大小，并拒绝不安全的媒体子路径。账号/工作区切换使用 session generation 阻止旧分页结果回写新界面。
+- 自动化结果：Windows Core 27、Presentation 58、API 38、Connector 405、NetworkGuard 19 项通过，共 547 项通过；另有 5 项 Windows 原生验收在 macOS 按设计跳过。Rust protocol 24、runtime 38、Host 47 项通过，共 109 项通过。新增 XAML 已通过 XML 解析。
+- 当前状态：`待真机验收`。macOS 无法执行 Windows App SDK 的 `XamlCompiler.exe`；需在 Windows x64/ARM64 构建 WinUI，并验证登录恢复、Host 崩溃恢复、长轮询、媒体分页和工具长执行续租。此同步不迁移旧数据，也没有重新引入旧 Task Runner 或 ChatOS 任务后端。
 
 ## 详细记录
 

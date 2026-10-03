@@ -31,10 +31,13 @@ public sealed class WindowsLocalAgentPetActivityService : IPetActivityInboxServi
     {
         var owner = RequireOwner();
         var normalized = (uint)Math.Clamp(limit, 1, 100);
-        var activeTask = _runtime.ListRunsAsync(owner, "active", normalized, cancellationToken);
-        var terminalTask = _runtime.ListRunsAsync(owner, "terminal", normalized, cancellationToken);
-        await Task.WhenAll(activeTask, terminalTask).ConfigureAwait(false);
         var cutoff = DateTimeOffset.UtcNow.AddMinutes(-15);
+        var activeTask = _runtime.ListRunsAsync(
+            owner, "active", normalized, cancellationToken: cancellationToken);
+        var terminalTask = _runtime.ListRunsAsync(
+            owner, "terminal", normalized, updatedAfterUnixMs: cutoff.ToUnixTimeMilliseconds(),
+            cancellationToken: cancellationToken);
+        await Task.WhenAll(activeTask, terminalTask).ConfigureAwait(false);
         return activeTask.Result.Runs.Concat(terminalTask.Result.Runs)
             .Where(run => !IsTerminal(run.Status) || Date(run.UpdatedAtUnixMs) >= cutoff)
             .OrderByDescending(run => run.UpdatedAtUnixMs)

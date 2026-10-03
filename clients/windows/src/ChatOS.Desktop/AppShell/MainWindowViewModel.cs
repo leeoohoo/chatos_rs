@@ -456,6 +456,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         string ownerUserId,
         CancellationToken cancellationToken)
     {
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, _accountCancellation.Token);
+        cancellationToken = linkedCancellation.Token;
         if (_localAgentBootstrap is not null)
         {
             _ = await _localAgentBootstrap

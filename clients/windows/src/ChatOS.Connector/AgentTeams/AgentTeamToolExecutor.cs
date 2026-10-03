@@ -675,6 +675,23 @@ internal sealed partial class AgentTeamToolExecutor(
         return output;
     }
 
+    private static IReadOnlyList<JsonElement> OptionalObjectArray(
+        JsonElement value,
+        string name,
+        int maximumCount)
+    {
+        if (!value.TryGetProperty(name, out var property) || property.ValueKind == JsonValueKind.Null)
+            return [];
+        if (property.ValueKind != JsonValueKind.Array)
+            throw AgentTeamValidation.Invalid(name);
+        var output = property.EnumerateArray().Select(item =>
+            item.ValueKind == JsonValueKind.Object
+                ? item.Clone()
+                : throw AgentTeamValidation.Invalid(name)).ToArray();
+        if (output.Length > maximumCount) throw AgentTeamValidation.Invalid(name);
+        return output;
+    }
+
     private static TEnum ParseEnum<TEnum>(string value) where TEnum : struct, Enum =>
         Enum.TryParse<TEnum>(value, ignoreCase: true, out var result)
             ? result

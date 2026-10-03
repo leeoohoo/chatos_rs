@@ -13,7 +13,7 @@ public sealed class LocalAgentHostFrameCodecTests
 
         await LocalAgentHostFrameCodec.WriteAsync(stream, payload, CancellationToken.None);
         var encoded = stream.ToArray();
-        Assert.Equal(payload.Length, BinaryPrimitives.ReadUInt32BigEndian(encoded.AsSpan(0, 4)));
+        Assert.Equal((uint)payload.Length, BinaryPrimitives.ReadUInt32BigEndian(encoded.AsSpan(0, 4)));
         Assert.Equal(payload, encoded[4..]);
 
         stream.Position = 0;

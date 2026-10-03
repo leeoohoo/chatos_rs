@@ -7,26 +7,28 @@ namespace ChatOS.Connector.LocalAgent;
 public sealed class WindowsLocalAgentRealtimeClient : IRealtimeClient
 {
     private readonly WindowsLocalAgentConversationClient _conversations;
-    private readonly WindowsLocalAgentRuntimeClient _runtime;
+    private readonly WindowsLocalAgentEventHub _eventHub;
     private readonly object _gate = new();
     private string? _ownerUserId;
 
     public WindowsLocalAgentRealtimeClient(
         WindowsLocalAgentConversationClient conversations,
-        WindowsLocalAgentRuntimeClient runtime)
+        WindowsLocalAgentEventHub eventHub)
     {
         _conversations = conversations;
-        _runtime = runtime;
+        _eventHub = eventHub;
     }
 
     public void Configure(string ownerUserId)
     {
         lock (_gate) _ownerUserId = ownerUserId;
+        _eventHub.Configure(ownerUserId);
     }
 
     public void Reset()
     {
         lock (_gate) _ownerUserId = null;
+        _eventHub.Reset();
     }
 
     public async IAsyncEnumerable<ConversationRealtimeSignal> StreamConversationAsync(
@@ -36,40 +38,46 @@ public sealed class WindowsLocalAgentRealtimeClient : IRealtimeClient
         ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
         var owner = RequireOwner();
         ulong? observedVersion = null;
-        long cursor = 0;
-        while (!cancellationToken.IsCancellationRequested)
+        var observedRunIds = new HashSet<string>(StringComparer.Ordinal);
+        var initial = await GetConversationOrNullAsync(
+            owner, conversationId, cancellationToken).ConfigureAwait(false);
+        if (initial is not null)
         {
-            try
-            {
-                if (observedVersion is null)
-                {
-                    var detail = await _conversations.GetAsync(
-                        owner, conversationId, cancellationToken).ConfigureAwait(false);
-                    observedVersion = detail.Conversation.Version;
-                    yield return Signal(conversationId, detail);
-                }
+            observedVersion = initial.Conversation.Version;
+            observedRunIds = initial.Turns.Select(value => value.RunId)
+                .ToHashSet(StringComparer.Ordinal);
+            yield return Signal(conversationId, initial);
+        }
 
-                var page = await _runtime.ListEventPageAsync(
-                    owner, cursor, cancellationToken: cancellationToken).ConfigureAwait(false);
-                cursor = page.NextCursor;
-                if (page.Events.Count == 0)
-                {
-                    await Task.Delay(TimeSpan.FromMilliseconds(400), cancellationToken)
-                        .ConfigureAwait(false);
-                    continue;
-                }
+        await foreach (var update in _eventHub.UpdatesAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (!string.Equals(update.OwnerUserId, owner, StringComparison.Ordinal)) continue;
+            if (!update.IsReconcile && !EventsAffectConversation(
+                    update.Events, conversationId, observedRunIds)) continue;
+            var current = await GetConversationOrNullAsync(
+                owner, conversationId, cancellationToken).ConfigureAwait(false);
+            if (current is null) continue;
+            observedRunIds = current.Turns.Select(value => value.RunId)
+                .ToHashSet(StringComparer.Ordinal);
+            if (observedVersion == current.Conversation.Version) continue;
+            observedVersion = current.Conversation.Version;
+            yield return Signal(conversationId, current);
+        }
+    }
 
-                var current = await _conversations.GetAsync(
-                    owner, conversationId, cancellationToken).ConfigureAwait(false);
-                if (observedVersion == current.Conversation.Version) continue;
-                observedVersion = current.Conversation.Version;
-                yield return Signal(conversationId, current);
-            }
-            catch (LocalAgentHostRequestException exception) when (exception.Code == "not_found")
-            {
-                await Task.Delay(TimeSpan.FromMilliseconds(400), cancellationToken)
-                    .ConfigureAwait(false);
-            }
+    private async Task<WindowsLocalConversationDetail?> GetConversationOrNullAsync(
+        string ownerUserId,
+        string conversationId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _conversations.GetAsync(ownerUserId, conversationId, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (LocalAgentHostRequestException exception) when (exception.Code == "not_found")
+        {
+            return null;
         }
     }
 
@@ -77,21 +85,36 @@ public sealed class WindowsLocalAgentRealtimeClient : IRealtimeClient
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var owner = RequireOwner();
-        long cursor = 0;
         yield return new PetActivityEvent.Reconcile();
-        while (!cancellationToken.IsCancellationRequested)
+        await foreach (var update in _eventHub.UpdatesAsync(cancellationToken).ConfigureAwait(false))
         {
-            var page = await _runtime.ListEventPageAsync(
-                owner, cursor, cancellationToken: cancellationToken).ConfigureAwait(false);
-            cursor = page.NextCursor;
-            if (page.Events.Count != 0)
-            {
+            if (!string.Equals(update.OwnerUserId, owner, StringComparison.Ordinal)) continue;
+            if (update.IsReconcile || ShouldRefreshPet(update.Events))
                 yield return new PetActivityEvent.Reconcile();
-                continue;
-            }
-            await Task.Delay(TimeSpan.FromMilliseconds(400), cancellationToken)
-                .ConfigureAwait(false);
         }
+    }
+
+    internal static bool EventsAffectConversation(
+        IReadOnlyList<WindowsLocalAgentEvent> events,
+        string conversationId,
+        IReadOnlySet<string> knownRunIds) => events.Any(value =>
+            knownRunIds.Contains(value.RunId) ||
+            value.Payload is { ValueKind: System.Text.Json.JsonValueKind.Object } payload &&
+            payload.TryGetProperty("conversation_id", out var routed) &&
+            routed.ValueKind == System.Text.Json.JsonValueKind.String &&
+            string.Equals(routed.GetString(), conversationId, StringComparison.Ordinal));
+
+    internal static bool ShouldRefreshPet(IReadOnlyList<WindowsLocalAgentEvent> events)
+    {
+        var neutral = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "task_graph_written_back",
+            "task_state_reconciled",
+            "tool_invocation_approved",
+            "tool_invocation_claimed",
+            "tool_invocation_completed",
+        };
+        return events.Any(value => !neutral.Contains(value.EventType));
     }
 
     private static ConversationRealtimeSignal Signal(

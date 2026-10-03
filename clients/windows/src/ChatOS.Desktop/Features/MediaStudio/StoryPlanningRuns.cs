@@ -259,10 +259,12 @@ public sealed partial class StoryStudioViewModel
     {
         try
         {
-            var runs = await _store.LoadPlanningRunsAsync(owner, projectId);
+            var page = await _store.LoadPlanningRunsPageAsync(owner, projectId, null);
             if (_session != session || _ownerUserId != owner || _current?.Id != projectId) return;
             PlanningRuns.Clear();
-            foreach (var run in runs) PlanningRuns.Add(new StoryPlanningRunCard(run));
+            foreach (var run in page.Items) PlanningRuns.Add(new StoryPlanningRunCard(run));
+            _planningRunCursor = page.NextCursor;
+            HasMorePlanningRuns = _planningRunCursor is not null;
         }
         catch (Exception exception)
         {
@@ -276,6 +278,33 @@ public sealed partial class StoryStudioViewModel
                 _planningRunsReady = true;
                 NotifyPlanningRunsChanged();
             }
+        }
+    }
+
+    public async Task LoadMorePlanningRunsAsync(CancellationToken cancellationToken = default)
+    {
+        var owner = _ownerUserId;
+        var projectId = _current?.Id;
+        var cursor = _planningRunCursor;
+        if (owner is null || projectId is null || cursor is null || IsLoadingMorePlanningRuns) return;
+        var session = _session;
+        IsLoadingMorePlanningRuns = true;
+        try
+        {
+            var page = await _store.LoadPlanningRunsPageAsync(
+                owner, projectId.Value, cursor, cancellationToken: cancellationToken);
+            if (_session != session || _current?.Id != projectId) return;
+            foreach (var run in page.Items) PlanningRuns.Add(new StoryPlanningRunCard(run));
+            _planningRunCursor = page.NextCursor;
+            HasMorePlanningRuns = _planningRunCursor is not null;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            if (_session == session) ErrorMessage = $"读取更多规划记录失败：{exception.Message}";
+        }
+        finally
+        {
+            if (_session == session) IsLoadingMorePlanningRuns = false;
         }
     }
 

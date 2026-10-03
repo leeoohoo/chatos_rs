@@ -174,6 +174,49 @@ public sealed class StoryProjectStoreTests
         Assert.True(File.Exists(corruptPath));
     }
 
+    [Fact]
+    public async Task ProjectsAndPlanningRunsUseStableBoundedPages()
+    {
+        using var folder = new TemporaryFolder();
+        var store = new StoryProjectStore(folder.Path);
+        var projects = Enumerable.Range(0, 3).Select(index => Project($"Project {index}") with
+        {
+            UpdatedAt = new DateTimeOffset(2026, 9, 28, 8, index, 0, TimeSpan.Zero),
+        }).ToArray();
+        foreach (var project in projects) await store.SaveAsync("owner-a", project);
+        var ownerFolder = Directory.GetDirectories(folder.Path).Single();
+        foreach (var project in projects)
+        {
+            File.SetLastWriteTimeUtc(
+                Path.Combine(ownerFolder, project.Id.ToString(), "project.json"),
+                project.UpdatedAt.UtcDateTime);
+        }
+
+        var firstProjects = await store.LoadPageAsync("owner-a", null, 2);
+        var olderProjects = await store.LoadPageAsync("owner-a", firstProjects.NextCursor, 2);
+
+        Assert.Equal(["Project 2", "Project 1"], firstProjects.Items.Select(value => value.Title));
+        Assert.Equal("Project 0", Assert.Single(olderProjects.Items).Title);
+
+        var projectId = projects[0].Id;
+        var runs = Enumerable.Range(0, 3).Select(index =>
+            PlanningRun(projectId, StoryPlanningRunStatus.Running, null) with
+            {
+                UpdatedAt = new DateTimeOffset(2026, 9, 28, 9, index, 0, TimeSpan.Zero),
+            }).ToArray();
+        foreach (var run in runs) await store.SavePlanningRunAsync("owner-a", run);
+        var runFolder = Path.Combine(ownerFolder, projectId.ToString(), "planning-runs");
+        foreach (var run in runs)
+            File.SetLastWriteTimeUtc(Path.Combine(runFolder, $"{run.Id:N}.json"), run.UpdatedAt.UtcDateTime);
+
+        var firstRuns = await store.LoadPlanningRunsPageAsync("owner-a", projectId, null, 2);
+        var olderRuns = await store.LoadPlanningRunsPageAsync(
+            "owner-a", projectId, firstRuns.NextCursor, 2);
+
+        Assert.Equal([runs[2].Id, runs[1].Id], firstRuns.Items.Select(value => value.Id));
+        Assert.Equal(runs[0].Id, Assert.Single(olderRuns.Items).Id);
+    }
+
     private static StoryProjectDocument Project(string title)
     {
         var now = new DateTimeOffset(2026, 9, 28, 8, 0, 0, TimeSpan.Zero);

@@ -164,7 +164,9 @@ public sealed class WindowsLocalAgentMessageTaskGraphService : IMessageTaskGraph
 
     private static MessageTaskRunEvent MapEvent(WindowsLocalAgentEvent value) => new(
         value.EventId, value.EventType,
-        String(value.Payload, "message") ?? String(value.Payload, "reason"),
+        value.Payload is { } payload
+            ? String(payload, "message") ?? String(payload, "reason")
+            : null,
         Date(value.CreatedAtUnixMs));
 
     private static Dictionary<string, int> Depths(

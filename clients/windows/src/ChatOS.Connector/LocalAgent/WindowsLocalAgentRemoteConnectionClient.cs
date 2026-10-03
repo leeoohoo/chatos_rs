@@ -1,4 +1,5 @@
 using ChatOS.Core.Domain;
+using ChatOS.Core.Abstractions;
 
 namespace ChatOS.Connector.LocalAgent;
 

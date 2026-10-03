@@ -9,6 +9,8 @@ public sealed class StoryProjectStore
     private const int MaximumManifestBytes = 16 * 1024 * 1024;
     private const int MaximumImageBytes = 20 * 1024 * 1024;
     private const int MaximumVideoBytes = 512 * 1024 * 1024;
+    internal const int DefaultProjectPageSize = 40;
+    internal const int DefaultPlanningRunPageSize = 20;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
@@ -26,15 +28,25 @@ public sealed class StoryProjectStore
     public async Task<IReadOnlyList<StoryProjectDocument>> LoadAsync(
         string ownerUserId,
         CancellationToken cancellationToken = default)
+        => (await LoadPageAsync(ownerUserId, null, DefaultProjectPageSize, cancellationToken)
+            .ConfigureAwait(false)).Items;
+
+    internal async Task<StoryStorePage<StoryProjectDocument>> LoadPageAsync(
+        string ownerUserId,
+        StoryStoreCursor? after,
+        int limit = DefaultProjectPageSize,
+        CancellationToken cancellationToken = default)
     {
         var ownerFolder = OwnerFolder(ownerUserId);
-        if (!Directory.Exists(ownerFolder)) return [];
+        if (!Directory.Exists(ownerFolder)) return new([], null);
+        var page = ProjectCandidates(ownerFolder, after, limit, cancellationToken);
         var projects = new List<StoryProjectDocument>();
-        foreach (var folder in Directory.EnumerateDirectories(ownerFolder))
+        foreach (var candidate in page.Candidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var folder = Path.GetDirectoryName(candidate.Path)!;
             if (!Guid.TryParse(Path.GetFileName(folder), out var folderId)) continue;
-            var manifestPath = Path.Combine(folder, "project.json");
+            var manifestPath = candidate.Path;
             try
             {
                 var info = new FileInfo(manifestPath);
@@ -53,7 +65,9 @@ public sealed class StoryProjectStore
                 // Keep unreadable projects untouched so a later version can recover them.
             }
         }
-        return projects.OrderByDescending(project => project.UpdatedAt).ToArray();
+        return new(
+            projects.OrderByDescending(project => project.UpdatedAt).ToArray(),
+            page.HasMore ? page.Candidates[^1].Cursor : null);
     }
 
     public async Task SaveAsync(
@@ -125,13 +139,25 @@ public sealed class StoryProjectStore
         string ownerUserId,
         Guid projectId,
         CancellationToken cancellationToken = default)
+        => (await LoadPlanningRunsPageAsync(
+            ownerUserId, projectId, null, DefaultPlanningRunPageSize, cancellationToken)
+            .ConfigureAwait(false)).Items;
+
+    internal async Task<StoryStorePage<StoryPlanningRunDocument>> LoadPlanningRunsPageAsync(
+        string ownerUserId,
+        Guid projectId,
+        StoryStoreCursor? after,
+        int limit = DefaultPlanningRunPageSize,
+        CancellationToken cancellationToken = default)
     {
         var folder = Path.Combine(ProjectFolder(ownerUserId, projectId), "planning-runs");
-        if (!Directory.Exists(folder)) return [];
+        if (!Directory.Exists(folder)) return new([], null);
+        var page = FileCandidates(folder, "*.json", after, limit, cancellationToken);
         var runs = new List<StoryPlanningRunDocument>();
-        foreach (var path in Directory.EnumerateFiles(folder, "*.json"))
+        foreach (var candidate in page.Candidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var path = candidate.Path;
             try
             {
                 var info = new FileInfo(path);
@@ -149,7 +175,9 @@ public sealed class StoryProjectStore
                 // Preserve unreadable records for a later compatible version.
             }
         }
-        return runs.OrderByDescending(run => run.UpdatedAt).ToArray();
+        return new(
+            runs.OrderByDescending(run => run.UpdatedAt).ToArray(),
+            page.HasMore ? page.Candidates[^1].Cursor : null);
     }
 
     public async Task SavePlanningRunAsync(
@@ -188,9 +216,78 @@ public sealed class StoryProjectStore
     private string ProjectFolder(string ownerUserId, Guid projectId) =>
         Path.Combine(OwnerFolder(ownerUserId), projectId.ToString());
 
+    private static CandidatePage ProjectCandidates(
+        string ownerFolder,
+        StoryStoreCursor? after,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var paths = Directory.EnumerateDirectories(ownerFolder)
+            .Where(folder => Guid.TryParse(Path.GetFileName(folder), out _))
+            .Select(folder => Path.Combine(folder, "project.json"))
+            .Where(File.Exists);
+        return CandidatePageFor(
+            paths, after, limit, cancellationToken,
+            path => Path.GetFileName(Path.GetDirectoryName(path)!));
+    }
+
+    private static CandidatePage FileCandidates(
+        string folder,
+        string pattern,
+        StoryStoreCursor? after,
+        int limit,
+        CancellationToken cancellationToken) =>
+        CandidatePageFor(
+            Directory.EnumerateFiles(folder, pattern, SearchOption.TopDirectoryOnly),
+            after, limit, cancellationToken);
+
+    private static CandidatePage CandidatePageFor(
+        IEnumerable<string> paths,
+        StoryStoreCursor? after,
+        int requestedLimit,
+        CancellationToken cancellationToken,
+        Func<string, string>? recordId = null)
+    {
+        var limit = Math.Clamp(requestedLimit, 1, 200);
+        var candidates = new List<FileCandidate>(limit + 1);
+        foreach (var path in paths)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var id = recordId is null ? Path.GetFileName(path) : recordId(path);
+            var cursor = new StoryStoreCursor(
+                File.GetLastWriteTimeUtc(path), id);
+            if (after is not null && !IsAfter(cursor, after)) continue;
+            var candidate = new FileCandidate(path, cursor);
+            var index = candidates.FindIndex(value => IsNewer(cursor, value.Cursor));
+            if (index < 0) index = candidates.Count;
+            if (index > limit) continue;
+            candidates.Insert(index, candidate);
+            if (candidates.Count > limit + 1) candidates.RemoveAt(candidates.Count - 1);
+        }
+        var hasMore = candidates.Count > limit;
+        if (hasMore) candidates.RemoveAt(candidates.Count - 1);
+        return new(candidates, hasMore);
+    }
+
+    private static bool IsNewer(StoryStoreCursor left, StoryStoreCursor right) =>
+        left.ModifiedAt != right.ModifiedAt
+            ? left.ModifiedAt > right.ModifiedAt
+            : string.CompareOrdinal(left.RecordId, right.RecordId) > 0;
+
+    private static bool IsAfter(StoryStoreCursor value, StoryStoreCursor cursor) =>
+        value.ModifiedAt != cursor.ModifiedAt
+            ? value.ModifiedAt < cursor.ModifiedAt
+            : string.CompareOrdinal(value.RecordId, cursor.RecordId) < 0;
+
     private static string SafeSegment(string value)
     {
         var safe = new string(value.Where(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_').ToArray());
         return safe.Length == 0 ? "segment" : safe[..Math.Min(safe.Length, 64)];
     }
+
+    private sealed record FileCandidate(string Path, StoryStoreCursor Cursor);
+    private sealed record CandidatePage(List<FileCandidate> Candidates, bool HasMore);
 }
+
+internal sealed record StoryStoreCursor(DateTime ModifiedAt, string RecordId);
+internal sealed record StoryStorePage<T>(IReadOnlyList<T> Items, StoryStoreCursor? NextCursor);

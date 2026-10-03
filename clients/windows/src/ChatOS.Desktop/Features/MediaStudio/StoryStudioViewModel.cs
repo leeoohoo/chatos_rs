@@ -20,6 +20,8 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     private string? _lockedPlanningSource;
     private string? _lockedPlanningStyle;
     private string? _lockedPlanningRatio;
+    private StoryStoreCursor? _projectCursor;
+    private StoryStoreCursor? _planningRunCursor;
 
     public StoryStudioViewModel(
         IMediaGenerationService media,
@@ -71,6 +73,20 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     public ObservableCollection<MediaGenerationModel> Models { get; } = [];
     public ObservableCollection<MediaGenerationModel> ImageModels { get; } = [];
     public ObservableCollection<MediaGenerationModel> VideoModels { get; } = [];
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanLoadMoreProjects))]
+    private bool _hasMoreProjects;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanLoadMoreProjects))]
+    private bool _isLoadingMoreProjects;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanLoadMorePlanningRuns))]
+    private bool _hasMorePlanningRuns;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanLoadMorePlanningRuns))]
+    private bool _isLoadingMorePlanningRuns;
+    public bool CanLoadMoreProjects => HasMoreProjects && !IsLoadingMoreProjects;
+    public bool CanLoadMorePlanningRuns => HasMorePlanningRuns && !IsLoadingMorePlanningRuns;
     public IReadOnlyList<string> Ratios => StoryStudioOptions.Ratios;
     public IReadOnlyList<StoryResourceKind> ResourceKinds { get; } = Enum.GetValues<StoryResourceKind>();
     public IReadOnlyList<StorySegmentKindOption> SegmentKinds { get; } =
@@ -229,12 +245,16 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         IsBusy = true;
         try
         {
-            var projectsTask = _store.LoadAsync(ownerUserId, cancellationToken);
+            var projectsTask = _store.LoadPageAsync(
+                ownerUserId, null, cancellationToken: cancellationToken);
             var modelsTask = _media.FetchModelsAsync(cancellationToken);
             await Task.WhenAll(projectsTask, modelsTask);
             if (session != _session) return;
             ApplyModels(modelsTask.Result);
-            foreach (var project in projectsTask.Result) Projects.Add(new StoryProjectCard(project));
+            foreach (var project in projectsTask.Result.Items)
+                Projects.Add(new StoryProjectCard(project));
+            _projectCursor = projectsTask.Result.NextCursor;
+            HasMoreProjects = _projectCursor is not null;
             StatusMessage = Projects.Count == 0 ? "创建第一个剧情项目" : $"已加载 {Projects.Count} 个剧情项目";
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -244,6 +264,33 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         finally
         {
             if (session == _session) IsBusy = false;
+        }
+    }
+
+    public async Task LoadMoreProjectsAsync(CancellationToken cancellationToken = default)
+    {
+        var owner = _ownerUserId;
+        var cursor = _projectCursor;
+        if (owner is null || cursor is null || IsLoadingMoreProjects) return;
+        var session = _session;
+        IsLoadingMoreProjects = true;
+        try
+        {
+            var page = await _store.LoadPageAsync(
+                owner, cursor, cancellationToken: cancellationToken);
+            if (session != _session || _ownerUserId != owner) return;
+            foreach (var project in page.Items) Projects.Add(new StoryProjectCard(project));
+            _projectCursor = page.NextCursor;
+            HasMoreProjects = _projectCursor is not null;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            if (session == _session)
+                ErrorMessage = $"读取更多剧情项目失败：{exception.Message}";
+        }
+        finally
+        {
+            if (session == _session) IsLoadingMoreProjects = false;
         }
     }
 
@@ -281,6 +328,8 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         ClearSegmentRefinement();
         _planningRunsReady = false;
         PlanningRuns.Clear();
+        _planningRunCursor = null;
+        HasMorePlanningRuns = false;
         ProjectTitle = project.Title;
         ProjectDescription = project.Description;
         CreativeRequirements = project.CreativeRequirements;
@@ -320,6 +369,9 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         ClearOptimizationSuggestion();
         ClearSegmentRefinement();
         _planningRunsReady = false;
+        _planningRunCursor = null;
+        HasMorePlanningRuns = false;
+        IsLoadingMorePlanningRuns = false;
         Segments.Clear();
         Resources.Clear();
         PlanningRuns.Clear();
@@ -496,6 +548,12 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         ClearOptimizationSuggestion();
         ClearSegmentRefinement();
         _planningRunsReady = false;
+        _projectCursor = null;
+        _planningRunCursor = null;
+        HasMoreProjects = false;
+        HasMorePlanningRuns = false;
+        IsLoadingMoreProjects = false;
+        IsLoadingMorePlanningRuns = false;
         Projects.Clear();
         Segments.Clear();
         Resources.Clear();

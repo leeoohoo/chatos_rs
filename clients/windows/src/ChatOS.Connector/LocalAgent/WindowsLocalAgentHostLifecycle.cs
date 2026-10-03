@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using ChatOS.Core.Abstractions;
 
@@ -5,15 +6,20 @@ namespace ChatOS.Connector.LocalAgent;
 
 public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsyncDisposable
 {
-    private const int ProtocolVersion = 32;
+    private const int ProtocolVersion = 39;
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
     };
     private readonly LocalAgentHostOptions _options;
     private readonly ILocalAgentHostProcessLauncher _launcher;
-    private readonly SemaphoreSlim _gate = new(1, 1);
-    private ILocalAgentHostProcess? _process;
+    private readonly SemaphoreSlim _transition = new(1, 1);
+    private readonly object _stateGate = new();
+    private RunningHost? _running;
+    private string? _activeOwnerUserId;
+    private ulong _generation;
+    private bool _disposed;
+    private int _disposeStarted;
 
     public WindowsLocalAgentHostLifecycle(LocalAgentHostOptions options)
         : this(options, new LocalAgentHostProcessLauncher())
@@ -24,34 +30,46 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
         LocalAgentHostOptions options,
         ILocalAgentHostProcessLauncher launcher)
     {
+        if (options.RequestTimeout <= TimeSpan.Zero ||
+            options.RequestTimeout > TimeSpan.FromMinutes(5))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options), "Local Agent Host request timeout must be between 1 ms and 5 minutes.");
+        }
         _options = options;
         _launcher = launcher;
     }
 
-    public string? ActiveOwnerUserId { get; private set; }
+    public event EventHandler? UnexpectedExit;
+
+    public string? ActiveOwnerUserId
+    {
+        get { lock (_stateGate) return _activeOwnerUserId; }
+    }
 
     public async Task StartForOwnerAsync(
         string ownerUserId,
         CancellationToken cancellationToken = default)
     {
         ValidateOwner(ownerUserId);
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await _transition.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (_process is { HasExited: false } &&
-                string.Equals(ActiveOwnerUserId, ownerUserId, StringComparison.Ordinal))
+            ThrowIfDisposed();
+            lock (_stateGate)
             {
-                return;
+                if (_running is { IsAlive: true } &&
+                    string.Equals(_activeOwnerUserId, ownerUserId, StringComparison.Ordinal))
+                {
+                    return;
+                }
             }
-            await StopLockedAsync().ConfigureAwait(false);
-            await StartLockedAsync(
-                ownerUserId,
-                new Dictionary<string, string>(),
-                cancellationToken).ConfigureAwait(false);
+            await ReplaceAsync(ownerUserId, new Dictionary<string, string>(), cancellationToken)
+                .ConfigureAwait(false);
         }
         finally
         {
-            _gate.Release();
+            _transition.Release();
         }
     }
 
@@ -62,26 +80,31 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
     {
         ValidateOwner(ownerUserId);
         ValidateCredentialEnvironment(credentialEnvironment);
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await _transition.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await StopLockedAsync().ConfigureAwait(false);
-            await StartLockedAsync(
-                ownerUserId,
-                credentialEnvironment,
-                cancellationToken).ConfigureAwait(false);
+            ThrowIfDisposed();
+            await ReplaceAsync(ownerUserId, credentialEnvironment, cancellationToken)
+                .ConfigureAwait(false);
         }
         finally
         {
-            _gate.Release();
+            _transition.Release();
         }
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try { await StopLockedAsync().ConfigureAwait(false); }
-        finally { _gate.Release(); }
+        await _transition.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var previous = DetachCurrent();
+            if (previous is not null) await previous.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _transition.Release();
+        }
     }
 
     public async Task<TResponse> SendAsync<TCommand, TResponse>(
@@ -89,120 +112,111 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
         CancellationToken cancellationToken = default)
         where TCommand : notnull
     {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        RunningHost running;
+        string activeOwner;
+        lock (_stateGate)
         {
-            if (_process is not { HasExited: false } process || ActiveOwnerUserId is null)
-            {
-                throw new InvalidOperationException("Local Agent Host is not running.");
-            }
-            var commandElement = JsonSerializer.SerializeToElement(command, SerializerOptions);
-            if (commandElement.ValueKind != JsonValueKind.Object ||
-                !commandElement.TryGetProperty("type", out var type) ||
-                type.ValueKind != JsonValueKind.String)
-            {
-                throw new InvalidDataException(
-                    "Local Agent Host command must be a JSON object with a type.");
-            }
-            if (commandElement.TryGetProperty("owner_user_id", out var owner) &&
-                !string.Equals(owner.GetString(), ActiveOwnerUserId, StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException(
-                    "Local Agent Host command owner does not match the active account.");
-            }
-            return await RoundTripAsync<TResponse>(
-                process,
-                commandElement,
-                cancellationToken).ConfigureAwait(false);
+            ThrowIfDisposed();
+            running = _running is { IsAlive: true } value
+                ? value
+                : throw new InvalidOperationException("Local Agent Host is not running.");
+            activeOwner = _activeOwnerUserId
+                ?? throw new InvalidOperationException("Local Agent Host is not running.");
         }
-        finally
-        {
-            _gate.Release();
-        }
-    }
 
-    private static async Task VerifyHealthAsync(
-        ILocalAgentHostProcess process,
-        CancellationToken cancellationToken)
-    {
-        var commandId = $"native-health-{Guid.NewGuid():N}";
-        var request = JsonSerializer.SerializeToUtf8Bytes(
-            new HostRequest<JsonElement>(
-                ProtocolVersion,
-                commandId,
-                JsonSerializer.SerializeToElement(new { type = "health" }, SerializerOptions)),
-            SerializerOptions);
-        await LocalAgentHostFrameCodec
-            .WriteAsync(process.StandardInput, request, cancellationToken)
-            .ConfigureAwait(false);
-        var payload = await LocalAgentHostFrameCodec
-            .ReadAsync(process.StandardOutput, cancellationToken)
-            .ConfigureAwait(false);
-        var response = JsonSerializer.Deserialize<HostResponse>(payload, SerializerOptions)
-            ?? throw new InvalidDataException("Local Agent Host returned an empty response.");
-        if (response.ProtocolVersion != ProtocolVersion || response.CommandId != commandId)
+        var commandElement = JsonSerializer.SerializeToElement(command, SerializerOptions);
+        if (commandElement.ValueKind != JsonValueKind.Object ||
+            !commandElement.TryGetProperty("type", out var type) ||
+            type.ValueKind != JsonValueKind.String)
         {
-            throw new InvalidDataException("Local Agent Host response identity is invalid.");
+            throw new InvalidDataException(
+                "Local Agent Host command must be a JSON object with a type.");
         }
-        if (!response.Ok)
+        if (commandElement.TryGetProperty("owner_user_id", out var owner) &&
+            !string.Equals(owner.GetString(), activeOwner, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                response.Error?.Message ?? "Local Agent Host health check failed.");
+                "Local Agent Host command owner does not match the active account.");
         }
-        if (response.Result is not { } result ||
-            result.Deserialize<HealthResult>(SerializerOptions) is not
-                { Type: "health", StorageReady: true })
+
+        var commandId = $"native-command-{Guid.NewGuid():N}";
+        byte[] payload;
+        try
         {
-            throw new InvalidDataException("Local Agent Host health payload is invalid.");
+            payload = await running.RoundTripAsync(
+                Envelope(commandId, commandElement), commandId, _options.RequestTimeout,
+                cancellationToken).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            InvalidateAfterFailure(running);
+            throw;
+        }
+        return DecodeResponse<TResponse>(payload, commandId);
     }
 
-    private async Task StartLockedAsync(
+    private async Task ReplaceAsync(
         string ownerUserId,
         IReadOnlyDictionary<string, string> credentialEnvironment,
         CancellationToken cancellationToken)
     {
+        var previous = DetachCurrent();
+        if (previous is not null) await previous.DisposeAsync().ConfigureAwait(false);
+
         var process = await _launcher
             .LaunchAsync(_options, ownerUserId, credentialEnvironment, cancellationToken)
             .ConfigureAwait(false);
-        _process = process;
+        var generation = NextGeneration();
+        var running = new RunningHost(process, generation, OnTransportFailed);
+        lock (_stateGate) _running = running;
         try
         {
-            using var startup = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            startup.CancelAfter(_options.StartupTimeout);
-            await VerifyHealthAsync(process, startup.Token).ConfigureAwait(false);
-            ActiveOwnerUserId = ownerUserId;
+            var commandId = $"native-health-{Guid.NewGuid():N}";
+            var command = JsonSerializer.SerializeToElement(
+                new { type = "health" }, SerializerOptions);
+            var payload = await running.RoundTripAsync(
+                Envelope(commandId, command), commandId, _options.StartupTimeout,
+                cancellationToken).ConfigureAwait(false);
+            var health = DecodeResponse<HealthResult>(payload, commandId);
+            if (health is not { Type: "health", StorageReady: true })
+                throw new InvalidDataException("Local Agent Host health payload is invalid.");
+            lock (_stateGate)
+            {
+                if (!ReferenceEquals(_running, running))
+                    throw new InvalidOperationException("Local Agent Host exited during startup.");
+                _activeOwnerUserId = ownerUserId;
+            }
         }
         catch
         {
-            await StopLockedAsync().ConfigureAwait(false);
+            lock (_stateGate)
+            {
+                if (ReferenceEquals(_running, running))
+                {
+                    _running = null;
+                    _activeOwnerUserId = null;
+                    _generation++;
+                }
+            }
+            await running.DisposeAsync().ConfigureAwait(false);
             throw;
         }
     }
 
-    private static async Task<TResponse> RoundTripAsync<TResponse>(
-        ILocalAgentHostProcess process,
-        JsonElement command,
-        CancellationToken cancellationToken)
+    private static byte[] Envelope(string commandId, JsonElement command) =>
+        JsonSerializer.SerializeToUtf8Bytes(
+            new HostRequest<JsonElement>(ProtocolVersion, commandId, command), SerializerOptions);
+
+    private static TResponse DecodeResponse<TResponse>(byte[] payload, string commandId)
     {
-        var commandId = $"native-command-{Guid.NewGuid():N}";
-        var request = JsonSerializer.SerializeToUtf8Bytes(
-            new HostRequest<JsonElement>(ProtocolVersion, commandId, command),
-            SerializerOptions);
-        await LocalAgentHostFrameCodec
-            .WriteAsync(process.StandardInput, request, cancellationToken)
-            .ConfigureAwait(false);
-        var payload = await LocalAgentHostFrameCodec
-            .ReadAsync(process.StandardOutput, cancellationToken)
-            .ConfigureAwait(false);
-        var response = JsonSerializer.Deserialize<HostResponse>(
-            payload,
-            SerializerOptions) ?? throw new InvalidDataException(
-                "Local Agent Host returned an empty response.");
+        var response = JsonSerializer.Deserialize<HostResponse>(payload, SerializerOptions)
+            ?? throw new InvalidDataException("Local Agent Host returned an empty response.");
         if (response.ProtocolVersion != ProtocolVersion || response.CommandId != commandId)
-        {
             throw new InvalidDataException("Local Agent Host response identity is invalid.");
-        }
         if (!response.Ok)
         {
             throw new LocalAgentHostRequestException(
@@ -211,24 +225,49 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
                 response.Error?.Retryable ?? false);
         }
         if (response.Result is not { } result)
-        {
-            throw new InvalidDataException(
-                "Local Agent Host response did not contain a result.");
-        }
-        var decoded = result.Deserialize<TResponse>(SerializerOptions);
-        return decoded is null
-            ? throw new InvalidDataException("Local Agent Host result could not be decoded.")
-            : decoded;
+            throw new InvalidDataException("Local Agent Host response did not contain a result.");
+        return result.Deserialize<TResponse>(SerializerOptions)
+            ?? throw new InvalidDataException("Local Agent Host result could not be decoded.");
     }
 
-    private async Task StopLockedAsync()
+    private RunningHost? DetachCurrent()
     {
-        var process = _process;
-        _process = null;
-        ActiveOwnerUserId = null;
-        if (process is null) return;
-        await process.TerminateAsync().ConfigureAwait(false);
-        await process.DisposeAsync().ConfigureAwait(false);
+        lock (_stateGate)
+        {
+            var previous = _running;
+            _running = null;
+            _activeOwnerUserId = null;
+            _generation++;
+            return previous;
+        }
+    }
+
+    private ulong NextGeneration()
+    {
+        lock (_stateGate) return ++_generation;
+    }
+
+    private void OnTransportFailed(RunningHost running, Exception error) =>
+        InvalidateAfterFailure(running);
+
+    private void InvalidateAfterFailure(RunningHost failed)
+    {
+        var notify = false;
+        lock (_stateGate)
+        {
+            if (!ReferenceEquals(_running, failed)) return;
+            notify = _activeOwnerUserId is not null;
+            _running = null;
+            _activeOwnerUserId = null;
+            _generation++;
+        }
+        _ = Task.Run(async () => await failed.DisposeAsync().ConfigureAwait(false));
+        if (notify) UnexpectedExit?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed) throw new ObjectDisposedException(nameof(WindowsLocalAgentHostLifecycle));
     }
 
     private static void ValidateOwner(string ownerUserId)
@@ -246,11 +285,8 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
         IReadOnlyDictionary<string, string> credentialEnvironment)
     {
         if (credentialEnvironment.Count > 64)
-        {
-            throw new ArgumentException(
-                "Local Agent Host accepts at most 64 model credentials.",
+            throw new ArgumentException("Local Agent Host accepts at most 64 model credentials.",
                 nameof(credentialEnvironment));
-        }
         foreach (var (name, value) in credentialEnvironment)
         {
             if ((name != "CHATOS_MEMORY_ACCESS_TOKEN" &&
@@ -271,8 +307,18 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
 
     public async ValueTask DisposeAsync()
     {
-        await StopAsync().ConfigureAwait(false);
-        _gate.Dispose();
+        if (Interlocked.Exchange(ref _disposeStarted, 1) != 0) return;
+        await _transition.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            _disposed = true;
+            var previous = DetachCurrent();
+            if (previous is not null) await previous.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _transition.Release();
+        }
     }
 
     private sealed record HostRequest<TCommand>(
@@ -288,11 +334,144 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
         HostError? Error);
 
     private sealed record HealthResult(string Type, bool StorageReady);
+    private sealed record HostError(string Code, string Message, bool Retryable);
 
-    private sealed record HostError(
-        string Code,
-        string Message,
-        bool Retryable);
+    private sealed class RunningHost : IAsyncDisposable
+    {
+        private readonly ILocalAgentHostProcess _process;
+        private readonly Action<RunningHost, Exception> _failure;
+        private readonly ConcurrentDictionary<string, TaskCompletionSource<byte[]>> _pending = [];
+        private readonly SemaphoreSlim _writeGate = new(1, 1);
+        private readonly CancellationTokenSource _lifetime = new();
+        private readonly Task _reader;
+        private int _failed;
+        private int _disposed;
+
+        internal RunningHost(
+            ILocalAgentHostProcess process,
+            ulong generation,
+            Action<RunningHost, Exception> failure)
+        {
+            _process = process;
+            Generation = generation;
+            _failure = failure;
+            _process.Exited += ProcessExited;
+            _reader = Task.Run(ReadResponsesAsync);
+        }
+
+        internal ulong Generation { get; }
+        internal bool IsAlive => Volatile.Read(ref _failed) == 0 && !_process.HasExited;
+
+        internal async Task<byte[]> RoundTripAsync(
+            byte[] payload,
+            string commandId,
+            TimeSpan timeout,
+            CancellationToken cancellationToken)
+        {
+            if (!IsAlive) throw new InvalidOperationException("Local Agent Host is not running.");
+            var response = new TaskCompletionSource<byte[]>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            if (!_pending.TryAdd(commandId, response))
+                throw new InvalidOperationException("Duplicate Local Agent Host command identifier.");
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+            deadline.CancelAfter(timeout);
+            try
+            {
+                await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    await LocalAgentHostFrameCodec.WriteAsync(
+                        _process.StandardInput, payload, deadline.Token).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _writeGate.Release();
+                }
+                using var wait = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken, deadline.Token);
+                return await response.Task.WaitAsync(wait.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (
+                !cancellationToken.IsCancellationRequested && !_lifetime.IsCancellationRequested)
+            {
+                var error = new TimeoutException(
+                    "Local Agent Host did not respond before the request deadline.");
+                Fail(error);
+                throw error;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception error)
+            {
+                Fail(error);
+                throw;
+            }
+            finally
+            {
+                _pending.TryRemove(commandId, out _);
+            }
+        }
+
+        private async Task ReadResponsesAsync()
+        {
+            try
+            {
+                while (!_lifetime.IsCancellationRequested)
+                {
+                    var payload = await LocalAgentHostFrameCodec.ReadAsync(
+                        _process.StandardOutput, _lifetime.Token).ConfigureAwait(false);
+                    using var document = JsonDocument.Parse(payload);
+                    if (!document.RootElement.TryGetProperty("command_id", out var value) ||
+                        value.ValueKind != JsonValueKind.String || value.GetString() is not { } commandId)
+                    {
+                        throw new InvalidDataException(
+                            "Local Agent Host response has no command identifier.");
+                    }
+                    if (_pending.TryRemove(commandId, out var pending))
+                        pending.TrySetResult(payload);
+                }
+            }
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+            {
+            }
+            catch (Exception error)
+            {
+                Fail(error);
+            }
+        }
+
+        private void ProcessExited(object? sender, EventArgs args) =>
+            Fail(new EndOfStreamException("Local Agent Host exited unexpectedly."));
+
+        private void Fail(Exception error)
+        {
+            if (Interlocked.Exchange(ref _failed, 1) != 0) return;
+            _lifetime.Cancel();
+            foreach (var pending in _pending.Values) pending.TrySetException(error);
+            _pending.Clear();
+            _failure(this, error);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            _process.Exited -= ProcessExited;
+            Interlocked.Exchange(ref _failed, 1);
+            _lifetime.Cancel();
+            var stopped = new InvalidOperationException("Local Agent Host is not running.");
+            foreach (var pending in _pending.Values) pending.TrySetException(stopped);
+            _pending.Clear();
+            await _process.DisposeAsync().ConfigureAwait(false);
+            try { await _reader.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
+            catch (TimeoutException) { }
+            catch (OperationCanceledException) { }
+            _lifetime.Dispose();
+            _writeGate.Dispose();
+        }
+    }
 }
 
 public sealed class LocalAgentHostRequestException(
@@ -301,6 +480,5 @@ public sealed class LocalAgentHostRequestException(
     bool retryable) : Exception(message)
 {
     public string Code { get; } = code;
-
     public bool Retryable { get; } = retryable;
 }

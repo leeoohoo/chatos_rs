@@ -83,6 +83,33 @@ public sealed class MediaStudioHistoryStoreTests
         Assert.Empty(await store.LoadVideosAsync("owner-b"));
     }
 
+    [Fact]
+    public async Task HistoryPagesDecodeOnlyTheRequestedStableWindow()
+    {
+        using var folder = new TemporaryFolder();
+        var store = new MediaStudioHistoryStore(new NoNetworkHttpClientFactory(), folder.Path);
+        var paths = new List<string>();
+        for (var index = 0; index < 3; index++)
+        {
+            var result = new ImageGenerationResult(
+                $"result-{index}", "model-config", "image-v1",
+                new DateTimeOffset(2026, 9, 28, 8, index, 0, TimeSpan.Zero),
+                [new GeneratedMediaAsset($"image-{index}", "image/png", "AQID", null, null)]);
+            var saved = await store.SaveAsync("owner-a", $"prompt-{index}", result);
+            paths.Add(Path.Combine(Path.GetDirectoryName(saved.Images[0].FilePath)!, "entry.json"));
+        }
+        for (var index = 0; index < paths.Count; index++)
+            File.SetLastWriteTimeUtc(paths[index], new DateTime(2026, 9, 28, 8, index, 0, DateTimeKind.Utc));
+
+        var first = await store.LoadPageAsync("owner-a", null, 2);
+        var second = await store.LoadPageAsync("owner-a", first.NextCursor, 2);
+
+        Assert.Equal(["prompt-2", "prompt-1"], first.Items.Select(value => value.Prompt));
+        Assert.NotNull(first.NextCursor);
+        Assert.Equal("prompt-0", Assert.Single(second.Items).Prompt);
+        Assert.Null(second.NextCursor);
+    }
+
     private sealed class NoNetworkHttpClientFactory : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) =>

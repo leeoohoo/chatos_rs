@@ -305,6 +305,12 @@
                                             </Border>
                                         </DataTemplate>
                                     </ListView.ItemTemplate>
+                                    <ListView.Footer>
+                                        <Button HorizontalAlignment="Center" Click="OnLoadMoreStoryProjectsClick"
+                                                Content="加载更多项目" Style="{StaticResource ChatOSSecondaryButtonStyle}"
+                                                IsEnabled="{x:Bind StoryViewModel.CanLoadMoreProjects, Mode=OneWay}"
+                                                Visibility="{x:Bind StoryViewModel.HasMoreProjects, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                    </ListView.Footer>
                                 </ListView>
                             </Grid>
                         </Border>
@@ -411,6 +417,10 @@
                                                                 </DataTemplate>
                                                             </ItemsControl.ItemTemplate>
                                                         </ItemsControl>
+                                                        <Button HorizontalAlignment="Center" Click="OnLoadMorePlanningRunsClick"
+                                                                Content="加载更早规划记录" Style="{StaticResource ChatOSSecondaryButtonStyle}"
+                                                                IsEnabled="{x:Bind StoryViewModel.CanLoadMorePlanningRuns, Mode=OneWay}"
+                                                                Visibility="{x:Bind StoryViewModel.HasMorePlanningRuns, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                                     </StackPanel>
                                                 </Expander>
                                                 <Rectangle Height="1" Fill="{StaticResource ChatOSBorderBrush}" />
@@ -751,6 +761,12 @@
                                 </Border>
                             </DataTemplate>
                         </ListView.ItemTemplate>
+                        <ListView.Footer>
+                            <Button HorizontalAlignment="Center" Click="OnLoadMoreHistoryClick"
+                                    Content="加载更早记录" Style="{StaticResource ChatOSSecondaryButtonStyle}"
+                                    IsEnabled="{x:Bind ViewModel.CanLoadMoreHistory, Mode=OneWay}"
+                                    Visibility="{x:Bind ViewModel.HasMoreHistory, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                        </ListView.Footer>
                     </ListView>
                 </PivotItem>
 
@@ -781,6 +797,12 @@
                                 </Border>
                             </DataTemplate>
                         </ListView.ItemTemplate>
+                        <ListView.Footer>
+                            <Button HorizontalAlignment="Center" Click="OnLoadMoreVideoHistoryClick"
+                                    Content="加载更早记录" Style="{StaticResource ChatOSSecondaryButtonStyle}"
+                                    IsEnabled="{x:Bind ViewModel.CanLoadMoreVideoHistory, Mode=OneWay}"
+                                    Visibility="{x:Bind ViewModel.HasMoreVideoHistory, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                        </ListView.Footer>
                     </ListView>
                 </PivotItem>
             </Pivot>

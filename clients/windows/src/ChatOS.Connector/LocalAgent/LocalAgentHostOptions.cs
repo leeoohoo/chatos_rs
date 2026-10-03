@@ -8,6 +8,8 @@ public sealed record LocalAgentHostOptions(
     string MemorySourceId,
     TimeSpan MemoryTimeout)
 {
+    public TimeSpan RequestTimeout { get; init; } = TimeSpan.FromSeconds(75);
+
     public static LocalAgentHostOptions? Detect(string? apiBaseUrl = null)
     {
         var configured = Environment.GetEnvironmentVariable("CHATOS_LOCAL_AGENT_HOST_PATH")?.Trim();

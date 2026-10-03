@@ -28,6 +28,20 @@ public sealed class WindowsLocalAgentTaskClientTests
         Assert.Equal("restart from the beginning", command.Reason);
     }
 
+    [Fact]
+    public async Task MatchingGraphsPushesConversationTurnFilterIntoHostQuery()
+    {
+        var host = new TaskHost();
+        var client = new WindowsLocalAgentTaskClient(host);
+
+        _ = await client.MatchingGraphsAsync(
+            "owner-1", "turn-1", null, CancellationToken.None);
+
+        var command = Assert.IsType<ListLocalTaskGraphsCommand>(host.Command);
+        Assert.Equal("conversation_turn", command.SourceEntityType);
+        Assert.Equal("turn-1", command.SourceEntityId);
+    }
+
     private sealed class TaskHost : ILocalAgentHostClient
     {
         public object? Command { get; private set; }
@@ -50,6 +64,12 @@ public sealed class WindowsLocalAgentTaskClientTests
             where TCommand : notnull
         {
             Command = command;
+            if (command is ListLocalTaskGraphsCommand)
+            {
+                object list = new LocalTaskGraphsResult(
+                    "task_graphs", new WindowsLocalTaskGraphPage([], null, null));
+                return Task.FromResult((TResponse)list);
+            }
             object response = new LocalTaskGraphTypedResult("task_graph", new WindowsLocalTaskGraph(
                 "graph-1", "owner-1", "conversation_turn", "turn-1", "running", [], [], 1));
             return Task.FromResult((TResponse)response);

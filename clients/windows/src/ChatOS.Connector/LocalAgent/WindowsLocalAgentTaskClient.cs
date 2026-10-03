@@ -18,8 +18,8 @@ internal sealed record WindowsLocalTaskGraphPage(
     IReadOnlyList<WindowsLocalTaskGraphSummary> Graphs,
     long? NextBeforeUpdatedAtUnixMs, string? NextBeforeGraphId);
 internal sealed record ListLocalTaskGraphsCommand(
-    string Type, string OwnerUserId, string Scope, long? BeforeUpdatedAtUnixMs,
-    string? BeforeGraphId, uint Limit);
+    string Type, string OwnerUserId, string Scope, string? SourceEntityType,
+    string? SourceEntityId, long? BeforeUpdatedAtUnixMs, string? BeforeGraphId, uint Limit);
 internal sealed record GetLocalTaskGraphCommand(string Type, string OwnerUserId, string GraphId);
 internal sealed record GetLocalTaskRunsCommand(string Type, string OwnerUserId, string TaskId, uint Limit);
 internal sealed record RetryLocalTaskCommand(
@@ -45,12 +45,13 @@ public sealed class WindowsLocalAgentTaskClient(ILocalAgentHostClient host)
         do
         {
             var list = await host.SendAsync<ListLocalTaskGraphsCommand, LocalTaskGraphsResult>(new(
-                "list_task_graphs", owner, "all", beforeTimestamp, beforeId, 100), cancellationToken)
+                "list_task_graphs", owner, "all",
+                turnId is null ? null : "conversation_turn", turnId,
+                beforeTimestamp, beforeId, 100), cancellationToken)
                 .ConfigureAwait(false);
             if (list.Type != "task_graphs")
                 throw new InvalidDataException("Invalid Task Graph list.");
-            summaries.AddRange(list.Page.Graphs.Where(value => turnId is null ||
-                value.SourceEntityType == "conversation_turn" && value.SourceEntityId == turnId));
+            summaries.AddRange(list.Page.Graphs);
             beforeTimestamp = list.Page.NextBeforeUpdatedAtUnixMs;
             beforeId = list.Page.NextBeforeGraphId;
         } while (beforeTimestamp is not null && summaries.Count < 500);

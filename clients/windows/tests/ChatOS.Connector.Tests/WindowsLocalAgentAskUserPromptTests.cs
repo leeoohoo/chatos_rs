@@ -46,9 +46,26 @@ public sealed class WindowsLocalAgentAskUserPromptTests
         {
             object response = command switch
             {
-                ListLocalRunsCommand => new ListLocalRunsResult(
-                    "runs", new WindowsLocalAgentRunPage([Run], null, null)),
-                ListLocalEventsCommand => new ListLocalEventsResult(
+                ListLocalRunsCommand list => Runs(list),
+                ListLocalEventsCommand events => Events(events),
+                _ => throw new InvalidOperationException($"Unexpected command: {typeof(TCommand).Name}"),
+            };
+            return Task.FromResult((TResponse)response);
+        }
+
+        private static ListLocalRunsResult Runs(ListLocalRunsCommand command)
+        {
+            Assert.Equal("waiting_user", command.Status);
+            return new ListLocalRunsResult(
+                "runs", new WindowsLocalAgentRunPage([Run], null, null));
+        }
+
+        private static ListLocalEventsResult Events(ListLocalEventsCommand command)
+        {
+            Assert.Equal("user_input_requested", command.EventType);
+            Assert.True(command.NewestFirst);
+            Assert.Equal(1U, command.Limit);
+            return new ListLocalEventsResult(
                     "events",
                     [new WindowsLocalAgentEvent(
                         1, "event-1", "run-1", "user_input_requested",
@@ -59,10 +76,7 @@ public sealed class WindowsLocalAgentAskUserPromptTests
                             },
                         }),
                         1_500)],
-                    1),
-                _ => throw new InvalidOperationException($"Unexpected command: {typeof(TCommand).Name}"),
-            };
-            return Task.FromResult((TResponse)response);
+                    1);
         }
     }
 }

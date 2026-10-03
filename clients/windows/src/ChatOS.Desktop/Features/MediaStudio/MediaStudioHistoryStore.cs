@@ -9,6 +9,8 @@ namespace ChatOS.Desktop.Features.MediaStudio;
 public sealed class MediaStudioHistoryStore
 {
     private const int MaximumImageBytes = 20 * 1024 * 1024;
+    private const int MaximumManifestBytes = 2 * 1024 * 1024;
+    internal const int DefaultPageSize = 60;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
@@ -28,15 +30,27 @@ public sealed class MediaStudioHistoryStore
     public async Task<IReadOnlyList<MediaStudioHistoryItem>> LoadAsync(
         string ownerUserId,
         CancellationToken cancellationToken = default)
+        => (await LoadPageAsync(ownerUserId, null, DefaultPageSize, cancellationToken)
+            .ConfigureAwait(false)).Items;
+
+    internal async Task<MediaStudioHistoryPage<MediaStudioHistoryItem>> LoadPageAsync(
+        string ownerUserId,
+        MediaStudioHistoryCursor? after,
+        int limit = DefaultPageSize,
+        CancellationToken cancellationToken = default)
     {
         var ownerFolder = OwnerFolder(ownerUserId);
-        if (!Directory.Exists(ownerFolder)) return [];
+        if (!Directory.Exists(ownerFolder)) return new([], null);
+        var page = CandidatePage(ownerFolder, "entry.json", after, limit, cancellationToken);
         var items = new List<MediaStudioHistoryItem>();
-        foreach (var manifestPath in Directory.EnumerateFiles(ownerFolder, "entry.json", SearchOption.AllDirectories))
+        foreach (var candidate in page.Candidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var manifestPath = candidate.ManifestPath;
             try
             {
+                var manifestInfo = new FileInfo(manifestPath);
+                if (manifestInfo.Length is <= 0 or > MaximumManifestBytes) continue;
                 await using var stream = File.OpenRead(manifestPath);
                 var manifest = await JsonSerializer.DeserializeAsync<HistoryManifest>(
                     stream,
@@ -47,7 +61,7 @@ public sealed class MediaStudioHistoryStore
                 var images = manifest.Images
                     .Select(image => new MediaStudioImageItem(
                         image.Id,
-                        Path.Combine(folder, image.FileName),
+                        SafeChildPath(folder, image.FileName),
                         image.MimeType,
                         image.RevisedPrompt))
                     .Where(image => File.Exists(image.FilePath))
@@ -60,12 +74,15 @@ public sealed class MediaStudioHistoryStore
                     manifest.CreatedAt,
                     images));
             }
-            catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
+            catch (Exception exception) when (exception is IOException or JsonException or
+                UnauthorizedAccessException or InvalidDataException)
             {
                 StartupDiagnostics.RecordStage($"media history entry skipped: {Path.GetFileName(Path.GetDirectoryName(manifestPath))}");
             }
         }
-        return items.OrderByDescending(item => item.CreatedAt).ToArray();
+        return new(
+            items.OrderByDescending(item => item.CreatedAt).ToArray(),
+            page.HasMore ? page.Candidates[^1].Cursor : null);
     }
 
     public async Task<MediaStudioHistoryItem> SaveAsync(
@@ -115,22 +132,34 @@ public sealed class MediaStudioHistoryStore
     public async Task<IReadOnlyList<MediaStudioVideoHistoryItem>> LoadVideosAsync(
         string ownerUserId,
         CancellationToken cancellationToken = default)
+        => (await LoadVideoPageAsync(ownerUserId, null, DefaultPageSize, cancellationToken)
+            .ConfigureAwait(false)).Items;
+
+    internal async Task<MediaStudioHistoryPage<MediaStudioVideoHistoryItem>> LoadVideoPageAsync(
+        string ownerUserId,
+        MediaStudioHistoryCursor? after,
+        int limit = DefaultPageSize,
+        CancellationToken cancellationToken = default)
     {
         var ownerFolder = OwnerFolder(ownerUserId);
-        if (!Directory.Exists(ownerFolder)) return [];
+        if (!Directory.Exists(ownerFolder)) return new([], null);
+        var page = CandidatePage(ownerFolder, "video.json", after, limit, cancellationToken);
         var items = new List<MediaStudioVideoHistoryItem>();
-        foreach (var manifestPath in Directory.EnumerateFiles(ownerFolder, "video.json", SearchOption.AllDirectories))
+        foreach (var candidate in page.Candidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var manifestPath = candidate.ManifestPath;
             try
             {
+                var manifestInfo = new FileInfo(manifestPath);
+                if (manifestInfo.Length is <= 0 or > MaximumManifestBytes) continue;
                 await using var stream = File.OpenRead(manifestPath);
                 var manifest = await JsonSerializer.DeserializeAsync<VideoManifest>(
                     stream,
                     JsonOptions,
                     cancellationToken).ConfigureAwait(false);
                 if (manifest is null) continue;
-                var filePath = Path.Combine(Path.GetDirectoryName(manifestPath)!, manifest.FileName);
+                var filePath = SafeChildPath(Path.GetDirectoryName(manifestPath)!, manifest.FileName);
                 if (!File.Exists(filePath)) continue;
                 items.Add(new MediaStudioVideoHistoryItem(
                     manifest.Id,
@@ -140,12 +169,15 @@ public sealed class MediaStudioHistoryStore
                     filePath,
                     manifest.MimeType));
             }
-            catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException)
+            catch (Exception exception) when (exception is IOException or JsonException or
+                UnauthorizedAccessException or InvalidDataException)
             {
                 StartupDiagnostics.RecordStage($"media video history entry skipped: {Path.GetFileName(Path.GetDirectoryName(manifestPath))}");
             }
         }
-        return items.OrderByDescending(item => item.CreatedAt).ToArray();
+        return new(
+            items.OrderByDescending(item => item.CreatedAt).ToArray(),
+            page.HasMore ? page.Candidates[^1].Cursor : null);
     }
 
     public async Task<MediaStudioVideoHistoryItem> SaveVideoAsync(
@@ -240,6 +272,53 @@ public sealed class MediaStudioHistoryStore
         return Path.Combine(_root, hash);
     }
 
+    private static CandidatePageResult CandidatePage(
+        string ownerFolder,
+        string manifestName,
+        MediaStudioHistoryCursor? after,
+        int requestedLimit,
+        CancellationToken cancellationToken)
+    {
+        var limit = Math.Clamp(requestedLimit, 1, 200);
+        var candidates = new List<ManifestCandidate>(limit + 1);
+        foreach (var folder in Directory.EnumerateDirectories(ownerFolder))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var manifestPath = Path.Combine(folder, manifestName);
+            if (!File.Exists(manifestPath)) continue;
+            var cursor = new MediaStudioHistoryCursor(
+                File.GetLastWriteTimeUtc(manifestPath), Path.GetFileName(folder));
+            if (after is not null && !IsAfter(cursor, after)) continue;
+            var candidate = new ManifestCandidate(manifestPath, cursor);
+            var index = candidates.FindIndex(value => IsNewer(cursor, value.Cursor));
+            if (index < 0) index = candidates.Count;
+            if (index > limit) continue;
+            candidates.Insert(index, candidate);
+            if (candidates.Count > limit + 1) candidates.RemoveAt(candidates.Count - 1);
+        }
+        var hasMore = candidates.Count > limit;
+        if (hasMore) candidates.RemoveAt(candidates.Count - 1);
+        return new(candidates, hasMore);
+    }
+
+    private static bool IsNewer(MediaStudioHistoryCursor left, MediaStudioHistoryCursor right) =>
+        left.ModifiedAt != right.ModifiedAt
+            ? left.ModifiedAt > right.ModifiedAt
+            : string.CompareOrdinal(left.RecordId, right.RecordId) > 0;
+
+    private static bool IsAfter(MediaStudioHistoryCursor value, MediaStudioHistoryCursor cursor) =>
+        value.ModifiedAt != cursor.ModifiedAt
+            ? value.ModifiedAt < cursor.ModifiedAt
+            : string.CompareOrdinal(value.RecordId, cursor.RecordId) < 0;
+
+    private static string SafeChildPath(string folder, string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName) || Path.IsPathFullyQualified(fileName) ||
+            !string.Equals(fileName, Path.GetFileName(fileName), StringComparison.Ordinal))
+            throw new InvalidDataException("Media history contains an unsafe filename.");
+        return Path.Combine(folder, fileName);
+    }
+
     private static string SafeSegment(string value)
     {
         var safe = new string(value.Where(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_').ToArray());
@@ -273,7 +352,13 @@ public sealed class MediaStudioHistoryStore
         DateTimeOffset CreatedAt,
         string FileName,
         string MimeType);
+
+    private sealed record ManifestCandidate(string ManifestPath, MediaStudioHistoryCursor Cursor);
+    private sealed record CandidatePageResult(List<ManifestCandidate> Candidates, bool HasMore);
 }
+
+internal sealed record MediaStudioHistoryCursor(DateTime ModifiedAt, string RecordId);
+internal sealed record MediaStudioHistoryPage<T>(IReadOnlyList<T> Items, MediaStudioHistoryCursor? NextCursor);
 
 public sealed record MediaStudioHistoryItem(
     string Id,

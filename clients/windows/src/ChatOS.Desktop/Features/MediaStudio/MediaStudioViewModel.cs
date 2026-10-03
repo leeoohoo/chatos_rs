@@ -16,6 +16,9 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     private string? _ownerUserId;
     private bool _initialized;
     private CancellationTokenSource? _videoGenerationCancellation;
+    private MediaStudioHistoryCursor? _historyCursor;
+    private MediaStudioHistoryCursor? _videoHistoryCursor;
+    private Guid _session = Guid.NewGuid();
 
     public MediaStudioViewModel(
         IMediaGenerationService service,
@@ -130,6 +133,26 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     [ObservableProperty]
     private string _statusMessage = "选择模型并描述想要生成的画面";
 
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanLoadMoreHistory))]
+    private bool _hasMoreHistory;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanLoadMoreVideoHistory))]
+    private bool _hasMoreVideoHistory;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanLoadMoreHistory))]
+    private bool _isLoadingMoreHistory;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanLoadMoreVideoHistory))]
+    private bool _isLoadingMoreVideoHistory;
+
+    public bool CanLoadMoreHistory => HasMoreHistory && !IsLoadingMoreHistory;
+
+    public bool CanLoadMoreVideoHistory => HasMoreVideoHistory && !IsLoadingMoreVideoHistory;
+
     public async Task OpenAsync(string ownerUserId, CancellationToken cancellationToken = default)
     {
         if (!string.Equals(_ownerUserId, ownerUserId, StringComparison.Ordinal))
@@ -138,29 +161,92 @@ public sealed partial class MediaStudioViewModel : ObservableObject
             _ownerUserId = ownerUserId;
         }
         if (_initialized) return;
+        var session = _session;
         _initialized = true;
         IsBusy = true;
         ErrorMessage = null;
         try
         {
-            var historyTask = _historyStore.LoadAsync(ownerUserId, cancellationToken);
-            var videoHistoryTask = _historyStore.LoadVideosAsync(ownerUserId, cancellationToken);
+            var historyTask = _historyStore.LoadPageAsync(
+                ownerUserId, null, cancellationToken: cancellationToken);
+            var videoHistoryTask = _historyStore.LoadVideoPageAsync(
+                ownerUserId, null, cancellationToken: cancellationToken);
             var modelsTask = _service.FetchModelsAsync(cancellationToken);
             await Task.WhenAll(historyTask, videoHistoryTask, modelsTask);
-            foreach (var item in historyTask.Result) History.Add(item);
-            foreach (var item in videoHistoryTask.Result) VideoHistory.Add(item);
+            if (session != _session || _ownerUserId != ownerUserId) return;
+            foreach (var item in historyTask.Result.Items) History.Add(item);
+            foreach (var item in videoHistoryTask.Result.Items) VideoHistory.Add(item);
+            _historyCursor = historyTask.Result.NextCursor;
+            _videoHistoryCursor = videoHistoryTask.Result.NextCursor;
+            HasMoreHistory = _historyCursor is not null;
+            HasMoreVideoHistory = _videoHistoryCursor is not null;
             ShowLatest(History.FirstOrDefault());
             LatestVideo = VideoHistory.FirstOrDefault();
             ApplyModels(modelsTask.Result);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _initialized = false;
-            ErrorMessage = exception.Message;
+            if (session == _session)
+            {
+                _initialized = false;
+                ErrorMessage = exception.Message;
+            }
         }
         finally
         {
-            IsBusy = false;
+            if (session == _session) IsBusy = false;
+        }
+    }
+
+    public async Task LoadMoreHistoryAsync(CancellationToken cancellationToken = default)
+    {
+        var owner = _ownerUserId;
+        var cursor = _historyCursor;
+        if (owner is null || cursor is null || IsLoadingMoreHistory) return;
+        var session = _session;
+        IsLoadingMoreHistory = true;
+        try
+        {
+            var page = await _historyStore.LoadPageAsync(
+                owner, cursor, cancellationToken: cancellationToken);
+            if (session != _session || _ownerUserId != owner) return;
+            foreach (var item in page.Items) History.Add(item);
+            _historyCursor = page.NextCursor;
+            HasMoreHistory = _historyCursor is not null;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            if (session == _session) ErrorMessage = exception.Message;
+        }
+        finally
+        {
+            if (session == _session) IsLoadingMoreHistory = false;
+        }
+    }
+
+    public async Task LoadMoreVideoHistoryAsync(CancellationToken cancellationToken = default)
+    {
+        var owner = _ownerUserId;
+        var cursor = _videoHistoryCursor;
+        if (owner is null || cursor is null || IsLoadingMoreVideoHistory) return;
+        var session = _session;
+        IsLoadingMoreVideoHistory = true;
+        try
+        {
+            var page = await _historyStore.LoadVideoPageAsync(
+                owner, cursor, cancellationToken: cancellationToken);
+            if (session != _session || _ownerUserId != owner) return;
+            foreach (var item in page.Items) VideoHistory.Add(item);
+            _videoHistoryCursor = page.NextCursor;
+            HasMoreVideoHistory = _videoHistoryCursor is not null;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            if (session == _session) ErrorMessage = exception.Message;
+        }
+        finally
+        {
+            if (session == _session) IsLoadingMoreVideoHistory = false;
         }
     }
 
@@ -375,11 +461,18 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public void Reset()
     {
+        _session = Guid.NewGuid();
         _videoGenerationCancellation?.Cancel();
         _videoGenerationCancellation?.Dispose();
         _videoGenerationCancellation = null;
         _ownerUserId = null;
         _initialized = false;
+        _historyCursor = null;
+        _videoHistoryCursor = null;
+        HasMoreHistory = false;
+        HasMoreVideoHistory = false;
+        IsLoadingMoreHistory = false;
+        IsLoadingMoreVideoHistory = false;
         Models.Clear();
         VideoModels.Clear();
         History.Clear();

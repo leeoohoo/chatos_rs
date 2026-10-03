@@ -167,7 +167,7 @@ Example health request:
 
 ```json
 {
-  "protocol_version": 28,
+  "protocol_version": 39,
   "command_id": "health-019",
   "command": {
     "type": "health"
@@ -186,15 +186,21 @@ Mutating commands use `command_id` as an idempotency key. Reusing a key with dif
 - `get_capability_policy_snapshot`
 - `create_run`
 - `get_run`
+- `list_runs`
 - `claim_next_run`
 - `commit_step`
 - `claim_next_tool`
+- `renew_tool_claim`
 - `commit_tool`
+- `list_pending_tool_approvals`
+- `decide_tool_approval`
 - `resume_run`
 - `cancel_run`
+- `get_event_cursor`
 - `list_events`
 - `wait_events`
 - `create_task_graph`
+- `list_task_graphs`
 - `get_task_graph`
 - `get_task_runs`
 - `cancel_task`
@@ -208,6 +214,8 @@ Mutating commands use `command_id` as an idempotency key. Reusing a key with dif
 - `get_conversation`
 - `get_conversation_history`
 - `list_conversations`
+- `get_conversation_runtime_settings`
+- `put_conversation_runtime_settings`
 - `start_conversation_turn`
 - `guide_conversation_turn`
 - `resume_conversation_turn`

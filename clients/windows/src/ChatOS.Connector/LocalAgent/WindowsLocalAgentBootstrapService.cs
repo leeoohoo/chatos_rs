@@ -34,6 +34,10 @@ public sealed class WindowsLocalAgentBootstrapService
     private readonly ChatOSApiClient _api;
     private readonly IAuthTokenStore _authTokens;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly object _recoveryGate = new();
+    private readonly object _configurationStateGate = new();
+    private CancellationTokenSource? _recovery;
+    private ulong _configurationGeneration;
 
     public WindowsLocalAgentBootstrapService(
         ILocalAgentHostClient host,
@@ -71,6 +75,8 @@ public sealed class WindowsLocalAgentBootstrapService
         _remoteConnections = remoteConnections;
         _api = api;
         _authTokens = authTokens;
+        if (host is WindowsLocalAgentHostLifecycle lifecycle)
+            lifecycle.UnexpectedExit += OnUnexpectedHostExit;
     }
 
     public WindowsLocalAgentBootstrapSnapshot? Current { get; private set; }
@@ -83,19 +89,13 @@ public sealed class WindowsLocalAgentBootstrapService
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            _runtimeSettings.Reset();
-            _conversationCommands.Reset();
-            _conversationHistory.Reset();
-            _toolWorker.Reset();
-            _realtime.Reset();
-            _petActivities.Reset();
-            _askUser.Reset();
-            _taskGraph.Reset();
-            _workspace.Reset();
-            _projectConversations.Reset();
-            _notepad.Reset();
-            _remoteConnections.Reset();
-            Current = null;
+            ulong configurationGeneration;
+            lock (_configurationStateGate)
+            {
+                configurationGeneration = _configurationGeneration;
+                ResetConsumers();
+                Current = null;
+            }
             if (_host.ActiveOwnerUserId is { } activeOwner &&
                 !string.Equals(activeOwner, ownerUserId, StringComparison.Ordinal))
             {
@@ -204,19 +204,28 @@ public sealed class WindowsLocalAgentBootstrapService
                 snapshots,
                 options,
                 mainCapabilities);
-            _runtimeSettings.Configure(ownerUserId, result);
-            _conversationCommands.Configure(ownerUserId, result);
-            _conversationHistory.Configure(ownerUserId);
-            _toolWorker.Configure(ownerUserId);
-            _realtime.Configure(ownerUserId);
-            _petActivities.Configure(ownerUserId);
-            _askUser.Configure(ownerUserId);
-            _taskGraph.Configure(ownerUserId);
-            _workspace.Configure(ownerUserId);
-            _projectConversations.Configure(ownerUserId);
-            _notepad.Configure(ownerUserId);
-            _remoteConnections.Configure(ownerUserId);
-            Current = result;
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_configurationStateGate)
+            {
+                if (configurationGeneration != _configurationGeneration)
+                {
+                    throw new OperationCanceledException(
+                        "Local Agent bootstrap was superseded by an account reset.");
+                }
+                _runtimeSettings.Configure(ownerUserId, result);
+                _conversationCommands.Configure(ownerUserId, result);
+                _conversationHistory.Configure(ownerUserId);
+                _toolWorker.Configure(ownerUserId);
+                _realtime.Configure(ownerUserId);
+                _petActivities.Configure(ownerUserId);
+                _askUser.Configure(ownerUserId);
+                _taskGraph.Configure(ownerUserId);
+                _workspace.Configure(ownerUserId);
+                _projectConversations.Configure(ownerUserId);
+                _notepad.Configure(ownerUserId);
+                _remoteConnections.Configure(ownerUserId);
+                Current = result;
+            }
             return result;
         }
         finally
@@ -226,6 +235,21 @@ public sealed class WindowsLocalAgentBootstrapService
     }
 
     public void Reset()
+    {
+        lock (_recoveryGate)
+        {
+            _recovery?.Cancel();
+            _recovery = null;
+        }
+        lock (_configurationStateGate)
+        {
+            _configurationGeneration++;
+            ResetConsumers();
+            Current = null;
+        }
+    }
+
+    private void ResetConsumers()
     {
         _runtimeSettings.Reset();
         _conversationCommands.Reset();
@@ -239,7 +263,64 @@ public sealed class WindowsLocalAgentBootstrapService
         _projectConversations.Reset();
         _notepad.Reset();
         _remoteConnections.Reset();
-        Current = null;
+    }
+
+    private void OnUnexpectedHostExit(object? sender, EventArgs args)
+    {
+        var owner = Current?.OwnerUserId;
+        if (owner is null) return;
+        CancellationTokenSource source;
+        lock (_recoveryGate)
+        {
+            if (_recovery is not null) return;
+            source = new CancellationTokenSource();
+            _recovery = source;
+        }
+        _ = RecoverHostAsync(owner, source);
+    }
+
+    private async Task RecoverHostAsync(string ownerUserId, CancellationTokenSource source)
+    {
+        var delays = new[]
+        {
+            TimeSpan.FromMilliseconds(250),
+            TimeSpan.FromSeconds(1),
+            TimeSpan.FromSeconds(2),
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(10),
+        };
+        try
+        {
+            foreach (var delay in delays)
+            {
+                await Task.Delay(delay, source.Token).ConfigureAwait(false);
+                try
+                {
+                    await BootstrapForOwnerAsync(ownerUserId, source.Token).ConfigureAwait(false);
+                    return;
+                }
+                catch (OperationCanceledException) when (source.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch
+                {
+                    // Retry with bounded backoff. Bootstrap reads credentials again instead of
+                    // retaining model secrets in the lifecycle object.
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            lock (_recoveryGate)
+            {
+                if (ReferenceEquals(_recovery, source)) _recovery = null;
+            }
+            source.Dispose();
+        }
     }
 
     private static bool TryValidateModel(

@@ -137,7 +137,7 @@ public sealed class WindowsRemoteConnectionServiceTests
         RemoteHostKeyPolicy.AcceptNew, "device-1", "workspace-1", false,
         null, null, null, null, false, false, false, null);
 
-    private sealed class CloudDouble : IRemoteConnectionCloudService
+    private sealed class CloudDouble : IRemoteConnectionMetadataService
     {
         public List<RemoteConnection> Values { get; } = [Connection()];
         public RemoteConnectionDraft? LastDraft { get; private set; }

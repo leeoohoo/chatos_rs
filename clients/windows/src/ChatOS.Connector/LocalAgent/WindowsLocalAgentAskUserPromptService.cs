@@ -27,7 +27,9 @@ public sealed class WindowsLocalAgentAskUserPromptService : IAskUserPromptServic
         CancellationToken cancellationToken = default)
     {
         var owner = RequireOwner();
-        var page = await _runtime.ListRunsAsync(owner, "active", 100, cancellationToken)
+        var page = await _runtime.ListRunsAsync(
+                owner, "active", 100, status: "waiting_user",
+                cancellationToken: cancellationToken)
             .ConfigureAwait(false);
         var prompts = new List<AskUserPrompt>();
         foreach (var run in page.Runs.Where(value => value.Status == "waiting_user"))
@@ -111,11 +113,12 @@ public sealed class WindowsLocalAgentAskUserPromptService : IAskUserPromptServic
     private async Task<AskUserPrompt?> PromptAsync(
         WindowsLocalAgentRun run, RunContext context, CancellationToken cancellationToken)
     {
-        var events = await _runtime.ListEventsAsync(
-            run.OwnerUserId, run.RunId, cancellationToken).ConfigureAwait(false);
-        var requested = events.LastOrDefault(value => value.EventType == "user_input_requested");
-        if (requested is null || requested.Payload.ValueKind != JsonValueKind.Object ||
-            !requested.Payload.TryGetProperty("prompt", out var value)) return null;
+        var page = await _runtime.ListEventPageAsync(
+            run.OwnerUserId, 0, run.RunId, 1, "user_input_requested", newestFirst: true,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        var requested = page.Events.FirstOrDefault();
+        if (requested?.Payload is not { ValueKind: JsonValueKind.Object } payload ||
+            !payload.TryGetProperty("prompt", out var value)) return null;
         return MapPrompt(value, run, context, requested);
     }
 

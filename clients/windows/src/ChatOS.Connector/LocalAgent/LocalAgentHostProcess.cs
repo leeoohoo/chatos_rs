@@ -4,6 +4,8 @@ namespace ChatOS.Connector.LocalAgent;
 
 internal interface ILocalAgentHostProcess : IAsyncDisposable
 {
+    event EventHandler? Exited;
+
     Stream StandardInput { get; }
 
     Stream StandardOutput { get; }
@@ -128,19 +130,28 @@ internal sealed class LocalAgentHostProcessLauncher : ILocalAgentHostProcessLaun
         }
     }
 
-    private sealed class SystemLocalAgentHostProcess(Process process) : ILocalAgentHostProcess
+    private sealed class SystemLocalAgentHostProcess : ILocalAgentHostProcess
     {
+        private readonly Process _process;
         private int _terminated;
 
-        public Stream StandardInput => process.StandardInput.BaseStream;
+        public event EventHandler? Exited;
 
-        public Stream StandardOutput => process.StandardOutput.BaseStream;
+        public SystemLocalAgentHostProcess(Process process)
+        {
+            _process = process;
+            _process.Exited += OnExited;
+        }
+
+        public Stream StandardInput => _process.StandardInput.BaseStream;
+
+        public Stream StandardOutput => _process.StandardOutput.BaseStream;
 
         public bool HasExited
         {
             get
             {
-                try { return process.HasExited; }
+                try { return _process.HasExited; }
                 catch (InvalidOperationException) { return true; }
             }
         }
@@ -150,8 +161,8 @@ internal sealed class LocalAgentHostProcessLauncher : ILocalAgentHostProcessLaun
             if (Interlocked.Exchange(ref _terminated, 1) != 0) return Task.CompletedTask;
             try
             {
-                process.StandardInput.Close();
-                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                _process.StandardInput.Close();
+                if (!_process.HasExited) _process.Kill(entireProcessTree: true);
             }
             catch (InvalidOperationException)
             {
@@ -162,7 +173,10 @@ internal sealed class LocalAgentHostProcessLauncher : ILocalAgentHostProcessLaun
         public async ValueTask DisposeAsync()
         {
             await TerminateAsync().ConfigureAwait(false);
-            process.Dispose();
+            _process.Exited -= OnExited;
+            _process.Dispose();
         }
+
+        private void OnExited(object? sender, EventArgs args) => Exited?.Invoke(this, EventArgs.Empty);
     }
 }

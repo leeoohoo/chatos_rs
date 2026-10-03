@@ -50,6 +50,9 @@ public sealed partial class MediaStudioPage : Page
         if (e.ClickedItem is StoryProjectCard card) StoryViewModel.OpenProject(card.Project);
     }
 
+    private async void OnLoadMoreStoryProjectsClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.LoadMoreProjectsAsync();
+
     private async void OnCreateStoryProjectClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.CreateProjectAsync();
 
@@ -85,6 +88,9 @@ public sealed partial class MediaStudioPage : Page
 
     private async void OnAbandonStoryPlanningClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.AbandonPlanningAsync();
+
+    private async void OnLoadMorePlanningRunsClick(object sender, RoutedEventArgs e) =>
+        await StoryViewModel.LoadMorePlanningRunsAsync();
 
     private void OnAddStorySegmentClick(object sender, RoutedEventArgs e) =>
         StoryViewModel.AddSegment();
@@ -382,6 +388,9 @@ public sealed partial class MediaStudioPage : Page
             ViewModel.SelectHistoryItem(item);
     }
 
+    private async void OnLoadMoreHistoryClick(object sender, RoutedEventArgs e) =>
+        await ViewModel.LoadMoreHistoryAsync();
+
     private async void OnUseImageForVideoClick(object sender, RoutedEventArgs e)
     {
         if (sender is Button { DataContext: MediaStudioImageItem image })
@@ -440,6 +449,9 @@ public sealed partial class MediaStudioPage : Page
         if (e.ClickedItem is MediaStudioVideoHistoryItem item)
             ViewModel.SelectVideoHistoryItem(item);
     }
+
+    private async void OnLoadMoreVideoHistoryClick(object sender, RoutedEventArgs e) =>
+        await ViewModel.LoadMoreVideoHistoryAsync();
 
     private async void OnSaveImageClick(object sender, RoutedEventArgs e)
     {

@@ -298,7 +298,7 @@ public sealed class WindowsProjectRunService(
         WindowsProjectRunSettings saved)
     {
         var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (System.Collections.DictionaryEntry value in Environment.GetEnvironmentVariables())
+        foreach (System.Collections.DictionaryEntry value in System.Environment.GetEnvironmentVariables())
         {
             if (value.Key is string key && value.Value is string item) environment[key] = item;
         }

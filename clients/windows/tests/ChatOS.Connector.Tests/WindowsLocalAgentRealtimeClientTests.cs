@@ -21,9 +21,9 @@ public sealed class WindowsLocalAgentRealtimeClientTests
         Assert.Equal(1, iterator.Current.EventSequence);
         Assert.True(await iterator.MoveNextAsync());
         Assert.Equal(2, iterator.Current.EventSequence);
-        Assert.Equal(
-            ["get_conversation", "list_events", "get_conversation"],
-            host.CommandTypes);
+        Assert.Contains("get_event_cursor", host.CommandTypes);
+        Assert.Contains("wait_events", host.CommandTypes);
+        Assert.DoesNotContain("list_events", host.CommandTypes);
     }
 
     [Fact]
@@ -40,16 +40,23 @@ public sealed class WindowsLocalAgentRealtimeClientTests
         Assert.IsType<PetActivityEvent.Reconcile>(iterator.Current);
         Assert.True(await iterator.MoveNextAsync());
         Assert.IsType<PetActivityEvent.Reconcile>(iterator.Current);
-        Assert.Equal(["list_events"], host.CommandTypes);
+        Assert.True(await iterator.MoveNextAsync());
+        Assert.IsType<PetActivityEvent.Reconcile>(iterator.Current);
+        Assert.Contains("wait_events", host.CommandTypes);
+        Assert.DoesNotContain("list_events", host.CommandTypes);
     }
 
-    private static WindowsLocalAgentRealtimeClient CreateClient(ILocalAgentHostClient host) =>
-        new(new WindowsLocalAgentConversationClient(host), new WindowsLocalAgentRuntimeClient(host));
+    private static WindowsLocalAgentRealtimeClient CreateClient(ILocalAgentHostClient host)
+    {
+        var runtime = new WindowsLocalAgentRuntimeClient(host);
+        return new(new WindowsLocalAgentConversationClient(host), new WindowsLocalAgentEventHub(runtime));
+    }
 
     private sealed class RealtimeHost : ILocalAgentHostClient
     {
         private int _conversationReads;
-        public List<string> CommandTypes { get; } = [];
+        private int _eventsSent;
+        public System.Collections.Concurrent.ConcurrentQueue<string> CommandTypes { get; } = [];
         public string? ActiveOwnerUserId => "owner-1";
 
         public Task StartForOwnerAsync(
@@ -71,7 +78,8 @@ public sealed class WindowsLocalAgentRealtimeClientTests
             object response = command switch
             {
                 GetLocalConversationCommand => Conversation(),
-                ListLocalEventsCommand events => Events(events.AfterCursor),
+                GetLocalEventCursorCommand => Cursor(),
+                WaitLocalEventsCommand events => Events(events.AfterCursor),
                 _ => throw new InvalidOperationException(
                     $"Unexpected realtime command: {typeof(TCommand).Name}"),
             };
@@ -80,8 +88,9 @@ public sealed class WindowsLocalAgentRealtimeClientTests
 
         private LocalConversationResult Conversation()
         {
-            CommandTypes.Add("get_conversation");
-            var version = (ulong)++_conversationReads;
+            CommandTypes.Enqueue("get_conversation");
+            _conversationReads++;
+            var version = (ulong)(Volatile.Read(ref _eventsSent) == 0 ? 1 : 2);
             return new LocalConversationResult(
                 "conversation",
                 new WindowsLocalConversationDetail(
@@ -92,9 +101,16 @@ public sealed class WindowsLocalAgentRealtimeClientTests
                     []));
         }
 
+        private GetLocalEventCursorResult Cursor()
+        {
+            CommandTypes.Enqueue("get_event_cursor");
+            return new GetLocalEventCursorResult("event_cursor", 0);
+        }
+
         private ListLocalEventsResult Events(long afterCursor)
         {
-            CommandTypes.Add("list_events");
+            CommandTypes.Enqueue("wait_events");
+            Interlocked.Exchange(ref _eventsSent, 1);
             return new ListLocalEventsResult(
                 "events",
                 afterCursor == 0
@@ -103,7 +119,7 @@ public sealed class WindowsLocalAgentRealtimeClientTests
                         "event-1",
                         "run-1",
                         "run_updated",
-                        JsonSerializer.SerializeToElement(new { }),
+                        JsonSerializer.SerializeToElement(new { conversation_id = "conversation-1" }),
                         1)]
                     : [],
                 afterCursor == 0 ? 1 : afterCursor);

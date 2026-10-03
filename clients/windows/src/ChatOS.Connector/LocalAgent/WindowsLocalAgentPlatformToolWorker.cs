@@ -34,6 +34,10 @@ internal sealed record CommitLocalToolCommand(
     string Type, string OwnerUserId, string InvocationId, string ClaimToken,
     ulong ExpectedVersion, JsonElement Outcome);
 internal sealed record CommitLocalToolResult(string Type, JsonElement Result);
+internal sealed record RenewLocalToolClaimCommand(
+    string Type, string OwnerUserId, string InvocationId, string ClaimToken,
+    ulong ExpectedVersion, ulong LeaseDurationMs);
+internal sealed record RenewLocalToolClaimResult(string Type, bool Renewed);
 internal sealed record GetLocalRunCommand(string Type, string OwnerUserId, string RunId);
 internal sealed record GetLocalRunResult(string Type, WindowsLocalAgentRun Run);
 
@@ -46,9 +50,11 @@ public sealed class WindowsLocalAgentPlatformToolWorker
     private readonly WindowsLocalAgentProjectToolExecutor? _projectTools;
     private readonly IWindowsLocalAgentPluginToolExecutor? _pluginTools;
     private readonly WindowsLocalAgentToolApprovalHandler? _approvals;
+    private readonly WindowsLocalAgentEventHub? _eventHub;
     private readonly object _gate = new();
     private string? _owner;
     private CancellationTokenSource? _polling;
+    private CancellationTokenSource? _eventMonitoring;
     private bool _pendingWake;
 
     public WindowsLocalAgentPlatformToolWorker(
@@ -57,7 +63,8 @@ public sealed class WindowsLocalAgentPlatformToolWorker
         WindowsLocalAgentAttachmentVault vault,
         WindowsLocalAgentProjectToolExecutor projectTools,
         IWindowsLocalAgentPluginToolExecutor pluginTools,
-        WindowsLocalAgentToolApprovalHandler approvals)
+        WindowsLocalAgentToolApprovalHandler approvals,
+        WindowsLocalAgentEventHub eventHub)
     {
         _host = host;
         _conversations = conversations;
@@ -65,6 +72,7 @@ public sealed class WindowsLocalAgentPlatformToolWorker
         _projectTools = projectTools;
         _pluginTools = pluginTools;
         _approvals = approvals;
+        _eventHub = eventHub;
     }
 
     internal WindowsLocalAgentPlatformToolWorker(
@@ -81,6 +89,8 @@ public sealed class WindowsLocalAgentPlatformToolWorker
     {
         Reset();
         lock (_gate) _owner = ownerUserId;
+        _eventHub?.Configure(ownerUserId);
+        StartEventMonitoring(ownerUserId);
         Start(TimeSpan.Zero);
     }
 
@@ -93,10 +103,54 @@ public sealed class WindowsLocalAgentPlatformToolWorker
             _pluginTools?.Reset();
             _polling?.Cancel();
             _polling = null;
+            _eventMonitoring?.Cancel();
+            _eventMonitoring = null;
         }
     }
 
-    public void Wake() => Start(TimeSpan.FromMinutes(5));
+    public void Wake() => Start(TimeSpan.FromSeconds(15));
+
+    private void StartEventMonitoring(string owner)
+    {
+        if (_eventHub is null) return;
+        CancellationTokenSource source;
+        lock (_gate)
+        {
+            if (_eventMonitoring is not null) return;
+            source = new CancellationTokenSource();
+            _eventMonitoring = source;
+        }
+        _ = MonitorEventsAsync(owner, source);
+    }
+
+    private async Task MonitorEventsAsync(string owner, CancellationTokenSource source)
+    {
+        try
+        {
+            await foreach (var update in _eventHub!.UpdatesAsync(source.Token).ConfigureAwait(false))
+            {
+                if (!string.Equals(update.OwnerUserId, owner, StringComparison.Ordinal) ||
+                    update.IsReconcile) continue;
+                if (update.Events.Any(value => value.EventType is
+                    "tool_batch_requested" or "tool_invocation_approved" or
+                    "tool_claim_expired_requeued"))
+                {
+                    Start(TimeSpan.FromSeconds(15));
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                if (ReferenceEquals(_eventMonitoring, source)) _eventMonitoring = null;
+            }
+            source.Dispose();
+        }
+    }
 
     private void Start(TimeSpan window)
     {
@@ -136,10 +190,12 @@ public sealed class WindowsLocalAgentPlatformToolWorker
                 if (result.Type != "tool_claim") throw new InvalidDataException("Invalid tool claim result.");
                 if (result.Claim is { } claim)
                 {
-                    var outcome = await ExecuteAsync(owner, claim, source.Token).ConfigureAwait(false);
+                    var outcome = await ExecuteWhileRenewingAsync(owner, claim, source.Token)
+                        .ConfigureAwait(false);
+                    if (outcome is null) return;
                     _ = await _host.SendAsync<CommitLocalToolCommand, CommitLocalToolResult>(new(
                         "commit_tool", owner, claim.Invocation.InvocationId, claim.ClaimToken,
-                        claim.Invocation.Version, outcome), source.Token).ConfigureAwait(false);
+                        claim.Invocation.Version, outcome.Value), source.Token).ConfigureAwait(false);
                     delay = 250;
                     continue;
                 }
@@ -163,7 +219,63 @@ public sealed class WindowsLocalAgentPlatformToolWorker
                 }
             }
             source.Dispose();
-            if (restart) Start(TimeSpan.FromMinutes(5));
+            if (restart) Start(TimeSpan.FromSeconds(15));
+        }
+    }
+
+    private async Task<JsonElement?> ExecuteWhileRenewingAsync(
+        string owner,
+        WindowsLocalToolClaim claim,
+        CancellationToken cancellationToken)
+    {
+        using var execution = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var executeTask = ExecuteAsync(owner, claim, execution.Token);
+        var heartbeatTask = RenewUntilCancelledAsync(owner, claim, execution.Token);
+        var completed = await Task.WhenAny(executeTask, heartbeatTask).ConfigureAwait(false);
+        if (completed == executeTask)
+        {
+            var outcome = await executeTask.ConfigureAwait(false);
+            execution.Cancel();
+            try
+            {
+                if (!await heartbeatTask.ConfigureAwait(false)) return null;
+            }
+            catch (OperationCanceledException) { }
+            return outcome;
+        }
+
+        var leaseRetained = await heartbeatTask.ConfigureAwait(false);
+        if (leaseRetained) return await executeTask.ConfigureAwait(false);
+        execution.Cancel();
+        try { await executeTask.ConfigureAwait(false); }
+        catch (OperationCanceledException) { }
+        return null;
+    }
+
+    private async Task<bool> RenewUntilCancelledAsync(
+        string owner,
+        WindowsLocalToolClaim claim,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+                var result = await _host.SendAsync<RenewLocalToolClaimCommand, RenewLocalToolClaimResult>(
+                    new("renew_tool_claim", owner, claim.Invocation.InvocationId, claim.ClaimToken,
+                        claim.Invocation.Version, 30_000), cancellationToken).ConfigureAwait(false);
+                if (result.Type != "tool_claim_renewed") return false;
+                if (!result.Renewed) return false;
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -177,23 +289,23 @@ public sealed class WindowsLocalAgentPlatformToolWorker
             {
                 if (_pluginTools is null)
                     throw new InvalidOperationException("Local Plugin tools are unavailable.");
-                var output = await _pluginTools.ExecuteAsync(
+                var pluginOutput = await _pluginTools.ExecuteAsync(
                     owner,
                     claim.Invocation.RunId,
                     claim.Invocation.CallId,
                     claim.Invocation.ToolName,
                     claim.Invocation.Arguments,
                     cancellationToken).ConfigureAwait(false);
-                return JsonSerializer.SerializeToElement(new { type = "succeeded", output });
+                return JsonSerializer.SerializeToElement(new { type = "succeeded", output = pluginOutput });
             }
             if (WindowsLocalAgentCapabilityCatalog.ProjectToolNames.Contains(
                     claim.Invocation.ToolName))
             {
                 if (_projectTools is null)
                     throw new InvalidOperationException("Local project tools are unavailable.");
-                var output = await _projectTools.ExecuteAsync(
+                var projectOutput = await _projectTools.ExecuteAsync(
                     owner, claim.Invocation, cancellationToken).ConfigureAwait(false);
-                return JsonSerializer.SerializeToElement(new { type = "succeeded", output });
+                return JsonSerializer.SerializeToElement(new { type = "succeeded", output = projectOutput });
             }
             if (claim.Invocation.ToolName != AttachmentTool ||
                 claim.Invocation.Arguments.ValueKind != JsonValueKind.Object)
@@ -215,8 +327,8 @@ public sealed class WindowsLocalAgentPlatformToolWorker
             var attachment = conversation.Attachments.FirstOrDefault(value =>
                 value.AuthorizedLocalRef == reference) ?? throw new InvalidOperationException(
                     "The attachment is not authorized for this conversation.");
-            var output = _vault.Resolve(attachment, owner, conversationId, offset, limit);
-            return JsonSerializer.SerializeToElement(new { type = "succeeded", output });
+            var attachmentOutput = _vault.Resolve(attachment, owner, conversationId, offset, limit);
+            return JsonSerializer.SerializeToElement(new { type = "succeeded", output = attachmentOutput });
         }
         catch
         {

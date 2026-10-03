@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ChatOS.Connector.Approval;
 using ChatOS.Connector.Workspaces;
+using ChatOS.Core.Abstractions;
 
 namespace ChatOS.Connector.LocalAgent;
 
